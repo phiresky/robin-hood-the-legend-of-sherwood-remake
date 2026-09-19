@@ -5,5 +5,6 @@ export * from "./walls.ts";
 export * from "./terrain.ts";
 export * from "./scene.ts";
 export * from "./level3d.ts";
+export * from "./authored-assets.ts";
 export * from "./validation.ts";
 export * from "./geometry.ts";

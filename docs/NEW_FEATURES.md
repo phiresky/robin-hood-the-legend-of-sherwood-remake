@@ -9,6 +9,12 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Named level-editor assets and Blender refinement exports.** Derby's generated
+  parts belong to named building and wall groups, with second-click part selection.
+  Reusable Blender scripts preserve source IDs while exporting refined maps and
+  standalone asset models. Separate covered and revealed projection sources retain
+  interior artwork and patch-state metadata.
+
 - **Responsive browser replay seeking.** Timeline fast-forward runs in adaptive batches targeting two progress updates per second during seeks. Normal playback keeps its existing frame rate. Progress remains visible, and a new timeline target redirects an in-progress seek.
 
 - **Regular native presentation samples.** Camera and entity interpolation share

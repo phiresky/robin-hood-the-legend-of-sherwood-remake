@@ -7,6 +7,8 @@ import {
   IDENTITY_TRANSFORM,
   groupObstacles,
   snapFloatingParts,
+  authoredAssetGroups,
+  upgradeGeneratedAssetGroups,
   type Level3D,
   type Level3DGroup,
   type Level3DObject,
@@ -60,6 +62,7 @@ export async function prepareMapCandidate(
     }
     const nextSuspects = new Map<number, { delta: number; support: number }>();
     let d: Level3D | null = null;
+    let upgradedGroups = false;
     const docName = `${name}.level3d.json`;
     const files = await listFiles(dir);
     if (files.includes(docName)) {
@@ -69,6 +72,7 @@ export async function prepareMapCandidate(
         level: lvl ?? undefined,
         nodes: new Set(nextSources.keys()),
       });
+      upgradedGroups = upgradeGeneratedAssetGroups(d);
       if (lvl) {
         const terraces = new Set(
           d.objects
@@ -131,7 +135,7 @@ export async function prepareMapCandidate(
         camera: sceneDoc.camera,
         glb: glbName,
         objects,
-        groups,
+        groups: authoredAssetGroups(sceneDoc.map, objects) ?? groups,
       };
     }
     parseLevel3D(d, {
@@ -162,7 +166,7 @@ export async function prepareMapCandidate(
       ground: nextGround,
       suspects: nextSuspects,
       asset,
-      saved: files.includes(docName) && hadProvenance,
+      saved: files.includes(docName) && hadProvenance && !upgradedGroups,
     };
   } catch (error) {
     if (asset) disposeObjectResources([asset]);

@@ -1,0 +1,1266 @@
+{
+  "version": 1,
+  "map": "Derby",
+  "groups": [
+    {
+      "id": "derby-south-gatehouse",
+      "name": "South Gatehouse",
+      "parts": [
+        {
+          "obstacle": 0,
+          "name": "Gate passage masonry / segment 01"
+        },
+        {
+          "obstacle": 1,
+          "name": "Gate passage masonry / segment 02"
+        },
+        {
+          "obstacle": 2,
+          "name": "Gate passage masonry / segment 03"
+        },
+        {
+          "obstacle": 3,
+          "name": "East gate tower masonry / segment 01"
+        },
+        {
+          "obstacle": 4,
+          "name": "East gate tower masonry / segment 02"
+        },
+        {
+          "obstacle": 5,
+          "name": "West gate tower masonry / segment 01"
+        },
+        {
+          "obstacle": 6,
+          "name": "West gate tower masonry / segment 02"
+        },
+        {
+          "obstacle": 13,
+          "name": "East gate tower conical roof / segment 01"
+        },
+        {
+          "obstacle": 14,
+          "name": "East gate tower conical roof / segment 02"
+        },
+        {
+          "obstacle": 15,
+          "name": "East gate tower conical roof / segment 03"
+        },
+        {
+          "obstacle": 16,
+          "name": "East gate tower conical roof / segment 04"
+        },
+        {
+          "obstacle": 17,
+          "name": "West gate tower conical roof / segment 01"
+        },
+        {
+          "obstacle": 18,
+          "name": "West gate tower conical roof / segment 02"
+        },
+        {
+          "obstacle": 19,
+          "name": "West gate tower conical roof / segment 03"
+        },
+        {
+          "obstacle": 20,
+          "name": "West gate tower conical roof / segment 04"
+        },
+        {
+          "obstacle": 21,
+          "name": "West gate tower conical roof / segment 05"
+        },
+        {
+          "obstacle": 22,
+          "name": "West gate tower conical roof / segment 06"
+        }
+      ]
+    },
+    {
+      "id": "derby-southwest-postern",
+      "name": "Southwest Postern Tower",
+      "parts": [
+        {
+          "obstacle": 8,
+          "name": "Tower masonry / segment 01"
+        },
+        {
+          "obstacle": 9,
+          "name": "Tower masonry / segment 02"
+        },
+        {
+          "obstacle": 43,
+          "name": "Tower masonry / segment 03"
+        },
+        {
+          "obstacle": 26,
+          "name": "Upper landing / segment 01"
+        },
+        {
+          "obstacle": 34,
+          "name": "Upper landing / segment 02"
+        },
+        {
+          "obstacle": 33,
+          "name": "Lower landing"
+        },
+        {
+          "obstacle": 39,
+          "name": "Exterior stair / segment 01"
+        },
+        {
+          "obstacle": 40,
+          "name": "Exterior stair / segment 02"
+        }
+      ]
+    },
+    {
+      "id": "derby-lower-east-curtain",
+      "name": "Lower Bailey East Curtain",
+      "parts": [
+        {
+          "obstacle": 7,
+          "name": "Curtain wall and battlements / segment 01"
+        },
+        {
+          "obstacle": 10,
+          "name": "Curtain wall and battlements / segment 02"
+        },
+        {
+          "obstacle": 24,
+          "name": "Curtain wall and battlements / segment 03"
+        },
+        {
+          "obstacle": 41,
+          "name": "Curtain wall and battlements / segment 04"
+        },
+        {
+          "obstacle": 12,
+          "name": "Wall stair"
+        },
+        {
+          "obstacle": 44,
+          "name": "Stair support and landing"
+        }
+      ]
+    },
+    {
+      "id": "derby-lower-west-curtain",
+      "name": "Lower Bailey West Curtain",
+      "parts": [
+        {
+          "obstacle": 23,
+          "name": "Curtain wall and battlements / segment 01"
+        },
+        {
+          "obstacle": 25,
+          "name": "Curtain wall and battlements / segment 02"
+        },
+        {
+          "obstacle": 36,
+          "name": "Curtain wall and battlements / segment 03"
+        },
+        {
+          "obstacle": 37,
+          "name": "Curtain wall and battlements / segment 04"
+        },
+        {
+          "obstacle": 42,
+          "name": "Curtain wall and battlements / segment 05"
+        },
+        {
+          "obstacle": 38,
+          "name": "Wall stair"
+        },
+        {
+          "obstacle": 45,
+          "name": "Wall walk and support"
+        },
+        {
+          "obstacle": 27,
+          "name": "Southwest wall turret"
+        },
+        {
+          "obstacle": 28,
+          "name": "Turret conical roof / segment 01"
+        },
+        {
+          "obstacle": 29,
+          "name": "Turret conical roof / segment 02"
+        },
+        {
+          "obstacle": 30,
+          "name": "Turret conical roof / segment 03"
+        },
+        {
+          "obstacle": 31,
+          "name": "Turret conical roof / segment 04"
+        },
+        {
+          "obstacle": 32,
+          "name": "Turret conical roof / segment 05"
+        }
+      ]
+    },
+    {
+      "id": "derby-lower-courtyard-prop",
+      "name": "Lower Bailey Courtyard Prop",
+      "parts": [
+        {
+          "obstacle": 46,
+          "name": "Courtyard pedestal"
+        }
+      ]
+    },
+    {
+      "id": "derby-south-approach-stone",
+      "name": "Southern Approach Stone",
+      "parts": [
+        {
+          "obstacle": 47,
+          "name": "Stone surface / segment 01"
+        },
+        {
+          "obstacle": 48,
+          "name": "Stone surface / segment 02"
+        }
+      ]
+    },
+    {
+      "id": "derby-lower-east-cottage",
+      "name": "Lower Bailey East Cottage",
+      "parts": [
+        {
+          "obstacle": 49,
+          "name": "West roof and supporting wall"
+        },
+        {
+          "obstacle": 50,
+          "name": "East roof and supporting wall"
+        },
+        {
+          "obstacle": 51,
+          "name": "Doorstep"
+        },
+        {
+          "obstacle": 52,
+          "name": "Lean-to"
+        }
+      ]
+    },
+    {
+      "id": "derby-lower-west-cottage",
+      "name": "Lower Bailey West Cottage",
+      "parts": [
+        {
+          "obstacle": 53,
+          "name": "Porch roof and supports"
+        },
+        {
+          "obstacle": 54,
+          "name": "Side extension"
+        },
+        {
+          "obstacle": 55,
+          "name": "East roof and supporting wall"
+        },
+        {
+          "obstacle": 56,
+          "name": "West roof and supporting wall"
+        }
+      ]
+    },
+    {
+      "id": "derby-lower-southwest-cottage",
+      "name": "Lower Bailey Southwest Cottage",
+      "parts": [
+        {
+          "obstacle": 57,
+          "name": "West roof and supporting wall"
+        },
+        {
+          "obstacle": 58,
+          "name": "East roof and supporting wall"
+        }
+      ]
+    },
+    {
+      "id": "derby-lower-southeast-cottage",
+      "name": "Lower Bailey Southeast Cottage",
+      "parts": [
+        {
+          "obstacle": 11,
+          "name": "End extension"
+        },
+        {
+          "obstacle": 59,
+          "name": "Porch roof and supports"
+        },
+        {
+          "obstacle": 60,
+          "name": "East roof and supporting wall"
+        },
+        {
+          "obstacle": 61,
+          "name": "West roof and supporting wall"
+        }
+      ]
+    },
+    {
+      "id": "derby-lower-northwest-cottage",
+      "name": "Lower Bailey Northwest Cottage",
+      "parts": [
+        {
+          "obstacle": 62,
+          "name": "Threshold and lean-to / segment 01"
+        },
+        {
+          "obstacle": 63,
+          "name": "Threshold and lean-to / segment 02"
+        },
+        {
+          "obstacle": 64,
+          "name": "Side footing"
+        },
+        {
+          "obstacle": 65,
+          "name": "North roof and supporting wall"
+        },
+        {
+          "obstacle": 66,
+          "name": "South roof and supporting wall"
+        }
+      ]
+    },
+    {
+      "id": "derby-east-courtyard-south-shelter",
+      "name": "East Bailey South Wall Shelter",
+      "parts": [
+        {
+          "obstacle": 67,
+          "name": "Shelter body"
+        },
+        {
+          "obstacle": 68,
+          "name": "Shelter roof"
+        }
+      ]
+    },
+    {
+      "id": "derby-east-wall-landing",
+      "name": "East Bailey Wall Landing",
+      "parts": [
+        {
+          "obstacle": 69,
+          "name": "Landing and support"
+        }
+      ]
+    },
+    {
+      "id": "derby-east-courtyard-north-shelter",
+      "name": "East Bailey North Wall Shelter",
+      "parts": [
+        {
+          "obstacle": 70,
+          "name": "Shelter body"
+        },
+        {
+          "obstacle": 71,
+          "name": "Porch"
+        },
+        {
+          "obstacle": 72,
+          "name": "Roof"
+        }
+      ]
+    },
+    {
+      "id": "derby-lower-east-supplies",
+      "name": "Lower Bailey Stair Supplies",
+      "parts": [
+        {
+          "obstacle": 75,
+          "name": "Supply stack"
+        }
+      ]
+    },
+    {
+      "id": "derby-east-bailey-gate",
+      "name": "East Bailey Gatehouse",
+      "parts": [
+        {
+          "obstacle": 76,
+          "name": "Gate turret body"
+        },
+        {
+          "obstacle": 79,
+          "name": "Gate turret roof / segment 01"
+        },
+        {
+          "obstacle": 80,
+          "name": "Gate turret roof / segment 02"
+        },
+        {
+          "obstacle": 83,
+          "name": "Gate arch and piers / segment 01"
+        },
+        {
+          "obstacle": 84,
+          "name": "Gate arch and piers / segment 02"
+        },
+        {
+          "obstacle": 85,
+          "name": "Gate arch and piers / segment 03"
+        },
+        {
+          "obstacle": 95,
+          "name": "Gate battlements / segment 01"
+        },
+        {
+          "obstacle": 96,
+          "name": "Gate battlements / segment 02"
+        }
+      ]
+    },
+    {
+      "id": "derby-east-bailey-east-curtain",
+      "name": "East Bailey East Curtain",
+      "parts": [
+        {
+          "obstacle": 77,
+          "name": "Upper wall stair"
+        },
+        {
+          "obstacle": 78,
+          "name": "Lower wall stair"
+        },
+        {
+          "obstacle": 97,
+          "name": "Curtain wall walk"
+        },
+        {
+          "obstacle": 98,
+          "name": "Outer parapet"
+        },
+        {
+          "obstacle": 99,
+          "name": "Upper stair parapets / segment 01"
+        },
+        {
+          "obstacle": 100,
+          "name": "Upper stair parapets / segment 02"
+        },
+        {
+          "obstacle": 101,
+          "name": "Stair landing"
+        }
+      ]
+    },
+    {
+      "id": "derby-east-hall-stair",
+      "name": "East Hall Exterior Stair",
+      "parts": [
+        {
+          "obstacle": 82,
+          "name": "Upper landing"
+        },
+        {
+          "obstacle": 81,
+          "name": "Stair flight"
+        },
+        {
+          "obstacle": 106,
+          "name": "Stair footing"
+        }
+      ]
+    },
+    {
+      "id": "derby-east-bailey-west-curtain",
+      "name": "East Bailey West Curtain",
+      "parts": [
+        {
+          "obstacle": 86,
+          "name": "Upper wall walk / segment 01"
+        },
+        {
+          "obstacle": 87,
+          "name": "Upper wall walk / segment 02"
+        },
+        {
+          "obstacle": 88,
+          "name": "Upper wall walk / segment 03"
+        },
+        {
+          "obstacle": 89,
+          "name": "Lower wall walk / segment 01"
+        },
+        {
+          "obstacle": 90,
+          "name": "Lower wall walk / segment 02"
+        },
+        {
+          "obstacle": 91,
+          "name": "Lower wall walk / segment 03"
+        },
+        {
+          "obstacle": 92,
+          "name": "Lower wall walk / segment 04"
+        },
+        {
+          "obstacle": 93,
+          "name": "Wall parapets / segment 01"
+        },
+        {
+          "obstacle": 94,
+          "name": "Wall parapets / segment 02"
+        },
+        {
+          "obstacle": 102,
+          "name": "Stair and landing surfaces / segment 01"
+        },
+        {
+          "obstacle": 103,
+          "name": "Stair and landing surfaces / segment 02"
+        },
+        {
+          "obstacle": 104,
+          "name": "Stair and landing surfaces / segment 03"
+        },
+        {
+          "obstacle": 105,
+          "name": "Stair and landing surfaces / segment 04"
+        },
+        {
+          "obstacle": 121,
+          "name": "Upper landing parapet"
+        }
+      ]
+    },
+    {
+      "id": "derby-east-bailey-stacked-timber",
+      "name": "East Bailey Stacked Timber",
+      "parts": [
+        {
+          "obstacle": 107,
+          "name": "Timber stack / segment 01"
+        },
+        {
+          "obstacle": 108,
+          "name": "Timber stack / segment 02"
+        }
+      ]
+    },
+    {
+      "id": "derby-east-bailey-well",
+      "name": "East Bailey Covered Well",
+      "parts": [
+        {
+          "obstacle": 109,
+          "name": "East canopy slope"
+        },
+        {
+          "obstacle": 110,
+          "name": "West canopy slope"
+        },
+        {
+          "obstacle": 111,
+          "name": "Well basin"
+        }
+      ]
+    },
+    {
+      "id": "derby-east-bailey-crate",
+      "name": "East Bailey Supply Crate",
+      "parts": [
+        {
+          "obstacle": 112,
+          "name": "Crate"
+        }
+      ]
+    },
+    {
+      "id": "derby-east-bailey-yard-prop",
+      "name": "East Bailey Yard Prop",
+      "parts": [
+        {
+          "obstacle": 113,
+          "name": "Yard prop"
+        }
+      ]
+    },
+    {
+      "id": "derby-upper-west-curtain",
+      "name": "Upper Bailey West Curtain",
+      "parts": [
+        {
+          "obstacle": 73,
+          "name": "Covered wall section / segment 01"
+        },
+        {
+          "obstacle": 74,
+          "name": "Covered wall section / segment 02"
+        },
+        {
+          "obstacle": 114,
+          "name": "Keep access stair"
+        },
+        {
+          "obstacle": 116,
+          "name": "Wall walk and parapets / segment 01"
+        },
+        {
+          "obstacle": 117,
+          "name": "Wall walk and parapets / segment 02"
+        },
+        {
+          "obstacle": 127,
+          "name": "Keep landing / segment 01"
+        },
+        {
+          "obstacle": 128,
+          "name": "Keep landing / segment 02"
+        }
+      ]
+    },
+    {
+      "id": "derby-upper-gatehouse",
+      "name": "Upper Bailey Gatehouse",
+      "parts": [
+        {
+          "obstacle": 115,
+          "name": "West flanking tower / segment 01"
+        },
+        {
+          "obstacle": 118,
+          "name": "West flanking tower / segment 02"
+        },
+        {
+          "obstacle": 119,
+          "name": "East flanking tower / segment 01"
+        },
+        {
+          "obstacle": 125,
+          "name": "East flanking tower / segment 02"
+        },
+        {
+          "obstacle": 249,
+          "name": "Lower arch crown"
+        },
+        {
+          "obstacle": 250,
+          "name": "West battlement"
+        },
+        {
+          "obstacle": 251,
+          "name": "East battlement"
+        },
+        {
+          "obstacle": 252,
+          "name": "Upper chamber floor"
+        },
+        {
+          "obstacle": 253,
+          "name": "East chamber landing"
+        },
+        {
+          "obstacle": 254,
+          "name": "West gate pier"
+        },
+        {
+          "obstacle": 255,
+          "name": "East gate pier"
+        },
+        {
+          "obstacle": 256,
+          "name": "Upper chamber masonry / segment 01"
+        },
+        {
+          "obstacle": 257,
+          "name": "Upper chamber masonry / segment 02"
+        },
+        {
+          "obstacle": 258,
+          "name": "Upper chamber masonry / segment 03"
+        },
+        {
+          "obstacle": 259,
+          "name": "Arch spandrels / segment 01"
+        },
+        {
+          "obstacle": 260,
+          "name": "Arch spandrels / segment 02"
+        },
+        {
+          "obstacle": 261,
+          "name": "Tower landings / segment 01"
+        },
+        {
+          "obstacle": 262,
+          "name": "Tower landings / segment 02"
+        },
+        {
+          "obstacle": 263,
+          "name": "West chamber wall"
+        },
+        {
+          "obstacle": 264,
+          "name": "North chamber parapet"
+        },
+        {
+          "obstacle": 265,
+          "name": "Roof access stair"
+        },
+        {
+          "obstacle": 266,
+          "name": "Stair landing"
+        },
+        {
+          "obstacle": 267,
+          "name": "Threshold"
+        }
+      ]
+    },
+    {
+      "id": "derby-keep-hall-bridge",
+      "name": "Keep to East Hall Bridge",
+      "parts": [
+        {
+          "obstacle": 120,
+          "name": "Bridge span"
+        },
+        {
+          "obstacle": 122,
+          "name": "West bridge landing"
+        },
+        {
+          "obstacle": 126,
+          "name": "Bridge parapet"
+        },
+        {
+          "obstacle": 129,
+          "name": "East bridge landing"
+        }
+      ]
+    },
+    {
+      "id": "derby-upper-east-curtain",
+      "name": "Upper Bailey East Curtain",
+      "parts": [
+        {
+          "obstacle": 123,
+          "name": "Curtain wall"
+        },
+        {
+          "obstacle": 124,
+          "name": "Wall parapet"
+        }
+      ]
+    },
+    {
+      "id": "derby-great-keep",
+      "name": "Great Keep",
+      "parts": [
+        {
+          "obstacle": 130,
+          "name": "West tower roof terrace"
+        },
+        {
+          "obstacle": 131,
+          "name": "West tower outer walls / segment 01"
+        },
+        {
+          "obstacle": 132,
+          "name": "West tower outer walls / segment 02"
+        },
+        {
+          "obstacle": 133,
+          "name": "West tower outer walls / segment 03"
+        },
+        {
+          "obstacle": 134,
+          "name": "West tower rooftop stair"
+        },
+        {
+          "obstacle": 135,
+          "name": "West tower northwest turret / segment 01"
+        },
+        {
+          "obstacle": 136,
+          "name": "West tower northwest turret / segment 02"
+        },
+        {
+          "obstacle": 137,
+          "name": "West tower northwest turret / segment 03"
+        },
+        {
+          "obstacle": 138,
+          "name": "West tower northwest turret / segment 04"
+        },
+        {
+          "obstacle": 139,
+          "name": "West tower northeast turret / segment 01"
+        },
+        {
+          "obstacle": 140,
+          "name": "West tower northeast turret / segment 02"
+        },
+        {
+          "obstacle": 141,
+          "name": "West tower northeast turret / segment 03"
+        },
+        {
+          "obstacle": 142,
+          "name": "West tower northeast turret / segment 04"
+        },
+        {
+          "obstacle": 144,
+          "name": "West tower base and entrance / segment 01"
+        },
+        {
+          "obstacle": 239,
+          "name": "West tower base and entrance / segment 02"
+        },
+        {
+          "obstacle": 240,
+          "name": "West tower base and entrance / segment 03"
+        },
+        {
+          "obstacle": 145,
+          "name": "West tower connecting buttress"
+        },
+        {
+          "obstacle": 143,
+          "name": "Hall west entrance arch"
+        },
+        {
+          "obstacle": 146,
+          "name": "Hall east roof slope"
+        },
+        {
+          "obstacle": 147,
+          "name": "Hall entrance stair"
+        },
+        {
+          "obstacle": 148,
+          "name": "Hall west gable and buttresses / segment 01"
+        },
+        {
+          "obstacle": 150,
+          "name": "Hall west gable and buttresses / segment 02"
+        },
+        {
+          "obstacle": 151,
+          "name": "Hall west gable and buttresses / segment 03"
+        },
+        {
+          "obstacle": 176,
+          "name": "Hall west gable and buttresses / segment 04"
+        },
+        {
+          "obstacle": 177,
+          "name": "Hall west gable and buttresses / segment 05"
+        },
+        {
+          "obstacle": 178,
+          "name": "Hall west gable and buttresses / segment 06"
+        },
+        {
+          "obstacle": 180,
+          "name": "Hall west gable and buttresses / segment 07"
+        },
+        {
+          "obstacle": 182,
+          "name": "Hall west gable and buttresses / segment 08"
+        },
+        {
+          "obstacle": 149,
+          "name": "Hall west roof slope"
+        },
+        {
+          "obstacle": 152,
+          "name": "Central turret and roof walk / segment 01"
+        },
+        {
+          "obstacle": 153,
+          "name": "Central turret and roof walk / segment 02"
+        },
+        {
+          "obstacle": 154,
+          "name": "Central turret and roof walk / segment 03"
+        },
+        {
+          "obstacle": 155,
+          "name": "Central turret and roof walk / segment 04"
+        },
+        {
+          "obstacle": 156,
+          "name": "Central turret and roof walk / segment 05"
+        },
+        {
+          "obstacle": 157,
+          "name": "Central turret and roof walk / segment 06"
+        },
+        {
+          "obstacle": 158,
+          "name": "Central turret and roof walk / segment 07"
+        },
+        {
+          "obstacle": 159,
+          "name": "Central turret and roof walk / segment 08"
+        },
+        {
+          "obstacle": 170,
+          "name": "Central turret and roof walk / segment 09"
+        },
+        {
+          "obstacle": 181,
+          "name": "Central turret and roof walk / segment 10"
+        },
+        {
+          "obstacle": 160,
+          "name": "West tower connecting gallery / segment 01"
+        },
+        {
+          "obstacle": 161,
+          "name": "West tower connecting gallery / segment 02"
+        },
+        {
+          "obstacle": 162,
+          "name": "West tower connecting gallery / segment 03"
+        },
+        {
+          "obstacle": 163,
+          "name": "North tower roof terrace"
+        },
+        {
+          "obstacle": 164,
+          "name": "North tower upper masonry / segment 01"
+        },
+        {
+          "obstacle": 165,
+          "name": "North tower upper masonry / segment 02"
+        },
+        {
+          "obstacle": 166,
+          "name": "North tower upper masonry / segment 03"
+        },
+        {
+          "obstacle": 167,
+          "name": "Hall entrance surrounds / segment 01"
+        },
+        {
+          "obstacle": 168,
+          "name": "Hall entrance surrounds / segment 02"
+        },
+        {
+          "obstacle": 169,
+          "name": "Hall entrance surrounds / segment 03"
+        },
+        {
+          "obstacle": 171,
+          "name": "North tower conical roof / segment 01"
+        },
+        {
+          "obstacle": 172,
+          "name": "North tower conical roof / segment 02"
+        },
+        {
+          "obstacle": 173,
+          "name": "North tower conical roof / segment 03"
+        },
+        {
+          "obstacle": 174,
+          "name": "North tower side turrets / segment 01"
+        },
+        {
+          "obstacle": 175,
+          "name": "North tower side turrets / segment 02"
+        },
+        {
+          "obstacle": 179,
+          "name": "Hall east wall"
+        },
+        {
+          "obstacle": 223,
+          "name": "Interior floors and galleries / segment 01"
+        },
+        {
+          "obstacle": 224,
+          "name": "Interior floors and galleries / segment 02"
+        },
+        {
+          "obstacle": 227,
+          "name": "Interior floors and galleries / segment 03"
+        },
+        {
+          "obstacle": 228,
+          "name": "Interior floors and galleries / segment 04"
+        },
+        {
+          "obstacle": 229,
+          "name": "Interior floors and galleries / segment 05"
+        },
+        {
+          "obstacle": 230,
+          "name": "Interior floors and galleries / segment 06"
+        },
+        {
+          "obstacle": 225,
+          "name": "Interior stairs / segment 01"
+        },
+        {
+          "obstacle": 226,
+          "name": "Interior stairs / segment 02"
+        },
+        {
+          "obstacle": 231,
+          "name": "Interior stairs / segment 03"
+        },
+        {
+          "obstacle": 232,
+          "name": "Banquet table"
+        },
+        {
+          "obstacle": 233,
+          "name": "Banquet stool / seat 01"
+        },
+        {
+          "obstacle": 234,
+          "name": "Banquet stool / seat 02"
+        },
+        {
+          "obstacle": 235,
+          "name": "Banquet stool / seat 03"
+        },
+        {
+          "obstacle": 236,
+          "name": "Banquet stool / seat 04"
+        },
+        {
+          "obstacle": 237,
+          "name": "Banquet stool / seat 05"
+        },
+        {
+          "obstacle": 238,
+          "name": "Banquet stool / seat 06"
+        }
+      ]
+    },
+    {
+      "id": "derby-east-hall",
+      "name": "East Hall",
+      "parts": [
+        {
+          "obstacle": 183,
+          "name": "Southwest outer wall"
+        },
+        {
+          "obstacle": 184,
+          "name": "Northwest outer wall"
+        },
+        {
+          "obstacle": 185,
+          "name": "Northeast outer wall"
+        },
+        {
+          "obstacle": 186,
+          "name": "Interior lower floor"
+        },
+        {
+          "obstacle": 187,
+          "name": "Southeast window sill"
+        },
+        {
+          "obstacle": 188,
+          "name": "West entrance bay"
+        },
+        {
+          "obstacle": 189,
+          "name": "East corner buttress / segment 01"
+        },
+        {
+          "obstacle": 190,
+          "name": "East corner buttress / segment 02"
+        },
+        {
+          "obstacle": 191,
+          "name": "West facade masonry / segment 01"
+        },
+        {
+          "obstacle": 192,
+          "name": "West facade masonry / segment 02"
+        },
+        {
+          "obstacle": 193,
+          "name": "Upper floor"
+        },
+        {
+          "obstacle": 194,
+          "name": "West roof parapet"
+        },
+        {
+          "obstacle": 195,
+          "name": "Northwest turret / segment 01"
+        },
+        {
+          "obstacle": 196,
+          "name": "Northwest turret stair"
+        },
+        {
+          "obstacle": 197,
+          "name": "Northwest turret / segment 03"
+        },
+        {
+          "obstacle": 198,
+          "name": "Northwest turret / segment 04"
+        },
+        {
+          "obstacle": 199,
+          "name": "Northwest turret / segment 05"
+        },
+        {
+          "obstacle": 200,
+          "name": "Southwest roof slope"
+        },
+        {
+          "obstacle": 201,
+          "name": "Northeast roof slope"
+        },
+        {
+          "obstacle": 202,
+          "name": "South roof dormer / segment 01"
+        },
+        {
+          "obstacle": 204,
+          "name": "South roof dormer / segment 02"
+        },
+        {
+          "obstacle": 203,
+          "name": "North roof dormer / segment 01"
+        },
+        {
+          "obstacle": 205,
+          "name": "North roof dormer / segment 02"
+        },
+        {
+          "obstacle": 206,
+          "name": "Roof chimney"
+        },
+        {
+          "obstacle": 207,
+          "name": "Southeast turret body"
+        },
+        {
+          "obstacle": 208,
+          "name": "Southeast turret roof / segment 01"
+        },
+        {
+          "obstacle": 209,
+          "name": "Southeast turret roof / segment 02"
+        },
+        {
+          "obstacle": 210,
+          "name": "Southeast turret roof / segment 03"
+        },
+        {
+          "obstacle": 211,
+          "name": "Window ledge"
+        },
+        {
+          "obstacle": 212,
+          "name": "West entrance base"
+        },
+        {
+          "obstacle": 241,
+          "name": "Interior upper masonry"
+        },
+        {
+          "obstacle": 242,
+          "name": "Rear wall bench"
+        },
+        {
+          "obstacle": 243,
+          "name": "Serving table"
+        },
+        {
+          "obstacle": 244,
+          "name": "Banquet table"
+        },
+        {
+          "obstacle": 245,
+          "name": "Banquet bench / seat 01"
+        },
+        {
+          "obstacle": 246,
+          "name": "Banquet bench / seat 02"
+        },
+        {
+          "obstacle": 247,
+          "name": "High-backed dining chair / seat 01"
+        },
+        {
+          "obstacle": 248,
+          "name": "High-backed dining chair / seat 02"
+        },
+        {
+          "obstacle": 268,
+          "name": "Entrance landing"
+        },
+        {
+          "obstacle": 269,
+          "name": "Entrance lintel"
+        },
+        {
+          "obstacle": 270,
+          "name": "Upper entrance landing"
+        }
+      ]
+    },
+    {
+      "id": "derby-east-watchtower",
+      "name": "East Watchtower",
+      "parts": [
+        {
+          "obstacle": 213,
+          "name": "Tower entrance"
+        },
+        {
+          "obstacle": 214,
+          "name": "Main tower masonry"
+        },
+        {
+          "obstacle": 215,
+          "name": "Tower battlements"
+        },
+        {
+          "obstacle": 216,
+          "name": "Roof access stair"
+        },
+        {
+          "obstacle": 217,
+          "name": "Roof landing"
+        },
+        {
+          "obstacle": 218,
+          "name": "Lower wall landing"
+        },
+        {
+          "obstacle": 219,
+          "name": "Roof turret body"
+        },
+        {
+          "obstacle": 220,
+          "name": "Roof turret conical cap / segment 01"
+        },
+        {
+          "obstacle": 221,
+          "name": "Roof turret conical cap / segment 02"
+        },
+        {
+          "obstacle": 222,
+          "name": "Roof turret conical cap / segment 03"
+        }
+      ]
+    }
+  ]
+}
