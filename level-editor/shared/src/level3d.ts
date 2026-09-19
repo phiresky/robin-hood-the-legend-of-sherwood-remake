@@ -295,18 +295,28 @@ export function groupCentroid(parts: Level3DObject[]): [number, number] {
   return all.length ? obstacleCentroid(all) : [0, 0];
 }
 
-function applyGame(points: ObstaclePoint[], t: GameTransform, pivot: [number, number]): ObstaclePoint[] {
+/**
+ * Map y is the true ground distance foreshortened by sin(elevation), so the
+ * turn is a rigid rotation in the ground plane: unsquash y, rotate, squash.
+ */
+function applyGame(
+  cam: MapCamera,
+  points: ObstaclePoint[],
+  t: GameTransform,
+  pivot: [number, number],
+): ObstaclePoint[] {
   if (isIdentity(t)) return points;
+  const sinT = Math.sin((cam.elevation_deg * Math.PI) / 180);
   const a = (t.rot_deg * Math.PI) / 180;
   const c = Math.cos(a);
   const s = Math.sin(a);
   return points.map((p) => {
     const rx = p.x - pivot[0];
-    const ry = p.y - pivot[1];
+    const ry = (p.y - pivot[1]) / sinT;
     return {
       ...p,
       x: pivot[0] + rx * c - ry * s + t.dx,
-      y: pivot[1] + rx * s + ry * c + t.dy,
+      y: pivot[1] + (rx * s + ry * c) * sinT + t.dy,
       z_bottom: p.z_bottom + t.dz,
       z_top: p.z_top + t.dz,
     };
@@ -320,19 +330,19 @@ export function groupParts(doc: Level3D, groupId: string): Level3DObject[] {
 
 /** the obstacle as the bake writes it: the part's own transform, then its group's */
 export function transformedObstacle(doc: Level3D, o: Level3DObject): SightObstacle {
-  let points = applyGame(o.obstacle.points, o.transform, obstacleCentroid(o.obstacle.points));
+  let points = applyGame(doc.camera, o.obstacle.points, o.transform, obstacleCentroid(o.obstacle.points));
   if (o.group) {
     const g = doc.groups.find((x) => x.id === o.group);
-    if (g) points = applyGame(points, g.transform, groupCentroid(groupParts(doc, o.group)));
+    if (g) points = applyGame(doc.camera, points, g.transform, groupCentroid(groupParts(doc, o.group)));
   }
   return points === o.obstacle.points ? o.obstacle : { ...o.obstacle, points };
 }
 
 /**
  * A game transform about a pivot as a 4x4 matrix (column-major) in the
- * Z-up scene frame of `scene.ts`. Rotation happens in game coordinates,
- * where footprints are true rectangles; in the scene frame Y is stretched
- * by 1/sin(elevation), so the result is an affine map, not a pure rotation.
+ * Z-up scene frame of `scene.ts`. Footprints are true rectangles in the scene
+ * ground plane, so the turn is a rigid rotation there; only the map-pixel
+ * translation needs the 1/sin(elevation) stretch on Y.
  */
 export function gameTransformMatrix(cam: MapCamera, t: GameTransform, pivot: [number, number]): number[] {
   const sinT = Math.sin((cam.elevation_deg * Math.PI) / 180);
@@ -340,11 +350,12 @@ export function gameTransformMatrix(cam: MapCamera, t: GameTransform, pivot: [nu
   const a = (t.rot_deg * Math.PI) / 180;
   const c = Math.cos(a);
   const s = Math.sin(a);
-  // game: p' = R (p - c) + c + d  ->  scene X = x, Y = k y, Z = z / cosT with k = -1 / sinT
+  // scene X = x, Y = k y, Z = z / cosT with k = -1 / sinT; Y points up the map,
+  // so a counter-clockwise turn in map coordinates is clockwise about scene Z
   const k = -1 / sinT;
   const m00 = c;
-  const m01 = -s / k;
-  const m10 = s * k;
+  const m01 = s;
+  const m10 = -s;
   const m11 = c;
   const Cx = pivot[0];
   const Cy = pivot[1] * k;
