@@ -96,14 +96,13 @@ mod suite {
         );
 
         let reentrant = engine.start_post_seek_sequence(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             &mut Vec::new(),
             owner,
             Some((movement_sequence, 0)),
         );
         assert!(reentrant);
-        engine.launch_sword_movement_termination_provoke(&sim, &assets, owner);
+        engine.launch_sword_movement_termination_provoke(TickCtx::new(&sim, &assets), owner);
 
         let commands = engine
             .orders
@@ -180,7 +179,7 @@ mod suite {
         };
         *point = MapPoint::new(destination.x, destination.y);
         *flags = MoveFlags::MAP;
-        let launched = map_exit.launch_element(&sim, &assets, movement);
+        let launched = map_exit.launch_element(TickCtx::new(&sim, &assets), movement);
         let element = map_exit
             .orders
             .sequence_manager
@@ -207,8 +206,7 @@ mod suite {
             destination.x = ordinary_destination.x;
             destination.y = ordinary_destination.y;
             ordinary.duty_go_to(
-                &sim,
-                &assets,
+                TickCtx::new(&sim, &assets),
                 ordinary_owner,
                 destination,
                 crate::ai::GotoFlags::RUN,
@@ -365,8 +363,7 @@ mod suite {
         );
 
         let _ = engine.tick_entity_movement_owner(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
             owner,
             Some(MovementOwnerSelection {
                 seq_id: sequence,
@@ -548,8 +545,7 @@ mod suite {
         );
 
         let _ = engine.tick_entity_movement_owner(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
             owner,
             Some(MovementOwnerSelection {
                 seq_id: sequence,
@@ -723,16 +719,15 @@ mod suite {
         let assets = LevelAssets::new();
         stop_all_retains_goal_during_live_stop_transition(
             &mut engine,
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             owner,
             outgoing_sequence,
             old_goal,
             stop_transition,
         );
-        queue_straight_point_goto(&mut engine, &sim, &assets, owner, new_goal);
+        queue_straight_point_goto(&mut engine, TickCtx::new(&sim, &assets), owner, new_goal);
         let mut display = crate::engine::HostDisplayState::default();
-        engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+        engine.hourglass_phase_sequences(TickCtx::new(&sim, &assets), &mut display);
 
         let (replacement_sequence, replacement_index) =
             find_queued_replacement(&engine, owner, outgoing_sequence);
@@ -743,16 +738,15 @@ mod suite {
             old_goal,
         );
 
-        engine.tick_actor_owner_envelopes(&sim, &assets);
-        engine.tick_actor_owner_envelopes(&sim, &assets);
+        engine.tick_actor_owner_envelopes(TickCtx::new(&sim, &assets));
+        engine.tick_actor_owner_envelopes(TickCtx::new(&sim, &assets));
 
         assert_stop_transition_terminated_and_goal_cleared(&engine, owner, outgoing_sequence);
 
-        engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+        engine.hourglass_phase_sequences(TickCtx::new(&sim, &assets), &mut display);
         promoted_point_move_installs_goal_on_first_execute(
             &mut engine,
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             owner,
             replacement_sequence,
             replacement_index,
@@ -898,14 +892,13 @@ mod suite {
 
     fn stop_all_retains_goal_during_live_stop_transition(
         engine: &mut EngineInner,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: crate::element::EntityId,
         outgoing_sequence: crate::sequence::SequenceId,
         old_goal: MapPoint,
         stop_transition: OrderType,
     ) {
-        engine.stop_ai_owner(sim, assets, owner);
+        engine.stop_ai_owner(tcx, owner);
 
         assert_eq!(
             engine
@@ -943,8 +936,7 @@ mod suite {
 
     fn queue_straight_point_goto(
         engine: &mut EngineInner,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: crate::element::EntityId,
         new_goal: MapPoint,
     ) {
@@ -952,8 +944,7 @@ mod suite {
         destination.x = new_goal.x;
         destination.y = new_goal.y;
         engine.duty_go_to(
-            sim,
-            assets,
+            tcx,
             owner,
             destination,
             crate::ai::GotoFlags::RUN | crate::ai::GotoFlags::STRAIGHT,
@@ -1072,8 +1063,7 @@ mod suite {
 
     fn promoted_point_move_installs_goal_on_first_execute(
         engine: &mut EngineInner,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: crate::element::EntityId,
         replacement_sequence: crate::sequence::SequenceId,
         replacement_index: usize,
@@ -1096,7 +1086,7 @@ mod suite {
             if point_move_selected {
                 break;
             }
-            engine.tick_actor_owner_envelopes(sim, assets);
+            engine.tick_actor_owner_envelopes(tcx);
         }
         assert_eq!(
             engine
@@ -1122,7 +1112,7 @@ mod suite {
                 && (selected_point_order.target_y - new_goal.y).abs() <= 0.02,
             "fixture must select the authored destination endpoint, not the source-side transition-distance continuation"
         );
-        engine.tick_actor_owner_envelopes(sim, assets);
+        engine.tick_actor_owner_envelopes(tcx);
         let installed_goal = engine.ent(owner).position_iface().map_goal();
         assert!(
             (installed_goal.x - new_goal.x).abs() <= 0.02
@@ -1378,7 +1368,7 @@ mod suite {
         );
 
         let sim = crate::sim_rng::test_context();
-        engine.tick_actor_owner_envelopes(&sim, &assets);
+        engine.tick_actor_owner_envelopes(TickCtx::new(&sim, &assets));
         assert_eq!(
             i16::from(
                 engine
@@ -1396,7 +1386,7 @@ mod suite {
         let entity = engine.ent_mut(owner);
         entity.element_data_mut().set_direction_goal(4);
         entity.position_iface_mut().turn();
-        engine.tick_actor_owner_envelopes(&sim, &assets);
+        engine.tick_actor_owner_envelopes(TickCtx::new(&sim, &assets));
 
         let entity = engine.ent(owner);
         assert_eq!(i16::from(entity.position_iface().get_direction()), 4);
@@ -1562,7 +1552,7 @@ mod suite {
         let seq_id = engine.orders.sequence_manager.insert_element(movement);
         engine.select_sequence_element(owner, Some((seq_id, 0)));
         engine.send_condolation_card(
-            &crate::sim_rng::test_context(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
             crate::sequence::CondolationCard {
                 owner,
                 command: Command::PassDoor,
@@ -1571,7 +1561,6 @@ mod suite {
                 elem_idx: 0,
                 from_halt: true,
             },
-            &LevelAssets::new(),
         );
         let entity = engine.ent(owner);
 
@@ -1780,11 +1769,10 @@ mod suite {
         let sim = crate::sim_rng::test_context();
         let assets = LevelAssets::new();
         for _ in 0..64 {
-            engine.tick_actor_owner_envelopes(&sim, &assets);
+            engine.tick_actor_owner_envelopes(TickCtx::new(&sim, &assets));
             engine.hourglass_phase_sequences(
-                &sim,
+                TickCtx::new(&sim, &assets),
                 &mut crate::engine::HostDisplayState::default(),
-                &assets,
             );
             if engine.actor(owner).post_seek_sequence.is_none() {
                 return;
@@ -1850,11 +1838,10 @@ mod suite {
         let sim = crate::sim_rng::test_context();
         let assets = LevelAssets::new();
         for _ in 0..64 {
-            engine.tick_actor_owner_envelopes(&sim, &assets);
+            engine.tick_actor_owner_envelopes(TickCtx::new(&sim, &assets));
             engine.hourglass_phase_sequences(
-                &sim,
+                TickCtx::new(&sim, &assets),
                 &mut crate::engine::HostDisplayState::default(),
-                &assets,
             );
             if engine
                 .orders
@@ -1982,7 +1969,7 @@ mod suite {
         let sim = crate::sim_rng::test_context();
         let assets = LevelAssets::new();
         for _ in 0..8 {
-            engine.tick_actor_owner_envelopes(&sim, &assets);
+            engine.tick_actor_owner_envelopes(TickCtx::new(&sim, &assets));
             if engine.actor(owner).wait_time == 25 {
                 break;
             }
@@ -2033,7 +2020,7 @@ mod suite {
         let sim = crate::sim_rng::test_context();
         let assets = LevelAssets::new();
         assert!(
-            !engine.tick_refresh_seek_for_owner(&sim, &assets, owner),
+            !engine.tick_refresh_seek_for_owner(TickCtx::new(&sim, &assets), owner),
             "seeking must observe the live in-range target before testing stale-route refresh"
         );
         assert_eq!(
@@ -2100,11 +2087,10 @@ mod suite {
         let sim = crate::sim_rng::test_context();
         let assets = LevelAssets::new();
         for _ in 0..4 {
-            engine.tick_actor_owner_envelopes(&sim, &assets);
+            engine.tick_actor_owner_envelopes(TickCtx::new(&sim, &assets));
             engine.hourglass_phase_sequences(
-                &sim,
+                TickCtx::new(&sim, &assets),
                 &mut crate::engine::HostDisplayState::default(),
-                &assets,
             );
             if engine
                 .orders
@@ -2176,9 +2162,8 @@ mod suite {
 
         let transient = engine.t_launch_element(&LevelAssets::new(), seek);
         engine.hourglass_phase_sequences(
-            &crate::sim_rng::test_context(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
             &mut crate::engine::HostDisplayState::default(),
-            &LevelAssets::new(),
         );
 
         let actor = engine.actor(owner);

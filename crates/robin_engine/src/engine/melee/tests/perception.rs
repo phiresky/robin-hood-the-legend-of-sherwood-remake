@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 
 #[test]
 fn enemy_ai_hero_knockout_runs_shared_ai_cleanup() {
@@ -16,8 +17,7 @@ fn enemy_ai_hero_knockout_runs_shared_ai_cleanup() {
     let assets = assets_with_sword_profile(7, 30);
 
     engine.apply_knockout_side_effects(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         victim,
         true,
         true,
@@ -47,7 +47,10 @@ fn enemy_ai_hero_empty_opponent_evaluation_delivers_quit_event() {
         .clear();
     let assets = assets_with_sword_profile(7, 30);
 
-    engine.evaluate_opponents(&crate::sim_rng::test_context(), &assets, owner);
+    engine.evaluate_opponents(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        owner,
+    );
 
     let ai = engine
         .get_entity(owner)
@@ -107,7 +110,7 @@ fn deleting_final_opponent_synchronously_quits_enemy_ai_hero_ai() {
         ..LevelAssets::new()
     };
 
-    assert!(engine.delete_opponent(&sim, &assets, pc, opponent));
+    assert!(engine.delete_opponent(TickCtx::new(&sim, &assets), pc, opponent));
 
     let ai = engine.ai_ctrl(pc);
     assert_eq!(ai.current_substate, Substate::AttackingQuittingSwordfight);

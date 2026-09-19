@@ -7,21 +7,8 @@ use super::*;
 use crate::ai::{AiEntityHandle, AiState, Stimulus, StimulusInfo, Substate};
 use crate::ai_enemy::AiMapVec;
 use crate::ai_enemy::{SeekFlags, UNDEFINED_DIRECTION};
-#[cfg(test)]
-use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
-    #[cfg(test)]
-    pub(in crate::engine) fn execute_ai_out_of_view(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        stimulus: &Stimulus,
-    ) -> bool {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_out_of_view(stimulus)
-    }
-
     fn live_enemy_is_behind_me(&self, owner: EntityId) -> bool {
         let entity = self.expect_entity(owner, "visibility loss stare");
         let ground = entity.element_data().position();
@@ -62,7 +49,7 @@ impl AiOwnerCtx<'_> {
         if (bow || substate.is_any_swordfight())
             && ai.base.primary_target == Some(target)
             && self.engine.patrol_member_visible(
-                self.assets,
+                self.tcx.assets,
                 self.owner,
                 self.engine
                     .expect_human_id_for_ai_handle(target.get(), "visibility loss target"),
@@ -150,7 +137,7 @@ impl AiOwnerCtx<'_> {
             &self.engine.world.fast_grid.level.sectors,
             &self.engine.world.fast_grid.level.sector_number_map,
         )
-        .resolve_retaining_direction(self.sim, direction);
+        .resolve_retaining_direction(self.tcx.sim, direction);
         let ai = self
             .engine
             .enemy_ai_mut(self.owner, "visibility loss forecast");

@@ -223,11 +223,9 @@ mod suite {
         let sim = crate::sim_rng::test_context();
         assert!(matches!(
             engine.try_dispatch_move_path(
-                &sim,
-                &LevelAssets::new(),
+                TickCtx::new(&sim, &LevelAssets::new()),
                 owner,
-                sequence,
-                0,
+                SequenceElementRef::new(sequence, 0),
                 destination,
                 authored_action,
             ),
@@ -704,8 +702,10 @@ mod suite {
         engine.set_action_state_of(owner, ActionState::Waiting);
 
         let aborted = engine.abort_orphaned_sword_movement(
-            &crate::sim_rng::test_context(),
-            &assets_with_test_pc_profile(),
+            TickCtx::new(
+                &crate::sim_rng::test_context(),
+                &assets_with_test_pc_profile(),
+            ),
             owner,
             MovementOwnerSelection {
                 seq_id: movement_sequence,
@@ -772,8 +772,10 @@ mod suite {
         );
 
         assert!(engine.abort_orphaned_sword_movement(
-            &crate::sim_rng::test_context(),
-            &assets_with_test_pc_profile(),
+            TickCtx::new(
+                &crate::sim_rng::test_context(),
+                &assets_with_test_pc_profile()
+            ),
             owner,
             MovementOwnerSelection {
                 seq_id: movement_sequence,
@@ -812,7 +814,7 @@ mod suite {
         let sim = crate::sim_rng::test_context();
         let assets = assets_with_test_pc_profile();
 
-        engine.evaluate_opponents(&sim, &assets, owner);
+        engine.evaluate_opponents(TickCtx::new(&sim, &assets), owner);
 
         let quit_sequence = engine
             .orders
@@ -826,8 +828,7 @@ mod suite {
             })
             .expect("opponent evaluation must register QuitSwordfight");
         engine.engine_postpone(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             &mut Vec::new(),
             quit_sequence,
             0,
@@ -914,7 +915,7 @@ mod suite {
         let sim = crate::sim_rng::test_context();
         let assets = assets_with_test_pc_profile();
 
-        engine.tick_actor_owner_envelopes(&sim, &assets);
+        engine.tick_actor_owner_envelopes(TickCtx::new(&sim, &assets));
 
         let owner_entity = engine.ent(owner);
         assert_eq!(
@@ -963,7 +964,7 @@ mod suite {
 
         engine.actor_mut(owner).continuation.motion_state = crate::sprite::MotionState::Aborted;
         let mut display = crate::engine::HostDisplayState::default();
-        engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+        engine.hourglass_phase_sequences(TickCtx::new(&sim, &assets), &mut display);
 
         assert_eq!(
             engine.motion_state_of(owner),
@@ -998,7 +999,11 @@ mod suite {
             crate::sequence::FieldValue::Integer(9),
         );
         let turn_sequence = engine.t_launch_element(&LevelAssets::new(), turn);
-        engine.postpone_element(&sim, &assets, &mut Vec::new(), turn_sequence, 0);
+        engine.postpone_element(
+            TickCtx::new(&sim, &assets),
+            &mut Vec::new(),
+            SequenceElementRef::new(turn_sequence, 0),
+        );
         engine
             .orders
             .sequence_manager
@@ -1013,8 +1018,7 @@ mod suite {
 
         let ((), cards) = crate::engine::soldier_helpers::capture_condolation_cards(|| {
             assert!(engine.abort_orphaned_sword_movement(
-                &sim,
-                &assets,
+                TickCtx::new(&sim, &assets),
                 owner,
                 MovementOwnerSelection {
                     seq_id: movement_sequence,
@@ -1060,7 +1064,7 @@ mod suite {
             engine
                 .orders
                 .sequence_manager
-                .is_registered_to_go(unrelated_sequence, 0),
+                .is_registered_to_go(SequenceElementRef::new(unrelated_sequence, 0)),
             "the exact-root stop must preserve unrelated pending owner work"
         );
         let quit = engine
@@ -1283,13 +1287,13 @@ mod suite {
 
         let sim = crate::sim_rng::test_context();
         let assets = assets_with_test_pc_profile();
-        engine.tick_actor_owner_envelopes(&sim, &assets);
+        engine.tick_actor_owner_envelopes(TickCtx::new(&sim, &assets));
 
         let first = engine.ent(owner).position_iface();
         assert_eq!(first.get_direction().as_u8(), 10);
         assert_eq!(first.v48_serialized_state().direction_count, 2);
 
-        engine.tick_actor_owner_envelopes(&sim, &assets);
+        engine.tick_actor_owner_envelopes(TickCtx::new(&sim, &assets));
 
         assert_eq!(
             engine
@@ -1365,11 +1369,9 @@ mod suite {
 
         assert!(matches!(
             engine.try_dispatch_move_path(
-                &sim,
-                &LevelAssets::new(),
+                TickCtx::new(&sim, &LevelAssets::new()),
                 owner,
-                sequence,
-                0,
+                SequenceElementRef::new(sequence, 0),
                 destination,
                 OrderType::WalkingWithSword,
             ),

@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::ai::{AiEntityHandle, AiState, Decision, Substate};
-use crate::sim_rng::SimulationContext;
+use crate::engine::TickCtx;
 use std::ops::ControlFlow;
 
 fn vector_angle(ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
@@ -37,8 +37,7 @@ mod angle_tests {
 impl EngineInner {
     pub(in crate::engine) fn propose_live_shot_target(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
     ) -> Option<AiEntityHandle> {
         let position = self.live_ai_position(owner);
@@ -96,9 +95,10 @@ impl EngineInner {
         }
         let enemy_count = self.enemy_ai(owner, "shot candidate count").list_them.len();
         let (bow, _) = self
-            .bow_profile_and_ability(assets, owner)
+            .bow_profile_and_ability(tcx.assets, owner)
             .expect("shot selection requires a bow");
-        let bow = assets
+        let bow = tcx
+            .assets
             .profile_manager
             .get_bow(bow)
             .expect("shot selection bow profile");
@@ -121,9 +121,11 @@ impl EngineInner {
                 continue;
             }
             if distance > 100.0 * 100.0 && forest {
-                distance +=
-                    crate::sim_rng::u32(sim, crate::sim_rng::RngSite::ArcherForestTarget, 0..10000)
-                        as f32;
+                distance += crate::sim_rng::u32(
+                    tcx.sim,
+                    crate::sim_rng::RngSite::ArcherForestTarget,
+                    0..10000,
+                ) as f32;
             }
             distance += 10000.0
                 * self
@@ -185,10 +187,7 @@ impl AiOwnerCtx<'_> {
         {
             return ControlFlow::Continue(Decision::RunForNewArrows);
         }
-        let Some(target) = self
-            .engine
-            .propose_live_shot_target(self.sim, self.assets, self.owner)
-        else {
+        let Some(target) = self.engine.propose_live_shot_target(self.tcx, self.owner) else {
             return ControlFlow::Continue(Decision::ArcherObserve);
         };
         let ai = self.engine.ai_mut(self.owner, "shot selected target");
@@ -216,13 +215,12 @@ impl AiOwnerCtx<'_> {
                 let target = self
                     .engine
                     .expect_human_id_for_ai_handle(target.get(), "shot target");
-                self.engine
-                    .shoot_bow_at(self.sim, self.assets, self.owner, target);
+                self.engine.shoot_bow_at(self.tcx, self.owner, target);
             } else {
                 self.duty_set_state(AiState::Attacking, Substate::AttackingBowAiming);
                 let (_, ability) = self
                     .engine
-                    .bow_profile_and_ability(self.assets, self.owner)
+                    .bow_profile_and_ability(self.tcx.assets, self.owner)
                     .expect("aiming bow");
                 let time = ((110 - i32::from(ability as u16)) / 2) as u32;
                 let frame = self.engine.control.frame_counter;
@@ -240,8 +238,7 @@ impl AiOwnerCtx<'_> {
                 crate::element::Command::EquipBow
             };
             self.engine.launch_element(
-                self.sim,
-                self.assets,
+                self.tcx,
                 crate::sequence::SequenceElement::new(1, command, Some(self.owner)),
             );
         }

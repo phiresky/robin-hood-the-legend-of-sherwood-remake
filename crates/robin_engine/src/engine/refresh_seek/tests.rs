@@ -3,7 +3,9 @@ use crate::element::{
     ActorData, ActorPc, ActorSoldier, AiBrain, Command, ElementData, ElementKind, Entity,
     HumanData, PcData, Posture, SoldierData,
 };
+use crate::engine::TickCtx;
 use crate::position_interface::SectorHandle;
+use crate::sequence::SequenceElementRef;
 use crate::sequence::{SequenceElementData, SequenceState};
 
 #[test]
@@ -192,8 +194,7 @@ fn same_sector_request_leaves_the_element_available_for_cross_sector_retry() {
     )
     .unwrap();
     assert!(!engine.try_dispatch_cross_sector_point_seek(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         &mut Vec::new(),
         request(133),
     ));
@@ -209,8 +210,7 @@ fn same_sector_request_leaves_the_element_available_for_cross_sector_retry() {
         .unwrap()
     );
     assert!(engine.try_dispatch_cross_sector_point_seek(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         &mut Vec::new(),
         request(22),
     ));
@@ -222,8 +222,7 @@ fn original_replay_point_seek_rejects_missing_recorded_outcome() {
     let (mut engine, owner, sequence_id, destination) = replay_owned_point_seek_fixture();
 
     engine.try_dispatch_cross_sector_point_seek(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         &mut Vec::new(),
         crate::engine::refresh_seek::PointSeekRequest {
             owner,
@@ -246,8 +245,7 @@ fn live_point_seek_without_recorded_outcome_uses_gate_graph() {
     let (mut engine, owner, sequence_id, destination) = replay_owned_point_seek_fixture();
 
     assert!(engine.try_dispatch_cross_sector_point_seek(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         &mut Vec::new(),
         crate::engine::refresh_seek::PointSeekRequest {
             owner,
@@ -497,8 +495,7 @@ fn lost_target_moveok_stop_transition_publishes_waiting_before_terminal_handoff(
 
     let mut tail_order = None;
     engine.tick_actor_owner_envelopes_with_test_owner_hook(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         |engine, tail_owner| {
             if tail_owner == owner {
                 tail_order = engine.actor_order_type(owner);
@@ -848,8 +845,7 @@ fn refresh_seek_recovers_moved_owner_and_target_sectors_before_indexed_route() {
     engine.orders.sequence_manager.rebuild_indices();
 
     assert!(engine.try_dispatch_cross_sector_entity_seek(
-        &sim,
-        &LevelAssets::new(),
+        TickCtx::new(&sim, &LevelAssets::new()),
         &mut Vec::new(),
         crate::engine::refresh_seek::EntitySeekRequest {
             owner,
@@ -963,8 +959,7 @@ fn cross_sector_refresh_seek_does_not_append_pc_posture_recovery() {
     engine.orders.sequence_manager.rebuild_indices();
 
     assert!(engine.try_dispatch_cross_sector_entity_seek(
-        &sim,
-        &LevelAssets::new(),
+        TickCtx::new(&sim, &LevelAssets::new()),
         &mut Vec::new(),
         crate::engine::refresh_seek::EntitySeekRequest {
             owner,
@@ -1020,8 +1015,7 @@ fn ordinary_cross_sector_pc_move_still_appends_posture_recovery() {
 
     let sequence_id = engine
         .launch_gate_movement_sequence(
-            &sim,
-            &crate::engine::LevelAssets::new(),
+            TickCtx::new(&sim, &crate::engine::LevelAssets::new()),
             &mut Vec::new(),
             crate::engine::movement::GateRouteRequest {
                 entity_id: owner,
@@ -1079,8 +1073,7 @@ fn resolve_stop_npc_seek_with_target_at(
     let assets = engine.test_runtime_assets();
 
     let _ = engine.resolve_entity_seek(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         owner,
         target,
         MoveFlags::SEEK | MoveFlags::SEEK_STOP_NPC,
@@ -1233,8 +1226,7 @@ fn refresh_seek_waits_when_same_sector_actor_target_is_passing_door() {
     engine.orders.sequence_manager.rebuild_indices();
 
     engine.apply_seek_refresh(
-        sim,
-        &assets,
+        TickCtx::new(sim, &assets),
         &mut Vec::new(),
         crate::engine::refresh_seek::EntitySeekRequest {
             owner,
@@ -1320,8 +1312,12 @@ fn running_stairs_refreshes_a_moved_target_before_its_second_motion() {
         *element = Some(target);
         *tolerance = 10.0;
     }
-    let sequence = engine.launch_element(&sim, &assets, seek);
-    engine.element_in_progress(&sim, &assets, &mut Vec::new(), sequence, 0);
+    let sequence = engine.launch_element(TickCtx::new(&sim, &assets), seek);
+    engine.element_in_progress(
+        TickCtx::new(&sim, &assets),
+        &mut Vec::new(),
+        SequenceElementRef::new(sequence, 0),
+    );
     engine.select_sequence_element(owner, Some((sequence, 0)));
     let actor = engine
         .get_entity_mut(owner)
@@ -1334,7 +1330,7 @@ fn running_stairs_refreshes_a_moved_target_before_its_second_motion() {
     actor.last_seek_target_position = MapPoint::new(60.0, 10.0);
 
     crate::movement_diagnostics::begin_parity_movement_capture();
-    engine.tick_actor_owner_envelopes(&sim, &assets);
+    engine.tick_actor_owner_envelopes(TickCtx::new(&sim, &assets));
     let calls: Vec<_> = crate::movement_diagnostics::take_parity_movement_capture()
         .unwrap()
         .into_iter()
@@ -1446,7 +1442,7 @@ fn assert_moved_target_refresh_returns_explicit_in_progress(
         actor.last_seek_target_position = MapPoint::new(60.0, 10.0);
     }
 
-    engine.tick_actor_owner_envelopes(&sim, &assets);
+    engine.tick_actor_owner_envelopes(TickCtx::new(&sim, &assets));
 
     let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
     assert_eq!(actor.continuation.motion_state, MotionState::InProgress);
@@ -1615,7 +1611,7 @@ fn climbing_seek_flag_does_not_run_perform_seek_refresh() {
         actor.last_seek_target_position = MapPoint::ZERO;
     }
 
-    assert!(!engine.tick_refresh_seek_for_owner(&sim, &assets, owner));
+    assert!(!engine.tick_refresh_seek_for_owner(TickCtx::new(&sim, &assets), owner));
     assert_eq!(
         engine
             .orders
@@ -1867,12 +1863,10 @@ fn relaunch_seek_replacement_clears_selected_seek_goal_before_queuing_replacemen
     let mut assets = crate::engine::LevelAssets::new();
     crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.relaunch_seek_replacement(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
         owner,
-        seek_seq,
-        0,
+        SequenceElementRef::new(seek_seq, 0),
         replacement,
     );
 
@@ -1907,6 +1901,6 @@ fn relaunch_seek_replacement_clears_selected_seek_goal_before_queuing_replacemen
         engine
             .orders
             .sequence_manager
-            .is_registered_to_go(replacement_seq, 0)
+            .is_registered_to_go(SequenceElementRef::new(replacement_seq, 0))
     );
 }

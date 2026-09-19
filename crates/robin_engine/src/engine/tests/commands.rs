@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 use crate::player_command::PlayerCommand;
 
 fn swordfight_test_assets() -> LevelAssets {
@@ -66,8 +67,7 @@ fn draw_fast_forward_skips() {
     engine.control.fast_forward = true;
     engine.control.frame_counter = 1; // Not a multiple of 32
     let result = engine.tick_display_state(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         &mut display,
     );
     assert_eq!(result, 1); // Should skip
@@ -80,8 +80,7 @@ fn draw_fast_forward_every_32nd() {
     engine.control.fast_forward = true;
     engine.control.frame_counter = 32; // Multiple of 32
     let result = engine.tick_display_state(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         &mut display,
     );
     assert_eq!(result, 0); // Should render
@@ -855,7 +854,7 @@ fn swordfight_los_ignores_crossing_motion_line() {
         "fixture must contain a movement barrier between the fighters"
     );
 
-    engine.tick_waiting_sword_execute_for(sim, &assets, left_id);
+    engine.tick_waiting_sword_execute_for(TickCtx::new(sim, &assets), left_id);
 
     assert_eq!(engine.human(left_id).opponents, vec![right_id]);
     assert_eq!(engine.human(right_id).opponents, vec![left_id]);
@@ -912,7 +911,10 @@ fn swordfight_elevation_prune_skips_visibility_and_tears_down_both_fighters() {
     }
 
     crate::sight_obstacle::begin_parity_visibility_capture();
-    engine.tick_waiting_sword_execute_for(&crate::sim_rng::test_context(), &assets, owner);
+    engine.tick_waiting_sword_execute_for(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        owner,
+    );
     let visibility_queries = crate::sight_obstacle::take_parity_visibility_capture();
 
     assert!(
@@ -1003,7 +1005,10 @@ fn swordfight_prune_resets_survivors_smalltalk_initiative_through_delete_opponen
         human.received_smalltalk_initiative = false;
     }
 
-    engine.tick_waiting_sword_execute_for(&crate::sim_rng::test_context(), &assets, departing);
+    engine.tick_waiting_sword_execute_for(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        departing,
+    );
 
     let survivor_human = engine.human(survivor);
     assert_eq!(survivor_human.opponents, vec![principal]);
@@ -1087,7 +1092,7 @@ fn smalltalk_strike_does_not_transfer_initiative_immediately() {
 
     engine.control.frame_counter = 15;
     crate::sim_rng::with_seed(1, |sim| {
-        engine.tick_waiting_sword_execute_for(sim, &assets, attacker_id);
+        engine.tick_waiting_sword_execute_for(TickCtx::new(sim, &assets), attacker_id);
     });
 
     let attacker_human = engine.human(attacker_id);
@@ -1231,13 +1236,13 @@ fn waiting_sword_smalltalk_is_installed_by_same_frame_manager_after_owner_execut
         engine.publish_selected_order_as_installed(attacker);
 
         let sim = crate::sim_rng::test_context();
-        let executed = engine.tick_actor_animation_for(&sim, &assets, attacker);
+        let executed = engine.tick_actor_animation_for(TickCtx::new(&sim, &assets), attacker);
         assert!(
             executed.is_some(),
             "the selected WaitingSword order must execute"
         );
         assert_eq!(engine.actor_order_type(attacker), Some(waiting));
-        engine.tick_waiting_sword_execute_for(&sim, &assets, attacker);
+        engine.tick_waiting_sword_execute_for(TickCtx::new(&sim, &assets), attacker);
 
         let strikes_before_manager: Vec<_> = engine
             .orders
@@ -1366,7 +1371,7 @@ fn waiting_sword_near_gate_uses_three_dimensional_square_norm() {
     }
 
     crate::sim_rng::with_seed(1, |sim| {
-        engine.tick_waiting_sword_execute_for(sim, &assets, attacker);
+        engine.tick_waiting_sword_execute_for(TickCtx::new(sim, &assets), attacker);
     });
 
     assert!(
@@ -1424,8 +1429,7 @@ fn waiting_sword_requires_real_combat_profiles_contextually() {
     }
 
     engine.tick_waiting_sword_execute_for(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         owner,
     );
 }
@@ -1494,7 +1498,7 @@ fn smalltalk_hint_suppresses_normal_swordfight_evaluation() {
         soldier.human_data_mut().unwrap().opponents.push(pc_id);
     }
 
-    engine.tick_waiting_sword_execute_for(sim, &assets, pc_id);
+    engine.tick_waiting_sword_execute_for(TickCtx::new(sim, &assets), pc_id);
 
     let pc_human = engine.human(pc_id);
     assert_eq!(pc_human.smalltalk_hint, SmalltalkHint::None);
@@ -1549,8 +1553,7 @@ fn smalltalk_hint_missing_required_opponent_fails_contextually() {
     human.smalltalk_hint_opponent = Some(stale);
 
     engine.tick_waiting_sword_execute_for(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         owner,
     );
 }
@@ -1687,9 +1690,9 @@ fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_
             .push(free_attacker_id);
     }
 
-    engine.tick_waiting_sword_execute_for(sim, &assets, hinted_id);
+    engine.tick_waiting_sword_execute_for(TickCtx::new(sim, &assets), hinted_id);
     crate::sim_rng::with_seed(1, |sim| {
-        engine.tick_waiting_sword_execute_for(sim, &assets, free_attacker_id);
+        engine.tick_waiting_sword_execute_for(TickCtx::new(sim, &assets), free_attacker_id);
     });
 
     assert!(
@@ -1844,8 +1847,7 @@ fn camera_slide_approaches_target() {
     engine.control.speed = 1.0;
 
     engine.perform_director_work(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         &mut display,
     );
 
@@ -1890,8 +1892,7 @@ fn camera_slide_cancels_at_target() {
     engine.feedback.cutscene_camera.camera_slide = crate::coordinates::MapPoint::new(500.0, 300.0);
 
     engine.perform_director_work(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         &mut display,
     );
 
@@ -2194,7 +2195,7 @@ fn dispatch_scroll_hourglasses_no_script_is_noop() {
 
     // No mission_script → nothing to dispatch, counter stays zero.
     let assets = crate::engine::LevelAssets::new();
-    engine.tick_static_entity_hourglass_for(sim, &assets, scroll_id);
+    engine.tick_static_entity_hourglass_for(TickCtx::new(sim, &assets), scroll_id);
     let entity = engine.get_entity(scroll_id);
     let counter = match entity {
         Some(Entity::Scroll(s)) => s.script_hourglass_timeout,
@@ -2240,7 +2241,7 @@ fn scroll_is_taken_without_script_returns_false_and_opens() {
     let pc_id = engine.add_test_entity(pc);
 
     let assets = crate::engine::LevelAssets::new();
-    let accepted = engine.scroll_is_taken(sim, &assets, scroll_id, pc_id);
+    let accepted = engine.scroll_is_taken(TickCtx::new(sim, &assets), scroll_id, pc_id);
     assert!(!accepted);
     // Without `mission_script`, the status store isn't populated
     // either — the setter early-returns.  Covering the "happens to

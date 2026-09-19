@@ -303,6 +303,7 @@ fn validate_member_schema(
 
 #[cfg(test)]
 mod tests {
+    use crate::engine::TickCtx;
     use crate::scb::TypeTag;
     use std::collections::BTreeMap;
 
@@ -439,17 +440,17 @@ mod tests {
         engine.scripts.attach_native_capabilities(&assets);
         let sim = crate::sim_rng::test_context();
         assert_eq!(
-            engine.call_external_native(&sim, &assets, "GetGlobal", &[1]),
+            engine.call_external_native(TickCtx::new(&sim, &assets), "GetGlobal", &[1]),
             Ok(0)
         );
         assert_eq!(
-            engine.call_external_native(&sim, &assets, "SetGlobal", &[15, 9]),
+            engine.call_external_native(TickCtx::new(&sim, &assets), "SetGlobal", &[15, 9]),
             Ok(0)
         );
         globals[15] = 9;
         assert_eq!(engine.scripts.globals, globals);
         assert_eq!(
-            engine.call_external_native(&sim, &assets, "GetGlobal", &[16]),
+            engine.call_external_native(TickCtx::new(&sim, &assets), "GetGlobal", &[16]),
             Ok(-1)
         );
     }

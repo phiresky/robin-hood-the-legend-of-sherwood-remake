@@ -1,4 +1,6 @@
 use super::*;
+use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 #[test]
 fn sector_to_angle_keeps_original_double_intermediate_rounding() {
@@ -165,14 +167,12 @@ fn thrust_a_translates_for_an_existing_opponent_during_ordinary_door_transit() {
         id
     };
     engine.dispatch_sword_strike(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
         attacker,
         target,
         SwordStrike::A,
-        sequence,
-        0,
+        SequenceElementRef::new(sequence, 0),
     );
 
     let element = engine
@@ -210,7 +210,11 @@ fn circle_tail_retains_candidate_past_final_in_the_same_sector() {
         final_angle: 0.70,
     };
 
-    engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, false);
+    engine.tick_sweep_for(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        attacker,
+        false,
+    );
 
     let current = engine.human(attacker).sword_sweep.current_angle;
     assert!(
@@ -235,7 +239,7 @@ fn domino_propagates_to_actors_in_flight_path() {
 
     let motion =
         engine.perform_combat_flight_position(flyer, crate::sprite::MotionState::InProgress);
-    engine.finish_combat_flight(sim, &LevelAssets::default(), flyer, motion);
+    engine.finish_combat_flight(TickCtx::new(sim, &LevelAssets::default()), flyer, motion);
 
     assert_eq!(
         count_domino_hits_for(&engine, mid, hitter),

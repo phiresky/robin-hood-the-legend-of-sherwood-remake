@@ -2,7 +2,9 @@
 //! one [`SimulationContext`] through several engine calls, so its RNG stream
 //! keeps advancing across them instead of restarting from the seed per call.
 
-use crate::engine::{EngineInner, HostDisplayState, LevelAssets};
+use crate::engine::{EngineInner, HostDisplayState};
+use crate::engine::{LevelAssets, TickCtx};
+use crate::sequence::SequenceElementRef;
 use crate::sequence::{Sequence, SequenceElement, SequenceId};
 use crate::sim_rng::SimulationContext;
 
@@ -13,7 +15,7 @@ impl EngineInner {
         assets: &LevelAssets,
         elem: SequenceElement,
     ) -> SequenceId {
-        self.launch_element(sim, assets, elem)
+        self.launch_element(TickCtx::new(sim, assets), elem)
     }
 
     pub(crate) fn t_launch_sequence_with(
@@ -22,7 +24,7 @@ impl EngineInner {
         assets: &LevelAssets,
         seq: Sequence,
     ) -> SequenceId {
-        self.launch_sequence(sim, assets, seq)
+        self.launch_sequence(TickCtx::new(sim, assets), seq)
     }
 
     pub(crate) fn t_element_in_progress_with(
@@ -32,7 +34,11 @@ impl EngineInner {
         seq_id: SequenceId,
         elem_idx: usize,
     ) {
-        self.element_in_progress(sim, assets, &mut Vec::new(), seq_id, elem_idx);
+        self.element_in_progress(
+            TickCtx::new(sim, assets),
+            &mut Vec::new(),
+            SequenceElementRef::new(seq_id, elem_idx),
+        );
     }
 
     pub(crate) fn t_element_terminated_with(
@@ -42,7 +48,11 @@ impl EngineInner {
         seq_id: SequenceId,
         elem_idx: usize,
     ) {
-        self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
+        self.element_terminated(
+            TickCtx::new(sim, assets),
+            &mut Vec::new(),
+            SequenceElementRef::new(seq_id, elem_idx),
+        );
     }
 
     pub(crate) fn t_postpone_element_with(
@@ -52,7 +62,11 @@ impl EngineInner {
         seq_id: SequenceId,
         elem_idx: usize,
     ) {
-        self.postpone_element(sim, assets, &mut Vec::new(), seq_id, elem_idx);
+        self.postpone_element(
+            TickCtx::new(sim, assets),
+            &mut Vec::new(),
+            SequenceElementRef::new(seq_id, elem_idx),
+        );
     }
 
     pub(crate) fn t_tick_actor_owner_envelopes_with(
@@ -60,7 +74,7 @@ impl EngineInner {
         sim: &SimulationContext,
         assets: &LevelAssets,
     ) {
-        self.tick_actor_owner_envelopes(sim, assets);
+        self.tick_actor_owner_envelopes(TickCtx::new(sim, assets));
     }
 
     pub(crate) fn t_hourglass_phase_sequences_with(
@@ -68,6 +82,6 @@ impl EngineInner {
         sim: &SimulationContext,
         assets: &LevelAssets,
     ) {
-        self.hourglass_phase_sequences(sim, &mut HostDisplayState::default(), assets);
+        self.hourglass_phase_sequences(TickCtx::new(sim, assets), &mut HostDisplayState::default());
     }
 }

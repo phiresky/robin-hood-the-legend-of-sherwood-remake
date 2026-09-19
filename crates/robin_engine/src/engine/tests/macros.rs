@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 
 // ── QA macro playback / abort system tests ─────────────────────────
 
@@ -658,7 +659,7 @@ fn queued_multi_pc_group_move_replays_each_recorded_formation_seek() {
         engine.t_element_terminated(&assets, sequence, 0);
     }
     let mut camera = crate::engine::CameraDisplayState::default();
-    engine.advance_auto_quick_action_queues(&sim, &mut camera, &assets);
+    engine.advance_auto_quick_action_queues(TickCtx::new(&sim, &assets), &mut camera);
 
     for (pc, expected_destination) in [
         (pc_a, MapPoint::new(500.0, 477.0)),

@@ -6,21 +6,8 @@ use crate::ai::{
     StimulusInfo, Substate,
 };
 use crate::ai_enemy::SeekFlags;
-#[cfg(test)]
-use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
-    #[cfg(test)]
-    pub(in crate::engine) fn execute_enemy_report_callback(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        stimulus: &Stimulus,
-    ) -> Option<bool> {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_enemy_report_callback(stimulus)
-    }
-
     fn report_antagonist(&self, owner: EntityId) -> EntityId {
         let handle = self
             .ai(owner, "report participant")
@@ -141,8 +128,7 @@ impl AiOwnerCtx<'_> {
                         }
                     } else if waiting {
                         self.engine.execute_ai_callback(
-                            self.sim,
-                            self.assets,
+                            self.tcx,
                             officer,
                             &Stimulus::with_human(StimulusType::CallReport, self.owner.index()),
                         );
@@ -161,8 +147,7 @@ impl AiOwnerCtx<'_> {
                 StimulusType::EventMyTalk1 => {
                     let officer = self.engine.report_antagonist(self.owner);
                     self.engine.execute_ai_callback(
-                        self.sim,
-                        self.assets,
+                        self.tcx,
                         officer,
                         &Stimulus::with_human(StimulusType::CallYourTalk1, self.owner.index()),
                     );
@@ -207,8 +192,7 @@ impl AiOwnerCtx<'_> {
                     if kind == StimulusType::EventMyTalk0 {
                         if waiting {
                             self.engine.execute_ai_callback(
-                                self.sim,
-                                self.assets,
+                                self.tcx,
                                 officer,
                                 &Stimulus::new(StimulusType::CallYourTalk0),
                             );
@@ -263,16 +247,14 @@ impl AiOwnerCtx<'_> {
                     };
                     if point {
                         self.engine.execute_ai_callback(
-                            self.sim,
-                            self.assets,
+                            self.tcx,
                             officer,
                             &Stimulus::with_human(StimulusType::CallReport, self.owner.index()),
                         );
                         // The recipient can redirect the conversation during the report.
                         let officer = self.engine.report_antagonist(self.owner);
                         self.engine.execute_ai_callback(
-                            self.sim,
-                            self.assets,
+                            self.tcx,
                             officer,
                             &Stimulus::new(StimulusType::CallYourTalk1),
                         );
@@ -282,8 +264,7 @@ impl AiOwnerCtx<'_> {
                         self.report_state(Substate::SeekingSoldierGiveAlertingReportToOfficerEnd);
                         let officer = self.engine.report_antagonist(self.owner);
                         self.engine.execute_ai_callback(
-                            self.sim,
-                            self.assets,
+                            self.tcx,
                             officer,
                             &Stimulus::with_human(StimulusType::CallReport, self.owner.index()),
                         );
@@ -336,8 +317,7 @@ impl AiOwnerCtx<'_> {
                 } else {
                     let soldier = self.engine.report_antagonist(self.owner);
                     self.engine.execute_ai_callback(
-                        self.sim,
-                        self.assets,
+                        self.tcx,
                         soldier,
                         &Stimulus::new(StimulusType::CallYourTalk1),
                     );
@@ -502,12 +482,9 @@ mod tests {
             .expect_ai_controller_mut(owner, format_args!("test listener"));
         ai.current_state = AiState::Seeking;
         ai.current_substate = Substate::SeekingWaitForAlertingCivilian;
-        engine.execute_enemy_report_callback(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            owner,
-            &Stimulus::with_human(StimulusType::CallReport, 42),
-        );
+        engine
+            .ai_ctx(&crate::sim_rng::test_context(), &LevelAssets::new(), owner)
+            .execute_enemy_report_callback(&Stimulus::with_human(StimulusType::CallReport, 42));
     }
 
     #[test]
@@ -572,12 +549,9 @@ mod tests {
         ai.current_state = AiState::Default;
         ai.current_substate = Substate::SeekingSoldierGiveReportToOfficer;
         assert_eq!(
-            engine.execute_enemy_report_callback(
-                &crate::sim_rng::test_context(),
-                &LevelAssets::new(),
-                owner,
-                &Stimulus::new(StimulusType::EventDone),
-            ),
+            engine
+                .ai_ctx(&crate::sim_rng::test_context(), &LevelAssets::new(), owner)
+                .execute_enemy_report_callback(&Stimulus::new(StimulusType::EventDone),),
             Some(false)
         );
     }
@@ -612,12 +586,9 @@ mod tests {
         };
         engine.ai.standard_view_polygon_radius = 300;
         assert_eq!(
-            engine.execute_enemy_report_callback(
-                &sim,
-                &LevelAssets::new(),
-                owner,
-                &Stimulus::new(StimulusType::EventTimer),
-            ),
+            engine
+                .ai_ctx(&sim, &LevelAssets::new(), owner)
+                .execute_enemy_report_callback(&Stimulus::new(StimulusType::EventTimer),),
             Some(false)
         );
         let ai = engine
@@ -632,12 +603,11 @@ mod tests {
         assert!(ai.base.timer_is_running);
         assert_eq!(ai.base.when_does_timer_ring, 14_768);
         assert_eq!(
-            engine.execute_enemy_report_callback(
-                &sim,
-                &LevelAssets::new(),
-                owner,
-                &Stimulus::new(StimulusType::EventLoseConsciousness),
-            ),
+            engine
+                .ai_ctx(&sim, &LevelAssets::new(), owner)
+                .execute_enemy_report_callback(&Stimulus::new(
+                    StimulusType::EventLoseConsciousness
+                ),),
             None
         );
     }

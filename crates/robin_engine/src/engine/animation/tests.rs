@@ -3,6 +3,8 @@ use crate::element::{
     ActorCivilian, ActorPc, ActorSoldier, ElementData, ElementFx, ElementKind, Entity, FxData,
 };
 use crate::engine::EngineInner;
+use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 #[test]
 fn failed_movement_translation_clears_the_previous_installed_idle_order() {
@@ -24,7 +26,11 @@ fn failed_movement_translation_clears_the_previous_installed_idle_order() {
     let wait_id = engine.orders.sequence_manager.insert_element(wait);
     engine.orders.sequence_manager.start_sequence_level(wait_id);
     engine.select_sequence_element(owner, Some((wait_id, 0)));
-    engine.element_in_progress(&sim, &assets, &mut Vec::new(), wait_id, 0);
+    engine.element_in_progress(
+        TickCtx::new(&sim, &assets),
+        &mut Vec::new(),
+        SequenceElementRef::new(wait_id, 0),
+    );
     engine.publish_selected_order_as_installed(owner);
     let installed_wait = engine
         .get_entity(owner)
@@ -34,17 +40,14 @@ fn failed_movement_translation_clears_the_previous_installed_idle_order() {
         .installed_order;
 
     let movement = engine.launch_element(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright),
     );
     engine.select_sequence_element(owner, Some((movement, 0)));
     engine.element_interrupted(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         &mut Vec::new(),
-        wait_id,
-        0,
+        SequenceElementRef::new(wait_id, 0),
         crate::sequence::CascadeFlags::NEXT_LEVEL,
     );
     // Queue membership ends first; the installed object remains readable through
@@ -72,7 +75,11 @@ fn failed_movement_translation_clears_the_previous_installed_idle_order() {
         Some(OrderType::WaitingCapeAnonymousArcher)
     );
 
-    engine.element_impossible(&sim, &assets, &mut Vec::new(), movement, 0);
+    engine.element_impossible(
+        TickCtx::new(&sim, &assets),
+        &mut Vec::new(),
+        SequenceElementRef::new(movement, 0),
+    );
 
     assert_eq!(
         engine.live_actor_animation(owner),
@@ -317,8 +324,7 @@ fn raising_sword_state_changes_follow_human_start_and_soldier_done() {
     let soldier = engine.add_test_entity(weak_soldier_at_action_done(0));
     apply_soldier_execute_side_effects(
         &mut engine,
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         OrderType::TransitionRaisingSword,
         MotionState::Start,
         None,
@@ -335,8 +341,7 @@ fn raising_sword_state_changes_follow_human_start_and_soldier_done() {
     );
     apply_soldier_execute_side_effects(
         &mut engine,
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         OrderType::TransitionRaisingSword,
         MotionState::Done,
         None,
@@ -533,16 +538,16 @@ fn dead_actor_executes_its_selected_ordinary_animation() {
         .start_sequence_level(sequence);
     engine.select_sequence_element(actor, Some((sequence, 0)));
     engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
-        sequence,
-        0,
+        SequenceElementRef::new(sequence, 0),
     );
 
     let result = engine.tick_actor_animation_for(
-        &crate::sim_rng::test_context(),
-        &crate::engine::types::LevelAssets::new(),
+        TickCtx::new(
+            &crate::sim_rng::test_context(),
+            &crate::engine::types::LevelAssets::new(),
+        ),
         actor,
     );
 
@@ -786,9 +791,13 @@ fn weak_sword_first_arrival_at_action_done_preserves_done() {
         .sequence_manager
         .start_sequence_level(sequence);
     engine.select_sequence_element(actor, Some((sequence, 0)));
-    engine.element_in_progress(&sim, &assets, &mut Vec::new(), sequence, 0);
+    engine.element_in_progress(
+        TickCtx::new(&sim, &assets),
+        &mut Vec::new(),
+        SequenceElementRef::new(sequence, 0),
+    );
 
-    let start = engine.tick_actor_animation_for(&sim, &assets, actor);
+    let start = engine.tick_actor_animation_for(TickCtx::new(&sim, &assets), actor);
     assert_eq!(start.expect("weak-sword START"), MotionState::Start);
     for _ in 0..10 {
         let before = engine
@@ -797,7 +806,7 @@ fn weak_sword_first_arrival_at_action_done_preserves_done() {
             .human_data()
             .unwrap()
             .tiredness;
-        let result = engine.tick_actor_animation_for(&sim, &assets, actor);
+        let result = engine.tick_actor_animation_for(TickCtx::new(&sim, &assets), actor);
         let entity = engine.get_entity(actor).unwrap();
         assert_eq!(
             entity.human_data().unwrap().tiredness,
@@ -808,7 +817,7 @@ fn weak_sword_first_arrival_at_action_done_preserves_done() {
         }
         assert_eq!(result.expect("first action-done tick"), MotionState::Done);
         let frame = (entity.sprite().current_frame, entity.sprite().frame_count);
-        let held = engine.tick_actor_animation_for(&sim, &assets, actor);
+        let held = engine.tick_actor_animation_for(TickCtx::new(&sim, &assets), actor);
         assert_eq!(held.expect("following held tick"), MotionState::InProgress);
         let entity = engine.get_entity(actor).unwrap();
         assert_eq!(
@@ -866,7 +875,10 @@ fn global_actor_freeze_also_stops_nonactor_animation() {
     let assets = crate::engine::types::LevelAssets::new();
 
     engine.set_actors_frozen(true);
-    engine.tick_static_entity_hourglass_for(&crate::sim_rng::test_context(), &assets, fx);
+    engine.tick_static_entity_hourglass_for(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        fx,
+    );
     assert_eq!(
         engine
             .world
@@ -880,7 +892,10 @@ fn global_actor_freeze_also_stops_nonactor_animation() {
     );
 
     engine.set_actors_frozen(false);
-    engine.tick_static_entity_hourglass_for(&crate::sim_rng::test_context(), &assets, fx);
+    engine.tick_static_entity_hourglass_for(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        fx,
+    );
     assert_eq!(
         engine
             .world
@@ -903,8 +918,10 @@ fn patch_fx_without_mission_vm_uses_default_progression_without_finalization() {
     )));
 
     engine.tick_static_entity_hourglass_for(
-        &crate::sim_rng::test_context(),
-        &crate::engine::types::LevelAssets::new(),
+        TickCtx::new(
+            &crate::sim_rng::test_context(),
+            &crate::engine::types::LevelAssets::new(),
+        ),
         fx,
     );
 
@@ -1512,8 +1529,7 @@ fn striking_down_sword_start_faces_target_and_done_launches_kill() {
     let victim = engine.add_test_entity(weak_soldier_at_action_done(0));
     apply_striking_down_sword_side_effect(
         &mut engine,
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         OrderType::StrikingDownSword,
         MotionState::Start,
         Some(victim),
@@ -1536,8 +1552,7 @@ fn striking_down_sword_start_faces_target_and_done_launches_kill() {
     );
     apply_striking_down_sword_side_effect(
         &mut engine,
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         OrderType::StrikingDownSword,
         MotionState::Done,
         Some(victim),
@@ -1619,11 +1634,9 @@ fn striking_down_execute_fixture() -> (
         .start_sequence_level(sequence);
     engine.select_sequence_element(owner, Some((sequence, 0)));
     engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
-        sequence,
-        0,
+        SequenceElementRef::new(sequence, 0),
     );
     let order_id = engine
         .orders
@@ -1690,7 +1703,7 @@ fn striking_down_force_initialization_preserves_walk_caches_for_start_tick() {
     let walk_forecast = sprite.position_iface.get_forecasted_movement();
     assert_ne!(walk_forecast, crate::coordinates::WorldVec3D::ZERO);
 
-    let first_result = engine.tick_actor_animation_for(&sim, &assets, owner);
+    let first_result = engine.tick_actor_animation_for(TickCtx::new(&sim, &assets), owner);
     assert_eq!(first_result, Some(MotionState::Start));
     let sprite = engine.get_entity(owner).expect("owner").sprite();
     assert_eq!(sprite.last_processed_order_id, order_id.get());
@@ -1703,7 +1716,7 @@ fn striking_down_force_initialization_preserves_walk_caches_for_start_tick() {
         "forced strike initialization preserves Original's prior walk forecast"
     );
 
-    let _ = engine.tick_actor_animation_for(&sim, &assets, owner);
+    let _ = engine.tick_actor_animation_for(TickCtx::new(&sim, &assets), owner);
     let sprite = engine.get_entity(owner).expect("owner").sprite();
     assert_eq!(sprite.last_action, OrderType::StrikingDownSword);
     assert_eq!(
@@ -1718,7 +1731,7 @@ fn striking_down_revalidates_after_done_before_repeating_kill() {
     let sim = crate::sim_rng::test_context();
     let (mut engine, assets, owner, victim, _sequence) = striking_down_execute_fixture();
 
-    let first_result = engine.tick_actor_animation_for(&sim, &assets, owner);
+    let first_result = engine.tick_actor_animation_for(TickCtx::new(&sim, &assets), owner);
     assert_eq!(first_result, Some(MotionState::Done));
     assert_eq!(
         engine
@@ -1738,7 +1751,7 @@ fn striking_down_revalidates_after_done_before_repeating_kill() {
         .npc_data_mut()
         .expect("NPC data")
         .life_points = 0;
-    let second_result = engine.tick_actor_animation_for(&sim, &assets, owner);
+    let second_result = engine.tick_actor_animation_for(TickCtx::new(&sim, &assets), owner);
     assert_eq!(
         engine
             .get_entity(owner)
@@ -1771,8 +1784,8 @@ fn striking_down_keeps_running_while_unconscious_victim_is_alive() {
     let sim = crate::sim_rng::test_context();
     let (mut engine, assets, owner, _victim, _sequence) = striking_down_execute_fixture();
 
-    let _ = engine.tick_actor_animation_for(&sim, &assets, owner);
-    let result = engine.tick_actor_animation_for(&sim, &assets, owner);
+    let _ = engine.tick_actor_animation_for(TickCtx::new(&sim, &assets), owner);
+    let result = engine.tick_actor_animation_for(TickCtx::new(&sim, &assets), owner);
 
     assert_eq!(result, Some(MotionState::InProgress));
     assert_eq!(

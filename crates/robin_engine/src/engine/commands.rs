@@ -17,6 +17,7 @@ mod quick_actions;
 mod seat_lifecycle;
 mod selection;
 
+use crate::engine::TickCtx;
 pub(crate) use interaction_route::command_action_distance_animation;
 pub(super) use object_use::is_pc_takable;
 pub use object_use::{coin_pickup_target, object_pickup_command};
@@ -96,13 +97,12 @@ impl EngineInner {
     /// of adjacent selection messages.
     pub(crate) fn apply_frame_commands_with_mode(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         commands: &[PlayerInput],
         mode: SelectionCommandBatchMode,
     ) {
         let mut camera = std::mem::take(&mut self.feedback.cutscene_camera.display);
-        self.apply_commands_authoritative(sim, &mut camera, assets, commands, mode);
+        self.apply_commands_authoritative(tcx, &mut camera, commands, mode);
         self.feedback.cutscene_camera.display = camera;
     }
 
@@ -110,9 +110,8 @@ impl EngineInner {
     /// `engine::test_support` can drive the same authoritative dispatcher.
     pub(super) fn apply_commands_authoritative(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         camera: &mut CameraDisplayState,
-        assets: &LevelAssets,
         commands: &[PlayerInput],
         mode: SelectionCommandBatchMode,
     ) {
@@ -149,9 +148,8 @@ impl EngineInner {
                     ) if *player_id == inp.player_id && selected == nested
                 );
             self.apply_command_for_seat_with_replay_context(
-                sim,
+                tcx,
                 camera,
-                assets,
                 seat,
                 &inp.command,
                 recorded_nested_selection_action,
@@ -179,9 +177,8 @@ impl EngineInner {
 
     fn apply_command_for_seat_with_replay_context(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         display: &mut CameraDisplayState,
-        assets: &LevelAssets,
         seat: usize,
         cmd: &PlayerCommand,
         recorded_nested_selection_action: bool,
@@ -197,59 +194,54 @@ impl EngineInner {
         // per sim-affecting player command addressed at the currently
         // recording PC, keyed by the resolved Action (portrait bar)
         // so the macro-icon strip can render per-step titbit frames.
-        self.record_macro_step_for(seat, cmd, assets);
+        self.record_macro_step_for(seat, cmd, tcx.assets);
         // Keep routing exhaustive here. Family helpers only handle admitted
         // commands, and there is deliberately no shared epilogue: a family's
         // early return must finish this command without any later mutation.
         match cmd {
             Noop => {} // consumed input, no action
             ScriptKeyPressed { virtual_key } => {
-                self.apply_script_key_pressed_command(sim, assets, *virtual_key)
+                self.apply_script_key_pressed_command(tcx, *virtual_key)
             }
 
             // ── Movement ────────────────────────────────────────
-            GroupMove { .. } => self.apply_group_move_command(sim, assets, cmd),
+            GroupMove { .. } => self.apply_group_move_command(tcx, cmd),
             // Stopping an actor leaves its default Wait element alone. For real
             // movement it rewrites/stops the sequence so its transition can
             // finish; it does not directly force the action state to Waiting.
             StopPc { pc_id } => self.stop_actor_orders(
-                sim,
-                assets,
+                tcx,
                 &mut Vec::new(),
                 *pc_id,
                 crate::sequence::SequencePriority::Normal,
             ),
 
             // ── Sequence-based interactions ──────────────────────
-            LaunchInteraction { .. } => self.apply_launch_interaction_command(sim, assets, cmd),
-            LaunchGroundTarget { .. } => self.apply_launch_ground_target_command(sim, assets, cmd),
-            LaunchSelfAbility { actor, command } => {
-                self.dispatch_self_ability(sim, assets, actor, command)
-            }
-            LaunchScrollRead { .. } => self.apply_launch_scroll_read_command(sim, assets, cmd),
+            LaunchInteraction { .. } => self.apply_launch_interaction_command(tcx, cmd),
+            LaunchGroundTarget { .. } => self.apply_launch_ground_target_command(tcx, cmd),
+            LaunchSelfAbility { actor, command } => self.dispatch_self_ability(tcx, actor, command),
+            LaunchScrollRead { .. } => self.apply_launch_scroll_read_command(tcx, cmd),
 
             // ── Swordfight ──────────────────────────────────────
-            EnterSwordfight { .. } => self.apply_enter_swordfight_command(sim, assets, cmd),
-            SwordStrikeCmd { .. } => self.apply_sword_strike_command(sim, assets, cmd),
+            EnterSwordfight { .. } => self.apply_enter_swordfight_command(tcx, cmd),
+            SwordStrikeCmd { .. } => self.apply_sword_strike_command(tcx, cmd),
             SetPrincipalOpponent { actor, opponent_id } => {
-                self.set_as_new_principal_opponent(sim, assets, *actor, *opponent_id)
+                self.set_as_new_principal_opponent(tcx, *actor, *opponent_id)
             }
 
             ClearShootList { pc_id } => {
                 self.clear_pc_shoot_list(*pc_id);
             }
-            DropAmmo { .. } => self.apply_drop_ammo_command(sim, assets, cmd),
-            DropAleAt { .. } => self.apply_drop_ale_at_command(sim, assets, cmd),
+            DropAmmo { .. } => self.apply_drop_ammo_command(tcx, cmd),
+            DropAleAt { .. } => self.apply_drop_ale_at_command(tcx, cmd),
             ShieldSelectProtected { protected_pc, .. } => {
                 self.apply_shield_select_protected_command(*protected_pc)
             }
-            RaiseShieldWithDanger { .. } => {
-                self.apply_raise_shield_with_danger_command(sim, assets, cmd)
-            }
+            RaiseShieldWithDanger { .. } => self.apply_raise_shield_with_danger_command(tcx, cmd),
 
             // ── Posture ─────────────────────────────────────────
-            CrouchDown => self.apply_crouch_down(sim, assets, seat),
-            StandUp => self.apply_stand_up(sim, assets, seat),
+            CrouchDown => self.apply_crouch_down(tcx, seat),
+            StandUp => self.apply_stand_up(tcx, seat),
 
             // ── Action bar / selection / modifier keys ──────────
             SelectAction { .. }
@@ -282,36 +274,33 @@ impl EngineInner {
             | SelectTacticalGroup { .. }
             | PageTacticalPortraits { .. } => {
                 self.dispatch_selection_input_command(
-                    sim,
-                    assets,
+                    tcx,
                     seat,
                     cmd,
                     recorded_nested_selection_action,
                 );
             }
 
-            MoveTacticalUnits { .. } => {
-                self.apply_move_tactical_units_command(sim, assets, seat, cmd)
-            }
+            MoveTacticalUnits { .. } => self.apply_move_tactical_units_command(tcx, seat, cmd),
             SetCombatStance { soldiers, stance } => {
-                self.set_tactical_stance(sim, assets, soldiers, *stance)
+                self.set_tactical_stance(tcx, soldiers, *stance)
             }
             SetTacticalFormation { .. } => self.apply_set_tactical_formation_command(cmd),
-            SetTacticalPatrol { .. } => self.apply_set_tactical_patrol_command(sim, assets, cmd),
-            SetTacticalFollow { .. } => self.apply_set_tactical_follow_command(sim, assets, cmd),
-            ReleaseTacticalControl => self.release_tactical_control(sim, assets),
+            SetTacticalPatrol { .. } => self.apply_set_tactical_patrol_command(tcx, cmd),
+            SetTacticalFollow { .. } => self.apply_set_tactical_follow_command(tcx, cmd),
+            ReleaseTacticalControl => self.release_tactical_control(tcx),
 
             // ── Special ─────────────────────────────────────────
-            ResetComa { pc_id } => self.reset_coma(sim, assets, *pc_id),
+            ResetComa { pc_id } => self.reset_coma(tcx, *pc_id),
             SendReinforcement { pc_id } => self.request_reinforcement(*pc_id),
             // Use actor-level fast-movement conversion so the pathfinder + queued
             // transitions get rewritten, not just the element-level
             // action.
-            MakePcFast { pc_id } => self.actor_make_fast(sim, *pc_id),
+            MakePcFast { pc_id } => self.actor_make_fast(tcx.sim, *pc_id),
             BeggarDontTalkStamp { beggar_id } => self.stamp_beggar_dont_talk_counter(*beggar_id),
-            MakePcSlow { pc_id } => self.actor_make_slow(sim, *pc_id),
-            MakePcUpright { pc_id } => self.actor_make_upright(sim, assets, *pc_id),
-            MakePcCrouched { pc_id } => self.actor_make_crouched(sim, assets, *pc_id),
+            MakePcSlow { pc_id } => self.actor_make_slow(tcx.sim, *pc_id),
+            MakePcUpright { pc_id } => self.actor_make_upright(tcx, *pc_id),
+            MakePcCrouched { pc_id } => self.actor_make_crouched(tcx, *pc_id),
 
             ChangeState(req) => {
                 self.change_state(display, seat, *req);
@@ -328,13 +317,13 @@ impl EngineInner {
             | ChangeQaMemory { .. }
             | QueueQuickAction { .. }
             | MakeQueuedActionFast { .. } => {
-                self.dispatch_quick_action_command(sim, display, assets, seat, cmd);
+                self.dispatch_quick_action_command(tcx, display, seat, cmd);
             }
 
             // ── Per-frame aim orientation ──────────────────────
-            PerformOrientation { mouse_map } => self.perform_orientation(sim, assets, *mouse_map),
+            PerformOrientation { mouse_map } => self.perform_orientation(tcx, *mouse_map),
             PerformResolvedOrientation { .. } => {
-                self.apply_perform_resolved_orientation_command(sim, assets, seat, cmd)
+                self.apply_perform_resolved_orientation_command(tcx, seat, cmd)
             }
 
             // ── Cheats ──────────────────────────────────────────
@@ -344,30 +333,30 @@ impl EngineInner {
             SetMenToBlazonConversionMode { on } => self.set_men_to_blazon_conversion_mode(*on),
             RegisterPeasantName { name } => self.register_peasant_name(name.clone()),
             DispatchStartupMessage { msg, arg1, arg2 } => {
-                self.dispatch_startup_message(sim, assets, *msg, *arg1, *arg2)
+                self.dispatch_startup_message(tcx, *msg, *arg1, *arg2)
             }
             RevealAllBlips => self.reveal_all_blips(),
             CampaignSelectNextMission { mission_idx } => self
                 .mission_domain
                 .campaign
-                .select_next_mission(*mission_idx, &assets.profile_manager),
+                .select_next_mission(*mission_idx, &tcx.assets.profile_manager),
             CampaignSwapPendingToAccessibleMissions => self
                 .mission_domain
                 .campaign
                 .swap_pending_to_accessible_missions(),
-            CampaignHarvestProductionSectorState => self.harvest_production_sector_state(assets),
+            CampaignHarvestProductionSectorState => {
+                self.harvest_production_sector_state(tcx.assets)
+            }
             CampaignSellProductionItem { .. } => {
-                self.apply_campaign_sell_production_item_command(assets, seat, cmd)
+                self.apply_campaign_sell_production_item_command(tcx.assets, seat, cmd)
             }
             CampaignConvertSelectedPeasantsToBlazons => {
-                self.convert_selected_peasants_to_blazons(sim, &assets.profile_manager)
+                self.convert_selected_peasants_to_blazons(tcx.sim, &tcx.assets.profile_manager)
             }
-            ApplyQuitMissionUpdates { .. } => {
-                self.apply_quit_mission_updates_command(sim, assets, cmd)
-            }
+            ApplyQuitMissionUpdates { .. } => self.apply_quit_mission_updates_command(tcx, cmd),
             QuitMissionRequested => self.apply_quit_mission_requested_command(),
             TeleportSelectedToPoint { .. } => {
-                self.apply_teleport_selected_to_point_command(sim, assets, cmd)
+                self.apply_teleport_selected_to_point_command(tcx, cmd)
             }
 
             // ── Minimap ─────────────────────────────────────────
@@ -395,10 +384,10 @@ impl EngineInner {
             | SetDiplomacyEnabled { .. }
             | SetNpcFactionWars { .. }
             | SetDiplomacyRelationship { .. } => {
-                self.dispatch_camera_control_command(sim, assets, seat, cmd);
+                self.dispatch_camera_control_command(tcx, seat, cmd);
             }
 
-            HeroSpeak { pc_id, expression } => self.hero_speaking(assets, *pc_id, *expression),
+            HeroSpeak { pc_id, expression } => self.hero_speaking(tcx.assets, *pc_id, *expression),
 
             // Host-side record of a drained modal. The actual
             // dismissal happens in the game session loop; the engine
@@ -422,8 +411,7 @@ impl EngineInner {
     /// The exhaustive outer dispatcher selects this family after macro recording.
     fn dispatch_selection_input_command(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         seat: usize,
         cmd: &PlayerCommand,
         recorded_nested_selection_action: bool,
@@ -434,16 +422,10 @@ impl EngineInner {
                 pc_id,
                 action_index,
             } => {
-                self.select_pc_action_by_index_from_message(
-                    sim,
-                    assets,
-                    seat,
-                    *pc_id,
-                    *action_index as u8,
-                );
+                self.select_pc_action_by_index_from_message(tcx, seat, *pc_id, *action_index as u8);
             }
             SelectResolvedAction { pc_id, action } => {
-                self.set_pc_action_from_message(sim, assets, seat, *pc_id, *action);
+                self.set_pc_action_from_message(tcx, seat, *pc_id, *action);
             }
             SelectPlannedAction { pc_id, action } => {
                 if !self.players.seats[seat].selection.contains(pc_id) {
@@ -496,8 +478,7 @@ impl EngineInner {
             }
             CancelAction { pc_id } => {
                 self.set_pc_action_from_message(
-                    sim,
-                    assets,
+                    tcx,
                     seat,
                     *pc_id,
                     crate::profiles::Action::NoAction,
@@ -505,7 +486,7 @@ impl EngineInner {
             }
             UnselectAllActions => {
                 for pc_id in self.players.seats[seat].selection.clone() {
-                    self.unselect_action(sim, assets, pc_id);
+                    self.unselect_action(tcx, pc_id);
                 }
                 self.players.seats[seat].selected_action = crate::profiles::Action::NoAction;
             }
@@ -523,8 +504,7 @@ impl EngineInner {
             }
             SelectPc { pc_id, append } => {
                 self.dispatch_pc_selection(
-                    sim,
-                    assets,
+                    tcx,
                     seat,
                     pc_id,
                     append,
@@ -532,7 +512,7 @@ impl EngineInner {
                 );
             }
             TogglePcSelection { pc_id } => {
-                self.toggle_pc_selection(sim, assets, seat, *pc_id);
+                self.toggle_pc_selection(tcx, seat, *pc_id);
                 self.update_recording_after_selection_change();
             }
             UnselectPc { pc_id } => {
@@ -543,7 +523,7 @@ impl EngineInner {
                 }
             }
             BoxSelect { pt1, pt2, shift } => {
-                self.apply_box_select(sim, assets, seat, *pt1, *pt2, *shift);
+                self.apply_box_select(tcx, seat, *pt1, *pt2, *shift);
                 self.update_recording_after_selection_change();
             }
             BoxUnselect { pt1, pt2 } => {
@@ -551,7 +531,7 @@ impl EngineInner {
                 self.update_recording_after_selection_change();
             }
             SelectAllPcs => {
-                self.select_all_pcs(sim, assets, seat);
+                self.select_all_pcs(tcx, seat);
                 self.update_recording_after_selection_change();
             }
             UnselectAllPcs => {
@@ -562,14 +542,14 @@ impl EngineInner {
                 self.assign_quick_group(seat, *index as usize);
             }
             RecallQuickGroup { index } => {
-                self.recall_quick_group(assets, seat, *index as usize);
+                self.recall_quick_group(tcx.assets, seat, *index as usize);
                 self.update_recording_after_selection_change();
             }
             SelectByPortrait {
                 portrait_index,
                 append,
             } => {
-                self.dispatch_portrait_selection(sim, assets, seat, portrait_index, append);
+                self.dispatch_portrait_selection(tcx, seat, portrait_index, append);
             }
             SelectTacticalUnits { soldiers, append } => {
                 self.select_tactical_units(seat, soldiers, *append);
@@ -610,7 +590,7 @@ impl EngineInner {
                         .map(|pc| pc.current_action)
                         .unwrap_or(crate::profiles::Action::NoAction);
                     if cur != crate::profiles::Action::NoAction {
-                        self.unselect_action(sim, assets, id);
+                        self.unselect_action(tcx, id);
                     }
                     if let Some(entity) = self.get_entity_mut(id)
                         && let Some(pc) = entity.pc_data_mut()
@@ -635,7 +615,7 @@ impl EngineInner {
                         None => continue,
                     };
                     if cur != restore {
-                        self.unselect_action(sim, assets, id);
+                        self.unselect_action(tcx, id);
                     }
                     if let Some(entity) = self.get_entity_mut(id)
                         && let Some(pc) = entity.pc_data_mut()
@@ -664,9 +644,8 @@ impl EngineInner {
     /// The exhaustive outer dispatcher selects this family after macro recording.
     fn dispatch_quick_action_command(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         display: &mut CameraDisplayState,
-        assets: &LevelAssets,
         seat: usize,
         cmd: &PlayerCommand,
     ) {
@@ -676,7 +655,7 @@ impl EngineInner {
                 self.stop_recording_macro();
             }
             StartMacro { pc, slot } => {
-                self.apply_start_macro(sim, display, assets, *pc, *slot);
+                self.apply_start_macro(tcx, display, *pc, *slot);
             }
             DeleteMacro { pc, slot } => {
                 self.apply_delete_macro(display, *pc, *slot);
@@ -689,10 +668,10 @@ impl EngineInner {
             }
             QueueQuickAction { action, command } => {
                 let command = command.to_player_command();
-                self.apply_queue_quick_action(sim, display, assets, seat, *action, &command);
+                self.apply_queue_quick_action(tcx, display, seat, *action, &command);
             }
             MakeQueuedActionFast { pc_id } => {
-                self.apply_make_queued_action_fast(sim, *pc_id);
+                self.apply_make_queued_action_fast(tcx.sim, *pc_id);
             }
             _ => unreachable!("command routed to the wrong dispatch_quick_action_command family"),
         }
@@ -702,8 +681,7 @@ impl EngineInner {
     /// The exhaustive outer dispatcher selects this family after macro recording.
     fn dispatch_camera_control_command(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         seat: usize,
         cmd: &PlayerCommand,
     ) {
@@ -740,8 +718,7 @@ impl EngineInner {
                 // engine message from rollback-local minimap scratch.
                 if *continuing_drag {
                     self.forward_message(
-                        sim,
-                        assets,
+                        tcx,
                         crate::messenger::Message::new(crate::messenger::MessageType::Simple(
                             crate::messenger::SimpleMessage::UiHasFocus,
                         )),
@@ -774,8 +751,7 @@ impl EngineInner {
                     // presentation mutation above may legitimately differ
                     // on a rollback scratch display.
                     self.forward_message(
-                        sim,
-                        assets,
+                        tcx,
                         crate::messenger::Message::new(crate::messenger::MessageType::Simple(
                             crate::messenger::SimpleMessage::UiHasFocus,
                         )),
@@ -868,7 +844,7 @@ impl EngineInner {
                         // tick. Populate current sight immediately so enabling
                         // fog cannot present one black or stale frame while
                         // waiting for the next periodic scan.
-                        self.refresh_fog_of_war(assets, true);
+                        self.refresh_fog_of_war(tcx.assets, true);
                     }
                 }
             }
@@ -908,7 +884,7 @@ impl EngineInner {
                     .expect("achievement results changed after mission finalization");
             }
             SetReusableCloaks { enabled } => {
-                self.set_reusable_cloaks_enabled(sim, assets, *enabled);
+                self.set_reusable_cloaks_enabled(tcx, *enabled);
             }
             SetItemGameplayConfig { config } => {
                 if self.control.rng.original_replay_cursor().is_some() {
@@ -938,13 +914,13 @@ impl EngineInner {
                 self.control.sim_config.diplomacy = *enabled;
                 self.mission_domain.diplomacy.set_enabled(*enabled);
                 self.reconcile_diplomacy_runtime();
-                self.refresh_fog_of_war(assets, true);
+                self.refresh_fog_of_war(tcx.assets, true);
             }
             SetNpcFactionWars { enabled } => {
                 self.control.sim_config.npc_faction_wars = *enabled;
                 self.mission_domain.diplomacy.set_npc_faction_wars(*enabled);
                 self.reconcile_diplomacy_runtime();
-                self.refresh_fog_of_war(assets, true);
+                self.refresh_fog_of_war(tcx.assets, true);
             }
             SetDiplomacyRelationship {
                 first,
@@ -956,7 +932,7 @@ impl EngineInner {
                     .set_relationship_ids(*first, *second, *relationship)
                     .unwrap_or_else(|error| panic!("invalid diplomacy command: {error}"));
                 self.reconcile_diplomacy_runtime();
-                self.refresh_fog_of_war(assets, true);
+                self.refresh_fog_of_war(tcx.assets, true);
             }
             _ => unreachable!("command routed to the wrong dispatch_camera_control_command family"),
         }
@@ -964,13 +940,12 @@ impl EngineInner {
 
     fn apply_command_authoritative(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         camera: &mut CameraDisplayState,
-        assets: &LevelAssets,
         seat: usize,
         command: &PlayerCommand,
     ) {
-        self.apply_command_for_seat_with_replay_context(sim, camera, assets, seat, command, false);
+        self.apply_command_for_seat_with_replay_context(tcx, camera, seat, command, false);
     }
 }
 
@@ -1089,15 +1064,9 @@ impl EngineInner {
         true
     }
 
-    fn apply_script_key_pressed_command(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        virtual_key: i32,
-    ) {
+    fn apply_script_key_pressed_command(&mut self, tcx: TickCtx<'_>, virtual_key: i32) {
         self.call_script_vm(
-            sim,
-            assets,
+            tcx,
             crate::engine::ScriptVmKey::Global,
             "KeyPressed",
             &[virtual_key],
@@ -1106,12 +1075,7 @@ impl EngineInner {
         .unwrap_or_else(|error| panic!("Script KeyPressed failed: {error}"));
     }
 
-    fn apply_group_move_command(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        cmd: &PlayerCommand,
-    ) {
+    fn apply_group_move_command(&mut self, tcx: TickCtx<'_>, cmd: &PlayerCommand) {
         let PlayerCommand::GroupMove {
             actors,
             destination,
@@ -1127,8 +1091,7 @@ impl EngineInner {
             unreachable!("apply_group_move_command called for {cmd:?}")
         };
         self.perform_group_move(
-            sim,
-            assets,
+            tcx,
             actors,
             *destination,
             *running,
@@ -1150,17 +1113,12 @@ impl EngineInner {
                 continue;
             }
             if group_move_actor_accepts_command(pc_id, recorded_failed_gate_routes) {
-                self.hero_speaking(assets, pc_id, crate::engine::melee::HERO_ACCEPT_COMMAND);
+                self.hero_speaking(tcx.assets, pc_id, crate::engine::melee::HERO_ACCEPT_COMMAND);
             }
         }
     }
 
-    fn apply_launch_interaction_command(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        cmd: &PlayerCommand,
-    ) {
+    fn apply_launch_interaction_command(&mut self, tcx: TickCtx<'_>, cmd: &PlayerCommand) {
         let PlayerCommand::LaunchInteraction {
             actor,
             target,
@@ -1170,15 +1128,10 @@ impl EngineInner {
         else {
             unreachable!("apply_launch_interaction_command called for {cmd:?}")
         };
-        self.dispatch_target_interaction(sim, assets, actor, target, command, running);
+        self.dispatch_target_interaction(tcx, actor, target, command, running);
     }
 
-    fn apply_launch_ground_target_command(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
-        cmd: &PlayerCommand,
-    ) {
+    fn apply_launch_ground_target_command(&mut self, tcx: TickCtx<'_>, cmd: &PlayerCommand) {
         let PlayerCommand::LaunchGroundTarget {
             actor,
             target_pos,
@@ -1189,23 +1142,10 @@ impl EngineInner {
         else {
             unreachable!("apply_launch_ground_target_command called for {cmd:?}")
         };
-        self.dispatch_ground_target(
-            sim,
-            assets,
-            actor,
-            target_pos,
-            command,
-            target_field,
-            titbit_layer,
-        );
+        self.dispatch_ground_target(tcx, actor, target_pos, command, target_field, titbit_layer);
     }
 
-    fn apply_launch_scroll_read_command(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        cmd: &PlayerCommand,
-    ) {
+    fn apply_launch_scroll_read_command(&mut self, tcx: TickCtx<'_>, cmd: &PlayerCommand) {
         let PlayerCommand::LaunchScrollRead {
             actor,
             target,
@@ -1214,15 +1154,10 @@ impl EngineInner {
         else {
             unreachable!("apply_launch_scroll_read_command called for {cmd:?}")
         };
-        self.dispatch_scroll_read(sim, assets, actor, target, running);
+        self.dispatch_scroll_read(tcx, actor, target, running);
     }
 
-    fn apply_enter_swordfight_command(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        cmd: &PlayerCommand,
-    ) {
+    fn apply_enter_swordfight_command(&mut self, tcx: TickCtx<'_>, cmd: &PlayerCommand) {
         let PlayerCommand::EnterSwordfight {
             actor,
             target,
@@ -1231,15 +1166,10 @@ impl EngineInner {
         else {
             unreachable!("apply_enter_swordfight_command called for {cmd:?}")
         };
-        self.apply_enter_swordfight(sim, assets, *actor, *target, *running);
+        self.apply_enter_swordfight(tcx, *actor, *target, *running);
     }
 
-    fn apply_sword_strike_command(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        cmd: &PlayerCommand,
-    ) {
+    fn apply_sword_strike_command(&mut self, tcx: TickCtx<'_>, cmd: &PlayerCommand) {
         let PlayerCommand::SwordStrikeCmd {
             actor,
             target,
@@ -1253,8 +1183,7 @@ impl EngineInner {
             unreachable!("apply_sword_strike_command called for {cmd:?}")
         };
         self.dispatch_player_sword_strike(
-            sim,
-            assets,
+            tcx,
             actor,
             target,
             command,
@@ -1265,12 +1194,7 @@ impl EngineInner {
         );
     }
 
-    fn apply_drop_ammo_command(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
-        cmd: &PlayerCommand,
-    ) {
+    fn apply_drop_ammo_command(&mut self, tcx: TickCtx<'_>, cmd: &PlayerCommand) {
         let PlayerCommand::DropAmmo {
             pc_id,
             action_id,
@@ -1279,15 +1203,10 @@ impl EngineInner {
         else {
             unreachable!("apply_drop_ammo_command called for {cmd:?}")
         };
-        self.dispatch_drop_ammo(sim, assets, pc_id, action_id, amount);
+        self.dispatch_drop_ammo(tcx, pc_id, action_id, amount);
     }
 
-    fn apply_drop_ale_at_command(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
-        cmd: &PlayerCommand,
-    ) {
+    fn apply_drop_ale_at_command(&mut self, tcx: TickCtx<'_>, cmd: &PlayerCommand) {
         let PlayerCommand::DropAleAt {
             actor,
             target_pos,
@@ -1301,8 +1220,7 @@ impl EngineInner {
             unreachable!("apply_drop_ale_at_command called for {cmd:?}")
         };
         self.dispatch_drop_ale(
-            sim,
-            assets,
+            tcx,
             actor,
             target_pos,
             running,
@@ -1321,12 +1239,7 @@ impl EngineInner {
         self.world.shield.is_protected = false;
     }
 
-    fn apply_raise_shield_with_danger_command(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
-        cmd: &PlayerCommand,
-    ) {
+    fn apply_raise_shield_with_danger_command(&mut self, tcx: TickCtx<'_>, cmd: &PlayerCommand) {
         let PlayerCommand::RaiseShieldWithDanger {
             actor,
             protected_pc,
@@ -1337,8 +1250,7 @@ impl EngineInner {
             unreachable!("apply_raise_shield_with_danger_command called for {cmd:?}")
         };
         self.dispatch_player_raise_shield(
-            sim,
-            assets,
+            tcx,
             actor,
             protected_pc,
             danger_point,
@@ -1348,8 +1260,7 @@ impl EngineInner {
 
     fn apply_move_tactical_units_command(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         seat: usize,
         cmd: &PlayerCommand,
     ) {
@@ -1363,15 +1274,7 @@ impl EngineInner {
             unreachable!("apply_move_tactical_units_command called for {cmd:?}")
         };
         let leaders = self.players.seats[seat].selection.clone();
-        self.command_tactical_move(
-            sim,
-            assets,
-            soldiers,
-            &leaders,
-            *destination,
-            *running,
-            *formation,
-        )
+        self.command_tactical_move(tcx, soldiers, &leaders, *destination, *running, *formation)
     }
 
     fn apply_set_tactical_formation_command(&mut self, cmd: &PlayerCommand) {
@@ -1385,12 +1288,7 @@ impl EngineInner {
         self.set_tactical_formation(soldiers, *formation)
     }
 
-    fn apply_set_tactical_patrol_command(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        cmd: &PlayerCommand,
-    ) {
+    fn apply_set_tactical_patrol_command(&mut self, tcx: TickCtx<'_>, cmd: &PlayerCommand) {
         let PlayerCommand::SetTacticalPatrol {
             soldiers,
             destination,
@@ -1399,15 +1297,10 @@ impl EngineInner {
         else {
             unreachable!("apply_set_tactical_patrol_command called for {cmd:?}")
         };
-        self.set_tactical_patrol(sim, assets, soldiers, *destination, *formation)
+        self.set_tactical_patrol(tcx, soldiers, *destination, *formation)
     }
 
-    fn apply_set_tactical_follow_command(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        cmd: &PlayerCommand,
-    ) {
+    fn apply_set_tactical_follow_command(&mut self, tcx: TickCtx<'_>, cmd: &PlayerCommand) {
         let PlayerCommand::SetTacticalFollow {
             soldiers,
             hero,
@@ -1416,13 +1309,12 @@ impl EngineInner {
         else {
             unreachable!("apply_set_tactical_follow_command called for {cmd:?}")
         };
-        self.set_tactical_follow(sim, assets, soldiers, *hero, *formation)
+        self.set_tactical_follow(tcx, soldiers, *hero, *formation)
     }
 
     fn apply_perform_resolved_orientation_command(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         seat: usize,
         cmd: &PlayerCommand,
     ) {
@@ -1442,7 +1334,7 @@ impl EngineInner {
         // before the pre-update mission script can query
         // HasAnyActionSelected.
         self.players.seats[seat].selected_action = *action;
-        self.perform_resolved_orientation(sim, assets, *pc_id, *action, *mouse_map, *target);
+        self.perform_resolved_orientation(tcx, *pc_id, *action, *mouse_map, *target);
     }
 
     fn apply_campaign_sell_production_item_command(
@@ -1462,12 +1354,7 @@ impl EngineInner {
         self.sell_sherwood_production_item(assets, seat, *request_id, *prod_type, *quantity);
     }
 
-    fn apply_quit_mission_updates_command(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        cmd: &PlayerCommand,
-    ) {
+    fn apply_quit_mission_updates_command(&mut self, tcx: TickCtx<'_>, cmd: &PlayerCommand) {
         let PlayerCommand::ApplyQuitMissionUpdates {
             exit_code,
             difficulty,
@@ -1478,8 +1365,7 @@ impl EngineInner {
             unreachable!("apply_quit_mission_updates_command called for {cmd:?}")
         };
         self.apply_quit_mission_updates(
-            sim,
-            assets,
+            tcx,
             *exit_code,
             *difficulty,
             *completed_at_unix_seconds,
@@ -1498,12 +1384,7 @@ impl EngineInner {
         }
     }
 
-    fn apply_teleport_selected_to_point_command(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
-        cmd: &PlayerCommand,
-    ) {
+    fn apply_teleport_selected_to_point_command(&mut self, tcx: TickCtx<'_>, cmd: &PlayerCommand) {
         let PlayerCommand::TeleportSelectedToPoint {
             dest,
             layer,
@@ -1512,7 +1393,7 @@ impl EngineInner {
         else {
             unreachable!("apply_teleport_selected_to_point_command called for {cmd:?}")
         };
-        self.manage_input_process_teleport(sim, assets, *dest, *layer, *sector);
+        self.manage_input_process_teleport(tcx, *dest, *layer, *sector);
     }
 }
 

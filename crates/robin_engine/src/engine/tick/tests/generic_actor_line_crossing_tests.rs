@@ -3,6 +3,7 @@ use crate::coordinates::{MapPoint, MapVec};
 use crate::element::{
     ActionState, ActorData, ActorSoldier, ElementData, ElementKind, HumanData, NpcData, Posture,
 };
+use crate::engine::TickCtx;
 use crate::fast_find_grid::GridLine;
 use crate::order::{Order, OrderType};
 use crate::sequence::SequenceElement;
@@ -224,8 +225,7 @@ fn delayed_position_multi_non_elevation_crossing_recomputes_invalid_increment() 
     assert_eq!(elevation_count, 0);
 
     engine.apply_delayed_actor_position(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         owner,
     );
 

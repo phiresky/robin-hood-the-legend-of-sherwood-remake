@@ -64,6 +64,7 @@ use super::*;
 use crate::ai_vision;
 use crate::coordinates::{GroundPoint, MapPoint};
 use crate::element::{Camp, Detectable, DetectableType, Entity, EntityId, Posture};
+use crate::engine::TickCtx;
 
 const DETECTION_FREQUENCY_BLIP: u32 = 16;
 const BLIP_SUPER_DETECTION: f32 = 1.5;
@@ -724,8 +725,7 @@ impl EngineInner {
     /// walked in order and each eligible nearby enemy is sent through Think.
     pub(crate) fn tick_attacking_reactiontime_enemy_near_for(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         npc_id: EntityId,
     ) {
         let frame = self.control.frame_counter;
@@ -781,7 +781,7 @@ impl EngineInner {
                 crate::ai::StimulusType::EventEnemyNear,
                 target_handle,
             );
-            self.execute_ai_callback(sim, assets, npc_id, &stimulus);
+            self.execute_ai_callback(tcx, npc_id, &stimulus);
         }
     }
 
@@ -790,8 +790,7 @@ impl EngineInner {
     /// Blip detection runs inside that NPC's creation-ordered detection refresh.
     pub(super) fn tick_enemy_ai_blip_detection(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         pc_id: EntityId,
     ) -> Option<crate::sprite::MotionState> {
         const DISTANCE_LISTEN: f32 = 750.0;
@@ -841,7 +840,7 @@ impl EngineInner {
                 let order_id = ability.order_id;
                 if !sprite_frozen {
                     let _ignored_motion = pc.element.sprite.perform_action(
-                        sim,
+                        tcx.sim,
                         Some(order_id),
                         crate::order::OrderType::Listening,
                         direction,
@@ -904,7 +903,7 @@ impl EngineInner {
                         .unwrap()
                         .reveal_blip();
                 }
-                if heard && sim.config().script_enabled {
+                if heard && tcx.sim.config().script_enabled {
                     let target = match self.entities_mut().get_mut(entity_id) {
                         Some(Entity::Target(target)) => target,
                         _ => panic!("Listen target {entity_id:?} changed type before Heard"),
@@ -927,8 +926,7 @@ impl EngineInner {
                     let target_handle = crate::natives::ScriptHandleCodec::actor_handle(entity_id);
                     let pc_handle = crate::natives::ScriptHandleCodec::actor_handle(pc_id);
                     self.call_script_vm(
-                        sim,
-                        assets,
+                        tcx,
                         ScriptVmKey::Target(target_handle),
                         "ActivatedByListenable",
                         &[pc_handle],
@@ -1012,12 +1010,7 @@ impl EngineInner {
     /// each NPC's creation slot: an earlier NPC's synchronous Think/script
     /// may activate, deactivate, blip, reveal, or move a later NPC before its
     /// own cadence opens.
-    fn tick_enemy_ai_npc_blip_detection_for_npc(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        npc_id: EntityId,
-        assets: &LevelAssets,
-    ) {
+    fn tick_enemy_ai_npc_blip_detection_for_npc(&mut self, tcx: TickCtx<'_>, npc_id: EntityId) {
         use crate::element::Posture;
 
         let entity = self.expect_entity(
@@ -1057,9 +1050,13 @@ impl EngineInner {
             ai_vision::DEFAULT_VIEW_RADIUS as f32
         };
         let difficulty_factor = crate::player_profile::DifficultyRules::percent_as_f32(
-            sim.config().difficulty.rules().blip_detection_range_percent,
+            tcx.sim
+                .config()
+                .difficulty
+                .rules()
+                .blip_detection_range_percent,
         );
-        let sight_obstacles = self.world.sight_obstacles(assets);
+        let sight_obstacles = self.world.sight_obstacles(tcx.assets);
 
         let mut detecting_pc = None;
         for &pc_id in self.world.original_pc_registry() {
@@ -1115,7 +1112,7 @@ impl EngineInner {
             .reveal_blip();
         if perched {
             self.hero_speaking(
-                assets,
+                tcx.assets,
                 pc_id,
                 crate::engine::melee::HERO_PERCHED_AND_SEE_ENNEMY,
             );
@@ -1135,9 +1132,8 @@ impl EngineInner {
     /// same NPC's optical `InstantDetection` decision immediately afterward.
     pub(super) fn tick_enemy_ai_acoustic_detection_for_npc(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         npc_id: EntityId,
-        assets: &LevelAssets,
     ) {
         use crate::ai::AiState;
 
@@ -1180,7 +1176,7 @@ impl EngineInner {
             let hostile_soldier = matches!(entity, Entity::Soldier(_))
                 && entity.camp().is_hostile_to(Camp::Royalists);
             let hearing_factor =
-                difficulty_hearing_factor(hostile_soldier, sim.config().difficulty);
+                difficulty_hearing_factor(hostile_soldier, tcx.sim.config().difficulty);
             (npc.ai_state(), hearing_factor)
         };
         let hearing_debug_gate = hearing_gate_debug_gate();
@@ -1403,7 +1399,7 @@ impl EngineInner {
             // including door-side and carrier substitution. Volume calculation
             // above uses the produced-noise origin instead.
             heard_noise.origin = crate::ai::NoiseOrigin::from_position(source_position);
-            self.execute_ai_callback(sim, assets, npc_id, &stimulus);
+            self.execute_ai_callback(tcx, npc_id, &stimulus);
         }
     }
 
@@ -1421,18 +1417,13 @@ impl EngineInner {
     /// Detection refresh queues detection stimuli while
     /// scanning lists, then calls `Think` before returning from that NPC's
     /// actor update.
-    pub(super) fn tick_enemy_ai_refresh_detection(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        npc_id: EntityId,
-    ) {
+    pub(super) fn tick_enemy_ai_refresh_detection(&mut self, tcx: TickCtx<'_>, npc_id: EntityId) {
         let _detail = super::super::tick::entity_system_detail_guard(
             super::super::tick::EntitySystemDetail::RefreshDetection,
         );
         let universal_frame = self.control.frame_counter;
 
-        self.tick_enemy_ai_npc_blip_detection_for_npc(sim, npc_id, assets);
+        self.tick_enemy_ai_npc_blip_detection_for_npc(tcx, npc_id);
 
         // Sample the two pre-acoustic detection-refresh gates before
         // EVENT_HEAR can synchronously run Think/script and mutate the
@@ -1448,7 +1439,7 @@ impl EngineInner {
                 && entity.human_data().is_none_or(|human| !human.unconscious)
                 && elem.posture() != Posture::Tied
         });
-        self.tick_enemy_ai_acoustic_detection_for_npc(sim, npc_id, assets);
+        self.tick_enemy_ai_acoustic_detection_for_npc(tcx, npc_id);
 
         // Detection refresh clears both maxima after acoustics but
         // before its narrower optical eligibility gate. In particular,
@@ -1515,7 +1506,7 @@ impl EngineInner {
                 .view_radius;
             let think_input = self.tick_enemy_ai_refresh_detection_for_npc(
                 npc_id,
-                assets,
+                tcx.assets,
                 universal_frame,
                 ground,
                 radius,
@@ -1534,7 +1525,7 @@ impl EngineInner {
             // observer's latches. Think starts only after all buckets finish.
             self.tick_enemy_ai_refresh_per_type_for_npc(
                 npc_id,
-                assets,
+                tcx.assets,
                 universal_frame,
                 ground,
                 radius,
@@ -1553,21 +1544,20 @@ impl EngineInner {
             );
         }
 
-        self.dispatch_optical_stimuli(sim, npc_id, assets, stimuli);
+        self.dispatch_optical_stimuli(tcx, npc_id, stimuli);
     }
 
     /// Test seam: mutate entity/sequence state immediately before detection.
     #[cfg(test)]
     pub(crate) fn refresh_detection_after_live_mutation_for_test(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         mutate_live_state: impl FnOnce(&mut Self),
     ) {
         mutate_live_state(self);
         let owners: Vec<_> = self.entities().ai_owner_ids().collect();
         for owner in owners {
-            self.tick_enemy_ai_refresh_detection(sim, assets, owner);
+            self.tick_enemy_ai_refresh_detection(tcx, owner);
         }
     }
 

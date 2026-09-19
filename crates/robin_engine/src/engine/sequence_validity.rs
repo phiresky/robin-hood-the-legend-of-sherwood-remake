@@ -9,7 +9,10 @@
 //! gate and wires it into the per-tick sequence-element pickup path.
 
 use crate::element::{Command, Entity, EntityId, Human, ObjectType, Posture};
+use crate::engine::TickCtx;
 use crate::engine::{EngineInner, LevelAssets};
+#[cfg(test)]
+use crate::sequence::SequenceElementRef;
 use crate::sequence::{Field, FieldValue, SequenceElement, SequenceElementData};
 
 use super::input::BowTarget;
@@ -1355,8 +1358,7 @@ impl EngineInner {
     ///   behaviour where the same NI guard blocks the cascade.
     pub(super) fn pre_tick_human_execute_validity_for(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         entity_id: EntityId,
     ) -> Option<crate::sprite::MotionState> {
         let Some(entity) = self.world.entities.get(entity_id) else {
@@ -1414,7 +1416,7 @@ impl EngineInner {
         let Some(elem) = self.orders.sequence_manager.get_element(seq_id, elem_idx) else {
             return None;
         };
-        if self.check_sequence_element_validity(assets, entity_id, elem, check_position) {
+        if self.check_sequence_element_validity(tcx.assets, entity_id, elem, check_position) {
             return None;
         }
 
@@ -1446,7 +1448,7 @@ impl EngineInner {
             ValidityArmTerminal::Terminated => crate::sprite::MotionState::Terminated,
             ValidityArmTerminal::TerminatedWithDrop { needs_drop } => {
                 if needs_drop {
-                    self.force_drop_carried_corpse_instant(sim, assets, entity_id);
+                    self.force_drop_carried_corpse_instant(tcx, entity_id);
                 }
                 crate::sprite::MotionState::Terminated
             }
@@ -2063,11 +2065,9 @@ mod tests {
         };
         engine.select_sequence_element(shooter, Some((sequence, 0)));
         engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
             &mut Vec::new(),
-            sequence,
-            0,
+            SequenceElementRef::new(sequence, 0),
         );
         engine
             .get_entity_mut(shooter)
@@ -2220,11 +2220,9 @@ mod tests {
         };
         engine.select_sequence_element(pc_id, Some((sequence, 0)));
         engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
             &mut Vec::new(),
-            sequence,
-            0,
+            SequenceElementRef::new(sequence, 0),
         );
         engine
             .get_entity_mut(pc_id)
@@ -2233,8 +2231,7 @@ mod tests {
             .execute_order_initialising = true;
 
         let motion = engine.pre_tick_human_execute_validity_for(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
             pc_id,
         );
 
@@ -2348,17 +2345,16 @@ mod tests {
             };
             engine.select_sequence_element(healer, Some((sequence, 0)));
             engine.element_in_progress(
-                &crate::sim_rng::test_context(),
-                &LevelAssets::new(),
+                TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
                 &mut Vec::new(),
-                sequence,
-                0,
+                SequenceElementRef::new(sequence, 0),
             );
             engine.publish_selected_order_as_installed(healer);
 
             let assets = LevelAssets::new();
 
-            engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
+            engine
+                .tick_actor_owner_envelopes(TickCtx::new(&crate::sim_rng::test_context(), &assets));
 
             assert_eq!(
                 engine
@@ -2413,8 +2409,7 @@ mod tests {
             .expect("test target human data")
             .unconscious = true;
         let motion = engine.pre_tick_human_execute_validity_for(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             shooter,
         );
 
@@ -2447,7 +2442,7 @@ mod tests {
             .expect("test target human data")
             .unconscious = true;
 
-        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
+        engine.tick_actor_owner_envelopes(TickCtx::new(&crate::sim_rng::test_context(), &assets));
 
         assert_eq!(
             engine
@@ -2481,8 +2476,7 @@ mod tests {
             &mut engine.orders.sequence_manager,
             shooter,
             target,
-            next_sequence,
-            0,
+            SequenceElementRef::new(next_sequence, 0),
             false,
             1,
             Some(ShootMode::Normal),
@@ -2499,8 +2493,7 @@ mod tests {
     fn non_interruptable_bow_validity_noop_retains_selected_order() {
         let (mut engine, assets, shooter, target, sequence) = bow_execute_fixture();
         engine.orders.sequence_manager.set_element_priority(
-            sequence,
-            0,
+            SequenceElementRef::new(sequence, 0),
             crate::sequence::SequencePriority::NonInterruptable,
         );
         engine
@@ -2510,8 +2503,7 @@ mod tests {
             .unconscious = true;
 
         engine.pre_tick_human_execute_validity_for(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             shooter,
         );
 
@@ -2579,8 +2571,7 @@ mod tests {
     fn bow_release_initialization_preserves_valid_target_shots() {
         let (mut engine, assets, shooter, _target, sequence) = bow_execute_fixture();
         engine.pre_tick_human_execute_validity_for(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             shooter,
         );
 

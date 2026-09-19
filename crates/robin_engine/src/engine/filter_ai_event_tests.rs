@@ -26,6 +26,7 @@ use crate::element::{
     Entity, EntityId, HumanData, NpcData, ObjectData, ObjectType, Posture,
 };
 use crate::engine::EngineInner;
+use crate::engine::TickCtx;
 use crate::engine::test_support::actors::TestActor;
 use crate::engine::test_support::asm::*;
 use crate::engine::types::{LevelAssets, MissionScript};
@@ -239,7 +240,11 @@ fn filter_allows_when_script_returns_nonzero_for_actual_source() {
         .expect("valid robin handle") as u32;
     let stim = crate::ai::Stimulus::with_human(crate::ai::StimulusType::EventView, robin_human);
 
-    let allowed = engine.filter_stimulus(sim, &LevelAssets::new(), sensitive_handle, &stim);
+    let allowed = engine.filter_stimulus(
+        TickCtx::new(sim, &LevelAssets::new()),
+        sensitive_handle,
+        &stim,
+    );
     assert!(
         allowed,
         "non-zero source → script returns source → allow (got {allowed})"
@@ -258,7 +263,11 @@ fn filter_blocks_when_script_returns_zero_for_unknown_source() {
     // `filter_stimulus` passes source=0.
     let stim = crate::ai::Stimulus::new(crate::ai::StimulusType::EventView);
 
-    let allowed = engine.filter_stimulus(sim, &LevelAssets::new(), sensitive_handle, &stim);
+    let allowed = engine.filter_stimulus(
+        TickCtx::new(sim, &LevelAssets::new()),
+        sensitive_handle,
+        &stim,
+    );
     assert!(!allowed, "source=0 → script returns 0 → block");
 }
 
@@ -274,7 +283,11 @@ fn filter_runs_for_unmapped_stimulus_type() {
     // proves the -2 path invoked the filter when it blocks the stimulus.
     let stim = crate::ai::Stimulus::new(crate::ai::StimulusType::EventEnemyNear);
 
-    let allowed = engine.filter_stimulus(sim, &LevelAssets::new(), sensitive_handle, &stim);
+    let allowed = engine.filter_stimulus(
+        TickCtx::new(sim, &LevelAssets::new()),
+        sensitive_handle,
+        &stim,
+    );
     assert!(
         !allowed,
         "unmapped stimulus type must run FilterAIEvent(-2)"
@@ -291,7 +304,8 @@ fn filter_allows_when_actor_has_no_filter_override() {
     let (mut engine, _, _, noov_handle) = build_engine();
     let stim = crate::ai::Stimulus::new(crate::ai::StimulusType::EventView);
 
-    let allowed = engine.filter_stimulus(sim, &LevelAssets::new(), noov_handle, &stim);
+    let allowed =
+        engine.filter_stimulus(TickCtx::new(sim, &LevelAssets::new()), noov_handle, &stim);
     assert!(
         allowed,
         "no FilterAIEvent override → base returns 1 → allow"
@@ -337,17 +351,15 @@ fn reentrant_return_to_duty_uses_absent_live_order_not_stale_sprite_animation() 
     );
 
     engine.dispatch_filtered_stimulus(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         actor,
         &crate::ai::Stimulus::new(crate::ai::StimulusType::EventReturnToDuty),
     );
     // The Think boundary only registers the launched Turn with the sequence
     // manager; the manager's own update dispatches it later in the frame.
     engine.hourglass_phase_sequences(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut crate::engine::HostDisplayState::default(),
-        &assets,
     );
 
     let ai = engine.ai_ctrl(actor);
@@ -427,7 +439,7 @@ fn remove_all_subordinates_force_returns_script_locked_civilian_to_duty() {
     }
 
     let (_, draws) = crate::sim_rng::with_draw_trace(|| {
-        engine.script_remove_all_subordinates(&sim, &assets, chief);
+        engine.script_remove_all_subordinates(TickCtx::new(&sim, &assets), chief);
     });
     assert!(
         draws.contains(&crate::sim_rng::RngSite::AiRandomValueRectangle),
@@ -528,7 +540,7 @@ fn remove_all_subordinates_rereads_roster_after_member_state_callback() {
         crate::natives::ScriptHandleCodec::actor_handle(first),
         "ClearChiefAgain",
     );
-    engine.script_remove_all_subordinates(&sim, &assets, chief);
+    engine.script_remove_all_subordinates(TickCtx::new(&sim, &assets), chief);
 }
 
 #[test]
@@ -585,8 +597,7 @@ fn remove_all_subordinates_vm_yield_clears_before_following_add_as_subordinate()
 
     engine
         .call_script_vm(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             super::ScriptVmKey::Global,
             "Reassign",
             &[],
@@ -620,7 +631,11 @@ fn filter_allows_when_actor_not_bound_to_any_script() {
 
     let stim = crate::ai::Stimulus::new(crate::ai::StimulusType::EventView);
     assert!(
-        engine.filter_stimulus(sim, &LevelAssets::new(), unbound_handle, &stim),
+        engine.filter_stimulus(
+            TickCtx::new(sim, &LevelAssets::new()),
+            unbound_handle,
+            &stim
+        ),
         "no bound script → allow"
     );
 }
@@ -648,8 +663,11 @@ fn dispatch_handles_registered_actor_when_filter_blocks_and_skips_think() {
 
     // EventView with no human info → source=0 → script blocks.
     let stim = crate::ai::Stimulus::new(crate::ai::StimulusType::EventView);
-    let handled =
-        engine.dispatch_filtered_stimulus(sim, &LevelAssets::new(), sensitive_entity_id, &stim);
+    let handled = engine.dispatch_filtered_stimulus(
+        TickCtx::new(sim, &LevelAssets::new()),
+        sensitive_entity_id,
+        &stim,
+    );
     assert!(
         handled,
         "the dispatch wrapper handles a registered actor even when its script refuses Think"
@@ -710,7 +728,11 @@ fn combat_command_consumes_live_script_filter_refusal() {
     };
 
     // Combat alerts carry a position, so SourceSensitive receives source zero.
-    assert!(engine.execute_ai_command_soldiers_to_attack(&sim, &assets, caller_id, center,));
+    assert!(engine.execute_ai_command_soldiers_to_attack(
+        TickCtx::new(&sim, &assets),
+        caller_id,
+        center,
+    ));
     assert_eq!(engine.ai_ctrl(target_id).current_state, AiState::Default,);
 
     // Allowing the filter also lets the accepted recipient execute its handler.
@@ -720,7 +742,11 @@ fn combat_command_consumes_live_script_filter_refusal() {
         .as_mut()
         .expect("mission remains loaded")
         .bind_actor(sensitive_handle, "NoOverride");
-    assert!(engine.execute_ai_command_soldiers_to_attack(&sim, &assets, caller_id, center,));
+    assert!(engine.execute_ai_command_soldiers_to_attack(
+        TickCtx::new(&sim, &assets),
+        caller_id,
+        center,
+    ));
 }
 
 #[test]
@@ -789,16 +815,17 @@ fn closure_review_alert_cap_counts_acceptances_after_script_refusals() {
         );
     }
 
-    assert!(engine.execute_ai_alert_soldiers(
-        &sim,
-        &assets,
-        officer_id,
-        Position {
-            x: 300.0,
-            ..Default::default()
-        },
-        0
-    ));
+    assert!(
+        engine
+            .ai_ctx(&sim, &assets, officer_id)
+            .execute_ai_alert_soldiers(
+                Position {
+                    x: 300.0,
+                    ..Default::default()
+                },
+                0
+            )
+    );
 
     let officer = engine.enemy(officer_id);
     // Acceptances happen in roster order, but each accepted soldier is
@@ -1163,15 +1190,17 @@ fn nested_callback_keeps_the_canonical_query_views() {
     let assets = LevelAssets::new();
     engine.attach_script_bindings(&assets);
     engine
-        .with_script_session(&crate::sim_rng::test_context(), &assets, |script, _, _| {
-            script.bind_actor(outer_handle, "OuterCaller");
-            script.bind_actor(inner_handle, "InnerTarget");
-        })
+        .with_script_session(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            |script, _, _| {
+                script.bind_actor(outer_handle, "OuterCaller");
+                script.bind_actor(inner_handle, "InnerTarget");
+            },
+        )
         .expect("mission installed");
     let result = engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Actor(outer_handle),
             "FilterAIEvent",
             &[inner_handle, 0, 0],
@@ -1195,8 +1224,7 @@ fn ordinary_actor_callback_binds_this_to_the_target_actor() {
     engine.attach_script_bindings(&assets);
     let result = engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Actor(inner_handle),
             "FilterAIEvent",
             &[0, 0],
@@ -1233,8 +1261,7 @@ fn scroll_callback_binds_this_scroll_and_unwinds_the_frame() {
         .with_current_scroll(scroll_handle);
     let result = engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Scroll(scroll_handle),
             "FilterAIEvent",
             &[0, 0],
@@ -1272,8 +1299,7 @@ fn prototype_filter_event_preserves_the_outer_this_actor() {
     engine.attach_script_bindings(&assets);
     let result = engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Actor(outer_handle),
             "FilterAIEvent",
             &[prototype_handle, 0, 0],
@@ -1327,8 +1353,7 @@ fn prototype_filter_event_dispatches_to_target_actor_script() {
     engine.attach_script_bindings(&assets);
     let result = engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Actor(outer_handle),
             "FilterAIEvent",
             &[inner_handle, 0, 0],
@@ -1358,8 +1383,7 @@ fn recursive_prototype_filter_event_stops_at_call_stack_limit() {
     engine.attach_script_bindings(&assets);
     let error = engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Actor(actor_a),
             "FilterAIEvent",
             &[actor_b, 0],
@@ -1393,7 +1417,7 @@ fn script_session_preserves_nested_pending_call_resume_and_restoration() {
     engine.attach_script_bindings(&assets);
 
     engine
-        .with_script_session(sim, &assets, |script, _, _| {
+        .with_script_session(TickCtx::new(sim, &assets), |script, _, _| {
             script.bind_actor(outer_handle, "OuterCaller");
             script.bind_actor(inner_handle, "InnerTarget");
         })
@@ -1401,8 +1425,7 @@ fn script_session_preserves_nested_pending_call_resume_and_restoration() {
 
     let result = engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Actor(outer_handle),
             "FilterAIEvent",
             &[inner_handle, 0, 0],
@@ -1433,8 +1456,7 @@ fn prototype_filter_event_missing_override_uses_actor_base_default() {
     engine.attach_script_bindings(&assets);
     let result = engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Actor(outer_handle),
             "FilterAIEvent",
             &[prototype_handle, 0, 0],
@@ -1472,8 +1494,7 @@ fn nested_prototype_callback_observes_outer_native_entity_mutation() {
     engine.attach_script_bindings(&assets);
     let result = engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Actor(outer_handle),
             "FilterAIEvent",
             &[prototype_handle, prototype_handle, 0],
@@ -1521,8 +1542,7 @@ fn nested_prototype_callback_observes_canonical_ai_global_mutation() {
 
     let result = engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Actor(outer_handle),
             "FilterAIEvent",
             &[prototype_handle, 0, 0],
@@ -1557,8 +1577,7 @@ fn prototype_filter_event_unbound_target_is_a_required_vm_error() {
     engine.attach_script_bindings(&assets);
     let error = engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Actor(outer_handle),
             "FilterAIEvent",
             &[99, 0, 0],
@@ -1827,8 +1846,7 @@ fn unlock_door_done_clears_every_lock_in_owner_slot_with_swapped_creation_order(
 
         let mut observer_saw_locked = None;
         engine.tick_actor_owner_envelopes_with_test_owner_hook(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             |engine, owner| {
                 if owner == observer {
                     observer_saw_locked =
@@ -1882,9 +1900,12 @@ fn bind_action_observer(engine: &mut EngineInner, assets: &LevelAssets, actor: E
     );
     engine.attach_script_bindings(assets);
     engine
-        .with_script_session(&crate::sim_rng::test_context(), assets, |script, _, _| {
-            script.bind_actor(handle, "ActionObserver");
-        })
+        .with_script_session(
+            TickCtx::new(&crate::sim_rng::test_context(), assets),
+            |script, _, _| {
+                script.bind_actor(handle, "ActionObserver");
+            },
+        )
         .expect("action-observer mission remains installed");
 }
 
@@ -1916,10 +1937,13 @@ fn action_change_ordering_engine(
     let assets = LevelAssets::new();
     engine.attach_script_bindings(&assets);
     engine
-        .with_script_session(&crate::sim_rng::test_context(), &assets, |script, _, _| {
-            script.bind_actor(mutator_handle, "PostureMutator");
-            script.bind_actor(observer_handle, "ActionObserver");
-        })
+        .with_script_session(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            |script, _, _| {
+                script.bind_actor(mutator_handle, "PostureMutator");
+                script.bind_actor(observer_handle, "ActionObserver");
+            },
+        )
         .expect("action-change mission remains installed");
 
     install_test_action(
@@ -1971,7 +1995,7 @@ fn action_change_unbound_nonempty_script_class_does_not_consume_transition() {
         crate::order::OrderType::WaitingUpright,
     );
 
-    engine.dispatch_actor_action_changes(&crate::sim_rng::test_context(), &assets);
+    engine.dispatch_actor_action_changes(TickCtx::new(&crate::sim_rng::test_context(), &assets));
 
     let actor_data = engine
         .world
@@ -1996,7 +2020,7 @@ fn action_change_unbound_nonempty_script_class_does_not_consume_transition() {
 fn action_change_earlier_callback_changes_later_actor_snapshot() {
     let (mut engine, assets, _mutator, observer) = action_change_ordering_engine(true);
 
-    engine.dispatch_actor_action_changes(&crate::sim_rng::test_context(), &assets);
+    engine.dispatch_actor_action_changes(TickCtx::new(&crate::sim_rng::test_context(), &assets));
 
     assert_eq!(
         observed_action_args(&engine, observer),
@@ -2013,7 +2037,7 @@ fn action_change_later_callback_mutation_waits_for_visited_actor_next_pass() {
     let (mut engine, assets, _mutator, observer) = action_change_ordering_engine(false);
     let sim = crate::sim_rng::test_context();
 
-    engine.dispatch_actor_action_changes(&sim, &assets);
+    engine.dispatch_actor_action_changes(TickCtx::new(&sim, &assets));
     assert_eq!(
         observed_action_args(&engine, observer),
         (
@@ -2023,7 +2047,7 @@ fn action_change_later_callback_mutation_waits_for_visited_actor_next_pass() {
         "an already visited actor keeps its pre-mutation callback arguments"
     );
 
-    engine.dispatch_actor_action_changes(&sim, &assets);
+    engine.dispatch_actor_action_changes(TickCtx::new(&sim, &assets));
     assert_eq!(
         observed_action_args(&engine, observer),
         (
@@ -2047,9 +2071,12 @@ fn action_change_self_mutation_stores_live_post_callback_animation() {
     let assets = LevelAssets::new();
     engine.attach_script_bindings(&assets);
     engine
-        .with_script_session(&crate::sim_rng::test_context(), &assets, |script, _, _| {
-            script.bind_actor(handle, "SelfPostureMutator");
-        })
+        .with_script_session(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            |script, _, _| {
+                script.bind_actor(handle, "SelfPostureMutator");
+            },
+        )
         .expect("self-mutation mission remains installed");
     install_test_action(
         &mut engine,
@@ -2059,7 +2086,7 @@ fn action_change_self_mutation_stores_live_post_callback_animation() {
         crate::order::OrderType::WaitingUpright,
     );
 
-    engine.dispatch_actor_action_changes(&crate::sim_rng::test_context(), &assets);
+    engine.dispatch_actor_action_changes(TickCtx::new(&crate::sim_rng::test_context(), &assets));
 
     assert_eq!(
         observed_action_args(&engine, actor),
@@ -2317,8 +2344,10 @@ fn movement_owned_token_skip_does_not_sample_stale_execute_inputs() {
         engine.select_sequence_element(actor, Some((sequence, 0)));
         engine.t_element_in_progress(&assets, sequence, 0);
 
-        let executed =
-            engine.tick_actor_animation_for(&crate::sim_rng::test_context(), &assets, actor);
+        let executed = engine.tick_actor_animation_for(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            actor,
+        );
 
         assert!(executed.is_none(), "{movement_order:?}");
         assert_eq!(
@@ -2369,9 +2398,12 @@ fn per_actor_wait_initialization_does_not_publish_later_wait_to_earlier_callback
     let assets = LevelAssets::new();
     engine.attach_script_bindings(&assets);
     engine
-        .with_script_session(&crate::sim_rng::test_context(), &assets, |script, _, _| {
-            script.bind_actor(first_handle, "WaitProbe");
-        })
+        .with_script_session(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            |script, _, _| {
+                script.bind_actor(first_handle, "WaitProbe");
+            },
+        )
         .expect("wait-isolation mission remains installed");
 
     engine.t_tick_actor_owner_envelopes(&assets);
@@ -2596,18 +2628,21 @@ fn live_actor_walk_visits_callback_spawned_later_slot_and_skips_holes() {
     let mut spawned = None;
 
     let (_, phases) = capture_actor_owner_envelope(|| {
-        engine.tick_actor_owner_envelopes_with_test_owner_hook(&sim, &assets, |engine, owner| {
-            visited.push(owner);
-            if owner == first {
-                engine.remove_entity(removed_during_callback);
-                let id = engine.add_test_entity(make_pc(false));
-                assert!(
-                    id.index() > later.index(),
-                    "runtime entities are append-only"
-                );
-                spawned = Some(id);
-            }
-        });
+        engine.tick_actor_owner_envelopes_with_test_owner_hook(
+            TickCtx::new(&sim, &assets),
+            |engine, owner| {
+                visited.push(owner);
+                if owner == first {
+                    engine.remove_entity(removed_during_callback);
+                    let id = engine.add_test_entity(make_pc(false));
+                    assert!(
+                        id.index() > later.index(),
+                        "runtime entities are append-only"
+                    );
+                    spawned = Some(id);
+                }
+            },
+        );
     });
     let spawned = spawned.expect("the first owner's callback must spawn an actor");
 
@@ -2660,8 +2695,7 @@ fn earlier_owner_callback_installs_invalid_later_pc_init_order_rejected_same_fra
     let mut installed = None;
 
     engine.tick_actor_owner_envelopes_with_test_owner_hook(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         |engine, completed_owner| {
             if completed_owner != first || installed.is_some() {
                 return;
@@ -2874,9 +2908,8 @@ fn sequence_manager_instruction_rewrites_terminated_motion_to_in_progress() {
     ));
     let successor = engine.t_launch_element(&assets, element);
     engine.hourglass_phase_sequences(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut crate::engine::HostDisplayState::default(),
-        &assets,
     );
 
     assert_eq!(
@@ -2905,9 +2938,8 @@ fn accepted_empty_generic_latches_motion_before_immediate_completion() {
         SequenceElement::new(1, Command::Generic, Some(actor)),
     );
     engine.hourglass_phase_sequences(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut crate::engine::HostDisplayState::default(),
-        &assets,
     );
 
     assert_eq!(
@@ -3253,8 +3285,7 @@ fn earlier_owner_callback_installs_later_timer_while_reverse_order_defers() {
         let mut timer_sequence = None;
 
         engine.tick_actor_owner_envelopes_with_test_owner_hook(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             |engine, completed_owner| {
                 if completed_owner != installer || timer_sequence.is_some() {
                     return;
@@ -3420,8 +3451,10 @@ fn waiting_sword_execute_faces_world_xy_not_projected_map_xy() {
         .opponents
         .push(opponent);
 
-    let execute_result =
-        engine.tick_actor_animation_for(&crate::sim_rng::test_context(), &assets, actor);
+    let execute_result = engine.tick_actor_animation_for(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        actor,
+    );
 
     assert_eq!(
         execute_result.expect("WaitingSword must execute"),
@@ -3448,7 +3481,7 @@ fn earlier_smalltalk_hint_is_consumed_by_later_waiting_sword_slot() {
 
     let (mut engine, assets, _attacker, defender) = waiting_sword_pair(true);
     crate::sim_rng::with_seed(1, |sim| {
-        engine.tick_actor_owner_envelopes(sim, &assets);
+        engine.tick_actor_owner_envelopes(TickCtx::new(sim, &assets));
     });
 
     assert!(
@@ -3474,7 +3507,7 @@ fn frozen_all_keeps_waiting_sword_callbacks_live_without_selecting_sprites() {
         [attacker, defender].map(|actor| engine.elem(actor).sprite.last_processed_order_id);
     engine.set_actors_frozen(true);
     crate::sim_rng::with_seed(1, |sim| {
-        engine.tick_actor_owner_envelopes(sim, &assets);
+        engine.tick_actor_owner_envelopes(TickCtx::new(sim, &assets));
     });
 
     assert!(
@@ -3670,8 +3703,7 @@ fn stunned_sword_initialisation_dispatches_adversary_weak_synchronously() {
 
     let mut synchronous_state = None;
     engine.tick_actor_owner_envelopes_with_test_owner_hook(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         |engine, owner| {
             if owner == stunned {
                 let ai = engine.enemy(opponent);
@@ -3738,7 +3770,7 @@ fn civilian_random_speech_closes_its_owner_boundary_before_the_lock_gate() {
         });
 
     engine.with_simulation_context(|engine, sim| {
-        engine.tick_civilian_random_speech_for_npc(sim, beggar, &assets);
+        engine.tick_civilian_random_speech_for_npc(TickCtx::new(sim, &assets), beggar);
     });
 
     let ai = engine.ai_ctrl(beggar);
@@ -3765,7 +3797,7 @@ fn civilian_owner_speech_rejects_missing_position_layer() {
     civilian.npc.ai_brain.base_mut().unwrap().me = id.index();
     engine.control.frame_counter = 100;
     engine.with_simulation_context(|engine, sim| {
-        engine.tick_civilian_random_speech_for_npc(sim, id, &LevelAssets::new());
+        engine.tick_civilian_random_speech_for_npc(TickCtx::new(sim, &LevelAssets::new()), id);
     });
 }
 
@@ -3905,7 +3937,7 @@ fn later_smalltalk_hint_defers_for_already_visited_defender() {
 
     let (mut engine, assets, _attacker, defender) = waiting_sword_pair(false);
     crate::sim_rng::with_seed(1, |sim| {
-        engine.tick_actor_owner_envelopes(sim, &assets);
+        engine.tick_actor_owner_envelopes(TickCtx::new(sim, &assets));
     });
 
     assert!(
@@ -3935,7 +3967,7 @@ fn earlier_initiative_transfer_drives_later_recipient_slot() {
         human.relative_fighting_ability = 100;
     }
     crate::sim_rng::with_seed(9, |sim| {
-        engine.tick_actor_owner_envelopes(sim, &assets);
+        engine.tick_actor_owner_envelopes(TickCtx::new(sim, &assets));
     });
 
     assert!(
@@ -3960,7 +3992,7 @@ fn later_initiative_transfer_cannot_reenter_visited_recipient_slot() {
         human.relative_fighting_ability = 100;
     }
     crate::sim_rng::with_seed(9, |sim| {
-        engine.tick_actor_owner_envelopes(sim, &assets);
+        engine.tick_actor_owner_envelopes(TickCtx::new(sim, &assets));
     });
 
     assert!(
@@ -4031,7 +4063,7 @@ fn earlier_opponent_prune_synchronously_quits_both_combatants() {
         }
 
         crate::sim_rng::with_seed(5, |sim| {
-            engine.tick_actor_owner_envelopes(sim, &assets);
+            engine.tick_actor_owner_envelopes(TickCtx::new(sim, &assets));
         });
         // The prune launches both QuitSwordfight elements at the owner slot,
         // but a normal-priority launch is only registered with the sequence
@@ -4039,9 +4071,8 @@ fn earlier_opponent_prune_synchronously_quits_both_combatants() {
         // element update in the frame — dispatches and completes them.
         crate::sim_rng::with_seed(5, |sim| {
             engine.hourglass_phase_sequences(
-                sim,
+                TickCtx::new(sim, &assets),
                 &mut crate::engine::HostDisplayState::default(),
-                &assets,
             );
         });
         for actor in [pruner, mutated] {
@@ -4120,7 +4151,7 @@ fn skipped_and_non_waiting_sword_slots_do_not_touch_combat_refs_or_rng() {
     );
 
     let observed = crate::sim_rng::with_seed(77, |sim| {
-        engine.tick_actor_owner_envelopes(sim, &assets);
+        engine.tick_actor_owner_envelopes(TickCtx::new(sim, &assets));
         crate::sim_rng::bool(sim, crate::sim_rng::RngSite::SmalltalkStrikeSide)
     });
     let expected = crate::sim_rng::with_seed(77, |sim| {
@@ -4342,7 +4373,10 @@ fn npc_searching_animation_allows_missing_antagonist() {
         )],
     );
 
-    engine.tick_actor_animation_for(&crate::sim_rng::test_context(), &assets, actor);
+    engine.tick_actor_animation_for(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        actor,
+    );
 
     assert_eq!(
         engine
@@ -4378,7 +4412,10 @@ fn npc_searching_animation_rejects_present_stale_antagonist() {
         ],
     );
 
-    engine.tick_actor_animation_for(&crate::sim_rng::test_context(), &assets, actor);
+    engine.tick_actor_animation_for(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        actor,
+    );
 }
 
 // ───────── Owner-local state-change notifications ─────────
@@ -4497,8 +4534,7 @@ fn retained_human_stimulus_reads_target_position_after_filter() {
         target.index(),
     ));
     engine.execute_ai_callback(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         &Stimulus::new(StimulusType::EventAfterScriptGoOn),
     );
@@ -4897,8 +4933,7 @@ fn run_ai_state_native_probe(engine: &mut EngineInner, assets: &LevelAssets, act
     let handle = crate::natives::ScriptHandleCodec::actor_handle(actor);
     engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            assets,
+            TickCtx::new(&crate::sim_rng::test_context(), assets),
             crate::engine::ScriptVmKey::Actor(handle),
             "Run",
             &[],
@@ -5358,8 +5393,7 @@ fn script_native_state_effects_stabilize_before_adjacent_instruction() {
         id: 0,
     });
     engine.duty_set_state(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         default,
         crate::ai::AiState::Seeking,
         crate::ai::Substate::SeekingJustWatching,
@@ -5504,8 +5538,7 @@ fn pre_existing_same_owner_moves_are_stopped_without_being_dispatched_as_causal_
         ..engine.live_ai_position(actor)
     };
     engine.launch_ai_move(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         actor,
         destination,
         crate::ai::GotoFlags::empty(),
@@ -5719,8 +5752,7 @@ fn unrelated_detection_event_does_not_resolve_entering_primary_or_officer_foreca
     let sim = crate::sim_rng::test_context();
     let (_, trace) = with_draw_trace(|| {
         engine.dispatch_filtered_stimulus(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             owner,
             &Stimulus::with_human(StimulusType::EventView, entering_primary.index()),
         )
@@ -5927,8 +5959,7 @@ fn enemy_state_change_callback_is_owner_local_observes_outgoing_and_ignores_zero
     bind_state_change_actor(&mut engine, enemy, "StateMutator");
 
     engine.duty_set_state(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         enemy,
         crate::ai::AiState::Seeking,
         crate::ai::Substate::SeekingHeardsteps,
@@ -6013,8 +6044,7 @@ fn enemy_state_change_sources_and_same_substate_gate_match_original() {
         ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(target_raw));
     }
     engine.duty_set_state(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         enemy,
         crate::ai::AiState::Attacking,
         crate::ai::Substate::AttackingSwordfight,
@@ -6022,8 +6052,7 @@ fn enemy_state_change_sources_and_same_substate_gate_match_original() {
     assert_eq!(npc_custom_values(&engine, enemy)[0], target_handle);
 
     engine.duty_set_state(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         enemy,
         crate::ai::AiState::Attacking,
         crate::ai::Substate::AttackingSwordfight,
@@ -6045,8 +6074,7 @@ fn enemy_state_change_sources_and_same_substate_gate_match_original() {
         ai.base.primary_target = None;
     }
     engine.duty_set_state(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         enemy,
         crate::ai::AiState::Fleeing,
         crate::ai::Substate::FleeingPanic,
@@ -6085,8 +6113,7 @@ fn friendly_repeated_state_change_callbacks_see_target_alert_and_outgoing_state(
         ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(target.index()));
     }
     engine.duty_set_state(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         friendly,
         crate::ai::AiState::Fleeing,
         crate::ai::Substate::FleeingPanic,
@@ -6098,8 +6125,7 @@ fn friendly_repeated_state_change_callbacks_see_target_alert_and_outgoing_state(
     assert_eq!(first[3], crate::ai::AlertLevel::Yellow as i32);
 
     engine.duty_set_state(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         friendly,
         crate::ai::AiState::Fleeing,
         crate::ai::Substate::FleeingPanic,
@@ -6138,7 +6164,7 @@ fn owner_state_changes_complete_each_transition_inline() {
             crate::ai::Substate::DefaultOnPost,
         ),
     ] {
-        engine.duty_set_state(&sim, &assets, friendly, state, substate);
+        engine.duty_set_state(TickCtx::new(&sim, &assets), friendly, state, substate);
     }
     let values = npc_custom_values(&engine, friendly);
     assert_eq!(&values[4..7], &[102, 103, 101]);
@@ -6280,8 +6306,7 @@ fn run_cross_owner_state_change_order(mutator_first: bool) -> i32 {
     };
     for actor in order {
         engine.duty_set_state(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             actor,
             crate::ai::AiState::Seeking,
             crate::ai::Substate::SeekingJustWatching,
@@ -6367,8 +6392,7 @@ fn direct_parade_and_special_strike_drain_boundary_does_not_leak() {
         ai.base.current_substate = crate::ai::Substate::AttackingSwordfight;
     }
     engine.duty_set_state(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         enemy,
         crate::ai::AiState::Attacking,
         crate::ai::Substate::AttackingSwordfightParade,
@@ -6388,7 +6412,7 @@ fn direct_parade_and_special_strike_drain_boundary_does_not_leak() {
             .unwrap();
         ai.base.current_substate = crate::ai::Substate::AttackingSwordfight;
     }
-    engine.begin_ai_special_strike(&sim, &assets, enemy);
+    engine.begin_ai_special_strike(TickCtx::new(&sim, &assets), enemy);
     let ai = engine
         .world
         .entities
@@ -6406,15 +6430,9 @@ fn direct_parade_and_special_strike_drain_boundary_does_not_leak() {
 
 #[test]
 fn unavailable_state_change_callbacks_do_not_block_state_commit() {
-    fn change_to_seeking(
-        engine: &mut EngineInner,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        actor: EntityId,
-    ) {
+    fn change_to_seeking(engine: &mut EngineInner, tcx: TickCtx<'_>, actor: EntityId) {
         engine.duty_set_state(
-            sim,
-            assets,
+            tcx,
             actor,
             crate::ai::AiState::Seeking,
             crate::ai::Substate::SeekingJustWatching,
@@ -6436,7 +6454,7 @@ fn unavailable_state_change_callbacks_do_not_block_state_commit() {
 
     let mut no_mission = EngineInner::new();
     let actor = no_mission.add_test_entity(make_scripted_soldier("StateRecorder"));
-    change_to_seeking(&mut no_mission, &sim, &assets, actor);
+    change_to_seeking(&mut no_mission, TickCtx::new(&sim, &assets), actor);
     assert_committed(&no_mission, actor);
 
     let mut unbound = EngineInner::new();
@@ -6449,14 +6467,14 @@ fn unavailable_state_change_callbacks_do_not_block_state_commit() {
             None,
         )]),
     );
-    change_to_seeking(&mut unbound, &sim, &assets, actor);
+    change_to_seeking(&mut unbound, TickCtx::new(&sim, &assets), actor);
     assert_committed(&unbound, actor);
 
     let mut no_override = EngineInner::new();
     let actor = no_override.add_test_entity(make_scripted_soldier("NoOverride"));
     let assets = install_state_change_script(&mut no_override, build_scb());
     bind_state_change_actor(&mut no_override, actor, "NoOverride");
-    change_to_seeking(&mut no_override, &sim, &assets, actor);
+    change_to_seeking(&mut no_override, TickCtx::new(&sim, &assets), actor);
     assert_committed(&no_override, actor);
 
     let mut unscripted = EngineInner::new();
@@ -6470,7 +6488,7 @@ fn unavailable_state_change_callbacks_do_not_block_state_commit() {
         )]),
     );
     bind_state_change_actor(&mut unscripted, actor, "StateRecorder");
-    change_to_seeking(&mut unscripted, &sim, &assets, actor);
+    change_to_seeking(&mut unscripted, TickCtx::new(&sim, &assets), actor);
     assert_committed(&unscripted, actor);
     assert_eq!(
         npc_custom_values(&unscripted, actor)[9],
@@ -6494,7 +6512,7 @@ fn unavailable_state_change_callbacks_do_not_block_state_commit() {
         ..Default::default()
     };
     let disabled_sim = crate::sim_rng::SimulationContext::with_seed_and_config(1, config);
-    change_to_seeking(&mut disabled, &disabled_sim, &assets, actor);
+    change_to_seeking(&mut disabled, TickCtx::new(&disabled_sim, &assets), actor);
     assert_committed(&disabled, actor);
     assert_eq!(
         npc_custom_values(&disabled, actor)[9],
@@ -6570,8 +6588,7 @@ fn fit_again_engine_calls_surround_state_callback_in_original_order() {
         let (_, observations) = super::script::capture_ai_state_callback_observations(|| {
             crate::sim_rng::with_seed(0xA013_F17A, |sim| {
                 engine.dispatch_filtered_stimulus(
-                    sim,
-                    &assets,
+                    TickCtx::new(sim, &assets),
                     owner,
                     &Stimulus::new(StimulusType::EventFitAgain),
                 )
@@ -6670,8 +6687,7 @@ fn patrol_arrival_registers_turn_before_returning_without_halting_selected_move(
     engine.t_element_in_progress(&assets, selected, 0);
 
     let handled = engine.dispatch_filtered_stimulus(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         &Stimulus::new(StimulusType::EventReachPoint),
     );
@@ -6794,8 +6810,7 @@ fn patrol_arrival_callback_can_lock_owner_before_recursive_done() {
     ai.current_substate = Substate::DefaultGotoRoute;
     ai.patrol_path = PatrolPath::new(PathId::new(0).unwrap(), &assets.navigation.hiking_paths);
     engine.dispatch_filtered_stimulus(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         &Stimulus::new(StimulusType::EventReachPoint),
     );

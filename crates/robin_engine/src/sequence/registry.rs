@@ -56,7 +56,7 @@ impl SequenceManager {
     }
 
     pub(super) fn insert_actor_live_ref(&mut self, owner: EntityId, elem_ref: SequenceElementRef) {
-        self.get_element(elem_ref.sequence_id, elem_ref.element_index)
+        self.get_element_at(elem_ref)
             .expect("cannot index missing live element");
         self.actor_live.entry(owner).or_default().insert(elem_ref);
     }

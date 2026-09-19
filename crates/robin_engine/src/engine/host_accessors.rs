@@ -4,6 +4,8 @@
 //! `engine/mod.rs` so that file holds mission lifecycle only.
 
 use super::*;
+use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 impl EngineInner {
     // ─── Read-only accessors for host renderer / input ───────────
@@ -127,12 +129,7 @@ impl EngineInner {
     /// Original-game shoot-list processing retries the oldest
     /// retained element synchronously, and remove it only when instruction handling
     /// accepts it. The sprite animation gate is deliberately exact.
-    pub(crate) fn process_shoot_list_for(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
+    pub(crate) fn process_shoot_list_for(&mut self, tcx: TickCtx<'_>, owner: EntityId) {
         let entity = self.world.entities.get(owner).unwrap_or_else(|| {
             panic!(
                 "shoot-list owner {} disappeared from its legacy slot",
@@ -158,12 +155,10 @@ impl EngineInner {
             return;
         };
         let accepted = self.instruct_owner(
-            sim,
-            assets,
+            tcx,
             &mut Vec::new(),
             owner,
-            element_ref.sequence_id,
-            element_ref.element_index,
+            SequenceElementRef::new(element_ref.sequence_id, element_ref.element_index),
         );
         if accepted {
             let human = self
@@ -294,13 +289,11 @@ impl EngineInner {
     /// Deliver a host-originated simulation message immediately.
     pub(crate) fn send_simple_message(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         msg: crate::messenger::SimpleMessage,
     ) {
         self.forward_message(
-            sim,
-            assets,
+            tcx,
             crate::messenger::Message::new(crate::messenger::MessageType::Simple(msg)),
         );
     }
@@ -418,18 +411,15 @@ impl EngineInner {
     /// pushing it onto the given element.
     pub(crate) fn push_new_order(
         &mut self,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
         order_type: crate::order::OrderType,
         x: f32,
         y: f32,
     ) -> std::num::NonZeroU32 {
         let id = self.orders.allocate_order_id();
-        self.orders.sequence_manager.push_order_on(
-            seq_id,
-            elem_idx,
-            crate::order::Order::new(order_type, x, y, id),
-        );
+        self.orders
+            .sequence_manager
+            .push_order_at(elem_ref, crate::order::Order::new(order_type, x, y, id));
         id
     }
 
@@ -449,13 +439,11 @@ impl EngineInner {
     /// — its Execute arm consumes the event in
     /// `dispatch_arm_completion` (`engine/animation.rs`) and mutates
     /// the front order in place without popping.
-    pub(crate) fn do_next_order(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
-    ) {
+    pub(crate) fn do_next_order(&mut self, tcx: TickCtx<'_>, elem_ref: SequenceElementRef) {
+        let SequenceElementRef {
+            sequence_id: seq_id,
+            element_index: elem_idx,
+        } = elem_ref;
         if tracing::enabled!(target: "parity_owner_handoff", tracing::Level::TRACE) {
             let element_state = self
                 .orders
@@ -594,7 +582,11 @@ impl EngineInner {
         // Removal-notification callback can synchronously instruct a real
         // successor. The actor's next update entry supplies Wait only if
         // that stack unwinds without one.
-        self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
+        self.element_terminated(
+            tcx,
+            &mut Vec::new(),
+            SequenceElementRef::new(seq_id, elem_idx),
+        );
     }
 
     /// Guarantee that `entity_id` has a live `Command::Wait` sequence
@@ -607,12 +599,7 @@ impl EngineInner {
     /// Exhausting the final order does not call this again in the same slot:
     /// The original game leaves the actor order empty through ActionChange and creates the
     /// fallback Wait on the actor's next frame.
-    pub(crate) fn ensure_wait_element(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        entity_id: EntityId,
-    ) {
+    pub(crate) fn ensure_wait_element(&mut self, tcx: TickCtx<'_>, entity_id: EntityId) {
         use crate::sequence::{SequenceElement, SequencePriority};
 
         // The original actor update installs Wait whenever the actor has no
@@ -637,7 +624,7 @@ impl EngineInner {
         // Bypassing it made a freshly loaded upright NPC jump straight from
         // its authored WAITING_UPRIGHT pose to WAITING_UPRIGHT_BORED on the
         // first frame.
-        self.launch_element(sim, assets, elem);
+        self.launch_element(tcx, elem);
     }
 
     /// Consume the typed motion-stage input and feed it into
@@ -935,12 +922,9 @@ impl EngineInner {
     /// The serialized flag keeps both live play and rollback replay
     /// idempotent; [`EngineInner::perform_post_initialize`] owns the
     /// original post-refresh host boundary.
-    pub(crate) fn run_post_initialize_if_needed(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
-        if !sim.config().script_enabled || self.script_domains.mission_ui.game_post_initialized {
+    pub(crate) fn run_post_initialize_if_needed(&mut self, tcx: TickCtx<'_>) {
+        if !tcx.sim.config().script_enabled || self.script_domains.mission_ui.game_post_initialized
+        {
             return;
         }
         // Original RHGame owns this latch, setting it before the optional
@@ -952,8 +936,7 @@ impl EngineInner {
 
         let result = self
             .call_script_vm(
-                sim,
-                assets,
+                tcx,
                 ScriptVmKey::Global,
                 "PostInitialize",
                 &[],

@@ -4,8 +4,6 @@ use crate::ai::{
     AiEntityHandle, AiState, EmoticonType, GotoFlags, Position, Remark, ReportType, Substate,
 };
 use crate::ai_enemy::{EnemyAi, ProfileRank, task_priority};
-#[cfg(test)]
-use crate::sim_rng::SimulationContext;
 
 #[cfg(test)]
 mod tests;
@@ -37,28 +35,6 @@ impl EngineInner {
             .base
             .set_emoticon(EmoticonType::QuestionMark);
     }
-    #[cfg(test)]
-    pub(super) fn execute_ai_react_live(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        maximum: u16,
-    ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_react_live(maximum)
-    }
-
-    #[cfg(test)]
-    pub(super) fn execute_ai_seen_enemy(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        target: u32,
-    ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_seen_enemy(target)
-    }
-
     fn observation_enemy_below(&self, owner: EntityId, target: EntityId) -> bool {
         let me = self.expect_entity(owner, "below observer");
         if me.element_data().posture() == crate::element::Posture::LeaningOut {
@@ -80,39 +56,6 @@ impl EngineInner {
         let dy = (b.y - a.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
         dx * dx + dy * dy <= height * height
     }
-    #[cfg(test)]
-    pub(super) fn execute_ai_seen_shadow(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        position: Position,
-    ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_seen_shadow(position)
-    }
-
-    #[cfg(test)]
-    pub(super) fn execute_ai_received_arrow(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        origin: Position,
-    ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_received_arrow(origin)
-    }
-
-    #[cfg(test)]
-    pub(super) fn execute_ai_seen_object(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        object: u32,
-    ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_seen_object(object)
-    }
-
     fn unavailable_ale_position(
         &mut self,
         assets: &LevelAssets,
@@ -171,27 +114,6 @@ impl EngineInner {
         }
         None
     }
-    #[cfg(test)]
-    pub(super) fn execute_ai_ale_approach(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        arrived: bool,
-    ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_ale_approach(arrived)
-    }
-
-    #[cfg(test)]
-    pub(super) fn execute_ai_ale_reaction(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_ale_reaction()
-    }
-
     pub(in crate::engine) fn reliable_ale_for_actor(
         &self,
         assets: &LevelAssets,
@@ -277,7 +199,7 @@ impl AiOwnerCtx<'_> {
             let difficulty = self.engine.control.sim_config.difficulty;
             let modifier = if self.engine.is_hostile_to_player_camp(entity.camp()) {
                 if difficulty == crate::player_profile::DifficultyLevel::Hard
-                    && !self.sim.config().fix_hard_reaction_times
+                    && !self.tcx.sim.config().fix_hard_reaction_times
                 {
                     2.0
                 } else {
@@ -292,7 +214,7 @@ impl AiOwnerCtx<'_> {
                 - self
                     .engine
                     .observation_ai(self.owner)
-                    .profile(&self.assets.profile_manager)
+                    .profile(&self.tcx.assets.profile_manager)
                     .intelligence as f32)
                 * 0.01
                 * f32::from(maximum)
@@ -360,7 +282,7 @@ impl AiOwnerCtx<'_> {
                 .element_data(),
         ) {
             self.engine
-                .dispatch_enemy_in_house_alert(self.sim, self.owner, self.assets);
+                .dispatch_enemy_in_house_alert(self.tcx, self.owner);
             return;
         }
         self.engine.reinitialize_live_ai_enemies(self.owner);
@@ -370,7 +292,7 @@ impl AiOwnerCtx<'_> {
         }
         let hint = self.engine.live_ai_position(enemy);
         self.engine
-            .execute_ai_look_there(self.sim, self.assets, self.owner, hint, 100);
+            .execute_ai_look_there(self.tcx, self.owner, hint, 100);
         if self
             .engine
             .expect_entity(self.owner, "post-sighting action")
@@ -463,7 +385,7 @@ impl AiOwnerCtx<'_> {
         self.observation_stop();
         self.duty_set_state(AiState::Default, Substate::DefaultLookingShadow);
         self.engine.execute_ai_set_alert_status(
-            self.assets,
+            self.tcx.assets,
             self.owner,
             crate::ai::AlertLevel::Yellow,
             crate::ai::AlertFlags::ONLY_MUSIC,
@@ -486,8 +408,8 @@ impl AiOwnerCtx<'_> {
             .update(ReportType::Enemy, origin);
         let ai = self.engine.observation_ai(self.owner);
         let seeking = ai.base.current_state == AiState::Seeking
-            && ai.get_rank(&self.assets.profile_manager) != ProfileRank::Officer;
-        let rank = ai.get_rank(&self.assets.profile_manager);
+            && ai.get_rank(&self.tcx.assets.profile_manager) != ProfileRank::Officer;
+        let rank = ai.get_rank(&self.tcx.assets.profile_manager);
         if !seeking
             && !matches!(
                 rank,
@@ -514,7 +436,7 @@ impl AiOwnerCtx<'_> {
         self.engine
             .ai
             .global
-            .set_pos_on_near_seek_point(self.sim, here, &mut point, 0.3, 0);
+            .set_pos_on_near_seek_point(self.tcx.sim, here, &mut point, 0.3, 0);
         self.engine
             .observation_ai_mut(self.owner)
             .base
@@ -531,7 +453,7 @@ impl AiOwnerCtx<'_> {
             .interesting_object;
         self.engine.observation_focus(self.owner, object);
         self.engine
-            .execute_ai_look_there(self.sim, self.assets, self.owner, origin, 200);
+            .execute_ai_look_there(self.tcx, self.owner, origin, 200);
         if rank == ProfileRank::Officer {
             self.engine
                 .observation_timer(self.owner, crate::parameters_ai::AI_FIRST_LOOK_TIME as u32);
@@ -588,7 +510,7 @@ impl AiOwnerCtx<'_> {
                 let delay = if self
                     .engine
                     .observation_ai(self.owner)
-                    .get_rank(&self.assets.profile_manager)
+                    .get_rank(&self.tcx.assets.profile_manager)
                     == ProfileRank::Officer
                 {
                     60
@@ -626,7 +548,7 @@ impl AiOwnerCtx<'_> {
     pub(super) fn execute_ai_ale_approach(&mut self, arrived: bool) {
         if let Some(position) = self
             .engine
-            .unavailable_ale_position(self.assets, self.owner)
+            .unavailable_ale_position(self.tcx.assets, self.owner)
         {
             self.duty_face_position_ground(position);
             self.engine
@@ -653,7 +575,7 @@ impl AiOwnerCtx<'_> {
                 Some(self.owner),
                 Some(object),
             ));
-            self.engine.launch_sequence(self.sim, self.assets, sequence);
+            self.engine.launch_sequence(self.tcx, sequence);
 
             self.duty_set_state(AiState::Wondering, Substate::WonderingDrinkingAle);
         } else {
@@ -670,8 +592,10 @@ impl AiOwnerCtx<'_> {
                 && !self
                     .engine
                     .entity_data_in_building_sector(actor.element_data())
-                && (ai.profile(&self.assets.profile_manager).beer > 0
-                    || self.engine.reliable_ale_for_actor(self.assets, self.owner)));
+                && (ai.profile(&self.tcx.assets.profile_manager).beer > 0
+                    || self
+                        .engine
+                        .reliable_ale_for_actor(self.tcx.assets, self.owner)));
         if take {
             let ai = self.engine.observation_ai_mut(self.owner);
             ai.base.object_of_desire = ai.base.interesting_object;

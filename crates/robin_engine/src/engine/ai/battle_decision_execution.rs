@@ -10,7 +10,7 @@ use crate::ai::{
 use crate::ai_enemy::{
     AiMapVec, BattleDecisionInputs, PrimaryTargetFlags, SeekFlags, archer, combat,
 };
-use crate::sim_rng::SimulationContext;
+use crate::engine::TickCtx;
 use std::ops::ControlFlow;
 
 #[cfg(test)]
@@ -32,15 +32,9 @@ mod tests {
                 .expect_enemy_ai_mut(owner, format_args!("empty battle"))
                 .list_them
                 .clear();
-            let result = engine.execute_live_battle_decision(
-                &crate::sim_rng::test_context(),
-                &assets,
-                owner,
-                decision,
-                Substate::AttackingReactiontime,
-                0,
-                false,
-            );
+            let result = engine
+                .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                .execute_live_battle_decision(decision, Substate::AttackingReactiontime, 0, false);
             assert_eq!(result, Some(Decision::Reserve));
             let ai = engine
                 .world
@@ -73,7 +67,9 @@ mod tests {
                 .element_data_mut()
                 .set_position_map(MapPoint::new(x, y));
             let expected = engine.live_ai_position(target);
-            engine.execute_battle_decisions(&crate::sim_rng::test_context(), &assets, owner);
+            engine
+                .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                .execute_battle_decisions();
             let ai = engine
                 .world
                 .entities
@@ -134,22 +130,9 @@ impl EngineInner {
                 || (!ai.combat_trainer && ai.company_number != 100))
     }
 
-    #[cfg(test)]
-    pub(super) fn execute_live_battle_without_visible_enemies(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        unconscious: Vec<HumanHandle>,
-    ) {
-        AiOwnerCtx::new(self, sim, assets, owner)
-            .execute_live_battle_without_visible_enemies(unconscious)
-    }
-
     pub(super) fn choose_live_battle_decision(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         inputs: BattleDecisionInputs,
     ) -> (Decision, HumanHandle) {
@@ -177,7 +160,7 @@ impl EngineInner {
             );
             return (forced, 0);
         }
-        let predecision = self.execute_ai_make_battle_predecisions(sim, assets, owner);
+        let predecision = self.execute_ai_make_battle_predecisions(tcx, owner);
         let ai = self.enemy_ai(owner, "battle decision tree");
         if ai.combat_trainer {
             return (Decision::Observe, 0);
@@ -200,7 +183,7 @@ impl EngineInner {
             {
                 Decision::RunForNewArrows
             } else if !ai.base.friends_are_alerted && !only_soldiers && ai.base.blood_alcohol == 0 {
-                match ai.get_rank(&assets.profile_manager) {
+                match ai.get_rank(&tcx.assets.profile_manager) {
                     crate::profiles::ProfileRank::Soldier => Decision::LookForHelp,
                     crate::profiles::ProfileRank::Officer => Decision::RunAndAlertSoldiers,
                     _ => Decision::Cassos,
@@ -221,7 +204,7 @@ impl EngineInner {
                     0,
                 );
             }
-            if self.live_archer_is_too_near(assets, owner, ai.base.primary_target) {
+            if self.live_archer_is_too_near(tcx.assets, owner, ai.base.primary_target) {
                 return (Decision::ArcherStepBack, 0);
             }
             let ai = self.enemy_ai(owner, "archer cover decision");
@@ -245,11 +228,11 @@ impl EngineInner {
             if ai.my_shooting_point.is_some() {
                 return (Decision::Shoot, 0);
             }
-            if self.choose_ai_good_shooting_point(assets, owner) {
+            if self.choose_ai_good_shooting_point(tcx.assets, owner) {
                 return (Decision::RunToArcheryPoint, 0);
             }
             return self
-                .nearest_live_free_shield_bearer(assets, owner)
+                .nearest_live_free_shield_bearer(tcx.assets, owner)
                 .map_or((Decision::Shoot, 0), |bearer| {
                     (Decision::CoverBehindShieldBearer, bearer.index())
                 });
@@ -268,7 +251,7 @@ impl EngineInner {
                 0,
             );
         }
-        if ai.get_rank(&assets.profile_manager) == crate::profiles::ProfileRank::Officer
+        if ai.get_rank(&tcx.assets.profile_manager) == crate::profiles::ProfileRank::Officer
             && inputs.simple_soldiers_near
             && !ai.base.friends_are_alerted
             && ai.base.blood_alcohol == 0
@@ -285,7 +268,7 @@ impl EngineInner {
         {
             return (Decision::LastReserve, 0);
         }
-        if inputs.soldiers_lower_pride && self.live_ai_is_too_proud_to_attack(assets, owner) {
+        if inputs.soldiers_lower_pride && self.live_ai_is_too_proud_to_attack(tcx.assets, owner) {
             return (Decision::TooProudToAttack, 0);
         }
         if self.expect_entity(owner, "observing soldier camp").camp() == Camp::Lacklandists
@@ -293,7 +276,7 @@ impl EngineInner {
         {
             let courage = self
                 .enemy_ai(owner, "observe courage")
-                .get_courage(&assets.profile_manager);
+                .get_courage(&tcx.assets.profile_manager);
             let enemies = inputs.num_enemies_i_can_see as f32;
             if f32::from(inputs.friends_nearer_to_enemy)
                 >= enemies + enemies * (0.045_f32 * f32::from(courage))
@@ -302,25 +285,6 @@ impl EngineInner {
             }
         }
         (Decision::Fight, 0)
-    }
-
-    #[cfg(test)]
-    pub(in crate::engine) fn execute_live_battle_decision(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        decision: Decision,
-        old_substate: Substate,
-        cover: HumanHandle,
-        alerting_near: bool,
-    ) -> Option<Decision> {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_live_battle_decision(
-            decision,
-            old_substate,
-            cover,
-            alerting_near,
-        )
     }
 }
 
@@ -345,18 +309,18 @@ impl AiOwnerCtx<'_> {
 
     fn battle_command(&mut self, command: crate::element::Command) {
         self.engine.launch_element(
-            self.sim,
-            self.assets,
+            self.tcx,
             crate::sequence::SequenceElement::new(1, command, Some(self.owner)),
         );
     }
 
     fn battle_panic_remark(&mut self) {
-        let remark = if crate::sim_rng::bool(self.sim, crate::sim_rng::RngSite::BattlePanicRemark) {
-            Remark::Cassos
-        } else {
-            Remark::Panic
-        };
+        let remark =
+            if crate::sim_rng::bool(self.tcx.sim, crate::sim_rng::RngSite::BattlePanicRemark) {
+                Remark::Cassos
+            } else {
+                Remark::Panic
+            };
         self.execute_ai_speech(AiSpeechAttempt { remark, flags: 0 });
     }
 
@@ -453,7 +417,7 @@ impl AiOwnerCtx<'_> {
                     &self.engine.world.fast_grid.level.sectors,
                     &self.engine.world.fast_grid.level.sector_number_map,
                 )
-                .resolve_retaining_direction(self.sim, ai.pc_gone_away_in_this_direction);
+                .resolve_retaining_direction(self.tcx.sim, ai.pc_gone_away_in_this_direction);
                 let ai = self
                     .engine
                     .enemy_ai_mut(self.owner, "missed battle forecast result");
@@ -469,23 +433,15 @@ impl AiOwnerCtx<'_> {
                 direction,
             );
         } else if !unconscious.is_empty() && !self.engine.battle_forest_merry_man(self.owner) {
-            self.engine.execute_approach_sleeping_enemies(
-                self.sim,
-                self.assets,
-                self.owner,
-                unconscious,
-            );
+            self.engine
+                .execute_approach_sleeping_enemies(self.tcx, self.owner, unconscious);
         } else {
             let camp = self
                 .engine
                 .expect_entity(self.owner, "sleeping enemy search camp")
                 .camp();
-            self.engine.execute_kill_nearby_sleeping_enemies(
-                self.sim,
-                self.assets,
-                self.owner,
-                camp,
-            );
+            self.engine
+                .execute_kill_nearby_sleeping_enemies(self.tcx, self.owner, camp);
         }
     }
 
@@ -533,7 +489,7 @@ impl AiOwnerCtx<'_> {
                         .is_sword()
                     {
                         if crate::sim_rng::u32(
-                            self.sim,
+                            self.tcx.sim,
                             crate::sim_rng::RngSite::BattleProvoke,
                             0..4,
                         ) == 0
@@ -571,8 +527,7 @@ impl AiOwnerCtx<'_> {
                             .select_battle_primary(self.owner, PrimaryTargetFlags::VIPS_ALLOWED);
                         let center = target.map(|target| self.engine.live_ai_position(target));
                         self.engine.execute_ai_panic(
-                            self.sim,
-                            self.assets,
+                            self.tcx,
                             self.owner,
                             center,
                             crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
@@ -591,12 +546,10 @@ impl AiOwnerCtx<'_> {
                             .ai_mut(self.owner, "battle alert latch")
                             .friends_are_alerted = true;
                         let center = self.engine.live_ai_position(target);
-                        if self.engine.execute_ai_command_soldiers_to_attack(
-                            self.sim,
-                            self.assets,
-                            self.owner,
-                            center,
-                        ) {
+                        if self
+                            .engine
+                            .execute_ai_command_soldiers_to_attack(self.tcx, self.owner, center)
+                        {
                             self.execute_ai_speech(AiSpeechAttempt {
                                 remark: Remark::OfficerGivesAttackOrder,
                                 flags: 0,
@@ -684,22 +637,19 @@ impl AiOwnerCtx<'_> {
                     ControlFlow::Break(true)
                 }
                 Decision::RunForNewArrows => self.execute_ai_battle_run_for_arrows(),
-                Decision::RunToArcheryPoint => {
-                    self.engine
-                        .execute_ai_battle_archery_point(self.sim, self.assets, self.owner)
-                }
+                Decision::RunToArcheryPoint => self
+                    .engine
+                    .execute_ai_battle_archery_point(self.tcx, self.owner),
                 Decision::TooProudToAttack => self.execute_ai_battle_too_proud(old_substate),
                 Decision::ArcherStepBack => self.engine.execute_ai_battle_archer_step_back(
-                    self.sim,
-                    self.assets,
+                    self.tcx,
                     self.owner,
                     old_substate,
                 ),
                 Decision::ArcherObserve => self.execute_ai_battle_archer_observe(),
-                Decision::CoverBehindShieldBearer => {
-                    self.engine
-                        .execute_ai_battle_cover(self.sim, self.assets, self.owner, cover)
-                }
+                Decision::CoverBehindShieldBearer => self
+                    .engine
+                    .execute_ai_battle_cover(self.tcx, self.owner, cover),
                 _ => panic!("unsupported battle decision {decision:?}"),
             };
             match outcome {
@@ -743,7 +693,7 @@ impl AiOwnerCtx<'_> {
             let distance = crate::ai::AiController::value_between(
                 crate::parameters_ai::OBSERVE_SWORDFIGHT_MAX_DISTANCE,
                 crate::parameters_ai::OBSERVE_SWORDFIGHT_MIN_DISTANCE,
-                ai.get_courage(&self.assets.profile_manager) as u8,
+                ai.get_courage(&self.tcx.assets.profile_manager) as u8,
             );
             self.duty_go_near(destination, i32::from(distance), GotoFlags::empty());
         }

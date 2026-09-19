@@ -4,18 +4,17 @@ use super::swordfight_candidates::LiveCombatFighters;
 use super::*;
 use crate::ai::{AiEntityHandle, AiSpeechAttempt, AiState, GotoFlags, Position, Remark, Substate};
 use crate::ai_enemy::{AiMapVec, CombatFighterAccess, rider_charge_goal_geometry};
-use crate::sim_rng::SimulationContext;
+use crate::engine::TickCtx;
 use crate::weapons::WeaponDistance;
 
 impl EngineInner {
     pub(in crate::engine) fn execute_ai_rebalance_swordfight(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         target: EntityId,
     ) {
-        if self.direct_enter_swordfight(sim, assets, owner, target) {
+        if self.direct_enter_swordfight(tcx, owner, target) {
             self.enemy_ai_mut(owner, "combat rebalance")
                 .base
                 .primary_target = Some(AiEntityHandle::new(target.index()));
@@ -91,32 +90,10 @@ impl EngineInner {
 
     pub(in crate::engine) fn execute_ai_begin_swordfight(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_begin_swordfight()
-    }
-
-    #[cfg(test)]
-    pub(in crate::engine) fn execute_ai_reconsider_enemy_approach(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        reachpoint: bool,
-    ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_reconsider_enemy_approach(reachpoint)
-    }
-
-    #[cfg(test)]
-    pub(in crate::engine) fn execute_ai_maybe_make_rider_attack(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) -> bool {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_maybe_make_rider_attack()
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_begin_swordfight()
     }
 
     fn live_rider_attack_destination(
@@ -221,8 +198,7 @@ impl AiOwnerCtx<'_> {
             return;
         }
         self.engine.launch_element(
-            self.sim,
-            self.assets,
+            self.tcx,
             crate::sequence::SequenceElement::new(
                 1,
                 crate::element::Command::QuitSwordfight,
@@ -245,13 +221,12 @@ impl AiOwnerCtx<'_> {
             crate::sequence::Field::JumplineDestination,
             crate::sequence::FieldValue::Integer(0),
         );
-        self.engine.launch_element(self.sim, self.assets, element);
+        self.engine.launch_element(self.tcx, element);
     }
 
     pub(in crate::engine) fn execute_ai_begin_swordfight(&mut self) {
         self.stop_ai_owner();
-        self.engine
-            .nearby_civilians_panic(self.sim, self.assets, self.owner);
+        self.engine.nearby_civilians_panic(self.tcx, self.owner);
 
         let target = self.engine.approach_primary(self.owner);
         let entity = self.engine.expect_entity(target, "swordfight target stop");
@@ -267,8 +242,7 @@ impl AiOwnerCtx<'_> {
                 .is_moving()
         {
             self.engine.stop_actor_orders(
-                self.sim,
-                self.assets,
+                self.tcx,
                 &mut Vec::new(),
                 target,
                 crate::sequence::SequencePriority::Normal,
@@ -301,7 +275,7 @@ impl AiOwnerCtx<'_> {
             crate::sequence::Field::SwordfightPrepared,
             crate::sequence::FieldValue::Integer(0),
         );
-        self.engine.launch_element(self.sim, self.assets, element);
+        self.engine.launch_element(self.tcx, element);
 
         self.engine.clear_live_combat_neighbours(self.owner);
         self.engine.approach_focus(self.owner, None);
@@ -352,12 +326,14 @@ impl AiOwnerCtx<'_> {
                 .ai_mut(self.owner, "approach carrier substitution")
                 .primary_target = Some(AiEntityHandle::new(target.index()));
         }
-        let standard_range = self.engine.approach_sword_range(self.assets, self.owner);
+        let standard_range = self
+            .engine
+            .approach_sword_range(self.tcx.assets, self.owner);
         let sword_range = standard_range.wrapping_add(10);
         let courage = self
             .engine
             .enemy_ai(self.owner, "approach courage")
-            .get_courage(&self.assets.profile_manager);
+            .get_courage(&self.tcx.assets.profile_manager);
         let mut run_distance = (2 * (100 - courage)).max(sword_range);
         let my_position = self.engine.live_ai_position(self.owner);
         let mut target_position = self.engine.live_ai_position(target);
@@ -366,7 +342,7 @@ impl AiOwnerCtx<'_> {
             .sqrt() as u16;
         let maximal_range = LiveCombatFighters {
             engine: self.engine,
-            assets: self.assets,
+            assets: self.tcx.assets,
             owner: self.owner,
         }
         .sword_range_maximal(self.owner.index());
@@ -481,7 +457,7 @@ impl AiOwnerCtx<'_> {
             }
             Substate::AttackingReactiontime | Substate::AttackingReactiontimeRunning => (
                 ai.sword_is_charge_weapon
-                    && ai.get_courage(&self.assets.profile_manager)
+                    && ai.get_courage(&self.tcx.assets.profile_manager)
                         >= crate::ai_enemy::combat::CHARGE_MIN_COURAGE
                     && i32::from(distance) >= crate::ai_enemy::combat::CHARGE_MIN_DISTANCE
                     && ai.my_line_jump.is_none()
@@ -545,7 +521,9 @@ impl AiOwnerCtx<'_> {
             charge = false;
             below = false;
             reconsider = true;
-            run_distance = self.engine.approach_sword_range(self.assets, self.owner);
+            run_distance = self
+                .engine
+                .approach_sword_range(self.tcx.assets, self.owner);
         }
         if !reconsider {
             self.engine.approach_timer(self.owner, 10);
@@ -587,7 +565,8 @@ impl AiOwnerCtx<'_> {
                 (
                     Substate::AttackingChargingEnemy,
                     GotoFlags::RUN | GotoFlags::CHARGE,
-                    self.engine.approach_sword_range(self.assets, self.owner),
+                    self.engine
+                        .approach_sword_range(self.tcx.assets, self.owner),
                 )
             } else {
                 (
@@ -604,13 +583,15 @@ impl AiOwnerCtx<'_> {
             (
                 Substate::AttackingRunningToEnemy,
                 GotoFlags::RUN | GotoFlags::DONT_STOP,
-                self.engine.approach_sword_range(self.assets, self.owner),
+                self.engine
+                    .approach_sword_range(self.tcx.assets, self.owner),
             )
         } else {
             (
                 Substate::AttackingWalkingToEnemy,
                 GotoFlags::empty(),
-                self.engine.approach_sword_range(self.assets, self.owner),
+                self.engine
+                    .approach_sword_range(self.tcx.assets, self.owner),
             )
         };
         if below && line.is_some() {
@@ -868,12 +849,9 @@ mod tests {
             MapPoint::new(500.0, 500.0)
         );
         assert_eq!(engine.map_pos_of(target), MapPoint::new(70.0, 80.0));
-        engine.execute_ai_reconsider_enemy_approach(
-            &crate::sim_rng::test_context(),
-            &assets,
-            owner,
-            false,
-        );
+        engine
+            .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+            .execute_ai_reconsider_enemy_approach(false);
         let ai = engine.enemy(owner);
         assert_eq!(ai.base.current_substate, Substate::AttackingRunningToLadder);
         assert_eq!(ai.base.last_goto_destination, entry);
@@ -887,12 +865,9 @@ mod tests {
         move_actor(&mut engine, replacement, 700.0, 100.0);
         engine.enemy_mut(owner).base.primary_target =
             Some(AiEntityHandle::new(replacement.index()));
-        engine.execute_ai_reconsider_enemy_approach(
-            &crate::sim_rng::test_context(),
-            &assets,
-            owner,
-            true,
-        );
+        engine
+            .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+            .execute_ai_reconsider_enemy_approach(true);
         let ai = engine.enemy(owner);
         assert_eq!(ai.base.current_substate, Substate::AttackingRunningToEnemy);
         assert_eq!(
@@ -995,12 +970,9 @@ mod tests {
             });
             let sequences_before = engine.orders.sequence_manager.sequence_count();
             let target_position = engine.live_ai_position(target);
-            engine.execute_ai_reconsider_enemy_approach(
-                &crate::sim_rng::test_context(),
-                &assets,
-                owner,
-                true,
-            );
+            engine
+                .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                .execute_ai_reconsider_enemy_approach(true);
             let ai = engine.enemy(owner);
             assert_eq!(
                 ai.base.current_substate,
@@ -1052,12 +1024,9 @@ mod tests {
         move_actor(&mut engine, owner, 655.007_8, 1744.445);
         move_actor(&mut engine, target, 585.0, 1726.0);
         engine.set_active(friend, false);
-        engine.execute_ai_reconsider_enemy_approach(
-            &crate::sim_rng::test_context(),
-            &assets,
-            owner,
-            false,
-        );
+        engine
+            .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+            .execute_ai_reconsider_enemy_approach(false);
         assert_eq!(
             engine.enemy(owner).base.current_substate,
             Substate::AttackingSwordfight
@@ -1201,12 +1170,9 @@ mod tests {
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingRunningToEnemy;
         ai.base.primary_target = Some(AiEntityHandle::new(replacement.index()));
-        engine.execute_ai_reconsider_enemy_approach(
-            &crate::sim_rng::test_context(),
-            &assets,
-            owner,
-            false,
-        );
+        engine
+            .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+            .execute_ai_reconsider_enemy_approach(false);
         let ai = engine.enemy(owner);
         assert_eq!(
             ai.base.primary_target,
@@ -1244,12 +1210,9 @@ mod tests {
                 Substate::AttackingTooProudToAttackApproach
             };
             install_stopping_state_callback(&mut engine, &assets, owner);
-            engine.execute_ai_reconsider_enemy_approach(
-                &crate::sim_rng::test_context(),
-                &assets,
-                owner,
-                true,
-            );
+            engine
+                .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                .execute_ai_reconsider_enemy_approach(true);
             let ai = engine.enemy(owner);
             assert_eq!(ai.base.current_substate, Substate::AttackingRunningToEnemy);
             assert_eq!(ai.base.stop_before_end_of_path_distance, 50);
@@ -1274,12 +1237,9 @@ mod tests {
         move_actor(&mut engine, owner, 100.0, 100.0);
         move_actor(&mut engine, target, 200.0, 100.0);
         engine.enemy_mut(owner).sword_is_charge_weapon = true;
-        engine.execute_ai_reconsider_enemy_approach(
-            &crate::sim_rng::test_context(),
-            &assets,
-            owner,
-            false,
-        );
+        engine
+            .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+            .execute_ai_reconsider_enemy_approach(false);
         let ai = engine.enemy(owner);
         assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
         assert!(!ai.base.already_on_point);
@@ -1385,11 +1345,11 @@ mod tests {
                 .set_direction(crate::position_interface::Direction::from_raw(0));
             engine.place(target, WorldPoint3D::new(500.0, 500.0 - distance, 0.0));
             let position = engine.live_ai_position(target);
-            assert!(engine.execute_ai_maybe_make_rider_attack(
-                &crate::sim_rng::test_context(),
-                &assets,
-                owner
-            ));
+            assert!(
+                engine
+                    .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                    .execute_ai_maybe_make_rider_attack()
+            );
             let ai = engine
                 .world
                 .entities
@@ -1468,11 +1428,11 @@ mod tests {
             .entities
             .expect_ai_controller_mut(owner, format_args!("rider target"))
             .primary_target = Some(AiEntityHandle::new(target.index()));
-        assert!(engine.execute_ai_maybe_make_rider_attack(
-            &crate::sim_rng::test_context(),
-            &assets,
-            owner
-        ));
+        assert!(
+            engine
+                .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                .execute_ai_maybe_make_rider_attack()
+        );
         assert_eq!(
             engine
                 .world
@@ -1493,12 +1453,9 @@ mod tests {
         let entity = engine.ent_mut(target);
         entity.element_data_mut().set_posture(Posture::OnShoulders);
         entity.human_data_mut().unwrap().carrier = Some(carrier);
-        engine.execute_ai_reconsider_enemy_approach(
-            &crate::sim_rng::test_context(),
-            &assets,
-            owner,
-            false,
-        );
+        engine
+            .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+            .execute_ai_reconsider_enemy_approach(false);
         assert_eq!(
             engine
                 .world
@@ -1519,12 +1476,9 @@ mod tests {
             .expect_ai_controller_mut(owner, format_args!("combat fixture"));
         ai.primary_target = None;
         ai.current_substate = Substate::AttackingSwordfight;
-        engine.execute_ai_reconsider_enemy_approach(
-            &crate::sim_rng::test_context(),
-            &assets,
-            owner,
-            false,
-        );
+        engine
+            .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+            .execute_ai_reconsider_enemy_approach(false);
         let ai = engine
             .world
             .entities

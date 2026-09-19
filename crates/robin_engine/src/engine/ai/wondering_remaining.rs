@@ -83,7 +83,7 @@ impl AiOwnerCtx<'_> {
                 };
                 self.duty_set_state(AiState::Wondering, next);
                 let direction = if crate::sim_rng::u32(
-                    self.sim,
+                    self.tcx.sim,
                     crate::sim_rng::RngSite::EnemyWonderingLook,
                     0..2,
                 ) != 0
@@ -111,7 +111,7 @@ impl AiOwnerCtx<'_> {
                 self.duty_face_direction(direction);
                 let delay = 30
                     + crate::sim_rng::u32(
-                        self.sim,
+                        self.tcx.sim,
                         crate::sim_rng::RngSite::EnemyWonderingLook,
                         0..8,
                     );
@@ -175,12 +175,8 @@ impl AiOwnerCtx<'_> {
                     let target = self
                         .engine
                         .expect_human_id_for_ai_handle(target, "brawl conversation participant");
-                    self.engine.execute_ai_callback(
-                        self.sim,
-                        self.assets,
-                        target,
-                        &Stimulus::new(call),
-                    )
+                    self.engine
+                        .execute_ai_callback(self.tcx, target, &Stimulus::new(call))
                 });
                 if !answered {
                     self.execute_ai_callback(&Stimulus::new(call));
@@ -208,8 +204,7 @@ impl AiOwnerCtx<'_> {
                             .expect_human_id_for_ai_handle(target, "brawl dismissed participant");
                         if matches!(target, EntityId::Soldier(_)) {
                             self.engine.execute_ai_callback(
-                                self.sim,
-                                self.assets,
+                                self.tcx,
                                 target,
                                 &Stimulus::new(EventReturnToDuty),
                             );
@@ -229,8 +224,7 @@ impl AiOwnerCtx<'_> {
                         .engine
                         .expect_human_id_for_ai_handle(target.get(), "brawl cleanup antagonist");
                     self.engine.execute_ai_callback(
-                        self.sim,
-                        self.assets,
+                        self.tcx,
                         target,
                         &Stimulus::new(CallCleanUpAfterBrawl),
                     );
@@ -268,7 +262,7 @@ impl AiOwnerCtx<'_> {
             ) => {
                 if event == CallYourTalk1 {
                     self.engine.ai.global.current_speech_variant = crate::sim_rng::u32(
-                        self.sim,
+                        self.tcx.sim,
                         crate::sim_rng::RngSite::EnemyBrawlExcuse,
                         0..3,
                     ) as u16;
@@ -309,12 +303,8 @@ impl AiOwnerCtx<'_> {
                         EventMyTalk2 => CallYourTalk2,
                         _ => CallYourTalk3,
                     };
-                    self.engine.execute_ai_callback(
-                        self.sim,
-                        self.assets,
-                        target,
-                        &Stimulus::new(call),
-                    );
+                    self.engine
+                        .execute_ai_callback(self.tcx, target, &Stimulus::new(call));
                 }
             }
             (WonderingSoldierLookingOfficerWhoFinishedBrawl, EventTimer) => {
@@ -333,8 +323,7 @@ impl AiOwnerCtx<'_> {
                     .engine
                     .expect_human_id_for_ai_handle(body.get(), "brawl victim wake target");
                 self.engine.launch_element(
-                    self.sim,
-                    self.assets,
+                    self.tcx,
                     crate::sequence::SequenceElement::new_interaction(
                         1,
                         crate::element::Command::WakeUp,

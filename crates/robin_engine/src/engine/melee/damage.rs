@@ -3,6 +3,8 @@
 //! Extracted from the original `melee.rs` mega-file.
 
 use super::*;
+use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 impl EngineInner {
     #[inline(never)]
@@ -426,16 +428,14 @@ impl EngineInner {
     /// before the damage interrupts it.
     pub(crate) fn queue_sword_damage(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         victim_id: EntityId,
         attacker_id: EntityId,
         sword_strike: SwordStrike,
         attacker_profile_idx: u32,
     ) {
         self.queue_scaled_sword_damage(
-            sim,
-            assets,
+            tcx,
             victim_id,
             attacker_id,
             sword_strike,
@@ -450,8 +450,7 @@ impl EngineInner {
     /// later at the sequence-manager boundary.
     pub(crate) fn queue_scaled_sword_damage(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         victim_id: EntityId,
         attacker_id: EntityId,
         sword_strike: SwordStrike,
@@ -495,7 +494,7 @@ impl EngineInner {
         // synchronous arbitration. The manager-tail InstructOwner action owns
         // arbitration, transition generation, and damage dispatch.
         self.resolve_element_priority(&mut elem);
-        let sequence_id = self.launch_element(sim, assets, elem);
+        let sequence_id = self.launch_element(tcx, elem);
         self.trace_reactive_sword_topology(
             "after_damage_registration",
             victim_id,
@@ -526,8 +525,7 @@ impl EngineInner {
     /// dispatches here with a valid `damage_element`.
     pub(super) fn apply_sword_damage(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         victim_id: EntityId,
         attacker_id: Option<EntityId>,
         sword_strike: Option<SwordStrike>,
@@ -535,8 +533,7 @@ impl EngineInner {
         damage_element: (crate::sequence::SequenceId, usize),
     ) {
         let Some(strike) = self.sword_damage_prelude(
-            sim,
-            assets,
+            tcx,
             victim_id,
             attacker_id,
             sword_strike,
@@ -545,21 +542,20 @@ impl EngineInner {
         ) else {
             return;
         };
-        let reception = self.sword_damage_receive(sim, assets, &strike);
+        let reception = self.sword_damage_receive(tcx, &strike);
         if self
-            .sword_damage_learning_and_impact(assets, &strike, &reception)
+            .sword_damage_learning_and_impact(tcx.assets, &strike, &reception)
             .is_break()
         {
             return;
         }
         let (pushed, grounded_translation_terminates) =
-            self.sword_damage_push_and_grounded(sim, assets, &strike, &reception);
-        let victim_died = self.sword_damage_xp_and_speech(sim, assets, &strike, &reception, pushed);
-        self.sword_damage_hit_reaction(sim, assets, &strike, &reception, pushed);
-        self.sword_damage_inform_attacker(sim, assets, &strike, &reception, pushed, victim_died);
+            self.sword_damage_push_and_grounded(tcx, &strike, &reception);
+        let victim_died = self.sword_damage_xp_and_speech(tcx, &strike, &reception, pushed);
+        self.sword_damage_hit_reaction(tcx, &strike, &reception, pushed);
+        self.sword_damage_inform_attacker(tcx, &strike, &reception, pushed, victim_died);
         self.sword_damage_death_transitions(
-            sim,
-            assets,
+            tcx,
             &strike,
             &reception,
             pushed,
@@ -573,8 +569,7 @@ impl EngineInner {
     /// type, or diplomacy forbids it after terminating the element).
     fn sword_damage_prelude(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         victim_id: EntityId,
         attacker_id: Option<EntityId>,
         sword_strike: Option<SwordStrike>,
@@ -617,11 +612,9 @@ impl EngineInner {
                 victim.is_pc(),
             ) {
                 self.element_terminated(
-                    sim,
-                    assets,
+                    tcx,
                     &mut Vec::new(),
-                    damage_element.0,
-                    damage_element.1,
+                    SequenceElementRef::new(damage_element.0, damage_element.1),
                 );
                 return None;
             }
@@ -638,7 +631,7 @@ impl EngineInner {
 
         // Look up the attacker's weapon profile
         let attacker_profile = attacker_profile_idx
-            .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
+            .and_then(|idx| tcx.assets.profile_manager.get_hth_weapon(idx))
             .cloned();
         let default_profile;
         let attacker_profile = match attacker_profile {
@@ -671,8 +664,7 @@ impl EngineInner {
     /// life-point speech and the damage number.
     fn sword_damage_receive(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         strike_app: &SwordDamageStrike,
     ) -> SwordDamageReception {
         let SwordDamageStrike {
@@ -700,11 +692,11 @@ impl EngineInner {
             let (dir, elev) = (elem.direction(), elem.position().z);
             let ability = fighting_ability_from_profile(
                 atk,
-                &assets.profile_manager,
-                sim.config().difficulty,
+                &tcx.assets.profile_manager,
+                tcx.sim.config().difficulty,
                 &self.mission_domain.diplomacy,
             );
-            let is_rank = is_rank_soldier(atk, &assets.profile_manager);
+            let is_rank = is_rank_soldier(atk, &tcx.assets.profile_manager);
             let def_to_atk = direction_to(&self.world.entities, victim_id, attacker);
             (dir, def_to_atk, elev, ability, is_rank)
         } else {
@@ -744,14 +736,14 @@ impl EngineInner {
             .unconscious;
 
         // Look up defender's weapon profile
-        let defender_profile_idx = get_hth_weapon_id_full(victim, &assets.profile_manager);
+        let defender_profile_idx = get_hth_weapon_id_full(victim, &tcx.assets.profile_manager);
         let defender_profile = defender_profile_idx
-            .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
+            .and_then(|idx| tcx.assets.profile_manager.get_hth_weapon(idx))
             .cloned();
 
         let ctx = concussion_ctx_full(
             victim,
-            self.is_sherwood(&assets.profile_manager),
+            self.is_sherwood(&tcx.assets.profile_manager),
             Some(&self.mission_domain.campaign),
             self.control.sim_config.difficulty,
         );
@@ -787,12 +779,11 @@ impl EngineInner {
             .human_and_life_points_mut()
             .expect("apply_sword_damage victim must be human");
 
-        let (result, cutting_inflicted) = combat::receive_sword_damage(sim, human, lp, &params);
+        let (result, cutting_inflicted) = combat::receive_sword_damage(tcx.sim, human, lp, &params);
 
         let raw_life_points_after = *lp;
         let coma_saved = self.close_pc_wounded_coma_boundary(
-            sim,
-            assets,
+            tcx,
             victim_id,
             cutting_inflicted,
             life_points_before,
@@ -822,13 +813,7 @@ impl EngineInner {
                         .is_pc()
                 })
                 .unwrap_or(false);
-            self.apply_nonvisual_death_cascade(
-                sim,
-                assets,
-                victim_id,
-                Some(damage_element),
-                killer_is_pc,
-            );
+            self.apply_nonvisual_death_cascade(tcx, victim_id, Some(damage_element), killer_is_pc);
         }
         let victim_went_unconscious = !victim_was_unconscious
             && self
@@ -845,13 +830,18 @@ impl EngineInner {
             // Concussion handling closes its KO side effects inline,
             // before control returns to sword-damage translation: first
             // Leave swordfight, set up stars/healing, then apply the NPC response.
-            self.apply_knockout_side_effects(sim, assets, victim_id, attacker_is_pc, false);
+            self.apply_knockout_side_effects(tcx, victim_id, attacker_is_pc, false);
         }
         // PC hurt/death speech belongs to the life-point update
         // inside ReceiveSwordDamage. It uses the applied LP delta, before
         // Sword-damage translation later invokes pain speech (a no-op for PCs).
         if !coma_saved {
-            self.pc_life_points_speech(assets, victim_id, life_points_before, life_points_after);
+            self.pc_life_points_speech(
+                tcx.assets,
+                victim_id,
+                life_points_before,
+                life_points_after,
+            );
         }
         // Use the attempted damage (not the clamped lp delta) so
         // overkill hits display the same number as a non-overkill hit
@@ -1029,8 +1019,7 @@ impl EngineInner {
     /// `(pushed, grounded_translation_terminates)`.
     fn sword_damage_push_and_grounded(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         strike_app: &SwordDamageStrike,
         reception: &SwordDamageReception,
     ) -> (bool, bool) {
@@ -1067,7 +1056,7 @@ impl EngineInner {
             .posture()
             == Posture::CarryingCorpse
         {
-            self.force_drop_carried_corpse_instant(sim, assets, victim_id);
+            self.force_drop_carried_corpse_instant(tcx, victim_id);
         }
 
         // Life-point updates invoke death handling synchronously before
@@ -1087,13 +1076,7 @@ impl EngineInner {
                         .is_pc()
                 })
                 .unwrap_or(false);
-            self.apply_nonvisual_death_cascade(
-                sim,
-                assets,
-                victim_id,
-                Some(damage_element),
-                killer_is_pc,
-            );
+            self.apply_nonvisual_death_cascade(tcx, victim_id, Some(damage_element), killer_is_pc);
         }
         // Human life updating returns immediately when the victim was
         // already dead. Its earlier Kill call has therefore already owned
@@ -1110,8 +1093,7 @@ impl EngineInner {
                     repulsion: thrust.repulsion,
                 };
                 self.apply_push_effect(
-                    sim,
-                    assets,
+                    tcx,
                     victim_id,
                     attacker,
                     &push_info,
@@ -1186,7 +1168,7 @@ impl EngineInner {
                 .publish_order_posture(Posture::Dead);
             }
             let (dseq, didx) = damage_element;
-            self.element_terminated(sim, assets, &mut Vec::new(), dseq, didx);
+            self.element_terminated(tcx, &mut Vec::new(), SequenceElementRef::new(dseq, didx));
             // The original game's transition to terminated sends the selected actor's
             // condolence card synchronously from inside
             // sword-damage translation. Besides notifying an NPC AI, that
@@ -1204,8 +1186,7 @@ impl EngineInner {
     /// hero speech. Returns `victim_died`.
     fn sword_damage_xp_and_speech(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         strike_app: &SwordDamageStrike,
         reception: &SwordDamageReception,
         pushed: bool,
@@ -1229,7 +1210,7 @@ impl EngineInner {
         let victim_died =
             get_life_points(self.expect_entity(victim_id, "apply_sword_damage death check")) <= 0;
         if victim_died && let Some(atk_id) = attacker_id {
-            self.award_sword_kill_xp(assets, atk_id, victim_id);
+            self.award_sword_kill_xp(tcx.assets, atk_id, victim_id);
         }
 
         // Sword-damage translation invokes the victim's pain speech (unless
@@ -1244,7 +1225,7 @@ impl EngineInner {
                 Entity::Soldier(_) | Entity::Civilian(_)
             )
         {
-            self.say_ouch(sim, assets, victim_id, Some(cutting_inflicted));
+            self.say_ouch(tcx, victim_id, Some(cutting_inflicted));
         }
 
         // Provoke after sword strike — random taunt. Original evaluates this
@@ -1258,7 +1239,7 @@ impl EngineInner {
             // suppression clause.  A controlled attacker therefore still
             // owns one global draw even though it can never launch Provoke.
             let provoke_roll =
-                crate::sim_rng::u32(sim, crate::sim_rng::RngSite::MeleeProvoke, 0..100);
+                crate::sim_rng::u32(tcx.sim, crate::sim_rng::RngSite::MeleeProvoke, 0..100);
 
             // Suppress Provoke when the attacker is the currently-selected
             // PC — the player's controlled character shouldn't taunt on hit.
@@ -1270,7 +1251,7 @@ impl EngineInner {
             if provoke_roll_succeeds(provoke_roll, attacker_ctx.fighting_ability)
                 && !attacker_is_selected_pc
             {
-                self.launch_provoke(sim, assets, atk_id);
+                self.launch_provoke(tcx, atk_id);
             }
         }
 
@@ -1306,7 +1287,7 @@ impl EngineInner {
             && let Some(atk_id) = attacker_id
         {
             if victim_died {
-                self.hero_speaking(assets, atk_id, HERO_KILLED_OPPONENT);
+                self.hero_speaking(tcx.assets, atk_id, HERO_KILLED_OPPONENT);
             } else if victim_is_unconscious {
                 let cutting = combat::get_strike_cutting_effect(
                     &attacker_profile,
@@ -1315,9 +1296,9 @@ impl EngineInner {
                     attacker_ctx.is_rank_soldier,
                 );
                 if cutting > 50 {
-                    self.hero_speaking(assets, atk_id, HERO_SUCCESSFULL_BLOW);
+                    self.hero_speaking(tcx.assets, atk_id, HERO_SUCCESSFULL_BLOW);
                 } else {
-                    self.hero_speaking(assets, atk_id, HERO_STUN_ENNEMY);
+                    self.hero_speaking(tcx.assets, atk_id, HERO_STUN_ENNEMY);
                 }
             }
         }
@@ -1328,8 +1309,7 @@ impl EngineInner {
     /// alive-and-conscious hit animation chain.
     fn sword_damage_hit_reaction(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         strike_app: &SwordDamageStrike,
         reception: &SwordDamageReception,
         pushed: bool,
@@ -1376,12 +1356,12 @@ impl EngineInner {
                 Posture::OnShoulders | Posture::CarryingOnShoulders | Posture::HelpingToClimb
             );
             if is_shoulder_posture {
-                self.translate_shoulder_damage(sim, assets, victim_id, damage_element);
+                self.translate_shoulder_damage(tcx, victim_id, damage_element);
             } else if matches!(victim_posture, Posture::OnLadder | Posture::OnWall) {
                 // Ladder/wall arm of the hit-reaction posture switch.
                 // Like the shoulder arm this fires for lethal and KO
                 // hits too — the fall itself resolves the victim's fate.
-                self.translate_ladder_wall_fall(sim, assets, victim_id, damage_element);
+                self.translate_ladder_wall_fall(tcx, victim_id, damage_element);
             } else if still_alive && still_conscious {
                 let anims = {
                     let e = self.expect_entity(victim_id, "sword-damage hit-reaction victim");
@@ -1399,7 +1379,7 @@ impl EngineInner {
                         // defender is mid-swordfight with concussion
                         // above the threshold.
                         self.push_translated_damage_order(damage_element, a.falling_back);
-                        self.try_queue_roll(assets, victim_id, damage_element);
+                        self.try_queue_roll(tcx.assets, victim_id, damage_element);
                         self.push_translated_damage_order(damage_element, a.standing_up);
                         let (is_swordfighting, concussion) = self
                             .expect_entity(victim_id, "sword-damage stun chain victim")
@@ -1425,8 +1405,7 @@ impl EngineInner {
     /// EventGoodStrike) and the victim's synchronous swordfight exits.
     fn sword_damage_inform_attacker(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         strike_app: &SwordDamageStrike,
         reception: &SwordDamageReception,
         pushed: bool,
@@ -1504,7 +1483,7 @@ impl EngineInner {
                 // reaches the attacker first and moves it out of its
                 // special-strike substate, which is what keeps the kill
                 // remark from firing on a blow that ends the fight.
-                self.quit_swordfight(sim, assets, victim_id);
+                self.quit_swordfight(tcx, victim_id);
             }
             let stimulus_type = if victim_died {
                 Some(crate::ai::StimulusType::EventLethalStrike)
@@ -1533,12 +1512,7 @@ impl EngineInner {
                         );
                     }
                 }
-                self.execute_ai_callback(
-                    sim,
-                    assets,
-                    atk_id,
-                    &crate::ai::Stimulus::new(stimulus_type),
-                );
+                self.execute_ai_callback(tcx, atk_id, &crate::ai::Stimulus::new(stimulus_type));
             }
 
             // Original-game sword-damage translation sends
@@ -1552,7 +1526,7 @@ impl EngineInner {
                     .expect_entity(victim_id, "sword-damage knockout victim")
                     .is_unconscious()
             {
-                self.quit_swordfight(sim, assets, victim_id);
+                self.quit_swordfight(tcx, victim_id);
             }
         }
     }
@@ -1561,8 +1535,7 @@ impl EngineInner {
     /// victim, post-damage state transitions and the final lifecycle trace.
     fn sword_damage_death_transitions(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         strike_app: &SwordDamageStrike,
         reception: &SwordDamageReception,
         pushed: bool,
@@ -1636,7 +1609,7 @@ impl EngineInner {
             });
             if let Some(anim) = repeated_dying_anim {
                 self.queue_damage_anim(victim_id, damage_element, anim);
-                self.try_queue_roll(assets, victim_id, damage_element);
+                self.try_queue_roll(tcx.assets, victim_id, damage_element);
             }
         }
 
@@ -1644,7 +1617,7 @@ impl EngineInner {
         // since apply_push_effect already handled death/KO transitions.
         if !pushed && !result.is_empty() {
             if victim_went_unconscious {
-                self.queue_knockout_orders(assets, victim_id, damage_element);
+                self.queue_knockout_orders(tcx.assets, victim_id, damage_element);
             } else if victim_was_unconscious && !victim_died {
                 // Concussion handling only runs its knockout cascade on the
                 // conscious-to-unconscious edge. A later ordinary sword hit still
@@ -1653,20 +1626,19 @@ impl EngineInner {
                 // posture has synchronously terminated above. Do not route either
                 // case back through handle_post_damage's full KO side effects.
                 if !grounded_translation_terminates {
-                    self.queue_knockout_orders(assets, victim_id, damage_element);
+                    self.queue_knockout_orders(tcx.assets, victim_id, damage_element);
                 }
             } else {
                 if fresh_lethal_ordinary {
                     self.queue_death_visuals_with_damage_element(
-                        assets,
+                        tcx.assets,
                         victim_id,
                         damage_element,
                         dying_anim_override,
                     );
                 } else {
                     self.handle_post_damage(
-                        sim,
-                        assets,
+                        tcx,
                         victim_id,
                         life_points_before,
                         unconscious_before,
@@ -1697,8 +1669,7 @@ impl EngineInner {
     /// un-carriered PC.
     pub(crate) fn force_drop_carried_corpse_instant(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         carrier_id: EntityId,
     ) {
         let (
@@ -1805,14 +1776,13 @@ impl EngineInner {
             Some(carried_id),
         );
         wait_elem.priority = crate::sequence::SequencePriority::Wait;
-        self.launch_element(sim, assets, wait_elem);
+        self.launch_element(tcx, wait_elem);
     }
 
     /// Apply generic damage (falling, environmental, mobile collision).
     pub(super) fn apply_generic_damage(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         victim_id: EntityId,
         damage: u16,
         concussion: u16,
@@ -1834,8 +1804,8 @@ impl EngineInner {
             .element_data()
             .posture();
         if matches!(pre_posture, Posture::OnLadder | Posture::OnWall) {
-            self.say_ouch(sim, assets, victim_id, None);
-            self.translate_ladder_wall_fall(sim, assets, victim_id, damage_element);
+            self.say_ouch(tcx, victim_id, None);
+            self.translate_ladder_wall_fall(tcx, victim_id, damage_element);
             return;
         }
         if pre_posture.is_lying() {
@@ -1847,13 +1817,13 @@ impl EngineInner {
             );
             if !is_rider && !still_alive {
                 let (dseq, didx) = damage_element;
-                self.element_terminated(sim, assets, &mut Vec::new(), dseq, didx);
+                self.element_terminated(tcx, &mut Vec::new(), SequenceElementRef::new(dseq, didx));
                 return;
             }
         }
 
         let (ctx, max_lp, life_points_before, unconscious_before) =
-            self.damage_victim_snapshot(assets, victim_id);
+            self.damage_victim_snapshot(tcx.assets, victim_id);
         let victim = self
             .world
             .entities
@@ -1866,8 +1836,7 @@ impl EngineInner {
         let _died = combat::receive_generic_damage(human, lp, damage, concussion, max_lp, &ctx);
         let raw_life_points_after = *lp;
         self.close_pc_wounded_coma_boundary(
-            sim,
-            assets,
+            tcx,
             victim_id,
             damage,
             life_points_before,
@@ -1885,10 +1854,9 @@ impl EngineInner {
             victim_posture,
             Posture::OnShoulders | Posture::CarryingOnShoulders | Posture::HelpingToClimb
         ) {
-            self.translate_shoulder_damage(sim, assets, victim_id, damage_element);
+            self.translate_shoulder_damage(tcx, victim_id, damage_element);
             self.handle_post_damage(
-                sim,
-                assets,
+                tcx,
                 victim_id,
                 life_points_before,
                 unconscious_before,
@@ -1903,10 +1871,10 @@ impl EngineInner {
         // CarryingCorpse arm — forces an instant corpse drop and
         // falls through to the default damage path.
         if victim_posture == Posture::CarryingCorpse {
-            self.force_drop_carried_corpse_instant(sim, assets, victim_id);
+            self.force_drop_carried_corpse_instant(tcx, victim_id);
         }
 
-        self.say_ouch(sim, assets, victim_id, None);
+        self.say_ouch(tcx, victim_id, None);
 
         // Alive-conscious branch: queue the posture-dependent
         // simple-hit animation onto the damage element and fire the
@@ -1942,12 +1910,11 @@ impl EngineInner {
             // Unconditional roll attempt (except for net damage, which
             // routes through a different path that never reaches
             // `apply_generic_damage`).
-            self.try_queue_roll(assets, victim_id, damage_element);
+            self.try_queue_roll(tcx.assets, victim_id, damage_element);
         }
 
         self.handle_post_damage(
-            sim,
-            assets,
+            tcx,
             victim_id,
             life_points_before,
             unconscious_before,
@@ -1966,8 +1933,7 @@ impl EngineInner {
     /// share the same piercing damage math.
     pub(super) fn apply_piercing_damage(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         victim_id: EntityId,
         damage: u16,
         concussion: u16,
@@ -1988,7 +1954,7 @@ impl EngineInner {
             .posture();
 
         let (ctx, max_lp, life_points_before, unconscious_before) =
-            self.damage_victim_snapshot(assets, victim_id);
+            self.damage_victim_snapshot(tcx.assets, victim_id);
         let victim = self
             .world
             .entities
@@ -2001,8 +1967,7 @@ impl EngineInner {
         let _died = combat::receive_piercing_damage(human, lp, damage, concussion, max_lp, &ctx);
         let raw_life_points_after = *lp;
         let coma_saved = self.close_pc_wounded_coma_boundary(
-            sim,
-            assets,
+            tcx,
             victim_id,
             damage,
             life_points_before,
@@ -2031,7 +1996,12 @@ impl EngineInner {
         // is an empty no-op for player characters, so the
         // translation below must not speak for them again.
         if !coma_saved {
-            self.pc_life_points_speech(assets, victim_id, life_points_before, life_points_after);
+            self.pc_life_points_speech(
+                tcx.assets,
+                victim_id,
+                life_points_before,
+                life_points_after,
+            );
         }
         let fresh_lethal = !coma_saved && life_points_before > 0 && life_points_after <= 0;
         if fresh_lethal {
@@ -2048,13 +2018,7 @@ impl EngineInner {
                         .is_pc()
                 })
                 .unwrap_or(false);
-            self.apply_nonvisual_death_cascade(
-                sim,
-                assets,
-                victim_id,
-                Some(damage_element),
-                killer_is_pc,
-            );
+            self.apply_nonvisual_death_cascade(tcx, victim_id, Some(damage_element), killer_is_pc);
         }
 
         let translation_posture = self
@@ -2075,14 +2039,14 @@ impl EngineInner {
             .expect_entity(victim_id, "piercing-damage say-ouch")
             .is_pc()
         {
-            self.say_ouch(sim, assets, victim_id, Some(damage));
+            self.say_ouch(tcx, victim_id, Some(damage));
         }
 
         // The ladder/wall translation is an arrow/stone hit reaction, not a
         // damage-immunity arm: piercing damage has already subtracted
         // life and applied concussion when Original gets here.
         if matches!(pre_posture, Posture::OnLadder | Posture::OnWall) {
-            self.translate_ladder_wall_fall(sim, assets, victim_id, damage_element);
+            self.translate_ladder_wall_fall(tcx, victim_id, damage_element);
             return;
         }
 
@@ -2096,18 +2060,17 @@ impl EngineInner {
                 Posture::OnShoulders | Posture::CarryingOnShoulders | Posture::HelpingToClimb
             );
         if pc_shoulder_override {
-            self.translate_shoulder_damage(sim, assets, victim_id, damage_element);
+            self.translate_shoulder_damage(tcx, victim_id, damage_element);
             if fresh_lethal {
                 self.queue_death_visuals_with_damage_element(
-                    assets,
+                    tcx.assets,
                     victim_id,
                     damage_element,
                     None,
                 );
             } else {
                 self.handle_post_damage(
-                    sim,
-                    assets,
+                    tcx,
                     victim_id,
                     life_points_before,
                     unconscious_before,
@@ -2162,7 +2125,7 @@ impl EngineInner {
             }
             if !is_rider || !post_dead {
                 let (dseq, didx) = damage_element;
-                self.element_terminated(sim, assets, &mut Vec::new(), dseq, didx);
+                self.element_terminated(tcx, &mut Vec::new(), SequenceElementRef::new(dseq, didx));
                 return;
             }
             // TODO: match the Original sleeping-rider special case,
@@ -2173,7 +2136,7 @@ impl EngineInner {
         // CarryingCorpse arm — forces an instant corpse drop and
         // falls through to the default damage path.
         if translation_posture == Posture::CarryingCorpse {
-            self.force_drop_carried_corpse_instant(sim, assets, victim_id);
+            self.force_drop_carried_corpse_instant(tcx, victim_id);
         }
 
         // Arrow-damage / generic-damage translation always selects an authored
@@ -2236,7 +2199,7 @@ impl EngineInner {
             }
 
             if life_points_after > 0 || life_points_before <= 0 {
-                self.try_queue_roll(assets, victim_id, damage_element);
+                self.try_queue_roll(tcx.assets, victim_id, damage_element);
             }
         }
 
@@ -2244,11 +2207,15 @@ impl EngineInner {
             // The nonvisual half of death processing already ran inside
             // piercing damage above; only the translation-owned
             // dying animation and roll are still outstanding.
-            self.queue_death_visuals_with_damage_element(assets, victim_id, damage_element, None);
+            self.queue_death_visuals_with_damage_element(
+                tcx.assets,
+                victim_id,
+                damage_element,
+                None,
+            );
         } else {
             self.handle_post_damage(
-                sim,
-                assets,
+                tcx,
                 victim_id,
                 life_points_before,
                 unconscious_before,
@@ -2269,8 +2236,7 @@ impl EngineInner {
     /// `combat_anim` directly.
     pub(super) fn apply_hit_damage(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         victim_id: EntityId,
         attacker_id: Option<EntityId>,
         concussion: u16,
@@ -2296,11 +2262,9 @@ impl EngineInner {
                 )
             {
                 self.element_terminated(
-                    sim,
-                    assets,
+                    tcx,
                     &mut Vec::new(),
-                    damage_element.0,
-                    damage_element.1,
+                    SequenceElementRef::new(damage_element.0, damage_element.1),
                 );
                 return;
             }
@@ -2308,7 +2272,7 @@ impl EngineInner {
         let victim = self.expect_entity(victim_id, "apply_hit_damage victim");
         let ctx = concussion_ctx_full(
             victim,
-            self.is_sherwood(&assets.profile_manager),
+            self.is_sherwood(&tcx.assets.profile_manager),
             Some(&self.mission_domain.campaign),
             self.control.sim_config.difficulty,
         );
@@ -2337,7 +2301,7 @@ impl EngineInner {
             })
             .unwrap_or(false);
         if went_unconscious {
-            self.apply_knockout_side_effects(sim, assets, victim_id, attacker_is_pc, false);
+            self.apply_knockout_side_effects(tcx, victim_id, attacker_is_pc, false);
 
             if let Some(atk_id) = attacker_id {
                 let same_camp_soldier = {
@@ -2354,7 +2318,7 @@ impl EngineInner {
                     ai.knocked_out_in_money_fight = true;
                     ai.looted_after_money_fight = false;
                 } else if attacker_is_pc {
-                    self.hero_speaking(assets, atk_id, HERO_STUN_ENNEMY);
+                    self.hero_speaking(tcx.assets, atk_id, HERO_STUN_ENNEMY);
                 }
             }
 
@@ -2363,7 +2327,7 @@ impl EngineInner {
             // already empty, but the soldier's synchronous
             // EVENT_QUIT_SWORDFIGHT callback still occurs (and is refused
             // while unconscious).
-            self.quit_swordfight(sim, assets, victim_id);
+            self.quit_swordfight(tcx, victim_id);
         } else {
             let conscious_npc =
                 conscious_hit_notifies_ai(self.expect_entity(victim_id, "apply_hit_damage victim"));
@@ -2382,7 +2346,7 @@ impl EngineInner {
                     ),
                     None => crate::ai::Stimulus::new(crate::ai::StimulusType::EventGotHit),
                 };
-                self.execute_ai_callback(sim, assets, victim_id, &stimulus);
+                self.execute_ai_callback(tcx, victim_id, &stimulus);
             }
         }
 
@@ -2403,11 +2367,9 @@ impl EngineInner {
         // still restore EYES_DIE_OR_GET_UNCONSCIOUS before the element ends.
         if victim_posture == Posture::Lying {
             self.element_terminated(
-                sim,
-                assets,
+                tcx,
                 &mut Vec::new(),
-                damage_element.0,
-                damage_element.1,
+                SequenceElementRef::new(damage_element.0, damage_element.1),
             );
             return;
         }
@@ -2416,7 +2378,7 @@ impl EngineInner {
             victim_posture,
             Posture::OnShoulders | Posture::CarryingOnShoulders | Posture::HelpingToClimb
         ) {
-            self.translate_shoulder_damage(sim, assets, victim_id, damage_element);
+            self.translate_shoulder_damage(tcx, victim_id, damage_element);
             return;
         }
 
@@ -2445,7 +2407,7 @@ impl EngineInner {
                     | Posture::DeadBack
             )
         {
-            self.say_ouch(sim, assets, victim_id, None);
+            self.say_ouch(tcx, victim_id, None);
         }
 
         // CarryingCorpse arm — drop the corpse instantly (the
@@ -2453,14 +2415,14 @@ impl EngineInner {
         // path which dispatches the regular hit-fall animation
         // below).
         if victim_posture == Posture::CarryingCorpse {
-            self.force_drop_carried_corpse_instant(sim, assets, victim_id);
+            self.force_drop_carried_corpse_instant(tcx, victim_id);
         }
 
         // OnLadder / OnWall fall routing — these postures route
         // through `translate_ladder_wall_fall`, matching the parallel
         // push-path routing.
         if matches!(victim_posture, Posture::OnLadder | Posture::OnWall) {
-            self.translate_ladder_wall_fall(sim, assets, victim_id, damage_element);
+            self.translate_ladder_wall_fall(tcx, victim_id, damage_element);
             return;
         }
 
@@ -2469,8 +2431,7 @@ impl EngineInner {
         // priority and end lying; harder hits play in place and
         // collapse to lying on completion.
         self.dispatch_hit_fall_animation(
-            sim,
-            assets,
+            tcx,
             victim_id,
             attacker_id,
             is_harder_hit,
@@ -2493,8 +2454,7 @@ impl EngineInner {
     /// that order first executes.
     pub(super) fn dispatch_hit_fall_animation(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         victim_id: EntityId,
         attacker_id: Option<EntityId>,
         is_harder_hit: bool,
@@ -2522,11 +2482,9 @@ impl EngineInner {
                 // mistake one of those stale orders for a hit reaction and
                 // run actor instruction handling's IN_PROGRESS epilogue.
                 self.element_terminated(
-                    sim,
-                    assets,
+                    tcx,
                     &mut Vec::new(),
-                    damage_element.0,
-                    damage_element.1,
+                    SequenceElementRef::new(damage_element.0, damage_element.1),
                 );
                 return;
             }
@@ -2554,7 +2512,7 @@ impl EngineInner {
         // death/KO branches in `handle_post_damage` will queue a
         // separate roll after death/unconscious posture, but a
         // non-fatal hit on a slope must roll too.
-        self.try_queue_roll(assets, victim_id, damage_element);
+        self.try_queue_roll(tcx.assets, victim_id, damage_element);
     }
 
     /// Initialize a non-hard `FALLING_HIT_*` order on its first Execute.
@@ -2771,12 +2729,7 @@ impl EngineInner {
     ///    posture that can't transition to StuckUnderNet (tied, KO,
     ///    dead).  Counter still tracks though, so the same victim
     ///    netted while tied gets released correctly on un-apply.
-    pub(super) fn apply_net(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        victim_id: EntityId,
-    ) {
+    pub(super) fn apply_net(&mut self, tcx: TickCtx<'_>, victim_id: EntityId) {
         let (already_stuck, can_transition) = {
             let victim = self.expect_entity(victim_id, "apply_net victim");
             let posture = victim.element_data().posture();
@@ -2806,8 +2759,7 @@ impl EngineInner {
         if victim_is_npc {
             self.add_detectable_for_all_npc(victim_id, crate::element::DetectableType::Body);
             self.execute_ai_callback(
-                sim,
-                assets,
+                tcx,
                 victim_id,
                 &crate::ai::Stimulus::new(crate::ai::StimulusType::EventNet),
             );
@@ -2824,8 +2776,7 @@ impl EngineInner {
     /// - Concussion >= threshold → knockout (unconscious, posture Lying)
     pub(super) fn handle_post_damage(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         victim_id: EntityId,
         life_points_before: i16,
         unconscious_before: bool,
@@ -2880,14 +2831,13 @@ impl EngineInner {
         if is_dead {
             // Check for PC coma save before death
             let saved = if is_pc {
-                self.try_pc_coma_save(sim, assets, victim_id, life_points.unsigned_abs())
+                self.try_pc_coma_save(tcx, victim_id, life_points.unsigned_abs())
             } else {
                 false
             };
             if !saved {
                 self.handle_death_with_damage_element(
-                    sim,
-                    assets,
+                    tcx,
                     victim_id,
                     damage_element,
                     dying_anim_override,
@@ -2906,7 +2856,7 @@ impl EngineInner {
                         .is_pc()
                 })
                 .unwrap_or(false);
-            self.handle_knockout(sim, assets, victim_id, damage_element, attacker_is_pc);
+            self.handle_knockout(tcx, victim_id, damage_element, attacker_is_pc);
         }
     }
 
@@ -2926,12 +2876,7 @@ impl EngineInner {
     /// Sets posture to Dead, quits swordfight, closes eyes for NPCs,
     /// and flags the entity as dead for the game state checks.
     #[cfg(test)]
-    pub(crate) fn handle_death(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        victim_id: EntityId,
-    ) {
+    pub(crate) fn handle_death(&mut self, tcx: TickCtx<'_>, victim_id: EntityId) {
         // Scripted-death entry (e.g. death cheat).
         // Launch a synthetic `ReceiveDamage` element targeting the
         // victim with full life points and dispatch it synchronously
@@ -2953,9 +2898,14 @@ impl EngineInner {
             lethal_damage,
             0,
         );
-        let seq_id = self.launch_element(sim, assets, elem);
+        let seq_id = self.launch_element(tcx, elem);
         let elem_idx = 0;
-        self.instruct_owner(sim, assets, &mut Vec::new(), victim_id, seq_id, elem_idx);
+        self.instruct_owner(
+            tcx,
+            &mut Vec::new(),
+            victim_id,
+            SequenceElementRef::new(seq_id, elem_idx),
+        );
     }
 
     /// Register a projectile damage sequence for the sequence-manager phase.
@@ -2968,8 +2918,7 @@ impl EngineInner {
     /// victim's `EVENT_GET_ARROW` between registration and damage.
     pub(crate) fn queue_projectile_damage(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         victim_id: EntityId,
         shooter_id: EntityId,
         command: crate::element::Command,
@@ -2995,7 +2944,7 @@ impl EngineInner {
             unreachable!("new_damage must create damage element data");
         };
         *projectile = projectile_id;
-        self.launch_element(sim, assets, elem);
+        self.launch_element(tcx, elem);
     }
 
     /// Internal entry point for `handle_death` that accepts the active
@@ -3048,12 +2997,7 @@ impl EngineInner {
     ///   trumpet portrait and bump the killed-peasant mission stat.
     /// - Always: decrement the new-PC mission stat.
     /// - Always: burn the three macro slots belonging to the dead PC.
-    pub(super) fn apply_pc_kill_cascade(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        victim_id: EntityId,
-    ) {
+    pub(super) fn apply_pc_kill_cascade(&mut self, tcx: TickCtx<'_>, victim_id: EntityId) {
         let pc_info = self
             .world
             .entities
@@ -3064,7 +3008,7 @@ impl EngineInner {
             return;
         };
         let (is_vip, profile_name) = Some(&self.mission_domain.campaign)
-            .and(assets.profile_manager.get_character(profile_idx))
+            .and(tcx.assets.profile_manager.get_character(profile_idx))
             .map(|cp| (cp.vip, cp.profile_name.clone()))
             .unwrap_or((false, String::new()));
         let amulets = Some(&self.mission_domain.campaign)
@@ -3099,7 +3043,11 @@ impl EngineInner {
         if !is_vip {
             let has_replacement = Some(&self.mission_domain.campaign)
                 .and_then(|c| {
-                    c.get_random_peasant_from_gang(sim, Some(profile_idx), &assets.profile_manager)
+                    c.get_random_peasant_from_gang(
+                        tcx.sim,
+                        Some(profile_idx),
+                        &tcx.assets.profile_manager,
+                    )
                 })
                 .is_some();
             if has_replacement
@@ -3262,8 +3210,7 @@ impl EngineInner {
 
     pub(crate) fn handle_death_with_damage_element(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         victim_id: EntityId,
         damage_element: (crate::sequence::SequenceId, usize),
         dying_anim_override: Option<crate::order::OrderType>,
@@ -3301,16 +3248,10 @@ impl EngineInner {
                 }
             });
 
-        self.apply_nonvisual_death_cascade(
-            sim,
-            assets,
-            victim_id,
-            Some(damage_element),
-            killer_is_pc,
-        );
+        self.apply_nonvisual_death_cascade(tcx, victim_id, Some(damage_element), killer_is_pc);
 
         // Queue roll only after death processing has synchronously completed.
-        self.try_queue_roll(assets, victim_id, damage_element);
+        self.try_queue_roll(tcx.assets, victim_id, damage_element);
     }
 
     /// Finish the generic-damage translation's visual half of a death. This is
@@ -3356,12 +3297,7 @@ impl EngineInner {
     }
 
     /// Set NPC life to zero without a damage instruction or protection rolls.
-    pub(crate) fn kill_npc_directly(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        victim_id: EntityId,
-    ) {
+    pub(crate) fn kill_npc_directly(&mut self, tcx: TickCtx<'_>, victim_id: EntityId) {
         let victim = self.expect_entity(victim_id, "direct NPC life update");
         assert!(victim.is_npc(), "direct NPC life update requires an NPC");
         let life = get_life_points(victim);
@@ -3375,7 +3311,7 @@ impl EngineInner {
             .expect("NPC has human life state");
         *life = if human.invulnerable { 100 } else { 0 };
         if *life == 0 {
-            self.apply_nonvisual_death_cascade(sim, assets, victim_id, None, false);
+            self.apply_nonvisual_death_cascade(tcx, victim_id, None, false);
         }
     }
 
@@ -3383,8 +3319,7 @@ impl EngineInner {
     /// A direct life update has no damage instruction to exempt from cleanup.
     pub(super) fn apply_nonvisual_death_cascade(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         victim_id: EntityId,
         damage_element: Option<(crate::sequence::SequenceId, usize)>,
         killer_is_pc: bool,
@@ -3428,8 +3363,7 @@ impl EngineInner {
         // a hard interrupt instead, so the damage element's `DyingSword`
         // order becomes current without deleting a simultaneous pending hit.
         self.kill_owner_sequences(
-            sim,
-            assets,
+            tcx,
             &mut Vec::new(),
             victim_id,
             damage_element.map(|element| element.0),
@@ -3458,7 +3392,7 @@ impl EngineInner {
             .is_some_and(|ai| ai.base.current_state == crate::ai::AiState::Seeking);
         if victim.ai_controller().is_some() {
             self.execute_ai_set_alert_status(
-                assets,
+                tcx.assets,
                 victim_id,
                 crate::ai::AlertLevel::Green,
                 crate::ai::AlertFlags::INSTANT_MUSIC_CHANGE,
@@ -3496,7 +3430,7 @@ impl EngineInner {
         // PC-only kill cascade — see `apply_pc_kill_cascade`.
         let is_pc = victim.kind().is_pc();
         if is_pc {
-            self.apply_pc_kill_cascade(sim, assets, victim_id);
+            self.apply_pc_kill_cascade(tcx, victim_id);
         }
 
         // Clear concussion / unconscious state and drop any
@@ -3528,7 +3462,7 @@ impl EngineInner {
         }
 
         // Quit swordfight (removes from all opponents' lists)
-        self.quit_swordfight(sim, assets, victim_id);
+        self.quit_swordfight(tcx, victim_id);
 
         // Mission-stat bump for Royalist soldier deaths.
         let victim = self.expect_entity(victim_id, "death cascade mission-stat victim");
@@ -3578,8 +3512,7 @@ impl EngineInner {
     /// Sets posture to Lying, quits swordfight, closes eyes for NPCs.
     pub(super) fn handle_knockout(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         victim_id: EntityId,
         damage_element: (crate::sequence::SequenceId, usize),
         attacker_is_pc: bool,
@@ -3625,7 +3558,7 @@ impl EngineInner {
 
         tracing::info!(entity = ?victim_id, concussion, "Entity knocked out");
 
-        let falling_anim = self.queue_knockout_orders(assets, victim_id, damage_element);
+        let falling_anim = self.queue_knockout_orders(tcx.assets, victim_id, damage_element);
 
         // If a falling_back animation is going to play, leave the
         // posture where it is — the animation-completion handler in
@@ -3638,7 +3571,7 @@ impl EngineInner {
         // was in a posture that doesn't map to one), fall back to
         // the original immediate-lying behavior so downstream code
         // that assumes Lying for unconscious humans still works.
-        self.apply_knockout_side_effects(sim, assets, victim_id, attacker_is_pc, !falling_anim);
+        self.apply_knockout_side_effects(tcx, victim_id, attacker_is_pc, !falling_anim);
     }
 
     fn queue_knockout_orders(
@@ -3688,8 +3621,7 @@ impl EngineInner {
 
     pub(super) fn apply_knockout_side_effects(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         victim_id: EntityId,
         attacker_is_pc: bool,
         set_lying_now: bool,
@@ -3697,11 +3629,11 @@ impl EngineInner {
         let healing_speed = concussion_healing_speed_for_entity(
             self.get_entity(victim_id)
                 .expect("knockout victim disappeared before healing-timeout setup"),
-            &assets.profile_manager,
+            &tcx.assets.profile_manager,
         );
 
         // Quit swordfight (removes from all opponents' lists).
-        self.quit_swordfight(sim, assets, victim_id);
+        self.quit_swordfight(tcx, victim_id);
 
         // Add unconscious star titbit (event-driven creation).
         self.add_unconscious_star(victim_id);
@@ -3732,8 +3664,7 @@ impl EngineInner {
             .is_some_and(|entity| entity.ai_controller().is_some())
         {
             self.execute_ai_callback(
-                sim,
-                assets,
+                tcx,
                 victim_id,
                 &crate::ai::Stimulus::new(crate::ai::StimulusType::EventLoseConsciousness),
             );
@@ -3789,7 +3720,7 @@ mod net_publication_tests {
             .money_fight_enemies
             .push(victim.index());
 
-        engine.apply_net(&sim, &assets, victim);
+        engine.apply_net(TickCtx::new(&sim, &assets), victim);
 
         assert!(engine.human(victim).already_detectable_body);
         for owner in [victim, friend] {

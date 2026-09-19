@@ -1,4 +1,6 @@
 use super::*;
+use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 #[test]
 fn pc_and_civilian_provoke_translate_without_soldier_speech() {
@@ -20,7 +22,7 @@ fn pc_and_civilian_provoke_translate_without_soldier_speech() {
         };
 
         engine.with_simulation_context(|engine, sim| {
-            engine.dispatch_provoke(sim, &assets, owner, sequence, 0);
+            engine.dispatch_provoke(TickCtx::new(sim, &assets), owner, sequence, 0);
         });
 
         let element = engine
@@ -123,7 +125,12 @@ fn reactive_strike_recognition_uses_command_not_replacement_animation() {
             engine.orders.sequence_manager.start_sequence_level(id);
             id
         };
-        engine.push_new_order(old_sequence, 0, OrderType::WalkingWithSword, 90.0, 100.0);
+        engine.push_new_order(
+            SequenceElementRef::new(old_sequence, 0),
+            OrderType::WalkingWithSword,
+            90.0,
+            100.0,
+        );
         engine.select_sequence_element(victim, Some((old_sequence, 0)));
         engine.t_element_in_progress(&assets, old_sequence, 0);
         {
@@ -150,8 +157,7 @@ fn reactive_strike_recognition_uses_command_not_replacement_animation() {
             id
         };
         engine.push_new_order(
-            strike_sequence,
-            0,
+            SequenceElementRef::new(strike_sequence, 0),
             OrderType::StrikingRoundLeftSword,
             100.0,
             100.0,
@@ -190,7 +196,12 @@ fn reactive_strike_recognition_uses_command_not_replacement_animation() {
         // PushAside geometry can turn that parade into a step-back.
         engine.control.rng = SimulationRng::with_original_replay(vec![85]);
         engine.with_simulation_context(|engine, sim| {
-            engine.warn_for_strike(sim, &assets, attacker, &[victim], SwordStrike::H);
+            engine.warn_for_strike(
+                TickCtx::new(sim, &assets),
+                attacker,
+                &[victim],
+                SwordStrike::H,
+            );
         });
         let ai = engine
             .get_entity(victim)
@@ -268,7 +279,7 @@ fn lateral_done_keeps_actor_scan_order_and_does_not_recover_out_of_arc_antagonis
         install_test_melee_order(&mut engine, attacker, antagonist, SwordStrike::D, false);
 
     assert_eq!(
-        engine.tick_nonstraight_melee_for(sim, &assets, attacker, selected),
+        engine.tick_nonstraight_melee_for(TickCtx::new(sim, &assets), attacker, selected),
         Some(crate::sprite::MotionState::Done)
     );
     let pending = &engine.human(attacker).sword_sweep.victims;
@@ -363,7 +374,7 @@ fn interrupted_circle_sweep_preserves_geometry_before_replacement_action_point()
         sprite.conversion = std::sync::Arc::new(vec![0; crate::sprite_script::NONANIMATION_END]);
     }
 
-    engine.tick_melee_strikes(sim, &assets);
+    engine.tick_melee_strikes(TickCtx::new(sim, &assets));
     {
         let sprite = &mut engine.elem_mut(attacker).sprite;
         assert_eq!(sprite.action_done_frame, 5);
@@ -371,7 +382,7 @@ fn interrupted_circle_sweep_preserves_geometry_before_replacement_action_point()
         sprite.current_frame = 3;
         sprite.frame_count = 0;
     }
-    engine.tick_melee_strikes(sim, &assets);
+    engine.tick_melee_strikes(TickCtx::new(sim, &assets));
 
     let attacker_entity = engine.ent(attacker);
     let retained_before_action = &attacker_entity.human_data().unwrap().sword_sweep;
@@ -383,7 +394,7 @@ fn interrupted_circle_sweep_preserves_geometry_before_replacement_action_point()
         "the interrupted circle geometry must not rotate replacement strike F before its action point"
     );
 
-    engine.tick_melee_strikes(sim, &assets);
+    engine.tick_melee_strikes(TickCtx::new(sim, &assets));
 }
 
 #[test]
@@ -411,7 +422,7 @@ fn replacement_true_circle_uses_current_direction_at_action_done() {
         };
     }
 
-    engine.tick_selected_melee_owner(sim, &assets, attacker, selected);
+    engine.tick_selected_melee_owner(TickCtx::new(sim, &assets), attacker, selected);
 
     let attacker_entity = engine.ent(attacker);
     let sprite = &attacker_entity.element_data().sprite;
@@ -449,7 +460,11 @@ fn saved_human_sweep_executes_once_for_the_live_strike_order() {
     assert_eq!(sweep.current_angle, 0.0);
     assert_eq!(sweep.final_angle, std::f32::consts::PI);
 
-    engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, false);
+    engine.tick_sweep_for(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        attacker,
+        false,
+    );
     assert!(
         engine.human(attacker).sword_sweep.victims.is_empty(),
         "executing a saved sweep consumes its persistent victim list"
@@ -466,7 +481,11 @@ fn saved_human_sweep_executes_once_for_the_live_strike_order() {
             .count()
     };
     assert_eq!(damage_count(&engine), 1);
-    engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, false);
+    engine.tick_sweep_for(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        attacker,
+        false,
+    );
     assert_eq!(
         damage_count(&engine),
         1,
@@ -599,8 +618,7 @@ fn lateral_done_processes_victims_in_original_actor_order_before_good_strike() {
         engine.select_sequence_element(victim, Some((sequence_id, 0)));
         engine.t_element_in_progress(&assets, sequence_id, 0);
         engine.apply_sword_damage(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             victim,
             Some(attacker),
             Some(SwordStrike::A),
@@ -663,7 +681,7 @@ fn no_animation_fresh_push_knockout_does_not_repeat_ko_side_effects() {
     let assets = assets_with_sword_profile(1, 50);
     // Model concussion handling's already-completed fresh-KO prefix,
     // then translate push damage without an animation.
-    engine.apply_knockout_side_effects(&sim, &assets, victim, true, false);
+    engine.apply_knockout_side_effects(TickCtx::new(&sim, &assets), victim, true, false);
     let damage =
         crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
     let sequence = {
@@ -674,8 +692,7 @@ fn no_animation_fresh_push_knockout_does_not_repeat_ko_side_effects() {
     engine.select_sequence_element(victim, Some((sequence, 0)));
 
     assert!(engine.apply_push_effect(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         victim,
         attacker,
         &PushStrikeInfo { repulsion: 100 },
@@ -720,7 +737,11 @@ fn reconsider_rebalance_updates_opponents_without_recursive_enter_command() {
     let replacement_handle = (0..3)
         .find(|slot| engine.world.entities.id_at_legacy_slot(*slot) == Some(replacement))
         .expect("replacement PC must occupy a legacy entity slot");
-    engine.execute_ai_rebalance_swordfight(&sim, &LevelAssets::default(), owner, replacement);
+    engine.execute_ai_rebalance_swordfight(
+        TickCtx::new(&sim, &LevelAssets::default()),
+        owner,
+        replacement,
+    );
 
     assert_eq!(
         engine.human(owner).opponents.first(),
@@ -762,7 +783,11 @@ fn enabling_temp_actions_restores_matching_slot_after_targeted_selection_collaps
     }
     engine.pc_mut(companion).current_action = Action::Bow;
 
-    engine.enable_pc_actions_temp(&crate::sim_rng::test_context(), &assets, 0, pc);
+    engine.enable_pc_actions_temp(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        0,
+        pc,
+    );
 
     let pc_data = engine.pc(pc);
     assert_eq!(pc_data.current_action, Action::Purse);
@@ -798,7 +823,11 @@ fn enabling_temp_actions_does_not_restore_action_absent_from_profile_slots() {
         pc_data.disabled_actions_temp = vec![true; 3];
     }
 
-    engine.enable_pc_actions_temp(&crate::sim_rng::test_context(), &assets, 0, pc);
+    engine.enable_pc_actions_temp(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        0,
+        pc,
+    );
 
     let pc_data = engine.pc(pc);
     assert_eq!(pc_data.current_action, Action::NoAction);

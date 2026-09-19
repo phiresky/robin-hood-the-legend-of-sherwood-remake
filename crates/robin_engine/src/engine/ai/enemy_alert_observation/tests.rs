@@ -65,12 +65,9 @@ fn hearing_projects_origin_instead_of_using_recorded_noise_elevation() {
         sector: engine.live_ai_position(owner).sector,
         level: 0,
     };
-    engine.execute_ai_heard_noise(
-        &crate::sim_rng::test_context(),
-        &assets,
-        owner,
-        &noise(NoiseType::ZingZing, position),
-    );
+    engine
+        .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+        .execute_ai_heard_noise(&noise(NoiseType::ZingZing, position));
     assert!(
         turn_directions(&engine, owner).contains(&11),
         "ground projection selects11 while substituting recorded elevation selects10"
@@ -99,7 +96,9 @@ fn zonk_keeps_absent_sector_and_layer_impact() {
     };
     let mut noise = noise(NoiseType::Zonk, position);
     noise.elevation = 480;
-    engine.execute_ai_heard_noise(&crate::sim_rng::test_context(), &assets, owner, &noise);
+    engine
+        .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+        .execute_ai_heard_noise(&noise);
     let ai = engine
         .world
         .entities
@@ -118,12 +117,9 @@ fn distraction_noise_records_impact_before_investigation() {
         y: 90.0,
         ..engine.live_ai_position(owner)
     };
-    engine.execute_ai_heard_noise(
-        &crate::sim_rng::test_context(),
-        &assets,
-        owner,
-        &noise(NoiseType::Distraction, position),
-    );
+    engine
+        .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+        .execute_ai_heard_noise(&noise(NoiseType::Distraction, position));
     let ai = engine
         .world
         .entities
@@ -153,12 +149,9 @@ fn logs_and_drawbridge_draw_cooldown_only_from_default_state() {
                 ..engine.live_ai_position(owner)
             };
             let (_, draws) = crate::sim_rng::with_draw_trace(|| {
-                engine.execute_ai_heard_noise(
-                    &crate::sim_rng::test_context(),
-                    &assets,
-                    owner,
-                    &noise(kind, position),
-                )
+                engine
+                    .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                    .execute_ai_heard_noise(&noise(kind, position))
             });
             assert_eq!(
                 draws
@@ -196,19 +189,13 @@ fn look_there_and_combat_alert_keep_distinct_macro_behavior() {
             .expect_ai_controller_mut(owner, format_args!("alert macro"))
             .macro_in_progress = true;
         if combat {
-            engine.execute_ai_combat_alert_reaction(
-                &crate::sim_rng::test_context(),
-                &assets,
-                owner,
-                position,
-            );
+            engine
+                .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                .execute_ai_combat_alert_reaction(position);
         } else {
-            engine.execute_ai_look_there_reaction(
-                &crate::sim_rng::test_context(),
-                &assets,
-                owner,
-                position,
-            );
+            engine
+                .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                .execute_ai_look_there_reaction(position);
         }
         let ai = engine
             .world
@@ -252,16 +239,13 @@ fn tower_alert_selects_rank_branch_and_preserves_running_macro() {
             profile.rank = rank
         });
         ai.base.macro_in_progress = true;
-        engine.execute_ai_tower_alert_reaction(
-            &crate::sim_rng::test_context(),
-            &assets,
-            owner,
-            &Hint {
+        engine
+            .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+            .execute_ai_tower_alert_reaction(&Hint {
                 seek_point: position,
                 who_tells_me: crate::ai::AiEntityHandle::new(caller.index()),
                 seek_flags: 0,
-            },
-        );
+            });
         let ai = engine
             .world
             .entities
@@ -335,16 +319,13 @@ fn tower_alert_faces_caller_moved_by_state_callback() {
         y: 500.0,
         ..engine.live_ai_position(owner)
     };
-    engine.execute_ai_tower_alert_reaction(
-        &crate::sim_rng::test_context(),
-        &assets,
-        owner,
-        &Hint {
+    engine
+        .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+        .execute_ai_tower_alert_reaction(&Hint {
             seek_point: position,
             who_tells_me: crate::ai::AiEntityHandle::new(caller.index()),
             seek_flags: 0,
-        },
-    );
+        });
     assert_eq!(
         engine.live_ai_position(caller).map_point(),
         MapPoint::new(100.0, 600.0)

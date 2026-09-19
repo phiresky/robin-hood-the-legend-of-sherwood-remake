@@ -1,4 +1,6 @@
 use super::*;
+use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 #[test]
 fn this_guy_forbid_preserves_original_uword_narrowing_and_ulong_comparison() {
@@ -141,12 +143,12 @@ fn enter_swordfight_clears_pending_bow_shot_list() {
         Some(opponent),
     );
     shot.priority = crate::sequence::SequencePriority::Preference;
-    let shot_seq = engine.launch_element(sim, &assets, shot);
+    let shot_seq = engine.launch_element(TickCtx::new(sim, &assets), shot);
     engine.queue_pc_shoot_bow(pc, crate::sequence::SequenceElementRef::new(shot_seq, 0));
     assert_eq!(engine.human(pc).pending_shoots.len(), 1);
     assert!(engine.pc_has_pending_shoot_bow(pc));
 
-    let _ = engine.enter_swordfight(sim, &assets, pc, opponent, false);
+    let _ = engine.enter_swordfight(TickCtx::new(sim, &assets), pc, opponent, false);
 
     assert_eq!(
         engine
@@ -181,11 +183,15 @@ fn npc_enter_swordfight_preserves_postponed_bow_sequence() {
         Some(opponent),
     );
     shot.priority = crate::sequence::SequencePriority::Preference;
-    let shot_seq = engine.launch_element(sim, &assets, shot);
-    engine.postpone_element(sim, &assets, &mut Vec::new(), shot_seq, 0);
+    let shot_seq = engine.launch_element(TickCtx::new(sim, &assets), shot);
+    engine.postpone_element(
+        TickCtx::new(sim, &assets),
+        &mut Vec::new(),
+        SequenceElementRef::new(shot_seq, 0),
+    );
 
     let (_, stimuli) = crate::engine::soldier_helpers::capture_condolation_stimuli(|| {
-        engine.enter_swordfight(sim, &assets, initiator, opponent, false)
+        engine.enter_swordfight(TickCtx::new(sim, &assets), initiator, opponent, false)
     });
 
     assert_eq!(
@@ -234,8 +240,7 @@ fn synchronous_one_shot_noise_is_handled_before_broadcast_returns() {
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     engine.broadcast_noise_synchronously(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         NoiseType::Bonk,
         MapPoint::new(20.0, 10.0),
         Some(crate::position_interface::Layer::ZERO),
@@ -490,7 +495,11 @@ fn bow_interaction_accepts_a_target_that_died_while_aiming() {
 
     assert!(
         engine
-            .shoot_bow_at(&crate::sim_rng::test_context(), &assets, shooter, target)
+            .shoot_bow_at(
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
+                shooter,
+                target
+            )
             .is_some()
     );
 }
@@ -726,10 +735,9 @@ fn reconsider_observation_uses_raw_positions_across_committed_gate_sides() {
     assert_eq!(engine.live_ai_position(raw_far_id).x, 20.0);
 
     engine.dispatch_think_with_drain(
-        &sim,
+        TickCtx::new(&sim, &assets),
         owner_id,
         &Stimulus::new(StimulusType::EventTimer),
-        &assets,
     );
 
     let owner = engine.enemy(owner_id);
@@ -750,7 +758,11 @@ fn closure_review_alert_soldiers_keeps_inactive_soldier_in_live_camp_scan() {
     };
     soldier.element.active = false;
 
-    assert!(engine.execute_ai_alert_soldiers(&sim, &assets, officer_id, Position::default(), 0));
+    assert!(
+        engine
+            .ai_ctx(&sim, &assets, officer_id)
+            .execute_ai_alert_soldiers(Position::default(), 0)
+    );
     assert_eq!(
         engine
             .world

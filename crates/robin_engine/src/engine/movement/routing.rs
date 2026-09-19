@@ -1,15 +1,16 @@
 use super::*;
+use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 impl EngineInner {
     pub(in crate::engine) fn launch_live_ai_turn(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         direction: i16,
         fast: bool,
     ) {
-        self.halt_actor(sim, assets, owner);
+        self.halt_actor(tcx, owner);
         self.launch_turn_sequence_deferred_no_transitions(
             owner,
             if fast {
@@ -152,8 +153,7 @@ impl EngineInner {
     /// Construct and register movement at the caller's current statement.
     pub(in crate::engine) fn launch_ai_move(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         entity_id: EntityId,
         destination: crate::ai::Position,
         goto: crate::ai::GotoFlags,
@@ -474,8 +474,7 @@ impl EngineInner {
                 // position behind later actors.
                 let route_assert_sector = route_identity_differs.then_some(source_sector);
                 return self.launch_gate_movement_sequence(
-                    sim,
-                    assets,
+                    tcx,
                     &mut Vec::new(),
                     crate::engine::movement::GateRouteRequest {
                         entity_id: entity_id,
@@ -569,7 +568,7 @@ impl EngineInner {
                     .map_or(1, |element| element.command_level.saturating_add(1));
                 sequence.append_element(tail);
             }
-            let sequence_id = self.launch_sequence(sim, assets, sequence);
+            let sequence_id = self.launch_sequence(tcx, sequence);
 
             tracing::trace!(
                 entity = ?entity_id,
@@ -582,7 +581,7 @@ impl EngineInner {
             Some(sequence_id)
         })();
         if launched.is_some() && was_computing_path {
-            self.halt_actor(sim, assets, entity_id);
+            self.halt_actor(tcx, entity_id);
             None
         } else {
             launched
@@ -800,8 +799,7 @@ impl EngineInner {
 
     pub(in crate::engine) fn execute_globally_frozen_pre_motion_owner(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         selected: MovementOwnerSelection,
     ) -> OrderType {
@@ -911,8 +909,7 @@ impl EngineInner {
                         );
                     }
                     let launched = self.start_post_seek_sequence(
-                        sim,
-                        assets,
+                        tcx,
                         &mut Vec::new(),
                         owner,
                         Some((selected.seq_id, selected.elem_idx)),
@@ -926,7 +923,10 @@ impl EngineInner {
                 // seeking still renews the order before aging its wait scalar.
                 let (element, next_order_id) = self
                     .orders
-                    .element_with_order_ids_mut(selected.seq_id, selected.elem_idx)
+                    .element_with_order_ids_mut(SequenceElementRef::new(
+                        selected.seq_id,
+                        selected.elem_idx,
+                    ))
                     .expect("globally frozen seek lost its selected element");
                 let order = element
                     .orders
@@ -1009,8 +1009,7 @@ mod exact_ai_goto_source_tests {
             };
             let sequence = engine
                 .launch_ai_move(
-                    &crate::sim_rng::test_context(),
-                    &LevelAssets::new(),
+                    TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
                     owner,
                     destination,
                     flags,
@@ -1124,8 +1123,7 @@ mod exact_ai_goto_source_tests {
         };
         let sequence_id = engine
             .launch_ai_move(
-                &crate::sim_rng::test_context(),
-                &LevelAssets::new(),
+                TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
                 owner,
                 destination,
                 crate::ai::GotoFlags::RUN,

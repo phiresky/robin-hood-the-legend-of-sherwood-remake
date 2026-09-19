@@ -1,4 +1,6 @@
 use super::*;
+use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 #[test]
 fn accepted_empty_damage_clears_installed_order_without_clearing_movement_goal() {
@@ -303,8 +305,7 @@ fn ladder_fall_translation_retains_layer_goal_and_authors_landing_target() {
     };
 
     engine.translate_ladder_wall_fall(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         victim,
         (sequence, 0),
     );
@@ -365,8 +366,7 @@ fn purse_brawl_knocks_out_allied_soldier_independently_of_diplomacy() {
                 id
             };
             engine.apply_hit_damage(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 victim,
                 Some(attacker),
                 40,
@@ -457,8 +457,8 @@ fn special_strike_cancellation_closes_its_set_state_callback_boundary() {
     let (attacker, _) = make_enemy_strike_pair(&mut engine);
     let assets = assets_with_sword_profile(7, 30);
     engine.with_simulation_context(|engine, sim| {
-        engine.begin_ai_special_strike(sim, &assets, attacker);
-        engine.tick_enemy_sword_attacks(sim, &assets);
+        engine.begin_ai_special_strike(TickCtx::new(sim, &assets), attacker);
+        engine.tick_enemy_sword_attacks(TickCtx::new(sim, &assets));
     });
 
     let ai = engine
@@ -504,7 +504,7 @@ fn event_authorized_parade_reconsideration_reaches_strike_proposal() {
     engine.control.rng = SimulationRng::with_original_replay(vec![85]);
 
     engine.with_simulation_context(|engine, sim| {
-        engine.execute_ai_sword_strike_proposal(sim, &assets, attacker);
+        engine.execute_ai_sword_strike_proposal(TickCtx::new(sim, &assets), attacker);
     });
 
     assert_eq!(
@@ -583,8 +583,7 @@ fn reactive_counterstrike_uses_difficulty_modified_soldier_fighting_ability() {
     let (mut engine, assets, victim, attacker, _) = reactive_counterstrike_fixture();
     engine.with_simulation_context(|engine, sim| {
         engine.consider_to_begin_parade(
-            sim,
-            &assets,
+            TickCtx::new(sim, &assets),
             victim,
             attacker,
             Some(SwordStrike::A),
@@ -635,15 +634,14 @@ fn reactive_counterstrike_registers_after_stop_callback_removes_final_principal(
             // Complete relationship removal reentrantly while Stop owns the
             // stack, before its caller constructs the counterstrike.
             let sim = engine.control.simulation_context();
-            engine.quit_swordfight(&sim, &callback_assets, victim);
+            engine.quit_swordfight(TickCtx::new(&sim, &callback_assets), victim);
             assert!(engine.human(victim).opponents.is_empty());
             assert!(engine.human(attacker).opponents.is_empty());
         },
         || {
             engine.with_simulation_context(|engine, sim| {
                 engine.consider_to_begin_parade(
-                    sim,
-                    &assets,
+                    TickCtx::new(sim, &assets),
                     victim,
                     attacker,
                     Some(SwordStrike::A),
@@ -759,7 +757,12 @@ fn reactive_zero_distance_step_back_completes_before_returning() {
             engine.orders.sequence_manager.start_sequence_level(id);
             id
         };
-        engine.push_new_order(old_sequence, 0, OrderType::WalkingWithSword, 90.0, 100.0);
+        engine.push_new_order(
+            SequenceElementRef::new(old_sequence, 0),
+            OrderType::WalkingWithSword,
+            90.0,
+            100.0,
+        );
         engine.select_sequence_element(victim, Some((old_sequence, 0)));
         engine.t_element_in_progress(&assets, old_sequence, 0);
         {
@@ -787,8 +790,7 @@ fn reactive_zero_distance_step_back_completes_before_returning() {
         engine.control.rng = SimulationRng::with_original_replay(vec![65]);
         engine.with_simulation_context(|engine, sim| {
             engine.consider_to_begin_parade(
-                sim,
-                &assets,
+                TickCtx::new(sim, &assets),
                 victim,
                 attacker,
                 Some(SwordStrike::A),
@@ -869,17 +871,29 @@ fn empty_true_circle_sweep_advances_until_rotation_complete() {
         current_angle: 0.0,
         final_angle: std::f32::consts::TAU,
     };
-    engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, false);
+    engine.tick_sweep_for(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        attacker,
+        false,
+    );
     assert_eq!(
         engine.human(attacker).sword_sweep.current_angle,
         std::f32::consts::PI
     );
-    engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, false);
+    engine.tick_sweep_for(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        attacker,
+        false,
+    );
     assert_eq!(
         engine.human(attacker).sword_sweep.current_angle,
         std::f32::consts::TAU
     );
-    engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, false);
+    engine.tick_sweep_for(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        attacker,
+        false,
+    );
     let attacker = engine.ent(attacker);
     assert_eq!(attacker.element_data().direction(), 0);
     assert_eq!(
@@ -1039,7 +1053,7 @@ fn interrupted_lateral_sweep_uses_the_replacement_strike() {
         sprite.conversion = std::sync::Arc::new(vec![0; crate::sprite_script::NONANIMATION_END]);
     }
 
-    engine.tick_melee_strikes(sim, &assets);
+    engine.tick_melee_strikes(TickCtx::new(sim, &assets));
     let retained_on_start = &engine.human(attacker).sword_sweep;
     let replacement_direction_angle = sector_to_angle(engine.direction_of(attacker));
 
@@ -1053,7 +1067,11 @@ fn interrupted_lateral_sweep_uses_the_replacement_strike() {
     assert_eq!(retained_on_start.final_angle, replacement_direction_angle);
     assert_eq!(soldier_life(&engine, victim), 50);
 
-    engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, false);
+    engine.tick_sweep_for(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        attacker,
+        false,
+    );
 
     let retained_after_hit = &engine.human(attacker).sword_sweep;
     assert_eq!(
@@ -1086,7 +1104,7 @@ fn interrupted_push_victims_survive_replacement_lateral_start() {
         sprite.frame_count = 0;
     }
 
-    engine.tick_selected_melee_owner(&sim, &assets, attacker, selected);
+    engine.tick_selected_melee_owner(TickCtx::new(&sim, &assets), attacker, selected);
 
     assert_eq!(engine.human(attacker).sword_sweep.victims, vec![victim]);
 }
@@ -1187,14 +1205,14 @@ fn interrupted_h_circle_runs_replacement_i_effect_without_advancing_geometry() {
         sprite.conversion = std::sync::Arc::new(vec![0; crate::sprite_script::NONANIMATION_END]);
     }
 
-    engine.tick_melee_strikes(sim, &assets);
+    engine.tick_melee_strikes(TickCtx::new(sim, &assets));
     {
         let sprite = &mut engine.elem_mut(attacker).sprite;
         assert_eq!(sprite.action_done_frame, 5);
         sprite.current_frame = 2;
         sprite.frame_count = 0;
     }
-    engine.tick_melee_strikes(sim, &assets);
+    engine.tick_melee_strikes(TickCtx::new(sim, &assets));
 
     assert_eq!(
         engine
@@ -1209,7 +1227,7 @@ fn interrupted_h_circle_runs_replacement_i_effect_without_advancing_geometry() {
         1,
         "the first replacement pre-action effect consumes the reached retained victim"
     );
-    engine.tick_melee_strikes(sim, &assets);
+    engine.tick_melee_strikes(TickCtx::new(sim, &assets));
     {
         let sprite = &mut engine.elem_mut(attacker).sprite;
         sprite.current_frame = 4;
@@ -1222,8 +1240,7 @@ fn interrupted_h_circle_runs_replacement_i_effect_without_advancing_geometry() {
         assert_ne!(sprite.current_frame, sprite.action_done_frame);
     }
     engine.tick_selected_sweep_phase(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         attacker,
         strikes::SweepTickPhase::InProgress,
     );
@@ -1327,7 +1344,7 @@ fn replacement_half_circle_start_rebases_retained_angles_before_effect() {
     // Human action execution warns for the strike on MotionState::Start. Its
     // half-circle victim query mutates the shared angles even though the
     // retained victim FIFO belongs to the interrupted H strike.
-    engine.tick_selected_melee_owner(&sim, &assets, attacker, selected);
+    engine.tick_selected_melee_owner(TickCtx::new(&sim, &assets), attacker, selected);
     assert_eq!(
         engine.elem(attacker).sprite.last_motion_state,
         Some(crate::sprite::MotionState::Start),
@@ -1350,7 +1367,7 @@ fn replacement_half_circle_start_rebases_retained_angles_before_effect() {
             < f32::EPSILON
     );
 
-    engine.tick_selected_melee_owner(&sim, &assets, attacker, selected);
+    engine.tick_selected_melee_owner(TickCtx::new(&sim, &assets), attacker, selected);
     assert_eq!(
         engine.elem(attacker).sprite.last_motion_state,
         Some(crate::sprite::MotionState::InProgress),
@@ -1406,7 +1423,7 @@ fn terminal_true_circle_direction_is_presented_before_done_progresses() {
         };
     }
 
-    engine.tick_selected_melee_owner(sim, &assets, attacker, selected);
+    engine.tick_selected_melee_owner(TickCtx::new(sim, &assets), attacker, selected);
 
     let attacker_entity = engine.ent(attacker);
     assert_eq!(
@@ -1464,7 +1481,11 @@ fn saved_empty_true_circle_sweep_rotates_from_persistent_angles() {
     assert!(sweep.victims.is_empty());
     assert_eq!(sweep.current_angle.to_bits(), current_angle.to_bits());
 
-    engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, false);
+    engine.tick_sweep_for(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        attacker,
+        false,
+    );
     assert_eq!(
         engine.direction_of(attacker),
         3,
@@ -1497,7 +1518,11 @@ fn lateral_start_rebases_retained_serialized_human_victims() {
         sprite.frame_count = 0;
     }
 
-    engine.tick_selected_melee_owner(&crate::sim_rng::test_context(), &assets, attacker, selected);
+    engine.tick_selected_melee_owner(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        attacker,
+        selected,
+    );
 
     let attacker = engine.ent(attacker);
     assert_eq!(
@@ -1538,8 +1563,7 @@ fn terminated_lateral_sweep_cannot_hit_again_in_a_fresh_strike() {
     assert_eq!(engine.human(attacker).sword_sweep.victims, vec![victim]);
 
     engine.complete_melee_strike(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         attacker,
         SwordStrike::D,
         Some(1),
@@ -1558,7 +1582,11 @@ fn terminated_lateral_sweep_cannot_hit_again_in_a_fresh_strike() {
     );
 
     install_test_melee_order(&mut engine, attacker, victim, SwordStrike::D, true);
-    engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, false);
+    engine.tick_sweep_for(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        attacker,
+        false,
+    );
     assert!(engine.human(attacker).sword_sweep.victims.is_empty());
     assert!(
         !engine
@@ -1603,7 +1631,11 @@ fn later_circle_frame_tests_existing_angle_before_tail_advance() {
             .count()
     };
 
-    engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, false);
+    engine.tick_sweep_for(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        attacker,
+        false,
+    );
     assert_eq!(
         queued_damage_count(&engine),
         0,
@@ -1612,7 +1644,11 @@ fn later_circle_frame_tests_existing_angle_before_tail_advance() {
     let sweep = &engine.human(attacker).sword_sweep;
     assert!((sweep.current_angle - std::f32::consts::FRAC_PI_2).abs() < f32::EPSILON);
 
-    engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, false);
+    engine.tick_sweep_for(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        attacker,
+        false,
+    );
     assert_eq!(
         queued_damage_count(&engine),
         1,
@@ -1638,7 +1674,11 @@ fn lateral_advance_is_raw_and_does_not_use_circle_final_clamping() {
         final_angle: 0.70,
     };
 
-    engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, false);
+    engine.tick_sweep_for(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        attacker,
+        false,
+    );
 
     let current = engine.human(attacker).sword_sweep.current_angle;
     assert!(
@@ -1673,7 +1713,7 @@ fn push_replacement_executes_without_advancing_retained_circle_sweep() {
         final_angle: 5.5,
     };
 
-    engine.tick_selected_melee_owner(sim, &assets, attacker, selected);
+    engine.tick_selected_melee_owner(TickCtx::new(sim, &assets), attacker, selected);
 
     assert_eq!(
         engine.direction_of(attacker),
@@ -1716,7 +1756,7 @@ fn push_strike_does_not_recover_antagonist_outside_rectangle() {
     let selected = install_test_melee_order(&mut engine, attacker, target, SwordStrike::A, false);
 
     assert_eq!(
-        engine.tick_nonstraight_melee_for(sim, &assets, attacker, selected),
+        engine.tick_nonstraight_melee_for(TickCtx::new(sim, &assets), attacker, selected),
         Some(crate::sprite::MotionState::Done)
     );
 
@@ -1769,8 +1809,7 @@ fn push_strike_does_not_inform_soldier_of_good_strike() {
     engine.t_element_in_progress(&assets, sequence_id, 0);
 
     engine.apply_sword_damage(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         victim,
         Some(attacker),
         Some(SwordStrike::H),
@@ -1832,8 +1871,7 @@ fn ordinary_cutting_strike_still_informs_soldier_of_good_strike() {
     engine.t_element_in_progress(&assets, sequence_id, 0);
 
     engine.apply_sword_damage(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         victim,
         Some(attacker),
         Some(SwordStrike::A),
@@ -1906,8 +1944,7 @@ fn non_pc_helping_to_climb_still_informs_soldier_of_good_strike() {
     engine.t_element_in_progress(&assets, sequence_id, 0);
 
     engine.apply_sword_damage(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         victim,
         Some(attacker),
         Some(SwordStrike::A),
@@ -1957,8 +1994,7 @@ fn preexisting_unconscious_push_preserves_closed_eyes_without_replaying_ko() {
     };
 
     assert!(engine.apply_push_effect(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         victim,
         attacker,
         &PushStrikeInfo { repulsion: 100 },
@@ -2072,8 +2108,7 @@ fn parried_true_circle_still_queues_push_fall() {
     let victim_moving_before = engine.ent(victim).position_iface().is_moving_map();
 
     engine.apply_sword_damage(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         victim,
         Some(attacker),
         Some(SwordStrike::H),
@@ -2156,7 +2191,7 @@ fn parried_true_circle_still_queues_push_fall() {
             .map(|(_, _, order)| order.order_type),
         Some(OrderType::ParryingSword)
     );
-    engine.tick_actor_animation_for(&sim, &assets, victim);
+    engine.tick_actor_animation_for(TickCtx::new(&sim, &assets), victim);
     assert_eq!(
         engine.map_pos_of(victim),
         victim_position_before,
@@ -2233,7 +2268,7 @@ fn parried_true_circle_still_queues_push_fall() {
         );
     let motion =
         engine.perform_combat_flight_position(victim, crate::sprite::MotionState::InProgress);
-    engine.finish_combat_flight(&sim, &assets, victim, motion);
+    engine.finish_combat_flight(TickCtx::new(&sim, &assets), victim, motion);
     let victim_after_fall_start = engine.ent(victim);
     assert_eq!(
         victim_after_fall_start.element_data().posture(),
@@ -2255,7 +2290,7 @@ fn parried_true_circle_still_queues_push_fall() {
     engine.actor_mut(victim).execute_order_initialising = false;
     let motion =
         engine.perform_combat_flight_position(victim, crate::sprite::MotionState::InProgress);
-    engine.finish_combat_flight(&sim, &assets, victim, motion);
+    engine.finish_combat_flight(TickCtx::new(&sim, &assets), victim, motion);
     assert_eq!(
         engine.map_pos_of(victim),
         crate::coordinates::MapPoint::new(
@@ -2414,7 +2449,7 @@ fn pushed_flight_starts_from_cached_takeoff_elevation_after_installing_goal_plan
 
     let motion =
         engine.perform_combat_flight_position(victim, crate::sprite::MotionState::InProgress);
-    engine.finish_combat_flight(&sim, &assets, victim, motion);
+    engine.finish_combat_flight(TickCtx::new(&sim, &assets), victim, motion);
     let position = engine.ent(victim).position_iface().get_position();
     assert_eq!(
         position.z.to_bits(),
@@ -2460,14 +2495,12 @@ fn thrust_a_promotes_clicked_secondary_opponent() {
     let action_state_before_dispatch = engine.action_state_of(pc);
 
     engine.dispatch_sword_strike(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::default(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
         &mut Vec::new(),
         pc,
         clicked,
         SwordStrike::A,
-        seq_id,
-        0,
+        SequenceElementRef::new(seq_id, 0),
     );
     assert_eq!(
         engine.action_state_of(pc),
@@ -2523,7 +2556,11 @@ fn reconsider_rebalance_rejection_preserves_opponent_and_ai_primary_target() {
     };
     let ai = soldier.npc.ai_brain.enemy_mut().unwrap();
     ai.base.primary_target = Some(AiEntityHandle::new(old_primary_handle));
-    engine.execute_ai_rebalance_swordfight(&sim, &LevelAssets::default(), owner, replacement);
+    engine.execute_ai_rebalance_swordfight(
+        TickCtx::new(&sim, &LevelAssets::default()),
+        owner,
+        replacement,
+    );
 
     let Entity::Soldier(soldier) = engine.ent(owner) else {
         unreachable!()
@@ -2559,7 +2596,11 @@ fn reconsider_direct_entry_does_not_prepare_or_stop_opponent() {
     engine.t_element_in_progress(&assets, selected_id, 0);
     engine.actor_mut(opponent).continuation.motion_state = crate::sprite::MotionState::InProgress;
 
-    assert!(engine.direct_enter_swordfight(&sim, &LevelAssets::default(), initiator, opponent,));
+    assert!(engine.direct_enter_swordfight(
+        TickCtx::new(&sim, &LevelAssets::default()),
+        initiator,
+        opponent,
+    ));
 
     assert_eq!(
         engine
@@ -2628,7 +2669,7 @@ fn deleting_final_opponent_synchronously_quits_soldier_ai() {
         ..LevelAssets::new()
     };
 
-    assert!(engine.delete_opponent(&sim, &assets, soldier, opponent));
+    assert!(engine.delete_opponent(TickCtx::new(&sim, &assets), soldier, opponent));
 
     let ai = engine.ai_ctrl(soldier);
     assert_eq!(
@@ -2670,7 +2711,7 @@ fn elevated_domino_uses_world_ground_xy_not_projected_map_y() {
 
     let motion =
         engine.perform_combat_flight_position(flyer, crate::sprite::MotionState::InProgress);
-    engine.finish_combat_flight(sim, &LevelAssets::default(), flyer, motion);
+    engine.finish_combat_flight(TickCtx::new(sim, &LevelAssets::default()), flyer, motion);
 
     let flyer_element = engine.elem(flyer);
     let victim_element = engine.elem(victim);
@@ -2699,7 +2740,7 @@ fn domino_skips_actors_behind_flight_direction() {
     give_flight(&mut engine, flyer, hitter, 1.0, 0.0, 5);
     let motion =
         engine.perform_combat_flight_position(flyer, crate::sprite::MotionState::InProgress);
-    engine.finish_combat_flight(sim, &LevelAssets::default(), flyer, motion);
+    engine.finish_combat_flight(TickCtx::new(sim, &LevelAssets::default()), flyer, motion);
 
     assert_eq!(
         count_domino_hits_for(&engine, behind, hitter),
@@ -2721,7 +2762,7 @@ fn domino_respects_distance_radius() {
     give_flight(&mut engine, flyer, hitter, 1.0, 0.0, 5);
     let motion =
         engine.perform_combat_flight_position(flyer, crate::sprite::MotionState::InProgress);
-    engine.finish_combat_flight(sim, &LevelAssets::default(), flyer, motion);
+    engine.finish_combat_flight(TickCtx::new(sim, &LevelAssets::default()), flyer, motion);
 
     assert_eq!(
         count_domino_hits_for(&engine, far, hitter),
@@ -2744,7 +2785,7 @@ fn domino_skips_non_upright_actors() {
     give_flight(&mut engine, flyer, hitter, 1.0, 0.0, 5);
     let motion =
         engine.perform_combat_flight_position(flyer, crate::sprite::MotionState::InProgress);
-    engine.finish_combat_flight(sim, &LevelAssets::default(), flyer, motion);
+    engine.finish_combat_flight(TickCtx::new(sim, &LevelAssets::default()), flyer, motion);
 
     assert_eq!(
         count_domino_hits_for(&engine, lying, hitter),
@@ -2780,7 +2821,7 @@ fn no_domino_when_flight_has_no_antagonist() {
 
     let motion =
         engine.perform_combat_flight_position(flyer, crate::sprite::MotionState::InProgress);
-    engine.finish_combat_flight(sim, &LevelAssets::default(), flyer, motion);
+    engine.finish_combat_flight(TickCtx::new(sim, &LevelAssets::default()), flyer, motion);
 
     let any_hit = engine
         .orders
@@ -2825,8 +2866,12 @@ fn apply_concussion_uses_pc_profile_wake_up() {
 
     // Drive the cheat-equivalent call: 100 concussion → KO →
     // healing-timeout init.
-    let outcome =
-        engine.apply_concussion(&crate::sim_rng::test_context(), &assets, pc_id, 100, false);
+    let outcome = engine.apply_concussion(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        pc_id,
+        100,
+        false,
+    );
     assert_eq!(outcome, crate::combat::ConcussionOutcome::WentUnconscious);
 
     let timeout = engine.human(pc_id).concussion_healing_timeout;
@@ -2894,8 +2939,7 @@ fn evaluated_step_back_aborted_before_motion_terminal_preserves_history() {
     engine.human_mut(owner).last_motion_was_step_back_in_combat = false;
 
     engine.launch_evaluated_step_back(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         crate::coordinates::MapPoint::new(12.0, 0.0),
         0,
@@ -2911,11 +2955,9 @@ fn evaluated_step_back_aborted_before_motion_terminal_preserves_history() {
         .expect("evaluated step-back movement must be registered");
 
     engine.element_impossible(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
-        sequence_id,
-        element_index,
+        SequenceElementRef::new(sequence_id, element_index),
     );
     assert!(
         !engine.human(owner).last_motion_was_step_back_in_combat,
@@ -2990,7 +3032,7 @@ fn unselected_rescue_pc_proposes_strike_before_step_back() {
     // this rescue PC owns no player command interface.
     engine.control.rng = SimulationRng::with_original_replay(vec![0, 99, 0]);
     engine.with_simulation_context(|engine, sim| {
-        engine.tick_waiting_sword_execute_for(sim, &assets, owner);
+        engine.tick_waiting_sword_execute_for(TickCtx::new(sim, &assets), owner);
     });
     let draws = engine
         .control

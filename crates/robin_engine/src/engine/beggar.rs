@@ -18,6 +18,7 @@ use super::EngineInner;
 use crate::bow_shot;
 use crate::coordinates::MapPoint;
 use crate::element::{Entity, EntityId, ObjectType};
+use crate::engine::TickCtx;
 use crate::inventory::COIN_VALUE;
 use crate::position_interface::vector_to_sector_0_to_15_iso;
 
@@ -306,8 +307,7 @@ fn give_money_to_beggar(
     };
     let coin_id = engine.with_simulation_context(|engine, sim| {
         engine.publish_primed_coin(
-            sim,
-            assets,
+            TickCtx::new(sim, assets),
             coin,
             npc_pos_2d,
             source_sector,
@@ -364,8 +364,7 @@ impl EngineInner {
     /// PC Execute arm. Donors are searched in live NPC creation order.
     pub(crate) fn tick_beggar_bid_for(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         pc_id: EntityId,
         order_id: std::num::NonZeroU32,
     ) {
@@ -388,7 +387,7 @@ impl EngineInner {
             crate::sprite::MotionState::InProgress
         } else {
             pc.element_data_mut().sprite.perform_action(
-                sim,
+                tcx.sim,
                 Some(order_id),
                 crate::order::OrderType::SimulatingBeggar,
                 direction,
@@ -401,7 +400,7 @@ impl EngineInner {
             pc.set_posture(crate::element::Posture::SimulatingBeggar);
             pc.actor_data_mut().unwrap().action_state = crate::element::ActionState::Waiting;
         }
-        self.bid_for_money(assets, pc_id);
+        self.bid_for_money(tcx.assets, pc_id);
     }
 }
 

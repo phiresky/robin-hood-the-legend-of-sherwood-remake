@@ -6,8 +6,10 @@ use super::*;
 use crate::abilities::{SelectedAbility, ability_order_type, selected_ability};
 use crate::coordinates::MapPoint;
 use crate::element::{ActionState, Entity, EntityId, Posture};
+use crate::engine::TickCtx;
 use crate::movement::AbilityKind;
 use crate::order::OrderType;
+use crate::sequence::SequenceElementRef;
 use crate::sprite::MotionState as SpriteMotionState;
 
 impl EngineInner {
@@ -15,8 +17,7 @@ impl EngineInner {
     /// whose selected command belongs to the following ability.
     pub(super) fn apply_completed_corpse_drop(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         carrier_id: EntityId,
         target_id: EntityId,
         drop_posture: crate::element::Posture,
@@ -150,7 +151,7 @@ impl EngineInner {
         // tested against the body's old current position, not against the
         // delayed drop destination applied at its later owner slot.
         self.process_corpse_intersection_update_for(target_id);
-        self.actor_wait(sim, assets, target_id);
+        self.actor_wait(tcx, target_id);
 
         if in_building && let Some(target) = self.get_entity_mut(target_id) {
             let is_dead = target.is_dead();
@@ -173,8 +174,7 @@ impl EngineInner {
     /// The caller has already installed the explicit Wait successor.
     pub(super) fn apply_listen_done_action_handoff(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         actor_id: EntityId,
     ) {
         self.get_entity(actor_id)
@@ -188,7 +188,7 @@ impl EngineInner {
             // Listen completion must not clear that newer action.
             if self.players.seats[0].selected_action == crate::profiles::Action::Listen {
                 self.players.seats[0].selected_action = crate::profiles::Action::NoAction;
-                self.unselect_action(sim, assets, actor_id);
+                self.unselect_action(tcx, actor_id);
             }
         } else if let Some(pc) = self
             .get_entity_mut(actor_id)
@@ -210,13 +210,12 @@ impl EngineInner {
     /// Abort the walking arm as soon as its rider no longer fits overhead.
     pub(super) fn check_walking_shoulder_clearance(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         carrier_id: EntityId,
     ) -> bool {
         let carrier = self.expect_entity(carrier_id, "walking shoulder carrier");
         let position = carrier.element_data().position();
-        if crate::abilities::can_carry_on_shoulders(position, self.sight_obstacles(assets)) {
+        if crate::abilities::can_carry_on_shoulders(position, self.sight_obstacles(tcx.assets)) {
             return true;
         }
         let victim = carrier
@@ -231,7 +230,7 @@ impl EngineInner {
             0,
             0,
         );
-        self.launch_element(sim, assets, damage);
+        self.launch_element(tcx, damage);
         false
     }
     pub(super) fn apply_ability_carry_done(&mut self, carrier_id: EntityId, target_id: EntityId) {
@@ -259,8 +258,7 @@ impl EngineInner {
 
     pub(super) fn apply_ability_tie_done(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         actor_id: EntityId,
         target_id: EntityId,
     ) {
@@ -270,8 +268,7 @@ impl EngineInner {
         target.set_posture(crate::element::Posture::Tied);
         if target.is_soldier() {
             self.execute_ai_speech(
-                sim,
-                assets,
+                tcx,
                 target_id,
                 crate::ai::AiSpeechAttempt {
                     remark: crate::ai::Remark::TiedUp,
@@ -281,7 +278,7 @@ impl EngineInner {
         }
         // Player-character ability execution refreshes the victim
         // with Wait after applying the tied posture and remark.
-        self.actor_wait(sim, assets, target_id);
+        self.actor_wait(tcx, target_id);
         tracing::debug!(
             actor = ?actor_id,
             target = ?target_id,
@@ -292,8 +289,7 @@ impl EngineInner {
 
     pub(super) fn apply_ability_untie_done(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         actor_id: EntityId,
         target_id: EntityId,
     ) {
@@ -306,7 +302,7 @@ impl EngineInner {
         target.untie_human();
         // Preserve unconsciousness and concussion. The regular
         // human recovery tick remains the sole wake-up authority.
-        self.actor_wait(sim, assets, target_id);
+        self.actor_wait(tcx, target_id);
         tracing::debug!(
             actor = ?actor_id,
             target = ?target_id,
@@ -316,8 +312,7 @@ impl EngineInner {
 
     pub(super) fn apply_ability_climb_on_shoulders_done(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         climber_id: EntityId,
         helper_id: EntityId,
     ) {
@@ -328,7 +323,7 @@ impl EngineInner {
         // low-priority Wait so its frozen-execution can
         // re-enter the idle loop while still
         // `CarryingOnShoulders`.
-        self.actor_wait(sim, assets, helper_id);
+        self.actor_wait(tcx, helper_id);
         tracing::debug!(
             climber = ?climber_id,
             helper = ?helper_id,
@@ -338,8 +333,7 @@ impl EngineInner {
 
     pub(super) fn apply_ability_climb_down_from_shoulders_done(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         climber_id: EntityId,
         helper_id: EntityId,
     ) {
@@ -456,7 +450,7 @@ impl EngineInner {
         // Park the helper on a low-priority idle so it
         // doesn't immediately re-acquire its previous
         // element.
-        self.actor_wait(sim, assets, helper_id);
+        self.actor_wait(tcx, helper_id);
 
         tracing::debug!(
             climber = ?climber_id,
@@ -467,13 +461,15 @@ impl EngineInner {
 
     pub(super) fn apply_ability_heal_done(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         healer_id: EntityId,
         target_id: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) -> SpriteMotionState {
+        let SequenceElementRef {
+            sequence_id: seq_id,
+            element_index: elem_idx,
+        } = elem_ref;
         // Player-character execution checks Heal validity again in
         // the completed-motion arm, immediately before healing (or
         // FX activation) and consuming a plant. The target may
@@ -483,11 +479,11 @@ impl EngineInner {
             let element = self
                 .orders
                 .sequence_manager
-                .get_element(seq_id, elem_idx)
+                .get_element_at(elem_ref)
                 .unwrap_or_else(|| {
                     panic!("Heal DONE owner {healer_id:?} lost element {seq_id:?}/{elem_idx}")
                 });
-            self.check_sequence_element_validity(assets, healer_id, element, true)
+            self.check_sequence_element_validity(tcx.assets, healer_id, element, true)
         };
         if !heal_still_valid {
             return SpriteMotionState::Terminated;
@@ -509,7 +505,7 @@ impl EngineInner {
             activation.data = crate::sequence::SequenceElementData::Interaction {
                 antagonist: Some(healer_id),
             };
-            self.launch_element(sim, assets, activation);
+            self.launch_element(tcx, activation);
         } else if let Some(target) = self.get_entity_mut(target_id) {
             // Heal the target PC via the shared helper that
             // applies the heal + life-point clamp guards.
@@ -525,10 +521,10 @@ impl EngineInner {
                 human.concussion_of_the_brain = 0;
             }
             // "Sexual healing" speech cue on the healed PC.
-            self.hero_speaking(assets, target_id, crate::engine::melee::HERO_HEALED);
+            self.hero_speaking(tcx.assets, target_id, crate::engine::melee::HERO_HEALED);
         }
         // Decrease healer's bandage ammo.
-        self.decrement_ability_ammo(assets, healer_id, crate::profiles::Action::Heal);
+        self.decrement_ability_ammo(tcx.assets, healer_id, crate::profiles::Action::Heal);
         tracing::debug!(
             healer = ?healer_id,
             target = ?target_id,
@@ -592,8 +588,7 @@ impl EngineInner {
 
     pub(super) fn apply_ability_whistle_done(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         actor_id: EntityId,
         position: MapPoint,
     ) {
@@ -609,8 +604,7 @@ impl EngineInner {
             })
             .unwrap_or_else(|| panic!("whistle noise owner {actor_id:?} disappeared"));
         self.broadcast_noise_synchronously(
-            sim,
-            assets,
+            tcx,
             crate::ai::NoiseType::Pfiiit,
             crate::coordinates::MapPoint::new(position.x, position.y),
             crate::position_interface::Layer::new(layer),
@@ -626,12 +620,7 @@ impl EngineInner {
         );
     }
 
-    pub(super) fn apply_ability_listen_entered(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        actor_id: EntityId,
-    ) {
+    pub(super) fn apply_ability_listen_entered(&mut self, tcx: TickCtx<'_>, actor_id: EntityId) {
         // Entry transition animation just finished; the
         // PC is now executing the Listening order. Forward
         // PcMessage::SelectAction(Listen) so HUD/UI
@@ -644,19 +633,14 @@ impl EngineInner {
         // postponed behind itself (a move instructed while the
         // PC was listening never resumes).  An unselected PC only
         // stores the action.
-        self.set_pc_action_from_message(sim, assets, 0, actor_id, crate::profiles::Action::Listen);
+        self.set_pc_action_from_message(tcx, 0, actor_id, crate::profiles::Action::Listen);
         tracing::debug!(
             actor = ?actor_id,
             "Listen: entry transition done → CountingDown, MSG_SELECT_ACTION sent"
         );
     }
 
-    pub(super) fn apply_ability_listen_done(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        actor_id: EntityId,
-    ) {
+    pub(super) fn apply_ability_listen_done(&mut self, tcx: TickCtx<'_>, actor_id: EntityId) {
         // Player-character execution launches Wait synchronously
         // on the DONE edge of
         // TRANSITION_LISTENING_WAITING_UPRIGHT.  This is an
@@ -664,14 +648,14 @@ impl EngineInner {
         // fallback installed at the start of the next actor
         // update: it must already be available when the exit
         // transition terminates and sends its consolation card.
-        self.actor_wait(sim, assets, actor_id);
+        self.actor_wait(tcx, actor_id);
         // Listen branches immediately after waiting: an
         // unselected PC only stores NOACTION, while a selected PC
         // synchronously forwards MSG_UNSELECT_ACTION(Listen).
         // Apply that message's gameplay half inline, before a
         // later input-boundary SelectPC can restitute the stale
         // Listen action and Stop() the just-postponed Wait.
-        self.apply_listen_done_action_handoff(sim, assets, actor_id);
+        self.apply_listen_done_action_handoff(tcx, actor_id);
         tracing::debug!(
             actor = ?actor_id,
             "Listen: exit transition done → Inactive, MSG_UNSELECT_ACTION sent"
@@ -724,8 +708,7 @@ impl EngineInner {
 
     pub(super) fn apply_ability_throw_purse_done(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         actor_id: EntityId,
         target_pos: MapPoint,
     ) {
@@ -742,8 +725,8 @@ impl EngineInner {
         };
         let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
             fast_find_grid: &self.world.fast_grid,
-            sight_obstacles: self.sight_obstacles(assets),
-            water_zones: Some(&assets.environment.water_zones),
+            sight_obstacles: self.sight_obstacles(tcx.assets),
+            water_zones: Some(&tcx.assets.environment.water_zones),
         };
         let purse_entity = crate::bow_shot::spawn_purse(
             actor_id,
@@ -752,14 +735,14 @@ impl EngineInner {
             layer,
             Some(&obstacle_check),
         );
-        self.publish_new_purse(sim, assets, actor_id, purse_entity);
+        self.publish_new_purse(tcx, actor_id, purse_entity);
         tracing::debug!(
             actor = ?actor_id,
             x = target_pos.x,
             y = target_pos.y,
             "ThrowPurse: spawned purse projectile"
         );
-        self.decrement_ability_ammo(assets, actor_id, crate::profiles::Action::Purse);
+        self.decrement_ability_ammo(tcx.assets, actor_id, crate::profiles::Action::Purse);
         // Deduct the thrown purse's face value from the
         // campaign ransom pool on throw.  Coin pickup later
         // credits `COIN_VALUE` per recovered coin, so
@@ -813,13 +796,15 @@ impl EngineInner {
 
     pub(super) fn apply_ability_pay_done(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         pc_id: EntityId,
         beggar_id: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) -> SpriteMotionState {
+        let SequenceElementRef {
+            sequence_id: seq_id,
+            element_index: elem_idx,
+        } = elem_ref;
         // Paying validates again after action processing reports completion.
         // Ransom or distance may have changed while the PC was
         // turning/animating; invalid payment aborts before launching the
@@ -828,7 +813,7 @@ impl EngineInner {
             let element = self
                 .orders
                 .sequence_manager
-                .get_element(seq_id, elem_idx)
+                .get_element_at(elem_ref)
                 .unwrap_or_else(|| {
                     panic!("completed Pay owner {pc_id:?} lost element {seq_id:?}/{elem_idx}")
                 });
@@ -839,7 +824,7 @@ impl EngineInner {
             });
             assert_eq!(order.order_type, crate::order::OrderType::Paying);
             assert_eq!(order.target_actor, Some(beggar_id.index()));
-            self.check_sequence_element_validity(assets, pc_id, element, true)
+            self.check_sequence_element_validity(tcx.assets, pc_id, element, true)
         };
         if !valid {
             return SpriteMotionState::Aborted;
@@ -865,7 +850,7 @@ impl EngineInner {
             activation.data = crate::sequence::SequenceElementData::Interaction {
                 antagonist: Some(pc_id),
             };
-            self.launch_element(sim, assets, activation);
+            self.launch_element(tcx, activation);
         } else {
             let mut receive = crate::sequence::SequenceElement::new(
                 1,
@@ -873,14 +858,14 @@ impl EngineInner {
                 Some(beggar_id),
             );
             receive.priority = crate::sequence::SequencePriority::Normal;
-            self.launch_element(sim, assets, receive);
+            self.launch_element(tcx, receive);
         }
         self.add_campaign_value(
             crate::campaign::CampaignValue::Ransom,
             -crate::engine::BEGGAR_SALARY,
         );
         if !antagonist_is_fx_target {
-            let exhausted = !self.are_there_revealable_scrolls(assets, beggar_id);
+            let exhausted = !self.are_there_revealable_scrolls(tcx.assets, beggar_id);
             self.mission_domain
                 .achievements
                 .record_beggar_payment(beggar_id, exhausted)
@@ -896,8 +881,7 @@ impl EngineInner {
 
     pub(super) fn apply_ability_receive_purse_revealing(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         beggar_id: EntityId,
     ) {
         // Middle of the receive-purse chain — the beggar is
@@ -907,7 +891,7 @@ impl EngineInner {
         // CIV_REMARK_BEGGAR_* speech cue is queued inside
         // `reveal_scrolls` and later dispatched by
         // the owner-local speech drain.
-        match self.reveal_scrolls(sim, assets, beggar_id) {
+        match self.reveal_scrolls(tcx, beggar_id) {
             Some(remark) => tracing::debug!(
                 beggar = ?beggar_id,
                 ?remark,
@@ -934,13 +918,15 @@ impl EngineInner {
 
     pub(super) fn apply_ability_hit_done(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         actor_id: EntityId,
         target_id: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
+        let SequenceElementRef {
+            sequence_id: seq_id,
+            element_index: elem_idx,
+        } = elem_ref;
         // Human hitting execution rechecks the live
         // interaction when motion completes, before applying damage.
         // Losing validity here merely makes the swing miss: the
@@ -950,7 +936,7 @@ impl EngineInner {
             let element = self
                 .orders
                 .sequence_manager
-                .get_element(seq_id, elem_idx)
+                .get_element_at(elem_ref)
                 .unwrap_or_else(|| {
                     panic!(
                         "completed Hit owner {actor_id:?} lost element \
@@ -964,7 +950,7 @@ impl EngineInner {
             });
             assert_eq!(order.order_type, crate::order::OrderType::Hitting);
             assert_eq!(order.target_actor, Some(target_id.index()));
-            self.check_sequence_element_validity(assets, actor_id, element, true)
+            self.check_sequence_element_validity(tcx.assets, actor_id, element, true)
         };
         if !valid {
             let sprite = &mut self
@@ -974,7 +960,7 @@ impl EngineInner {
                 })
                 .element_data_mut()
                 .sprite;
-            sprite.perform_virgin_increment(sim, crate::sprite::FrameProgression::Default);
+            sprite.perform_virgin_increment(tcx.sim, crate::sprite::FrameProgression::Default);
             tracing::debug!(
                 attacker = ?actor_id,
                 target = ?target_id,
@@ -997,7 +983,7 @@ impl EngineInner {
                 let has_hit_hard = attacker
                     .and_then(|e| e.pc_data())
                     .map(|pc| pc.profile_index)
-                    .and_then(|idx| assets.profile_manager.get_character(idx))
+                    .and_then(|idx| tcx.assets.profile_manager.get_character(idx))
                     .is_some_and(|cp| cp.has_action(crate::profiles::Action::HitHard));
                 let base = if has_hit_hard {
                     (150u16, true)
@@ -1036,7 +1022,7 @@ impl EngineInner {
         {
             *ih = is_harder_hit;
         }
-        self.launch_element(sim, assets, dmg);
+        self.launch_element(tcx, dmg);
 
         tracing::debug!(
             attacker = ?actor_id,
@@ -1049,8 +1035,7 @@ impl EngineInner {
 
     pub(super) fn apply_ability_strangle_done(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         actor_id: EntityId,
         target_id: EntityId,
     ) {
@@ -1061,7 +1046,7 @@ impl EngineInner {
         // it retaliates.
         let stranglable = match self.get_entity(target_id) {
             Some(crate::element::Entity::Soldier(s)) => {
-                assets
+                tcx.assets
                     .profile_manager
                     .get_soldier(s.soldier.soldier_profile_index)
                     .unwrap_or_else(|| {
@@ -1087,7 +1072,7 @@ impl EngineInner {
                 crate::ai::StimulusType::EventGotHit,
                 actor_id.index(),
             );
-            self.execute_ai_callback(sim, assets, target_id, &stimulus);
+            self.execute_ai_callback(tcx, target_id, &stimulus);
             #[cfg(test)]
             crate::engine::soldier_helpers::observe_strangle_condolation_step(
                 "TerminalEventGotHit",
@@ -1119,7 +1104,7 @@ impl EngineInner {
             life,
             0,
         );
-        self.launch_element(sim, assets, dmg);
+        self.launch_element(tcx, dmg);
 
         tracing::debug!(
             attacker = ?actor_id,
@@ -1132,8 +1117,7 @@ impl EngineInner {
     // Sequence identity and the pre-tick freeze sample belong to this exact DONE edge.
     pub(super) fn apply_ability_strangle_setup_done(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         actor_id: EntityId,
         target_id: EntityId,
         sprite_frozen: bool,
@@ -1202,7 +1186,7 @@ impl EngineInner {
                 .set_position_map(authorized_position);
             victim.sprite_mut().compute_display_depth();
         }
-        self.actor_freeze_execution(sim, assets, target_id);
+        self.actor_freeze_execution(tcx, target_id);
         let victim = self
             .get_entity_mut(target_id)
             .unwrap_or_else(|| panic!("strangle victim {target_id:?} vanished at Done"));
@@ -1216,8 +1200,7 @@ impl EngineInner {
             crate::ai::Remark::Strangled
         };
         self.execute_ai_speech(
-            sim,
-            assets,
+            tcx,
             target_id,
             crate::ai::AiSpeechAttempt {
                 remark,
@@ -1229,7 +1212,7 @@ impl EngineInner {
                 .expect("strangle victim disappeared after speech")
                 .element_data_mut()
                 .sprite
-                .perform_virgin_increment(sim, crate::sprite::FrameProgression::Default);
+                .perform_virgin_increment(tcx.sim, crate::sprite::FrameProgression::Default);
         }
         SpriteMotionState::Done
     }
@@ -1402,13 +1385,12 @@ impl EngineInner {
 
     pub(super) fn initialize_ability_carry_init(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         actor_id: EntityId,
         ability: &crate::abilities::SelectedAbility,
     ) -> bool {
         let target_id = ability.target.expect("Carry order requires an antagonist");
-        if !self.ability_carry_target_valid(assets, actor_id, ability) {
+        if !self.ability_carry_target_valid(tcx.assets, actor_id, ability) {
             return false;
         }
         // The pickup transition's first Execute is where the carried
@@ -1422,7 +1404,7 @@ impl EngineInner {
             actor_id,
             target_id,
         );
-        self.actor_freeze_execution(sim, assets, target_id);
+        self.actor_freeze_execution(tcx, target_id);
         let carrier = self
             .get_entity(actor_id)
             .expect("Carry owner disappeared after freezing body");
@@ -1439,8 +1421,7 @@ impl EngineInner {
 
     pub(super) fn initialize_ability_climb_on_shoulders_init(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         actor_id: EntityId,
         ability: &crate::abilities::SelectedAbility,
     ) -> bool {
@@ -1454,7 +1435,7 @@ impl EngineInner {
             actor_id,
             helper_id,
         );
-        self.actor_freeze_execution(sim, assets, helper_id);
+        self.actor_freeze_execution(tcx, helper_id);
         true
     }
 
@@ -1562,8 +1543,7 @@ impl EngineInner {
     /// pass.
     pub(crate) fn tick_selected_ability(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         requested_actor: EntityId,
         sprite_frozen: bool,
     ) -> Option<SpriteMotionState> {
@@ -1595,26 +1575,23 @@ impl EngineInner {
         let initialized = !initialising
             || match ability.kind {
                 AbilityKind::Pay => {
-                    self.initialize_ability_pay_init(assets, requested_actor, &ability)
+                    self.initialize_ability_pay_init(tcx.assets, requested_actor, &ability)
                 }
                 AbilityKind::Hit => {
-                    self.initialize_ability_hit_init(assets, requested_actor, &ability)
+                    self.initialize_ability_hit_init(tcx.assets, requested_actor, &ability)
                 }
                 AbilityKind::Tie | AbilityKind::Untie => {
-                    self.initialize_ability_tying_init(assets, requested_actor, &ability)
+                    self.initialize_ability_tying_init(tcx.assets, requested_actor, &ability)
                 }
                 AbilityKind::Carry => {
-                    self.initialize_ability_carry_init(sim, assets, requested_actor, &ability)
+                    self.initialize_ability_carry_init(tcx, requested_actor, &ability)
                 }
-                AbilityKind::ClimbOnShoulders => self.initialize_ability_climb_on_shoulders_init(
-                    sim,
-                    assets,
-                    requested_actor,
-                    &ability,
-                ),
+                AbilityKind::ClimbOnShoulders => {
+                    self.initialize_ability_climb_on_shoulders_init(tcx, requested_actor, &ability)
+                }
                 AbilityKind::Heal => self.initialize_ability_heal_facing(requested_actor, &ability),
                 AbilityKind::Strangle => {
-                    self.initialize_ability_strangle_init(assets, requested_actor, &ability)
+                    self.initialize_ability_strangle_init(tcx.assets, requested_actor, &ability)
                 }
                 _ => true,
             };
@@ -1624,7 +1601,7 @@ impl EngineInner {
         // Execute retains the entry order and its antagonist through initialization.
         let kind = ability.kind;
 
-        if let Some(motion) = self.tick_ability_pre_action(sim, assets, requested_actor, &ability) {
+        if let Some(motion) = self.tick_ability_pre_action(tcx, requested_actor, &ability) {
             return Some(motion);
         }
 
@@ -1643,11 +1620,11 @@ impl EngineInner {
         // plus the shared `wait_time` countdown in
         // the selected PC owner arm.
         if kind == AbilityKind::Listen {
-            return Some(self.tick_listen(sim, assets, entity_id, &ability, sprite_frozen));
+            return Some(self.tick_listen(tcx, entity_id, &ability, sprite_frozen));
         }
 
         if kind == AbilityKind::ReceivePurse {
-            return Some(self.tick_receive_purse(sim, assets, entity_id, &ability, sprite_frozen));
+            return Some(self.tick_receive_purse(tcx, entity_id, &ability, sprite_frozen));
         }
 
         let order_id = Some(ability.order_id);
@@ -1709,7 +1686,7 @@ impl EngineInner {
         } else {
             let elem = entity.element_data_mut();
             elem.sprite.perform_action(
-                sim,
+                tcx.sim,
                 order_id,
                 order_type,
                 direction,
@@ -1733,7 +1710,7 @@ impl EngineInner {
             AbilityKind::Carry | AbilityKind::Drop => {
                 crate::abilities::sync_corpse_animation_for_carrier(
                     &mut self.world.entities,
-                    &assets.profile_manager,
+                    &tcx.assets.profile_manager,
                     entity_id,
                     order_type,
                 )
@@ -1752,7 +1729,7 @@ impl EngineInner {
         // motion states still run the tail increment before termination effects.
         if kind == AbilityKind::Strangle && motion != SpriteMotionState::Done && !sprite_frozen {
             self.advance_pre_action_strangle_victim_if_due(
-                sim,
+                tcx.sim,
                 entity_id,
                 ability.target.expect("strangle target"),
             );
@@ -1771,23 +1748,20 @@ impl EngineInner {
         }
         if motion == SpriteMotionState::Terminated {
             match kind {
-                AbilityKind::Drop => self.execute_corpse_drop_done(sim, assets, entity_id),
+                AbilityKind::Drop => self.execute_corpse_drop_done(tcx, entity_id),
                 AbilityKind::ClimbOnShoulders => self.apply_ability_climb_on_shoulders_done(
-                    sim,
-                    assets,
+                    tcx,
                     entity_id,
                     ability.target.expect("climb helper"),
                 ),
                 AbilityKind::ClimbDownFromShoulders => self
                     .apply_ability_climb_down_from_shoulders_done(
-                        sim,
-                        assets,
+                        tcx,
                         entity_id,
                         ability.target.expect("dismount helper"),
                     ),
                 AbilityKind::Strangle => self.apply_ability_strangle_done(
-                    sim,
-                    assets,
+                    tcx,
                     entity_id,
                     ability.target.expect("strangle target"),
                 ),
@@ -1803,20 +1777,19 @@ impl EngineInner {
             return Some(motion);
         }
 
-        Some(self.execute_ability_done(sim, assets, entity_id, &ability, sprite_frozen))
+        Some(self.execute_ability_done(tcx, entity_id, &ability, sprite_frozen))
     }
 
     fn tick_ability_pre_action(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         requested_actor: EntityId,
         ability: &SelectedAbility,
     ) -> Option<SpriteMotionState> {
         let kind = ability.kind;
         if kind == AbilityKind::Carry
             && !ability.order_done
-            && !self.ability_carry_target_valid(assets, requested_actor, ability)
+            && !self.ability_carry_target_valid(tcx.assets, requested_actor, ability)
         {
             return Some(SpriteMotionState::Aborted);
         }
@@ -1870,7 +1843,7 @@ impl EngineInner {
                 .position_iface_mut()
                 .turn_fast()
             {
-                self.advance_pre_action_strangle_victim_if_due(sim, requested_actor, victim_id);
+                self.advance_pre_action_strangle_victim_if_due(tcx.sim, requested_actor, victim_id);
                 return Some(SpriteMotionState::InProgress);
             }
             let victim =
@@ -1882,7 +1855,7 @@ impl EngineInner {
                 "strangle victim {victim_id:?} lost required actor state while turning"
             );
             if victim.position_iface_mut().turn_fast() {
-                self.advance_pre_action_strangle_victim_if_due(sim, requested_actor, victim_id);
+                self.advance_pre_action_strangle_victim_if_due(tcx.sim, requested_actor, victim_id);
                 return Some(SpriteMotionState::InProgress);
             }
         }
@@ -1929,8 +1902,7 @@ impl EngineInner {
 
     fn tick_listen(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         entity_id: EntityId,
         ability: &SelectedAbility,
         sprite_frozen: bool,
@@ -1954,7 +1926,7 @@ impl EngineInner {
         } else {
             let elem = entity.element_data_mut();
             elem.sprite.perform_action(
-                sim,
+                tcx.sim,
                 order_id,
                 order_type,
                 direction,
@@ -1978,10 +1950,10 @@ impl EngineInner {
                     // animation.rs idle-pose fallback) and hand off
                     // to the ai.rs countdown.
                     actor.action_state = ActionState::Listening;
-                    self.apply_ability_listen_entered(sim, assets, entity_id);
+                    self.apply_ability_listen_entered(tcx, entity_id);
                 } else if order_type == OrderType::TransitionListeningWaitingUpright {
                     actor.action_state = ActionState::Waiting;
-                    self.apply_ability_listen_done(sim, assets, entity_id);
+                    self.apply_ability_listen_done(tcx, entity_id);
                 }
             }
             _ => {}
@@ -1991,8 +1963,7 @@ impl EngineInner {
 
     fn tick_receive_purse(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         entity_id: EntityId,
         ability: &SelectedAbility,
         sprite_frozen: bool,
@@ -2013,7 +1984,7 @@ impl EngineInner {
         } else {
             let elem = entity.element_data_mut();
             elem.sprite.perform_action(
-                sim,
+                tcx.sim,
                 order_id,
                 order_type,
                 direction,
@@ -2037,7 +2008,7 @@ impl EngineInner {
         match order_type {
             OrderType::ReceivingPurse => {}
             OrderType::WaitingWithPurse => {
-                self.apply_ability_receive_purse_revealing(sim, assets, entity_id);
+                self.apply_ability_receive_purse_revealing(tcx, entity_id);
             }
             OrderType::TransitionWaitingWithPurseWaitingUpright => {
                 actor.action_state = ActionState::Waiting;
@@ -2050,8 +2021,7 @@ impl EngineInner {
 
     fn execute_ability_done(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         entity_id: EntityId,
         ability: &SelectedAbility,
         sprite_frozen: bool,
@@ -2075,31 +2045,25 @@ impl EngineInner {
         match kind {
             AbilityKind::Carry => self.apply_ability_carry_done(entity_id, target()),
             AbilityKind::Drop => unreachable!("drop completion runs at animation termination"),
-            AbilityKind::Tie => self.apply_ability_tie_done(sim, assets, entity_id, target()),
-            AbilityKind::Untie => self.apply_ability_untie_done(sim, assets, entity_id, target()),
+            AbilityKind::Tie => self.apply_ability_tie_done(tcx, entity_id, target()),
+            AbilityKind::Untie => self.apply_ability_untie_done(tcx, entity_id, target()),
             AbilityKind::Heal => {
                 return self.apply_ability_heal_done(
-                    sim,
-                    assets,
+                    tcx,
                     entity_id,
                     target(),
-                    seq_id,
-                    elem_idx,
+                    SequenceElementRef::new(seq_id, elem_idx),
                 );
             }
-            AbilityKind::Whistle => {
-                self.apply_ability_whistle_done(sim, assets, entity_id, actor_pos)
-            }
+            AbilityKind::Whistle => self.apply_ability_whistle_done(tcx, entity_id, actor_pos),
             AbilityKind::Pay => {
                 return self.apply_ability_pay_done(
-                    sim,
-                    assets,
+                    tcx,
                     entity_id,
                     ability
                         .target
                         .expect("AbilityKind::Pay must carry a beggar target (set in begin_pay)"),
-                    seq_id,
-                    elem_idx,
+                    SequenceElementRef::new(seq_id, elem_idx),
                 );
             }
             AbilityKind::Listen | AbilityKind::ReceivePurse => unreachable!(
@@ -2119,7 +2083,7 @@ impl EngineInner {
                         y: o.target_y,
                     })
                     .unwrap_or_else(|| panic!("ThrowNet selected without its required live order"));
-                self.apply_ability_throw_net_done(assets, entity_id, target_pos)
+                self.apply_ability_throw_net_done(tcx.assets, entity_id, target_pos)
             }
             AbilityKind::ThrowWaspNest => {
                 let target_pos = self
@@ -2134,7 +2098,7 @@ impl EngineInner {
                     .unwrap_or_else(|| {
                         panic!("ThrowWaspNest selected without its required live order")
                     });
-                self.apply_ability_throw_wasp_nest_done(assets, entity_id, target_pos)
+                self.apply_ability_throw_wasp_nest_done(tcx.assets, entity_id, target_pos)
             }
             AbilityKind::ThrowPurse => {
                 let target_pos = self
@@ -2149,10 +2113,10 @@ impl EngineInner {
                     .unwrap_or_else(|| {
                         panic!("ThrowPurse selected without its required live order")
                     });
-                self.apply_ability_throw_purse_done(sim, assets, entity_id, target_pos)
+                self.apply_ability_throw_purse_done(tcx, entity_id, target_pos)
             }
             AbilityKind::ThrowApple => self.on_throw_projectile_done(
-                assets,
+                tcx.assets,
                 entity_id,
                 ability.target,
                 crate::profiles::Action::Apple,
@@ -2178,14 +2142,14 @@ impl EngineInner {
                 });
                 match (ability.target, ground_target) {
                     (Some(target), None) => self.on_throw_projectile_done(
-                        assets,
+                        tcx.assets,
                         entity_id,
                         Some(target),
                         crate::profiles::Action::Stone,
                         crate::element::ObjectType::Stone,
                     ),
                     (None, Some(target)) => {
-                        self.on_throw_noise_distraction_done(assets, entity_id, target)
+                        self.on_throw_noise_distraction_done(tcx.assets, entity_id, target)
                     }
                     pair => panic!(
                         "completed ThrowStone must carry exactly one target kind, got {pair:?}"
@@ -2193,19 +2157,16 @@ impl EngineInner {
                 }
             }
             AbilityKind::Hit => self.apply_ability_hit_done(
-                sim,
-                assets,
+                tcx,
                 entity_id,
                 ability
                     .target
                     .expect("AbilityKind::Hit must carry a target (set in begin_hit)"),
-                seq_id,
-                elem_idx,
+                SequenceElementRef::new(seq_id, elem_idx),
             ),
             AbilityKind::Strangle => {
                 return self.apply_ability_strangle_setup_done(
-                    sim,
-                    assets,
+                    tcx,
                     entity_id,
                     ability.target.expect(
                         "AbilityKind::Strangle must carry a target (set in begin_strangle)",
@@ -2213,7 +2174,7 @@ impl EngineInner {
                     sprite_frozen,
                 );
             }
-            AbilityKind::Eat => self.apply_ability_eat_done(assets, entity_id),
+            AbilityKind::Eat => self.apply_ability_eat_done(tcx.assets, entity_id),
             AbilityKind::ClimbOnShoulders | AbilityKind::ClimbDownFromShoulders => {
                 unreachable!("shoulder completion runs at animation termination")
             }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 
 #[test]
 fn reciprocal_swordfight_entry_preserves_existing_opponent_strength() {
@@ -15,7 +16,7 @@ fn reciprocal_swordfight_entry_preserves_existing_opponent_strength() {
         human.relative_fighting_ability = 42;
     }
 
-    assert!(engine.enter_swordfight(&sim, &assets, initiator, opponent, false));
+    assert!(engine.enter_swordfight(TickCtx::new(&sim, &assets), initiator, opponent, false));
 
     let initiator_human = engine.human(initiator);
     assert_eq!(initiator_human.opponents, vec![opponent]);
@@ -75,14 +76,14 @@ fn terminal_sword_provoke_observes_promoted_opponent_before_post_seek_speak() {
         !engine.sword_movement_termination_warrants_provoke(&assets, owner),
         "the >UBER old principal must make a pre-removal snapshot false"
     );
-    engine.quit_swordfight_with_far_opponents(&sim, &assets, owner);
+    engine.quit_swordfight_with_far_opponents(TickCtx::new(&sim, &assets), owner);
     assert_eq!(engine.human(owner).opponents, vec![promoted]);
     assert!(
         engine.sword_movement_termination_warrants_provoke(&assets, owner),
         "the promoted reciprocal opponent is inside the Provoke band"
     );
 
-    engine.launch_sword_movement_termination_provoke(&sim, &assets, owner);
+    engine.launch_sword_movement_termination_provoke(TickCtx::new(&sim, &assets), owner);
     let mut post_seek = Sequence::new();
     post_seek.append_element(SequenceElement::new(
         2,
@@ -150,7 +151,7 @@ fn sword_movement_start_gives_initiative_to_principal_promoted_by_far_pruning() 
         engine.human_mut(opponent).opponents = vec![owner].into();
     }
 
-    engine.quit_swordfight_with_far_opponents(&sim, &assets, owner);
+    engine.quit_swordfight_with_far_opponents(TickCtx::new(&sim, &assets), owner);
     engine.apply_sword_movement_start_initiative_transfer(owner);
 
     let owner_human = engine.human(owner);
@@ -240,7 +241,10 @@ fn soldier_death_detaches_guard_and_archery_before_forcing_quiet_music() {
     assert_eq!(engine.pc(current_guarded_pc).guard, Some(victim_id));
 
     let assets = engine.test_runtime_assets();
-    engine.handle_death(&crate::sim_rng::test_context(), &assets, victim_id);
+    engine.handle_death(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        victim_id,
+    );
 
     for guarded_pc in [old_guarded_pc, current_guarded_pc] {
         let Some(Entity::Pc(pc)) = engine.get_entity(guarded_pc) else {
@@ -339,7 +343,10 @@ fn soldier_death_detaches_both_combat_neighbours_without_touching_another_line()
     }
 
     let assets = engine.test_runtime_assets();
-    engine.handle_death(&crate::sim_rng::test_context(), &assets, victim);
+    engine.handle_death(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        victim,
+    );
 
     let links = |engine: &EngineInner, handle: u32| {
         let Some(Entity::Soldier(soldier)) = engine
@@ -426,7 +433,10 @@ fn soldier_death_clears_live_reciprocal_combat_neighbours() {
     victim_enemy.right_combat_neighbour = Some(crate::ai::AiEntityHandle::new(old_right_handle));
 
     let assets = engine.test_runtime_assets();
-    engine.handle_death(&crate::sim_rng::test_context(), &assets, victim);
+    engine.handle_death(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        victim,
+    );
 
     let links = |engine: &EngineInner, handle: u32| {
         let Some(Entity::Soldier(soldier)) = engine
@@ -543,7 +553,10 @@ fn enemy_ai_hero_death_detaches_pc_combat_neighbours() {
         .characters
         .push(crate::profiles::CharacterProfile::default());
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    engine.handle_death(&crate::sim_rng::test_context(), &assets, victim);
+    engine.handle_death(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        victim,
+    );
 
     assert_eq!(engine.enemy(left).right_combat_neighbour, None);
     assert_eq!(engine.enemy(right).left_combat_neighbour, None);
@@ -557,8 +570,7 @@ fn review2_combat_alert_preserves_original_busy_lock_acceptance() {
     let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
     engine.ai_ctrl_mut(soldier_id).locks_flag_field = AiLockFlags::BUSY;
     assert!(engine.execute_ai_command_soldiers_to_attack(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         officer_id,
         Position {
             x: 100.0,
@@ -595,15 +607,14 @@ fn final_review_combat_alert_all_refused_enters_reserve_without_success_remark()
     let enemy_id = engine.add_test_entity(enemy);
     complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.enemy_mut(officer_id).list_them = vec![enemy_id.index()];
-    engine.execute_live_battle_decision(
-        &sim,
-        &assets,
-        officer_id,
-        Decision::AlertSoldiers,
-        Substate::AttackingReactiontime,
-        0,
-        false,
-    );
+    engine
+        .ai_ctx(&sim, &assets, officer_id)
+        .execute_live_battle_decision(
+            Decision::AlertSoldiers,
+            Substate::AttackingReactiontime,
+            0,
+            false,
+        );
 
     let officer = engine.enemy(officer_id);
     assert!(officer.base.friends_are_alerted);
@@ -682,15 +693,14 @@ fn command_soldiers_to_attack_does_not_overwrite_acceptor_gather_instruction() {
     let enemy_id = engine.add_test_entity(enemy);
     complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.enemy_mut(officer_id).list_them = vec![enemy_id.index()];
-    engine.execute_live_battle_decision(
-        &sim,
-        &assets,
-        officer_id,
-        Decision::AlertSoldiers,
-        Substate::AttackingReactiontime,
-        0,
-        false,
-    );
+    engine
+        .ai_ctx(&sim, &assets, officer_id)
+        .execute_live_battle_decision(
+            Decision::AlertSoldiers,
+            Substate::AttackingReactiontime,
+            0,
+            false,
+        );
 
     let officer = engine.enemy(officer_id);
     assert!(officer.base.friends_are_alerted);
@@ -727,8 +737,7 @@ fn final_review_combat_alert_requires_recipient_360_detection() {
         .expect("360-degree recipient is a soldier")
         .view_radius = 10;
     assert!(!engine.execute_ai_command_soldiers_to_attack(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         officer_id,
         Position {
             x: 300.0,
@@ -829,7 +838,8 @@ fn closure_review_combat_alert_uses_exact_is_able_to_fight_under_retained_lock()
             }
         }
 
-        let accepted = start_review_command_soldiers(&mut engine, &sim, &assets, officer_id);
+        let accepted =
+            start_review_command_soldiers(&mut engine, TickCtx::new(&sim, &assets), officer_id);
         assert!(
             !accepted,
             "case {case:?} must be rejected before retained-lock Think"
@@ -862,8 +872,7 @@ fn closure_review_combat_alert_closed_eyes_do_not_disable_360_detection() {
 
     assert!(start_review_command_soldiers(
         &mut engine,
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         officer_id
     ));
     assert_eq!(

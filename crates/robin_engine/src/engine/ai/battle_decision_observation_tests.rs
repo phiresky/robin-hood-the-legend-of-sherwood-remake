@@ -151,15 +151,14 @@ fn observe_movement_is_registered_before_the_state_callback() {
         if stops_move {
             stop_on_state(&mut engine, &assets, owner);
         }
-        let decision = engine.execute_live_battle_decision(
-            &crate::sim_rng::test_context(),
-            &assets,
-            owner,
-            Decision::Observe,
-            Substate::AttackingReactiontimeRunning,
-            0,
-            false,
-        );
+        let decision = engine
+            .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+            .execute_live_battle_decision(
+                Decision::Observe,
+                Substate::AttackingReactiontimeRunning,
+                0,
+                false,
+            );
         assert_eq!(decision, Some(Decision::Observe));
         let ai = engine.enemy(owner);
         assert_eq!(
@@ -220,15 +219,14 @@ fn failed_fight_executes_observe_on_the_same_think_stack() {
         ),
         Some(AiEntityHandle::new(target.index()))
     );
-    let decision = engine.execute_live_battle_decision(
-        &sim,
-        &assets,
-        owner,
-        Decision::Fight,
-        Substate::AttackingReactiontimeRunning,
-        0,
-        false,
-    );
+    let decision = engine
+        .ai_ctx(&sim, &assets, owner)
+        .execute_live_battle_decision(
+            Decision::Fight,
+            Substate::AttackingReactiontimeRunning,
+            0,
+            false,
+        );
     assert_eq!(decision, Some(Decision::Observe));
     let ai = engine.enemy(owner);
     assert_eq!(

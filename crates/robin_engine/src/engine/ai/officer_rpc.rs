@@ -7,14 +7,13 @@ use crate::ai::{
     StimulusInfo, Substate,
 };
 use crate::ai_enemy::SeekFlags;
+use crate::engine::TickCtx;
 use crate::profiles::ProfileRank;
-use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
     pub(in crate::engine) fn execute_ai_officer_rpc(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         stimulus: &Stimulus,
     ) -> Option<bool> {
@@ -30,7 +29,7 @@ impl EngineInner {
             event,
             StimulusType::EventTimer | StimulusType::EventDone | StimulusType::EventSyncCharly
         ) {
-            AiOwnerCtx::new(self, sim, assets, owner).charly_event(substate, stimulus);
+            AiOwnerCtx::new(self, tcx, owner).charly_event(substate, stimulus);
             return Some(false);
         }
         if matches!(
@@ -59,7 +58,7 @@ impl EngineInner {
                 | Substate::SeekingCharly
                 | Substate::SeekingCharlyWatching
         ) {
-            AiOwnerCtx::new(self, sim, assets, owner).charly_event(substate, stimulus);
+            AiOwnerCtx::new(self, tcx, owner).charly_event(substate, stimulus);
             return Some(false);
         }
         if self.observation_ai(owner).base.current_substate == Substate::SeekingCharlyGoToOfficer
@@ -68,7 +67,7 @@ impl EngineInner {
                 StimulusType::EventTimer | StimulusType::EventReachPoint
             )
         {
-            AiOwnerCtx::new(self, sim, assets, owner).report_back(event);
+            AiOwnerCtx::new(self, tcx, owner).report_back(event);
             return Some(false);
         }
         if !matches!(
@@ -86,20 +85,20 @@ impl EngineInner {
             panic!("officer call {event:?} requires a human sender");
         };
         let target = self.expect_human_id_for_ai_handle(target.get(), "officer call sender");
-        Some(AiOwnerCtx::new(self, sim, assets, owner).rpc_event(event, target))
+        Some(AiOwnerCtx::new(self, tcx, owner).rpc_event(event, target))
     }
 }
 
 impl AiOwnerCtx<'_> {
     fn halt(&mut self) {
-        self.engine.halt_actor(self.sim, self.assets, self.owner);
+        self.engine.halt_actor(self.tcx, self.owner);
     }
     fn face(&mut self, target: EntityId) {
         self.observation_face_entity(target, false);
     }
     fn face_position(&mut self, point: Position) {
         let target = self.engine.position_to_point_3d(
-            self.assets,
+            self.tcx.assets,
             point.sector,
             point.level,
             point.x,
@@ -129,7 +128,7 @@ impl AiOwnerCtx<'_> {
     fn rank(&self, target: EntityId) -> ProfileRank {
         self.engine
             .enemy_ai(target, "officer call rank")
-            .get_rank(&self.assets.profile_manager)
+            .get_rank(&self.tcx.assets.profile_manager)
     }
     fn accept(&mut self, state: Substate) {
         self.seek_state(state);
@@ -156,13 +155,12 @@ impl AiOwnerCtx<'_> {
                 {
                     return false;
                 }
-                match self.enemy().get_rank(&self.assets.profile_manager) {
+                match self.enemy().get_rank(&self.tcx.assets.profile_manager) {
                     ProfileRank::Soldier => {
                         self.enemy_mut().base.antagonist =
                             Some(AiEntityHandle::new(target.index()));
                         if self.engine.execute_ai_callback(
-                            self.sim,
-                            self.assets,
+                            self.tcx,
                             target,
                             &Stimulus::with_human(CallAlert, self.owner.index()),
                         ) {
@@ -180,7 +178,7 @@ impl AiOwnerCtx<'_> {
                             )
                             .expect("officer forecast requires actor");
                             let position = crate::ai::forecast_destination_for_ia(
-                                self.sim,
+                                self.tcx.sim,
                                 &input,
                                 &self.engine.script_domains.interactables.doors,
                                 &self.engine.world.fast_grid.level.sectors,
@@ -251,7 +249,8 @@ impl AiOwnerCtx<'_> {
                             | SeekingBodyReactiontime
                     );
                 if !react
-                    || self.enemy().get_rank(&self.assets.profile_manager) != ProfileRank::Soldier
+                    || self.enemy().get_rank(&self.tcx.assets.profile_manager)
+                        != ProfileRank::Soldier
                     || !self.priority()
                 {
                     return false;
@@ -277,7 +276,7 @@ impl AiOwnerCtx<'_> {
                     self.accept(SeekingWaitForAlertingCivilian);
                     return true;
                 }
-                match self.enemy().get_rank(&self.assets.profile_manager) {
+                match self.enemy().get_rank(&self.tcx.assets.profile_manager) {
                     ProfileRank::Soldier => {
                         let react = matches!(
                             self.enemy().base.current_state,
@@ -396,12 +395,15 @@ impl AiOwnerCtx<'_> {
         let event = stimulus.stimulus_type;
         match (state, event) {
             (DefaultLookingForCharly, EventTimer) => {
-                let draw =
-                    crate::sim_rng::u32(self.sim, crate::sim_rng::RngSite::CharlySorrow, 0..5000);
+                let draw = crate::sim_rng::u32(
+                    self.tcx.sim,
+                    crate::sim_rng::RngSite::CharlySorrow,
+                    0..5000,
+                );
                 if draw < u32::from(self.enemy().base.sorrow_level) + 10 {
                     self.duty_set_state(AiState::Default, DefaultLookingSidewardsForCharly);
                     let direction = if crate::sim_rng::u32(
-                        self.sim,
+                        self.tcx.sim,
                         crate::sim_rng::RngSite::CharlySorrow,
                         0..2,
                     ) != 0
@@ -472,7 +474,7 @@ impl AiOwnerCtx<'_> {
             }
             (SeekingDetectedCharly, EventTimer) => {
                 self.enemy_mut().base.my_reconnaissance_report.charly_seen = true;
-                if self.enemy().get_rank(&self.assets.profile_manager) == ProfileRank::Officer
+                if self.enemy().get_rank(&self.tcx.assets.profile_manager) == ProfileRank::Officer
                     && !self.enemy().alerted_us.is_empty()
                 {
                     let state = self.enemy().previous_state.get("previous state");
@@ -497,8 +499,7 @@ impl AiOwnerCtx<'_> {
                     );
                     let target = self.target();
                     if self.engine.execute_ai_callback(
-                        self.sim,
-                        self.assets,
+                        self.tcx,
                         friend,
                         &Stimulus::with_human(CallGoToOfficer, target.index()),
                     ) {
@@ -545,8 +546,7 @@ impl AiOwnerCtx<'_> {
             }
             (SeekingCharlyGoToOfficerSeen, EventReachPoint) => {
                 self.engine.execute_ai_callback(
-                    self.sim,
-                    self.assets,
+                    self.tcx,
                     self.target(),
                     &Stimulus::with_human(CallCoordinate, self.owner.index()),
                 );
@@ -559,8 +559,7 @@ impl AiOwnerCtx<'_> {
             (SeekingCharlyGetLectureByOfficer2, EventMyTalk1)
             | (SeekingOfficerLectureCharly, EventMyTalk1) => {
                 self.engine.execute_ai_callback(
-                    self.sim,
-                    self.assets,
+                    self.tcx,
                     self.target(),
                     &Stimulus::new(CallYourTalk1),
                 );
@@ -608,7 +607,7 @@ impl AiOwnerCtx<'_> {
                         .expect("checkpoint path must resolve")
                         .get() as usize;
                     let here = self.engine.live_ai_position(self.owner);
-                    let points = &self.assets.navigation.hiking_paths[path].waypoints;
+                    let points = &self.tcx.assets.navigation.hiking_paths[path].waypoints;
                     let mut best = Option::None;
                     let mut distance = u32::MAX as f32;
                     for (index, point) in points.iter().enumerate() {
@@ -625,7 +624,7 @@ impl AiOwnerCtx<'_> {
                     Position {
                         x: point.x as f32,
                         y: point.y as f32,
-                        sector: self.assets.navigation.hiking_waypoint_sector(
+                        sector: self.tcx.assets.navigation.hiking_waypoint_sector(
                             path,
                             index,
                             point.sector,
@@ -642,8 +641,7 @@ impl AiOwnerCtx<'_> {
             }
             (SeekingOfficerLectureCharlyPointing, EventMyTalk3) => {
                 self.engine.execute_ai_callback(
-                    self.sim,
-                    self.assets,
+                    self.tcx,
                     self.target(),
                     &Stimulus::new(CallYourTalk2),
                 );
@@ -684,14 +682,13 @@ impl AiOwnerCtx<'_> {
         }
         let officer = self.target();
         if self.engine.npc_is_detecting_human(
-            self.assets,
+            self.tcx.assets,
             self.owner,
             officer,
             self.engine.control.frame_counter,
         ) {
             if self.engine.execute_ai_callback(
-                self.sim,
-                self.assets,
+                self.tcx,
                 officer,
                 &Stimulus::with_human(StimulusType::CallMrOfficerIAmBack, self.owner.index()),
             ) {

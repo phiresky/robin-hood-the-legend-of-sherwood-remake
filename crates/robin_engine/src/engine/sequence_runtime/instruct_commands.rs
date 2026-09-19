@@ -1,20 +1,20 @@
 use super::*;
+use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 impl EngineInner {
     pub(super) fn instruct_shoot_bow(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
         cmd: Command,
     ) {
         let elem = self
             .orders
             .sequence_manager
-            .get_element(seq_id, elem_idx)
+            .get_element_at(elem_ref)
             .expect("instructed sequence element disappeared");
         let shoot_once = cmd == Command::ShootBowOnce;
         let antagonist = match &elem.data {
@@ -25,7 +25,7 @@ impl EngineInner {
             Some(t) => t,
             None => {
                 // No target — nothing we can do.
-                self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                self.element_impossible(tcx, active_scripts, elem_ref);
                 return;
             }
         };
@@ -36,14 +36,14 @@ impl EngineInner {
         let ammo_count = self.get_bow_ammo_count(owner);
         let owner_is_pc = self.get_entity(owner).is_some_and(|entity| entity.is_pc());
         if owner_is_pc && ammo_count == 0 {
-            self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_impossible(tcx, active_scripts, elem_ref);
             return;
         }
 
         // Determine shoot mode via
         // `can_shoot_with_bow_at` before
         // beginning the shot.
-        let (bow_target, shoot_mode) = self.can_shoot_with_bow_at(assets, owner, target);
+        let (bow_target, shoot_mode) = self.can_shoot_with_bow_at(tcx.assets, owner, target);
         if bow_target != super::input::BowTarget::Valid {
             tracing::debug!(
                 ?owner,
@@ -67,8 +67,7 @@ impl EngineInner {
                 &mut self.orders.sequence_manager,
                 owner,
                 target,
-                seq_id,
-                elem_idx,
+                elem_ref,
                 shoot_once,
                 ammo_count,
                 Some(shoot_mode),
@@ -76,7 +75,7 @@ impl EngineInner {
             ) {
                 BeginShotResult::Started => {}
                 BeginShotResult::Impossible => {
-                    self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                    self.element_impossible(tcx, active_scripts, elem_ref);
                 }
             }
         }
@@ -84,17 +83,15 @@ impl EngineInner {
 
     pub(super) fn instruct_change_position(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
         let elem = self
             .orders
             .sequence_manager
-            .get_element(seq_id, elem_idx)
+            .get_element_at(elem_ref)
             .expect("instructed sequence element disappeared");
         if let crate::sequence::SequenceElementData::Movement {
             destination,
@@ -115,18 +112,16 @@ impl EngineInner {
 
             if tgt_sector.is_some() && actor_sector != tgt_sector {
                 self.element_interrupted(
-                    sim,
-                    assets,
+                    tcx,
                     active_scripts,
-                    seq_id,
-                    elem_idx,
+                    elem_ref,
                     crate::sequence::CascadeFlags::NEXT_LEVEL,
                 );
                 return;
             }
 
             self.finalize_special_move_position(
-                assets,
+                tcx.assets,
                 owner,
                 super::special_motion::SpecialMovePosition::Map(dest),
                 // The encoded topology is the expected
@@ -153,22 +148,20 @@ impl EngineInner {
                     .set_direction_instantly(tgt_direction);
             }
         }
-        self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+        self.element_terminated(tcx, active_scripts, elem_ref);
     }
 
     pub(super) fn instruct_swordstrike_thrust_a(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
         let elem = self
             .orders
             .sequence_manager
-            .get_element(seq_id, elem_idx)
+            .get_element_at(elem_ref)
             .expect("instructed sequence element disappeared");
         let strike = match elem.command {
             Command::SwordstrikeThrustA => crate::weapons::SwordStrike::A,
@@ -194,62 +187,50 @@ impl EngineInner {
         // motion is marked in progress
         // epilogue.
         match target {
-            Some(target_id) => self.dispatch_sword_strike(
-                sim,
-                assets,
-                active_scripts,
-                owner,
-                target_id,
-                strike,
-                seq_id,
-                elem_idx,
-            ),
+            Some(target_id) => {
+                self.dispatch_sword_strike(tcx, active_scripts, owner, target_id, strike, elem_ref)
+            }
             None => {
-                self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                self.element_impossible(tcx, active_scripts, elem_ref);
             }
         };
     }
 
     pub(super) fn instruct_raise_shield(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
         cmd: Command,
     ) {
-        let follow_up =
-            self.dispatch_shield_command(sim, assets, active_scripts, owner, cmd, seq_id, elem_idx);
+        let follow_up = self.dispatch_shield_command(tcx, active_scripts, owner, cmd, elem_ref);
         if cmd == Command::RaiseShieldInstantly {
             // Human-actor translation performs
             // shield updates immediately after entering
             // HOLDING_SHIELD.
-            self.refresh_retained_shield_obstacle(assets, owner);
+            self.refresh_retained_shield_obstacle(tcx.assets, owner);
         }
         if let Some(follow_up) = follow_up {
             // Player-character raise-shield translation
             // launches this SEEK synchronously. Route it
             // through the full owned-element instruction path
             // before the action-loop splice below.
-            self.launch_element_inline(sim, assets, active_scripts, follow_up)
+            self.launch_element_inline(tcx, active_scripts, follow_up)
                 .unwrap_or_else(|error| panic!("shield follow-up launch failed: {error:?}"));
         }
     }
 
     pub(super) fn instruct_hide_behind_shield(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
         let elem = self
             .orders
             .sequence_manager
-            .get_element(seq_id, elem_idx)
+            .get_element_at(elem_ref)
             .expect("instructed sequence element disappeared");
         let antagonist = match &elem.data {
             crate::sequence::SequenceElementData::Interaction { antagonist } => *antagonist,
@@ -257,7 +238,7 @@ impl EngineInner {
         };
         let posture_after = elem.posture_after_transition;
         let Some(holder) = antagonist else {
-            self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_impossible(tcx, active_scripts, elem_ref);
             return;
         };
         let (is_holding, holder_protected) = self
@@ -273,11 +254,9 @@ impl EngineInner {
             .unwrap_or((false, None));
         if !is_holding || holder_protected.is_some() {
             self.element_interrupted(
-                sim,
-                assets,
+                tcx,
                 active_scripts,
-                seq_id,
-                elem_idx,
+                elem_ref,
                 crate::sequence::CascadeFlags::NEXT_LEVEL,
             );
             return;
@@ -291,29 +270,27 @@ impl EngineInner {
                 id,
             );
             order.compute_direction = false;
-            self.orders
-                .sequence_manager
-                .push_order_on(seq_id, elem_idx, order);
+            self.orders.sequence_manager.push_order_at(elem_ref, order);
         }
         let id = self.orders.allocate_order_id();
         let mut order =
             crate::order::Order::new(crate::order::OrderType::HidingBehindShield, 0.0, 0.0, id)
                 .with_antagonist(holder);
         order.compute_direction = false;
-        self.orders
-            .sequence_manager
-            .push_order_on(seq_id, elem_idx, order);
+        self.orders.sequence_manager.push_order_at(elem_ref, order);
     }
 
     pub(super) fn instruct_swordstrike_down(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
+        let SequenceElementRef {
+            sequence_id: seq_id,
+            element_index: elem_idx,
+        } = elem_ref;
         let elem = self
             .orders
             .sequence_manager
@@ -325,7 +302,11 @@ impl EngineInner {
         };
         let Some(target) = antagonist else {
             tracing::warn!(?seq_id, elem_idx, "SwordstrikeDown missing antagonist");
-            self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_impossible(
+                tcx,
+                active_scripts,
+                SequenceElementRef::new(seq_id, elem_idx),
+            );
             return;
         };
         let (tx, ty) = match (self.get_entity(owner), self.get_entity(target)) {
@@ -335,7 +316,11 @@ impl EngineInner {
             }
             _ => {
                 tracing::warn!(?owner, ?target, "SwordstrikeDown owner or target missing");
-                self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                self.element_impossible(
+                    tcx,
+                    active_scripts,
+                    SequenceElementRef::new(seq_id, elem_idx),
+                );
                 return;
             }
         };
@@ -355,17 +340,15 @@ impl EngineInner {
 
     pub(super) fn instruct_get_killed_at_bottom(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
         let elem = self
             .orders
             .sequence_manager
-            .get_element(seq_id, elem_idx)
+            .get_element_at(elem_ref)
             .expect("instructed sequence element disappeared");
         let killer = match elem.data {
             crate::sequence::SequenceElementData::Interaction { antagonist } => antagonist,
@@ -378,7 +361,7 @@ impl EngineInner {
             .is_some_and(|description| description.status.in_coma);
         let (damage, raw_life_points_after, died) = {
             let Some(victim) = self.world.entities.get_mut(owner) else {
-                self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                self.element_impossible(tcx, active_scripts, elem_ref);
                 return;
             };
             let damage = victim
@@ -386,7 +369,7 @@ impl EngineInner {
                 .map(|(_, lp)| (*lp).max(0) as u16);
             let Some(damage) = damage else {
                 tracing::warn!(?owner, ?killer, "GetKilledAtBottom owner is not a human");
-                self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                self.element_impossible(tcx, active_scripts, elem_ref);
                 return;
             };
             let max_life_points = match victim {
@@ -416,8 +399,7 @@ impl EngineInner {
         // inside this command before the posture/death
         // translation continues.
         let coma_saved = self.close_pc_wounded_coma_boundary(
-            sim,
-            assets,
+            tcx,
             owner,
             damage,
             damage as i16,
@@ -432,7 +414,7 @@ impl EngineInner {
             // The original game's wounded-state query routes through specialized
             // Human life updates, which invoke the complete
             // PC/NPC/Soldier/Human Kill chain before returning.
-            self.apply_scripted_virtual_kill(sim, assets, owner, killer);
+            self.apply_scripted_virtual_kill(tcx, owner, killer);
             if self.get_entity(owner).is_some_and(|victim| {
                 victim.is_soldier()
                     && self.camps_are_hostile(victim.camp(), crate::element::Camp::Royalists)
@@ -444,7 +426,7 @@ impl EngineInner {
                 );
             }
         }
-        self.say_ouch(sim, assets, owner, Some(damage));
+        self.say_ouch(tcx, owner, Some(damage));
 
         let victim = self
             .world
@@ -471,28 +453,26 @@ impl EngineInner {
                     }
                 })
                 .unwrap_or(crate::order::OrderType::DyingUpright);
-            self.push_new_order(seq_id, elem_idx, anim, 0.0, 0.0);
+            self.push_new_order(elem_ref, anim, 0.0, 0.0);
         } else {
             if victim.is_dead() {
                 victim.set_posture(crate::element::Posture::DeadBack);
             }
-            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_terminated(tcx, active_scripts, elem_ref);
         }
     }
 
     pub(super) fn instruct_take_corpse(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
         let elem = self
             .orders
             .sequence_manager
-            .get_element(seq_id, elem_idx)
+            .get_element_at(elem_ref)
             .expect("instructed sequence element disappeared");
         let target = match &elem.data {
             crate::sequence::SequenceElementData::Interaction { antagonist } => *antagonist,
@@ -505,8 +485,7 @@ impl EngineInner {
                     &mut self.orders.sequence_manager,
                     owner,
                     target_id,
-                    seq_id,
-                    elem_idx,
+                    elem_ref,
                     &mut self.orders.next_order_id,
                 ) {
                     AbilityBeginResult::Started => {
@@ -522,31 +501,28 @@ impl EngineInner {
                         // actually begins lifting it.
                     }
                     AbilityBeginResult::Impossible => {
-                        self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                        self.element_impossible(tcx, active_scripts, elem_ref);
                     }
                 }
             }
             None => {
-                self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                self.element_impossible(tcx, active_scripts, elem_ref);
             }
         }
     }
 
     pub(super) fn instruct_drop_corpse(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
         match abilities::begin_drop(
             &mut self.world.entities,
             &mut self.orders.sequence_manager,
             owner,
-            seq_id,
-            elem_idx,
+            elem_ref,
             &mut self.orders.next_order_id,
         ) {
             AbilityBeginResult::Started => {
@@ -568,36 +544,38 @@ impl EngineInner {
                     // script-driven
                     // `ActionChange`) is
                     // interrupted.
-                    self.actor_freeze_execution(sim, assets, cid);
+                    self.actor_freeze_execution(tcx, cid);
                     self.apply_carry_building_hulk(owner, cid);
                 }
             }
             AbilityBeginResult::Impossible => {
-                self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                self.element_impossible(tcx, active_scripts, elem_ref);
             }
         }
     }
 
     pub(super) fn instruct_hit_cmd(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
         cmd: Command,
     ) {
+        let SequenceElementRef {
+            sequence_id: seq_id,
+            element_index: elem_idx,
+        } = elem_ref;
         let Some(target) = self
             .orders
             .sequence_manager
-            .get_element(seq_id, elem_idx)
+            .get_element_at(elem_ref)
             .and_then(|element| match &element.data {
                 crate::sequence::SequenceElementData::Interaction { antagonist, .. } => *antagonist,
                 _ => None,
             })
         else {
-            self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_impossible(tcx, active_scripts, elem_ref);
             return;
         };
         let begin = match cmd {
@@ -606,8 +584,7 @@ impl EngineInner {
                 &mut self.orders.sequence_manager,
                 owner,
                 target,
-                seq_id,
-                elem_idx,
+                elem_ref,
                 &mut self.orders.next_order_id,
             ),
             Command::StrangleCmd => abilities::begin_strangle(
@@ -615,15 +592,14 @@ impl EngineInner {
                 &mut self.orders.sequence_manager,
                 owner,
                 target,
-                seq_id,
-                elem_idx,
+                elem_ref,
                 &mut self.orders.next_order_id,
             ),
             _ => unreachable!(),
         };
         match begin {
             AbilityBeginResult::Impossible => {
-                self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx)
+                self.element_impossible(tcx, active_scripts, elem_ref)
             }
             AbilityBeginResult::Started => {
                 // Human command translation inserts the Hit/Strangle order before
@@ -643,8 +619,7 @@ impl EngineInner {
                     .is_moving();
                 if moving {
                     self.execute_ai_callback(
-                        sim,
-                        assets,
+                        tcx,
                         target,
                         &crate::ai::Stimulus::new(crate::ai::StimulusType::EventStop),
                     );
@@ -655,12 +630,10 @@ impl EngineInner {
 
     pub(super) fn instruct_tie_cmd(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
         cmd: Command,
     ) {
         let ammo_available = match cmd {
@@ -682,30 +655,26 @@ impl EngineInner {
             _ => true,
         };
         self.dispatch_direct_ability_command(
-            sim,
-            assets,
+            tcx,
             active_scripts,
             owner,
             cmd,
             ammo_available,
-            seq_id,
-            elem_idx,
+            elem_ref,
         );
     }
 
     pub(super) fn instruct_climb_up_on_shoulders(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
         let elem = self
             .orders
             .sequence_manager
-            .get_element(seq_id, elem_idx)
+            .get_element_at(elem_ref)
             .expect("instructed sequence element disappeared");
         // Owner is the climber, antagonist is the
         // HelpingToClimb helper.
@@ -714,25 +683,24 @@ impl EngineInner {
             _ => None,
         };
         let Some(helper_id) = helper else {
-            self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_impossible(tcx, active_scripts, elem_ref);
             return;
         };
         // The headroom ray-cast inside `begin_climb_on_shoulders` reads the
         // sight obstacles beside the mutable entity table.
-        let (entities, obstacles, _, _) = self.world.entities_mut_with_sight(assets);
+        let (entities, obstacles, _, _) = self.world.entities_mut_with_sight(tcx.assets);
         match abilities::begin_climb_on_shoulders(
             entities,
             &mut self.orders.sequence_manager,
             owner,
             helper_id,
-            seq_id,
-            elem_idx,
+            elem_ref,
             &mut self.orders.next_order_id,
             obstacles,
         ) {
             crate::abilities::ClimbResult::Started => {}
             crate::abilities::ClimbResult::Impossible => {
-                self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                self.element_impossible(tcx, active_scripts, elem_ref);
             }
             crate::abilities::ClimbResult::NoHeadroom { helper_id } => {
                 // Low ceiling → helper stands
@@ -744,26 +712,24 @@ impl EngineInner {
                     crate::element::Command::LeaveHelpingClimb,
                     Some(helper_id),
                 );
-                self.launch_element_inline(sim, assets, active_scripts, leave_elem)
+                self.launch_element_inline(tcx, active_scripts, leave_elem)
                     .unwrap_or_else(|error| panic!("shoulder-climb exit launch failed: {error:?}"));
-                self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                self.element_impossible(tcx, active_scripts, elem_ref);
             }
         }
     }
 
     pub(super) fn instruct_pay(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
         let elem = self
             .orders
             .sequence_manager
-            .get_element(seq_id, elem_idx)
+            .get_element_at(elem_ref)
             .expect("instructed sequence element disappeared");
         // Validate campaign has enough ransom.
         // The original aborts with the post-walk
@@ -785,35 +751,32 @@ impl EngineInner {
                     &mut self.orders.sequence_manager,
                     owner,
                     beggar_id,
-                    seq_id,
-                    elem_idx,
+                    elem_ref,
                     &mut self.orders.next_order_id,
                 ) {
                     AbilityBeginResult::Started => {}
                     AbilityBeginResult::Impossible => {
-                        self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                        self.element_impossible(tcx, active_scripts, elem_ref);
                     }
                 }
             }
             None => {
-                self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                self.element_impossible(tcx, active_scripts, elem_ref);
             }
         }
     }
 
     pub(super) fn instruct_drop_ammo(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
         let elem = self
             .orders
             .sequence_manager
-            .get_element(seq_id, elem_idx)
+            .get_element_at(elem_ref)
             .expect("instructed sequence element disappeared");
         // Decrement the PC's ammo for the action,
         // then either merge into an adjacent
@@ -859,7 +822,7 @@ impl EngineInner {
             _ => (None, None),
         };
         let Some(action_id) = action_id else {
-            self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_impossible(tcx, active_scripts, elem_ref);
             return;
         };
         let requested = amount.unwrap_or(1) as u16;
@@ -871,7 +834,7 @@ impl EngineInner {
         // sentinel test.  Treat this as terminate,
         // not impossible.
         if !crate::inventory::action_uses_ammo(action) {
-            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_terminated(tcx, active_scripts, elem_ref);
             return;
         }
         // Refuse the drop when no walkable cell
@@ -879,7 +842,7 @@ impl EngineInner {
         // `DROPPING_AMMO[_CROUCHED]` order and
         // terminate.
         if self.try_get_drop_position(owner).is_none() {
-            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_terminated(tcx, active_scripts, elem_ref);
             return;
         }
         // Capture PC
@@ -897,7 +860,7 @@ impl EngineInner {
             )
         });
         let Some((pos, layer, sector, obstacle, direction, material)) = pc_snap else {
-            self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_impossible(tcx, active_scripts, elem_ref);
             return;
         };
         // Decrement PC ammo, clamped to current
@@ -907,7 +870,7 @@ impl EngineInner {
             _ => None,
         });
         let Some(status_idx) = status_idx else {
-            self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_impossible(tcx, active_scripts, elem_ref);
             return;
         };
         let dropped = if let Some(campaign) = Some(&mut self.mission_domain.campaign)
@@ -921,7 +884,7 @@ impl EngineInner {
             0
         };
         if dropped == 0 {
-            self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_impossible(tcx, active_scripts, elem_ref);
             return;
         }
         // Auto-disable the action slot when ammo
@@ -933,7 +896,7 @@ impl EngineInner {
             .map(|d| d.status.get_ammo(action) == 0)
             .unwrap_or(false);
         if now_empty {
-            self.disable_pc_action(assets, owner, action);
+            self.disable_pc_action(tcx.assets, owner, action);
         }
 
         // Merge into the previously-dropped pile if
@@ -1038,7 +1001,7 @@ impl EngineInner {
                 obstacle,
                 crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
                     obstacle,
-                    assets.environment.static_sight_obstacles.as_slice(),
+                    tcx.assets.environment.static_sight_obstacles.as_slice(),
                 ),
             );
             let bonus = crate::element::Entity::Bonus(crate::element::ElementBonus {
@@ -1074,19 +1037,13 @@ impl EngineInner {
             }
         }
 
-        self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+        self.element_terminated(tcx, active_scripts, elem_ref);
     }
 
-    pub(super) fn instruct_unlock_door(
-        &mut self,
-        owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
-    ) {
+    pub(super) fn instruct_unlock_door(&mut self, owner: EntityId, elem_ref: SequenceElementRef) {
         let id = required_unlock_door_id(
-            self.orders.sequence_manager.get_element(seq_id, elem_idx),
-            seq_id,
-            elem_idx,
+            self.orders.sequence_manager.get_element_at(elem_ref),
+            elem_ref,
         );
         // Pick UnlockingDoor vs UnlockingTrap
         // by door type.
@@ -1108,51 +1065,41 @@ impl EngineInner {
         );
         let order = crate::order::Order::new(anim_type, 0.0, 0.0, self.orders.allocate_order_id())
             .with_completion(crate::order::OrderCompletion::UnlockDoor { door_id: id });
-        self.orders
-            .sequence_manager
-            .push_order_on(seq_id, elem_idx, order);
+        self.orders.sequence_manager.push_order_at(elem_ref, order);
     }
 
     pub(super) fn instruct_enter_swordfight(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
         let opponent = self
             .orders
             .sequence_manager
-            .get_element(seq_id, elem_idx)
+            .get_element_at(elem_ref)
             .expect("instructed sequence element disappeared")
             .get_property(crate::sequence::Field::Opponent)
             .and_then(|value| match value {
                 crate::sequence::FieldValue::Element(id) => Some(*id),
                 _ => None,
             });
-        self.dispatch_enter_swordfight(
-            sim,
-            assets,
-            active_scripts,
-            owner,
-            opponent,
-            seq_id,
-            elem_idx,
-        );
+        self.dispatch_enter_swordfight(tcx, active_scripts, owner, opponent, elem_ref);
     }
 
     pub(super) fn instruct_attentive_mode(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
         cmd: Command,
     ) {
+        let SequenceElementRef {
+            sequence_id: seq_id,
+            element_index: elem_idx,
+        } = elem_ref;
         self.trace_attentive_owner_handoff(
             "translate_before",
             owner,
@@ -1160,13 +1107,11 @@ impl EngineInner {
             format_args!("before attentive translator"),
         );
         self.dispatch_npc_attention_command(
-            sim,
-            assets,
+            tcx,
             active_scripts,
             owner,
             cmd,
-            seq_id,
-            elem_idx,
+            SequenceElementRef::new(seq_id, elem_idx),
         );
         self.trace_attentive_owner_handoff(
             "translate_after",
@@ -1178,14 +1123,16 @@ impl EngineInner {
 
     pub(super) fn instruct_stealth_posture(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
         cmd: Command,
     ) {
+        let SequenceElementRef {
+            sequence_id: seq_id,
+            element_index: elem_idx,
+        } = elem_ref;
         if cmd == Command::EnterBeggar {
             // "To avoid beggar & run bug": the beggar
             // entry stops the actor from inside its own
@@ -1201,8 +1148,7 @@ impl EngineInner {
                 Self::priority_resolver(&engine.world.entities)(element)
             };
             self.stop_owner_from_root(
-                sim,
-                assets,
+                tcx,
                 active_scripts,
                 owner,
                 Some((seq_id, elem_idx)),
@@ -1210,7 +1156,13 @@ impl EngineInner {
                 &resolver,
             );
         }
-        self.dispatch_stealth_command(sim, assets, active_scripts, owner, cmd, seq_id, elem_idx);
+        self.dispatch_stealth_command(
+            tcx,
+            active_scripts,
+            owner,
+            cmd,
+            SequenceElementRef::new(seq_id, elem_idx),
+        );
     }
 
     /// SwordstrikeTired pushes a `BeingWeakSword`
@@ -1221,34 +1173,24 @@ impl EngineInner {
     /// AI can resume the fight.
     pub(super) fn instruct_swordstrike_tired(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
         if self.get_entity(owner).is_some() {
-            self.push_new_order(
-                seq_id,
-                elem_idx,
-                crate::order::OrderType::BeingWeakSword,
-                0.0,
-                0.0,
-            );
+            self.push_new_order(elem_ref, crate::order::OrderType::BeingWeakSword, 0.0, 0.0);
         } else {
-            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_terminated(tcx, active_scripts, elem_ref);
         }
     }
 
     pub(super) fn instruct_climb_down_from_shoulders(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
         // Owner is the climber; the carrier
         // (helper) is read from the climber's
@@ -1262,8 +1204,7 @@ impl EngineInner {
             &mut self.world.entities,
             &mut self.orders.sequence_manager,
             owner,
-            seq_id,
-            elem_idx,
+            elem_ref,
             &mut self.orders.next_order_id,
         ) {
             AbilityBeginResult::Started => {
@@ -1274,11 +1215,11 @@ impl EngineInner {
                 // the sync'd
                 // TRANSITION_HELPING_CLIMBING_DOWN.
                 if let Some(helper_id) = carrier_id {
-                    self.actor_freeze_execution(sim, assets, helper_id);
+                    self.actor_freeze_execution(tcx, helper_id);
                 }
             }
             AbilityBeginResult::Impossible => {
-                self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                self.element_impossible(tcx, active_scripts, elem_ref);
             }
         }
     }
@@ -1286,12 +1227,10 @@ impl EngineInner {
     /// Drop ale bottle.
     pub(super) fn instruct_drop_ale(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
         let order_type = match self.get_entity(owner) {
             Some(entity)
@@ -1301,48 +1240,44 @@ impl EngineInner {
             }
             Some(_) => crate::order::OrderType::DroppingAle,
             None => {
-                self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                self.element_impossible(tcx, active_scripts, elem_ref);
                 return;
             }
         };
-        self.push_new_order(seq_id, elem_idx, order_type, 0.0, 0.0);
+        self.push_new_order(elem_ref, order_type, 0.0, 0.0);
     }
 
     /// Author the run-up, trajectory, and landing as ordinary sequence orders.
     pub(super) fn instruct_jump(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
-        if !self.start_jump(sim, assets, owner, seq_id, elem_idx) {
+        if !self.start_jump(tcx, owner, elem_ref) {
             tracing::warn!(
                 entity = ?owner,
-                seq = ?seq_id,
-                elem = elem_idx,
+                seq = ?elem_ref.sequence_id,
+                elem = elem_ref.element_index,
                 "Jump: failed to translate orders — terminating element"
             );
-            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_terminated(tcx, active_scripts, elem_ref);
         }
     }
 
     pub(super) fn instruct_activate_target(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
         cmd: Command,
     ) {
         let elem = self
             .orders
             .sequence_manager
-            .get_element(seq_id, elem_idx)
+            .get_element_at(elem_ref)
             .expect("instructed sequence element disappeared");
         let antagonist = match &elem.data {
             crate::sequence::SequenceElementData::Interaction { antagonist } => *antagonist,
@@ -1358,8 +1293,7 @@ impl EngineInner {
             .is_some_and(|script| script.has_script_vm(key));
         if is_instantiated
             && let Err(error) = self.call_script_vm(
-                sim,
-                assets,
+                tcx,
                 key,
                 method,
                 &[pc_handle],
@@ -1368,7 +1302,7 @@ impl EngineInner {
         {
             tracing::warn!("{method} (target {target_handle}): {error}");
         }
-        self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+        self.element_terminated(tcx, active_scripts, elem_ref);
     }
 
     /// Script-recorded PlayAnim / PlayAnimLoop /
@@ -1379,18 +1313,16 @@ impl EngineInner {
     /// animation/progression immediately.
     pub(super) fn instruct_play_anim(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
         cmd: Command,
     ) {
         let elem = self
             .orders
             .sequence_manager
-            .get_element(seq_id, elem_idx)
+            .get_element_at(elem_ref)
             .expect("instructed sequence element disappeared");
         let animation = match elem.get_property(crate::sequence::Field::AnimationId) {
             Some(crate::sequence::FieldValue::Animation(anim)) => Some(*anim),
@@ -1411,14 +1343,12 @@ impl EngineInner {
                     })
                 });
         self.dispatch_play_animation(
-            sim,
-            assets,
+            tcx,
             active_scripts,
             owner,
             cmd,
             animation,
-            seq_id,
-            elem_idx,
+            elem_ref,
             preserve_trigger_visual,
         );
     }
@@ -1437,32 +1367,28 @@ impl EngineInner {
     /// order reports `MotionState::Done`.
     pub(super) fn instruct_target_interaction(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
         cmd: Command,
     ) {
         let elem = self
             .orders
             .sequence_manager
-            .get_element(seq_id, elem_idx)
+            .get_element_at(elem_ref)
             .expect("instructed sequence element disappeared");
         let target = match &elem.data {
             crate::sequence::SequenceElementData::Interaction { antagonist } => *antagonist,
             _ => None,
         };
         self.dispatch_sequence_target_interaction(
-            sim,
-            assets,
+            tcx,
             active_scripts,
             owner,
             cmd,
             target,
-            seq_id,
-            elem_idx,
+            elem_ref,
         );
     }
 }

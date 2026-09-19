@@ -46,12 +46,8 @@ mod tests {
                     });
                 let (_, draws) = crate::sim_rng::with_draw_trace(|| {
                     engine
-                        .execute_ai_common_fleeing_event(
-                            &crate::sim_rng::test_context(),
-                            &assets,
-                            owner,
-                            &Stimulus::new(stimulus),
-                        )
+                        .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                        .execute_ai_common_fleeing_event(&Stimulus::new(stimulus))
                         .expect("spent panic event must be handled");
                 });
                 let ai = engine.ai_ctrl(owner);
@@ -94,18 +90,7 @@ mod tests {
     }
 }
 
-impl EngineInner {
-    #[cfg(test)]
-    pub(in crate::engine) fn execute_ai_common_fleeing_event(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        stimulus: &Stimulus,
-    ) -> Option<bool> {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_common_fleeing_event(stimulus)
-    }
-}
+impl EngineInner {}
 
 impl AiOwnerCtx<'_> {
     pub(in crate::engine) fn execute_ai_enemy_fleeing_event(
@@ -154,7 +139,7 @@ impl AiOwnerCtx<'_> {
                             .engine
                             .expect_human_id_for_ai_handle(target.get(), "retiring primary target");
                         self.engine
-                            .live_ai_detects_180(self.assets, self.owner, target)
+                            .live_ai_detects_180(self.tcx.assets, self.owner, target)
                     });
                     if sees_target {
                         self.execute_battle_decisions();
@@ -233,7 +218,7 @@ impl AiOwnerCtx<'_> {
                         };
                         *destination = crate::coordinates::MapPoint::new(point.x, point.y);
                         *flags = crate::sequence::MoveFlags::MAP;
-                        self.engine.launch_element(self.sim, self.assets, movement);
+                        self.engine.launch_element(self.tcx, movement);
                     } else {
                         self.duty_go_to(destination, GotoFlags::RUN);
                         self.engine.observation_timer(self.owner, 30);
@@ -296,7 +281,7 @@ impl AiOwnerCtx<'_> {
                 if event == StimulusType::EventReachPoint {
                     self.duty_set_state(AiState::Fleeing, Substate::FleeingHiding);
                     self.engine.execute_ai_set_alert_status(
-                        self.assets,
+                        self.tcx.assets,
                         self.owner,
                         AlertLevel::Yellow,
                         crate::ai::AlertFlags::empty(),
@@ -319,7 +304,7 @@ impl AiOwnerCtx<'_> {
                     }
                     let frames = crate::parameters_ai::AI_MIN_PANIC_HIDING_TIME as u32
                         + crate::sim_rng::u32(
-                            self.sim,
+                            self.tcx.sim,
                             crate::sim_rng::RngSite::AiPanic,
                             0..crate::parameters_ai::AI_DELTA_PANIC_HIDING_TIME as u32,
                         );
@@ -356,13 +341,13 @@ impl AiOwnerCtx<'_> {
                     ai.panic_center_y - position.y,
                 ) as u16
             } else {
-                crate::sim_rng::u32(self.sim, crate::sim_rng::RngSite::AiPanic, 0..16) as u16
+                crate::sim_rng::u32(self.tcx.sim, crate::sim_rng::RngSite::AiPanic, 0..16) as u16
             };
             self.duty_face_direction(direction);
             let ai = self.engine.ai_mut(self.owner, "panic hiding");
             ai.clear_emoticon();
             self.engine.execute_ai_set_alert_status(
-                self.assets,
+                self.tcx.assets,
                 self.owner,
                 AlertLevel::Yellow,
                 crate::ai::AlertFlags::empty(),
@@ -376,7 +361,7 @@ impl AiOwnerCtx<'_> {
             }
             let frames = crate::parameters_ai::AI_MIN_PANIC_HIDING_TIME as u32
                 + crate::sim_rng::u32(
-                    self.sim,
+                    self.tcx.sim,
                     crate::sim_rng::RngSite::AiPanic,
                     0..crate::parameters_ai::AI_DELTA_PANIC_HIDING_TIME as u32,
                 );
@@ -396,7 +381,7 @@ impl AiOwnerCtx<'_> {
             .lasting_panic_runs = runs.wrapping_sub(1);
         let ai = self.engine.ai(self.owner, "panic direction");
         let sector = if !ai.directed_panic {
-            crate::sim_rng::u32(self.sim, crate::sim_rng::RngSite::AiPanic, 0..16) as u8
+            crate::sim_rng::u32(self.tcx.sim, crate::sim_rng::RngSite::AiPanic, 0..16) as u8
         } else {
             let position = self.engine.live_ai_position(self.owner);
             let base = crate::position_interface::vector_to_sector_0_to_15(
@@ -413,7 +398,7 @@ impl AiOwnerCtx<'_> {
                 )
             };
             let jitter =
-                crate::sim_rng::u32(self.sim, crate::sim_rng::RngSite::AiPanic, 0..count) as u8;
+                crate::sim_rng::u32(self.tcx.sim, crate::sim_rng::RngSite::AiPanic, 0..count) as u8;
             base.wrapping_add(side)
                 .wrapping_add(jitter)
                 .wrapping_sub(offset)
@@ -422,7 +407,7 @@ impl AiOwnerCtx<'_> {
         let (vx, vy) = crate::element::direction_vector_16(sector as i16);
         let distance = (crate::parameters_ai::AI_MIN_PANIC_RUN_SEGMENT_DISTANCE as u32
             + crate::sim_rng::u32(
-                self.sim,
+                self.tcx.sim,
                 crate::sim_rng::RngSite::AiPanic,
                 0..crate::parameters_ai::AI_DELTA_PANIC_RUN_SEGMENT_DISTANCE as u32,
             )) as f32;

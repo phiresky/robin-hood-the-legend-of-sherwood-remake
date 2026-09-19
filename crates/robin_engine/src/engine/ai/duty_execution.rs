@@ -15,7 +15,7 @@ impl AiOwnerCtx<'_> {
             .enemy_ai()
             .is_some()
         {
-            AiOwnerCtx::new(self.engine, self.sim, self.assets, self.owner).enemy_duty(flags);
+            AiOwnerCtx::new(self.engine, self.tcx, self.owner).enemy_duty(flags);
             return;
         }
         self.engine
@@ -111,7 +111,7 @@ impl AiOwnerCtx<'_> {
         {
             self.enemy_mut().seek_flags = SeekFlags::empty();
             debug_assert_eq!(
-                self.enemy().get_rank(&self.assets.profile_manager),
+                self.enemy().get_rank(&self.tcx.assets.profile_manager),
                 ProfileRank::Soldier
             );
             if self.alert_officer_after_search() {
@@ -160,7 +160,7 @@ impl AiOwnerCtx<'_> {
                         .engine
                         .entity_building_sector(owner.element_data().sector())
                         .is_none()
-                    && self.enemy().profile(&self.assets.profile_manager).money > 0);
+                    && self.enemy().profile(&self.tcx.assets.profile_manager).money > 0);
             if takes_money
                 && !flags.contains(DutyFlags::BECAUSE_COULDNT_REACHPOINT)
                 && self
@@ -229,7 +229,7 @@ impl AiOwnerCtx<'_> {
         }
 
         self.engine
-            .initialize_patrol_for_npc(self.assets, self.owner);
+            .initialize_patrol_for_npc(self.tcx.assets, self.owner);
         self.execute_common_ai_duty(flags);
     }
 
@@ -327,7 +327,7 @@ impl AiOwnerCtx<'_> {
             let ai = entity
                 .enemy_ai()
                 .expect("officer registry soldier has no Enemy AI");
-            match ai.get_rank(&self.assets.profile_manager) {
+            match ai.get_rank(&self.tcx.assets.profile_manager) {
                 ProfileRank::Officer
                     if matches!(entity, Entity::Soldier(soldier) if soldier.is_able_to_fight())
                         && ai.base.current_state == AiState::Default
@@ -378,7 +378,7 @@ impl AiOwnerCtx<'_> {
                             | Substate::SeekingRunningToOfficerSeen
                     ) && self
                         .engine
-                        .patrol_member_visible(self.assets, self.owner, id) =>
+                        .patrol_member_visible(self.tcx.assets, self.owner, id) =>
                 {
                     return false;
                 }
@@ -407,7 +407,7 @@ impl AiOwnerCtx<'_> {
         let input = extract_exact_forecast_input(self.engine, entity, passing_door)
             .expect("officer forecast requires an actor");
         let destination = crate::ai::forecast_destination_for_ia(
-            self.sim,
+            self.tcx.sim,
             &input,
             &self.engine.script_domains.interactables.doors,
             &self.engine.world.fast_grid.level.sectors,

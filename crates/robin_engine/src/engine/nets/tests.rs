@@ -4,6 +4,7 @@ use crate::element::Camp;
 use crate::element::{
     ElementData, ElementKind, ElementNet, NetData, ObjectData, Posture, ProjectileData,
 };
+use crate::engine::TickCtx;
 use crate::engine::test_support::actors::TestActor;
 use crate::profiles::{Action, CharacterProfile, ProfileManager, SoldierProfile};
 
@@ -50,7 +51,7 @@ fn run_net_owner_path(
 ) -> Vec<(EntityId, crate::sprite::FrameProgression)> {
     let (_, trace) = capture_net_sprite_progressions(|| {
         crate::sim_rng::with_seed(0x4E45_5431, |sim| {
-            engine.tick_actor_owner_envelopes(sim, assets);
+            engine.tick_actor_owner_envelopes(TickCtx::new(sim, assets));
         });
     });
     trace
@@ -83,7 +84,7 @@ fn first_grounded_update_biases_net_and_only_single_net_victims_once() {
             unreachable!()
         };
         net.net.victims.push(victim_id);
-        engine.tick_net(&sim, &assets, net_id);
+        engine.tick_net(TickCtx::new(&sim, &assets), net_id);
         let expected = LAND_Y - if crumpled { 10.0 } else { 40.0 };
         assert_eq!(
             engine.get_entity(net_id).unwrap().sprite().display_depth,
@@ -99,7 +100,7 @@ fn first_grounded_update_biases_net_and_only_single_net_victims_once() {
             .unwrap()
             .sprite_mut()
             .display_depth = 900.0;
-        engine.tick_net(&sim, &assets, net_id);
+        engine.tick_net(TickCtx::new(&sim, &assets), net_id);
         assert_eq!(
             engine.get_entity(victim_id).unwrap().sprite().display_depth,
             expected - 0.001
@@ -369,7 +370,7 @@ fn net_captures_three_normal_soldiers() {
         })
         .collect();
 
-    engine.apply_net_falling_effect(sim, &assets, net_id);
+    engine.apply_net_falling_effect(TickCtx::new(sim, &assets), net_id);
 
     let net = match engine.get_entity(net_id).unwrap() {
         Entity::Net(n) => n,
@@ -427,7 +428,7 @@ fn ordered_net_dispatch_applies_landing_capture_inline() {
     let net_id = engine.add_test_entity(net);
     let victim_id = add_soldier(&mut engine, landing, 0, false);
 
-    engine.tick_net(sim, &assets, net_id);
+    engine.tick_net(TickCtx::new(sim, &assets), net_id);
 
     assert_eq!(
         engine
@@ -467,9 +468,9 @@ fn second_apply_pass_does_not_double_capture() {
         0,
         false,
     );
-    engine.apply_net_falling_effect(sim, &assets, net_id);
-    engine.apply_net_falling_effect(sim, &assets, net_id);
-    engine.apply_net_falling_effect(sim, &assets, net_id);
+    engine.apply_net_falling_effect(TickCtx::new(sim, &assets), net_id);
+    engine.apply_net_falling_effect(TickCtx::new(sim, &assets), net_id);
+    engine.apply_net_falling_effect(TickCtx::new(sim, &assets), net_id);
 
     let net = match engine.get_entity(net_id).unwrap() {
         Entity::Net(n) => n,
@@ -516,7 +517,7 @@ fn net_crumples_when_only_rider_in_range() {
             .build(),
     );
 
-    engine.apply_net_falling_effect(sim, &assets, net_id);
+    engine.apply_net_falling_effect(TickCtx::new(sim, &assets), net_id);
 
     let net = match engine.get_entity(net_id).unwrap() {
         Entity::Net(n) => n,
@@ -576,7 +577,7 @@ fn selective_immunity_skips_all_resistant_types_and_captures_an_ally() {
             .build(),
     );
 
-    engine.apply_net_falling_effect(sim, &assets, net_id);
+    engine.apply_net_falling_effect(TickCtx::new(sim, &assets), net_id);
 
     let Entity::Net(net) = engine.get_entity(net_id).unwrap() else {
         panic!("test net changed entity kind");
@@ -615,7 +616,7 @@ fn net_capture_circle_keeps_original_strict_radius_boundary() {
         false,
     );
 
-    engine.apply_net_falling_effect(sim, &assets, net_id);
+    engine.apply_net_falling_effect(TickCtx::new(sim, &assets), net_id);
 
     let Entity::Net(net) = engine.get_entity(net_id).unwrap() else {
         panic!("test net changed entity kind");
@@ -652,7 +653,7 @@ fn net_crumples_on_vip_soldier_alone() {
             .build(),
     );
 
-    engine.apply_net_falling_effect(sim, &assets, net_id);
+    engine.apply_net_falling_effect(TickCtx::new(sim, &assets), net_id);
 
     let net = match engine.get_entity(net_id).unwrap() {
         Entity::Net(n) => n,
@@ -713,7 +714,7 @@ fn net_with_existing_victim_ignores_new_rider() {
         n.net.victims.push(existing_id);
     }
 
-    engine.apply_net_falling_effect(sim, &assets, net_id);
+    engine.apply_net_falling_effect(TickCtx::new(sim, &assets), net_id);
 
     let net = match engine.get_entity(net_id).unwrap() {
         Entity::Net(n) => n,
@@ -764,7 +765,7 @@ fn net_skips_humans_outside_radius() {
         false,
     );
 
-    engine.apply_net_falling_effect(sim, &assets, net_id);
+    engine.apply_net_falling_effect(TickCtx::new(sim, &assets), net_id);
 
     let net = match engine.get_entity(net_id).unwrap() {
         Entity::Net(n) => n,
@@ -800,7 +801,7 @@ fn net_crumples_on_stuteley_pc() {
             .build(),
     );
 
-    engine.apply_net_falling_effect(sim, &assets, net_id);
+    engine.apply_net_falling_effect(TickCtx::new(sim, &assets), net_id);
 
     let net = match engine.get_entity(net_id).unwrap() {
         Entity::Net(n) => n,
@@ -851,7 +852,7 @@ fn unapply_clears_victims_and_releases_counters() {
     // damage handler). We don't run the per-tick dispatcher in
     // this unit test, so set the posture by hand to simulate the
     // post-dispatch state.
-    engine.apply_net_falling_effect(sim, &assets, net_id);
+    engine.apply_net_falling_effect(TickCtx::new(sim, &assets), net_id);
     if let Some(entity) = engine.world.entities.get_mut(victim_id) {
         entity.set_posture_stuck_under_net_for_human();
     }
@@ -874,7 +875,7 @@ fn unapply_clears_victims_and_releases_counters() {
         Posture::StuckUnderNet
     );
 
-    engine.unapply_net_effect(sim, &assets, net_id);
+    engine.unapply_net_effect(TickCtx::new(sim, &assets), net_id);
 
     let net = match engine.get_entity(net_id).unwrap() {
         Entity::Net(n) => n,
@@ -928,7 +929,7 @@ fn vip_soldier_says_vip_net_no_remark() {
     }
     let vip_id = engine.add_test_entity(vip);
 
-    engine.apply_net_falling_effect(sim, &assets, net_id);
+    engine.apply_net_falling_effect(TickCtx::new(sim, &assets), net_id);
 
     let entity = engine.get_entity(vip_id).unwrap();
     let remark = entity
@@ -970,7 +971,7 @@ fn capture_sets_victim_display_order_behind_net() {
     );
 
     // The owner tick publishes captured victims' depth after the capture callback.
-    engine.tick_net(sim, &assets, net_id);
+    engine.tick_net(TickCtx::new(sim, &assets), net_id);
 
     let sprite = engine.get_entity(victim_id).unwrap().sprite();
     assert_eq!(
@@ -980,7 +981,7 @@ fn capture_sets_victim_display_order_behind_net() {
     assert_eq!(sprite.display_order_ref, None);
     assert!(!sprite.behind_display_order_ref);
 
-    engine.unapply_net_effect(sim, &assets, net_id);
+    engine.unapply_net_effect(TickCtx::new(sim, &assets), net_id);
     let sprite = engine.get_entity(victim_id).unwrap().sprite();
     assert_eq!(
         sprite.display_depth,
@@ -1028,7 +1029,7 @@ fn landing_registers_repulsive_points() {
         assert!(registered_ids.contains(id));
     }
 
-    engine.unapply_net_effect(sim, &assets, net_id);
+    engine.unapply_net_effect(TickCtx::new(sim, &assets), net_id);
     // After unapply: zero repulsive points left.
     assert!(engine.ai.global.repulsive_points.is_empty());
 }
@@ -1080,11 +1081,11 @@ fn taking_net_animation_dispatched_for_pc() {
 
     // Fire the landing path so the net is actually on the ground.
     let sim = crate::sim_rng::test_context();
-    engine.snap_net_to_landing_obstacle(&sim, &assets, net_id);
+    engine.snap_net_to_landing_obstacle(TickCtx::new(&sim, &assets), net_id);
 
     // Launch Take(antagonist=net) targeting the PC.
     let elem = SequenceElement::new_interaction(1, Command::Take, Some(pc_id), Some(net_id));
-    engine.launch_element(&crate::sim_rng::test_context(), &assets, elem);
+    engine.launch_element(TickCtx::new(&crate::sim_rng::test_context(), &assets), elem);
     // Process the pending element so the dispatcher runs.
     let mut dev = crate::engine::DevState::default();
     let mut display = crate::engine::HostDisplayState::default();

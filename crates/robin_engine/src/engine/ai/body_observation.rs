@@ -7,21 +7,8 @@ use super::*;
 use crate::ai::{AiEntityHandle, AiState, EmoticonType, HumanHandle, Remark, ReportType, Substate};
 use crate::element::Human as _;
 use crate::profiles::ProfileRank;
-#[cfg(test)]
-use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
-    #[cfg(test)]
-    pub(super) fn execute_ai_seen_body(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        body: HumanHandle,
-    ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_seen_body(body)
-    }
-
     fn near_officer_informed_about_body(
         &self,
         assets: &LevelAssets,
@@ -81,16 +68,6 @@ impl EngineInner {
             return Some(id);
         }
         None
-    }
-
-    #[cfg(test)]
-    pub(super) fn execute_ai_body_reaction_timer(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_body_reaction_timer()
     }
 }
 
@@ -165,7 +142,7 @@ impl AiOwnerCtx<'_> {
         });
         let hint = self.engine.live_ai_position(body_id);
         self.engine
-            .execute_ai_look_there(self.sim, self.assets, self.owner, hint, 100);
+            .execute_ai_look_there(self.tcx, self.owner, hint, 100);
         self.engine.seek_enemy_mut(self.owner).seen_dead_body = false;
         self.stop_ai_owner();
         let body_position = self.engine.live_ai_position(body_id);
@@ -179,7 +156,7 @@ impl AiOwnerCtx<'_> {
         // A state callback can replace the remembered point before Face reads it.
         let position = self.engine.seek_enemy(self.owner).base.seek_position;
         let target = self.engine.position_to_point_3d(
-            self.assets,
+            self.tcx.assets,
             position.sector,
             position.level,
             position.x,
@@ -224,7 +201,7 @@ impl AiOwnerCtx<'_> {
             let difficulty = self.engine.control.sim_config.difficulty;
             let modifier = if self.engine.is_hostile_to_player_camp(entity.camp()) {
                 if difficulty == crate::player_profile::DifficultyLevel::Hard
-                    && !self.sim.config().fix_hard_reaction_times
+                    && !self.tcx.sim.config().fix_hard_reaction_times
                 {
                     2.0
                 } else {
@@ -239,7 +216,7 @@ impl AiOwnerCtx<'_> {
                 - self
                     .engine
                     .seek_enemy(self.owner)
-                    .profile(&self.assets.profile_manager)
+                    .profile(&self.tcx.assets.profile_manager)
                     .intelligence as f32)
                 * 0.01
                 * crate::parameters_ai::AI_MAX_DEADBODY_REACTIONTIME as f32
@@ -266,15 +243,17 @@ impl AiOwnerCtx<'_> {
         let rank = self
             .engine
             .seek_enemy(self.owner)
-            .profile(&self.assets.profile_manager)
+            .profile(&self.tcx.assets.profile_manager)
             .rank;
         let mut officer = None;
         let mut delegate = false;
         match rank {
             ProfileRank::Soldier => {
-                officer =
-                    self.engine
-                        .near_officer_informed_about_body(self.assets, self.owner, body_id)
+                officer = self.engine.near_officer_informed_about_body(
+                    self.tcx.assets,
+                    self.owner,
+                    body_id,
+                )
             }
             ProfileRank::Officer => {
                 let here = self
@@ -306,7 +285,7 @@ impl AiOwnerCtx<'_> {
                         && !self
                             .engine
                             .entity_data_in_building_sector(entity.element_data())
-                        && (ai.profile(&self.assets.profile_manager).initiative < 50
+                        && (ai.profile(&self.tcx.assets.profile_manager).initiative < 50
                             || !ai.base.patrol.is_empty());
                 }
             }

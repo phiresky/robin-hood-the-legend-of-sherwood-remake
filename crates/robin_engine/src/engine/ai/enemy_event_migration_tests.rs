@@ -2,6 +2,7 @@ use super::*;
 use crate::ai::{AiEntityHandle, AiState, Position, ReportType, Stimulus, StimulusType, Substate};
 use crate::coordinates::WorldPoint3D;
 use crate::element::{ActionState, Command, Posture};
+use crate::engine::TickCtx;
 use crate::profiles::ProfileRank;
 
 fn fixture(substate: Substate) -> (EngineInner, LevelAssets, EntityId, EntityId) {
@@ -41,12 +42,9 @@ fn soldier(engine: &mut EngineInner, assets: &mut LevelAssets, substate: Substat
 }
 
 fn event(engine: &mut EngineInner, assets: &LevelAssets, owner: EntityId, kind: StimulusType) {
-    engine.execute_ai_handler_body(
-        &crate::sim_rng::test_context(),
-        assets,
-        owner,
-        &Stimulus::new(kind),
-    );
+    engine
+        .ai_ctx(&crate::sim_rng::test_context(), assets, owner)
+        .execute_ai_handler_body(&Stimulus::new(kind));
 }
 
 #[test]
@@ -66,12 +64,9 @@ fn repeated_view_during_battle_preserves_first_enemy_insertion_order() {
         for target in [first, first, second, first, second] {
             let mut stimulus = Stimulus::new(StimulusType::EventView);
             stimulus.info = crate::ai::StimulusInfo::Human(AiEntityHandle::new(target.index()));
-            engine.execute_ai_handler_body(
-                &crate::sim_rng::test_context(),
-                &assets,
-                owner,
-                &stimulus,
-            );
+            engine
+                .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                .execute_ai_handler_body(&stimulus);
         }
         let ai = engine.enemy(owner);
         assert_eq!(
@@ -87,12 +82,9 @@ fn repeated_view_during_battle_preserves_first_enemy_insertion_order() {
 fn misses_charly_notification_does_not_start_a_search() {
     for substate in [Substate::DefaultOnPost, Substate::DefaultLookingForCharly] {
         let (mut engine, assets, owner, _) = fixture(substate);
-        let handled = engine.execute_ai_handler_body(
-            &crate::sim_rng::test_context(),
-            &assets,
-            owner,
-            &Stimulus::new(StimulusType::EventMissesCharly),
-        );
+        let handled = engine
+            .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+            .execute_ai_handler_body(&Stimulus::new(StimulusType::EventMissesCharly));
         assert!(!handled);
         let ai = engine.enemy(owner);
         assert_eq!(ai.base.current_substate, substate);
@@ -274,12 +266,12 @@ fn go_to_officer_call_accepts_default_and_rejects_combat() {
         let (mut engine, mut assets, owner, _) = fixture(state);
         let caller = soldier(&mut engine, &mut assets, Substate::DefaultOnPost);
         assert_eq!(
-            engine.execute_ai_enemy_event(
-                &crate::sim_rng::test_context(),
-                &assets,
-                owner,
-                &Stimulus::with_human(StimulusType::CallGoToOfficer, caller.index())
-            ),
+            engine
+                .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                .execute_ai_enemy_event(&Stimulus::with_human(
+                    StimulusType::CallGoToOfficer,
+                    caller.index()
+                )),
             accepted
         );
         let ai = engine.enemy(owner);
@@ -326,12 +318,14 @@ fn call_alert_keeps_running_macro_for_each_caller_role() {
         ai.base.macro_in_progress = true;
         ai.base.macro_timer_is_running = true;
         ai.base.when_does_macro_timer_ring = 10054;
-        assert!(engine.execute_ai_enemy_event(
-            &crate::sim_rng::test_context(),
-            &assets,
-            owner,
-            &Stimulus::with_human(StimulusType::CallAlert, caller.index())
-        ));
+        assert!(
+            engine
+                .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                .execute_ai_enemy_event(&Stimulus::with_human(
+                    StimulusType::CallAlert,
+                    caller.index()
+                ))
+        );
         let ai = engine.enemy(owner);
         assert!(ai.base.macro_in_progress);
         assert!(ai.base.macro_timer_is_running);
@@ -356,12 +350,14 @@ fn rejected_civilian_alert_still_replaces_antagonist() {
     let (mut engine, mut assets, owner, _) = fixture(Substate::SeekingRunningToOfficer);
     let caller = civilian(&mut engine);
     crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
-    assert!(!engine.execute_ai_enemy_event(
-        &crate::sim_rng::test_context(),
-        &assets,
-        owner,
-        &Stimulus::with_human(StimulusType::CallAlert, caller.index())
-    ));
+    assert!(
+        !engine
+            .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+            .execute_ai_enemy_event(&Stimulus::with_human(
+                StimulusType::CallAlert,
+                caller.index()
+            ))
+    );
     let ai = engine.enemy(owner);
     assert_eq!(
         ai.base.antagonist,
@@ -387,8 +383,7 @@ fn group_arrival_compares_raw_direction_before_registering_a_turn() {
         ai.gather_position_instructed = true;
         ai.gather_direction = gather;
         engine.execute_ai_officer_rendezvous_event(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             &Stimulus::new(StimulusType::EventReachPoint),
         );
@@ -422,12 +417,12 @@ fn apple_interrupt_rule_uses_actual_combat_relationship() {
         };
         config.item_gameplay.apple_combat_interrupt = interrupt;
         let sim = crate::sim_rng::SimulationContext::with_seed_and_config(7, config);
-        engine.execute_ai_enemy_event(
-            &sim,
-            &assets,
-            owner,
-            &Stimulus::with_position(StimulusType::EventApple, Position::default()),
-        );
+        engine
+            .ai_ctx(&sim, &assets, owner)
+            .execute_ai_enemy_event(&Stimulus::with_position(
+                StimulusType::EventApple,
+                Position::default(),
+            ));
         let ai = engine.enemy(owner);
         assert_eq!(
             ai.base.current_substate,
@@ -456,12 +451,12 @@ fn engaged_hit_ignores_existing_opponent_and_friendly_attacker() {
         } else {
             target
         };
-        engine.execute_ai_combat_impact_event(
-            &crate::sim_rng::test_context(),
-            &assets,
-            owner,
-            &Stimulus::with_human(StimulusType::EventGotHit, attacker.index()),
-        );
+        engine
+            .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+            .execute_ai_combat_impact_event(&Stimulus::with_human(
+                StimulusType::EventGotHit,
+                attacker.index(),
+            ));
         assert_eq!(engine.human(owner).opponents, vec![target]);
         assert!(!commands(&engine, owner).contains(&Command::EnterSwordfight));
     }
@@ -474,12 +469,12 @@ fn menacing_hit_sets_direction_without_a_turn_sequence() {
     let there = engine.live_ai_position(target);
     let direction =
         crate::position_interface::vector_to_sector_0_to_15_iso(there.x - here.x, there.y - here.y);
-    engine.execute_ai_combat_impact_event(
-        &crate::sim_rng::test_context(),
-        &assets,
-        owner,
-        &Stimulus::with_human(StimulusType::EventGotHit, target.index()),
-    );
+    engine
+        .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+        .execute_ai_combat_impact_event(&Stimulus::with_human(
+            StimulusType::EventGotHit,
+            target.index(),
+        ));
     let entity = engine.ent(owner);
     assert_eq!(
         entity.enemy_ai().unwrap().base.current_substate,
@@ -623,12 +618,12 @@ fn civilian_beggar_sighting_scrubs_every_observer_without_requeuing_current_begg
         if already_examining {
             engine.enemy_mut(owner).beggar_to_examine = Some(AiEntityHandle::new(beggar.index()));
         }
-        engine.execute_ai_enemy_event(
-            &crate::sim_rng::test_context(),
-            &assets,
-            owner,
-            &Stimulus::with_human(StimulusType::EventSeesBeggar, beggar.index()),
-        );
+        engine
+            .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+            .execute_ai_enemy_event(&Stimulus::with_human(
+                StimulusType::EventSeesBeggar,
+                beggar.index(),
+            ));
         let ai = engine.enemy(owner);
         assert_eq!(
             ai.beggars_to_control,
@@ -693,7 +688,9 @@ fn ale_eligibility_requires_outdoor_beer_preference_or_enabled_reliable_rule() {
             .ale_reliable_distraction = reliable;
         let sim =
             crate::sim_rng::SimulationContext::with_seed_and_config(1, engine.control.sim_config);
-        engine.execute_ai_ale_reaction(&sim, &assets, owner);
+        engine
+            .ai_ctx(&sim, &assets, owner)
+            .execute_ai_ale_reaction();
         assert_eq!(
             engine.enemy(owner).base.object_of_desire == Some(AiEntityHandle::new(bottle.index())),
             take
@@ -757,12 +754,12 @@ fn unengaged_hit_uses_live_relationship_instead_of_stale_swordfight_state() {
         }
         let here = engine.pos_of(owner);
         engine.place(target, WorldPoint3D::new(here.x + 10.0, here.y, here.z));
-        engine.execute_ai_combat_impact_event(
-            &crate::sim_rng::test_context(),
-            &assets,
-            owner,
-            &Stimulus::with_human(StimulusType::EventGotHit, target.index()),
-        );
+        engine
+            .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+            .execute_ai_combat_impact_event(&Stimulus::with_human(
+                StimulusType::EventGotHit,
+                target.index(),
+            ));
         let entity = engine.ent(owner);
         assert_eq!(
             entity.enemy_ai().unwrap().base.primary_target,
@@ -802,11 +799,11 @@ fn engaged_hit_adds_a_new_hostile_attacker_inline() {
     engine.human_mut(owner).opponents.push(previous);
     let here = engine.pos_of(owner);
     engine.place(target, WorldPoint3D::new(here.x + 10.0, here.y, here.z));
-    engine.execute_ai_combat_impact_event(
-        &crate::sim_rng::test_context(),
-        &assets,
-        owner,
-        &Stimulus::with_human(StimulusType::EventGotHit, target.index()),
-    );
+    engine
+        .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+        .execute_ai_combat_impact_event(&Stimulus::with_human(
+            StimulusType::EventGotHit,
+            target.index(),
+        ));
     assert!(engine.human(owner).opponents.contains(&target));
 }

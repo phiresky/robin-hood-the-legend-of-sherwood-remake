@@ -89,12 +89,14 @@ fn out_of_view_compares_ai_primary_instead_of_actor_principal() {
     let sim = crate::sim_rng::test_context();
     let seed = sim.seed();
     crate::sight_obstacle::begin_parity_visibility_capture();
-    assert!(!engine.execute_ai_out_of_view(
-        &sim,
-        &assets,
-        owner,
-        &Stimulus::with_human(StimulusType::EventOutOfView, lost.index())
-    ));
+    assert!(
+        !engine
+            .ai_ctx(&sim, &assets, owner)
+            .execute_ai_out_of_view(&Stimulus::with_human(
+                StimulusType::EventOutOfView,
+                lost.index()
+            ))
+    );
     let queries = crate::sight_obstacle::take_parity_visibility_capture();
     assert!(
         queries.is_empty(),
@@ -114,12 +116,12 @@ fn out_of_view_compares_ai_primary_instead_of_actor_principal() {
 #[test]
 fn perpendicular_non_primary_loss_rebuilds_from_current_detectables() {
     let (mut engine, assets, [owner, primary, lost]) = fixture();
-    engine.execute_ai_out_of_view(
-        &crate::sim_rng::test_context(),
-        &assets,
-        owner,
-        &Stimulus::with_human(StimulusType::EventOutOfView, lost.index()),
-    );
+    engine
+        .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+        .execute_ai_out_of_view(&Stimulus::with_human(
+            StimulusType::EventOutOfView,
+            lost.index(),
+        ));
     let ai = engine
         .world
         .entities
@@ -148,12 +150,12 @@ fn removed_detectable_forecasts_the_current_stimulus_target_lazily() {
         .set_position(point);
     let expected = engine.live_ai_position(lost);
     assert_ne!(expected, engine.live_ai_position(primary));
-    engine.execute_ai_out_of_view(
-        &crate::sim_rng::test_context(),
-        &assets,
-        owner,
-        &Stimulus::with_human(StimulusType::EventOutOfView, lost.index()),
-    );
+    engine
+        .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+        .execute_ai_out_of_view(&Stimulus::with_human(
+            StimulusType::EventOutOfView,
+            lost.index(),
+        ));
     let ai = engine
         .world
         .entities

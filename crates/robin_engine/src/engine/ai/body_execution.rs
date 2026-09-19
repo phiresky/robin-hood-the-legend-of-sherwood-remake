@@ -6,21 +6,8 @@ use crate::ai::{
 use crate::ai_enemy::{SeekFlags, UNDEFINED_DIRECTION};
 use crate::parameters_ai;
 use crate::profiles::ProfileRank;
-#[cfg(test)]
-use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
-    #[cfg(test)]
-    pub(in crate::engine) fn execute_ai_body_reaction(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        operation: BodyReaction,
-    ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_body_reaction(operation)
-    }
-
     fn body_target(&self, owner: EntityId) -> EntityId {
         let body = self
             .seek_enemy(owner)
@@ -63,7 +50,7 @@ impl AiOwnerCtx<'_> {
                 if entity.human_life_points() > 0
                     && !entity.is_unconscious()
                     && self.engine.npc_is_detecting_human(
-                        self.assets,
+                        self.tcx.assets,
                         self.owner,
                         body,
                         self.engine.control.frame_counter,
@@ -192,7 +179,7 @@ impl AiOwnerCtx<'_> {
                 match self
                     .engine
                     .seek_enemy(self.owner)
-                    .get_rank(&self.assets.profile_manager)
+                    .get_rank(&self.tcx.assets.profile_manager)
                 {
                     ProfileRank::Officer => {
                         let center = self.engine.live_ai_position(self.owner);
@@ -248,7 +235,7 @@ impl AiOwnerCtx<'_> {
                 Some(self.owner),
                 Some(body),
             ));
-            self.engine.launch_sequence(self.sim, self.assets, sequence);
+            self.engine.launch_sequence(self.tcx, sequence);
 
             self.engine.body_timer(self.owner, 50);
             self.engine.seek_enemy_mut(self.owner).base.clear_emoticon();
@@ -266,7 +253,7 @@ impl AiOwnerCtx<'_> {
         match self
             .engine
             .seek_enemy(self.owner)
-            .get_rank(&self.assets.profile_manager)
+            .get_rank(&self.tcx.assets.profile_manager)
         {
             ProfileRank::Soldier => {
                 let entity = self.engine.expect_entity(self.owner, "body alert owner");
@@ -277,7 +264,7 @@ impl AiOwnerCtx<'_> {
                     && !self
                         .engine
                         .entity_data_in_building_sector(entity.element_data())
-                    && ai.profile(&self.assets.profile_manager).initiative >= 50
+                    && ai.profile(&self.tcx.assets.profile_manager).initiative >= 50
                     && ai.base.antagonist.is_none();
                 let flags = if seek_first {
                     SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK | SeekFlags::LOOK_FOR_HELP_AFTER
@@ -287,7 +274,7 @@ impl AiOwnerCtx<'_> {
                     }
                     SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK
                 };
-                let radius = self.engine.body_alert_radius(self.assets, self.owner);
+                let radius = self.engine.body_alert_radius(self.tcx.assets, self.owner);
                 self.execute_ai_seek_area(center, radius, flags, UNDEFINED_DIRECTION);
             }
             ProfileRank::Officer => {
@@ -300,7 +287,7 @@ impl AiOwnerCtx<'_> {
                 self.duty_face_direction(direction);
                 let position = self.engine.live_ai_position(self.owner);
                 if !self.execute_ai_alert_soldiers(position, SeekFlags::BODY_SEEK.bits()) {
-                    let radius = self.engine.body_alert_radius(self.assets, self.owner);
+                    let radius = self.engine.body_alert_radius(self.tcx.assets, self.owner);
                     self.execute_ai_seek_area(
                         center,
                         radius,
@@ -311,7 +298,7 @@ impl AiOwnerCtx<'_> {
             }
             ProfileRank::Knight => {
                 let position = self.engine.live_ai_position(self.owner);
-                let radius = self.engine.body_alert_radius(self.assets, self.owner);
+                let radius = self.engine.body_alert_radius(self.tcx.assets, self.owner);
                 self.execute_ai_seek_area(
                     position,
                     radius,
@@ -414,12 +401,9 @@ mod tests {
             covering_net(&mut engine, body, 125.0, false, false);
             let farther = covering_net(&mut engine, body, 450.0, true, false);
             let chosen = covering_net(&mut engine, body, 350.0, true, crumpled);
-            engine.execute_ai_body_reaction(
-                &crate::sim_rng::test_context(),
-                &assets,
-                owner,
-                BodyReaction::Examine { body: body.index() },
-            );
+            engine
+                .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                .execute_ai_body_reaction(BodyReaction::Examine { body: body.index() });
             let ai = engine.seek_enemy(owner);
             assert_eq!(
                 ai.base.detected_body,
@@ -451,12 +435,9 @@ mod tests {
     #[should_panic(expected = "body examination target")]
     fn examining_missing_body_rejects_invalid_identity() {
         let (mut engine, assets, owner, _) = fixture();
-        engine.execute_ai_body_reaction(
-            &crate::sim_rng::test_context(),
-            &assets,
-            owner,
-            BodyReaction::Examine { body: u32::MAX - 1 },
-        );
+        engine
+            .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+            .execute_ai_body_reaction(BodyReaction::Examine { body: u32::MAX - 1 });
     }
 
     #[test]
@@ -471,12 +452,9 @@ mod tests {
         crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
         engine.seek_enemy_mut(owner).other_bodies_to_examine =
             vec![recovered.index(), down.index()];
-        engine.execute_ai_body_reaction(
-            &crate::sim_rng::test_context(),
-            &assets,
-            owner,
-            BodyReaction::SleeperTimer,
-        );
+        engine
+            .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+            .execute_ai_body_reaction(BodyReaction::SleeperTimer);
         let ai = engine.seek_enemy(owner);
         assert!(ai.other_bodies_to_examine.is_empty());
         assert_eq!(
@@ -495,12 +473,9 @@ mod tests {
             let entity = engine.ent_mut(body);
             entity.human_data_mut().unwrap().unconscious = unconscious;
             entity.npc_data_mut().unwrap().life_points = if dead { 0 } else { 50 };
-            engine.execute_ai_body_reaction(
-                &crate::sim_rng::test_context(),
-                &assets,
-                owner,
-                BodyReaction::NetDone,
-            );
+            engine
+                .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                .execute_ai_body_reaction(BodyReaction::NetDone);
             let ai = engine.seek_enemy(owner);
             if dead || unconscious {
                 assert_eq!(ai.base.current_substate, Substate::SeekingBody);
@@ -523,12 +498,9 @@ mod tests {
         let (mut engine, assets, owner, body) = fixture();
         engine.human_mut(body).stuck_under_nets_counter = 1;
         let net = covering_net(&mut engine, body, 350.0, true, false);
-        engine.execute_ai_body_reaction(
-            &crate::sim_rng::test_context(),
-            &assets,
-            owner,
-            BodyReaction::NetDone,
-        );
+        engine
+            .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+            .execute_ai_body_reaction(BodyReaction::NetDone);
         let ai = engine.seek_enemy(owner);
         assert_eq!(ai.base.current_substate, Substate::SeekingNet);
         assert_eq!(
@@ -569,12 +541,9 @@ mod tests {
                 .soldier_profile_index;
             std::sync::Arc::make_mut(&mut assets.profile_manager).soldiers[usize::from(profile)]
                 .duty = duty;
-            engine.execute_ai_body_reaction(
-                &crate::sim_rng::test_context(),
-                &assets,
-                owner,
-                BodyReaction::DeadBodyAlert { center },
-            );
+            engine
+                .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                .execute_ai_body_reaction(BodyReaction::DeadBodyAlert { center });
             let ai = engine.seek_enemy(owner);
             assert_eq!(
                 ai.base.my_reconnaissance_report.report_type,

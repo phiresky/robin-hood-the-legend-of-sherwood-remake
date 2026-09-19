@@ -4,21 +4,8 @@ use crate::ai::{
 };
 use crate::ai_enemy::{SeekFlags, UNDEFINED_DIRECTION};
 use crate::parameters_ai;
-#[cfg(test)]
-use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
-    #[cfg(test)]
-    pub(in crate::engine) fn execute_ai_seeking_event(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        stimulus: &Stimulus,
-    ) -> Option<bool> {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_seeking_event(stimulus)
-    }
-
     fn seek_event_timer(&mut self, owner: EntityId, duration: u32) {
         let frame = self.control.frame_counter;
         self.seek_enemy_mut(owner)
@@ -73,14 +60,16 @@ impl AiOwnerCtx<'_> {
             (SeekingSeekpoint, EventReachPoint) => self.execute_seekpoint_arrival(),
             (SeekingSeekpointWatching, EventTimer) => {
                 self.duty_set_state(AiState::Seeking, SeekingSeekpointWatchingSidewards);
-                let direction =
-                    if crate::sim_rng::u32(self.sim, crate::sim_rng::RngSite::EnemySeekLook, 0..2)
-                        != 0
-                    {
-                        crate::ai::LookDirection::LeftRight
-                    } else {
-                        crate::ai::LookDirection::RightLeft
-                    };
+                let direction = if crate::sim_rng::u32(
+                    self.tcx.sim,
+                    crate::sim_rng::RngSite::EnemySeekLook,
+                    0..2,
+                ) != 0
+                {
+                    crate::ai::LookDirection::LeftRight
+                } else {
+                    crate::ai::LookDirection::RightLeft
+                };
                 self.execute_ai_look_sidewards(direction);
             }
             (SeekingSeekpointWatchingSidewards, EventDone | EventTimer) => {
@@ -146,7 +135,7 @@ impl AiOwnerCtx<'_> {
                 {
                     ai.changed_to_alert_path = true;
                     ai.base.patrol_path =
-                        crate::ai::PatrolPath::new(path, &self.assets.navigation.hiking_paths);
+                        crate::ai::PatrolPath::new(path, &self.tcx.assets.navigation.hiking_paths);
                     ai.base.has_patrol_path = true;
                 }
                 ai.base.set_emoticon(EmoticonType::QuestionMark);
@@ -247,7 +236,7 @@ impl AiOwnerCtx<'_> {
                 continue;
             }
             let insertion = crate::sim_rng::usize(
-                self.sim,
+                self.tcx.sim,
                 crate::sim_rng::RngSite::EnemySeekDirectionShuffle,
                 0..=self
                     .engine
@@ -299,7 +288,7 @@ impl AiOwnerCtx<'_> {
         if event == StimulusType::EventTimer {
             if !stuck
                 && self.engine.npc_is_detecting_human(
-                    self.assets,
+                    self.tcx.assets,
                     self.owner,
                     body,
                     self.engine.control.frame_counter,
@@ -353,7 +342,7 @@ impl AiOwnerCtx<'_> {
                     Some(self.owner),
                     Some(net),
                 ));
-                self.engine.launch_sequence(self.sim, self.assets, sequence);
+                self.engine.launch_sequence(self.tcx, sequence);
 
                 self.engine
                     .seek_enemy_mut(self.owner)
@@ -433,12 +422,9 @@ pub(super) mod tests {
             }
             let sim = crate::sim_rng::test_context();
             assert_eq!(
-                engine.execute_ai_seeking_event(
-                    &sim,
-                    &assets,
-                    owner,
-                    &Stimulus::new(StimulusType::EventTimer)
-                ),
+                engine
+                    .ai_ctx(&sim, &assets, owner)
+                    .execute_ai_seeking_event(&Stimulus::new(StimulusType::EventTimer)),
                 Some(false)
             );
             let ai = engine.seek_enemy(owner);
@@ -471,12 +457,9 @@ pub(super) mod tests {
             engine.seek_enemy_mut(owner).base.current_substate =
                 Substate::DefaultPatrolEnrouteWaiting;
             assert_eq!(
-                engine.execute_ai_seeking_event(
-                    &sim,
-                    &assets,
-                    owner,
-                    &Stimulus::new(StimulusType::EventTimer)
-                ),
+                engine
+                    .ai_ctx(&sim, &assets, owner)
+                    .execute_ai_seeking_event(&Stimulus::new(StimulusType::EventTimer)),
                 Some(false)
             );
             assert_eq!(
@@ -504,12 +487,9 @@ pub(super) mod tests {
         ai.base.current_substate = Substate::DefaultGotoChief;
         let sim = crate::sim_rng::test_context();
         assert_eq!(
-            engine.execute_ai_seeking_event(
-                &sim,
-                &assets,
-                owner,
-                &Stimulus::new(StimulusType::EventReachPoint)
-            ),
+            engine
+                .ai_ctx(&sim, &assets, owner)
+                .execute_ai_seeking_event(&Stimulus::new(StimulusType::EventReachPoint)),
             Some(false)
         );
         let turn = engine
@@ -543,22 +523,16 @@ pub(super) mod tests {
         ai.base.interesting_object = None;
         let sim = crate::sim_rng::test_context();
         assert_eq!(
-            engine.execute_ai_seeking_event(
-                &sim,
-                &assets,
-                owner,
-                &Stimulus::new(StimulusType::EventTimer)
-            ),
+            engine
+                .ai_ctx(&sim, &assets, owner)
+                .execute_ai_seeking_event(&Stimulus::new(StimulusType::EventTimer)),
             Some(false)
         );
         assert_eq!(engine.seek_enemy(owner).base.when_does_timer_ring, 110);
         assert_eq!(
-            engine.execute_ai_seeking_event(
-                &sim,
-                &assets,
-                owner,
-                &Stimulus::new(StimulusType::EventReachPoint)
-            ),
+            engine
+                .ai_ctx(&sim, &assets, owner)
+                .execute_ai_seeking_event(&Stimulus::new(StimulusType::EventReachPoint)),
             Some(false)
         );
         assert_eq!(
@@ -593,12 +567,9 @@ pub(super) mod tests {
         ai.actual_seek_point = Some(0);
         crate::sim_rng::with_seed(441, |sim| {
             assert_eq!(
-                engine.execute_ai_seeking_event(
-                    sim,
-                    &assets,
-                    owner,
-                    &Stimulus::new(StimulusType::EventReachPoint)
-                ),
+                engine
+                    .ai_ctx(sim, &assets, owner)
+                    .execute_ai_seeking_event(&Stimulus::new(StimulusType::EventReachPoint)),
                 Some(false)
             );
         });
@@ -639,7 +610,9 @@ pub(super) mod tests {
             StimulusType::EventCouldntReachPoint,
         ] {
             assert_eq!(
-                engine.execute_ai_seeking_event(&sim, &assets, owner, &Stimulus::new(event)),
+                engine
+                    .ai_ctx(&sim, &assets, owner)
+                    .execute_ai_seeking_event(&Stimulus::new(event)),
                 None
             );
         }

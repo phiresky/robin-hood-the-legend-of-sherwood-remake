@@ -1,6 +1,7 @@
 //! Existing tick phase implementations; scheduling remains in the parent tick spine.
 
 use super::*;
+use crate::engine::TickCtx;
 
 impl EngineInner {
     /// Run mission gates, the once-per-second script, clock advancement, and
@@ -12,9 +13,8 @@ impl EngineInner {
     /// loss checks, and reinforcement notification in this order.
     pub(super) fn hourglass_phase_mission_and_messages(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         display: &mut CameraDisplayState,
-        assets: &LevelAssets,
         pc_guarded: bool,
         simulation_body_allowed: bool,
     ) -> Option<GameCode> {
@@ -50,7 +50,7 @@ impl EngineInner {
                     show: false,
                     restore_position: true,
                 }));
-            self.finalize_mission_script(sim, assets, false);
+            self.finalize_mission_script(tcx, false);
             return Some(GameCode::LevelSucceeded);
         }
         if self.mission_domain.state.quit_lost {
@@ -72,7 +72,7 @@ impl EngineInner {
                     show: false,
                     restore_position: true,
                 }));
-            self.finalize_mission_script(sim, assets, true);
+            self.finalize_mission_script(tcx, true);
             return Some(GameCode::LevelInterrupted);
         }
 
@@ -94,8 +94,7 @@ impl EngineInner {
             let game_seconds = self.control.frame_counter / FRAMES_PER_SECOND;
 
             if let Err(error) = self.call_script_vm(
-                sim,
-                assets,
+                tcx,
                 crate::engine::ScriptVmKey::Global,
                 "Hourglass",
                 &[game_seconds as i32],
@@ -113,8 +112,7 @@ impl EngineInner {
 
                 {
                     let victory_result = self.call_script_vm(
-                        sim,
-                        assets,
+                        tcx,
                         crate::engine::ScriptVmKey::Global,
                         "CheckVictoryCondition",
                         &[game_seconds as i32],
@@ -127,7 +125,7 @@ impl EngineInner {
                                 // Don't show the "leave mission" message for
                                 // ambush or tactical missions (they end immediately).
                                 let show_window = !matches!(
-                                    self.mission_type(&assets.profile_manager),
+                                    self.mission_type(&tcx.assets.profile_manager),
                                     Some(MissionType::Ambush | MissionType::Tactical)
                                 );
                                 self.win(show_window);
@@ -151,7 +149,7 @@ impl EngineInner {
             && !display.background_transform.zoom_to_down
             && !self.engine_locked()
             && simulation_body_allowed;
-        if runtime_features_can_advance && self.tick_mission_runtime_features(assets) {
+        if runtime_features_can_advance && self.tick_mission_runtime_features(tcx.assets) {
             tracing::info!("authored mission time limit expired");
             self.mission_domain.state.quit_lost = true;
             self.quit_mission();
@@ -238,17 +236,13 @@ impl EngineInner {
         }
 
         // ── Send reinforcement messages ──────────────────────────
-        self.tick_pc_reinforcement_arrivals(sim, assets);
+        self.tick_pc_reinforcement_arrivals(tcx);
 
         None
     }
 
     /// Advance each reinforcement timer and create its replacement at expiry.
-    fn tick_pc_reinforcement_arrivals(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
+    fn tick_pc_reinforcement_arrivals(&mut self, tcx: TickCtx<'_>) {
         let pc_ids_for_reinf: Vec<EntityId> = self.world.pc_ids.clone();
         for pc_id in pc_ids_for_reinf {
             let Some(Entity::Pc(pc)) = self.get_entity_mut(pc_id) else {
@@ -266,20 +260,15 @@ impl EngineInner {
                 }
             };
             if arrived {
-                self.create_reinforcement(sim, assets, Some(pc_id));
+                self.create_reinforcement(tcx, Some(pc_id));
             }
         }
     }
 
     /// Deliver simulation messages at the sending statement, including nested calls.
-    pub(crate) fn forward_message(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        msg: crate::messenger::Message,
-    ) {
-        if let Some(msg) = self.handle_selection_and_macro_message(sim, assets, msg) {
-            self.handle_input_and_action_message(sim, assets, msg);
+    pub(crate) fn forward_message(&mut self, tcx: TickCtx<'_>, msg: crate::messenger::Message) {
+        if let Some(msg) = self.handle_selection_and_macro_message(tcx, msg) {
+            self.handle_input_and_action_message(tcx, msg);
         }
     }
 
@@ -288,8 +277,7 @@ impl EngineInner {
     /// the message unchanged when no arm matches.
     fn handle_selection_and_macro_message(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         msg: crate::messenger::Message,
     ) -> Option<crate::messenger::Message> {
         match msg.msg_type {
@@ -337,8 +325,7 @@ impl EngineInner {
                 if was_recording {
                     let restore = self.players.action_before_recording_macro;
                     self.forward_message(
-                        sim,
-                        assets,
+                        tcx,
                         crate::messenger::Message::pc_with_value(
                             crate::messenger::PcMessage::SelectAction,
                             None,
@@ -382,37 +369,37 @@ impl EngineInner {
             // consumes the side effect below and clears that gate
             // before later mouse dispatch can see it.
             MessageType::Simple(crate::messenger::SimpleMessage::UiHasFocus) => {
-                self.request_pc_info_overlay(assets, None);
+                self.request_pc_info_overlay(tcx.assets, None);
                 self.feedback
                     .pending_side_effects
                     .request_signal(crate::engine::HostSignal::ClearUiFocus);
             }
             MessageType::Pc(crate::messenger::PcMessage::ShowPcInformation, pc) => {
-                self.request_pc_info_overlay(assets, pc);
+                self.request_pc_info_overlay(tcx.assets, pc);
             }
             MessageType::Pc(crate::messenger::PcMessage::HidePcInformation, _) => {
-                self.request_pc_info_overlay(assets, None);
+                self.request_pc_info_overlay(tcx.assets, None);
             }
             // The four `SelectCharacter[Add][WithEcho]` arms
             // all route through `select_pc` with the
             // appropriate (multi-select, speak) flags.
             MessageType::Pc(crate::messenger::PcMessage::SelectCharacter, Some(pc_id)) => {
-                self.select_pc(sim, assets, 0, pc_id, false, false);
+                self.select_pc(tcx, 0, pc_id, false, false);
                 self.emit_character_selection_followups();
             }
             MessageType::Pc(crate::messenger::PcMessage::SelectCharacterWithEcho, Some(pc_id)) => {
-                self.select_pc(sim, assets, 0, pc_id, false, true);
+                self.select_pc(tcx, 0, pc_id, false, true);
                 self.emit_character_selection_followups();
             }
             MessageType::Pc(crate::messenger::PcMessage::SelectAddCharacter, Some(pc_id)) => {
-                self.select_pc(sim, assets, 0, pc_id, true, false);
+                self.select_pc(tcx, 0, pc_id, true, false);
                 self.emit_character_selection_followups();
             }
             MessageType::Pc(
                 crate::messenger::PcMessage::SelectAddCharacterWithEcho,
                 Some(pc_id),
             ) => {
-                self.select_pc(sim, assets, 0, pc_id, true, true);
+                self.select_pc(tcx, 0, pc_id, true, true);
                 self.emit_character_selection_followups();
             }
             // `pc == None` drops the whole selection;
@@ -424,7 +411,7 @@ impl EngineInner {
                 // PC's interface hidden; otherwise hide just
                 // that PC's.  Engine side clears the selection
                 // list separately.
-                if self.is_sherwood(&assets.profile_manager) {
+                if self.is_sherwood(&tcx.assets.profile_manager) {
                     match pc {
                         None => {
                             let ids = self.world.pc_ids.clone();
@@ -462,8 +449,7 @@ impl EngineInner {
                 if let Some(pc_id) = pc {
                     if self.players.seats[0].selection.as_slice() == [pc_id] {
                         self.forward_message(
-                            sim,
-                            assets,
+                            tcx,
                             crate::messenger::Message::pc_with_value(
                                 crate::messenger::PcMessage::SelectAction,
                                 None,
@@ -480,7 +466,7 @@ impl EngineInner {
                     // HUD path, but parity still matters for
                     // the `STATUS PC` cheat and future HUD
                     // wiring.
-                    if !self.is_sherwood(&assets.profile_manager)
+                    if !self.is_sherwood(&tcx.assets.profile_manager)
                         && let Some(crate::element::Entity::Pc(pc)) = self.get_entity_mut(pc_id)
                     {
                         pc.pc.interface_hidden = true;
@@ -509,8 +495,7 @@ impl EngineInner {
     /// and macro QA feedback.
     fn handle_input_and_action_message(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         msg: crate::messenger::Message,
     ) {
         match msg.msg_type {
@@ -542,9 +527,9 @@ impl EngineInner {
                 let action = crate::profiles::Action::try_from(msg.value)
                     .expect("SelectAction requires a valid action");
                 if let Some(id) = pc {
-                    self.set_pc_action_from_message(sim, assets, 0, id, action);
+                    self.set_pc_action_from_message(tcx, 0, id, action);
                 } else {
-                    self.set_selected_action_from_message(sim, assets, 0, action);
+                    self.set_selected_action_from_message(tcx, 0, action);
                 }
             }
             MessageType::Pc(crate::messenger::PcMessage::UnselectAction, pc) => {
@@ -556,7 +541,7 @@ impl EngineInner {
                 let targets =
                     pc.map_or_else(|| self.players.seats[0].selection.clone(), |id| vec![id]);
                 for id in targets {
-                    self.unselect_action(sim, assets, id);
+                    self.unselect_action(tcx, id);
                 }
             }
             // Ctrl-press saves the current action on every
@@ -569,8 +554,7 @@ impl EngineInner {
                 self.players.seats[0].action_before_control = self.get_selected_action();
                 self.save_action_for_selected_pcs(0);
                 self.forward_message(
-                    sim,
-                    assets,
+                    tcx,
                     crate::messenger::Message::pc_with_value(
                         crate::messenger::PcMessage::SelectAction,
                         None,
@@ -603,8 +587,7 @@ impl EngineInner {
             MessageType::Simple(crate::messenger::SimpleMessage::HideConsole)
             | MessageType::Simple(crate::messenger::SimpleMessage::SwitchTask) => {
                 self.forward_message(
-                    sim,
-                    assets,
+                    tcx,
                     crate::messenger::Message::new(MessageType::Simple(
                         crate::messenger::SimpleMessage::ResetInput,
                     )),
@@ -680,7 +663,7 @@ impl EngineInner {
                 self.apply_disable_all_actions_temp(0, pc);
             }
             MessageType::Pc(crate::messenger::PcMessage::EnableAllActionsTemp, pc) => {
-                self.apply_enable_all_actions_temp(sim, assets, 0, pc);
+                self.apply_enable_all_actions_temp(tcx, 0, pc);
             }
             _ => {}
         }
@@ -691,12 +674,8 @@ impl EngineInner {
     /// NPC AI is primarily reached through each NPC's
     /// the per-entity update in the original entity loop. The Rust pre-pass is an
     /// architectural split; its exact parity remains audited separately.
-    pub(super) fn hourglass_phase_control_and_cleanup(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
-        self.tick_tactical_control(sim, assets);
+    pub(super) fn hourglass_phase_control_and_cleanup(&mut self, tcx: TickCtx<'_>) {
+        self.tick_tactical_control(tcx);
 
         // ── Sequence manager cleanup ─────────────────────────────
         // Run every 256 simulation frames.
@@ -756,8 +735,7 @@ mod direct_message_tests {
         let sim = engine.control.simulation_context();
         engine.players.seats[0].is_lock_alt = true;
         engine.forward_message(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             Message::new(MessageType::Simple(SimpleMessage::HideConsole)),
         );
         assert!(!engine.players.seats[0].is_lock_alt);
@@ -774,8 +752,7 @@ mod direct_message_tests {
                 .has_signal(crate::engine::HostSignal::ResetInput)
         );
         engine.forward_message(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             Message::new(MessageType::Simple(SimpleMessage::LockAlt)),
         );
         assert!(engine.players.seats[0].is_lock_alt);

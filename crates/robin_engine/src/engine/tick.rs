@@ -16,9 +16,11 @@ mod tick_action_change_step;
 use super::movement::{CompletedPathWork, PathScheduleContext};
 use super::*;
 use crate::element::{Command, Entity, EntityId};
+use crate::engine::TickCtx;
 use crate::game_operation::GameCode;
 use crate::messenger::{MessageType, SimpleMessage};
 use crate::profiles::MissionType;
+use crate::sequence::SequenceElementRef;
 
 /// Strict opt-in gate for the Drop Execute-boundary diagnostic.
 fn drop_owner_boundary_matches(frame: u32, owner: EntityId) -> bool {
@@ -1084,10 +1086,14 @@ impl EngineInner {
             return fx;
         }
 
-        let code =
-            self.perform_hourglass_inner(sim, display, assets, simulation_body_allowed, execution);
+        let code = self.perform_hourglass_inner(
+            TickCtx::new(sim, assets),
+            display,
+            simulation_body_allowed,
+            execution,
+        );
         self.refresh_achievement_progress(assets);
-        self.advance_auto_quick_action_queues(sim, display, assets);
+        self.advance_auto_quick_action_queues(TickCtx::new(sim, assets), display);
         self.refresh_fog_of_war(assets, false);
         self.control.arrow_refresh_pending = true;
 
@@ -1183,7 +1189,7 @@ impl EngineInner {
         // camera display state into this argument. Advance that exact value;
         // taking `cutscene_camera.display` again here would tick a fresh
         // default and then overwrite it when the outer value is restored.
-        let skip_render = self.tick_display_state(sim, assets, display);
+        let skip_render = self.tick_display_state(TickCtx::new(sim, assets), display);
 
         // Original's portrait refresh mirrors these fields from canonical
         // profile/status/interface state. Event-driven open, burn, and
@@ -1341,7 +1347,7 @@ impl EngineInner {
         // PostInitialize can consume RNG or inspect sprite state.
         self.apply_pending_presentation_refresh(sim);
 
-        self.run_post_initialize_if_needed(sim, assets);
+        self.run_post_initialize_if_needed(TickCtx::new(sim, assets));
 
         let mut fx = self.feedback.drain_side_effects();
         fx.code = GameCode::LevelInProgress;
@@ -1380,21 +1386,19 @@ impl EngineInner {
 
     fn perform_hourglass_inner(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         display: &mut CameraDisplayState,
-        assets: &LevelAssets,
         simulation_body_allowed: bool,
         execution: Option<&crate::ranked_resim::RankedExecutionContext>,
     ) -> GameCode {
         let pc_guarded = time_hourglass_phase(HourglassPhase::DeferredEffectsStart, || {
-            self.hourglass_phase_deferred_effects_start(sim, assets, execution)
+            self.hourglass_phase_deferred_effects_start(tcx, execution)
         });
 
         if let Some(code) = time_hourglass_phase(HourglassPhase::MissionAndMessages, || {
             self.hourglass_phase_mission_and_messages(
-                sim,
+                tcx,
                 display,
-                assets,
                 pc_guarded,
                 simulation_body_allowed,
             )
@@ -1403,30 +1407,28 @@ impl EngineInner {
         }
 
         time_hourglass_phase(HourglassPhase::ControlAndCleanup, || {
-            self.hourglass_phase_control_and_cleanup(sim, assets)
+            self.hourglass_phase_control_and_cleanup(tcx)
         });
 
-        time_hourglass_phase(HourglassPhase::Paths, || {
-            self.hourglass_phase_paths(sim, assets)
-        });
+        time_hourglass_phase(HourglassPhase::Paths, || self.hourglass_phase_paths(tcx));
 
         let was_swordfighting =
             time_hourglass_phase(HourglassPhase::Entities, || self.hourglass_phase_entities());
 
         time_hourglass_phase(HourglassPhase::EntitySystems, || {
-            self.hourglass_phase_entity_systems(sim, assets)
+            self.hourglass_phase_entity_systems(tcx)
         });
 
         time_hourglass_phase(HourglassPhase::GameplaySystems, || {
-            self.hourglass_phase_gameplay_systems(sim, display, assets)
+            self.hourglass_phase_gameplay_systems(tcx, display)
         });
 
         time_hourglass_phase(HourglassPhase::Sequences, || {
-            self.hourglass_phase_sequences_authoritative(sim, assets)
+            self.hourglass_phase_sequences_authoritative(tcx)
         });
 
         time_hourglass_phase(HourglassPhase::DeferredEffectsEnd, || {
-            self.hourglass_phase_deferred_effects_end(sim, assets, was_swordfighting)
+            self.hourglass_phase_deferred_effects_end(tcx, was_swordfighting)
         });
 
         GameCode::LevelInProgress
@@ -1501,8 +1503,7 @@ impl EngineInner {
 
     fn apply_completed_path_work(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         completed: Option<CompletedPathWork>,
     ) {
         if let Some(owner) = completed.as_ref().map(|work| match work {
@@ -1524,7 +1525,7 @@ impl EngineInner {
                 {
                     element.command = crate::element::Command::MoveOk;
                 }
-                self.finish_move_path(sim, request, waypoints);
+                self.finish_move_path(tcx.sim, request, waypoints);
             }
             Some(CompletedPathWork::Failed(request)) => {
                 tracing::warn!(
@@ -1548,11 +1549,9 @@ impl EngineInner {
                         element.command = crate::element::Command::MoveOk;
                     }
                     self.element_impossible(
-                        sim,
-                        assets,
+                        tcx,
                         &mut Vec::new(),
-                        request.seq_id,
-                        request.elem_idx,
+                        SequenceElementRef::new(request.seq_id, request.elem_idx),
                     );
                     if let Some(destination) = fallback {
                         tracing::info!(
@@ -1564,8 +1563,7 @@ impl EngineInner {
                             "allied formation slot unreachable; moving toward shared command center",
                         );
                         self.perform_group_move(
-                            sim,
-                            assets,
+                            tcx,
                             &[request.owner],
                             destination,
                             false,
@@ -1593,12 +1591,7 @@ impl EngineInner {
     /// Execute a mobile element at its first masked-effect child's
     /// creation slot, then execute that one child. Later child slots animate
     /// only themselves and therefore cannot retrigger the master.
-    fn tick_mobile_child_owner_boundary(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        child_id: EntityId,
-    ) -> bool {
+    fn tick_mobile_child_owner_boundary(&mut self, tcx: TickCtx<'_>, child_id: EntityId) -> bool {
         let Some(mobile_index_u16) = self
             .world
             .entities
@@ -1672,7 +1665,8 @@ impl EngineInner {
             }
 
             let path_index = self.world.mobile_elements[mobile_index].path_index;
-            let path = assets
+            let path = tcx
+                .assets
                 .navigation
                 .hiking_paths
                 .get(usize::from(path_index))
@@ -1707,9 +1701,9 @@ impl EngineInner {
                 // This deliberately precedes waypoint execution. Projection
                 // fallback probes with the increment that produced this move,
                 // not a direction selected by the newly reached waypoint.
-                self.check_mobile_line_crossing(assets, mobile_index);
+                self.check_mobile_line_crossing(tcx.assets, mobile_index);
                 self.world.mobile_elements[mobile_index]
-                    .finish_hourglass_waypoint(sim, path, motion.reached_goal)
+                    .finish_hourglass_waypoint(tcx.sim, path, motion.reached_goal)
                     .unwrap_or_else(|error| {
                         panic!(
                             "mobile {mobile_index} waypoint update at child {child_id} failed: {error}"
@@ -1760,12 +1754,7 @@ impl EngineInner {
         true
     }
 
-    pub(super) fn tick_static_entity_hourglass_for(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
+    pub(super) fn tick_static_entity_hourglass_for(&mut self, tcx: TickCtx<'_>, owner: EntityId) {
         use crate::element::OriginalBonusConcreteClass;
         use crate::sprite::{FrameProgression, MotionState};
 
@@ -1811,11 +1800,10 @@ impl EngineInner {
                     .unwrap_or_else(|| panic!("FX {owner:?} vanished before sprite update"))
                     .element_data_mut()
                     .sprite
-                    .perform_virgin_increment(sim, progression);
+                    .perform_virgin_increment(tcx.sim, progression);
                 if matches!(motion, MotionState::Terminated) && in_transition {
                     self.finish_patch_transition_for(
-                        sim,
-                        assets,
+                        tcx,
                         patch_idx.expect("transitioning FX must retain its patch"),
                     );
                 }
@@ -1830,14 +1818,14 @@ impl EngineInner {
                         .unwrap()
                         .element_data_mut()
                         .sprite
-                        .perform_virgin_increment(sim, progression);
+                        .perform_virgin_increment(tcx.sim, progression);
                 }
             }
             Entity::Scroll(scroll) => {
                 if !scroll.element.active {
                     return;
                 }
-                self.dispatch_scroll_hourglass_for(sim, assets, owner);
+                self.dispatch_scroll_hourglass_for(tcx, owner);
                 // Sprite handling samples the engine FreezeAll state after the
                 // synchronous Scroll VM returns, not at update entry.
                 if !self.actors_frozen()
@@ -1854,7 +1842,7 @@ impl EngineInner {
                     scroll
                         .element
                         .sprite
-                        .perform_virgin_increment(sim, FrameProgression::Default);
+                        .perform_virgin_increment(tcx.sim, FrameProgression::Default);
                 }
             }
             Entity::Bonus(bonus) => match bonus.original_concrete_class() {
@@ -1866,9 +1854,9 @@ impl EngineInner {
                             .unwrap()
                             .element_data_mut()
                             .sprite
-                            .perform_virgin_increment(sim, FrameProgression::Default);
+                            .perform_virgin_increment(tcx.sim, FrameProgression::Default);
                     }
-                    self.refresh_bonus_discovered_for(assets, owner);
+                    self.refresh_bonus_discovered_for(tcx.assets, owner);
                 }
                 // The ale update returns false once inactive, but
                 // The engine removes the element with its default
@@ -1883,7 +1871,7 @@ impl EngineInner {
                             .unwrap()
                             .element_data_mut()
                             .sprite
-                            .perform_virgin_increment(sim, FrameProgression::Default);
+                            .perform_virgin_increment(tcx.sim, FrameProgression::Default);
                     }
                 }
                 OriginalBonusConcreteClass::Unsupported => panic!(
@@ -1895,28 +1883,22 @@ impl EngineInner {
         }
     }
 
-    pub(crate) fn tick_actor_owner_envelopes(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
-        self.tick_actor_owner_envelopes_with_owner_hook(sim, assets, |_, _| {});
+    pub(crate) fn tick_actor_owner_envelopes(&mut self, tcx: TickCtx<'_>) {
+        self.tick_actor_owner_envelopes_with_owner_hook(tcx, |_, _| {});
     }
 
     #[cfg(test)]
     pub(super) fn tick_actor_owner_envelopes_with_test_owner_hook(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner_hook: impl FnMut(&mut Self, EntityId),
     ) {
-        self.tick_actor_owner_envelopes_with_owner_hook(sim, assets, owner_hook);
+        self.tick_actor_owner_envelopes_with_owner_hook(tcx, owner_hook);
     }
 
     fn tick_actor_owner_envelopes_with_owner_hook(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         mut owner_hook: impl FnMut(&mut Self, EntityId),
     ) {
         {
@@ -1948,9 +1930,9 @@ impl EngineInner {
                 let actor_enters_hourglass = entity.actor_data().is_some()
                     && !matches!(entity, Entity::Pc(pc) if pc.pc.fried_psykokwack);
                 if actor_enters_hourglass {
-                    self.tick_one_actor_animation_action_change_slot(sim, assets, entity_id);
+                    self.tick_one_actor_animation_action_change_slot(tcx, entity_id);
                 } else {
-                    self.tick_non_actor_owner(sim, assets, entity_id);
+                    self.tick_non_actor_owner(tcx, entity_id);
                 }
                 owner_hook(self, entity_id);
             }
@@ -1985,12 +1967,7 @@ impl EngineInner {
         }
     }
 
-    fn tick_non_actor_owner(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
+    fn tick_non_actor_owner(&mut self, tcx: TickCtx<'_>, owner: EntityId) {
         let _detail = entity_system_detail_guard(EntitySystemDetail::StaticOwners);
 
         use crate::element::OriginalHourglassClass as Class;
@@ -2008,11 +1985,11 @@ impl EngineInner {
             .original_hourglass_class();
         match class {
             Class::FxMasked => assert!(
-                self.tick_mobile_child_owner_boundary(sim, assets, owner),
+                self.tick_mobile_child_owner_boundary(tcx, owner),
                 "mapped FXMasked owner {owner:?} lost its mobile boundary"
             ),
             Class::Fx | Class::Target | Class::Bonus | Class::Ale | Class::Cape | Class::Scroll => {
-                self.tick_static_entity_hourglass_for(sim, assets, owner)
+                self.tick_static_entity_hourglass_for(tcx, owner)
             }
             Class::Arrow
             | Class::Apple
@@ -2021,28 +1998,23 @@ impl EngineInner {
             | Class::Coin
             | Class::Net
             | Class::WaspNest
-            | Class::Wasp => self.tick_projectile_or_net_hourglass(sim, assets, owner),
+            | Class::Wasp => self.tick_projectile_or_net_hourglass(tcx, owner),
             Class::ActorPc | Class::ActorSoldier | Class::ActorCivilian => {}
         }
     }
 
-    fn tick_actor_prelude(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
+    fn tick_actor_prelude(&mut self, tcx: TickCtx<'_>, owner: EntityId) {
         let _detail = entity_system_detail_guard(EntitySystemDetail::OwnerPrelude);
 
         if matches!(owner, EntityId::Soldier(_)) {
             observe_actor_owner_envelope(ActorOwnerEnvelopePhase::SoldierPrelude(owner));
             self.tick_apple_smell_for(owner);
             self.tick_soldier_track_primary_target_for(owner);
-            self.tick_attacking_reactiontime_enemy_near_for(sim, assets, owner);
+            self.tick_attacking_reactiontime_enemy_near_for(tcx, owner);
         }
         if matches!(owner, EntityId::Soldier(_) | EntityId::Civilian(_)) && !self.actors_frozen() {
             observe_actor_owner_envelope(ActorOwnerEnvelopePhase::Patrol(owner));
-            self.tick_patrol_coordination_for_npc(sim, assets, owner);
+            self.tick_patrol_coordination_for_npc(tcx, owner);
         }
         if self
             .world
@@ -2051,15 +2023,14 @@ impl EngineInner {
             .is_some_and(|entity| entity.human_data().is_some())
         {
             observe_actor_owner_envelope(ActorOwnerEnvelopePhase::HumanPrelude(owner));
-            self.tick_concussion_healing_for(sim, owner, assets);
-            self.process_shoot_list_for(sim, assets, owner);
+            self.tick_concussion_healing_for(tcx, owner);
+            self.process_shoot_list_for(tcx, owner);
         }
     }
 
     fn tick_actor_derived_tail(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         derived_tail_order_type: crate::order::OrderType,
     ) {
@@ -2083,7 +2054,7 @@ impl EngineInner {
             EntityId::Pc(_) => {
                 self.refresh_pc_produced_noise_for_with_order(owner, derived_tail_order_type);
                 observe_actor_owner_envelope(ActorOwnerEnvelopePhase::HumanNoise(owner));
-                self.tick_tiredness_for(owner, assets);
+                self.tick_tiredness_for(owner, tcx.assets);
                 observe_actor_owner_envelope(ActorOwnerEnvelopePhase::HumanTiredness(owner));
                 if self
                     .world
@@ -2091,17 +2062,17 @@ impl EngineInner {
                     .get(owner)
                     .is_some_and(|entity| entity.ai_controller().is_some())
                 {
-                    self.tick_npc_owner_pass(sim, assets, owner);
+                    self.tick_npc_owner_pass(tcx, owner);
                 }
-                self.tick_pc_auto_heal_for(sim, owner);
+                self.tick_pc_auto_heal_for(tcx.sim, owner);
                 observe_actor_owner_envelope(ActorOwnerEnvelopePhase::PcTail(owner));
             }
             EntityId::Soldier(_) | EntityId::Civilian(_) => {
-                self.tick_tiredness_for(owner, assets);
+                self.tick_tiredness_for(owner, tcx.assets);
                 // NPC humans have no produced-noise refresh, so
                 // their Human tail begins at tiredness.
                 observe_actor_owner_envelope(ActorOwnerEnvelopePhase::HumanTiredness(owner));
-                self.tick_npc_owner_pass(sim, assets, owner);
+                self.tick_npc_owner_pass(tcx, owner);
                 observe_actor_owner_envelope(ActorOwnerEnvelopePhase::NpcTail(owner));
             }
             _ => panic!(
@@ -2115,12 +2086,7 @@ impl EngineInner {
     /// projectile/net creation slot.  Entity kind and `ObjectType` together
     /// are the Rust vtable: accepting any other pairing here would fabricate
     /// subtype behaviour that the loaded object never had.
-    pub(super) fn tick_projectile_or_net_hourglass(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        id: EntityId,
-    ) {
+    pub(super) fn tick_projectile_or_net_hourglass(&mut self, tcx: TickCtx<'_>, id: EntityId) {
         let Some(entity) = self.get_entity(id) else {
             return;
         };
@@ -2173,9 +2139,9 @@ impl EngineInner {
         };
         let retain = if is_projectile {
             match object_type {
-                crate::element::ObjectType::Arrow => self.tick_existing_projectile(sim, assets, id),
+                crate::element::ObjectType::Arrow => self.tick_existing_projectile(tcx, id),
                 crate::element::ObjectType::Apple | crate::element::ObjectType::Stone => {
-                    let base_result = self.tick_existing_projectile(sim, assets, id);
+                    let base_result = self.tick_existing_projectile(tcx, id);
                     let frozen = self.actors_frozen();
                     if let Some(Entity::Projectile(projectile)) = self.get_entity_mut(id)
                         && !projectile.projectile.flying
@@ -2183,7 +2149,7 @@ impl EngineInner {
                     {
                         observe_projectile_derived_tail(id, object_type);
                         let motion = projectile.element.sprite.perform_virgin_increment(
-                            sim,
+                            tcx.sim,
                             crate::sprite::FrameProgression::Default,
                         );
                         projectile.element.active =
@@ -2194,12 +2160,12 @@ impl EngineInner {
                     base_result
                 }
                 crate::element::ObjectType::Purse | crate::element::ObjectType::Coin => {
-                    self.tick_purse_or_coin(sim, assets, id)
+                    self.tick_purse_or_coin(tcx, id)
                 }
                 crate::element::ObjectType::WaspNest
                 | crate::element::ObjectType::BonusWaspNest
                 | crate::element::ObjectType::Wasp => {
-                    self.tick_wasp_nest_or_wasp(sim, assets, id);
+                    self.tick_wasp_nest_or_wasp(tcx, id);
                     base_active
                 }
                 unsupported => panic!(
@@ -2209,7 +2175,7 @@ impl EngineInner {
         } else {
             match object_type {
                 crate::element::ObjectType::Net | crate::element::ObjectType::BonusNet => {
-                    self.tick_net(sim, assets, id);
+                    self.tick_net(tcx, id);
                     true
                 }
                 unsupported => panic!(
@@ -2253,7 +2219,7 @@ impl EngineInner {
             }
         } else if command == Some(Command::WaitFreeLift) {
             let (seq, elem) = selected.expect("lift wait lost its selected element");
-            if self.authorize_and_reserve_lift_wait(owner, seq, elem) {
+            if self.authorize_and_reserve_lift_wait(owner, SequenceElementRef::new(seq, elem)) {
                 *motion = crate::sprite::MotionState::Terminated;
             }
         }
@@ -2261,8 +2227,7 @@ impl EngineInner {
 
     fn finish_actor_execute_completion(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         aborted_element: Option<(crate::sequence::SequenceId, usize)>,
         motion: crate::sprite::MotionState,
@@ -2271,7 +2236,7 @@ impl EngineInner {
         match motion {
             MotionState::Aborted => {
                 if let Some(entry) = aborted_element {
-                    self.execute_seq_impossible(sim, assets, entry);
+                    self.execute_seq_impossible(tcx, entry);
                 }
             }
             MotionState::Terminated => {
@@ -2289,15 +2254,14 @@ impl EngineInner {
                 match completion {
                     crate::order::OrderCompletion::AdvanceElement
                     | crate::order::OrderCompletion::UnlockDoor { .. } => {
-                        self.execute_seq_advance(sim, assets, (seq_id, elem_idx));
+                        self.execute_seq_advance(tcx, (seq_id, elem_idx));
                     }
                     crate::order::OrderCompletion::WaspStruggleCycle { cycles_remaining } => {
                         if cycles_remaining <= 1 {
-                            self.execute_seq_terminate(sim, assets, (seq_id, elem_idx));
+                            self.execute_seq_terminate(tcx, (seq_id, elem_idx));
                         } else {
                             self.execute_wasp_next_cycle(
-                                sim,
-                                assets,
+                                tcx,
                                 (seq_id, elem_idx, cycles_remaining - 1),
                             );
                         }
@@ -2335,8 +2299,7 @@ impl EngineInner {
             Some((selected.element.sequence_id, selected.element.element_index)),
         );
         self.finish_actor_execute_completion(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
             owner,
             None,
             crate::sprite::MotionState::Done,
@@ -2364,8 +2327,7 @@ impl EngineInner {
 
     pub(super) fn execute_helper_shoulder_dismount(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         helper_id: EntityId,
         motion: crate::sprite::MotionState,
     ) {
@@ -2470,7 +2432,7 @@ impl EngineInner {
         }
         // Waiting can synchronously change the relationship. Release the
         // helper's then-current rider and use that rider's live carrier heading.
-        self.actor_wait(sim, assets, carried_id);
+        self.actor_wait(tcx, carried_id);
         let carried_id = self
             .expect_entity(helper_id, "shoulder helper after rider wait")
             .pc_data()

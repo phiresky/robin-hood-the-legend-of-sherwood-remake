@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 
 #[test]
 fn phalanx_arrival_reads_target_position_after_state_callback() {
@@ -63,12 +64,11 @@ fn phalanx_arrival_reads_target_position_after_state_callback() {
         .entities
         .expect_ai_controller_mut(neighbour, format_args!("arrival neighbour"))
         .primary_target = Some(AiEntityHandle::new(target.index()));
-    assert!(engine.execute_ai_shield_expected_event(
-        &crate::sim_rng::test_context(),
-        &assets,
-        owner,
-        crate::ai::StimulusType::EventDone
-    ));
+    assert!(
+        engine
+            .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+            .execute_ai_shield_expected_event(crate::ai::StimulusType::EventDone)
+    );
     let raw = engine
         .expect_entity(target, "moved target")
         .element_data()
@@ -194,12 +194,11 @@ fn advancing_shield_uses_live_target_sector_for_indexed_route() {
     ai.base.current_state = AiState::Attacking;
     ai.base.current_substate = Substate::AttackingAdvancingWithShield;
     ai.base.primary_target = Some(AiEntityHandle::new(target_id.index()));
-    assert!(engine.execute_ai_shield_expected_event(
-        &sim,
-        &assets,
-        owner,
-        crate::ai::StimulusType::EventDone
-    ));
+    assert!(
+        engine
+            .ai_ctx(&sim, &assets, owner)
+            .execute_ai_shield_expected_event(crate::ai::StimulusType::EventDone)
+    );
     let ai = engine
         .world
         .entities
@@ -355,12 +354,11 @@ fn live_shield_replacement_is_assigned_before_bow_rng() {
         if !protected_archer {
             let _ = crate::sim_rng::u32(&expected, crate::sim_rng::RngSite::ShieldAdvance, 0..4);
         }
-        assert!(engine.execute_ai_shield_expected_event(
-            &sim,
-            &assets,
-            owner,
-            StimulusType::EventTimer
-        ));
+        assert!(
+            engine
+                .ai_ctx(&sim, &assets, owner)
+                .execute_ai_shield_expected_event(StimulusType::EventTimer)
+        );
         let ai = engine
             .world
             .entities
@@ -439,8 +437,7 @@ fn live_cover_position_preserves_aspect_then_distance_rounding() {
     engine.ai.standard_view_polygon_radius = 1;
     assert_eq!(
         engine.execute_ai_battle_cover(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             bearer.index()
         ),
@@ -489,8 +486,7 @@ fn live_already_in_cover_decision_does_not_require_a_route() {
     // actor positions, so it must retain cover without attempting movement.
     engine.world.fast_grid_mut().level_mut().layers.clear();
     let (decision, cover) = engine.choose_live_battle_decision(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         crate::ai_enemy::BattleDecisionInputs {
             friends_lower_company: 0,
@@ -665,8 +661,7 @@ fn protection_reads_reciprocal_unlink_after_state_change() {
     ai.shield_bearer_before_me = Some(AiEntityHandle::new(owner.index()));
     assert_eq!(engine.live_archers_needing_protection(&assets, owner), 0);
     engine.duty_set_state(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         AiState::Attacking,
         Substate::AttackingApproachToObserve,
@@ -748,8 +743,7 @@ fn close_phalanx_slot_with_different_sector_needs_no_movement_order() {
     };
     engine.enter_ai_think_frame(owner);
     engine.duty_go_to(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         destination,
         GotoFlags::RUN,
@@ -814,7 +808,11 @@ fn shield_sequence_keeps_stored_world_y_without_map_roundtrip() {
         point.y.to_bits()
     );
     let stored = element.position();
-    engine.launch_ai_raise_shield(&crate::sim_rng::test_context(), &assets, owner, stored);
+    engine.launch_ai_raise_shield(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        owner,
+        stored,
+    );
     let element = engine
         .orders
         .sequence_manager
@@ -890,7 +888,10 @@ fn periodic_phalanx_fixture(
 fn periodic_phalanx_move_is_registered_before_idle_stuck_check() {
     let (mut engine, assets, owner) =
         periodic_phalanx_fixture(500.0, crate::element::Command::Wait);
-    engine.tick_periodic_ai_for_npc(&crate::sim_rng::test_context(), owner, &assets);
+    engine.tick_periodic_ai_for_npc(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        owner,
+    );
     let ai = engine
         .world
         .entities
@@ -928,7 +929,10 @@ fn periodic_phalanx_move_keeps_attentive_command_classification() {
         .expect_enemy_ai_mut(owner, format_args!("attentive counter"))
         .base
         .stuck_counter = 0;
-    engine.tick_periodic_ai_for_npc(&crate::sim_rng::test_context(), owner, &assets);
+    engine.tick_periodic_ai_for_npc(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        owner,
+    );
     let ai = engine
         .world
         .entities
@@ -968,7 +972,10 @@ fn periodic_phalanx_already_on_point_does_not_register_a_move() {
         .entities
         .expect_ai_controller_mut(owner, format_args!("locked arrival"))
         .script_locked = true;
-    engine.tick_periodic_ai_for_npc(&crate::sim_rng::test_context(), owner, &assets);
+    engine.tick_periodic_ai_for_npc(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        owner,
+    );
     let ai = engine
         .world
         .entities

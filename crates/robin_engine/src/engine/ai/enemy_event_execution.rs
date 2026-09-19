@@ -5,27 +5,14 @@ use crate::ai::{
     AiState, DutyFlags, EmoticonType, EnemyRecovery, MoneyFightOperation, Remark, Stimulus,
     StimulusInfo, Substate,
 };
-#[cfg(test)]
-use crate::sim_rng::SimulationContext;
 
-impl EngineInner {
-    #[cfg(test)]
-    pub(in crate::engine) fn execute_ai_enemy_event(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        stimulus: &Stimulus,
-    ) -> bool {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_enemy_event(stimulus)
-    }
-}
+impl EngineInner {}
 
 impl AiOwnerCtx<'_> {
     pub(in crate::engine) fn execute_ai_enemy_event(&mut self, stimulus: &Stimulus) -> bool {
-        if let Some(result) =
-            self.engine
-                .execute_ai_officer_rpc(self.sim, self.assets, self.owner, stimulus)
+        if let Some(result) = self
+            .engine
+            .execute_ai_officer_rpc(self.tcx, self.owner, stimulus)
         {
             return result;
         }
@@ -145,7 +132,7 @@ impl AiOwnerCtx<'_> {
                 assert_eq!(
                     self.engine
                         .observation_ai(self.owner)
-                        .get_rank(&self.assets.profile_manager),
+                        .get_rank(&self.tcx.assets.profile_manager),
                     crate::profiles::ProfileRank::Soldier
                 );
                 if matches!(
@@ -289,7 +276,7 @@ impl AiOwnerCtx<'_> {
                     Substate::WonderingSoldierLookingOfficerWhoFinishedBrawl,
                 );
                 let extra = crate::sim_rng::u32(
-                    self.sim,
+                    self.tcx.sim,
                     crate::sim_rng::RngSite::SoldierBrawlCooldown,
                     0..32,
                 );
@@ -304,7 +291,7 @@ impl AiOwnerCtx<'_> {
                 self.execute_reconsider_swordfight(event == StimulusType::EventAdversaryWeak);
                 if event == StimulusType::EventAfterCombatInjury {
                     self.engine
-                        .combat_insult_after_reconsider(self.sim, self.assets, self.owner);
+                        .combat_insult_after_reconsider(self.tcx, self.owner);
                 }
             }
             StimulusType::EventSwordStrike
@@ -320,8 +307,7 @@ impl AiOwnerCtx<'_> {
                     panic!("sword strike requires attacker");
                 };
                 self.engine.execute_ai_consider_to_begin_parade(
-                    self.sim,
-                    self.assets,
+                    self.tcx,
                     self.owner,
                     attacker.get(),
                 );
@@ -388,16 +374,12 @@ impl AiOwnerCtx<'_> {
                             .expect_entity(self.owner, "fleeing observer")
                             .element_data(),
                     ) {
-                        self.engine.dispatch_enemy_in_house_alert(
-                            self.sim,
-                            self.owner,
-                            self.assets,
-                        );
+                        self.engine
+                            .dispatch_enemy_in_house_alert(self.tcx, self.owner);
                     } else {
                         let position = self.engine.live_ai_position(id);
                         self.engine.execute_ai_panic(
-                            self.sim,
-                            self.assets,
+                            self.tcx,
                             self.owner,
                             Some(position),
                             crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
@@ -436,11 +418,8 @@ impl AiOwnerCtx<'_> {
                             .expect_entity(self.owner, "door observer")
                             .element_data(),
                     ) {
-                        self.engine.dispatch_enemy_in_house_alert(
-                            self.sim,
-                            self.owner,
-                            self.assets,
-                        );
+                        self.engine
+                            .dispatch_enemy_in_house_alert(self.tcx, self.owner);
                     }
                 }
                 Substate::AttackingRiderChargingGettingDistance
@@ -490,7 +469,11 @@ mod tests {
         );
         let stimulus = Stimulus::with_human(StimulusType::EventView, target.index());
         assert!(engine.admit_ai_think_live(owner, &stimulus));
-        assert!(!engine.execute_ai_enemy_event(&sim, &assets, owner, &stimulus));
+        assert!(
+            !engine
+                .ai_ctx(&sim, &assets, owner)
+                .execute_ai_enemy_event(&stimulus)
+        );
         let after = engine.observation_ai(owner);
         assert_eq!(after.base.current_state, AiState::Sleeping);
         assert_eq!(after.base.current_substate, Substate::SleepingAwakening);

@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 
 const SPEECH_TIMING_PROFILE_ID: u32 = 0x1234_0000;
 
@@ -42,8 +43,7 @@ fn build_mytalk_timing_test() -> (EngineInner, EntityId, LevelAssets) {
 
     let (mut engine, soldier_id, assets) = build_speech_timing_actor();
     engine.execute_ai_speech(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         soldier_id,
         crate::ai::AiSpeechAttempt {
             remark: Remark::Arrow,
@@ -136,8 +136,7 @@ fn queue_and_settle_speech(
     flags: crate::ai::SpeechFlags,
 ) {
     engine.execute_ai_speech(
-        &crate::sim_rng::test_context(),
-        assets,
+        TickCtx::new(&crate::sim_rng::test_context(), assets),
         owner,
         crate::ai::AiSpeechAttempt {
             remark,
@@ -386,10 +385,9 @@ fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInn
         crate::engine::types::Ambiance::Night | crate::engine::types::Ambiance::Fog
     ));
     engine.dispatch_think_with_drain(
-        sim,
+        TickCtx::new(sim, &assets),
         charly_id,
         &Stimulus::new(StimulusType::EventTimer),
-        &assets,
     );
     engine
 }
@@ -484,14 +482,18 @@ fn run_synchronous_civilian_alert(
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     if direct_callback {
-        engine.execute_ai_callback(sim, &assets, civilian_id, &Stimulus::new(trigger));
+        engine.execute_ai_callback(
+            TickCtx::new(sim, &assets),
+            civilian_id,
+            &Stimulus::new(trigger),
+        );
     } else {
         let stimulus = if trigger == StimulusType::EventSeesSoldier {
             Stimulus::with_human(trigger, soldier_id.index())
         } else {
             Stimulus::new(trigger)
         };
-        engine.dispatch_think_with_drain(sim, civilian_id, &stimulus, &assets);
+        engine.dispatch_think_with_drain(TickCtx::new(sim, &assets), civilian_id, &stimulus);
     }
     engine
 }
@@ -549,13 +551,11 @@ fn setup_review2_officer_and_soldier() -> (EngineInner, EntityId, EntityId, Leve
 
 fn start_review_command_soldiers(
     engine: &mut EngineInner,
-    sim: &crate::sim_rng::SimulationContext,
-    assets: &LevelAssets,
+    tcx: TickCtx<'_>,
     officer_id: EntityId,
 ) -> bool {
     engine.execute_ai_command_soldiers_to_attack(
-        sim,
-        assets,
+        tcx,
         officer_id,
         crate::ai::Position {
             x: 300.0,

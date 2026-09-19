@@ -6,8 +6,6 @@ use crate::ai::{
 };
 use crate::ai_enemy::SeekFlags;
 use crate::profiles::ProfileRank;
-#[cfg(test)]
-use crate::sim_rng::SimulationContext;
 
 #[cfg(test)]
 mod tests {
@@ -39,12 +37,9 @@ mod tests {
         ai.macro_in_progress = false;
         ai.detached_patrol_path_status.current_waypoint_index = 3;
         ai.detached_patrol_path_status.last_waypoint_index = 2;
-        engine.execute_ai_seen_charly(
-            &crate::sim_rng::test_context(),
-            &assets,
-            owner,
-            partner.index(),
-        );
+        engine
+            .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+            .execute_ai_seen_charly(partner.index());
         let ai = &engine.observation_ai(owner).base;
         assert_eq!(ai.current_substate, Substate::DefaultSynchronizing);
         assert_eq!(ai.macro_command_offset, 0);
@@ -58,29 +53,7 @@ mod tests {
     }
 }
 
-impl EngineInner {
-    #[cfg(test)]
-    pub(in crate::engine) fn execute_ai_seen_charly(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        target: u32,
-    ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_seen_charly(target)
-    }
-
-    #[cfg(test)]
-    pub(in crate::engine) fn unalert_live_charly_seekers(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        charly: EntityId,
-    ) {
-        AiOwnerCtx::new(self, sim, assets, owner).unalert_live_charly_seekers(charly)
-    }
-}
+impl EngineInner {}
 
 impl AiOwnerCtx<'_> {
     pub(in crate::engine) fn execute_ai_seen_charly(&mut self, target: u32) {
@@ -91,7 +64,7 @@ impl AiOwnerCtx<'_> {
             match self
                 .engine
                 .observation_ai(self.owner)
-                .get_rank(&self.assets.profile_manager)
+                .get_rank(&self.tcx.assets.profile_manager)
             {
                 ProfileRank::Officer => {
                     if matches!(
@@ -114,14 +87,13 @@ impl AiOwnerCtx<'_> {
                         .expect_entity(charly, "checkpoint rank")
                         .enemy_ai()
                         .is_some_and(|ai| {
-                            ai.get_rank(&self.assets.profile_manager) == ProfileRank::Soldier
+                            ai.get_rank(&self.tcx.assets.profile_manager) == ProfileRank::Soldier
                         })
                     {
                         self.observation_say(Remark::FoundCharly);
                         let mut call = Stimulus::new(StimulusType::CallGoToOfficer);
                         call.info = StimulusInfo::Human(AiEntityHandle::new(self.owner.index()));
-                        self.engine
-                            .execute_ai_callback(self.sim, self.assets, charly, &call);
+                        self.engine.execute_ai_callback(self.tcx, charly, &call);
                         self.engine.observation_ai_mut(self.owner).base.antagonist =
                             Some(AiEntityHandle::new(target));
                         assert_eq!(
@@ -129,7 +101,7 @@ impl AiOwnerCtx<'_> {
                                 .world
                                 .entities
                                 .expect_enemy_ai(charly, format_args!("called checkpoint rank"))
-                                .get_rank(&self.assets.profile_manager),
+                                .get_rank(&self.tcx.assets.profile_manager),
                             ProfileRank::Soldier
                         );
                         self.observation_face_entity(charly, false);
@@ -153,7 +125,8 @@ impl AiOwnerCtx<'_> {
                             .expect_entity(charly, "checkpoint referral")
                             .enemy_ai()
                             .is_some_and(|ai| {
-                                ai.get_rank(&self.assets.profile_manager) == ProfileRank::Soldier
+                                ai.get_rank(&self.tcx.assets.profile_manager)
+                                    == ProfileRank::Soldier
                                     && !ai.reported_to_officer
                             })
                     {
@@ -203,10 +176,10 @@ impl AiOwnerCtx<'_> {
             || ai.synchronize_charly.is_none()
             || !ai.macro_in_progress
         {
-            self.engine.halt_actor(self.sim, self.assets, self.owner);
+            self.engine.halt_actor(self.tcx, self.owner);
 
             self.engine.execute_ai_set_alert_status(
-                self.assets,
+                self.tcx.assets,
                 self.owner,
                 AlertLevel::Green,
                 crate::ai::AlertFlags::empty(),
@@ -274,7 +247,7 @@ impl AiOwnerCtx<'_> {
                 continue;
             }
             let ai = self.engine.observation_ai(self.owner);
-            if ai.get_rank(&self.assets.profile_manager) != ProfileRank::Officer
+            if ai.get_rank(&self.tcx.assets.profile_manager) != ProfileRank::Officer
                 && ai
                     .base
                     .antagonist
@@ -284,15 +257,14 @@ impl AiOwnerCtx<'_> {
             }
             if self
                 .engine
-                .live_ai_detects_180(self.assets, candidate, charly)
+                .live_ai_detects_180(self.tcx.assets, candidate, charly)
                 || charly != self.owner
                     && self
                         .engine
-                        .live_ai_detects_180(self.assets, candidate, self.owner)
+                        .live_ai_detects_180(self.tcx.assets, candidate, self.owner)
             {
                 self.engine.execute_ai_callback(
-                    self.sim,
-                    self.assets,
+                    self.tcx,
                     candidate,
                     &Stimulus::with_human(StimulusType::CallCharlyIsBack, charly.index()),
                 );

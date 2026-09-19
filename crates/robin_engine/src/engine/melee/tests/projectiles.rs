@@ -1,4 +1,6 @@
 use super::*;
+use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 #[test]
 fn lying_arrow_victim_speaks_before_posture_termination() {
@@ -41,7 +43,12 @@ fn lying_arrow_victim_speaks_before_posture_termination() {
             engine.orders.sequence_manager.start_sequence_level(id);
             id
         };
-        engine.dispatch_receive_damage(&sim, &assets, &mut Vec::new(), victim, sequence, 0);
+        engine.dispatch_receive_damage(
+            TickCtx::new(&sim, &assets),
+            &mut Vec::new(),
+            victim,
+            SequenceElementRef::new(sequence, 0),
+        );
     }
 
     assert_eq!(
@@ -72,7 +79,9 @@ fn rejected_swordfight_reconsideration_does_not_retry_during_lifecycle_tick() {
     engine.set_action_state_of(target, ActionState::Waiting);
 
     engine.with_simulation_context(|engine, sim| {
-        engine.execute_reconsider_swordfight(sim, &assets, attacker, false);
+        engine
+            .ai_ctx(sim, &assets, attacker)
+            .execute_reconsider_swordfight(false);
     });
     let cursor_after_first = engine.control.rng.original_replay_cursor().unwrap();
     assert_eq!(cursor_after_first, 0, "honour rejection precedes proposal");
@@ -84,7 +93,7 @@ fn rejected_swordfight_reconsideration_does_not_retry_during_lifecycle_tick() {
     );
 
     engine.with_simulation_context(|engine, sim| {
-        engine.tick_enemy_sword_attacks(sim, &assets);
+        engine.tick_enemy_sword_attacks(TickCtx::new(sim, &assets));
     });
     assert_eq!(
         engine.control.rng.original_replay_cursor(),
@@ -141,10 +150,10 @@ fn consecutive_lethal_arrow_damage_preserves_new_amulet_coma() {
         0,
     );
     engine.resolve_element_priority(&mut damage);
-    engine.launch_element(&sim, &assets, damage);
+    engine.launch_element(TickCtx::new(&sim, &assets), damage);
 
     let mut display = crate::engine::HostDisplayState::default();
-    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+    engine.hourglass_phase_sequences(TickCtx::new(&sim, &assets), &mut display);
 
     {
         let victim_entity = engine.ent(victim);
@@ -181,8 +190,8 @@ fn consecutive_lethal_arrow_damage_preserves_new_amulet_coma() {
         0,
     );
     engine.resolve_element_priority(&mut second_damage);
-    engine.launch_element(&sim, &assets, second_damage);
-    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+    engine.launch_element(TickCtx::new(&sim, &assets), second_damage);
+    engine.hourglass_phase_sequences(TickCtx::new(&sim, &assets), &mut display);
 
     let victim_entity = engine.ent(victim);
     assert_eq!(victim_entity.pc_data().unwrap().life_points, 5);
@@ -251,10 +260,10 @@ fn sherwood_lethal_arrow_still_consumes_amulet_without_hurting_pc() {
         20,
     );
     engine.resolve_element_priority(&mut damage);
-    engine.launch_element(&sim, &assets, damage);
+    engine.launch_element(TickCtx::new(&sim, &assets), damage);
 
     let mut display = crate::engine::HostDisplayState::default();
-    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+    engine.hourglass_phase_sequences(TickCtx::new(&sim, &assets), &mut display);
 
     let victim = engine.ent(victim);
     assert_eq!(victim.pc_data().unwrap().life_points, 100);
@@ -309,11 +318,11 @@ fn same_frame_arrow_after_death_replaces_dying_order_and_then_rolls() {
             0,
         );
         engine.resolve_element_priority(&mut damage);
-        launched.push(engine.launch_element(&sim, &assets, damage));
+        launched.push(engine.launch_element(TickCtx::new(&sim, &assets), damage));
     }
 
     let mut display = crate::engine::HostDisplayState::default();
-    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+    engine.hourglass_phase_sequences(TickCtx::new(&sim, &assets), &mut display);
 
     assert_eq!(
         engine.world.entities.current_element_for_actor(victim),
@@ -385,10 +394,10 @@ fn arrow_damage_to_dead_grounded_actor_sets_dead_and_terminates_without_orders()
             0,
         );
         engine.resolve_element_priority(&mut damage);
-        let sequence = engine.launch_element(&sim, &assets, damage);
+        let sequence = engine.launch_element(TickCtx::new(&sim, &assets), damage);
 
         let mut display = crate::engine::HostDisplayState::default();
-        engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+        engine.hourglass_phase_sequences(TickCtx::new(&sim, &assets), &mut display);
 
         let element = engine
             .orders
@@ -435,9 +444,9 @@ fn arrow_damage_to_pc_on_shoulders_uses_virtual_shoulder_translation() {
         0,
     );
     engine.resolve_element_priority(&mut damage);
-    let sequence = engine.launch_element(&sim, &assets, damage);
+    let sequence = engine.launch_element(TickCtx::new(&sim, &assets), damage);
     let mut display = crate::engine::HostDisplayState::default();
-    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+    engine.hourglass_phase_sequences(TickCtx::new(&sim, &assets), &mut display);
 
     let element = engine
         .orders

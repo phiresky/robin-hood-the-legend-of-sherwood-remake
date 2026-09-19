@@ -4,8 +4,6 @@ use crate::ai::{
     AiState, EmoticonType, Hint, Noise, NoiseType, Position, Remark, ReportType, Substate,
 };
 use crate::ai_enemy::ProfileRank;
-#[cfg(test)]
-use crate::sim_rng::SimulationContext;
 
 #[cfg(test)]
 mod tests;
@@ -28,17 +26,6 @@ impl EngineInner {
     fn alert_focus_point(&mut self, assets: &LevelAssets, owner: EntityId, position: Position) {
         self.execute_ai_focus_point(assets, owner, position);
     }
-    #[cfg(test)]
-    pub(super) fn alert_face_noise_position(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        noise: &Noise,
-    ) {
-        AiOwnerCtx::new(self, sim, assets, owner).alert_face_noise_position(noise)
-    }
-
     fn alert_noise_is_already_investigated(&self, owner: EntityId) -> bool {
         let state = self.observation_ai(owner).base.current_substate;
         matches!(
@@ -46,49 +33,6 @@ impl EngineInner {
             Substate::SeekingHeardstepsPreReactiontime | Substate::SeekingHeardstepsReactiontime
         ) || state.is_take_money()
             || state.is_fight_for_money()
-    }
-    #[cfg(test)]
-    pub(super) fn execute_ai_heard_noise(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        noise: &Noise,
-    ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_heard_noise(noise)
-    }
-
-    #[cfg(test)]
-    pub(super) fn execute_ai_look_there_reaction(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        position: Position,
-    ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_look_there_reaction(position)
-    }
-
-    #[cfg(test)]
-    pub(super) fn execute_ai_tower_alert_reaction(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        hint: &Hint,
-    ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_tower_alert_reaction(hint)
-    }
-
-    #[cfg(test)]
-    pub(super) fn execute_ai_combat_alert_reaction(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        position: Position,
-    ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_combat_alert_reaction(position)
     }
 }
 
@@ -161,7 +105,7 @@ impl AiOwnerCtx<'_> {
                     && self
                         .engine
                         .observation_ai(self.owner)
-                        .profile(&self.assets.profile_manager)
+                        .profile(&self.tcx.assets.profile_manager)
                         .whistle
                         > 0;
                 if !look {
@@ -192,7 +136,7 @@ impl AiOwnerCtx<'_> {
                     .update(ReportType::Noise, origin);
                 let ai = self.engine.observation_ai(self.owner);
                 if ai.base.current_state == AiState::Seeking
-                    && ai.get_rank(&self.assets.profile_manager) != ProfileRank::Officer
+                    && ai.get_rank(&self.tcx.assets.profile_manager) != ProfileRank::Officer
                 {
                     self.duty_set_state(AiState::Seeking, Substate::SeekingHeardstepsReactiontime);
                     self.engine
@@ -239,7 +183,7 @@ impl AiOwnerCtx<'_> {
                 let ai = self.engine.observation_ai(self.owner);
                 if ai.base.current_state == AiState::Seeking
                     && ai.base.current_substate != Substate::SeekingGotStopEvent
-                    && ai.get_rank(&self.assets.profile_manager) != ProfileRank::Officer
+                    && ai.get_rank(&self.tcx.assets.profile_manager) != ProfileRank::Officer
                 {
                     self.duty_set_state(AiState::Seeking, Substate::SeekingHeardstepsReactiontime);
                     if noise.noise_type != NoiseType::Aaargh {
@@ -306,7 +250,7 @@ impl AiOwnerCtx<'_> {
                 self.alert_face_noise_position(noise);
                 let frames = 70
                     + crate::sim_rng::u32(
-                        self.sim,
+                        self.tcx.sim,
                         crate::sim_rng::RngSite::SoldierNoiseCooldown,
                         0..60,
                     );
@@ -327,7 +271,7 @@ impl AiOwnerCtx<'_> {
             .base
             .seek_position = position;
         self.engine
-            .alert_focus_point(self.assets, self.owner, position);
+            .alert_focus_point(self.tcx.assets, self.owner, position);
         self.alert_face_seek_position();
         self.engine.observation_timer(self.owner, 100);
     }
@@ -342,7 +286,7 @@ impl AiOwnerCtx<'_> {
         if self
             .engine
             .observation_ai(self.owner)
-            .get_rank(&self.assets.profile_manager)
+            .get_rank(&self.tcx.assets.profile_manager)
             == ProfileRank::Knight
         {
             self.duty_set_state(AiState::Seeking, Substate::SeekingKnightWatchingTowerGuard);
@@ -355,7 +299,7 @@ impl AiOwnerCtx<'_> {
             .seek_position = hint.seek_point;
         let position = self.engine.observation_ai(self.owner).base.seek_position;
         self.engine
-            .alert_focus_point(self.assets, self.owner, position);
+            .alert_focus_point(self.tcx.assets, self.owner, position);
         let teller = self
             .engine
             .expect_human_id_for_ai_handle(hint.who_tells_me.get(), "tower alert caller");
@@ -369,7 +313,7 @@ impl AiOwnerCtx<'_> {
         ai.base
             .my_reconnaissance_report
             .update(ReportType::Enemy, hint.seek_point);
-        match ai.get_rank(&self.assets.profile_manager) {
+        match ai.get_rank(&self.tcx.assets.profile_manager) {
             ProfileRank::Soldier => self.execute_ai_alert_officer_for_caller(
                 crate::ai::OfficerAlertCaller::TowerGuardCalled,
             ),
@@ -390,7 +334,7 @@ impl AiOwnerCtx<'_> {
             .base
             .seek_position = position;
         self.engine
-            .alert_focus_point(self.assets, self.owner, position);
+            .alert_focus_point(self.tcx.assets, self.owner, position);
         self.alert_face_seek_position();
         self.execute_ai_react_live(crate::parameters_ai::AI_MAX_STANDARD_REACTIONTIME as u16);
     }

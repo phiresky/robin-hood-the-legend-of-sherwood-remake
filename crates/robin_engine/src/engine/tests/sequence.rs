@@ -1,5 +1,7 @@
 use super::scenarios::assets_with_test_pc_profile;
 use super::*;
+use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 #[test]
 fn retained_shot_prelude_captures_replacement_for_aborted_execution() {
@@ -26,7 +28,7 @@ fn retained_shot_prelude_captures_replacement_for_aborted_execution() {
         0.0,
         engine.orders.allocate_order_id(),
     ));
-    let outgoing = engine.launch_element_for_owner(&sim, &assets, outgoing);
+    let outgoing = engine.launch_element_for_owner(TickCtx::new(&sim, &assets), outgoing);
     complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.mission_domain.campaign.characters[0]
         .status
@@ -34,7 +36,7 @@ fn retained_shot_prelude_captures_replacement_for_aborted_execution() {
     engine.elem_mut(owner).sprite.last_action = OrderType::TransitionLoadingBow;
     let incoming =
         SequenceElement::new_interaction(1, Command::ShootBow, Some(owner), Some(target));
-    let incoming = engine.launch_element_for_owner(&sim, &assets, incoming);
+    let incoming = engine.launch_element_for_owner(TickCtx::new(&sim, &assets), incoming);
     assert_eq!(
         engine.human(owner).pending_shoots,
         [crate::sequence::SequenceElementRef::new(incoming, 0)]
@@ -145,8 +147,7 @@ fn waiting_alerted_execute_registers_corrective_leave_when_requested_state_is_no
         .current_order_for_actor(&engine.world.entities, owner)
         .map(|(_, _, order)| order.order_type);
     let executed = engine.tick_actor_animation_for(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         owner,
     );
     assert!(executed.is_some());
@@ -207,8 +208,7 @@ fn waiting_upright_execute_registers_corrective_enter_when_requested_state_is_at
         .current_order_for_actor(&engine.world.entities, owner)
         .map(|(_, _, order)| order.order_type);
     let executed = engine.tick_actor_animation_for(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         owner,
     );
     assert!(executed.is_some());
@@ -270,8 +270,7 @@ fn waiting_upright_execute_needs_represented_attentive_state_for_correction() {
         .current_order_for_actor(&engine.world.entities, owner)
         .map(|(_, _, order)| order.order_type);
     let executed = engine.tick_actor_animation_for(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         owner,
     );
     assert!(executed.is_some());
@@ -298,7 +297,10 @@ fn waiting_alerted_execute_does_not_duplicate_a_leave_already_waiting_to_launch(
         SequenceElement::new(1, Command::LeaveAttentiveMode, Some(owner)),
     );
 
-    engine.execute_waiting_alerted(&crate::sim_rng::test_context(), &LevelAssets::new(), owner);
+    engine.execute_waiting_alerted(
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
+        owner,
+    );
 
     let matching = engine
         .orders
@@ -322,7 +324,10 @@ fn waiting_alerted_execute_preserves_attentive_requested_state() {
     enemy.attentive = true;
     enemy.will_be_attentive = true;
 
-    engine.execute_waiting_alerted(&crate::sim_rng::test_context(), &LevelAssets::new(), owner);
+    engine.execute_waiting_alerted(
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
+        owner,
+    );
 
     assert!(
         !engine
@@ -422,7 +427,10 @@ fn postponed_generic_order_carrier_resumes_in_progress() {
 
     let mut display = HostDisplayState::default();
     let assets = LevelAssets::default();
-    engine.hourglass_phase_sequences(&crate::sim_rng::test_context(), &mut display, &assets);
+    engine.hourglass_phase_sequences(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        &mut display,
+    );
 
     let element = engine
         .orders
@@ -484,7 +492,10 @@ fn manager_instruct_rejects_transition_terminated_element_before_priority_and_ar
     profiles.hth_weapons.push(Default::default());
     assert!(engine.enemy(owner).attentive);
     let mut display = HostDisplayState::default();
-    engine.hourglass_phase_sequences(&crate::sim_rng::test_context(), &mut display, &assets);
+    engine.hourglass_phase_sequences(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        &mut display,
+    );
 
     let incoming = engine
         .orders
@@ -569,7 +580,12 @@ fn redundant_swordfight_entry_releases_selected_wait_before_fresh_idle() {
         .orders
         .sequence_manager
         .start_sequence_level(incoming);
-    assert!(engine.instruct_owner(&sim, &assets, &mut Vec::new(), owner, incoming, 0));
+    assert!(engine.instruct_owner(
+        TickCtx::new(&sim, &assets),
+        &mut Vec::new(),
+        owner,
+        SequenceElementRef::new(incoming, 0)
+    ));
 
     assert_eq!(
         engine
@@ -636,9 +652,8 @@ fn exhausted_generic_order_carrier_terminates_on_resume() {
 
     let mut display = HostDisplayState::default();
     engine.hourglass_phase_sequences(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
         &mut display,
-        &LevelAssets::default(),
     );
 
     assert_eq!(
@@ -672,9 +687,8 @@ fn accepted_zero_order_damage_preserves_in_progress_motion_edge() {
 
     let mut display = HostDisplayState::default();
     engine.hourglass_phase_sequences(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
         &mut display,
-        &LevelAssets::default(),
     );
 
     assert_eq!(
@@ -713,9 +727,8 @@ fn manager_redundant_stop_parry_skips_instruct_motion_epilogue() {
 
     let mut display = HostDisplayState::default();
     engine.hourglass_phase_sequences(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
         &mut display,
-        &LevelAssets::default(),
     );
 
     assert_eq!(
@@ -761,9 +774,8 @@ fn manager_redundant_enter_attentive_skips_instruct_motion_epilogue() {
 
     let mut display = HostDisplayState::default();
     engine.hourglass_phase_sequences(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
         &mut display,
-        &LevelAssets::default(),
     );
 
     assert_eq!(
@@ -815,9 +827,8 @@ fn assert_position_translation_preserves_terminal_motion_edge() {
 
     let mut display = HostDisplayState::default();
     engine.hourglass_phase_sequences(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
         &mut display,
-        &LevelAssets::default(),
     );
 
     assert_eq!(
@@ -947,8 +958,8 @@ fn synchronous_accepted_zero_order_shoot_bow_stamps_in_progress_motion() {
     shot.priority = SequencePriority::Normal;
     shot.posture_after_transition = Posture::Upright;
     shot.action_state_after_transition = ActionState::AimingWithBow;
-    let sequence = engine.launch_element_for_owner(&sim, &assets, shot);
-    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+    let sequence = engine.launch_element_for_owner(TickCtx::new(&sim, &assets), shot);
+    engine.hourglass_phase_sequences(TickCtx::new(&sim, &assets), &mut display);
 
     let element = engine
         .orders
@@ -1115,9 +1126,8 @@ fn manager_redundant_parry_skips_instruct_epilogue_after_generated_transition() 
     );
     let mut display = HostDisplayState::default();
     engine.hourglass_phase_sequences(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
         &mut display,
-        &LevelAssets::default(),
     );
 
     let element = engine
@@ -1164,9 +1174,8 @@ fn redundant_raise_shield_preserves_prior_look_left_start_edge() {
     );
     let mut display = HostDisplayState::default();
     engine.hourglass_phase_sequences(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
         &mut display,
-        &LevelAssets::default(),
     );
 
     assert_eq!(
@@ -1207,9 +1216,8 @@ fn soldier_moving_shield_still_raises_and_publishes_accepted_motion_edge() {
     );
     let mut display = HostDisplayState::default();
     engine.hourglass_phase_sequences(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
         &mut display,
-        &LevelAssets::default(),
     );
 
     let element = engine
@@ -1246,9 +1254,8 @@ fn pc_moving_shield_terminates_raise_and_skips_instruct_motion_edge() {
     );
     let mut display = HostDisplayState::default();
     engine.hourglass_phase_sequences(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
         &mut display,
-        &LevelAssets::default(),
     );
 
     assert_eq!(
@@ -1352,9 +1359,11 @@ fn manager_redundant_quit_swordfight_skips_instruct_epilogue() {
     );
     let mut display = HostDisplayState::default();
     engine.hourglass_phase_sequences(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(
+            &crate::sim_rng::test_context(),
+            &assets_with_test_pc_profile(),
+        ),
         &mut display,
-        &assets_with_test_pc_profile(),
     );
 
     assert_eq!(
@@ -1504,9 +1513,8 @@ fn entity_phase_completion_resumes_postponed_work_in_same_manager_drain() {
 
     let mut display = HostDisplayState::default();
     engine.hourglass_phase_sequences(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
         &mut display,
-        &LevelAssets::default(),
     );
 
     assert_eq!(
@@ -1552,7 +1560,10 @@ fn postponing_pathfinding_movement_restores_move_and_cancels_failure() {
     engine.t_element_in_progress(&assets, movement_sequence, 0);
     engine.orders.failed_path_requests.push(
         crate::engine::movement::FailedPathRequest::from_pending(
-            crate::engine::movement::PendingPathRequest::test_request(owner, movement_sequence, 0),
+            crate::engine::movement::PendingPathRequest::test_request(
+                owner,
+                SequenceElementRef::new(movement_sequence, 0),
+            ),
             0,
         ),
     );
@@ -1562,8 +1573,7 @@ fn postponing_pathfinding_movement_restores_move_and_cancels_failure() {
     let blocker_sequence = engine.t_launch_element(&assets, blocker);
 
     engine.engine_postpone(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
         blocker_sequence,
         0,
@@ -1620,8 +1630,7 @@ fn deep_postpone_chain_preserves_unrelated_work_and_reaches_weak_tail() {
         waiter.priority = SequencePriority::PostponeEverythingButInjuries;
         let waiter = engine.t_launch_element(&assets, waiter);
         engine.engine_postpone(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             &mut Vec::new(),
             root,
             0,
@@ -1642,8 +1651,7 @@ fn deep_postpone_chain_preserves_unrelated_work_and_reaches_weak_tail() {
     }
 
     engine.stop_owner_current_from_root(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
         Some((root, 0)),
         SequencePriority::Preference,
@@ -1685,8 +1693,7 @@ fn deep_postpone_chain_preserves_unrelated_work_and_reaches_weak_tail() {
     weak.priority = SequencePriority::Normal;
     let weak = engine.t_launch_element(&assets, weak);
     engine.engine_postpone(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
         root,
         0,
@@ -1694,8 +1701,7 @@ fn deep_postpone_chain_preserves_unrelated_work_and_reaches_weak_tail() {
         0,
     );
     engine.stop_owner_current_from_root(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
         Some((root, 0)),
         SequencePriority::Preference,
@@ -1728,10 +1734,16 @@ fn repeated_postpone_and_stop_preserve_append_order() {
             SequenceElement::new(1, crate::element::Command::EnterSwordfight, Some(owner));
         waiter.priority = SequencePriority::PostponeEverythingButInjuries;
         let waiter = engine.t_launch_element(&assets, waiter);
-        engine.engine_postpone(&sim, &assets, &mut Vec::new(), root, 0, waiter, 0);
+        engine.engine_postpone(
+            TickCtx::new(&sim, &assets),
+            &mut Vec::new(),
+            root,
+            0,
+            waiter,
+            0,
+        );
         engine.stop_owner_current_from_root(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             &mut Vec::new(),
             Some((root, 0)),
             SequencePriority::Preference,
@@ -1787,8 +1799,7 @@ fn postpone_tail_cache_repairs_after_postpone_current_rewrite() {
     let root = launch(&mut engine, SequencePriority::PostponeEverythingButInjuries);
     let old_tail = launch(&mut engine, SequencePriority::PostponeEverythingButInjuries);
     engine.engine_postpone(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
         root,
         0,
@@ -1800,8 +1811,7 @@ fn postpone_tail_cache_repairs_after_postpone_current_rewrite() {
     // root -> injury -> old_tail through the PostponeCurrent branch.
     let injury = launch(&mut engine, SequencePriority::Injury);
     engine.engine_postpone(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
         root,
         0,
@@ -1831,8 +1841,7 @@ fn postpone_tail_cache_repairs_after_postpone_current_rewrite() {
 
     let new_tail = launch(&mut engine, SequencePriority::PostponeEverythingButInjuries);
     engine.engine_postpone(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
         root,
         0,
@@ -1875,8 +1884,7 @@ fn postpone_tail_cache_does_not_cache_waiter_with_existing_successor() {
         .set_cross_postponed_link((waiter, 0), Some((existing_successor, 0)));
 
     engine.engine_postpone(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
         root,
         0,
@@ -1886,8 +1894,7 @@ fn postpone_tail_cache_does_not_cache_waiter_with_existing_successor() {
 
     let next_waiter = launch(&mut engine);
     engine.engine_postpone(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
         root,
         0,
@@ -1927,8 +1934,7 @@ fn interrupted_postponed_successor_is_replaced_after_its_condolation() {
     // Install through the ordinary append path so the tail cache is warm
     // before InterruptCurrent detaches this successor.
     engine.engine_postpone(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         &mut Vec::new(),
         blocker_sequence,
         0,
@@ -1959,8 +1965,7 @@ fn interrupted_postponed_successor_is_replaced_after_its_condolation() {
             },
             || {
                 engine.engine_postpone(
-                    &sim,
-                    &assets,
+                    TickCtx::new(&sim, &assets),
                     &mut Vec::new(),
                     blocker_sequence,
                     0,
@@ -2037,8 +2042,7 @@ fn postponing_resolved_movement_restores_untranslated_move() {
     let blocker_sequence = engine.t_launch_element(&assets, blocker);
 
     engine.engine_postpone(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
         blocker_sequence,
         0,
@@ -2081,8 +2085,7 @@ fn post_seek_handoff_clears_selected_movement_goal() {
     let seek_sequence = engine.t_launch_in_progress(&assets, seek);
 
     assert!(engine.start_post_seek_sequence(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::default(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
         &mut Vec::new(),
         owner,
         Some((seek_sequence, 0)),
@@ -2134,8 +2137,7 @@ fn post_seek_handoff_registers_parent_successor_before_post_seek_tail() {
     engine.actor_mut(owner).post_seek_sequence = Some(post_seek.into_post_seek());
 
     assert!(engine.start_post_seek_sequence(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::default(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
         &mut Vec::new(),
         owner,
         Some((parent_id, 0)),
@@ -2217,9 +2219,8 @@ fn initial_seek_dispatch_clears_outgoing_movement_goal_until_first_execute() {
 
     let mut display = HostDisplayState::default();
     engine.hourglass_phase_sequences(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
         &mut display,
-        &LevelAssets::default(),
     );
 
     assert_eq!(
@@ -2302,9 +2303,8 @@ fn same_building_entity_seek_keeps_replaced_movement_goal_when_translation_is_em
 
     let mut display = HostDisplayState::default();
     engine.hourglass_phase_sequences(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
         &mut display,
-        &LevelAssets::default(),
     );
 
     let outgoing = engine
@@ -2473,9 +2473,8 @@ fn different_building_rewritten_seek_keeps_its_refresh_order() {
 
     let mut display = HostDisplayState::default();
     engine.hourglass_phase_sequences(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
         &mut display,
-        &LevelAssets::default(),
     );
 
     let movement = engine
@@ -2558,9 +2557,8 @@ fn assert_refreshing_seek_owner_envelope_ignores_stale_sprite_motion(
 
     let mut display = HostDisplayState::default();
     engine.hourglass_phase_sequences(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
         &mut display,
-        &LevelAssets::default(),
     );
 
     let movement = engine
@@ -2667,8 +2665,7 @@ fn point_refreshing_seek_returns_terminated_without_refreshing() {
 
     assert_eq!(
         engine.tick_refreshing_seek_for_owner(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::default(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
             owner,
         ),
         Some(MotionState::Terminated)
@@ -2712,8 +2709,7 @@ fn entity_refreshing_seek_with_cleared_actor_target_terminates_without_refreshin
 
     assert_eq!(
         engine.tick_refreshing_seek_for_owner(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::default(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
             owner,
         ),
         Some(MotionState::Terminated),
@@ -2979,13 +2975,11 @@ fn parry_sword_terminates_when_either_parry_is_already_active() {
             crate::sequence::SequenceElement::new(1, command, Some(soldier)),
         );
         engine.dispatch_parry_sword(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             &mut Vec::new(),
             soldier,
             low,
-            seq_id,
-            0,
+            SequenceElementRef::new(seq_id, 0),
         );
 
         let elem = engine
@@ -3083,15 +3077,13 @@ fn posture_transition_orders_preserve_live_pose_until_execution() {
             SequenceElement::new_generic(1, command, Some(owner))
         };
         let sequence = engine.orders.sequence_manager.insert_element(element);
-        engine.stamp_element_transition_state(owner, sequence, 0);
+        engine.stamp_element_transition_state(owner, SequenceElementRef::new(sequence, 0));
         assert!(
             engine.generate_transition(
-                &crate::sim_rng::test_context(),
-                &LevelAssets::new(),
+                TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
                 &mut Vec::new(),
                 owner,
-                sequence,
-                0,
+                SequenceElementRef::new(sequence, 0),
             ),
             "{posture:?} {command:?}"
         );
@@ -3139,8 +3131,14 @@ fn fresh_wait_replaces_pre_init_upright_idle_with_authored_sitting_idle() {
 
     // Mission/script initialization can make the actor execute an upright
     // wait before AI state initialization evaluates its authored initial animation.
-    engine.actor_wait(&crate::sim_rng::test_context(), &assets, owner);
-    engine.hourglass_phase_sequences(&crate::sim_rng::test_context(), &mut display, &assets);
+    engine.actor_wait(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        owner,
+    );
+    engine.hourglass_phase_sequences(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        &mut display,
+    );
 
     {
         let actor = engine.ent_mut(owner);
@@ -3149,8 +3147,14 @@ fn fresh_wait_replaces_pre_init_upright_idle_with_authored_sitting_idle() {
     }
 
     // Original-game AI state initialization waits again after setting states.
-    engine.actor_wait(&crate::sim_rng::test_context(), &assets, owner);
-    engine.hourglass_phase_sequences(&crate::sim_rng::test_context(), &mut display, &assets);
+    engine.actor_wait(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        owner,
+    );
+    engine.hourglass_phase_sequences(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        &mut display,
+    );
 
     let order = engine
         .orders
@@ -3202,11 +3206,17 @@ fn idle_wait_runs_while_future_owner_action_is_behind_ownerless_timer() {
 
     {
         let launch_assets = engine.test_runtime_assets();
-        engine.ensure_wait_element(&crate::sim_rng::test_context(), &launch_assets, owner)
+        engine.ensure_wait_element(
+            TickCtx::new(&crate::sim_rng::test_context(), &launch_assets),
+            owner,
+        )
     };
     let mut display = HostDisplayState::default();
     let assets = LevelAssets::default();
-    engine.hourglass_phase_sequences(&crate::sim_rng::test_context(), &mut display, &assets);
+    engine.hourglass_phase_sequences(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        &mut display,
+    );
 
     let (wait_sequence, wait_index) = engine
         .world
@@ -3316,9 +3326,8 @@ fn play_anim_uses_custom_wrapper_instead_of_requested_animation_semantics() {
         let sequence = engine.t_launch_element(&assets, element);
         let mut display = HostDisplayState::default();
         engine.hourglass_phase_sequences(
-            &crate::sim_rng::test_context(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
             &mut display,
-            &LevelAssets::default(),
         );
 
         let element = engine
@@ -3372,7 +3381,10 @@ fn soldier_enter_attentive_mode_queues_transition_anim() {
     };
     {
         let launch_assets = engine.test_runtime_assets();
-        engine.ensure_wait_element(&crate::sim_rng::test_context(), &launch_assets, soldier_id)
+        engine.ensure_wait_element(
+            TickCtx::new(&crate::sim_rng::test_context(), &launch_assets),
+            soldier_id,
+        )
     };
 
     let mut dev = crate::engine::DevState::default();
@@ -3416,8 +3428,7 @@ fn set_soldier_attentive_mode_plays_transition_from_upright() {
     {
         let launch_assets = engine.test_runtime_assets();
         engine.set_soldier_attentive_mode(
-            &crate::sim_rng::test_context(),
-            &launch_assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &launch_assets),
             soldier_id,
             true,
             false,
@@ -3425,7 +3436,10 @@ fn set_soldier_attentive_mode_plays_transition_from_upright() {
     };
     {
         let launch_assets = engine.test_runtime_assets();
-        engine.ensure_wait_element(&crate::sim_rng::test_context(), &launch_assets, soldier_id)
+        engine.ensure_wait_element(
+            TickCtx::new(&crate::sim_rng::test_context(), &launch_assets),
+            soldier_id,
+        )
     };
 
     let mut dev = crate::engine::DevState::default();
@@ -3463,8 +3477,7 @@ fn attentive_then_forget_preserves_launch_but_clears_local_flags() {
         {
             let launch_assets = engine.test_runtime_assets();
             engine.set_soldier_attentive_mode(
-                &crate::sim_rng::test_context(),
-                &launch_assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &launch_assets),
                 soldier_id,
                 true,
                 false,
@@ -3527,12 +3540,9 @@ fn quitting_swordfight_timer_does_not_accumulate_a_second_quit() {
         engine.t_element_in_progress(&assets, selected, 0);
         engine.select_sequence_element(owner, Some((selected, 0)));
 
-        let handled = engine.execute_ai_combat_expected_event(
-            &sim,
-            &assets,
-            owner,
-            crate::ai::StimulusType::EventTimer,
-        );
+        let handled = engine
+            .ai_ctx(&sim, &assets, owner)
+            .execute_ai_combat_expected_event(crate::ai::StimulusType::EventTimer);
         assert!(handled);
 
         let quit_count = engine
@@ -3580,8 +3590,7 @@ fn set_soldier_attentive_mode_plays_transition_while_movement_is_postponed() {
     {
         let launch_assets = engine.test_runtime_assets();
         engine.set_soldier_attentive_mode(
-            &crate::sim_rng::test_context(),
-            &launch_assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &launch_assets),
             soldier_id,
             true,
             false,
@@ -3762,8 +3771,7 @@ fn arbitration_ignores_serialized_order_ai_lock_like_original() {
     let incoming_seq = engine.t_launch_element(&assets, incoming);
 
     let accepted = engine.arbitrate_instruct(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
         incoming_seq,
         0,
@@ -3822,8 +3830,7 @@ fn injury_postpones_nonterminating_lift_wait_despite_done_sprite_cycle() {
         let injury_seq = engine.t_launch_element(&assets, injury);
 
         assert!(engine.arbitrate_instruct(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             &mut Vec::new(),
             injury_seq,
             0
@@ -3897,8 +3904,7 @@ fn duplicate_instruct_does_not_arbitrate_an_element_against_itself() {
     let sequence = engine.t_launch_in_progress(&assets, element);
 
     assert!(engine.arbitrate_instruct(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
         sequence,
         0
@@ -3939,8 +3945,7 @@ fn reentrant_lethal_interrupt_supersedes_injury_before_postponing_its_wait() {
     incoming.priority = SequencePriority::Lethal;
     let incoming_sequence = engine.t_launch_element(&assets, incoming);
     assert!(engine.arbitrate_instruct(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
         incoming_sequence,
         0
@@ -4005,7 +4010,7 @@ fn pc_shoot_bow_waits_through_load_and_wait_then_retries_only_while_aiming() {
     // side-effect free; this regression is about human instruction admission,
     // not projectile construction.
     let incoming = SequenceElement::new_interaction(1, Command::ShootBow, Some(pc), None);
-    let incoming_seq = engine.launch_element_for_owner(&sim, &assets, incoming);
+    let incoming_seq = engine.launch_element_for_owner(TickCtx::new(&sim, &assets), incoming);
 
     let held = engine
         .orders
@@ -4032,9 +4037,9 @@ fn pc_shoot_bow_waits_through_load_and_wait_then_retries_only_while_aiming() {
 
     // Loading has reported DONE, but the sprite still names the completed
     // loading animation. The following Wait frame is not sufficient either.
-    engine.process_shoot_list_for(&sim, &assets, pc);
+    engine.process_shoot_list_for(TickCtx::new(&sim, &assets), pc);
     engine.elem_mut(pc).sprite.last_action = OrderType::WaitingUpright;
-    engine.process_shoot_list_for(&sim, &assets, pc);
+    engine.process_shoot_list_for(TickCtx::new(&sim, &assets), pc);
     assert_eq!(engine.human(pc).pending_shoots.len(), 1);
     assert_eq!(
         engine
@@ -4050,7 +4055,7 @@ fn pc_shoot_bow_waits_through_load_and_wait_then_retries_only_while_aiming() {
     // reaches Translate and consumes the FIFO entry (the deliberately absent
     // target makes this particular element Impossible).
     engine.elem_mut(pc).sprite.last_action = OrderType::AimingWithBow;
-    engine.process_shoot_list_for(&sim, &assets, pc);
+    engine.process_shoot_list_for(TickCtx::new(&sim, &assets), pc);
     assert!(engine.human(pc).pending_shoots.is_empty());
     assert_eq!(
         engine
@@ -4091,14 +4096,14 @@ fn postponed_held_pc_shot_leaves_human_fifo_owned_by_sequence_manager() {
 
     engine.elem_mut(pc).sprite.last_action = OrderType::TransitionLoadingBow;
     let held = SequenceElement::new_interaction(1, Command::ShootBow, Some(pc), None);
-    let held_seq = engine.launch_element_for_owner(&sim, &assets, held);
+    let held_seq = engine.launch_element_for_owner(TickCtx::new(&sim, &assets), held);
     assert_eq!(
         engine.human(pc).pending_shoots,
         [crate::sequence::SequenceElementRef::new(held_seq, 0)]
     );
 
     engine.elem_mut(pc).sprite.last_action = OrderType::AimingWithBow;
-    engine.process_shoot_list_for(&sim, &assets, pc);
+    engine.process_shoot_list_for(TickCtx::new(&sim, &assets), pc);
 
     assert!(
         engine.human(pc).pending_shoots.is_empty(),
@@ -4129,7 +4134,7 @@ fn pc_shoot_list_readmits_retained_terminated_element() {
     engine.elem_mut(pc).sprite.last_action = OrderType::TransitionLoadingBow;
 
     let incoming = SequenceElement::new_interaction(1, Command::ShootBow, Some(pc), None);
-    let incoming_seq = engine.launch_element_for_owner(&sim, &assets, incoming);
+    let incoming_seq = engine.launch_element_for_owner(TickCtx::new(&sim, &assets), incoming);
     engine.t_element_terminated(&assets, incoming_seq, 0);
     assert_eq!(
         engine
@@ -4175,7 +4180,7 @@ fn pc_shoot_list_readmits_retained_terminated_element() {
     // its post-transition terminal-state check returns false. The
     // retained pointer stays queued and, crucially, the live Wait is not
     // interrupted and recreated with a fresh order ID.
-    engine.process_shoot_list_for(&sim, &assets, pc);
+    engine.process_shoot_list_for(TickCtx::new(&sim, &assets), pc);
 
     assert_eq!(
         engine.human(pc).pending_shoots,
@@ -4213,7 +4218,7 @@ fn pc_shoot_list_readmits_retained_terminated_element() {
         "Friday cleanup must preserve the backing allocation of a retained raw shoot pointer"
     );
 
-    let result = engine.tick_actor_animation_for(&sim, &assets, pc);
+    let result = engine.tick_actor_animation_for(TickCtx::new(&sim, &assets), pc);
     assert_eq!(result.unwrap(), crate::sprite::MotionState::InProgress);
     assert_eq!(
         engine.ent(pc).sprite().frame_count,
@@ -4242,7 +4247,7 @@ fn started_pass_door_rejects_new_move() {
 
     let incoming =
         SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
-    let incoming_seq = engine.launch_element_for_owner(&sim, &assets, incoming);
+    let incoming_seq = engine.launch_element_for_owner(TickCtx::new(&sim, &assets), incoming);
 
     let pass = engine
         .orders
@@ -4309,7 +4314,7 @@ fn executing_pass_door_postpones_new_move() {
 
     let incoming =
         SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
-    let incoming_seq = engine.launch_element_for_owner(&sim, &assets, incoming);
+    let incoming_seq = engine.launch_element_for_owner(TickCtx::new(&sim, &assets), incoming);
 
     let pass = engine
         .orders
@@ -4363,7 +4368,10 @@ fn soldier_enter_attentive_mode_from_crouched_stands_first() {
     };
     {
         let launch_assets = engine.test_runtime_assets();
-        engine.ensure_wait_element(&crate::sim_rng::test_context(), &launch_assets, soldier_id)
+        engine.ensure_wait_element(
+            TickCtx::new(&crate::sim_rng::test_context(), &launch_assets),
+            soldier_id,
+        )
     };
 
     let mut dev = crate::engine::DevState::default();
@@ -4496,17 +4504,19 @@ fn waypoint_driver_dispatches_and_distinguishes_missing_vm() {
     let assets = LevelAssets::new();
     engine.attach_script_bindings(&assets);
     engine
-        .with_script_session(&crate::sim_rng::test_context(), &assets, |script, _, _| {
-            script.bind_waypoint(crate::ai::PathId::new(0).unwrap(), 0, "TestWaypoint");
-        })
+        .with_script_session(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            |script, _, _| {
+                script.bind_waypoint(crate::ai::PathId::new(0).unwrap(), 0, "TestWaypoint");
+            },
+        )
         .expect("mission installed");
 
     // Bound: call dispatches cleanly.
     let actor_handle = 42;
     let ret = engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Waypoint(crate::ai::PathId::new(0).unwrap(), 0),
             "ReachPoint",
             &[actor_handle],
@@ -4518,8 +4528,7 @@ fn waypoint_driver_dispatches_and_distinguishes_missing_vm() {
     // A missing required VM is structural, not an optional-method default.
     let missing = engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Waypoint(crate::ai::PathId::new(7).unwrap(), 9),
             "ReachPoint",
             &[actor_handle],
@@ -4531,8 +4540,7 @@ fn waypoint_driver_dispatches_and_distinguishes_missing_vm() {
     // Missing function on a bound instance: also `Ok(0)`.
     let ret_no_fn = engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Waypoint(crate::ai::PathId::new(0).unwrap(), 0),
             "NotAFunction",
             &[],
@@ -4550,9 +4558,8 @@ fn disabled_waypoint_scripts_do_not_enter_vm_or_continue_route() {
     config.script_enabled = false;
     let sim = crate::sim_rng::SimulationContext::with_seed_and_config(1, config);
     engine.execute_ai_waypoint_script(
-        &sim,
+        TickCtx::new(&sim, &LevelAssets::new()),
         owner,
-        &LevelAssets::new(),
         crate::ai::PathId::new(5).unwrap(),
         2,
     );
@@ -4612,7 +4619,7 @@ fn initialize_mission_script_binds_waypoint_classes() {
     ];
 
     let assets = crate::engine::LevelAssets::new();
-    engine.initialize_mission_script_with(sim, &assets, 0, &paths);
+    engine.initialize_mission_script_with(TickCtx::new(sim, &assets), 0, &paths);
 
     let script = engine.scripts.mission.as_ref().expect("mission_script");
     // Two `Script` waypoints, both bound.
@@ -4649,7 +4656,7 @@ fn mission_startup_runs_after_script_sector_occupants_are_initialized() {
     let assets = crate::engine::LevelAssets::new();
 
     let (_, phases) = capture_mission_initialization_phases(|| {
-        engine.initialize_mission_script_with(&sim, &assets, 0, &[]);
+        engine.initialize_mission_script_with(TickCtx::new(&sim, &assets), 0, &[]);
     });
 
     assert_eq!(
@@ -4752,7 +4759,10 @@ fn launched_owned_element_reaches_in_progress_in_same_tick() {
     };
     {
         let launch_assets = engine.test_runtime_assets();
-        engine.ensure_wait_element(&crate::sim_rng::test_context(), &launch_assets, soldier_id)
+        engine.ensure_wait_element(
+            TickCtx::new(&crate::sim_rng::test_context(), &launch_assets),
+            soldier_id,
+        )
     };
 
     let mut dev = DevState::default();
@@ -4789,7 +4799,10 @@ fn equip_bow_translate_plays_transition_orders() {
     };
     {
         let launch_assets = engine.test_runtime_assets();
-        engine.ensure_wait_element(&crate::sim_rng::test_context(), &launch_assets, pc_id)
+        engine.ensure_wait_element(
+            TickCtx::new(&crate::sim_rng::test_context(), &launch_assets),
+            pc_id,
+        )
     };
 
     let mut dev = DevState::default();
@@ -4862,7 +4875,10 @@ fn assert_npc_translate_books(
         let launch_assets = engine.test_runtime_assets();
         engine.t_launch_element(&launch_assets, elem)
     };
-    engine.ensure_wait_element(&crate::sim_rng::test_context(), &assets, actor);
+    engine.ensure_wait_element(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        actor,
+    );
 
     complete_test_runtime_fixture(&mut engine, &mut assets);
     let _ = engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
@@ -4921,7 +4937,10 @@ fn wake_up_translate_books_turning_then_waking_up_with_antagonist() {
     };
     {
         let launch_assets = engine.test_runtime_assets();
-        engine.ensure_wait_element(&crate::sim_rng::test_context(), &launch_assets, rescuer)
+        engine.ensure_wait_element(
+            TickCtx::new(&crate::sim_rng::test_context(), &launch_assets),
+            rescuer,
+        )
     };
 
     let assets = engine.test_runtime_assets();
@@ -4978,7 +4997,10 @@ fn waking_up_done_clears_target_concussion_and_waits() {
     // The wake target already owns the ordinary unconscious idle Wait.
     // The original game makes the target wait, replacing this equal-priority element,
     // rather than merely ensuring that some Wait exists.
-    let stale_wait = engine.actor_wait(&crate::sim_rng::test_context(), &assets, target);
+    let stale_wait = engine.actor_wait(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        target,
+    );
 
     assert_eq!(
         engine
@@ -4989,7 +5011,7 @@ fn waking_up_done_clears_target_concussion_and_waits() {
         Some(OrderType::BeingUnconscious)
     );
 
-    engine.execute_waking_up_done(sim, &assets, (rescuer, target));
+    engine.execute_waking_up_done(TickCtx::new(sim, &assets), (rescuer, target));
 
     let target_entity = engine.ent(target);
     assert_eq!(target_entity.element_data().posture(), Posture::Lying);
@@ -5057,7 +5079,7 @@ fn waking_up_done_publishes_transient_lying_corpse_intersection() {
         .soldiers
         .resize_with(1, crate::profiles::SoldierProfile::default);
 
-    engine.execute_waking_up_done(&sim, &assets, (rescuer, target));
+    engine.execute_waking_up_done(TickCtx::new(&sim, &assets), (rescuer, target));
 
     for id in [target, neighbour] {
         assert!(
@@ -5132,7 +5154,10 @@ fn get_killed_at_bottom_kills_lying_victim_immediately() {
     };
     {
         let launch_assets = engine.test_runtime_assets();
-        engine.ensure_wait_element(&crate::sim_rng::test_context(), &launch_assets, victim)
+        engine.ensure_wait_element(
+            TickCtx::new(&crate::sim_rng::test_context(), &launch_assets),
+            victim,
+        )
     };
     let score_before = engine.mission_domain.campaign.values[CampaignValue::Score];
 
@@ -5189,7 +5214,10 @@ fn get_killed_at_bottom_uses_vip_pc_amulet_coma_save_and_preserves_existing_coma
     };
     {
         let launch_assets = engine.test_runtime_assets();
-        engine.ensure_wait_element(&crate::sim_rng::test_context(), &launch_assets, victim)
+        engine.ensure_wait_element(
+            TickCtx::new(&crate::sim_rng::test_context(), &launch_assets),
+            victim,
+        )
     };
 
     let mut display = HostDisplayState::default();
@@ -5222,7 +5250,10 @@ fn get_killed_at_bottom_uses_vip_pc_amulet_coma_save_and_preserves_existing_coma
     let elem =
         SequenceElement::new_interaction(1, Command::GetKilledAtBottom, Some(victim), Some(killer));
     engine.t_launch_element(&assets, elem);
-    engine.ensure_wait_element(&crate::sim_rng::test_context(), &assets, victim);
+    engine.ensure_wait_element(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        victim,
+    );
     engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     let entity = engine.ent(victim);

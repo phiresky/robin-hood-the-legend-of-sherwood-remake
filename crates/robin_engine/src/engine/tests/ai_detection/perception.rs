@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 use crate::engine::test_support::actors::for_both_creation_orders;
 
 #[test]
@@ -15,7 +16,7 @@ fn periodic_timer_restart_obeys_static_ai_freeze() {
         .expect_ai_controller_mut(owner, format_args!("periodic test"))
         .current_substate = Substate::AttackingObserve;
     engine.ai.global.freeze = true;
-    engine.tick_periodic_ai_for_npc(&sim, owner, &assets);
+    engine.tick_periodic_ai_for_npc(TickCtx::new(&sim, &assets), owner);
     assert!(
         !engine
             .world
@@ -24,7 +25,7 @@ fn periodic_timer_restart_obeys_static_ai_freeze() {
             .timer_is_running
     );
     engine.ai.global.freeze = false;
-    engine.tick_periodic_ai_for_npc(&sim, owner, &assets);
+    engine.tick_periodic_ai_for_npc(TickCtx::new(&sim, &assets), owner);
     assert!(
         engine
             .world
@@ -72,7 +73,11 @@ fn periodic_smalltalk_commands_advance_watchdog_but_unrelated_commands_preserve_
         // finished before the periodic watchdog inspects it.
         engine.select_sequence_element(owner, Some((sequence, 0)));
         engine.t_element_in_progress(&assets, sequence, 0);
-        engine.finish_enemy_periodic_stuck_suffix_after_refresh(&sim, owner, &assets, 64);
+        engine.finish_enemy_periodic_stuck_suffix_after_refresh(
+            TickCtx::new(&sim, &assets),
+            owner,
+            64,
+        );
         assert_eq!(
             engine
                 .world
@@ -157,7 +162,8 @@ fn periodic_bored_roll_reads_installed_order_after_detection_boundary() {
     engine.control.frame_counter = 100;
 
     let sim = crate::sim_rng::test_context();
-    let (_, trace) = with_draw_trace(|| engine.tick_periodic_ai_for_npc(&sim, npc_id, &assets));
+    let (_, trace) =
+        with_draw_trace(|| engine.tick_periodic_ai_for_npc(TickCtx::new(&sim, &assets), npc_id));
 
     assert!(
         trace.contains(&RngSite::VipIdleRemark),
@@ -213,9 +219,18 @@ fn periodic_enemy_post_refresh_reads_the_materialized_manager_queue_without_surf
             },
             _ => unreachable!(),
         };
-        engine.duty_go_to(&sim, &assets, owner, destination, GotoFlags::RUN);
+        engine.duty_go_to(
+            TickCtx::new(&sim, &assets),
+            owner,
+            destination,
+            GotoFlags::RUN,
+        );
 
-        engine.finish_enemy_periodic_stuck_suffix_after_refresh(&sim, owner, &assets, 0);
+        engine.finish_enemy_periodic_stuck_suffix_after_refresh(
+            TickCtx::new(&sim, &assets),
+            owner,
+            0,
+        );
         let pending = engine
             .orders
             .sequence_manager
@@ -314,7 +329,7 @@ fn pc_noise_is_live_at_the_following_npc_slot_only() {
         assets = engine.test_runtime_assets();
 
         crate::sim_rng::with_seed(0xA013_0015, |sim| {
-            engine.tick_actor_owner_envelopes(sim, &assets)
+            engine.tick_actor_owner_envelopes(TickCtx::new(sim, &assets))
         });
 
         assert_eq!(engine.actor(pc).last_noise_volume, 70);
@@ -360,7 +375,7 @@ fn npc_post_detection_tail_is_wholly_creation_ordered_even_without_detection() {
 
     let (_, trace) = capture_npc_post_detection_tail_phases(|| {
         crate::sim_rng::with_seed(0xA013_7A11, |sim| {
-            engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets)
+            engine.tick_enemy_ai_with_creation_ordered_prelude(TickCtx::new(sim, &assets))
         })
     });
 
@@ -400,8 +415,8 @@ fn post_detection_tail_clears_only_unlocked_expired_emoticon() {
     engine.ai_ctrl_mut(locked).locks_flag_field = AiLockFlags::FREEZE;
 
     crate::sim_rng::with_seed(0xA013_EA10, |sim| {
-        engine.tick_npc_post_detection_tail_for_npc(sim, unlocked, &assets);
-        engine.tick_npc_post_detection_tail_for_npc(sim, locked, &assets);
+        engine.tick_npc_post_detection_tail_for_npc(TickCtx::new(sim, &assets), unlocked);
+        engine.tick_npc_post_detection_tail_for_npc(TickCtx::new(sim, &assets), locked);
     });
     let unlocked_ai = engine.ai_ctrl(unlocked);
     assert_eq!(unlocked_ai.current_emoticon_type, EmoticonType::None);
@@ -424,7 +439,7 @@ fn post_detection_tail_refreshes_deafness_off_acoustic_cadence() {
     npc.old_cover_noise_deafness_frame_counter = 6;
 
     crate::sim_rng::with_seed(0xA013_DEAF, |sim| {
-        engine.tick_npc_post_detection_tail_for_npc(sim, npc_id, &assets)
+        engine.tick_npc_post_detection_tail_for_npc(TickCtx::new(sim, &assets), npc_id)
     });
     let npc = engine.npc(npc_id);
     assert_eq!(npc.old_cover_noise_deafness_frame_counter, 7);
@@ -463,14 +478,14 @@ fn post_detection_tail_preserves_ladder_threshold_and_macro_stop_semantics() {
     ai.when_does_macro_timer_ring = 0;
     ai.current_substate = Substate::DefaultOnPost;
 
-    engine.tick_npc_stuck_on_ladder_for_npc(sim, npc_id, &assets);
+    engine.tick_npc_stuck_on_ladder_for_npc(TickCtx::new(sim, &assets), npc_id);
     assert_eq!(
         engine.npc(npc_id).stuck_on_ladder_emergency_counter,
         0,
         "the 26th qualifying frame must trigger recovery and reset"
     );
 
-    engine.tick_ai_macro_timer_for_npc(sim, npc_id, &assets);
+    engine.tick_ai_macro_timer_for_npc(TickCtx::new(sim, &assets), npc_id);
     assert!(
         !engine.ai_ctrl(npc_id).macro_timer_is_running,
         "elapsed macro timers stop even outside DefaultInMacro"
@@ -499,7 +514,7 @@ fn normal_timer_does_not_turn_alerted_soldier_toward_primary_target() {
     ai.when_does_timer_ring = 0;
     ai.substate_at_last_timer_launch = ai.current_substate;
 
-    engine.tick_ai_normal_timer_for_npc(sim, npc_id, &assets);
+    engine.tick_ai_normal_timer_for_npc(TickCtx::new(sim, &assets), npc_id);
 
     let element = engine.elem(npc_id);
     assert_eq!(element.direction(), 5);
@@ -548,7 +563,7 @@ fn civilian_macro_break_drains_missed_friend_detectables_immediately() {
     ai.macro_timer_is_running = true;
     ai.when_does_macro_timer_ring = 0;
 
-    engine.tick_ai_macro_timer_for_npc(sim, civilian_id, &assets);
+    engine.tick_ai_macro_timer_for_npc(TickCtx::new(sim, &assets), civilian_id);
 
     let civilian = engine.npc(civilian_id);
     assert!(
@@ -659,7 +674,7 @@ fn npc_body_broadcast_respects_swapped_creation_order_boundary() {
         engine.control.frame_counter = (8 - (observer_order % 8)) % 8;
 
         crate::sim_rng::with_seed(0xA013_0B0D, |sim| {
-            engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets)
+            engine.tick_enemy_ai_with_creation_ordered_prelude(TickCtx::new(sim, &assets))
         });
 
         let observer = engine.npc(observer_id);
@@ -751,8 +766,7 @@ fn inline_npc_recovery_precedes_simultaneous_body_inform_and_view() {
 
     crate::sim_rng::with_seed(0x0A01_35A6, |sim| {
         engine.execute_ai_callback(
-            sim,
-            &assets,
+            TickCtx::new(sim, &assets),
             recovering_id,
             &crate::ai::Stimulus::new(crate::ai::StimulusType::EventFitAgain),
         );
@@ -765,7 +779,7 @@ fn inline_npc_recovery_precedes_simultaneous_body_inform_and_view() {
             engine.npc(observer_id).detectable_lists[DetectableType::Body as usize].is_empty(),
             "FitAgain must remove the stale body before the subsequent inform pass"
         );
-        engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets)
+        engine.tick_enemy_ai_with_creation_ordered_prelude(TickCtx::new(sim, &assets))
     });
 
     let recovering = engine.npc(recovering_id);
@@ -823,7 +837,7 @@ fn subordinate_handles_shadow_locally_when_detected_chief_has_empty_patrol() {
     });
 
     crate::sim_rng::with_seed(0xA013_2600, |sim| {
-        engine.dispatch_think_with_drain(sim, subordinate_id, &stimulus, &assets);
+        engine.dispatch_think_with_drain(TickCtx::new(sim, &assets), subordinate_id, &stimulus);
     });
 
     let chief = engine.enemy(chief_id);
@@ -969,10 +983,9 @@ fn sequence_completion_money_victim_scan_uses_live_off_detection_ko_registry() {
     crate::sight_obstacle::begin_parity_visibility_capture();
     let (_, draws) = with_draw_trace(|| {
         engine.dispatch_think_with_drain(
-            &sim,
+            TickCtx::new(&sim, &assets),
             owner_id,
             &Stimulus::new(StimulusType::EventDone),
-            &assets,
         );
     });
     let queries = crate::sight_obstacle::take_parity_visibility_capture();
@@ -1014,14 +1027,12 @@ fn wake_callback_observes_preceding_loss_of_consciousness() {
     ai.current_state = AiState::Default;
     crate::sim_rng::with_seed(0xA013_F1F0, |sim| {
         engine.execute_ai_callback(
-            sim,
-            &assets,
+            TickCtx::new(sim, &assets),
             npc_id,
             &Stimulus::new(StimulusType::EventLoseConsciousness),
         );
         engine.execute_ai_callback(
-            sim,
-            &assets,
+            TickCtx::new(sim, &assets),
             npc_id,
             &Stimulus::new(StimulusType::EventFitAgain),
         );
@@ -1150,7 +1161,7 @@ fn npc_detection_observes_friend_state_at_creation_order_boundary() {
         });
 
         crate::sim_rng::with_seed(0xA013, |sim| {
-            engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets)
+            engine.tick_enemy_ai_with_creation_ordered_prelude(TickCtx::new(sim, &assets))
         });
 
         let attacker_ai = engine.enemy(attacker_id);
@@ -1307,7 +1318,9 @@ fn npc_hearing_thinks_before_same_slot_optical_detection() {
         ..Detectable::default()
     });
 
-    crate::sim_rng::with_seed(0xA013_0EAD, |sim| engine.tick_enemy_ai(sim, &assets));
+    crate::sim_rng::with_seed(0xA013_0EAD, |sim| {
+        engine.tick_enemy_ai(TickCtx::new(sim, &assets))
+    });
 
     assert_eq!(
         engine.actor(pc_id).last_noise_volume,
@@ -1357,7 +1370,9 @@ fn detection_tick_preserves_authoritative_enemy_membership() {
     // acoustic gate as well as running the optical pass, so this one tick
     // exercises both places that formerly reconciled every missing PC.
     engine.control.frame_counter = 2;
-    crate::sim_rng::with_seed(0xA013_0EAE, |sim| engine.tick_enemy_ai(sim, &assets));
+    crate::sim_rng::with_seed(0xA013_0EAE, |sim| {
+        engine.tick_enemy_ai(TickCtx::new(sim, &assets))
+    });
 
     let observer = engine.npc(observer_id);
     assert!(
@@ -1382,14 +1397,18 @@ fn lackland_detection_scans_and_retains_full_fifo_while_ai_locked() {
 
     freeze_observer_with_seeded_detectables(&mut engine, ids);
 
-    crate::sim_rng::with_seed(0xA013_0B22, |sim| engine.tick_enemy_ai(sim, &assets));
+    crate::sim_rng::with_seed(0xA013_0B22, |sim| {
+        engine.tick_enemy_ai(TickCtx::new(sim, &assets))
+    });
 
     assert_locked_detection_commits_latches(&engine, ids);
     assert_locked_ai_retains_detection_fifo(&engine, ids);
     prepare_static_freeze_rescan(&mut engine, ids.observer);
 
     engine.ai.global.freeze = true;
-    crate::sim_rng::with_seed(0xA013_0B24, |sim| engine.tick_enemy_ai(sim, &assets));
+    crate::sim_rng::with_seed(0xA013_0B24, |sim| {
+        engine.tick_enemy_ai(TickCtx::new(sim, &assets))
+    });
 
     assert_static_freeze_discards_stimuli(&engine, ids.observer);
 }
@@ -1822,13 +1841,15 @@ fn retained_detection_view_rebuilds_the_live_enemy_scan_on_replay() {
         });
     }
 
-    crate::sim_rng::with_seed(0xA013_0B23, |sim| engine.tick_enemy_ai(sim, &assets));
+    crate::sim_rng::with_seed(0xA013_0B23, |sim| {
+        engine.tick_enemy_ai(TickCtx::new(sim, &assets))
+    });
     let ai = engine.enemy(observer_id);
     assert_eq!(ai.base.stimulus_queue.len(), 1);
     assert_eq!(ai.base.current_state, AiState::Default);
 
     engine.ai_ctrl_mut(observer_id).locks_flag_field = AiLockFlags::empty();
-    engine.tick_ai_queued_stimuli(sim, &assets);
+    engine.tick_ai_queued_stimuli(TickCtx::new(sim, &assets));
 
     let ai = engine.enemy(observer_id);
     assert!(ai.base.stimulus_queue.is_empty());
@@ -1945,7 +1966,9 @@ fn npc_out_of_view_precedes_same_slot_body_fifo() {
         ..Detectable::default()
     });
 
-    crate::sim_rng::with_seed(0x0A01_30A7, |sim| engine.tick_enemy_ai(sim, &assets));
+    crate::sim_rng::with_seed(0x0A01_30A7, |sim| {
+        engine.tick_enemy_ai(TickCtx::new(sim, &assets))
+    });
 
     let soldier = engine.npc(soldier_id);
     assert!(
@@ -2057,7 +2080,9 @@ fn npc_detection_delivers_each_rising_view_and_keeps_ordered_unique_enemies() {
             });
         }
 
-        crate::sim_rng::with_seed(0xA013_0B1E, |sim| engine.tick_enemy_ai(sim, &assets));
+        crate::sim_rng::with_seed(0xA013_0B1E, |sim| {
+            engine.tick_enemy_ai(TickCtx::new(sim, &assets))
+        });
 
         let soldier = engine.npc(soldier_id);
         let latches = soldier.detectable_lists[DetectableType::Enemy as usize]
@@ -2199,7 +2224,9 @@ fn royalist_detection_alert_does_not_bypass_strict_cadence() {
                 .is_multiple_of(crate::ai_vision::DETECTION_FREQUENCY_ENEMY_NPC),
             "listener fixture must start on a closed Royalist NPC detection gate"
         );
-        crate::sim_rng::with_seed(0xA013_0B20, |sim| engine.tick_enemy_ai(sim, &assets));
+        crate::sim_rng::with_seed(0xA013_0B20, |sim| {
+            engine.tick_enemy_ai(TickCtx::new(sim, &assets))
+        });
         assert!(
             !engine.elem(target_id).blipped,
             "Royalist detection must reveal its blipped NPC target at the detecting slot"
@@ -2327,7 +2354,9 @@ fn royalist_detection_retains_every_ordered_view_edge_while_ai_locked() {
         });
     }
 
-    crate::sim_rng::with_seed(0xA013_0B21, |sim| engine.tick_enemy_ai(sim, &assets));
+    crate::sim_rng::with_seed(0xA013_0B21, |sim| {
+        engine.tick_enemy_ai(TickCtx::new(sim, &assets))
+    });
 
     let observer = engine.npc(observer_id);
     assert_eq!(
@@ -2441,7 +2470,7 @@ fn royalist_enemy_cadence_stays_strict_when_staring_following_or_alerted() {
                 .is_multiple_of(crate::ai_vision::DETECTION_FREQUENCY_ENEMY_NPC)
         );
         crate::sim_rng::with_seed(0xA013_1600 + eye_status as u64, |sim| {
-            engine.tick_enemy_ai(sim, &assets)
+            engine.tick_enemy_ai(TickCtx::new(sim, &assets))
         });
 
         let observer = engine.npc(observer_id);
@@ -2545,7 +2574,9 @@ fn royalist_civilian_enemy_list_accepts_pc_but_not_lacklandist_soldier() {
         .expect("Royalist civilian retains FriendlyAi")
         .locks_flag_field = AiLockFlags::BUSY;
 
-    crate::sim_rng::with_seed(0xA013_C1A1, |sim| engine.tick_enemy_ai(sim, &assets));
+    crate::sim_rng::with_seed(0xA013_C1A1, |sim| {
+        engine.tick_enemy_ai(TickCtx::new(sim, &assets))
+    });
 
     let civilian = engine.npc(civilian_id);
     assert_eq!(
@@ -2599,7 +2630,9 @@ fn enemy_outer_box_rejection_preserves_shadow_latch_but_entered_invisible_clears
         observer.npc.detection_suspects[DetectableType::Enemy as usize] =
             crate::ai_vision::SHADOW_DETECTION_THRESHOLD as u16;
 
-        crate::sim_rng::with_seed(0xA013_0B0E, |sim| engine.tick_enemy_ai(sim, &assets));
+        crate::sim_rng::with_seed(0xA013_0B0E, |sim| {
+            engine.tick_enemy_ai(TickCtx::new(sim, &assets))
+        });
 
         let detectable = engine.npc(observer_id).detectable_lists[DetectableType::Enemy as usize]
             .first()
@@ -2633,7 +2666,9 @@ fn lacklandist_mixed_pc_soldier_enemy_fifo_follows_detectable_order() {
     for pc_first in [true, false] {
         let (mut engine, assets, observer_id, pc_id, royalist_id) =
             mixed_enemy_fifo_fixture(pc_first);
-        crate::sim_rng::with_seed(0xA013_F1F0, |sim| engine.tick_enemy_ai(sim, &assets));
+        crate::sim_rng::with_seed(0xA013_F1F0, |sim| {
+            engine.tick_enemy_ai(TickCtx::new(sim, &assets))
+        });
 
         let ai = engine.ai_ctrl(observer_id);
         let actual = ai
@@ -2672,7 +2707,7 @@ fn mixed_enemy_fifo_survives_detectable_mutation_between_entries() {
 
     let (mut engine, assets, observer_id, pc_id, royalist_id) = mixed_enemy_fifo_fixture(true);
     crate::sim_rng::with_seed(0xA013_F1F1, |sim| {
-        engine.tick_enemy_ai(sim, &assets);
+        engine.tick_enemy_ai(TickCtx::new(sim, &assets));
 
         // Consume the first retained entry, then model the detectable-list
         // mutation that Original explicitly postpones until after its full
@@ -2694,7 +2729,7 @@ fn mixed_enemy_fifo_survives_detectable_mutation_between_entries() {
             .expect("mixed-fifo observer retains AI state")
             .locks_flag_field = AiLockFlags::empty();
 
-        engine.tick_ai_queued_stimuli(sim, &assets);
+        engine.tick_ai_queued_stimuli(TickCtx::new(sim, &assets));
     });
 
     let ai = engine.enemy(observer_id);
@@ -2744,7 +2779,9 @@ fn lacklandist_mixed_enemy_cadence_is_selected_per_entry() {
             .expect("cadence observer retains AI state")
             .current_music_alert_status = AlertLevel::Green;
 
-        crate::sim_rng::with_seed(0xA013_CADE, |sim| engine.tick_enemy_ai(sim, &assets));
+        crate::sim_rng::with_seed(0xA013_CADE, |sim| {
+            engine.tick_enemy_ai(TickCtx::new(sim, &assets))
+        });
 
         let ai = engine.ai_ctrl(observer_id);
         let targets = ai
@@ -2815,7 +2852,9 @@ fn persisted_lean_out_flag_controls_detection_sharpness_after_posture_changes() 
     detectable.seen_now = true;
     detectable.seen_last_frame = true;
 
-    crate::sim_rng::with_seed(0xA013_1A11, |sim| engine.tick_enemy_ai(sim, &assets));
+    crate::sim_rng::with_seed(0xA013_1A11, |sim| {
+        engine.tick_enemy_ai(TickCtx::new(sim, &assets))
+    });
 
     let Entity::Soldier(observer) = engine.ent(observer_id) else {
         panic!("lean-out observer changed kind")
@@ -2869,7 +2908,9 @@ fn persisted_lean_out_flag_controls_non_enemy_detection_sharpness() {
         ..Detectable::default()
     });
 
-    crate::sim_rng::with_seed(0xA013_1A12, |sim| engine.tick_enemy_ai(sim, &assets));
+    crate::sim_rng::with_seed(0xA013_1A12, |sim| {
+        engine.tick_enemy_ai(TickCtx::new(sim, &assets))
+    });
 
     let Entity::Soldier(observer) = engine.ent(observer_id) else {
         panic!("non-Enemy lean-out observer changed kind")
@@ -2920,17 +2961,20 @@ fn enemy_optics_reads_pc_order_from_live_creation_slot_state() {
         .got_the_beggar_trick = false;
 
     crate::sim_rng::with_seed(0xA013_11E0, |sim| {
-        engine.refresh_detection_after_live_mutation_for_test(sim, &assets, |engine| {
-            engine
-                .orders
-                .sequence_manager
-                .get_element_mut(seq_id, elem_idx)
-                .expect("live-order sequence survives snapshot")
-                .orders
-                .front_mut()
-                .expect("live-order sequence retains a front order")
-                .order_type = OrderType::TransitionWaitingUprightSimulatingBeggar;
-        });
+        engine.refresh_detection_after_live_mutation_for_test(
+            TickCtx::new(sim, &assets),
+            |engine| {
+                engine
+                    .orders
+                    .sequence_manager
+                    .get_element_mut(seq_id, elem_idx)
+                    .expect("live-order sequence survives snapshot")
+                    .orders
+                    .front_mut()
+                    .expect("live-order sequence retains a front order")
+                    .order_type = OrderType::TransitionWaitingUprightSimulatingBeggar;
+            },
+        );
     });
 
     let ai = engine.ai_ctrl(observer_id);
@@ -2971,12 +3015,15 @@ fn enemy_optics_reads_pc_detection_z_from_live_creation_slot_posture() {
         .got_the_beggar_trick = true;
 
     crate::sim_rng::with_seed(0xA013_11E1, |sim| {
-        engine.refresh_detection_after_live_mutation_for_test(sim, &assets, |engine| {
-            let Entity::Pc(pc) = engine.ent_mut(pc_id) else {
-                panic!("live-Z target changed kind after snapshot")
-            };
-            pc.element.publish_order_posture(Posture::Crouched);
-        });
+        engine.refresh_detection_after_live_mutation_for_test(
+            TickCtx::new(sim, &assets),
+            |engine| {
+                let Entity::Pc(pc) = engine.ent_mut(pc_id) else {
+                    panic!("live-Z target changed kind after snapshot")
+                };
+                pc.element.publish_order_posture(Posture::Crouched);
+            },
+        );
     });
 
     let observer = engine.npc(observer_id);
@@ -2998,7 +3045,9 @@ fn lacklandist_enemy_optics_keeps_but_cannot_see_hollow_man() {
     let (mut engine, assets, observer_id, pc_id, royalist_id) = mixed_enemy_fifo_fixture(true);
     engine.human_mut(pc_id).hollow_man = true;
 
-    crate::sim_rng::with_seed(0xA013_4011, |sim| engine.tick_enemy_ai(sim, &assets));
+    crate::sim_rng::with_seed(0xA013_4011, |sim| {
+        engine.tick_enemy_ai(TickCtx::new(sim, &assets))
+    });
 
     let observer = engine.npc(observer_id);
     assert_eq!(

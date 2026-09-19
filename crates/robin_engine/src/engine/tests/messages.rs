@@ -1,4 +1,6 @@
 use super::*;
+use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 fn set_test_soldier_brawl_got_hit(engine: &mut EngineInner, soldier: EntityId) {
     use crate::ai::{AiState, Substate};
@@ -24,8 +26,7 @@ fn completion_callback_recurses_before_returning() {
 
     let assets = engine.test_runtime_assets();
     engine.execute_ai_callback(
-        sim,
-        &assets,
+        TickCtx::new(sim, &assets),
         soldier,
         &crate::ai::Stimulus::new(StimulusType::EventDone),
     );
@@ -90,7 +91,7 @@ fn change_way_tail_finishes_before_callers_next_callback() {
     let mut assets = LevelAssets::new();
     assets.navigation.hiking_paths = std::sync::Arc::new(paths);
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    engine.run_ai_macro(sim, &assets, civilian);
+    engine.run_ai_macro(TickCtx::new(sim, &assets), civilian);
     {
         let friendly = engine
             .get_entity(civilian)
@@ -109,8 +110,7 @@ fn change_way_tail_finishes_before_callers_next_callback() {
         );
     }
     engine.execute_ai_callback(
-        sim,
-        &assets,
+        TickCtx::new(sim, &assets),
         civilian,
         &crate::ai::Stimulus::new(StimulusType::EventGaloppLoopEnd),
     );
@@ -179,7 +179,7 @@ fn change_way_suppressed_assignment_still_uses_friendly_virtual_tail() {
     let mut assets = LevelAssets::new();
     assets.navigation.hiking_paths = std::sync::Arc::new(paths);
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    engine.run_ai_macro(sim, &assets, civilian);
+    engine.run_ai_macro(TickCtx::new(sim, &assets), civilian);
 
     let friendly = engine
         .get_entity(civilian)
@@ -258,7 +258,7 @@ fn change_way_enemy_assignment_consumes_ale_before_explicit_patrol_tail() {
     let mut assets = LevelAssets::new();
     assets.navigation.hiking_paths = std::sync::Arc::new(paths);
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    engine.run_ai_macro(sim, &assets, soldier);
+    engine.run_ai_macro(TickCtx::new(sim, &assets), soldier);
 
     let ai = engine.ai_ctrl(soldier);
     assert_eq!(ai.current_substate, Substate::DefaultGotoRoute);
@@ -520,19 +520,22 @@ fn attentive_postpone_current_preserves_rewritten_movement_goal() {
     // deliberately keeps the selected movement alive. The stronger attentive
     // command then POSTPONE_CURRENTs it without a condolence card.
     engine.stop_actor_orders(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
         owner,
         SequencePriority::Preference,
     );
-    engine.set_soldier_attentive_mode(&crate::sim_rng::test_context(), &assets, owner, true, false);
+    engine.set_soldier_attentive_mode(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        owner,
+        true,
+        false,
+    );
     // The attentive element is only registered here; drive the manager
     // update so its deferred instruction performs the POSTPONE_CURRENT.
     engine.hourglass_phase_sequences(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         &mut crate::engine::HostDisplayState::default(),
-        &LevelAssets::new(),
     );
 
     let movement = engine
@@ -616,20 +619,16 @@ fn pc_arrival_speech_finishes_before_non_interruptable_postponement() {
     let movement = engine.t_launch_sequence(&assets, sequence);
 
     assert!(engine.instruct_owner(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         &mut Vec::new(),
         owner,
-        movement,
-        0
+        SequenceElementRef::new(movement, 0)
     ));
     assert!(engine.instruct_owner(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         &mut Vec::new(),
         owner,
-        movement,
-        1
+        SequenceElementRef::new(movement, 1)
     ));
 
     let sequence = engine

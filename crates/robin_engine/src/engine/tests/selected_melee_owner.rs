@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 
 use crate::coordinates::WorldPoint3D;
 use crate::element::{Command, Posture};
@@ -779,7 +780,11 @@ fn same_owner_replacement_after_selection_cancels_melee_execute_arm() {
     );
     engine.select_sequence_element(owner, Some((replacement, 0)));
     engine.t_element_in_progress(&assets, replacement, 0);
-    engine.tick_selected_melee_owner(&crate::sim_rng::test_context(), &assets, owner, selected);
+    engine.tick_selected_melee_owner(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        owner,
+        selected,
+    );
 
     assert_eq!(engine.elem(attacker).sprite.current_frame, 0);
 }

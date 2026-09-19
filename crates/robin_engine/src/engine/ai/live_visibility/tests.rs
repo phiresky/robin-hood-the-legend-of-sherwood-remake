@@ -1,6 +1,7 @@
 use super::*;
 use crate::coordinates::{MapPoint, WorldPoint3D};
 use crate::element::{EyeStatus, Posture};
+use crate::engine::TickCtx;
 use crate::sight_obstacle::{ObstaclePoint, SightObstacle};
 
 fn fixture(radius: u16) -> (EngineInner, LevelAssets, EntityId, EntityId) {
@@ -306,7 +307,12 @@ fn look_there_broadcast_uses_raw_owner_range_during_door_transit() {
         sector,
         level: 0,
     };
-    engine.execute_ai_look_there(&crate::sim_rng::test_context(), &assets, owner, hint, 100);
+    engine.execute_ai_look_there(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        owner,
+        hint,
+        100,
+    );
     let ai = engine.enemy(friend);
     assert_eq!(ai.base.seek_position, hint);
     assert_eq!(

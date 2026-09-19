@@ -1,6 +1,6 @@
 use super::*;
 use crate::ai::{AiState, AlertLevel, LogLineType, Substate};
-use crate::sim_rng::SimulationContext;
+use crate::engine::TickCtx;
 
 impl EngineInner {
     pub(super) fn begin_live_enemy_state(
@@ -56,8 +56,7 @@ impl EngineInner {
 
     pub(super) fn finish_live_enemy_state(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         state: AiState,
         substate: Substate,
@@ -75,7 +74,7 @@ impl EngineInner {
                 | Substate::AttackingPhalanx
                 | Substate::AttackingRunningToPhalanx
         ) && let Some(archer) = self.seek_enemy(owner).archer_behind_me
-            && self.live_ai_is_shield_bearer(assets, owner)
+            && self.live_ai_is_shield_bearer(tcx.assets, owner)
         {
             let target = self.expect_human_id_for_ai_handle(archer.get(), "released paired archer");
             self.seek_enemy_mut(target).shield_bearer_before_me = None;
@@ -198,8 +197,7 @@ impl EngineInner {
         };
         if let Some((target, fast)) = attentive {
             self.set_soldier_attentive_mode_from(
-                sim,
-                assets,
+                tcx,
                 owner,
                 target,
                 fast,
@@ -212,6 +210,6 @@ impl EngineInner {
             AiState::Attacking => AlertLevel::Red,
             _ => AlertLevel::Yellow,
         };
-        self.execute_ai_set_alert_status(assets, owner, alert, crate::ai::AlertFlags::empty());
+        self.execute_ai_set_alert_status(tcx.assets, owner, alert, crate::ai::AlertFlags::empty());
     }
 }

@@ -5,20 +5,8 @@ use crate::ai::{
 };
 use crate::ai_enemy::{SeekFlags, task_priority};
 use crate::profiles::ProfileRank;
-#[cfg(test)]
-use crate::sim_rng::SimulationContext;
 
-impl EngineInner {
-    #[cfg(test)]
-    pub(in crate::engine) fn execute_ai_search_charly(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_search_charly()
-    }
-}
+impl EngineInner {}
 
 impl AiOwnerCtx<'_> {
     pub(in crate::engine) fn execute_ai_search_charly(&mut self) {
@@ -30,7 +18,7 @@ impl AiOwnerCtx<'_> {
         if self
             .engine
             .observation_ai(self.owner)
-            .get_rank(&self.assets.profile_manager)
+            .get_rank(&self.tcx.assets.profile_manager)
             == ProfileRank::Officer
         {
             self.execute_ai_missed_charly_alert();
@@ -59,7 +47,7 @@ impl AiOwnerCtx<'_> {
                 .expect("checkpoint path must resolve")
                 .get() as usize;
             let here = self.engine.live_ai_position(self.owner);
-            let points = &self.assets.navigation.hiking_paths[path].waypoints;
+            let points = &self.tcx.assets.navigation.hiking_paths[path].waypoints;
             let mut best = None;
             let mut distance = 65432.0_f32;
             for (index, point) in points.iter().enumerate() {
@@ -99,7 +87,7 @@ impl AiOwnerCtx<'_> {
                     .push(Position {
                         x: point.x as f32,
                         y: point.y as f32,
-                        sector: self.assets.navigation.hiking_waypoint_sector(
+                        sector: self.tcx.assets.navigation.hiking_waypoint_sector(
                             path,
                             index,
                             point.sector,
@@ -116,7 +104,7 @@ impl AiOwnerCtx<'_> {
         }
         self.duty_set_state(AiState::Seeking, Substate::SeekingCharly);
         self.engine.execute_ai_set_alert_status(
-            self.assets,
+            self.tcx.assets,
             self.owner,
             AlertLevel::Yellow,
             crate::ai::AlertFlags::empty(),
@@ -157,7 +145,7 @@ impl AiOwnerCtx<'_> {
         match self
             .engine
             .observation_ai(self.owner)
-            .get_rank(&self.assets.profile_manager)
+            .get_rank(&self.tcx.assets.profile_manager)
         {
             ProfileRank::Soldier => {
                 if self.execute_ai_alert_officer() {

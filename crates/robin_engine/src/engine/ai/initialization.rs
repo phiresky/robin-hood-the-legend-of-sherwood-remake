@@ -5,6 +5,7 @@
 //! enemy/friendly AI initialization in authored NPC order.
 
 use super::*;
+use crate::engine::TickCtx;
 
 #[cfg(test)]
 mod tests {
@@ -107,7 +108,10 @@ mod tests {
             ai.likes_to_sit_around = true;
             ai.special_action = true;
             ai.is_stay_at_home = true;
-            assert!(engine.initialize_ai_state(&crate::sim_rng::test_context(), &assets, owner));
+            assert!(engine.initialize_ai_state(
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
+                owner
+            ));
             let ai = engine
                 .world
                 .entities
@@ -134,7 +138,10 @@ mod tests {
             (OrderType::Special, Posture::Leisure, ActionState::Waiting),
         ] {
             let (mut engine, assets, owner) = fixture(action, false);
-            assert!(!engine.initialize_ai_state(&crate::sim_rng::test_context(), &assets, owner));
+            assert!(!engine.initialize_ai_state(
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
+                owner
+            ));
             let entity = engine.world.entities.get(owner).unwrap();
             let ai = entity.ai_controller().unwrap();
             assert_eq!(entity.posture(), posture);
@@ -174,7 +181,10 @@ mod tests {
             ),
         ] {
             let (mut engine, assets, owner) = fixture(action, false);
-            assert!(!engine.initialize_ai_state(&crate::sim_rng::test_context(), &assets, owner));
+            assert!(!engine.initialize_ai_state(
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
+                owner
+            ));
             let entity = engine.world.entities.get(owner).unwrap();
             assert_eq!(entity.posture(), posture);
             assert_eq!(entity.ai_controller().unwrap().current_substate, substate);
@@ -193,7 +203,10 @@ mod tests {
     #[test]
     fn building_membership_overrides_authored_initial_action() {
         let (mut engine, assets, owner) = fixture(OrderType::BeingDead, true);
-        assert!(!engine.initialize_ai_state(&crate::sim_rng::test_context(), &assets, owner));
+        assert!(!engine.initialize_ai_state(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            owner
+        ));
         let entity = engine.world.entities.get(owner).unwrap();
         let ai = entity.ai_controller().unwrap();
         assert!(ai.is_stay_at_home);
@@ -275,9 +288,8 @@ impl EngineInner {
         let soldier_subordinate_ids = assets.entities.soldier_subordinate_ids.clone();
         for &npc_id in &npc_ids {
             self.init_one_ai(
-                sim,
+                TickCtx::new(sim, assets),
                 npc_id,
-                assets,
                 &hiking_paths,
                 ambush_points_count,
                 &all_soldier_entity_ids,
@@ -357,9 +369,8 @@ impl EngineInner {
     /// 10. Execute authored state transitions and duty with live callbacks.
     fn init_one_ai(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         npc_id: EntityId,
-        assets: &LevelAssets,
         hiking_paths: &std::sync::Arc<Vec<crate::level_data::RawHikingPath>>,
         ambush_points_count: usize,
         all_soldier_entity_ids: &[EntityId],
@@ -453,7 +464,7 @@ impl EngineInner {
                     }
                 }
             }
-            self.initialize_patrol_for_npc(assets, npc_id);
+            self.initialize_patrol_for_npc(tcx.assets, npc_id);
         }
 
         // -- Phase 3: Build the detectable-enemy list for this NPC. --
@@ -508,7 +519,7 @@ impl EngineInner {
         if is_enemy && self_camp != Camp::Error {
             self.ai.global.soldier_camps.insert(self_camp);
         }
-        let state_allows_duty = self.initialize_ai_state(sim, assets, npc_id);
+        let state_allows_duty = self.initialize_ai_state(tcx, npc_id);
         let go_to_duty = {
             let ai = self.ai(npc_id, "AI initialization duty gate");
             state_allows_duty && !ai.ai_is_script_locked() && !ai.ai_is_locked()
@@ -699,18 +710,17 @@ impl EngineInner {
         if has_path && go_to_duty {
             if is_enemy {
                 self.duty_set_state(
-                    sim,
-                    assets,
+                    tcx,
                     npc_id,
                     crate::ai::AiState::Default,
                     crate::ai::Substate::DefaultEnroute,
                 );
             }
-            self.execute_ai_return_to_duty(sim, assets, npc_id, crate::ai::DutyFlags::empty());
+            self.execute_ai_return_to_duty(tcx, npc_id, crate::ai::DutyFlags::empty());
         } else if is_friendly && go_to_duty {
             let duration = crate::parameters_ai::AB_MIN_DEFAULT_LOOK_TIME
                 + crate::sim_rng::i32(
-                    sim,
+                    tcx.sim,
                     crate::sim_rng::RngSite::CivilianFirstLookTimer,
                     0..crate::parameters_ai::AB_DELTA_DEFAULT_LOOK_TIME,
                 );
@@ -718,8 +728,7 @@ impl EngineInner {
             self.ai_mut(npc_id, "civilian bootstrap timer")
                 .launch_timer(duration as u32, frame);
             self.duty_set_state(
-                sim,
-                assets,
+                tcx,
                 npc_id,
                 crate::ai::AiState::Default,
                 crate::ai::Substate::DefaultOnPost,
@@ -744,12 +753,7 @@ impl EngineInner {
             .last_hint_actuality = frame;
     }
 
-    fn initialize_ai_state(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) -> bool {
+    fn initialize_ai_state(&mut self, tcx: TickCtx<'_>, owner: EntityId) -> bool {
         use crate::ai::{AiState, EmoticonType, Substate};
         use crate::element::{ActionState, EyeStatus, Posture};
         use crate::order::OrderType;
@@ -770,13 +774,7 @@ impl EngineInner {
             ai.initial_action
         };
         if in_building {
-            self.duty_set_state(
-                sim,
-                assets,
-                owner,
-                AiState::Default,
-                Substate::DefaultHomeSweetHome,
-            );
+            self.duty_set_state(tcx, owner, AiState::Default, Substate::DefaultHomeSweetHome);
             return false;
         }
         let action = OrderType::try_from(initial_action).ok();
@@ -788,7 +786,7 @@ impl EngineInner {
             Some(OrderType::BeingUnconscious) => (AiState::Sleeping, Substate::SleepingUnconscious),
             _ => (AiState::Default, Substate::DefaultOnPost),
         };
-        self.duty_set_state(sim, assets, owner, state, substate);
+        self.duty_set_state(tcx, owner, state, substate);
         let posture = match action {
             Some(OrderType::SleepingUpright) => Some(Posture::Upright),
             Some(OrderType::Sitting) => Some(Posture::Sitting),
@@ -799,7 +797,7 @@ impl EngineInner {
             _ => None,
         };
         if posture.is_none() || action == Some(OrderType::Sitting) {
-            let bored = self.ai_bored_time(sim, assets, owner);
+            let bored = self.ai_bored_time(tcx, owner);
             let frame = self.control.frame_counter;
             let ai = self.ai_mut(owner, "initial AI bored timer");
             ai.launch_timer(bored as u32, frame);
@@ -855,7 +853,7 @@ impl EngineInner {
                 ActionState::Waiting
             };
         }
-        self.actor_wait(sim, assets, owner);
+        self.actor_wait(tcx, owner);
 
         let entity = self
             .entities_mut()

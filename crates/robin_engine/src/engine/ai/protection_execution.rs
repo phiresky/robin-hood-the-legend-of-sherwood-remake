@@ -6,12 +6,12 @@ mod tests;
 use super::*;
 use crate::ai::{AiEntityHandle, AiState, EmoticonType, GotoFlags, Position, Remark, Substate};
 use crate::ai_enemy::{PrimaryTargetFlags, archer};
+use crate::engine::TickCtx;
 
 impl EngineInner {
     pub(in crate::engine) fn launch_ai_raise_shield(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         point: crate::coordinates::WorldPoint3D,
     ) {
@@ -28,18 +28,7 @@ impl EngineInner {
                 z: point.z,
             },
         );
-        self.launch_element(sim, assets, element);
-    }
-
-    #[cfg(test)]
-    pub(in crate::engine) fn execute_ai_shield_expected_event(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        event: crate::ai::StimulusType,
-    ) -> bool {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_shield_expected_event(event)
+        self.launch_element(tcx, element);
     }
 
     fn shield_timer(&mut self, owner: EntityId, delay: u32) {
@@ -340,12 +329,11 @@ impl EngineInner {
 
     pub(in crate::engine) fn refresh_ai_arrow_protection(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         called_from_hourglass: bool,
     ) -> bool {
-        AiOwnerCtx::new(self, sim, assets, owner).refresh_ai_arrow_protection(called_from_hourglass)
+        AiOwnerCtx::new(self, tcx, owner).refresh_ai_arrow_protection(called_from_hourglass)
     }
 }
 
@@ -393,7 +381,7 @@ impl AiOwnerCtx<'_> {
             .element_data()
             .position();
         self.engine
-            .launch_ai_raise_shield(self.sim, self.assets, self.owner, point);
+            .launch_ai_raise_shield(self.tcx, self.owner, point);
     }
 
     fn execute_ai_protecting_shield_timer(&mut self) {
@@ -455,7 +443,7 @@ impl AiOwnerCtx<'_> {
             self.engine.execute_ai_direction_goal(self.owner, direction);
 
             self.engine
-                .refresh_retained_shield_obstacle(self.assets, self.owner);
+                .refresh_retained_shield_obstacle(self.tcx.assets, self.owner);
 
             self.engine.shield_timer(self.owner, 30);
         } else if self
@@ -466,11 +454,11 @@ impl AiOwnerCtx<'_> {
             .action_state
             .is_bow()
         {
-            if crate::sim_rng::u32(self.sim, crate::sim_rng::RngSite::ShieldAdvance, 0..4) == 0 {
+            if crate::sim_rng::u32(self.tcx.sim, crate::sim_rng::RngSite::ShieldAdvance, 0..4) == 0
+            {
                 self.duty_set_state(AiState::Attacking, Substate::AttackingAdvancingWithShield);
                 self.engine.launch_element(
-                    self.sim,
-                    self.assets,
+                    self.tcx,
                     crate::sequence::SequenceElement::new(
                         1,
                         crate::element::Command::LowerShield,
@@ -545,7 +533,7 @@ impl AiOwnerCtx<'_> {
         }
         if !self
             .engine
-            .live_ai_is_shield_bearer(self.assets, self.owner)
+            .live_ai_is_shield_bearer(self.tcx.assets, self.owner)
         {
             return false;
         }
@@ -592,7 +580,7 @@ impl AiOwnerCtx<'_> {
         if dangerous.is_none()
             && self
                 .engine
-                .live_archers_needing_protection(self.assets, self.owner)
+                .live_archers_needing_protection(self.tcx.assets, self.owner)
                 <= 0
         {
             return false;
@@ -604,7 +592,7 @@ impl AiOwnerCtx<'_> {
         self.engine.execute_ai_focus(self.owner, Some(handle));
 
         if let Some((position, direction, left, right)) =
-            self.engine.live_phalanx_place(self.assets, self.owner)
+            self.engine.live_phalanx_place(self.tcx.assets, self.owner)
         {
             self.execute_ai_speech(crate::ai::AiSpeechAttempt {
                 remark: Remark::ShieldBearersLineFormation,
@@ -646,7 +634,7 @@ impl AiOwnerCtx<'_> {
                 .element_data()
                 .position();
             self.engine
-                .launch_ai_raise_shield(self.sim, self.assets, self.owner, point);
+                .launch_ai_raise_shield(self.tcx, self.owner, point);
 
             let ai = self
                 .engine

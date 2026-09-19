@@ -1,6 +1,8 @@
 use super::*;
 use crate::element::{ActionState, Posture};
+use crate::engine::TickCtx;
 use crate::order::OrderType;
+use crate::sequence::SequenceElementRef;
 use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
 use crate::sprite::MotionState;
 
@@ -60,7 +62,12 @@ fn same_building_seek_keeps_synchronously_launched_post_seek_selection() {
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
-    assert!(engine.instruct_owner(&sim, &assets, &mut Vec::new(), owner, sequence, 0));
+    assert!(engine.instruct_owner(
+        TickCtx::new(&sim, &assets),
+        &mut Vec::new(),
+        owner,
+        SequenceElementRef::new(sequence, 0)
+    ));
     let selected = engine
         .world
         .entities
@@ -115,7 +122,12 @@ fn halt_keeps_selection_order_and_goal_installed_by_termination_callback() {
     };
     let (outgoing, _) = make_carrier();
     let (nested, nested_order) = make_carrier();
-    assert!(engine.instruct_owner(&sim, &assets, &mut Vec::new(), owner, outgoing, 0));
+    assert!(engine.instruct_owner(
+        TickCtx::new(&sim, &assets),
+        &mut Vec::new(),
+        owner,
+        SequenceElementRef::new(outgoing, 0)
+    ));
     let mut pending = SequenceElement::new(1, Command::Generic, Some(owner));
     pending.priority = SequencePriority::Normal;
     let pending = engine.t_launch_element_with(&sim, &assets, pending);
@@ -126,12 +138,10 @@ fn halt_keeps_selection_order_and_goal_installed_by_termination_callback() {
             if card.seq_id == pending {
                 assert_eq!(engine.world.entities.current_element_for_actor(owner), None);
                 assert!(engine.instruct_owner(
-                    &crate::sim_rng::test_context(),
-                    &callback_assets,
+                    TickCtx::new(&crate::sim_rng::test_context(), &callback_assets),
                     &mut Vec::new(),
                     owner,
-                    nested,
-                    0
+                    SequenceElementRef::new(nested, 0)
                 ));
                 engine
                     .ent_mut(owner)
@@ -139,7 +149,7 @@ fn halt_keeps_selection_order_and_goal_installed_by_termination_callback() {
                     .set_map_goal(goal);
             }
         },
-        || engine.halt_actor(&sim, &assets, owner),
+        || engine.halt_actor(TickCtx::new(&sim, &assets), owner),
     );
     assert_eq!(
         engine.world.entities.current_element_for_actor(owner),
@@ -189,7 +199,12 @@ fn nested_instruction_selection_survives_outer_callback_return() {
         let outgoing = insert(true);
         let incoming = insert(true);
         let nested = insert(nested_has_order);
-        assert!(engine.instruct_owner(&sim, &assets, &mut Vec::new(), owner, outgoing, 0));
+        assert!(engine.instruct_owner(
+            TickCtx::new(&sim, &assets),
+            &mut Vec::new(),
+            owner,
+            SequenceElementRef::new(outgoing, 0)
+        ));
         EngineInner::with_condolation_callback(
             move |engine, card| {
                 if card.seq_id == outgoing {
@@ -198,17 +213,20 @@ fn nested_instruction_selection_survives_outer_callback_return() {
                         Some((incoming, 0))
                     );
                     assert!(engine.instruct_owner(
-                        &crate::sim_rng::test_context(),
-                        &LevelAssets::new(),
+                        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
                         &mut Vec::new(),
                         owner,
-                        nested,
-                        0,
+                        SequenceElementRef::new(nested, 0),
                     ));
                 }
             },
             || {
-                assert!(!engine.instruct_owner(&sim, &assets, &mut Vec::new(), owner, incoming, 0));
+                assert!(!engine.instruct_owner(
+                    TickCtx::new(&sim, &assets),
+                    &mut Vec::new(),
+                    owner,
+                    SequenceElementRef::new(incoming, 0)
+                ));
             },
         );
         assert_eq!(
@@ -248,7 +266,7 @@ fn retained_shot_refreshes_transition_state_when_aiming_resumes() {
     let sequence = engine.t_launch_element_with(&sim, &assets, shot);
 
     engine.elem_mut(owner).sprite.last_action = OrderType::AimingWithBow;
-    engine.process_shoot_list_for(&sim, &assets, owner);
+    engine.process_shoot_list_for(TickCtx::new(&sim, &assets), owner);
 
     let shot = engine
         .orders

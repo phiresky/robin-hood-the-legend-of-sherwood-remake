@@ -78,16 +78,22 @@ real `sim` or inspects `active_scripts`.
 
 | Helper | Replaces (before) |
 |---|---|
-| `t_element_in_progress(&assets, seq, idx)` | `.element_in_progress(&crate::sim_rng::test_context(), &assets, &mut Vec::new(), seq, idx)` |
-| `t_launch_element(&assets, elem)` | `.launch_element(&crate::sim_rng::test_context(), &assets, elem)` |
-| `t_launch_sequence(&assets, seq)` | `.launch_sequence(&crate::sim_rng::test_context(), &assets, seq)` |
-| `t_element_terminated(&assets, seq, idx)` | `.element_terminated(&crate::sim_rng::test_context(), &assets, &mut Vec::new(), seq, idx)` |
-| `t_element_interrupted(&assets, seq, idx, flags)` | `.element_interrupted(&crate::sim_rng::test_context(), &assets, &mut Vec::new(), seq, idx, flags)` |
-| `t_postpone_element(&assets, seq, idx)` | `.postpone_element(&crate::sim_rng::test_context(), &assets, &mut Vec::new(), seq, idx)` |
-| `t_instruct_owner(&assets, owner, seq, idx)` | `.instruct_owner(&crate::sim_rng::test_context(), &assets, &mut Vec::new(), owner, seq, idx)` |
-| `t_tick_actor_owner_envelopes(&assets)` | `.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets)` |
-| `t_hourglass_phase_sequences(&assets)` | `.hourglass_phase_sequences(&crate::sim_rng::test_context(), &mut HostDisplayState::default(), &assets)` |
+| `t_element_in_progress(&assets, seq, idx)` | `.element_in_progress(TickCtx::new(&crate::sim_rng::test_context(), &assets), &mut Vec::new(), SequenceElementRef::new(seq, idx))` |
+| `t_launch_element(&assets, elem)` | `.launch_element(TickCtx::new(&crate::sim_rng::test_context(), &assets), elem)` |
+| `t_launch_sequence(&assets, seq)` | `.launch_sequence(TickCtx::new(&crate::sim_rng::test_context(), &assets), seq)` |
+| `t_element_terminated(&assets, seq, idx)` | `.element_terminated(TickCtx::new(&crate::sim_rng::test_context(), &assets), &mut Vec::new(), SequenceElementRef::new(seq, idx))` |
+| `t_element_interrupted(&assets, seq, idx, flags)` | `.element_interrupted(TickCtx::new(&crate::sim_rng::test_context(), &assets), &mut Vec::new(), SequenceElementRef::new(seq, idx), flags)` |
+| `t_postpone_element(&assets, seq, idx)` | `.postpone_element(TickCtx::new(&crate::sim_rng::test_context(), &assets), &mut Vec::new(), SequenceElementRef::new(seq, idx))` |
+| `t_instruct_owner(&assets, owner, seq, idx)` | `.instruct_owner(TickCtx::new(&crate::sim_rng::test_context(), &assets), &mut Vec::new(), owner, SequenceElementRef::new(seq, idx))` |
+| `t_tick_actor_owner_envelopes(&assets)` | `.tick_actor_owner_envelopes(TickCtx::new(&crate::sim_rng::test_context(), &assets))` |
+| `t_hourglass_phase_sequences(&assets)` | `.hourglass_phase_sequences(TickCtx::new(&crate::sim_rng::test_context(), &assets), &mut HostDisplayState::default())` |
 | `t_launch_in_progress(&assets, elem)` | `let s = engine.launch_element(...); engine.element_in_progress(..., s, 0);` pair |
+
+Engine-internal functions take the tick inputs as one `TickCtx` (`sim` +
+`assets`) and address a sequence element with one `SequenceElementRef`; the
+`t_*` / `t_*_with` adapters keep their flat `(&sim, &assets, seq, idx)`
+arguments and build both inside. `engine.ai_ctx(&sim, &assets, owner)` returns
+the owner-scoped `AiOwnerCtx` for calling AI behaviour methods directly.
 
 Many files bind `let sim = crate::sim_rng::test_context();` first and pass
 `&sim`; those are the same pattern (drop the binding if it becomes unused).
@@ -95,13 +101,12 @@ Many files bind `let sim = crate::sim_rng::test_context();` first and pass
 Before:
 
 ```rust
-let seq = engine.launch_element(&crate::sim_rng::test_context(), &assets, wait);
+let sim = crate::sim_rng::test_context();
+let seq = engine.launch_element(TickCtx::new(&sim, &assets), wait);
 engine.element_in_progress(
-    &crate::sim_rng::test_context(),
-    &assets,
+    TickCtx::new(&sim, &assets),
     &mut Vec::new(),
-    seq,
-    0,
+    SequenceElementRef::new(seq, 0),
 );
 ```
 

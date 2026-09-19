@@ -1,5 +1,6 @@
 use super::scenarios::assets_with_test_pc_profile;
 use super::*;
+use crate::engine::TickCtx;
 use crate::engine::tick::capture_projectile_derived_tails;
 
 /// Give every live test PC its required campaign-description identity.
@@ -388,11 +389,10 @@ fn chained_straight_strike_target_life(interrupter_first: bool) -> i16 {
         ..LevelAssets::new()
     };
     crate::sim_rng::with_seed(0xA_B_C, |sim| {
-        engine.tick_actor_owner_envelopes(sim, &assets);
+        engine.tick_actor_owner_envelopes(TickCtx::new(sim, &assets));
         assert_strike_damage_deferred_then_drain(
             &mut engine,
-            sim,
-            &assets,
+            TickCtx::new(sim, &assets),
             chained_attacker_id,
             final_target_id,
             interrupter_first,
@@ -411,8 +411,7 @@ fn chained_straight_strike_target_life(interrupter_first: bool) -> i16 {
 /// creation-slot order. Drains the manager phase before returning.
 fn assert_strike_damage_deferred_then_drain(
     engine: &mut EngineInner,
-    sim: &crate::sim_rng::SimulationContext,
-    assets: &LevelAssets,
+    tcx: TickCtx<'_>,
     chained_attacker_id: EntityId,
     final_target_id: EntityId,
     interrupter_first: bool,
@@ -435,7 +434,7 @@ fn assert_strike_damage_deferred_then_drain(
     );
 
     let mut display = HostDisplayState::default();
-    engine.hourglass_phase_sequences(sim, &mut display, assets);
+    engine.hourglass_phase_sequences(tcx, &mut display);
 }
 
 /// `(chained attacker soldier life, final target PC life)` for the chained
@@ -617,7 +616,7 @@ fn chained_nonstraight_strike_lives(
         // phase drains them.
         let mut registered = Vec::new();
         for _ in 0..32 {
-            engine.tick_actor_owner_envelopes(sim, &assets);
+            engine.tick_actor_owner_envelopes(TickCtx::new(sim, &assets));
             assert_eq!(
                 strike_life_points(&engine, chained_attacker_id, final_target_id),
                 (1, 50),
@@ -636,7 +635,7 @@ fn chained_nonstraight_strike_lives(
             "both strikes must register their damage before the manager phase"
         );
         let mut display = HostDisplayState::default();
-        engine.hourglass_phase_sequences(sim, &mut display, &assets);
+        engine.hourglass_phase_sequences(TickCtx::new(sim, &assets), &mut display);
     });
 
     let Entity::Pc(target) = engine.ent(final_target_id) else {

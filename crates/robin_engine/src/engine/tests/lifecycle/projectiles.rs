@@ -1,4 +1,6 @@
 use super::*;
+use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 #[test]
 fn pc_auto_heal_and_projectile_damage_follow_cross_entity_creation_order() {
@@ -161,7 +163,9 @@ fn earlier_projectile_runs_before_later_bow_release_and_spawned_arrow_runs_again
     assert_eq!(motion, crate::sprite::MotionState::InProgress);
 
     let (_, visited) = engine.with_simulation_context(|engine, sim| {
-        capture_ordered_gameplay_entities(|| engine.tick_actor_owner_envelopes(sim, &assets))
+        capture_ordered_gameplay_entities(|| {
+            engine.tick_actor_owner_envelopes(TickCtx::new(sim, &assets))
+        })
     });
 
     let spawned_arrow_id = EntityId::Projectile(ProjectileId(3));
@@ -280,8 +284,9 @@ fn inactive_projectile_virtual_results_are_applied_after_derived_tails() {
     let assets = LevelAssets::new();
 
     let (_, tails) = capture_projectile_derived_tails(|| {
-        engine
-            .with_simulation_context(|engine, sim| engine.tick_actor_owner_envelopes(sim, &assets))
+        engine.with_simulation_context(|engine, sim| {
+            engine.tick_actor_owner_envelopes(TickCtx::new(sim, &assets))
+        })
     });
 
     assert!(engine.get_entity(apple).is_some());
@@ -375,8 +380,7 @@ fn water_and_hole_projectiles_retire_after_their_nonterminal_derived_tail() {
             let assets = LevelAssets::new();
             let (_, tails) = capture_projectile_derived_tails(|| {
                 engine.tick_projectile_or_net_hourglass(
-                    &crate::sim_rng::test_context(),
-                    &assets,
+                    TickCtx::new(&crate::sim_rng::test_context(), &assets),
                     id,
                 );
             });
@@ -472,7 +476,7 @@ fn grounded_arrow_exposes_terminal_active_frame_then_refresh_retires_its_slot() 
     }
     let assets = LevelAssets::new();
 
-    engine.tick_projectile_or_net_hourglass(&sim, &assets, arrow);
+    engine.tick_projectile_or_net_hourglass(TickCtx::new(&sim, &assets), arrow);
     let Entity::Projectile(projectile) = engine.ent(arrow) else {
         unreachable!()
     };
@@ -494,7 +498,7 @@ fn grounded_arrow_exposes_terminal_active_frame_then_refresh_retires_its_slot() 
         "the between-frame Refresh must retire a stationary empty arrow"
     );
 
-    engine.tick_projectile_or_net_hourglass(&sim, &assets, arrow);
+    engine.tick_projectile_or_net_hourglass(TickCtx::new(&sim, &assets), arrow);
     assert!(
         engine.get_entity(arrow).is_some(),
         "inactive arrow must remain as a tombstone"
@@ -584,7 +588,7 @@ fn stationary_arrow_with_future_hole_flag_stays_active_until_refresh() {
     }));
 
     // A stopped arrow does not execute landing logic for its retained trajectory flags.
-    engine.tick_projectile_or_net_hourglass(&sim, &LevelAssets::new(), arrow);
+    engine.tick_projectile_or_net_hourglass(TickCtx::new(&sim, &LevelAssets::new()), arrow);
     let Entity::Projectile(projectile) = engine.ent(arrow) else {
         unreachable!()
     };
@@ -780,8 +784,7 @@ fn pending_bow_element_does_not_block_selected_nonbow_execution() {
 
     assert!(engine.selected_bow_order(owner).is_none());
     let executed = engine.tick_actor_animation_for(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         owner,
     );
     assert!(
@@ -952,8 +955,7 @@ fn execution_frozen_selected_bow_does_not_advance_or_fire() {
 
     assert_eq!(
         engine.tick_bow_shot_for(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
             shooter,
             order_id
         ),
@@ -1037,8 +1039,7 @@ fn production_throw_apple_owner_emits_terminal_projectile_effect() {
             &mut engine.orders.sequence_manager,
             owner,
             target,
-            sequence,
-            0,
+            SequenceElementRef::new(sequence, 0),
             &mut engine.orders.next_order_id,
         ),
         crate::abilities::BeginResult::Started
@@ -1077,8 +1078,7 @@ fn selected_listen_done_does_not_clear_newer_bow_action() {
     engine.players.seats[0].selected_action = crate::profiles::Action::Bow;
 
     engine.apply_listen_done_action_handoff(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         owner,
     );
 

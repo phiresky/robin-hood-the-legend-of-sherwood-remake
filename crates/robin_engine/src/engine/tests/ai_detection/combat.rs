@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 
 #[test]
 fn look_there_broadcast_skips_attacking_chief_and_reacts_on_eligible_member() {
@@ -26,7 +27,12 @@ fn look_there_broadcast_skips_attacking_chief_and_reacts_on_eligible_member() {
 
     let assets = engine.test_runtime_assets();
     crate::sim_rng::with_seed(0xA013_1090, |sim| {
-        engine.execute_ai_look_there(sim, &assets, source_id, Position::default(), 100);
+        engine.execute_ai_look_there(
+            TickCtx::new(sim, &assets),
+            source_id,
+            Position::default(),
+            100,
+        );
     });
 
     let chief = engine.ai_ctrl(chief_id);
@@ -120,7 +126,9 @@ fn npc_detection_view_rebinds_combat_data_to_the_queued_target() {
         ..Detectable::default()
     });
 
-    crate::sim_rng::with_seed(0xA013_0B1F, |sim| engine.tick_enemy_ai(sim, &assets));
+    crate::sim_rng::with_seed(0xA013_0B1F, |sim| {
+        engine.tick_enemy_ai(TickCtx::new(sim, &assets))
+    });
 
     let ai = engine.enemy(soldier_id);
     // Original-game battle decisions do not clear the forced

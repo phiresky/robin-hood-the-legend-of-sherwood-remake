@@ -164,11 +164,9 @@ mod suite {
             1,
         ));
         let outcome = engine.try_dispatch_move_path(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
             owner,
-            postponed_id,
-            0,
+            SequenceElementRef::new(postponed_id, 0),
             destination,
             OrderType::WalkingUpright,
         );
@@ -478,7 +476,7 @@ mod suite {
         orders
             .failed_path_requests
             .push(FailedPathRequest::from_pending(
-                PendingPathRequest::test_request(owner, sequence_id, 0),
+                PendingPathRequest::test_request(owner, SequenceElementRef::new(sequence_id, 0)),
                 10,
             ));
 
@@ -558,11 +556,17 @@ mod suite {
         let later_sequence = launch_waiting(later_owner);
         orders.failed_path_requests.extend([
             FailedPathRequest::from_pending(
-                PendingPathRequest::test_request(first_owner, first_sequence, 0),
+                PendingPathRequest::test_request(
+                    first_owner,
+                    SequenceElementRef::new(first_sequence, 0),
+                ),
                 0,
             ),
             FailedPathRequest::from_pending(
-                PendingPathRequest::test_request(later_owner, later_sequence, 0),
+                PendingPathRequest::test_request(
+                    later_owner,
+                    SequenceElementRef::new(later_sequence, 0),
+                ),
                 0,
             ),
         ]);
@@ -633,7 +637,7 @@ mod suite {
         orders
             .failed_path_requests
             .push(FailedPathRequest::from_pending(
-                PendingPathRequest::test_request(owner, sequence_id, 0),
+                PendingPathRequest::test_request(owner, SequenceElementRef::new(sequence_id, 0)),
                 0,
             ));
 

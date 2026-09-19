@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::ai::{AiController, AiEntityHandle, AiState, LookDirection, PathId, Position, Substate};
+use crate::engine::TickCtx;
 
 fn synchronize_index(current: u16, encoded: u16) -> u16 {
     if encoded > 500 {
@@ -37,15 +38,13 @@ fn path_status(ai: &AiController) -> (u16, u16, bool, Option<PathId>) {
 impl EngineInner {
     pub(in crate::engine) fn initialize_ai_friend_check(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         friend_id: u16,
         frames: u16,
         index: u16,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner)
-            .initialize_ai_friend_check(friend_id, frames, index)
+        AiOwnerCtx::new(self, tcx, owner).initialize_ai_friend_check(friend_id, frames, index)
     }
 
     fn friend_check_owner_mut(&mut self, owner: EntityId) -> &mut AiController {
@@ -224,15 +223,15 @@ impl AiOwnerCtx<'_> {
         let partner = self.engine.ai(target, "friend-check partner");
         if !partner.has_patrol_path {
             let post = partner.initial_position;
-            let mut point = self.engine.friend_check_world_point(self.assets, post);
+            let mut point = self.engine.friend_check_world_point(self.tcx.assets, post);
             if !self
                 .engine
-                .friend_check_detects_point(self.owner, self.assets, point)
+                .friend_check_detects_point(self.owner, self.tcx.assets, point)
             {
                 point.z += 15.0;
                 assert!(
                     self.engine
-                        .friend_check_detects_point(self.owner, self.assets, point),
+                        .friend_check_detects_point(self.owner, self.tcx.assets, point),
                     "friend-check partner's post is not visible"
                 );
             }
@@ -245,7 +244,7 @@ impl AiOwnerCtx<'_> {
             let path = path_status(partner)
                 .3
                 .expect("friend-check partner has no authored path");
-            let waypoints = &self.assets.navigation.hiking_paths[path.get() as usize].waypoints;
+            let waypoints = &self.tcx.assets.navigation.hiking_paths[path.get() as usize].waypoints;
             let count = waypoints.len() as u16;
             let mut visible = false;
             for waypoint_index in 0..count {
@@ -254,17 +253,19 @@ impl AiOwnerCtx<'_> {
                     x: waypoint.x as f32,
                     y: waypoint.y as f32,
                     level: waypoint.level,
-                    sector: self.assets.navigation.hiking_waypoint_sector(
+                    sector: self.tcx.assets.navigation.hiking_waypoint_sector(
                         path.get() as usize,
                         waypoint_index as usize,
                         waypoint.sector,
                     ),
                 };
-                let mut point = self.engine.friend_check_world_point(self.assets, position);
+                let mut point = self
+                    .engine
+                    .friend_check_world_point(self.tcx.assets, position);
                 point.z += 15.0;
                 if self
                     .engine
-                    .friend_check_detects_point(self.owner, self.assets, point)
+                    .friend_check_detects_point(self.owner, self.tcx.assets, point)
                 {
                     visible = true;
                     break;
@@ -296,7 +297,7 @@ impl AiOwnerCtx<'_> {
         ai.delta_sorrow_level = 1000 / ai.number_of_looks as u16;
         self.friend_check_state(Substate::DefaultLookingSidewardsForCharly);
         let direction = if crate::sim_rng::u32(
-            self.sim,
+            self.tcx.sim,
             crate::sim_rng::RngSite::CheckForLookDirection,
             0..2,
         ) != 0
@@ -385,8 +386,7 @@ mod tests {
     fn detached_partner_path_is_visible_without_consuming_following_wait() {
         let (mut engine, assets, owner, target) = checking_pair();
         engine.initialize_ai_friend_check(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             0,
             225,
@@ -412,7 +412,13 @@ mod tests {
         let partner = engine.friend_check_owner_mut(target);
         partner.macro_in_progress = true;
         partner.detached_patrol_path_status.current_waypoint_index = 5;
-        engine.initialize_ai_friend_check(&crate::sim_rng::test_context(), &assets, owner, 0, 0, 5);
+        engine.initialize_ai_friend_check(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            owner,
+            0,
+            0,
+            5,
+        );
         let ai = engine.friend_check_owner_mut(owner);
         assert_eq!(ai.current_substate, Substate::DefaultInMacro);
         assert!(ai.macro_timer_is_running);
@@ -428,7 +434,13 @@ mod tests {
     #[test]
     fn pure_sync_registers_on_live_partner_before_waiting() {
         let (mut engine, assets, owner, target) = checking_pair();
-        engine.initialize_ai_friend_check(&crate::sim_rng::test_context(), &assets, owner, 0, 0, 5);
+        engine.initialize_ai_friend_check(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            owner,
+            0,
+            0,
+            5,
+        );
         assert_eq!(
             engine.friend_check_owner_mut(owner).current_substate,
             Substate::DefaultSynchronizing

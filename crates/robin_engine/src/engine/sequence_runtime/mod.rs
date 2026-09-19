@@ -11,6 +11,8 @@ mod instruct_commands;
 mod instruction_tests;
 mod owner_dispatch;
 mod owner_preflight;
+use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 use owner_preflight::PreparedOwnerInstruction;
 mod phase;
 mod script_sync;
@@ -62,19 +64,17 @@ impl EngineInner {
     /// owner-local native barrier use this same outcome handling.
     fn dispatch_prepared_move_instruction(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
         dest: crate::coordinates::MapPoint,
         move_action: crate::order::OrderType,
     ) {
-        match self.try_dispatch_move_path(sim, assets, owner, seq_id, elem_idx, dest, move_action) {
+        match self.try_dispatch_move_path(tcx, owner, elem_ref, dest, move_action) {
             MovePathOutcome::Success | MovePathOutcome::Pending => (),
             MovePathOutcome::ActorGone | MovePathOutcome::Refused => {
-                self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                self.element_impossible(tcx, active_scripts, elem_ref);
             }
             MovePathOutcome::Failed => {
                 // Path request insertion calls Stop + Wait when it
@@ -109,9 +109,12 @@ pub(in crate::engine) fn required_canonical_door_mut<'a>(
 
 fn required_unlock_door_id(
     element: Option<&crate::sequence::SequenceElement>,
-    seq_id: crate::sequence::SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
 ) -> crate::gate::DoorIndex {
+    let SequenceElementRef {
+        sequence_id: seq_id,
+        element_index: elem_idx,
+    } = elem_ref;
     let element = element.unwrap_or_else(|| {
         panic!("UnlockDoor sequence element {seq_id:?}/{elem_idx} disappeared during dispatch")
     });
@@ -148,13 +151,15 @@ fn read_sequence_map_point_property(
 impl EngineInner {
     pub(in crate::engine) fn dispatch_position_assertion(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
+        let SequenceElementRef {
+            sequence_id: seq_id,
+            element_index: elem_idx,
+        } = elem_ref;
         let movement = self
             .orders
             .sequence_manager
@@ -177,11 +182,9 @@ impl EngineInner {
                 "interrupting AssertPosition because its owner no longer exists"
             );
             self.element_interrupted(
-                sim,
-                assets,
+                tcx,
                 active_scripts,
-                seq_id,
-                elem_idx,
+                SequenceElementRef::new(seq_id, elem_idx),
                 crate::sequence::CascadeFlags::NEXT_LEVEL,
             );
             return;
@@ -206,15 +209,17 @@ impl EngineInner {
 
         if mismatches {
             self.element_interrupted(
-                sim,
-                assets,
+                tcx,
                 active_scripts,
-                seq_id,
-                elem_idx,
+                SequenceElementRef::new(seq_id, elem_idx),
                 crate::sequence::CascadeFlags::NEXT_LEVEL,
             );
         } else {
-            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_terminated(
+                tcx,
+                active_scripts,
+                SequenceElementRef::new(seq_id, elem_idx),
+            );
         }
         // Position assertion changes state directly during translation. That
         // synchronous condolence clears the actor's selected sequence element, so
@@ -233,13 +238,16 @@ impl EngineInner {
     pub(in crate::engine) fn authorize_and_reserve_lift_wait(
         &mut self,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) -> bool {
+        let SequenceElementRef {
+            sequence_id: seq_id,
+            element_index: elem_idx,
+        } = elem_ref;
         let element = self
             .orders
             .sequence_manager
-            .get_element(seq_id, elem_idx)
+            .get_element_at(elem_ref)
             .unwrap_or_else(|| {
                 panic!("WAIT_FREE_LIFT owner {owner:?} lost current element {seq_id:?}/{elem_idx}")
             });
@@ -359,16 +367,18 @@ impl EngineInner {
 impl EngineInner {
     pub(in crate::engine) fn dispatch_smalltalk_command(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
+        let SequenceElementRef {
+            sequence_id: seq_id,
+            element_index: elem_idx,
+        } = elem_ref;
         let antagonist = self.orders.sequence_manager
-            .get_element(seq_id, elem_idx)
+            .get_element_at(elem_ref)
             .unwrap_or_else(|| {
                 panic!(
                     "smalltalk owner {owner:?} lost element {seq_id:?}/{elem_idx} during translation"
@@ -423,7 +433,7 @@ impl EngineInner {
                 super::melee::sword_strike_from_animation(order.order_type).is_some()
             });
         if blocked {
-            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_terminated(tcx, active_scripts, elem_ref);
             return;
         }
 
@@ -439,9 +449,7 @@ impl EngineInner {
         // authored pointer even though their live facing uses the principal
         // opponent.
         order.antagonist = Some(antagonist);
-        self.orders
-            .sequence_manager
-            .push_order_on(seq_id, elem_idx, order);
+        self.orders.sequence_manager.push_order_at(elem_ref, order);
     }
 }
 
@@ -454,13 +462,11 @@ impl EngineInner {
 impl EngineInner {
     fn dispatch_bow_transition(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
         let owner_entity = self
             .world
@@ -480,14 +486,14 @@ impl EngineInner {
             // transitions-only mode disabled) command body afterward. That body
             // terminates redundant equip commands whenever the actor is
             // already aiming.
-            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_terminated(tcx, active_scripts, elem_ref);
             return;
         }
 
         let command_body_already_queued = self
             .orders
             .sequence_manager
-            .get_element(seq_id, elem_idx)
+            .get_element_at(elem_ref)
             .is_some_and(|element| {
                 element.orders.iter().any(|order| {
                     use crate::order::OrderType as OT;
@@ -524,7 +530,7 @@ impl EngineInner {
             let target_xy = self
                 .orders
                 .sequence_manager
-                .get_element(seq_id, elem_idx)
+                .get_element_at(elem_ref)
                 .and_then(|element| element.orders.back())
                 .map(|order| (order.target_x, order.target_y))
                 .unwrap_or((0.0, 0.0));
@@ -536,16 +542,14 @@ impl EngineInner {
                     if anonymous {
                         OrderEmitter::new(&mut self.orders.next_order_id).push(
                             &mut self.orders.sequence_manager,
-                            seq_id,
-                            elem_idx,
+                            elem_ref,
                             OrderType::TransitionEquipBowAnonymous,
                             (0.0, 0.0),
                             false,
                         );
                         OrderEmitter::new(&mut self.orders.next_order_id).push(
                             &mut self.orders.sequence_manager,
-                            seq_id,
-                            elem_idx,
+                            elem_ref,
                             OrderType::TransitionLoadingBowAnonymous,
                             (0.0, 0.0),
                             false,
@@ -553,55 +557,48 @@ impl EngineInner {
                     } else {
                         OrderEmitter::new(&mut self.orders.next_order_id).push(
                             &mut self.orders.sequence_manager,
-                            seq_id,
-                            elem_idx,
+                            elem_ref,
                             OrderType::TransitionEquipBow,
                             (0.0, 0.0),
                             false,
                         );
                         OrderEmitter::new(&mut self.orders.next_order_id).push(
                             &mut self.orders.sequence_manager,
-                            seq_id,
-                            elem_idx,
+                            elem_ref,
                             OrderType::TransitionLoadingBow,
                             (0.0, 0.0),
                             false,
                         );
                     }
                     self.sequence_bow_set_action_state_after_transition(
-                        seq_id,
-                        elem_idx,
+                        elem_ref,
                         ActionState::AimingWithBow,
                     );
                 }
                 Command::EquipBowDown => {
                     OrderEmitter::new(&mut self.orders.next_order_id).push(
                         &mut self.orders.sequence_manager,
-                        seq_id,
-                        elem_idx,
+                        elem_ref,
                         OrderType::TransitionEquipBow,
                         (0.0, 0.0),
                         false,
                     );
                     OrderEmitter::new(&mut self.orders.next_order_id).push(
                         &mut self.orders.sequence_manager,
-                        seq_id,
-                        elem_idx,
+                        elem_ref,
                         OrderType::TransitionLoadingBow,
                         (0.0, 0.0),
                         false,
                     );
                     OrderEmitter::new(&mut self.orders.next_order_id).push(
                         &mut self.orders.sequence_manager,
-                        seq_id,
-                        elem_idx,
+                        elem_ref,
                         OrderType::TransitionLoweringBowLeaningOut,
                         (0.0, 0.0),
                         false,
                     );
                     self.sequence_bow_set_action_state_after_transition(
-                        seq_id,
-                        elem_idx,
+                        elem_ref,
                         ActionState::AimingWithBowDown,
                     );
                 }
@@ -610,16 +607,14 @@ impl EngineInner {
                     if anonymous {
                         OrderEmitter::new(&mut self.orders.next_order_id).push(
                             &mut self.orders.sequence_manager,
-                            seq_id,
-                            elem_idx,
+                            elem_ref,
                             OrderType::TransitionUnloadBowAnonymous,
                             (x, y),
                             false,
                         );
                         OrderEmitter::new(&mut self.orders.next_order_id).push(
                             &mut self.orders.sequence_manager,
-                            seq_id,
-                            elem_idx,
+                            elem_ref,
                             OrderType::TransitionUnequipBowAnonymous,
                             (x, y),
                             false,
@@ -627,32 +622,28 @@ impl EngineInner {
                     } else {
                         OrderEmitter::new(&mut self.orders.next_order_id).push(
                             &mut self.orders.sequence_manager,
-                            seq_id,
-                            elem_idx,
+                            elem_ref,
                             OrderType::TransitionUnloadBow,
                             (x, y),
                             false,
                         );
                         OrderEmitter::new(&mut self.orders.next_order_id).push(
                             &mut self.orders.sequence_manager,
-                            seq_id,
-                            elem_idx,
+                            elem_ref,
                             OrderType::TransitionUnequipBow,
                             (x, y),
                             false,
                         );
                     }
                     self.sequence_bow_set_action_state_after_transition(
-                        seq_id,
-                        elem_idx,
+                        elem_ref,
                         ActionState::Waiting,
                     );
                 }
                 Command::RaiseBow => {
                     OrderEmitter::new(&mut self.orders.next_order_id).push(
                         &mut self.orders.sequence_manager,
-                        seq_id,
-                        elem_idx,
+                        elem_ref,
                         if anonymous {
                             OrderType::TransitionRaisingBowAnonymous
                         } else {
@@ -662,16 +653,14 @@ impl EngineInner {
                         false,
                     );
                     self.sequence_bow_set_action_state_after_transition(
-                        seq_id,
-                        elem_idx,
+                        elem_ref,
                         ActionState::AimingWithBowUp,
                     );
                 }
                 Command::LowerBow => {
                     OrderEmitter::new(&mut self.orders.next_order_id).push(
                         &mut self.orders.sequence_manager,
-                        seq_id,
-                        elem_idx,
+                        elem_ref,
                         if anonymous {
                             OrderType::TransitionLoweringBowAnonymous
                         } else {
@@ -681,8 +670,7 @@ impl EngineInner {
                         false,
                     );
                     self.sequence_bow_set_action_state_after_transition(
-                        seq_id,
-                        elem_idx,
+                        elem_ref,
                         ActionState::AimingWithBow,
                     );
                 }
@@ -692,14 +680,13 @@ impl EngineInner {
     }
     fn sequence_bow_set_action_state_after_transition(
         &mut self,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
         state: crate::element::ActionState,
     ) {
         let element = self
             .orders
             .sequence_manager
-            .get_element_mut(seq_id, elem_idx)
+            .get_element_at_mut(elem_ref)
             .expect("bow transition sequence element disappeared during dispatch");
         element.action_state_after_transition = state;
     }
@@ -746,14 +733,12 @@ impl EngineInner {
 impl EngineInner {
     fn dispatch_play_animation(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
         animation: Option<crate::order::OrderType>,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
         preserve_trigger_visual: bool,
     ) {
         let Some(animation) = animation else {
@@ -762,12 +747,12 @@ impl EngineInner {
                 cmd = ?command,
                 "PlayAnim*: missing/invalid AnimationId — terminating",
             );
-            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_terminated(tcx, active_scripts, elem_ref);
             return;
         };
 
         let Some(owner_entity) = self.world.entities.get(owner) else {
-            self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_impossible(tcx, active_scripts, elem_ref);
             return;
         };
         if owner_entity.is_human() {
@@ -781,9 +766,7 @@ impl EngineInner {
             let id = crate::order::alloc_order_id(&mut self.orders.next_order_id);
             let mut order = crate::order::Order::new(wrapper, 0.0, 0.0, id);
             order.compute_direction = false;
-            self.orders
-                .sequence_manager
-                .push_order_on(seq_id, elem_idx, order);
+            self.orders.sequence_manager.push_order_at(elem_ref, order);
 
             // This is an ordinary accepted actor-instruction boundary. Let the
             // outer dispatcher publish the actor order and project IN_PROGRESS after
@@ -794,7 +777,7 @@ impl EngineInner {
         }
 
         if !owner_entity.kind().is_fx_target() {
-            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_terminated(tcx, active_scripts, elem_ref);
             return;
         }
 
@@ -806,7 +789,7 @@ impl EngineInner {
             // control visible and pixel-pickable. This queued command executes
             // after ActivatedBy* returns and captures its reversible patches.
             // Complete normally so following mission messages still run once.
-            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_terminated(tcx, active_scripts, elem_ref);
             return;
         }
 
@@ -838,7 +821,7 @@ impl EngineInner {
                 "PlayAnim*: animation unmapped for this sprite profile — skipping",
             );
         }
-        self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+        self.element_terminated(tcx, active_scripts, elem_ref);
     }
 }
 
@@ -848,14 +831,12 @@ impl EngineInner {
 impl EngineInner {
     fn dispatch_sequence_target_interaction(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         owner_command: Command,
         target: Option<EntityId>,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
         // SEARCH is the one command in this group that does not belong to
         // a target. Human-actor search translation
@@ -879,14 +860,12 @@ impl EngineInner {
             let mut order = crate::order::Order::new(order_type, 0.0, 0.0, id);
             order.compute_direction = false;
             order.antagonist = target;
-            self.orders
-                .sequence_manager
-                .push_order_on(seq_id, elem_idx, order);
+            self.orders.sequence_manager.push_order_at(elem_ref, order);
 
             return;
         }
         let Some(target) = target else {
-            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_terminated(tcx, active_scripts, elem_ref);
             return;
         };
         if !self
@@ -895,7 +874,7 @@ impl EngineInner {
             .get(target)
             .is_some_and(|entity| entity.kind().is_fx_target())
         {
-            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_terminated(tcx, active_scripts, elem_ref);
             return;
         }
         let order_types: &[crate::order::OrderType] = match owner_command {
@@ -921,9 +900,7 @@ impl EngineInner {
             if order_type == crate::order::OrderType::HittingTarget || order_types.len() == 1 {
                 order.antagonist = Some(target);
             }
-            self.orders
-                .sequence_manager
-                .push_order_on(seq_id, elem_idx, order);
+            self.orders.sequence_manager.push_order_at(elem_ref, order);
         }
     }
 }
@@ -936,12 +913,11 @@ impl EngineInner {
         &mut self,
         owner: EntityId,
         command: Command,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
         match command {
             Command::Turn | Command::TurnFast => {
-                let element = self.orders.sequence_manager.get_element(seq_id, elem_idx);
+                let element = self.orders.sequence_manager.get_element_at(elem_ref);
                 let camera_point = element
                     .and_then(|element| {
                         read_sequence_map_point_property(
@@ -970,8 +946,7 @@ impl EngineInner {
                 }
                 OrderEmitter::new(&mut self.orders.next_order_id).push(
                     &mut self.orders.sequence_manager,
-                    seq_id,
-                    elem_idx,
+                    elem_ref,
                     crate::order::OrderType::Turning,
                     (0.0, 0.0),
                     false,
@@ -981,7 +956,7 @@ impl EngineInner {
                 let antagonist = self
                     .orders
                     .sequence_manager
-                    .get_element(seq_id, elem_idx)
+                    .get_element_at(elem_ref)
                     .and_then(|element| match &element.data {
                         crate::sequence::SequenceElementData::Interaction { antagonist } => {
                             *antagonist
@@ -1011,8 +986,7 @@ impl EngineInner {
                 }
                 OrderEmitter::new(&mut self.orders.next_order_id).push(
                     &mut self.orders.sequence_manager,
-                    seq_id,
-                    elem_idx,
+                    elem_ref,
                     crate::order::OrderType::Turning,
                     (0.0, 0.0),
                     false,
@@ -1021,8 +995,7 @@ impl EngineInner {
             Command::Freeze => {
                 OrderEmitter::new(&mut self.orders.next_order_id).push(
                     &mut self.orders.sequence_manager,
-                    seq_id,
-                    elem_idx,
+                    elem_ref,
                     crate::order::OrderType::Freezing,
                     (0.0, 0.0),
                     true,
@@ -1036,8 +1009,7 @@ impl EngineInner {
                 };
                 OrderEmitter::new(&mut self.orders.next_order_id).push(
                     &mut self.orders.sequence_manager,
-                    seq_id,
-                    elem_idx,
+                    elem_ref,
                     order_type,
                     (0.0, 0.0),
                     false,
@@ -1087,14 +1059,16 @@ fn base_wait_animation(
 impl EngineInner {
     pub(in crate::engine) fn dispatch_wait_command(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
+        let SequenceElementRef {
+            sequence_id: seq_id,
+            element_index: elem_idx,
+        } = elem_ref;
         let (
             is_soldier,
             is_pc,
@@ -1140,13 +1114,13 @@ impl EngineInner {
                             "Wait translation owner {owner:?} carrier at {seq_id:?}/{elem_idx}"
                         ),
                     );
-                    self.sequence_wait_is_entity_vip(assets, carrier)
+                    self.sequence_wait_is_entity_vip(tcx.assets, carrier)
                 }),
             )
         };
 
         let wait_element = self.orders.sequence_manager
-            .get_element(seq_id, elem_idx)
+            .get_element_at(elem_ref)
             .unwrap_or_else(|| {
                 panic!(
                     "Wait translation owner {owner:?} lost sequence element {seq_id:?}/{elem_idx} for {command:?}"
@@ -1370,7 +1344,7 @@ impl EngineInner {
             let timer = self
                 .orders
                 .sequence_manager
-                .get_element(seq_id, elem_idx)
+                .get_element_at(elem_ref)
                 .unwrap_or_else(|| {
                     panic!("WAIT_TIMER owner {owner:?} lost sequence element {seq_id:?}/{elem_idx}")
                 })
@@ -1420,15 +1394,11 @@ impl EngineInner {
                 is_unconscious,
                 "upright wait on a downed actor; collapsing"
             );
-            self.orders
-                .sequence_manager
-                .clear_orders_on(seq_id, elem_idx);
+            self.orders.sequence_manager.clear_orders_on(elem_ref);
             let id = crate::order::alloc_order_id(&mut self.orders.next_order_id);
             let mut order = crate::order::Order::new(falling, 0.0, 0.0, id);
             order.compute_direction = false;
-            self.orders
-                .sequence_manager
-                .push_order_on(seq_id, elem_idx, order);
+            self.orders.sequence_manager.push_order_at(elem_ref, order);
         }
 
         if human_wait_discards_preallocated_order {
@@ -1446,11 +1416,9 @@ impl EngineInner {
             // by the original game. This can refresh the corpse's
             // facing from a newly stamped placement destination.
             order.compute_direction = animation == crate::order::OrderType::BeingDeadFallenBack;
-            self.orders
-                .sequence_manager
-                .push_order_on(seq_id, elem_idx, order);
+            self.orders.sequence_manager.push_order_at(elem_ref, order);
         } else {
-            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_terminated(tcx, active_scripts, elem_ref);
         }
     }
 
@@ -1476,8 +1444,7 @@ impl EngineInner {
     pub(in crate::engine) fn dispatch_npc_state_command(
         &mut self,
         command: Command,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
         match command {
             Command::SitDown | Command::BeggarShowFace | Command::EnterLeisure => {
@@ -1491,8 +1458,7 @@ impl EngineInner {
                 };
                 OrderEmitter::new(&mut self.orders.next_order_id).push(
                     &mut self.orders.sequence_manager,
-                    seq_id,
-                    elem_idx,
+                    elem_ref,
                     order_type,
                     (0.0, 0.0),
                     false,
@@ -1507,16 +1473,14 @@ impl EngineInner {
                     Command::StartMenace => {
                         OrderEmitter::new(&mut self.orders.next_order_id).push(
                             &mut self.orders.sequence_manager,
-                            seq_id,
-                            elem_idx,
+                            elem_ref,
                             crate::order::OrderType::TransitionRaisingSword,
                             (0.0, 0.0),
                             false,
                         );
                         OrderEmitter::new(&mut self.orders.next_order_id).push(
                             &mut self.orders.sequence_manager,
-                            seq_id,
-                            elem_idx,
+                            elem_ref,
                             crate::order::OrderType::TransitionWaitingSwordMenacing,
                             (0.0, 0.0),
                             false,
@@ -1525,16 +1489,14 @@ impl EngineInner {
                     Command::StopMenace => {
                         OrderEmitter::new(&mut self.orders.next_order_id).push(
                             &mut self.orders.sequence_manager,
-                            seq_id,
-                            elem_idx,
+                            elem_ref,
                             crate::order::OrderType::TransitionMenacingWaitingSword,
                             (0.0, 0.0),
                             false,
                         );
                         OrderEmitter::new(&mut self.orders.next_order_id).push(
                             &mut self.orders.sequence_manager,
-                            seq_id,
-                            elem_idx,
+                            elem_ref,
                             crate::order::OrderType::TransitionLoweringSword,
                             (0.0, 0.0),
                             false,
@@ -1542,8 +1504,7 @@ impl EngineInner {
                     }
                     Command::StopSleep => OrderEmitter::new(&mut self.orders.next_order_id).push(
                         &mut self.orders.sequence_manager,
-                        seq_id,
-                        elem_idx,
+                        elem_ref,
                         crate::order::OrderType::TransitionSleepingWaitingUpright,
                         (0.0, 0.0),
                         false,
@@ -1551,8 +1512,7 @@ impl EngineInner {
                     Command::LowerBowLeanOut => OrderEmitter::new(&mut self.orders.next_order_id)
                         .push(
                             &mut self.orders.sequence_manager,
-                            seq_id,
-                            elem_idx,
+                            elem_ref,
                             crate::order::OrderType::TransitionLoweringBowLeaningOut,
                             (0.0, 0.0),
                             false,
@@ -1560,8 +1520,7 @@ impl EngineInner {
                     Command::RaiseBowLeanOut => OrderEmitter::new(&mut self.orders.next_order_id)
                         .push(
                             &mut self.orders.sequence_manager,
-                            seq_id,
-                            elem_idx,
+                            elem_ref,
                             crate::order::OrderType::TransitionRaisingBowLeaningOut,
                             (0.0, 0.0),
                             false,
@@ -1589,13 +1548,11 @@ impl EngineInner {
 impl EngineInner {
     pub(in crate::engine) fn dispatch_npc_attention_command(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
         match command {
             Command::LookLeft | Command::LookRight | Command::LeanOut => {
@@ -1619,14 +1576,13 @@ impl EngineInner {
                 if let Some(order_type) = order_type {
                     OrderEmitter::new(&mut self.orders.next_order_id).push(
                         &mut self.orders.sequence_manager,
-                        seq_id,
-                        elem_idx,
+                        elem_ref,
                         order_type,
                         (0.0, 0.0),
                         false,
                     );
                 } else {
-                    self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+                    self.element_terminated(tcx, active_scripts, elem_ref);
                 }
             }
             Command::EnterAttentiveMode
@@ -1635,21 +1591,20 @@ impl EngineInner {
                 let posture_after_transition = self
                     .orders
                     .sequence_manager
-                    .get_element(seq_id, elem_idx)
+                    .get_element_at(elem_ref)
                     .map(|element| element.posture_after_transition)
                     .unwrap_or_default();
                 if !self.sequence_dispatch_attentive(
                     owner,
                     command,
                     posture_after_transition,
-                    seq_id,
-                    elem_idx,
+                    elem_ref,
                 ) {
                     // Soldier translation terminates the element in this
                     // branch. That can replace the selected sequence element while
                     // Translation is still active, so actor instruction handling
                     // returns before publishing the actor order or IN_PROGRESS.
-                    self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+                    self.element_terminated(tcx, active_scripts, elem_ref);
                     return;
                 }
             }
@@ -1662,8 +1617,7 @@ impl EngineInner {
         owner: EntityId,
         command: Command,
         posture_after_transition: crate::element::Posture,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) -> bool {
         let target_attentive = command == Command::EnterAttentiveMode;
         let animation = match command {
@@ -1684,8 +1638,7 @@ impl EngineInner {
         if command == Command::LeaveAttentiveModeOfficer {
             OrderEmitter::new(&mut self.orders.next_order_id).push(
                 &mut self.orders.sequence_manager,
-                seq_id,
-                elem_idx,
+                elem_ref,
                 animation,
                 (0.0, 0.0),
                 false,
@@ -1721,8 +1674,7 @@ impl EngineInner {
         if can_play_transition {
             OrderEmitter::new(&mut self.orders.next_order_id).push(
                 &mut self.orders.sequence_manager,
-                seq_id,
-                elem_idx,
+                elem_ref,
                 animation,
                 (0.0, 0.0),
                 false,
@@ -1749,16 +1701,14 @@ impl EngineInner {
 impl EngineInner {
     pub(in crate::engine) fn dispatch_stealth_command(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
         let Some(entity) = self.world.entities.get(owner) else {
-            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_terminated(tcx, active_scripts, elem_ref);
             return;
         };
         let live_posture = entity.element_data().posture();
@@ -1776,7 +1726,7 @@ impl EngineInner {
         // the actor upright before the body executes.
 
         let Some(transition) = crate::stealth::stealth_transition(command) else {
-            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_terminated(tcx, active_scripts, elem_ref);
             return;
         };
 
@@ -1804,9 +1754,7 @@ impl EngineInner {
                 let id = crate::order::alloc_order_id(&mut self.orders.next_order_id);
                 let mut order = crate::order::Order::new(animation, 0.0, 0.0, id);
                 order.compute_direction = false;
-                self.orders
-                    .sequence_manager
-                    .push_order_on(seq_id, elem_idx, order);
+                self.orders.sequence_manager.push_order_at(elem_ref, order);
             }
 
             return;
@@ -1820,19 +1768,18 @@ impl EngineInner {
             let id = crate::order::alloc_order_id(&mut self.orders.next_order_id);
             let mut order = crate::order::Order::new(transition.animation, 0.0, 0.0, id);
             order.compute_direction = false;
-            self.orders
-                .sequence_manager
-                .push_order_on(seq_id, elem_idx, order);
+            self.orders.sequence_manager.push_order_at(elem_ref, order);
 
             return;
         }
 
         let hidden_phase = if transition.result_posture.is_hidden() {
             let Some(Entity::Pc(pc)) = self.world.entities.get(owner) else {
-                self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+                self.element_terminated(tcx, active_scripts, elem_ref);
                 return;
             };
-            let profile = assets
+            let profile = tcx
+                .assets
                 .profile_manager
                 .get_character(pc.pc.profile_index)
                 .unwrap_or_else(|| {
@@ -1860,9 +1807,7 @@ impl EngineInner {
         let id = crate::order::alloc_order_id(&mut self.orders.next_order_id);
         let mut order = crate::order::Order::new(transition.animation, 0.0, 0.0, id);
         order.compute_direction = false;
-        self.orders
-            .sequence_manager
-            .push_order_on(seq_id, elem_idx, order);
+        self.orders.sequence_manager.push_order_at(elem_ref, order);
 
         tracing::debug!(
             ?owner,
@@ -1916,7 +1861,7 @@ impl EngineInner {
             );
         }
 
-        self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+        self.element_terminated(tcx, active_scripts, elem_ref);
     }
 }
 
@@ -1928,14 +1873,12 @@ impl EngineInner {
 impl EngineInner {
     pub(in crate::engine) fn dispatch_direct_ability_command(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
         ammo_available: bool,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
         // Every arm either bails out through `element_impossible` /
         // `element_terminated`, or picks the begin function whose result the
@@ -1945,16 +1888,14 @@ impl EngineInner {
             &mut crate::sequence::SequenceManager,
             EntityId,
             EntityId,
-            crate::sequence::SequenceId,
-            usize,
+            SequenceElementRef,
             &mut u32,
         ) -> AbilityBeginResult;
         type UntargetedBegin = fn(
             &mut crate::entities::Entities,
             &mut crate::sequence::SequenceManager,
             EntityId,
-            crate::sequence::SequenceId,
-            usize,
+            SequenceElementRef,
             &mut u32,
         ) -> AbilityBeginResult;
         type GroundBegin = fn(
@@ -1962,8 +1903,7 @@ impl EngineInner {
             &mut crate::sequence::SequenceManager,
             EntityId,
             crate::coordinates::MapPoint,
-            crate::sequence::SequenceId,
-            usize,
+            SequenceElementRef,
             &mut u32,
         ) -> AbilityBeginResult;
 
@@ -1973,13 +1913,12 @@ impl EngineInner {
             | Command::HealCmd
             | Command::HitCmd
             | Command::StrangleCmd => {
-                let Some(target) = self.sequence_ability_interaction_target(seq_id, elem_idx)
-                else {
-                    self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                let Some(target) = self.sequence_ability_interaction_target(elem_ref) else {
+                    self.element_impossible(tcx, active_scripts, elem_ref);
                     return;
                 };
                 if command == Command::HealCmd && !ammo_available {
-                    self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                    self.element_impossible(tcx, active_scripts, elem_ref);
                     return;
                 }
                 let begin: TargetedBegin = match command {
@@ -1995,14 +1934,13 @@ impl EngineInner {
                     &mut self.orders.sequence_manager,
                     owner,
                     target,
-                    seq_id,
-                    elem_idx,
+                    elem_ref,
                     &mut self.orders.next_order_id,
                 )
             }
             Command::WhistleCmd | Command::EatCmd | Command::ReceivePurse => {
                 if command == Command::EatCmd && !ammo_available {
-                    self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+                    self.element_terminated(tcx, active_scripts, elem_ref);
                     return;
                 }
                 let begin: UntargetedBegin = match command {
@@ -2015,18 +1953,16 @@ impl EngineInner {
                     &mut self.world.entities,
                     &mut self.orders.sequence_manager,
                     owner,
-                    seq_id,
-                    elem_idx,
+                    elem_ref,
                     &mut self.orders.next_order_id,
                 )
             }
             Command::EnterListen => abilities::begin_listen(
                 &mut self.world.entities,
-                &assets.profile_manager,
+                &tcx.assets.profile_manager,
                 &mut self.orders.sequence_manager,
                 owner,
-                seq_id,
-                elem_idx,
+                elem_ref,
                 &mut self.orders.next_order_id,
             ),
             Command::LeaveListen => {
@@ -2034,7 +1970,7 @@ impl EngineInner {
                 // arbitration postpones LeaveListen until the complete
                 // entry/listening/exit chain has restored Waiting. Re-dispatch
                 // then fails MUST_BE_LISTENING and is Impossible.
-                self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                self.element_impossible(tcx, active_scripts, elem_ref);
                 return;
             }
             Command::ThrowNet | Command::ThrowPurse | Command::ThrowWaspNest => {
@@ -2056,14 +1992,14 @@ impl EngineInner {
                 let Some(target) = self
                     .orders
                     .sequence_manager
-                    .get_element(seq_id, elem_idx)
+                    .get_element_at(elem_ref)
                     .and_then(|element| read_sequence_map_point_property(element, field))
                 else {
-                    self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                    self.element_impossible(tcx, active_scripts, elem_ref);
                     return;
                 };
                 if !ammo_available {
-                    self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                    self.element_impossible(tcx, active_scripts, elem_ref);
                     return;
                 }
                 begin(
@@ -2071,20 +2007,19 @@ impl EngineInner {
                     &mut self.orders.sequence_manager,
                     owner,
                     target,
-                    seq_id,
-                    elem_idx,
+                    elem_ref,
                     &mut self.orders.next_order_id,
                 )
             }
             Command::ThrowApple | Command::ThrowStone => {
                 if !ammo_available {
-                    self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                    self.element_impossible(tcx, active_scripts, elem_ref);
                     return;
                 }
                 let ground_target = if command == Command::ThrowStone {
                     self.orders
                         .sequence_manager
-                        .get_element(seq_id, elem_idx)
+                        .get_element_at(elem_ref)
                         .and_then(|element| {
                             match element
                                 .get_property(crate::sequence::Field::NoiseDistractionTarget)
@@ -2107,14 +2042,12 @@ impl EngineInner {
                         &mut self.orders.sequence_manager,
                         owner,
                         target,
-                        seq_id,
-                        elem_idx,
+                        elem_ref,
                         &mut self.orders.next_order_id,
                     )
                 } else {
-                    let Some(target) = self.sequence_ability_interaction_target(seq_id, elem_idx)
-                    else {
-                        self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                    let Some(target) = self.sequence_ability_interaction_target(elem_ref) else {
+                        self.element_impossible(tcx, active_scripts, elem_ref);
                         return;
                     };
                     let begin: TargetedBegin = match command {
@@ -2127,25 +2060,23 @@ impl EngineInner {
                         &mut self.orders.sequence_manager,
                         owner,
                         target,
-                        seq_id,
-                        elem_idx,
+                        elem_ref,
                         &mut self.orders.next_order_id,
                     )
                 }
             }
             _ => unreachable!("non-direct ability passed to direct ability context"),
         };
-        self.sequence_ability_finish_begin(sim, assets, active_scripts, result, seq_id, elem_idx)
+        self.sequence_ability_finish_begin(tcx, active_scripts, result, elem_ref)
     }
 
     fn sequence_ability_interaction_target(
         &self,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) -> Option<EntityId> {
         self.orders
             .sequence_manager
-            .get_element(seq_id, elem_idx)
+            .get_element_at(elem_ref)
             .and_then(|element| match &element.data {
                 crate::sequence::SequenceElementData::Interaction { antagonist } => *antagonist,
                 _ => None,
@@ -2154,17 +2085,15 @@ impl EngineInner {
 
     fn sequence_ability_finish_begin(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         result: AbilityBeginResult,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
         match result {
             AbilityBeginResult::Started => {}
             AbilityBeginResult::Impossible => {
-                self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx)
+                self.element_impossible(tcx, active_scripts, elem_ref)
             }
         }
     }
@@ -2176,27 +2105,32 @@ impl EngineInner {
 impl EngineInner {
     fn dispatch_recovery_command(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
+        let SequenceElementRef {
+            sequence_id: seq_id,
+            element_index: elem_idx,
+        } = elem_ref;
         use crate::order::OrderType;
 
         match command {
             Command::Fainted => {
                 OrderEmitter::new(&mut self.orders.next_order_id).push(
                     &mut self.orders.sequence_manager,
-                    seq_id,
-                    elem_idx,
+                    SequenceElementRef::new(seq_id, elem_idx),
                     OrderType::BeingUnconsciousSword,
                     (0.0, 0.0),
                     true,
                 );
-                self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+                self.element_terminated(
+                    tcx,
+                    active_scripts,
+                    SequenceElementRef::new(seq_id, elem_idx),
+                );
             }
             Command::Recover | Command::StandUp => {
                 let already_queued = self
@@ -2233,8 +2167,7 @@ impl EngineInner {
                         });
                     OrderEmitter::new(&mut self.orders.next_order_id).push(
                         &mut self.orders.sequence_manager,
-                        seq_id,
-                        elem_idx,
+                        SequenceElementRef::new(seq_id, elem_idx),
                         standing_up,
                         (0.0, 0.0),
                         true,
@@ -2254,7 +2187,11 @@ impl EngineInner {
                     });
                 let Some(target) = target else {
                     tracing::warn!(?owner, ?seq_id, elem_idx, "WakeUp element has no target");
-                    self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                    self.element_impossible(
+                        tcx,
+                        active_scripts,
+                        SequenceElementRef::new(seq_id, elem_idx),
+                    );
                     return;
                 };
                 let Some(target_position) = self
@@ -2270,7 +2207,11 @@ impl EngineInner {
                         elem_idx,
                         "WakeUp target is missing"
                     );
-                    self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                    self.element_impossible(
+                        tcx,
+                        active_scripts,
+                        SequenceElementRef::new(seq_id, elem_idx),
+                    );
                     return;
                 };
                 let owner_position = self
@@ -2315,13 +2256,16 @@ impl EngineInner {
             Command::Knee => {
                 OrderEmitter::new(&mut self.orders.next_order_id).push(
                     &mut self.orders.sequence_manager,
-                    seq_id,
-                    elem_idx,
+                    SequenceElementRef::new(seq_id, elem_idx),
                     OrderType::FallingBackSword,
                     (0.0, 0.0),
                     true,
                 );
-                self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+                self.element_terminated(
+                    tcx,
+                    active_scripts,
+                    SequenceElementRef::new(seq_id, elem_idx),
+                );
             }
             _ => unreachable!("non-recovery command passed to recovery context"),
         }
@@ -2336,14 +2280,13 @@ impl EngineInner {
         &mut self,
         owner: EntityId,
         command: Command,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
         let owner_is_pc = self.world.entities.get(owner).is_some_and(Entity::is_pc);
         let antagonist = self
             .orders
             .sequence_manager
-            .get_element(seq_id, elem_idx)
+            .get_element_at(elem_ref)
             .and_then(|element| match element.data {
                 crate::sequence::SequenceElementData::Interaction { antagonist } => antagonist,
                 _ => None,
@@ -2389,7 +2332,7 @@ impl EngineInner {
         let posture_after_transition = self
             .orders
             .sequence_manager
-            .get_element(seq_id, elem_idx)
+            .get_element_at(elem_ref)
             .map(|element| element.posture_after_transition)
             .unwrap_or(crate::element::Posture::Undefined);
         let order_type = match command {
@@ -2408,9 +2351,7 @@ impl EngineInner {
         if let Some(antagonist) = antagonist {
             order = order.with_antagonist(antagonist);
         }
-        self.orders
-            .sequence_manager
-            .push_order_on(seq_id, elem_idx, order);
+        self.orders.sequence_manager.push_order_at(elem_ref, order);
     }
 }
 
@@ -2419,13 +2360,11 @@ impl EngineInner {
 impl EngineInner {
     fn dispatch_mobile_immediate(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
         let mobile_index = self
             .world
@@ -2459,7 +2398,7 @@ impl EngineInner {
                 .element_data_mut()
                 .active = active;
         }
-        self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+        self.element_terminated(tcx, active_scripts, elem_ref);
     }
 }
 
@@ -2469,13 +2408,11 @@ impl EngineInner {
 impl EngineInner {
     fn dispatch_sprite_immediate(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
         match command {
             Command::Unblip => {
@@ -2487,13 +2424,11 @@ impl EngineInner {
             }
             Command::ReplaceAnim => {
                 let old = self.sequence_sprite_animation_property(
-                    seq_id,
-                    elem_idx,
+                    elem_ref,
                     crate::sequence::Field::OldAnimation,
                 );
                 let new = self.sequence_sprite_animation_property(
-                    seq_id,
-                    elem_idx,
+                    elem_ref,
                     crate::sequence::Field::NewAnimation,
                 );
                 if let (Some(old), Some(new), Some(entity)) =
@@ -2504,8 +2439,7 @@ impl EngineInner {
             }
             Command::RestoreAnim => {
                 let old = self.sequence_sprite_animation_property(
-                    seq_id,
-                    elem_idx,
+                    elem_ref,
                     crate::sequence::Field::OldAnimation,
                 );
                 if let (Some(old), Some(entity)) = (old, self.world.entities.get_mut(owner)) {
@@ -2514,18 +2448,17 @@ impl EngineInner {
             }
             _ => unreachable!("non-sprite command passed to sprite context"),
         }
-        self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+        self.element_terminated(tcx, active_scripts, elem_ref);
     }
 
     fn sequence_sprite_animation_property(
         &self,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
         field: crate::sequence::Field,
     ) -> Option<crate::order::OrderType> {
         self.orders
             .sequence_manager
-            .get_element(seq_id, elem_idx)
+            .get_element_at(elem_ref)
             .and_then(|element| element.get_property(field))
             .and_then(|value| match value {
                 crate::sequence::FieldValue::Integer(value) => {
@@ -2537,15 +2470,11 @@ impl EngineInner {
 }
 
 impl EngineInner {
-    fn timer_immediate_entry(
-        &self,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
-    ) -> TimerEntry {
+    fn timer_immediate_entry(&self, elem_ref: SequenceElementRef) -> TimerEntry {
         let remaining = self
             .orders
             .sequence_manager
-            .get_element(seq_id, elem_idx)
+            .get_element_at(elem_ref)
             .and_then(|element| element.get_property(crate::sequence::Field::Timer))
             .and_then(|value| match value {
                 // The timer is a signed integer in the original game; the
@@ -2556,7 +2485,10 @@ impl EngineInner {
             .unwrap_or(0);
         TimerEntry {
             remaining,
-            element_ref: crate::sequence::SequenceElementRef::new(seq_id, elem_idx),
+            element_ref: crate::sequence::SequenceElementRef::new(
+                elem_ref.sequence_id,
+                elem_ref.element_index,
+            ),
         }
     }
 }
@@ -2567,19 +2499,17 @@ impl EngineInner {
 impl EngineInner {
     fn dispatch_presentation_command(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         command: Command,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
         match command {
             Command::DisplayMap => {
                 let show = self
                     .orders
                     .sequence_manager
-                    .get_element(seq_id, elem_idx)
+                    .get_element_at(elem_ref)
                     .and_then(|element| element.get_property(crate::sequence::Field::MapDisplay))
                     .and_then(|value| match value {
                         crate::sequence::FieldValue::Bool(value) => Some(*value),
@@ -2597,39 +2527,36 @@ impl EngineInner {
             Command::PlayDialog => {
                 if !self.control.fast_forward {
                     let id = self.sequence_presentation_integer_property(
-                        seq_id,
-                        elem_idx,
+                        elem_ref,
                         crate::sequence::Field::DialogId,
                     );
                     self.feedback.pending_side_effects.extend_dialogues([id]);
                 }
-                self.sequence_presentation_reset_input(sim, assets);
+                self.sequence_presentation_reset_input(tcx);
             }
             Command::DisplayPopupText => {
                 if !self.control.fast_forward {
                     let id = self.sequence_presentation_integer_property(
-                        seq_id,
-                        elem_idx,
+                        elem_ref,
                         crate::sequence::Field::PopupTextId,
                     );
                     self.feedback.pending_side_effects.extend_popup_texts([id]);
                 }
-                self.sequence_presentation_reset_input(sim, assets);
+                self.sequence_presentation_reset_input(tcx);
             }
             _ => unreachable!("non-presentation command passed to presentation context"),
         }
-        self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+        self.element_terminated(tcx, active_scripts, elem_ref);
     }
 
     fn sequence_presentation_integer_property(
         &self,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
         field: crate::sequence::Field,
     ) -> i32 {
         self.orders
             .sequence_manager
-            .get_element(seq_id, elem_idx)
+            .get_element_at(elem_ref)
             .and_then(|element| element.get_property(field))
             .and_then(|value| match value {
                 crate::sequence::FieldValue::Integer(value) => Some(*value as i32),
@@ -2638,14 +2565,9 @@ impl EngineInner {
             .unwrap_or(0)
     }
 
-    fn sequence_presentation_reset_input(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
+    fn sequence_presentation_reset_input(&mut self, tcx: TickCtx<'_>) {
         self.forward_message(
-            sim,
-            assets,
+            tcx,
             Message::new(MessageType::Simple(SimpleMessage::ResetInput)),
         );
     }
@@ -2654,16 +2576,14 @@ impl EngineInner {
 impl EngineInner {
     fn dispatch_freeze_immediate(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<super::script::ActiveScriptCall>,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
         let frozen = self
             .orders
             .sequence_manager
-            .get_element(seq_id, elem_idx)
+            .get_element_at(elem_ref)
             .and_then(|element| element.get_property(crate::sequence::Field::Freeze))
             .and_then(|value| match value {
                 crate::sequence::FieldValue::Bool(value) => Some(*value),
@@ -2671,7 +2591,7 @@ impl EngineInner {
             })
             .unwrap_or(false);
         self.control.set_actors_frozen(frozen);
-        self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+        self.element_terminated(tcx, active_scripts, elem_ref);
     }
 }
 
@@ -2680,14 +2600,12 @@ impl EngineInner {
 impl EngineInner {
     fn dispatch_availability_immediate(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         command: Command,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
-        let element = self.orders.sequence_manager.get_element(seq_id, elem_idx);
+        let element = self.orders.sequence_manager.get_element_at(elem_ref);
         let owner = element.and_then(|element| element.owner);
         match command {
             Command::CharacterAvailable => {
@@ -2713,7 +2631,7 @@ impl EngineInner {
                     } else {
                         crate::messenger::PcMessage::DisableCharacter
                     };
-                    self.forward_message(sim, assets, Message::pc(message, Some(owner)));
+                    self.forward_message(tcx, Message::pc(message, Some(owner)));
                 }
             }
             Command::ActionAvailable => {
@@ -2740,15 +2658,14 @@ impl EngineInner {
                         crate::messenger::PcMessage::DisableAction
                     };
                     self.forward_message(
-                        sim,
-                        assets,
+                        tcx,
                         Message::pc_with_value(message, Some(owner), action_id),
                     );
                 }
             }
             _ => unreachable!("non-availability command passed to availability context"),
         }
-        self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+        self.element_terminated(tcx, active_scripts, elem_ref);
     }
 }
 
@@ -2908,13 +2825,11 @@ mod sequence_phase_context_tests {
         engine.orders.sequence_manager.start_sequence_level(seq_id);
 
         engine.dispatch_bow_transition(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::default(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
             &mut Vec::new(),
             owner,
             Command::EquipBow,
-            seq_id,
-            0,
+            SequenceElementRef::new(seq_id, 0),
         );
 
         let element = engine
@@ -2957,7 +2872,11 @@ mod sequence_phase_context_tests {
             );
             engine.orders.sequence_manager.start_sequence_level(seq_id);
 
-            engine.dispatch_object_interaction_command(owner, command, seq_id, 0);
+            engine.dispatch_object_interaction_command(
+                owner,
+                command,
+                SequenceElementRef::new(seq_id, 0),
+            );
 
             assert_eq!(
                 engine
@@ -2999,7 +2918,11 @@ mod sequence_phase_context_tests {
             ),
         );
         engine.orders.sequence_manager.start_sequence_level(seq_id);
-        engine.dispatch_object_interaction_command(owner, Command::Take, seq_id, 0);
+        engine.dispatch_object_interaction_command(
+            owner,
+            Command::Take,
+            SequenceElementRef::new(seq_id, 0),
+        );
         assert_eq!(
             engine
                 .get_entity(owner)
@@ -3043,13 +2966,11 @@ mod sequence_phase_context_tests {
             .start_sequence_level(sequence);
 
         engine.dispatch_wait_command(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::default(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
             &mut Vec::new(),
             owner,
             Command::Wait,
-            sequence,
-            0,
+            SequenceElementRef::new(sequence, 0),
         );
 
         assert_eq!(
@@ -3087,13 +3008,11 @@ mod sequence_phase_context_tests {
             .start_sequence_level(sequence);
 
         engine.dispatch_wait_command(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::default(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
             &mut Vec::new(),
             owner,
             Command::Wait,
-            sequence,
-            0,
+            SequenceElementRef::new(sequence, 0),
         );
 
         let order = engine
@@ -3145,13 +3064,11 @@ mod sequence_phase_context_tests {
             .start_sequence_level(sequence);
 
         engine.dispatch_wait_command(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::default(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
             &mut Vec::new(),
             owner,
             Command::Wait,
-            sequence,
-            0,
+            SequenceElementRef::new(sequence, 0),
         );
 
         let order = engine
@@ -3242,12 +3159,10 @@ mod sequence_phase_context_tests {
             .start_sequence_level(sequence);
 
         engine.dispatch_availability_immediate(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::default(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
             &mut Vec::new(),
             Command::CharacterAvailable,
-            sequence,
-            0,
+            SequenceElementRef::new(sequence, 0),
         );
 
         let pc = engine
@@ -3573,13 +3488,11 @@ mod sequence_phase_context_tests {
 
         let follow_up = engine
             .dispatch_shield_command(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 &mut Vec::new(),
                 owner,
                 Command::RaiseShield,
-                raise_seq,
-                0,
+                SequenceElementRef::new(raise_seq, 0),
             )
             .expect("already-shielding protector gets an immediate Seek");
         match &follow_up.data {
@@ -3656,7 +3569,10 @@ mod canonical_door_invariant_tests {
             crate::element::Command::UnlockDoor,
             None,
         );
-        required_unlock_door_id(Some(&element), crate::sequence::SequenceId(3), 0);
+        required_unlock_door_id(
+            Some(&element),
+            SequenceElementRef::new(crate::sequence::SequenceId(3), 0),
+        );
     }
 }
 
@@ -3683,8 +3599,7 @@ impl<'a> OrderEmitter<'a> {
     pub(in crate::engine) fn push(
         &mut self,
         sequence_manager: &mut crate::sequence::SequenceManager,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
         order_type: crate::order::OrderType,
         target: (f32, f32),
         compute_direction: bool,
@@ -3692,6 +3607,6 @@ impl<'a> OrderEmitter<'a> {
         let id = self.alloc_id();
         let mut order = crate::order::Order::new(order_type, target.0, target.1, id);
         order.compute_direction = compute_direction;
-        sequence_manager.push_order_on(seq_id, elem_idx, order);
+        sequence_manager.push_order_at(elem_ref, order);
     }
 }

@@ -3,30 +3,23 @@
 use super::*;
 use crate::ai::{AiController, AiState, DutyFlags, Remark, SpeechFlags, Substate};
 use crate::ai_enemy::EnemyAi;
-use crate::sim_rng::SimulationContext;
+use crate::engine::TickCtx;
 
 /// The engine plus the immutable tick inputs and the actor whose AI is
 /// currently executing.
 pub(in crate::engine) struct AiOwnerCtx<'a> {
     pub(in crate::engine) engine: &'a mut EngineInner,
-    pub(in crate::engine) sim: &'a SimulationContext,
-    pub(in crate::engine) assets: &'a LevelAssets,
+    pub(in crate::engine) tcx: TickCtx<'a>,
     pub(in crate::engine) owner: EntityId,
 }
 
 impl<'a> AiOwnerCtx<'a> {
     pub(in crate::engine) fn new(
         engine: &'a mut EngineInner,
-        sim: &'a SimulationContext,
-        assets: &'a LevelAssets,
+        tcx: TickCtx<'a>,
         owner: EntityId,
     ) -> Self {
-        Self {
-            engine,
-            sim,
-            assets,
-            owner,
-        }
+        Self { engine, tcx, owner }
     }
 
     pub(super) fn controller(&self) -> &AiController {
@@ -47,7 +40,7 @@ impl<'a> AiOwnerCtx<'a> {
 
     pub(super) fn state(&mut self, state: AiState, substate: Substate) {
         self.engine
-            .duty_set_state(self.sim, self.assets, self.owner, state, substate);
+            .duty_set_state(self.tcx, self.owner, state, substate);
     }
 
     pub(super) fn seek_state(&mut self, substate: Substate) {
@@ -60,12 +53,8 @@ impl<'a> AiOwnerCtx<'a> {
     }
 
     pub(super) fn duty(&mut self) {
-        self.engine.execute_ai_return_to_duty(
-            self.sim,
-            self.assets,
-            self.owner,
-            DutyFlags::empty(),
-        );
+        self.engine
+            .execute_ai_return_to_duty(self.tcx, self.owner, DutyFlags::empty());
     }
 
     /// The antagonist the owner is currently dealing with.
@@ -81,8 +70,7 @@ impl<'a> AiOwnerCtx<'a> {
 
     pub(super) fn say(&mut self, remark: Remark, flags: SpeechFlags) {
         self.engine.execute_ai_speech(
-            self.sim,
-            self.assets,
+            self.tcx,
             self.owner,
             crate::ai::AiSpeechAttempt {
                 remark,

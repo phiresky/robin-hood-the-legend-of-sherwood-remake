@@ -55,7 +55,7 @@ impl AiOwnerCtx<'_> {
                     .ai(self.owner, "arrow reaction broadcast")
                     .seek_position;
                 self.engine
-                    .execute_ai_look_there(self.sim, self.assets, self.owner, position, 100);
+                    .execute_ai_look_there(self.tcx, self.owner, position, 100);
                 self.engine.remaining_search_timer(self.owner, 200);
             }
             (SeekingArrow, EventTimer | EventReachPoint) => {
@@ -63,7 +63,7 @@ impl AiOwnerCtx<'_> {
                 if self
                     .engine
                     .enemy_ai(self.owner, "arrow search rank")
-                    .get_rank(&self.assets.profile_manager)
+                    .get_rank(&self.tcx.assets.profile_manager)
                     == ProfileRank::Soldier
                 {
                     flags |= SeekFlags::LOOK_FOR_HELP_AFTER;
@@ -134,7 +134,7 @@ impl AiOwnerCtx<'_> {
                 };
                 self.duty_set_state(AiState::Seeking, next);
                 let direction = if crate::sim_rng::u32(
-                    self.sim,
+                    self.tcx.sim,
                     crate::sim_rng::RngSite::OfficerSearchLook,
                     0..2,
                 ) != 0

@@ -3,6 +3,7 @@ use crate::ai::{AiEntityHandle, AiLockFlags, Stimulus, StimulusType};
 use crate::element::{
     ActionState, ActorData, ActorSoldier, ElementData, ElementKind, HumanData, NpcData, SoldierData,
 };
+use crate::engine::TickCtx;
 use crate::order::{Order, OrderType};
 use crate::sequence::{CascadeFlags, SequenceElement};
 
@@ -55,8 +56,7 @@ fn selected_terminal_card_precedes_frozen_actors_derived_tail() {
     engine.t_element_interrupted(&assets, sequence, 0, CascadeFlags::NEXT_LEVEL);
 
     engine.tick_actor_owner_envelopes_with_test_owner_hook(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         |engine, actor| {
             if actor == owner {
                 engine

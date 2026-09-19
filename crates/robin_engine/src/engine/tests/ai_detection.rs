@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 
 fn mixed_enemy_fifo_fixture(
     pc_first: bool,
@@ -154,7 +155,7 @@ fn make_blipped_non_bonus(kind: crate::element::ElementKind) -> Entity {
 
 fn run_owner_envelopes(engine: &mut EngineInner, assets: &LevelAssets) {
     crate::sim_rng::with_seed(0xB0A0_0013, |sim| {
-        engine.tick_actor_owner_envelopes(sim, assets);
+        engine.tick_actor_owner_envelopes(TickCtx::new(sim, assets));
     });
 }
 

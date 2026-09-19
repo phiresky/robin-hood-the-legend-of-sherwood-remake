@@ -3,6 +3,7 @@
 use super::*;
 use crate::coordinates::{GroundPoint, MapPoint};
 use crate::element::{Entity, EntityId};
+use crate::engine::TickCtx;
 
 // ─── Mouse cursor constants ─────────────────────────────────────
 
@@ -2916,8 +2917,7 @@ impl EngineInner {
     /// state always pairs with the aim animation.
     pub(crate) fn perform_orientation(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         mouse_map: crate::coordinates::MapPoint,
     ) {
         use crate::profiles::Action;
@@ -2950,7 +2950,7 @@ impl EngineInner {
         match selected_action {
             Action::Bow => {
                 let focused = self.find_focusable_entity(
-                    assets,
+                    tcx.assets,
                     &draw_order.as_ref().unwrap().ids,
                     mouse_map,
                     crate::element::Focus::Bow,
@@ -2976,10 +2976,10 @@ impl EngineInner {
                     None => self.world.fast_grid.convert_2d_to_3d(
                         mouse_map,
                         SIGHTOBSTACLE_MOUSE,
-                        self.sight_obstacles(assets),
+                        self.sight_obstacles(tcx.assets),
                     ),
                 };
-                self.turn_selected_pcs_in_bow_aim(sim, assets, target_3d);
+                self.turn_selected_pcs_in_bow_aim(tcx, target_3d);
             }
             Action::Apple | Action::Stone | Action::Net | Action::WaspNest | Action::Purse => {
                 let focus = match selected_action {
@@ -2987,7 +2987,7 @@ impl EngineInner {
                     _ => crate::element::Focus::Stone,
                 };
                 let focused = self.find_focusable_entity(
-                    assets,
+                    tcx.assets,
                     &draw_order.as_ref().unwrap().ids,
                     mouse_map,
                     focus,
@@ -2998,7 +2998,7 @@ impl EngineInner {
                         self.world.fast_grid.convert_2d_to_3d(
                             mouse_map,
                             SIGHTOBSTACLE_PROJECTION_AREA,
-                            self.sight_obstacles(assets),
+                            self.sight_obstacles(tcx.assets),
                         )
                     });
                 let ground_pt = GroundPoint {
@@ -3034,19 +3034,17 @@ impl EngineInner {
     ///   already rejects it.
     fn turn_selected_pcs_in_bow_aim(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         target_3d: crate::coordinates::WorldPoint3D,
     ) {
         for pc_id in self.players.seats[0].selection.clone() {
-            self.turn_pc_in_bow_aim(sim, assets, pc_id, target_3d, false);
+            self.turn_pc_in_bow_aim(tcx, pc_id, target_3d, false);
         }
     }
 
     fn turn_pc_in_bow_aim(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         pc_id: EntityId,
         target_3d: crate::coordinates::WorldPoint3D,
         gate_was_recorded_passed: bool,
@@ -3106,7 +3104,7 @@ impl EngineInner {
         }
 
         let (bow_status, shoot_mode) =
-            self.can_shoot_with_bow_at_point(assets, pc_id, target_3d, false);
+            self.can_shoot_with_bow_at_point(tcx.assets, pc_id, target_3d, false);
         let command = bow_aim_height_command(action_state, bow_status, shoot_mode, current_anim);
         tracing::trace!(
             ?pc_id,
@@ -3120,7 +3118,7 @@ impl EngineInner {
         );
         if let Some(cmd) = command {
             let elem = crate::sequence::SequenceElement::new(1, cmd, Some(pc_id));
-            self.launch_element(sim, assets, elem);
+            self.launch_element(tcx, elem);
         }
     }
 
@@ -3270,8 +3268,7 @@ impl EngineInner {
 
     pub(crate) fn perform_resolved_orientation(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         pc_id: EntityId,
         action: crate::profiles::Action,
         mouse_map: MapPoint,
@@ -3283,7 +3280,7 @@ impl EngineInner {
             // Original records this command only after the live orientation
             // gates succeed. Apply the recorded post-gate operation even if
             // Rust is still on the pre-nested-refresh animation this frame.
-            Action::Bow => self.turn_pc_in_bow_aim(sim, assets, pc_id, target, true),
+            Action::Bow => self.turn_pc_in_bow_aim(tcx, pc_id, target, true),
             Action::Apple | Action::Stone | Action::Net | Action::WaspNest | Action::Purse => {
                 self.turn_pc_throw(
                     pc_id,

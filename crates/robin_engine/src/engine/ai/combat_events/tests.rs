@@ -1,6 +1,7 @@
 use super::*;
 use crate::coordinates::{MapPoint, WorldPoint3D};
 use crate::element::Command;
+use crate::engine::TickCtx;
 use crate::order::OrderType;
 
 #[test]
@@ -66,8 +67,7 @@ fn after_combat_injury_speaks_once_only_after_a_rejected_strike_proposal() {
         engine.control.rng = SimulationRng::with_original_replay(vec![99, 99, roll, 37]);
         engine.with_simulation_context(|engine, sim| {
             engine.execute_ai_callback(
-                sim,
-                &assets,
+                TickCtx::new(sim, &assets),
                 owner,
                 &Stimulus::new(StimulusType::EventAfterCombatInjury),
             );
@@ -135,8 +135,7 @@ fn enemy_near_retargets_only_the_four_observing_substates() {
         ai.base.primary_target = None;
         ai.combat_trainer = true;
         let handled = engine.execute_ai_combat_unexpected_event(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             &crate::ai::Stimulus::with_human(StimulusType::EventEnemyNear, target.index()),
         );
@@ -182,7 +181,10 @@ fn live_swordfight_entry_clears_reciprocal_neighbours() {
         Some(crate::ai::AiEntityHandle::new(owner.index()));
     engine.combat_event_ai_mut(right).left_combat_neighbour =
         Some(crate::ai::AiEntityHandle::new(owner.index()));
-    engine.execute_ai_begin_swordfight(&crate::sim_rng::test_context(), &assets, owner);
+    engine.execute_ai_begin_swordfight(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        owner,
+    );
     assert_eq!(engine.combat_event_ai(owner).left_combat_neighbour, None);
     assert_eq!(engine.combat_event_ai(owner).right_combat_neighbour, None);
     assert_eq!(engine.combat_event_ai(left).right_combat_neighbour, None);
@@ -210,7 +212,10 @@ fn live_swordfight_entry_retains_selected_jump_line() {
             .push(line);
     }
     engine.combat_event_ai_mut(owner).my_line_jump = Some(1);
-    engine.execute_ai_begin_swordfight(&crate::sim_rng::test_context(), &assets, owner);
+    engine.execute_ai_begin_swordfight(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        owner,
+    );
     assert_eq!(engine.combat_event_ai(owner).my_line_jump, Some(1));
     assert!(engine.orders.sequence_manager.sequences_iter().flat_map(|s| s.elements.iter()).any(|element| {
         element.owner == Some(owner) && element.command == Command::EnterSwordfight
@@ -241,12 +246,9 @@ fn place(engine: &mut EngineInner, id: EntityId, x: f32, y: f32, z: f32) {
 }
 
 fn event(engine: &mut EngineInner, assets: &LevelAssets, owner: EntityId, event: StimulusType) {
-    let handled = engine.execute_ai_combat_expected_event(
-        &crate::sim_rng::test_context(),
-        assets,
-        owner,
-        event,
-    );
+    let handled = engine
+        .ai_ctx(&crate::sim_rng::test_context(), assets, owner)
+        .execute_ai_combat_expected_event(event);
     assert!(handled);
 }
 
@@ -472,12 +474,9 @@ fn archer_path_wait_returns_to_duty_only_on_timer() {
         Substate::AttackingArcherWaitOnArcheryPathBending,
     ] {
         let (mut engine, assets, owner, _) = fixture(state);
-        let handled = engine.execute_ai_combat_expected_event(
-            &crate::sim_rng::test_context(),
-            &assets,
-            owner,
-            StimulusType::EventDone,
-        );
+        let handled = engine
+            .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+            .execute_ai_combat_expected_event(StimulusType::EventDone);
         assert!(!handled);
         assert_eq!(engine.combat_event_ai(owner).base.current_substate, state);
         event(&mut engine, &assets, owner, StimulusType::EventTimer);
@@ -502,12 +501,9 @@ fn bow_cover_arrival_faces_target_with_truncated_elevation() {
     );
     engine.face(owner, 3);
     engine.set_action_state_of(owner, crate::element::ActionState::Moving);
-    let handled = engine.execute_ai_archery_expected_event(
-        &crate::sim_rng::test_context(),
-        &assets,
-        owner,
-        StimulusType::EventReachPoint,
-    );
+    let handled = engine
+        .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+        .execute_ai_archery_expected_event(StimulusType::EventReachPoint);
     assert!(handled);
     assert!(
         engine

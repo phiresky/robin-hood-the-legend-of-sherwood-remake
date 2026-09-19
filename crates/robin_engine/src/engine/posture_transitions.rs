@@ -31,7 +31,9 @@
 //!    `GoalShape::Line` / line-movement sequence equivalents.
 
 use crate::element::{ActionState, Command, EntityId, Posture};
+use crate::engine::TickCtx;
 use crate::order::OrderType;
+use crate::sequence::SequenceElementRef;
 use crate::sequence::{MoveFlags, SequenceElement, SequenceElementData, SequenceId, SequenceState};
 
 use super::EngineInner;
@@ -122,12 +124,7 @@ impl EngineInner {
     /// Only when the active element is itself a movement do we skip
     /// the `CROUCH_UP` fallback and run the path-rewrite tail
     /// (`after_make_rewrite`) instead.
-    pub(crate) fn actor_make_upright(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
-        entity: EntityId,
-    ) {
+    pub(crate) fn actor_make_upright(&mut self, tcx: TickCtx<'_>, entity: EntityId) {
         if self.selected_element(entity).is_some() {
             let selected_movement = self.selected_movement_element(entity);
 
@@ -144,7 +141,7 @@ impl EngineInner {
                         .make_upright(entity, pathfinder_index);
                     return;
                 }
-                self.after_make_rewrite(sim, entity, selected_movement);
+                self.after_make_rewrite(tcx.sim, entity, selected_movement);
 
                 return;
             }
@@ -155,16 +152,11 @@ impl EngineInner {
         let elem = SequenceElement::new(1, Command::CrouchUp, Some(entity));
         let mut sequence = crate::sequence::Sequence::new();
         sequence.append_element(elem);
-        self.launch_sequence(sim, assets, sequence);
+        self.launch_sequence(tcx, sequence);
     }
 
     /// Crouch the actor down.
-    pub(crate) fn actor_make_crouched(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
-        entity: EntityId,
-    ) {
+    pub(crate) fn actor_make_crouched(&mut self, tcx: TickCtx<'_>, entity: EntityId) {
         if let Some(selected_movement) = self.selected_movement_element(entity) {
             self.orders
                 .sequence_manager
@@ -177,7 +169,7 @@ impl EngineInner {
                     .make_crouched(entity, pathfinder_index);
                 return;
             }
-            self.after_make_rewrite(sim, entity, selected_movement);
+            self.after_make_rewrite(tcx.sim, entity, selected_movement);
         } else {
             if self.selected_element(entity).is_some() {
                 // As in crouched-movement conversion, recurse into its linked
@@ -189,7 +181,7 @@ impl EngineInner {
             let elem = SequenceElement::new(1, Command::CrouchDown, Some(entity));
             let mut sequence = crate::sequence::Sequence::new();
             sequence.append_element(elem);
-            self.launch_sequence(sim, assets, sequence);
+            self.launch_sequence(tcx, sequence);
         }
     }
 
@@ -205,13 +197,13 @@ impl EngineInner {
         entity: EntityId,
         (seq_id, elem_idx): (SequenceId, usize),
     ) {
-        self.post_process_path(seq_id, elem_idx);
+        self.post_process_path(SequenceElementRef::new(seq_id, elem_idx));
         // Each re-process call re-applies drunken midpoint deviation
         // at the new speed. The initial deviation is applied at
         // pathfind time (tick.rs); this call re-wobbles the remaining
         // waypoints when a drunken soldier transitions walk ↔ run
         // mid-path.
-        self.reapply_drunken_deviation(sim, entity, seq_id, elem_idx);
+        self.reapply_drunken_deviation(sim, entity, SequenceElementRef::new(seq_id, elem_idx));
     }
 
     /// Re-apply drunken path deviation to a soldier's remaining
@@ -222,8 +214,7 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         entity: EntityId,
-        seq_id: SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
         let Some(ent) = self.get_entity(entity) else {
             return;
@@ -244,7 +235,7 @@ impl EngineInner {
         let command = self
             .orders
             .sequence_manager
-            .get_element(seq_id, elem_idx)
+            .get_element_at(elem_ref)
             .map(|e| e.command);
         if command == Some(Command::PassDoor) {
             return;
@@ -254,7 +245,7 @@ impl EngineInner {
         let action = self
             .orders
             .sequence_manager
-            .get_element(seq_id, elem_idx)
+            .get_element_at(elem_ref)
             .and_then(|e| match e.data {
                 SequenceElementData::Movement { action, .. } => Some(action),
                 _ => None,
@@ -278,7 +269,7 @@ impl EngineInner {
             let remaining: Vec<crate::coordinates::MapPoint> = self
                 .orders
                 .sequence_manager
-                .get_element(seq_id, elem_idx)
+                .get_element_at(elem_ref)
                 .map(|e| {
                     e.orders
                         .iter()
@@ -326,9 +317,7 @@ impl EngineInner {
         // increment computation. Rust rewrites targets in place here;
         // reroll the id for any changed target to preserve that
         // motion-processing invariant.
-        if let Some((elem, next_order_id)) =
-            self.orders.element_with_order_ids_mut(seq_id, elem_idx)
-        {
+        if let Some((elem, next_order_id)) = self.orders.element_with_order_ids_mut(elem_ref) {
             // Skip any non-walking orders at the front (startup
             // transition or end transition — their geometry is not
             // part of the drunken-rewrite path).  Replace subsequent
@@ -360,7 +349,11 @@ impl EngineInner {
     ///
     /// Dispatches to [`Self::post_process_path_to_line`] at the top
     /// when the movement element carries [`MoveFlags::LINE`].
-    pub(crate) fn post_process_path(&mut self, seq_id: SequenceId, elem_idx: usize) -> bool {
+    pub(crate) fn post_process_path(&mut self, elem_ref: SequenceElementRef) -> bool {
+        let SequenceElementRef {
+            sequence_id: seq_id,
+            element_index: elem_idx,
+        } = elem_ref;
         // Snapshot everything we need from entity/element into locals
         // so we can release the immutable borrow before mutating the
         // sequence element. The element's posture/actionstate-after-
@@ -395,7 +388,7 @@ impl EngineInner {
         // of orders is visible to the subsequent
         // transition-start/end insertion sites.
         if flags.contains(MoveFlags::LINE) {
-            self.post_process_path_to_line(seq_id, elem_idx);
+            self.post_process_path_to_line(SequenceElementRef::new(seq_id, elem_idx));
         }
 
         // Re-read the element after `post_process_path_to_line`
@@ -457,7 +450,7 @@ impl EngineInner {
                 // walker; good enough for the end-transition gate.
                 self.orders
                     .sequence_manager
-                    .is_next_movement_or_jump(seq_id, elem_idx),
+                    .is_next_movement_or_jump(SequenceElementRef::new(seq_id, elem_idx)),
             );
 
         // Capture each transition's animation distance from the sprite
@@ -471,7 +464,9 @@ impl EngineInner {
             animation_end.and_then(|anim| self.sprite_distance_for_animation(owner, anim));
 
         // ── Apply transitions in order ──────────────────────────
-        let Some((elem, next_order_id)) = self.orders.element_with_order_ids_mut(seq_id, elem_idx)
+        let Some((elem, next_order_id)) = self
+            .orders
+            .element_with_order_ids_mut(SequenceElementRef::new(seq_id, elem_idx))
         else {
             return false;
         };
@@ -564,7 +559,11 @@ impl EngineInner {
     ///
     /// Called from the top of [`Self::post_process_path`] when the
     /// movement element carries [`MoveFlags::LINE`].
-    fn post_process_path_to_line(&mut self, seq_id: SequenceId, elem_idx: usize) {
+    fn post_process_path_to_line(&mut self, elem_ref: SequenceElementRef) {
+        let SequenceElementRef {
+            sequence_id: seq_id,
+            element_index: elem_idx,
+        } = elem_ref;
         // ── Snapshot line id, source-of-nearest-point, and
         //    transition-order count from the element.  The "source"
         //    is either the second-to-last order's destination (if
@@ -1012,11 +1011,9 @@ mod tests {
             .sequence_manager
             .start_sequence_level(sequence);
         engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             &mut Vec::new(),
-            sequence,
-            0,
+            SequenceElementRef::new(sequence, 0),
         );
         engine.select_sequence_element(
             engine
@@ -1079,7 +1076,7 @@ mod tests {
             *flags = MoveFlags::FAST | MoveFlags::NO_TRANSITIONS;
         }
         element.orders = orders.into();
-        engine.post_process_path(sequence, 0);
+        engine.post_process_path(SequenceElementRef::new(sequence, 0));
         let orders = &engine
             .orders
             .sequence_manager
@@ -1179,11 +1176,9 @@ mod tests {
             .sequence_manager
             .start_sequence_level(sequence);
         engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             &mut Vec::new(),
-            sequence,
-            0,
+            SequenceElementRef::new(sequence, 0),
         );
         engine.select_sequence_element(
             engine
@@ -1197,7 +1192,10 @@ mod tests {
         );
         engine.publish_selected_order_as_installed(owner);
 
-        engine.actor_make_crouched(&crate::sim_rng::test_context(), &assets, owner);
+        engine.actor_make_crouched(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            owner,
+        );
 
         let selected = engine
             .orders
@@ -1311,11 +1309,9 @@ mod tests {
             .sequence_manager
             .start_sequence_level(sequence);
         engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             &mut Vec::new(),
-            sequence,
-            0,
+            SequenceElementRef::new(sequence, 0),
         );
         engine.select_sequence_element(
             engine

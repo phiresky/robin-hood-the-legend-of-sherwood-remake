@@ -12,6 +12,7 @@ use crate::console::ConsoleCommand;
 #[cfg(test)]
 use crate::console::parse_with_final;
 use crate::element::{Camp, Command, Entity, EntityId, ObjectType, Posture};
+use crate::engine::TickCtx;
 use crate::sequence::SequenceElement;
 
 /// Any authoritative console command makes the current attempt ineligible
@@ -55,8 +56,7 @@ impl EngineInner {
     #[cfg(test)]
     pub(crate) fn run_console_command(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         dev: &mut DevState,
         selected_view_element: &mut Option<EntityId>,
         input: &str,
@@ -92,7 +92,7 @@ impl EngineInner {
             return ConsoleResponse::Unknown;
         };
         dev.console.push_history(input);
-        self.dispatch_console_command(sim, assets, dev, selected_view_element, &cmd)
+        self.dispatch_console_command(tcx, dev, selected_view_element, &cmd)
     }
 
     /// Dispatch an already-parsed console command.  Exposed for tests
@@ -106,32 +106,29 @@ impl EngineInner {
     /// can write back.
     pub(crate) fn dispatch_console_command(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         dev: &mut DevState,
         selected_view_element: &mut Option<EntityId>,
         cmd: &ConsoleCommand,
     ) -> ConsoleResponse {
-        self.dispatch_console_command_resolved(sim, assets, Some(dev), selected_view_element, cmd)
+        self.dispatch_console_command_resolved(tcx, Some(dev), selected_view_element, cmd)
     }
 
     /// Dispatch a command that was parsed and classified by the host before
     /// frame admission. This path deliberately has no access to `DevState`.
     pub(crate) fn dispatch_sim_console_command(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         selected_view_element: &mut Option<EntityId>,
         cmd: &ConsoleCommand,
     ) -> ConsoleResponse {
         assert!(!cmd.is_host_only(), "host-only console command admitted");
-        self.dispatch_console_command_resolved(sim, assets, None, selected_view_element, cmd)
+        self.dispatch_console_command_resolved(tcx, None, selected_view_element, cmd)
     }
 
     fn dispatch_console_command_resolved(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         mut dev: Option<&mut DevState>,
         selected_view_element: &mut Option<EntityId>,
         cmd: &ConsoleCommand,
@@ -145,12 +142,12 @@ impl EngineInner {
             GiveMoney { amount, show_help } => self.console_give_money(*amount, *show_help),
             GiveBlazon { amount } => self.console_give_blazon(*amount),
             GiveAmulets { amount } => self.console_give_amulets(*amount),
-            AddPeasant => self.console_add_peasant(sim, assets),
-            CampaignReport => self.console_campaign_report(assets),
+            AddPeasant => self.console_add_peasant(tcx),
+            CampaignReport => self.console_campaign_report(tcx.assets),
 
             // ── Mission flow ─────────────────────────────────────
             LoseMission => self.console_lose_mission(),
-            WinMission => self.console_win_mission(assets),
+            WinMission => self.console_win_mission(tcx.assets),
             WinCampaign => self.console_win_campaign(),
             // The save-file format lives in the host (robin_rs::save_file).
             // EngineInner returns the request; host dispatches the actual load.
@@ -202,22 +199,22 @@ impl EngineInner {
             }
 
             // ── Commands needing features not yet implemented ────
-            Nuke => self.console_nuke(sim, assets),
-            Wakeup => self.console_wake_npcs(sim, assets),
-            BudSpencer => self.console_knock_out_enemy_soldiers(sim, assets),
+            Nuke => self.console_nuke(tcx),
+            Wakeup => self.console_wake_npcs(tcx),
+            BudSpencer => self.console_knock_out_enemy_soldiers(tcx),
             Honolulu => self.console_honolulu(dev.as_deref_mut(), selected_view_element),
-            Morpheus => self.console_morpheus(sim, assets, selected_view_element),
-            Hades => self.console_hades(sim, assets, selected_view_element),
+            Morpheus => self.console_morpheus(tcx, selected_view_element),
+            Hades => self.console_hades(tcx, selected_view_element),
             LastManStanding => self.console_last_man_standing(selected_view_element),
-            RoterAlarm => self.console_alert_soldiers(sim, assets),
-            MisterSandman => self.console_mister_sandman(sim, assets),
-            Coma => self.console_coma(sim, assets),
-            Reinforcement => self.console_reinforcement(sim, assets),
-            SanPetrus => self.console_san_petrus(sim, assets),
-            WaspMaster | GiveArrows => self.console_force_ammo_cheat(assets, cmd),
-            GiveAmmo => self.console_give_ammo(assets),
-            Lukas { pcs } => self.console_lukas(sim, assets, pcs.as_deref()),
-            Call { actor, method } => self.console_call_actor(assets, actor, method),
+            RoterAlarm => self.console_alert_soldiers(tcx),
+            MisterSandman => self.console_mister_sandman(tcx),
+            Coma => self.console_coma(tcx),
+            Reinforcement => self.console_reinforcement(tcx),
+            SanPetrus => self.console_san_petrus(tcx),
+            WaspMaster | GiveArrows => self.console_force_ammo_cheat(tcx.assets, cmd),
+            GiveAmmo => self.console_give_ammo(tcx.assets),
+            Lukas { pcs } => self.console_lukas(tcx, pcs.as_deref()),
+            Call { actor, method } => self.console_call_actor(tcx.assets, actor, method),
             StatusFramecache | StatusShadow | StatusHardware | StatusPc | Optimize | Forget
             | Sarkozy | Fps => self.console_status_report(&mut dev, cmd),
 
@@ -250,13 +247,12 @@ impl EngineInner {
         ConsoleResponse::Ok(format!("{amount} amulets set."))
     }
 
-    fn console_add_peasant(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) -> ConsoleResponse {
-        self.campaign_mut_or_panic()
-            .add_new_peasant_to_gang(sim, None, &assets.profile_manager);
+    fn console_add_peasant(&mut self, tcx: TickCtx<'_>) -> ConsoleResponse {
+        self.campaign_mut_or_panic().add_new_peasant_to_gang(
+            tcx.sim,
+            None,
+            &tcx.assets.profile_manager,
+        );
         ConsoleResponse::Ok("New member!".to_string())
     }
 
@@ -401,28 +397,20 @@ impl EngineInner {
         ConsoleResponse::Ok(reply.to_string())
     }
 
-    fn console_mister_sandman(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) -> ConsoleResponse {
+    fn console_mister_sandman(&mut self, tcx: TickCtx<'_>) -> ConsoleResponse {
         // For every PC, launch a damage(100, 0) sequence —
         // hp=100, concussion=0, *not* the reverse.  Swapping
         // the two would change a death roll into a concussion
         // roll.
         let pcs = self.world.pc_ids.clone();
         for id in pcs {
-            self.launch_damage(sim, assets, id, 100, 0);
+            self.launch_damage(tcx, id, 100, 0);
         }
         ConsoleResponse::Ok("Sweet dreams !".to_string())
     }
 
-    fn console_reinforcement(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) -> ConsoleResponse {
-        self.create_reinforcement(sim, assets, None);
+    fn console_reinforcement(&mut self, tcx: TickCtx<'_>) -> ConsoleResponse {
+        self.create_reinforcement(tcx, None);
         ConsoleResponse::Ok(String::new())
     }
 
@@ -461,20 +449,15 @@ impl EngineInner {
         }
     }
 
-    fn console_lukas(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        pcs: Option<&str>,
-    ) -> ConsoleResponse {
+    fn console_lukas(&mut self, tcx: TickCtx<'_>, pcs: Option<&str>) -> ConsoleResponse {
         // Resolve each single-letter initial (R/J/T/S/W/M/A/B/C)
         // to a PC via the character profile index, then inflict
         // pain — funnels to an hp=100 / concussion=100 damage
         // sequence (same sequence used elsewhere).
         if let Some(pcs) = pcs {
-            let ids = self.resolve_pcs_by_initials(assets, pcs);
+            let ids = self.resolve_pcs_by_initials(tcx.assets, pcs);
             for id in ids {
-                self.launch_damage(sim, assets, id, 100, 100);
+                self.launch_damage(tcx, id, 100, 100);
             }
         }
         ConsoleResponse::Ok("PCs knocked out !".to_string())
@@ -853,11 +836,7 @@ impl EngineInner {
         ConsoleResponse::Ok("Mission won !".to_string())
     }
 
-    fn console_nuke(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) -> ConsoleResponse {
+    fn console_nuke(&mut self, tcx: TickCtx<'_>) -> ConsoleResponse {
         // Prints "Nuking ..." before walking every soldier,
         // launches a damage(1000, 1000) sequence per victim,
         // then prints "Nuked N soldiers".
@@ -869,16 +848,12 @@ impl EngineInner {
             .collect();
         let count = victims.len();
         for id in victims {
-            self.launch_damage(sim, assets, id, 1000, 1000);
+            self.launch_damage(tcx, id, 1000, 1000);
         }
         ConsoleResponse::Ok(format!("Nuking ...\nNuked {count} soldiers"))
     }
 
-    fn console_wake_npcs(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) -> ConsoleResponse {
+    fn console_wake_npcs(&mut self, tcx: TickCtx<'_>) -> ConsoleResponse {
         // Walk every NPC and, if unconscious, force concussion
         // to `31` — one above `CONCUSSION_WAKEUP_THRESHOLD` —
         // which drops them back to conscious via the normal
@@ -897,16 +872,12 @@ impl EngineInner {
             .collect();
         for id in ids {
             // Apply wake guards and finish the resulting callbacks inline.
-            self.apply_concussion(sim, assets, id, 31, false);
+            self.apply_concussion(tcx, id, 31, false);
         }
         ConsoleResponse::Ok("Wake up !".to_string())
     }
 
-    fn console_knock_out_enemy_soldiers(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) -> ConsoleResponse {
+    fn console_knock_out_enemy_soldiers(&mut self, tcx: TickCtx<'_>) -> ConsoleResponse {
         // Knock out every Lacklandist soldier via
         // concussion(100) + posture LYING + a trivial Wait
         // sequence element.  Concussion application reads the
@@ -922,15 +893,11 @@ impl EngineInner {
             // victim is dropped from opponents' lists and gets
             // the unconscious-star titbit + lose-consciousness
             // stimulus.
-            self.apply_concussion(sim, assets, id, 100, false);
+            self.apply_concussion(tcx, id, 100, false);
             if let Some(entity) = self.get_entity_mut(id) {
                 entity.set_posture(Posture::Lying);
             }
-            self.launch_element(
-                sim,
-                assets,
-                SequenceElement::new(1, Command::Wait, Some(id)),
-            );
+            self.launch_element(tcx, SequenceElement::new(1, Command::Wait, Some(id)));
         }
         ConsoleResponse::Ok("NPCs knocked out !".to_string())
     }
@@ -1008,8 +975,7 @@ impl EngineInner {
 
     fn console_morpheus(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         selected_view_element: &mut Option<EntityId>,
     ) -> ConsoleResponse {
         // Always prints "MORPHEUS" first, then gates on
@@ -1034,23 +1000,18 @@ impl EngineInner {
         // (drop from sword-fight opponents' lists,
         // unconscious-star titbit, lose-consciousness stimulus)
         // fire — a direct `set_concussion` call would skip them.
-        self.apply_concussion(sim, assets, id, 100, false);
+        self.apply_concussion(tcx, id, 100, false);
         if let Some(entity) = self.get_entity_mut(id) {
             entity.set_posture(Posture::Lying);
         }
-        self.launch_element(
-            sim,
-            assets,
-            SequenceElement::new(1, Command::Wait, Some(id)),
-        );
+        self.launch_element(tcx, SequenceElement::new(1, Command::Wait, Some(id)));
         *selected_view_element = None;
         ConsoleResponse::Ok("MORPHEUS\nSleep well...".to_string())
     }
 
     fn console_hades(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         selected_view_element: &mut Option<EntityId>,
     ) -> ConsoleResponse {
         let is_npc = selected_view_element
@@ -1064,14 +1025,10 @@ impl EngineInner {
             );
         }
         let id = selected_view_element.expect("NPC-selected implies id present");
-        self.kill_npc_directly(sim, assets, id);
+        self.kill_npc_directly(tcx, id);
         self.expect_entity_mut(id, "Hades selected NPC")
             .set_posture(Posture::Dead);
-        self.launch_element(
-            sim,
-            assets,
-            SequenceElement::new(1, Command::Wait, Some(id)),
-        );
+        self.launch_element(tcx, SequenceElement::new(1, Command::Wait, Some(id)));
         *selected_view_element = None;
         ConsoleResponse::Ok("HADES\nSleep well... forever!".to_string())
     }
@@ -1108,11 +1065,7 @@ impl EngineInner {
         ConsoleResponse::Ok("Last man standing\nLonely hero...".to_string())
     }
 
-    fn console_alert_soldiers(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) -> ConsoleResponse {
+    fn console_alert_soldiers(&mut self, tcx: TickCtx<'_>) -> ConsoleResponse {
         // Sets attentive mode on every soldier — silent cheat,
         // emits no console output.
         let soldier_ids: Vec<EntityId> = self
@@ -1123,8 +1076,7 @@ impl EngineInner {
             .collect();
         for id in soldier_ids {
             self.set_soldier_attentive_mode_from(
-                sim,
-                assets,
+                tcx,
                 id,
                 true,
                 false,
@@ -1134,11 +1086,7 @@ impl EngineInner {
         ConsoleResponse::Ok(String::new())
     }
 
-    fn console_coma(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) -> ConsoleResponse {
+    fn console_coma(&mut self, tcx: TickCtx<'_>) -> ConsoleResponse {
         // Needs a selected PC and at least one amulet, then
         // launches hp=10000 / concussion=0 damage on the first
         // selected PC.
@@ -1152,17 +1100,13 @@ impl EngineInner {
                 "There not enough amulets left to put the selected PC in the coma.".to_string(),
             ),
             (Some(id), _) => {
-                self.launch_damage(sim, assets, id, 10000, 0);
+                self.launch_damage(tcx, id, 10000, 0);
                 ConsoleResponse::Ok("Coma !".to_string())
             }
         }
     }
 
-    fn console_san_petrus(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) -> ConsoleResponse {
+    fn console_san_petrus(&mut self, tcx: TickCtx<'_>) -> ConsoleResponse {
         // Unconditionally prints "San Petrus", then either the
         // no-selection error or — per selected PC — launches a
         // hp=10000 / concussion=0 damage sequence and prints
@@ -1182,7 +1126,8 @@ impl EngineInner {
                     .and_then(|e| e.pc_data())
                     .map(|pc| pc.profile_index);
                 match (profile_idx, Some(&self.mission_domain.campaign)) {
-                    (Some(idx), Some(_)) => assets
+                    (Some(idx), Some(_)) => tcx
+                        .assets
                         .profile_manager
                         .get_character(idx)
                         .map(|p| p.profile_name.to_string())
@@ -1192,7 +1137,7 @@ impl EngineInner {
             })
             .collect();
         for (id, name) in selected.iter().zip(names.iter()) {
-            self.launch_damage(sim, assets, *id, 10000, 0);
+            self.launch_damage(tcx, *id, 10000, 0);
             out.push_str(&format!("\n{name} has been recalled by San Petrus."));
         }
         ConsoleResponse::Ok(out)
@@ -1550,7 +1495,11 @@ mod tests {
         let assets = engine.test_runtime_assets();
         let mut selected = Some(id);
 
-        engine.dispatch_sim_console_command(&sim, &assets, &mut selected, &ConsoleCommand::Hades);
+        engine.dispatch_sim_console_command(
+            TickCtx::new(&sim, &assets),
+            &mut selected,
+            &ConsoleCommand::Hades,
+        );
 
         let victim = engine.expect_entity(id, "Hades victim");
         assert_eq!(victim.npc_data().unwrap().life_points, 0);
@@ -1593,7 +1542,11 @@ mod tests {
         let id = engine.add_test_entity(victim);
         let assets = engine.test_runtime_assets();
         let mut selected = Some(id);
-        engine.dispatch_sim_console_command(&sim, &assets, &mut selected, &ConsoleCommand::Hades);
+        engine.dispatch_sim_console_command(
+            TickCtx::new(&sim, &assets),
+            &mut selected,
+            &ConsoleCommand::Hades,
+        );
         let victim = engine.expect_entity(id, "invulnerable Hades victim");
         assert_eq!(victim.npc_data().unwrap().life_points, 100);
         assert_eq!(victim.element_data().posture(), Posture::Dead);
@@ -1608,7 +1561,7 @@ mod tests {
         let mut dev = DevState::default();
         let mut engine = EngineInner::new();
         assert_eq!(
-            engine.run_console_command(sim, &assets(), &mut dev, &mut None, "XYZZY"),
+            engine.run_console_command(TickCtx::new(sim, &assets()), &mut dev, &mut None, "XYZZY"),
             ConsoleResponse::Unknown
         );
     }
@@ -1618,7 +1571,8 @@ mod tests {
         let sim_context = crate::sim_rng::test_context();
         let sim = &sim_context;
         let (mut engine, mut dev) = engine_with_campaign();
-        let _ = engine.run_console_command(sim, &assets(), &mut dev, &mut None, "NUKE");
+        let _ =
+            engine.run_console_command(TickCtx::new(sim, &assets()), &mut dev, &mut None, "NUKE");
         assert_eq!(dev.console.history.last().map(String::as_str), Some("NUKE"));
     }
 
@@ -1628,7 +1582,12 @@ mod tests {
         let sim = &sim_context;
         let (mut engine, mut dev) = engine_with_campaign();
 
-        let resp = engine.run_console_command(sim, &assets(), &mut dev, &mut None, "BIG BROTHER");
+        let resp = engine.run_console_command(
+            TickCtx::new(sim, &assets()),
+            &mut dev,
+            &mut None,
+            "BIG BROTHER",
+        );
         assert_eq!(
             resp,
             ConsoleResponse::Ok("Actor infos displayed !".to_string())
@@ -1636,7 +1595,12 @@ mod tests {
         assert!(dev.debug.actor_info_display);
         assert!(dev.debug.entity_ids);
 
-        let resp = engine.run_console_command(sim, &assets(), &mut dev, &mut None, "BIG BROTHER");
+        let resp = engine.run_console_command(
+            TickCtx::new(sim, &assets()),
+            &mut dev,
+            &mut None,
+            "BIG BROTHER",
+        );
         assert_eq!(
             resp,
             ConsoleResponse::Ok("Actors infos hidden !".to_string())
@@ -1644,7 +1608,8 @@ mod tests {
         assert!(!dev.debug.actor_info_display);
         assert!(!dev.debug.entity_ids);
 
-        let resp = engine.run_console_command(sim, &assets(), &mut dev, &mut None, "IDS");
+        let resp =
+            engine.run_console_command(TickCtx::new(sim, &assets()), &mut dev, &mut None, "IDS");
         assert_eq!(
             resp,
             ConsoleResponse::Ok("Actor infos displayed !".to_string())
@@ -1659,14 +1624,24 @@ mod tests {
         let sim = &sim_context;
         let (mut engine, mut dev) = engine_with_campaign();
 
-        let resp = engine.run_console_command(sim, &assets(), &mut dev, &mut None, "SPRITEMASKS");
+        let resp = engine.run_console_command(
+            TickCtx::new(sim, &assets()),
+            &mut dev,
+            &mut None,
+            "SPRITEMASKS",
+        );
         assert_eq!(
             resp,
             ConsoleResponse::Ok("Sprite masks displayed.".to_string())
         );
         assert!(dev.debug.sprite_masks_display);
 
-        let resp = engine.run_console_command(sim, &assets(), &mut dev, &mut None, "SPRITE MASKS");
+        let resp = engine.run_console_command(
+            TickCtx::new(sim, &assets()),
+            &mut dev,
+            &mut None,
+            "SPRITE MASKS",
+        );
         assert_eq!(
             resp,
             ConsoleResponse::Ok("Sprite masks hidden.".to_string())
@@ -1683,7 +1658,12 @@ mod tests {
             .mission_domain
             .campaign
             .get_value(CampaignValue::Ransom);
-        let resp = engine.run_console_command(sim, &assets(), &mut dev, &mut None, "EZB 500");
+        let resp = engine.run_console_command(
+            TickCtx::new(sim, &assets()),
+            &mut dev,
+            &mut None,
+            "EZB 500",
+        );
         assert_eq!(
             resp,
             ConsoleResponse::Ok("Money !\n500 gold added.".to_string())
@@ -1701,7 +1681,8 @@ mod tests {
         let sim = &sim_context;
         let (mut engine, mut dev) = engine_with_campaign();
         assert!(!engine.mission_domain.state.quit_lost);
-        let resp = engine.run_console_command(sim, &assets(), &mut dev, &mut None, "LOOSE");
+        let resp =
+            engine.run_console_command(TickCtx::new(sim, &assets()), &mut dev, &mut None, "LOOSE");
         assert!(matches!(resp, ConsoleResponse::Ok(_)));
         assert!(engine.mission_domain.state.quit_lost);
     }
@@ -1713,9 +1694,9 @@ mod tests {
         let mut dev = DevState::default();
         let mut engine = EngineInner::new();
         assert!(!engine.ai.global.freeze);
-        engine.run_console_command(sim, &assets(), &mut dev, &mut None, "FREEZE");
+        engine.run_console_command(TickCtx::new(sim, &assets()), &mut dev, &mut None, "FREEZE");
         assert!(engine.ai.global.freeze);
-        engine.run_console_command(sim, &assets(), &mut dev, &mut None, "FREEZE");
+        engine.run_console_command(TickCtx::new(sim, &assets()), &mut dev, &mut None, "FREEZE");
         assert!(!engine.ai.global.freeze);
     }
 
@@ -1728,7 +1709,12 @@ mod tests {
         let id_blipped = engine.add_test_entity(soldier(true));
         let id_plain = engine.add_test_entity(soldier(false));
 
-        let resp = engine.run_console_command(sim, &assets(), &mut dev, &mut None, "UBIQUITY");
+        let resp = engine.run_console_command(
+            TickCtx::new(sim, &assets()),
+            &mut dev,
+            &mut None,
+            "UBIQUITY",
+        );
         assert!(matches!(resp, ConsoleResponse::Ok(_)));
 
         assert!(
@@ -1758,7 +1744,12 @@ mod tests {
                 .invulnerable
         );
 
-        engine.run_console_command(sim, &assets(), &mut dev, &mut None, "HIGHLANDER2");
+        engine.run_console_command(
+            TickCtx::new(sim, &assets()),
+            &mut dev,
+            &mut None,
+            "HIGHLANDER2",
+        );
 
         assert!(
             engine
@@ -1777,7 +1768,12 @@ mod tests {
         let mut dev = DevState::default();
         let mut engine = EngineInner::new();
         assert!(!dev.debug.elevation_display);
-        engine.run_console_command(sim, &assets(), &mut dev, &mut None, "ELEVATION");
+        engine.run_console_command(
+            TickCtx::new(sim, &assets()),
+            &mut dev,
+            &mut None,
+            "ELEVATION",
+        );
         assert!(dev.debug.elevation_display);
     }
 
@@ -1787,7 +1783,12 @@ mod tests {
         let sim = &sim_context;
         let mut dev = DevState::default();
         let mut engine = EngineInner::new();
-        engine.run_console_command(sim, &assets(), &mut dev, &mut None, "LEVEL TEXT DB");
+        engine.run_console_command(
+            TickCtx::new(sim, &assets()),
+            &mut dev,
+            &mut None,
+            "LEVEL TEXT DB",
+        );
         assert!(dev.debug.all_debriefings);
         assert!(!dev.debug.all_dialogues);
     }
@@ -1805,7 +1806,12 @@ mod tests {
             assert!(!e.will_be_attentive);
         }
         assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
-        let resp = engine.run_console_command(sim, &assets(), &mut dev, &mut None, "ROTER ALARM");
+        let resp = engine.run_console_command(
+            TickCtx::new(sim, &assets()),
+            &mut dev,
+            &mut None,
+            "ROTER ALARM",
+        );
         // ROTER ALARM is a silent cheat — emits no console text.
         assert_eq!(resp, ConsoleResponse::Ok(String::new()));
         // The sequence element launch flips `will_be_attentive` immediately;
@@ -1825,7 +1831,8 @@ mod tests {
         engine.add_test_entity(soldier(false));
         engine.add_test_entity(soldier(false));
         assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
-        let resp = engine.run_console_command(sim, &assets(), &mut dev, &mut None, "NUKE");
+        let resp =
+            engine.run_console_command(TickCtx::new(sim, &assets()), &mut dev, &mut None, "NUKE");
         assert_eq!(
             resp,
             ConsoleResponse::Ok("Nuking ...\nNuked 2 soldiers".to_string())
@@ -1841,7 +1848,8 @@ mod tests {
         let mut engine = EngineInner::new();
         dev.console.use_final = true;
         engine.add_test_entity(soldier(true));
-        let resp = engine.run_console_command(sim, &assets(), &mut dev, &mut None, "UNBLIP");
+        let resp =
+            engine.run_console_command(TickCtx::new(sim, &assets()), &mut dev, &mut None, "UNBLIP");
         assert!(matches!(resp, ConsoleResponse::Ok(_)));
     }
 
@@ -1854,7 +1862,7 @@ mod tests {
         dev.console.use_final = true;
         // NUKE is a dev-only cheat — must not resolve in final mode.
         assert_eq!(
-            engine.run_console_command(sim, &assets(), &mut dev, &mut None, "NUKE"),
+            engine.run_console_command(TickCtx::new(sim, &assets()), &mut dev, &mut None, "NUKE"),
             ConsoleResponse::Unknown
         );
     }
@@ -1880,8 +1888,11 @@ mod tests {
         ] {
             let mut engine = EngineInner::new();
             let mut selected = None;
-            let response =
-                engine.dispatch_sim_console_command(&sim, &assets, &mut selected, &command);
+            let response = engine.dispatch_sim_console_command(
+                TickCtx::new(&sim, &assets),
+                &mut selected,
+                &command,
+            );
             assert_eq!(response, ConsoleResponse::Ok(expected.to_owned()));
             assert_eq!(selected, None);
             assert_eq!(
@@ -1899,8 +1910,7 @@ mod tests {
         let id = EntityId::new(999, crate::entity_id::EntityIdKind::Soldier);
         let mut selected = Some(id);
         let response = engine.dispatch_sim_console_command(
-            &sim,
-            &assets(),
+            TickCtx::new(&sim, &assets()),
             &mut selected,
             &ConsoleCommand::Honolulu,
         );
@@ -1921,8 +1931,7 @@ mod tests {
         let mut selected = Some(id);
         assert_eq!(
             engine.dispatch_console_command(
-                &sim,
-                &assets,
+                TickCtx::new(&sim, &assets),
                 &mut dev,
                 &mut selected,
                 &ConsoleCommand::Honolulu,
@@ -1936,8 +1945,7 @@ mod tests {
         selected = Some(id);
         assert_eq!(
             engine.dispatch_sim_console_command(
-                &sim,
-                &assets,
+                TickCtx::new(&sim, &assets),
                 &mut selected,
                 &ConsoleCommand::Honolulu,
             ),
@@ -1956,8 +1964,7 @@ mod tests {
             ("R", "CALL: no such PC."),
         ] {
             let response = engine.dispatch_sim_console_command(
-                &sim,
-                &assets(),
+                TickCtx::new(&sim, &assets()),
                 &mut None,
                 &ConsoleCommand::Call {
                     actor: actor.to_owned(),

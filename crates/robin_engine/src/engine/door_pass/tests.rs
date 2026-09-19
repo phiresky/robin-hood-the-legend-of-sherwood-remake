@@ -1,5 +1,7 @@
 use super::*;
+use crate::engine::TickCtx;
 use crate::engine::test_support::actors::TestActor;
+use crate::sequence::SequenceElementRef;
 use crate::sequence::{
     LegacyV48OrderState, LegacyV48SequenceElementState, SequenceElement, SequenceElementData,
     SequenceState,
@@ -121,12 +123,10 @@ fn dispatch_pass_with_element_mutation(
     engine.orders.sequence_manager.start_sequence_level(seq_id);
     engine.script_domains.interactables.doors = doors.to_vec();
     let accepted = engine.instruct_owner(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         &mut Vec::new(),
         owner,
-        seq_id,
-        0,
+        SequenceElementRef::new(seq_id, 0),
     );
     (accepted, seq_id)
 }
@@ -223,8 +223,7 @@ fn pass_door_change_layer_and_sector_follows_pc_carried_actor() {
         let _ = dispatch_pass(&mut engine, std::slice::from_ref(&door), owner);
         engine.script_domains.interactables.doors.push(door);
         engine.execute_pass_door(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
             owner,
             crate::gate::DoorIndex::new(0).expect("valid door index"),
             direct,
@@ -272,8 +271,7 @@ fn pass_door_change_layer_and_sector_does_not_rewrite_unrelated_actor() {
     let _ = dispatch_pass(&mut engine, std::slice::from_ref(&door), owner);
     engine.script_domains.interactables.doors.push(door);
     engine.execute_pass_door(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         owner,
         crate::gate::DoorIndex::new(0).expect("valid door index"),
         true,
@@ -346,7 +344,10 @@ fn fallback_wait_on_ladder_preserves_inherited_facing() {
     }
 
     let assets = engine.test_runtime_assets();
-    engine.ensure_wait_element(&crate::sim_rng::test_context(), &assets, owner);
+    engine.ensure_wait_element(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        owner,
+    );
 
     let entity = engine.world.entities.get(owner).unwrap();
     assert_eq!(entity.element_data().direction(), 1);
@@ -375,7 +376,10 @@ fn fallback_wait_preserves_unconscious_posture_inside_ladder_sector() {
     }
 
     let assets = engine.test_runtime_assets();
-    engine.ensure_wait_element(&crate::sim_rng::test_context(), &assets, owner);
+    engine.ensure_wait_element(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        owner,
+    );
 
     assert_eq!(
         engine
@@ -483,8 +487,7 @@ fn install_production_climb_fixture(
         actor.action_state = crate::element::ActionState::Waiting;
     }
     engine.execute_pass_door(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         owner,
         crate::gate::DoorIndex::new(0).expect("valid door index"),
         true,
@@ -844,10 +847,8 @@ fn wall_transition_and_passing_door_use_separate_owner_slots() {
     let (_, seq_id) = dispatch_pass(&mut engine, &[door], owner);
 
     engine.do_next_order(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        seq_id,
-        0,
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
+        SequenceElementRef::new(seq_id, 0),
     );
     let transition_order = {
         let element = engine
@@ -922,7 +923,7 @@ fn wall_transition_and_passing_door_use_separate_owner_slots() {
     // The terminal transition slot applies its OnWall state and installs
     // PassingDoor, but does not execute the topology callback.
     let assets = engine.test_runtime_assets();
-    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
+    engine.tick_actor_owner_envelopes(TickCtx::new(&crate::sim_rng::test_context(), &assets));
 
     let entity = engine.world.entities.get(owner).unwrap();
     assert_eq!(
@@ -952,7 +953,7 @@ fn wall_transition_and_passing_door_use_separate_owner_slots() {
         .position_map();
 
     let assets = engine.test_runtime_assets();
-    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
+    engine.tick_actor_owner_envelopes(TickCtx::new(&crate::sim_rng::test_context(), &assets));
 
     let entity = engine.world.entities.get(owner).unwrap();
     assert_eq!(
@@ -1039,7 +1040,10 @@ fn final_door_callback_preserves_rail_position_and_elevation() {
             ));
     }
 
-    engine.execute_passing_door_order(&crate::sim_rng::test_context(), &LevelAssets::new(), owner);
+    engine.execute_passing_door_order(
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
+        owner,
+    );
 
     let entity = engine.world.entities.get(owner).unwrap();
     assert_eq!(entity.element_data().position_map(), before_map);
@@ -1272,7 +1276,10 @@ fn direct_door_completion_does_not_reconstruct_an_already_committed_endpoint() {
     }
     let before = engine.get_entity(owner).unwrap().element_data().position();
 
-    engine.execute_passing_door_order(&crate::sim_rng::test_context(), &LevelAssets::new(), owner);
+    engine.execute_passing_door_order(
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
+        owner,
+    );
 
     let entity = engine.get_entity(owner).unwrap();
     assert_eq!(entity.element_data().position_map(), endpoint);
@@ -1424,7 +1431,10 @@ fn building_trap_exact_target_decorative_ladder_uses_release_compatibility_state
     );
 
     bind_single_animation(&mut engine, owner, OrderType::ClimbingLadderDown);
-    engine.execute_passing_door_order(&crate::sim_rng::test_context(), &LevelAssets::new(), owner);
+    engine.execute_passing_door_order(
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
+        owner,
+    );
     assert!(
         engine
             .get_entity(owner)
@@ -1469,7 +1479,7 @@ fn building_trap_exact_target_decorative_ladder_uses_release_compatibility_state
     }
 
     let assets = engine.test_runtime_assets();
-    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
+    engine.tick_actor_owner_envelopes(TickCtx::new(&crate::sim_rng::test_context(), &assets));
 
     let entity = engine.get_entity(owner).unwrap();
     assert_eq!(entity.element_data().posture(), Posture::Upright);
@@ -1537,8 +1547,7 @@ fn real_ladder_nonzero_climb_keeps_lift_facing_and_posture() {
     }
 
     let _ = engine.tick_entity_movement_owner(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         owner,
         Some(crate::engine::movement::MovementOwnerSelection {
             seq_id,
@@ -1705,8 +1714,7 @@ fn production_lift_callbacks_and_transition_turn_without_snapping_in_swapped_cre
             let is_climb = crate::engine::movement::order_uses_distance_motion(action);
             if is_climb {
                 engine.execute_passing_door_order(
-                    &crate::sim_rng::test_context(),
-                    &LevelAssets::new(),
+                    TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
                     owner,
                 );
             }
@@ -1723,8 +1731,7 @@ fn production_lift_callbacks_and_transition_turn_without_snapping_in_swapped_cre
             );
 
             let _ = engine.tick_entity_movement_owner(
-                &crate::sim_rng::test_context(),
-                &LevelAssets::new(),
+                TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
                 owner,
                 Some(crate::engine::movement::MovementOwnerSelection {
                     seq_id,
@@ -1746,8 +1753,7 @@ fn production_lift_callbacks_and_transition_turn_without_snapping_in_swapped_cre
             );
             if !is_climb {
                 engine.execute_passing_door_order(
-                    &crate::sim_rng::test_context(),
-                    &LevelAssets::new(),
+                    TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
                     owner,
                 );
                 assert_eq!(
@@ -1764,8 +1770,7 @@ fn production_lift_callbacks_and_transition_turn_without_snapping_in_swapped_cre
                 .element_data_mut()
                 .set_direction_goal(7);
             engine.execute_passing_door_order(
-                &crate::sim_rng::test_context(),
-                &LevelAssets::new(),
+                TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
                 owner,
             );
             assert_eq!(
@@ -1821,8 +1826,7 @@ fn frozen_all_climbs_turn_in_owner_slot_with_real_swapped_owner_visibility() {
 
             let mut direction_seen_by_observer = None;
             engine.tick_actor_owner_envelopes_with_test_owner_hook(
-                &crate::sim_rng::test_context(),
-                &LevelAssets::new(),
+                TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
                 |engine, completed_owner| {
                     if completed_owner == observer {
                         direction_seen_by_observer = Some(
@@ -1945,8 +1949,7 @@ fn fast_climb_first_iteration_termination_prevents_second_turn_in_swapped_creati
             .set_direction_goal(5);
 
         let _ = engine.tick_entity_movement_owner(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
             owner,
             Some(crate::engine::movement::MovementOwnerSelection {
                 seq_id,
@@ -1991,12 +1994,10 @@ fn non_movement_pass_door_is_an_invariant_failure() {
 
     engine.script_domains.interactables.doors = vec![default_door()];
     engine.instruct_pass_door(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         &mut Vec::new(),
         owner,
-        seq_id,
-        0,
+        SequenceElementRef::new(seq_id, 0),
     );
 }
 

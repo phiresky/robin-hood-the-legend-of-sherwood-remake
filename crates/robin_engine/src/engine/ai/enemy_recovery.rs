@@ -113,7 +113,7 @@ impl AiOwnerCtx<'_> {
                     .expect("apple owner must be human")
                     .opponents
                     .is_empty();
-                let interrupt = self.sim.config().item_gameplay.apple_combat_interrupt;
+                let interrupt = self.tcx.sim.config().item_gameplay.apple_combat_interrupt;
                 if fighting && !interrupt {
                     return;
                 }
@@ -128,8 +128,7 @@ impl AiOwnerCtx<'_> {
                         .is_empty()
                 {
                     self.engine.launch_element(
-                        self.sim,
-                        self.assets,
+                        self.tcx,
                         crate::sequence::SequenceElement::new(
                             1,
                             crate::element::Command::QuitSwordfight,

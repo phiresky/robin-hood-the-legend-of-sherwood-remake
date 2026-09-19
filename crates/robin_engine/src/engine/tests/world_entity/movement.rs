@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 
 #[test]
 fn owner_walk_observes_live_geometry_in_original_creation_order() {
@@ -23,8 +24,7 @@ fn owner_walk_observes_live_geometry_in_original_creation_order() {
     let mut visits = Vec::new();
     let mut observed = None;
     engine.tick_actor_owner_envelopes_with_test_owner_hook(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         |engine, id| {
             visits.push(id);
             if id == earlier {
@@ -80,13 +80,12 @@ fn attentive_barrier_constructs_following_move_at_same_owner_boundary() {
     let owner = engine.add_test_entity(soldier_entity);
     let assets = engine.test_runtime_assets();
 
-    engine.set_soldier_attentive_mode(&sim, &assets, owner, false, false);
+    engine.set_soldier_attentive_mode(TickCtx::new(&sim, &assets), owner, false, false);
     let mut destination = engine.live_ai_position(owner);
     destination.x = 100.0;
     destination.y = 90.0;
     engine.duty_go_to(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         owner,
         destination,
         crate::ai::GotoFlags::empty(),
