@@ -19,10 +19,11 @@ exist; it does not mean the live editor contains that refinement. â€œPublishedâ€
 means the geometry is included in the latest map export, not that all defects
 are resolved. Standalone asset exports still need synchronization with that map.
 
-Latest map publication: `work/derby-refinement/sunburst-editor-preview/derby.scene.glb`
+Latest map publication: `work/derby-refinement/sunburst-editor-uv-fixed/derby.scene.glb`
 to `library/scenes/derby-volumes.scene.glb`, with the document fingerprint updated.
 It contains 30 groups, 270 canonical parts, 284 meshes, and 141 modeled steps.
-The newest publication has not yet passed the complete browser acceptance run.
+The newest publication passed a focused real-browser gatehouse load/render check
+(30 groups, 270 parts). It has not yet passed the complete browser acceptance run.
 The earlier check's fixed staircase counts must be updated for current geometry.
 
 Paths below are relative to `level-editor/work/derby-refinement/`.
@@ -30,7 +31,7 @@ Reusable geometry recipes are in `level-editor/blender/derby_asset_*.py`.
 
 | Asset | Integration | Latest work / remaining review |
 | --- | --- | --- |
-| South Gatehouse | Published **with known defect; active rework** | Curved roofs and generated rear texture preview published. User reports roofs no longer round and possibly broken faces. Nine-sided eaves, independently fitted wedges, and texture seams need investigation. Round continuous roof rebuild assigned to `south_gatehouse_asset`; not complete. |
+| South Gatehouse | Published **with texture seams; active rework** | User clarified source solid geometry looks correct. Exact roof triangle comparison exonerated export topology. Generated roof texture used unsupported UV channel 4; exporter now compacts material-used channels and the editor-only hole artifact is fixed. Round-roof rebuild paused. Generated/fallback seams remain; `south_gatehouse_asset` improving projection coverage in an isolated worker. |
 | Southwest Postern Tower | Published | Timber ladders, scaffold, and 8 crenels; `postern-worker-v2`. |
 | Lower Bailey East Curtain | Published | 25 crenels and closed supports; lower-east-curtain worker series. |
 | Lower Bailey West Curtain | Published | 25 crenels, rounded turret, curved roof sectors, 18 stairs; oblique joins remain reviewable. |
@@ -87,8 +88,10 @@ Reusable geometry recipes are in `level-editor/blender/derby_asset_*.py`.
 
 ## Next required work
 
-1. Fix round gatehouse roof geometry; check gaps, overlaps, normals and sector
-   boundaries in solid views. Reproject only after geometry validation.
+1. Keep the reviewed gatehouse shape while resolving texture artifacts. Export UV
+   compaction fixed the editor-only hole; source and exported roof triangles match.
+   Do not reshape the roof to compensate for a texture bug. Internal nonplanar caps
+   remain a separate potential cleanup, not a demonstrated cause of this defect.
 2. Improve generated rear texture placement and verify the original-camera render
    remains unchanged. Do not infer texture correctness from the generated sheet.
 3. Integrate all worker-ready recipes and ground cleanup, preserving the generated

@@ -56,6 +56,52 @@ def reveal_metadata(working, sources, include_all=False):
             "visibility": "Sight obstacle state does not imply removal of rendered geometry; overlap is candidate association only."}
 
 
+def compact_texture_coordinates(doc):
+    """Export only UV channels used by each primitive's material, densely numbered.
+
+    Authoring meshes accumulate projection layers; runtime shaders have fewer UV
+    inputs. Accessors remain unchanged, so this remapping is lossless.
+    """
+    mappings = {}
+    for index, material in enumerate(doc.get("materials", [])):
+        textures = []
+        def visit(value):
+            if not isinstance(value, dict):
+                return
+            for key, item in value.items():
+                if key.endswith("Texture") and isinstance(item, dict) and "index" in item:
+                    textures.append(item)
+                elif isinstance(item, dict):
+                    visit(item)
+        visit(material)
+        used = set()
+        for texture in textures:
+            transform = texture.get("extensions", {}).get("KHR_texture_transform", {})
+            used.add(transform.get("texCoord", texture.get("texCoord", 0)))
+        mapping = {old: new for new, old in enumerate(sorted(used))}
+        if len(mapping) > 4:
+            raise ValueError("Material needs more than four simultaneous UV channels")
+        mappings[index] = mapping
+        for texture in textures:
+            transform = texture.get("extensions", {}).get("KHR_texture_transform", {})
+            old = transform.get("texCoord", texture.get("texCoord", 0))
+            texture["texCoord"] = mapping[old]
+            if "texCoord" in transform:
+                transform["texCoord"] = mapping[old]
+    for mesh in doc.get("meshes", []):
+        for primitive in mesh["primitives"]:
+            mapping = mappings.get(primitive.get("material"), {})
+            attributes = primitive["attributes"]
+            replacement = {key: value for key, value in attributes.items()
+                           if not key.startswith("TEXCOORD_")}
+            for old, new in mapping.items():
+                key = f"TEXCOORD_{old}"
+                if key not in attributes:
+                    raise ValueError(f"Textured primitive missing {key}")
+                replacement[f"TEXCOORD_{new}"] = attributes[key]
+            primitive["attributes"] = replacement
+
+
 def export_editor(map_name, output_path, asset_id=None):
     working = bpy.data.collections[map_name + " Working"]
     output = Path(output_path)
@@ -136,6 +182,7 @@ def export_editor(map_name, output_path, asset_id=None):
                 item["name"] = extras.pop("editor_node_name")
             if item.get("name") == "map" and reveal:
                 item.setdefault("extras", {})["reveal"] = reveal
+        compact_texture_coordinates(doc)
         chunk = json.dumps(doc, separators=(",", ":")).encode()
         chunk += b" " * (-len(chunk) % 4)
         binary = data[20 + length:]
