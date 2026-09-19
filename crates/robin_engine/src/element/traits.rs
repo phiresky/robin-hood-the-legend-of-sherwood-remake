@@ -33,11 +33,6 @@ pub trait Element {
     fn posture(&self) -> Posture {
         self.element_data().posture
     }
-    /// Set posture through the corpse-transition guard.  Delegates to
-    /// [`ElementData::set_posture`].
-    fn set_posture(&mut self, p: Posture) {
-        self.element_data_mut().set_posture(p);
-    }
     fn class_id(&self) -> u16 {
         self.element_data().class_id
     }

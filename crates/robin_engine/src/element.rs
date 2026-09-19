@@ -374,15 +374,12 @@ impl ElementData {
     /// Change the posture, respecting the corpse-transition guard: a
     /// `Dead` / `DeadBack` corpse can only transition to `Carried`
     /// (pickup); any other posture write on a dead sprite is silently
-    /// dropped. This is the public transition API; internal order publication
-    /// and save adoption have explicitly separate semantics.
+    /// dropped. This internal primitive is used by the engine transition API;
+    /// order publication and save adoption have separate semantics.
     ///
-    /// The "fire intersection update on every lying↔non-lying
-    /// transition" hook is implemented as a deferred per-tick drain
-    /// rather than a synchronous hook on this setter: the hook needs
-    /// engine access to iterate actors. See
-    /// [`EngineInner::process_corpse_intersection_updates`].
-    pub fn set_posture(&mut self, p: Posture) {
+    /// Runtime transitions use `EngineInner::set_entity_posture` so spatial
+    /// effects are published together with this write.
+    pub(crate) fn set_posture(&mut self, p: Posture) {
         if self.posture.allows_transition_to(p) {
             self.posture = p;
             self.sprite.position_iface.set_posture(p);
@@ -1250,15 +1247,6 @@ pub struct HumanData {
 
     // Shield & combat
     pub small_repulsive_radius: bool,
-    /// Previously-observed `posture.is_lying()` state for
-    /// [`EngineInner::process_corpse_intersection_updates`].
-    ///
-    /// `None` until the first observation (fresh spawn or post-load);
-    /// that first tick seeds it without firing an update so the
-    /// serialized `small_repulsive_radius` flag stays authoritative.
-    /// Later a mismatch against the current posture drives the
-    /// engine-level `update_intersecting_corpses` hook.
-    pub last_is_lying_for_corpse_intersection: Option<bool>,
     pub killed_by_accident: bool,
     pub parry_counter: u16,
     pub invulnerable: bool,
@@ -1305,7 +1293,6 @@ impl Default for HumanData {
             smalltalk_hint_opponent: None,
             relative_fighting_ability: 0,
             small_repulsive_radius: false,
-            last_is_lying_for_corpse_intersection: None,
             killed_by_accident: false,
             parry_counter: 0,
             invulnerable: false,

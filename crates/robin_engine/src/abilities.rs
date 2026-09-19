@@ -411,16 +411,20 @@ pub fn begin_climb_on_shoulders(
 /// ordering matters: sampling the climber after the snap collapses the facing
 /// vector to zero.
 pub(crate) fn initialize_climb_on_shoulders_relationship(
-    entities: &mut Entities,
+    engine: &mut crate::engine::EngineInner,
     climber_id: EntityId,
     helper_id: EntityId,
 ) {
-    let climber_pos = entities
+    let climber_pos = engine
+        .world
+        .entities
         .get(climber_id)
         .unwrap_or_else(|| panic!("climb-on-shoulders climber {climber_id:?} disappeared"))
         .element_data()
         .position_map();
-    let helper_pos = entities
+    let helper_pos = engine
+        .world
+        .entities
         .get(helper_id)
         .unwrap_or_else(|| panic!("climb-on-shoulders helper {helper_id:?} disappeared"))
         .element_data()
@@ -431,7 +435,9 @@ pub(crate) fn initialize_climb_on_shoulders_relationship(
     );
 
     {
-        let helper = entities
+        let helper = engine
+            .world
+            .entities
             .get_mut(helper_id)
             .expect("validated climb-on-shoulders helper disappeared during initialization");
         let pc = helper
@@ -440,38 +446,48 @@ pub(crate) fn initialize_climb_on_shoulders_relationship(
         pc.carried = Some(climber_id);
         pc.set_live_carried_posture(Posture::OnShoulders);
     }
-    entities
+    engine
+        .world
+        .entities
         .get_mut(climber_id)
         .expect("validated climb-on-shoulders climber disappeared during initialization")
         .human_data_mut()
         .expect("climb-on-shoulders climber is not human")
         .carrier = Some(helper_id);
-    entities
+    engine
+        .world
+        .entities
         .get_mut(helper_id)
         .expect("validated climb-on-shoulders helper disappeared before facing setup")
         .element_data_mut()
         .set_direction_goal(helper_facing);
     {
-        let climber = entities
+        engine.set_entity_posture(climber_id, Posture::OnShoulders);
+        let climber = engine
+            .world
+            .entities
             .get_mut(climber_id)
             .expect("validated climb-on-shoulders climber disappeared before posture setup");
-        climber.set_posture(Posture::OnShoulders);
         climber
             .actor_data_mut()
             .expect("climb-on-shoulders climber lost actor state")
             .action_state = ActionState::Waiting;
     }
     {
-        let helper = entities
+        engine.set_entity_posture(helper_id, Posture::CarryingOnShoulders);
+        let helper = engine
+            .world
+            .entities
             .get_mut(helper_id)
             .expect("validated climb-on-shoulders helper disappeared before posture setup");
-        helper.set_posture(Posture::CarryingOnShoulders);
         helper
             .actor_data_mut()
             .expect("climb-on-shoulders helper lost actor state")
             .action_state = ActionState::Waiting;
     }
-    entities
+    engine
+        .world
+        .entities
         .get_mut(climber_id)
         .expect("validated climb-on-shoulders climber disappeared before snap")
         .element_data_mut()
@@ -3428,7 +3444,10 @@ mod tests {
 
         let expected_helper_goal =
             crate::position_interface::vector_to_sector_0_to_15_iso(10.0 - 30.0, 20.0 - 40.0);
-        initialize_climb_on_shoulders_relationship(&mut entities, climber_id, helper_id);
+        let mut engine = crate::engine::EngineInner::new();
+        engine.world.entities = entities;
+        initialize_climb_on_shoulders_relationship(&mut engine, climber_id, helper_id);
+        let entities = &engine.world.entities;
 
         let climber = entities.get(climber_id).unwrap();
         assert_eq!(climber.element_data().posture(), Posture::OnShoulders);

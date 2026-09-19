@@ -991,7 +991,7 @@ impl EngineInner {
             if let Some(actor) = entity.actor_data_mut() {
                 actor.action_state = ActionState::HoldingShield;
             }
-            entity.set_posture(Posture::Upright);
+            self.set_entity_posture(owner, Posture::Upright);
         }
         OrderEmitter::new(&mut self.orders.next_order_id).push(
             &mut self.orders.sequence_manager,
@@ -1211,7 +1211,7 @@ impl EngineInner {
                         .is_some_and(|victim| get_life_points(victim) <= 0)
                     {
                         let shooter = origin.expect("arrow damage element has no shooter");
-                        self.award_bow_kill_xp(shooter);
+                        self.award_bow_kill_xp(tcx.assets, shooter);
                     }
                     if let Some(projectile_id) = projectile {
                         let direction = match self.get_entity(projectile_id) {

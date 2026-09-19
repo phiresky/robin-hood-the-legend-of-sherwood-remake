@@ -326,8 +326,7 @@ impl EngineInner {
     /// Release every human currently captured by `net_id`.
     ///
     /// Per victim:
-    /// 1. Decrement the stuck-under-nets counter via
-    ///    [`Entity::remove_net_from_human`] (which also clears
+    /// 1. Decrement the stuck-under-nets counter, also clearing
     ///    `Posture::StuckUnderNet` back to `Lying` if no other net is
     ///    still holding the victim down).
     /// 2. Stop in-progress sequences with `Injury` priority.
@@ -363,12 +362,20 @@ impl EngineInner {
 
         for victim_id in victims {
             // ── 1. Decrement counter / unstick posture ─────────────
-            // `Entity::remove_net_from_human` decrements the counter and snaps
-            // posture out of StuckUnderNet atomically.
-            let was_stuck = match self.get_entity_mut(victim_id) {
-                Some(e) => e.remove_net_from_human(),
-                None => continue,
+            let Some(entity) = self.get_entity_mut(victim_id) else {
+                continue;
             };
+            let posture = entity.posture();
+            let Some(human) = entity.human_data_mut() else {
+                continue;
+            };
+            let previous_counter = human.stuck_under_nets_counter;
+            human.stuck_under_nets_counter = previous_counter.saturating_sub(1);
+            let no_nets = human.stuck_under_nets_counter == 0;
+            let was_stuck = previous_counter > 0 && no_nets;
+            if no_nets && posture == crate::element::Posture::StuckUnderNet {
+                self.set_entity_posture(victim_id, crate::element::Posture::Lying);
+            }
 
             // The remaining steps only run when this was the last net
             // holding the victim.

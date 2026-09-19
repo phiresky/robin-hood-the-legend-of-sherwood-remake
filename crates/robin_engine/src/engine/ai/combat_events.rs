@@ -283,30 +283,17 @@ impl AiOwnerCtx<'_> {
                 self.execute_ai_reconsider_enemy_approach(event == EventReachPoint);
             }
             (AttackingSwordfight, EventTimer | EventDone | EventReachPoint) => {
-                if !self
-                    .engine
-                    .combat_event_ai(self.owner)
-                    .pending_special_strike
-                {
-                    self.engine
-                        .combat_event_ai_mut(self.owner)
-                        .base
-                        .set_emoticon(EmoticonType::None);
+                self.engine
+                    .combat_event_ai_mut(self.owner)
+                    .base
+                    .set_emoticon(EmoticonType::None);
 
-                    self.execute_reconsider_swordfight(false);
-                    self.engine
-                        .combat_insult_after_reconsider(self.tcx, self.owner);
-                }
+                self.execute_reconsider_swordfight(false);
+                self.engine
+                    .combat_insult_after_reconsider(self.tcx, self.owner);
             }
             (AttackingSwordfightSpecialStrike, EventDone | EventTimer) => {
-                self.engine
-                    .combat_event_ai_mut(self.owner)
-                    .pending_special_strike = false;
                 self.combat_event_state(AttackingSwordfight, 20);
-                let frame = self.engine.control.frame_counter;
-                self.engine
-                    .combat_event_ai_mut(self.owner)
-                    .next_sword_strike_frame = frame + 20;
             }
             (AttackingSwordfightParade, EventTimer) => {
                 if self

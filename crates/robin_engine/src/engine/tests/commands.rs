@@ -349,13 +349,90 @@ fn resize_snaps_zoom() {
 // ── Campaign integration tests ──────────────────────────────
 
 #[test]
+fn ransom_mutation_updates_purse_actions_before_returning() {
+    use crate::profiles::{Action, CharacterProfile};
+
+    let mut assets = LevelAssets::default();
+    std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .characters
+        .push(CharacterProfile {
+            actions: [Action::Bow, Action::Purse, Action::NoAction],
+            action_max_ammo: [12, 5, 0],
+            ..Default::default()
+        });
+    let mut engine = EngineInner::new();
+    let id = engine.add_test_entity(Entity::Pc(crate::element::ActorPc {
+        element: Default::default(),
+        actor: Default::default(),
+        human: Default::default(),
+        pc: crate::element::PcData {
+            disabled_actions: vec![false; 3],
+            current_action: Action::Purse,
+            saved_action: Action::Purse,
+            ..Default::default()
+        },
+    }));
+    engine.world.pc_ids.push(id);
+    engine.mission_domain.campaign.characters[0]
+        .status
+        .num_purses = 2;
+
+    engine.set_campaign_value(&assets, CampaignValue::Ransom, 0);
+    let pc = engine.get_entity(id).unwrap().pc_data().unwrap();
+    assert!(pc.disabled_actions[1]);
+    assert_eq!(pc.current_action, Action::NoAction);
+    assert_eq!(pc.saved_action, Action::NoAction);
+
+    let price = crate::inventory::COINS_PER_PURSE as i32 * crate::inventory::COIN_VALUE as i32;
+    engine.add_campaign_value(&assets, CampaignValue::Ransom, price);
+    assert!(
+        !engine
+            .get_entity(id)
+            .unwrap()
+            .pc_data()
+            .unwrap()
+            .disabled_actions[1]
+    );
+    engine.add_campaign_value(&assets, CampaignValue::Ransom, -1);
+    assert!(
+        engine
+            .get_entity(id)
+            .unwrap()
+            .pc_data()
+            .unwrap()
+            .disabled_actions[1]
+    );
+
+    // Inventory replenishment enables immediately, independently of currency.
+    engine.increase_ammo_and_enable(&assets, id, Action::Purse, 1);
+    assert!(
+        !engine
+            .get_entity(id)
+            .unwrap()
+            .pc_data()
+            .unwrap()
+            .disabled_actions[1]
+    );
+    // Even an unchanged ransom assignment reapplies the currency gate.
+    engine.set_campaign_value(&assets, CampaignValue::Ransom, price - 1);
+    assert!(
+        engine
+            .get_entity(id)
+            .unwrap()
+            .pc_data()
+            .unwrap()
+            .disabled_actions[1]
+    );
+}
+
+#[test]
 fn add_campaign_value_ransom_credits_mission_stat_and_emits_jingle() {
     use crate::sound::Jingle;
     let mut engine = EngineInner::new();
     engine.mission_domain.campaign = Campaign::default();
     engine.control.frame_counter = 100; // past frame 0 → jingle gate open
 
-    engine.add_campaign_value(CampaignValue::Ransom, 250);
+    engine.add_campaign_value(&LevelAssets::default(), CampaignValue::Ransom, 250);
 
     assert_eq!(
         engine
@@ -381,7 +458,7 @@ fn add_campaign_value_score_credits_mission_stat() {
     engine.mission_domain.campaign = Campaign::default();
     engine.control.frame_counter = 100;
 
-    engine.add_campaign_value(CampaignValue::Score, 750);
+    engine.add_campaign_value(&LevelAssets::default(), CampaignValue::Score, 750);
 
     assert_eq!(
         engine
@@ -404,7 +481,7 @@ fn add_campaign_value_negative_ransom_skips_jingle_but_credits_money() {
     engine.mission_domain.mission_stat.collected_money = 200;
 
     // A purse throw (`engine/archery.rs`, `ThrowPurseDone`) issues a negative delta.
-    engine.add_campaign_value(CampaignValue::Ransom, -100);
+    engine.add_campaign_value(&LevelAssets::default(), CampaignValue::Ransom, -100);
 
     assert_eq!(
         engine
@@ -427,7 +504,7 @@ fn add_campaign_value_skips_jingle_at_frame_zero() {
     engine.mission_domain.campaign = Campaign::default();
     engine.control.frame_counter = 0;
 
-    engine.add_campaign_value(CampaignValue::Ransom, 100);
+    engine.add_campaign_value(&LevelAssets::default(), CampaignValue::Ransom, 100);
 
     assert_eq!(engine.mission_domain.mission_stat.collected_money, 100);
     assert!(engine.feedback.pending_side_effects.sounds.is_empty());
@@ -442,11 +519,11 @@ fn set_campaign_value_ransom_emits_jingle_only_when_growing() {
     engine.mission_domain.campaign.values[CampaignValue::Ransom] = 200;
 
     // Lower → no jingle (only growth fires the gate).
-    engine.set_campaign_value(CampaignValue::Ransom, 100);
+    engine.set_campaign_value(&LevelAssets::default(), CampaignValue::Ransom, 100);
     assert!(engine.feedback.pending_side_effects.sounds.is_empty());
 
     // Higher → jingle.
-    engine.set_campaign_value(CampaignValue::Ransom, 500);
+    engine.set_campaign_value(&LevelAssets::default(), CampaignValue::Ransom, 500);
     let jingle_count = engine
         .feedback
         .pending_side_effects
@@ -465,7 +542,7 @@ fn add_campaign_value_amulets_has_no_side_effects() {
     engine.mission_domain.campaign = Campaign::default();
     engine.control.frame_counter = 100;
 
-    engine.add_campaign_value(CampaignValue::Amulets, 3);
+    engine.add_campaign_value(&LevelAssets::default(), CampaignValue::Amulets, 3);
 
     assert_eq!(
         engine

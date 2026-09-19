@@ -139,7 +139,9 @@ impl EngineInner {
         use ConsoleCommand::*;
         match cmd {
             // ── Campaign value mutations ─────────────────────────
-            GiveMoney { amount, show_help } => self.console_give_money(*amount, *show_help),
+            GiveMoney { amount, show_help } => {
+                self.console_give_money(tcx.assets, *amount, *show_help)
+            }
             GiveBlazon { amount } => self.console_give_blazon(*amount),
             GiveAmulets { amount } => self.console_give_amulets(*amount),
             AddPeasant => self.console_add_peasant(tcx),
@@ -761,10 +763,15 @@ fn console_status_hardware(dev: &mut DevState) -> ConsoleResponse {
 }
 
 impl EngineInner {
-    fn console_give_money(&mut self, amount: u32, show_help: bool) -> ConsoleResponse {
+    fn console_give_money(
+        &mut self,
+        assets: &LevelAssets,
+        amount: u32,
+        show_help: bool,
+    ) -> ConsoleResponse {
         // Panic on missing campaign — matches `campaign_mut_or_panic`'s
         // contract for cheats issued outside a mission.
-        self.add_campaign_value(CampaignValue::Ransom, amount as i32);
+        self.add_campaign_value(assets, CampaignValue::Ransom, amount as i32);
         // Always prints "Money !" first, then emits a four-line
         // help listing (`Try also the following:`, the three
         // CASH suggestions) when called without args, then
@@ -817,7 +824,7 @@ impl EngineInner {
             }
         }
 
-        self.add_campaign_value(CampaignValue::Ransom, money_delta);
+        self.add_campaign_value(assets, CampaignValue::Ransom, money_delta);
         if let Some(campaign) = Some(&mut self.mission_domain.campaign) {
             // Per-mission rescue-PC table — adds recruits
             // matching the current mission filename (e.g.
@@ -894,9 +901,7 @@ impl EngineInner {
             // the unconscious-star titbit + lose-consciousness
             // stimulus.
             self.apply_concussion(tcx, id, 100, false);
-            if let Some(entity) = self.get_entity_mut(id) {
-                entity.set_posture(Posture::Lying);
-            }
+            self.set_entity_posture(id, Posture::Lying);
             self.launch_element(tcx, SequenceElement::new(1, Command::Wait, Some(id)));
         }
         ConsoleResponse::Ok("NPCs knocked out !".to_string())
@@ -1001,9 +1006,7 @@ impl EngineInner {
         // unconscious-star titbit, lose-consciousness stimulus)
         // fire — a direct `set_concussion` call would skip them.
         self.apply_concussion(tcx, id, 100, false);
-        if let Some(entity) = self.get_entity_mut(id) {
-            entity.set_posture(Posture::Lying);
-        }
+        self.set_entity_posture(id, Posture::Lying);
         self.launch_element(tcx, SequenceElement::new(1, Command::Wait, Some(id)));
         *selected_view_element = None;
         ConsoleResponse::Ok("MORPHEUS\nSleep well...".to_string())
@@ -1026,8 +1029,7 @@ impl EngineInner {
         }
         let id = selected_view_element.expect("NPC-selected implies id present");
         self.kill_npc_directly(tcx, id);
-        self.expect_entity_mut(id, "Hades selected NPC")
-            .set_posture(Posture::Dead);
+        self.set_entity_posture(id, Posture::Dead);
         self.launch_element(tcx, SequenceElement::new(1, Command::Wait, Some(id)));
         *selected_view_element = None;
         ConsoleResponse::Ok("HADES\nSleep well... forever!".to_string())
@@ -1272,17 +1274,9 @@ impl EngineInner {
                 self.enable_pc_action(assets, id, action);
             }
         } else {
-            // Forcing the ammo counter to 0 should disable the action
-            // slot.  Every in-tree caller passes 0xFFFF, 999, or 1 —
-            // never 0 — so this arm is unreachable today.  If a future
-            // caller passes 0, route through `disable_pc_action` (needs
-            // a `&LevelAssets` reference to honour the
-            // first-available-action deselect fallback) instead of
-            // silently leaving the slot enabled-but-empty.
-            debug_assert!(
-                amount > 0,
-                "force_ammo_with_banner with amount=0 would need disable_pc_action; see comment"
-            );
+            for (id, _idx) in profile_indices {
+                self.disable_pc_action(assets, id, action);
+            }
         }
         ConsoleResponse::Ok(banner.to_string())
     }

@@ -6420,7 +6420,10 @@ fn direct_parade_and_special_strike_drain_boundary_does_not_leak() {
         .unwrap()
         .enemy_ai()
         .unwrap();
-    assert!(ai.pending_special_strike);
+    assert_eq!(
+        ai.base.current_substate,
+        crate::ai::Substate::AttackingSwordfightSpecialStrike
+    );
     assert_eq!(
         npc_custom_values(&engine, enemy)[9],
         6,

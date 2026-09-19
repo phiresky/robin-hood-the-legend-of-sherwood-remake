@@ -186,7 +186,7 @@ fn pc_beggar_execute_turns_during_both_transitions_and_idle() {
 
 #[test]
 fn leaving_beggar_state_effect_does_not_overwrite_a_newer_pc_action() {
-    let mut entity = Entity::Pc(ActorPc {
+    let entity = Entity::Pc(ActorPc {
         element: {
             let mut initial_element =
                 ElementData::from_initial_posture(crate::element::Posture::SimulatingBeggar);
@@ -201,11 +201,15 @@ fn leaving_beggar_state_effect_does_not_overwrite_a_newer_pc_action() {
         },
     });
 
+    let mut posture_engine = EngineInner::new();
+    let entity_id = posture_engine.add_test_entity(entity);
     apply_active_animation_start_state_side_effect(
-        &mut entity,
+        &mut posture_engine,
+        entity_id,
         OrderType::TransitionSimulatingBeggarWaitingUpright,
         MotionState::Done,
     );
+    let entity = posture_engine.get_entity_mut(entity_id).unwrap();
 
     assert_eq!(
         entity.pc_data().unwrap().current_action,
@@ -300,7 +304,7 @@ fn raising_sword_preserves_soldier_map_vs_human_ground_facing() {
 
 #[test]
 fn raising_sword_state_changes_follow_human_start_and_soldier_done() {
-    let mut pc = Entity::Pc(ActorPc {
+    let pc = Entity::Pc(ActorPc {
         element: {
             let mut initial_element = ElementData::default();
             initial_element.kind = ElementKind::ActorPc;
@@ -310,11 +314,15 @@ fn raising_sword_state_changes_follow_human_start_and_soldier_done() {
         human: Default::default(),
         pc: Default::default(),
     });
+    let mut posture_engine = EngineInner::new();
+    let pc_id = posture_engine.add_test_entity(pc);
     apply_active_animation_start_state_side_effect(
-        &mut pc,
+        &mut posture_engine,
+        pc_id,
         OrderType::TransitionRaisingSword,
         MotionState::Start,
     );
+    let pc = posture_engine.get_entity_mut(pc_id).unwrap();
     assert_eq!(
         pc.actor_data().unwrap().action_state,
         ActionState::WaitingSword
@@ -430,23 +438,29 @@ fn perform_flight_toggles_anti_collision_and_clears_deviation_before_stand_up_tu
     serialized.direction_count = 0;
     position.restore_v48_serialized_state(serialized);
 
+    let mut posture_engine = EngineInner::new();
+    let pc_id = posture_engine.add_test_entity(pc);
     apply_falling_start_side_effect(
-        &mut pc,
+        &mut posture_engine,
+        pc_id,
         OrderType::FallingPushedWithSword,
         MotionState::Start,
     );
+    let pc = posture_engine.get_entity_mut(pc_id).unwrap();
     assert!(!pc.position_iface().is_anti_collision_on());
     assert!(!pc.position_iface().is_deviated());
 
     apply_falling_completion_side_effect(
-        &mut pc,
+        &mut posture_engine,
+        pc_id,
         OrderType::FallingPushedWithSword,
         MotionState::Terminated,
     );
+    let pc = posture_engine.get_entity_mut(pc_id).unwrap();
     assert!(pc.position_iface().is_anti_collision_on());
 
     apply_standing_up_sword_post_perform_facing(
-        &mut pc,
+        pc,
         Some(0),
         EntityId::Pc(crate::entity_id::PcId(0)),
         0,
@@ -594,7 +608,7 @@ fn standing_up_sword_turns_toward_existing_goal_outside_swordfight() {
 
 #[test]
 fn lowering_sword_start_restores_upright_waiting_state() {
-    let mut pc = Entity::Pc(ActorPc {
+    let pc = Entity::Pc(ActorPc {
         element: {
             let mut initial_element = ElementData::from_initial_posture(Posture::Crouched);
             initial_element.kind = ElementKind::ActorPc;
@@ -608,11 +622,15 @@ fn lowering_sword_start_restores_upright_waiting_state() {
         pc: Default::default(),
     });
 
+    let mut posture_engine = EngineInner::new();
+    let pc_id = posture_engine.add_test_entity(pc);
     apply_active_animation_start_state_side_effect(
-        &mut pc,
+        &mut posture_engine,
+        pc_id,
         OrderType::TransitionLoweringSword,
         MotionState::Start,
     );
+    let pc = posture_engine.get_entity_mut(pc_id).unwrap();
 
     assert_eq!(pc.element_data().posture(), Posture::Upright);
     assert_eq!(pc.actor_data().unwrap().action_state, ActionState::Waiting);
@@ -620,7 +638,7 @@ fn lowering_sword_start_restores_upright_waiting_state() {
 
 #[test]
 fn helping_climb_done_applies_posture_and_toolbar_action() {
-    let mut pc = Entity::Pc(ActorPc {
+    let pc = Entity::Pc(ActorPc {
         element: {
             let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
             initial_element.kind = ElementKind::ActorPc;
@@ -631,11 +649,15 @@ fn helping_climb_done_applies_posture_and_toolbar_action() {
         pc: Default::default(),
     });
 
+    let mut posture_engine = EngineInner::new();
+    let pc_id = posture_engine.add_test_entity(pc);
     apply_active_animation_start_state_side_effect(
-        &mut pc,
+        &mut posture_engine,
+        pc_id,
         OrderType::TransitionWaitingUprightHelpingClimbing,
         MotionState::Done,
     );
+    let pc = posture_engine.get_entity_mut(pc_id).unwrap();
 
     assert_eq!(pc.element_data().posture(), Posture::HelpingToClimb);
     assert_eq!(pc.actor_data().unwrap().action_state, ActionState::Waiting);
@@ -648,7 +670,7 @@ fn helping_climb_done_applies_posture_and_toolbar_action() {
 #[test]
 fn generic_crouch_transitions_apply_state_at_done_and_terminated() {
     for motion in [MotionState::Done, MotionState::Terminated] {
-        let mut pc = Entity::Pc(ActorPc {
+        let pc = Entity::Pc(ActorPc {
             element: {
                 let mut initial_element = ElementData::from_initial_posture(Posture::Crouched);
                 initial_element.kind = ElementKind::ActorPc;
@@ -662,19 +684,25 @@ fn generic_crouch_transitions_apply_state_at_done_and_terminated() {
             pc: Default::default(),
         });
 
+        let mut posture_engine = EngineInner::new();
+        let pc_id = posture_engine.add_test_entity(pc);
         apply_active_animation_start_state_side_effect(
-            &mut pc,
+            &mut posture_engine,
+            pc_id,
             OrderType::TransitionCrouchingUp,
             motion,
         );
+        let pc = posture_engine.get_entity_mut(pc_id).unwrap();
         assert_eq!(pc.element_data().posture(), Posture::Upright);
         assert_eq!(pc.actor_data().unwrap().action_state, ActionState::Waiting);
 
         apply_active_animation_start_state_side_effect(
-            &mut pc,
+            &mut posture_engine,
+            pc_id,
             OrderType::TransitionCrouchingDown,
             motion,
         );
+        let pc = posture_engine.get_entity_mut(pc_id).unwrap();
         assert_eq!(pc.element_data().posture(), Posture::Crouched);
         assert_eq!(pc.actor_data().unwrap().action_state, ActionState::Waiting);
     }
@@ -841,13 +869,17 @@ fn falling_landing_depends_on_death_not_unconsciousness() {
             entity.npc_data_mut().unwrap().life_points = if dead { 0 } else { 100 };
             entity.human_data_mut().unwrap().unconscious = unconscious;
             entity.set_posture(Posture::Flying);
+            let mut posture_engine = EngineInner::new();
+            let entity_id = posture_engine.add_test_entity(entity);
             apply_falling_completion_side_effect(
-                &mut entity,
+                &mut posture_engine,
+                entity_id,
                 OrderType::FallingHitWithSword,
                 MotionState::Terminated,
             );
+            let entity = posture_engine.get_entity_mut(entity_id).unwrap();
             finish_flight_action_state(
-                &mut entity,
+                entity,
                 OrderType::FallingHitWithSword,
                 MotionState::Terminated,
             );
@@ -954,11 +986,15 @@ fn sword_combat_injury_callback_retains_pre_perform_action_state() {
     // The sword-injury START states are shared human behavior, so they
     // live in the universal active-animation dispatcher rather than the
     // soldier-only override.
+    let mut posture_engine = EngineInner::new();
+    let entity_id = posture_engine.add_test_entity(entity);
     apply_active_animation_start_state_side_effect(
-        &mut entity,
+        &mut posture_engine,
+        entity_id,
         OrderType::BeingStunnedSword,
         MotionState::Start,
     );
+    let entity = posture_engine.get_entity_mut(entity_id).unwrap();
 
     assert_eq!(callback_action, Some(ActionState::Moving));
     assert_eq!(entity.element_data().posture(), Posture::Upright);
@@ -993,7 +1029,15 @@ fn arrow_extraction_start_restores_original_posture_and_action_states() {
         entity.set_posture(Posture::Lying);
         entity.actor_data_mut().unwrap().action_state = ActionState::MovingFast;
 
-        apply_arrow_extraction_start_side_effect(&mut entity, anim_type, MotionState::Start);
+        let mut posture_engine = EngineInner::new();
+        let entity_id = posture_engine.add_test_entity(entity);
+        apply_arrow_extraction_start_side_effect(
+            &mut posture_engine,
+            entity_id,
+            anim_type,
+            MotionState::Start,
+        );
+        let entity = posture_engine.get_entity_mut(entity_id).unwrap();
 
         assert_eq!(entity.element_data().posture(), posture, "{anim_type:?}");
         assert_eq!(
@@ -1010,11 +1054,15 @@ fn arrow_extraction_start_is_universal_for_civilians() {
     entity.set_posture(Posture::Lying);
     entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
 
+    let mut posture_engine = EngineInner::new();
+    let entity_id = posture_engine.add_test_entity(entity);
     apply_arrow_extraction_start_side_effect(
-        &mut entity,
+        &mut posture_engine,
+        entity_id,
         OrderType::ExtractingArrowCrouched,
         MotionState::Start,
     );
+    let entity = posture_engine.get_entity_mut(entity_id).unwrap();
 
     assert_eq!(entity.element_data().posture(), Posture::Crouched);
     assert_eq!(
@@ -1025,7 +1073,7 @@ fn arrow_extraction_start_is_universal_for_civilians() {
 
 #[test]
 fn bow_equip_start_enters_aiming_state() {
-    let mut entity = Entity::Pc(ActorPc {
+    let entity = Entity::Pc(ActorPc {
         element: {
             let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
             initial_element.kind = ElementKind::ActorPc;
@@ -1036,11 +1084,15 @@ fn bow_equip_start_enters_aiming_state() {
         pc: Default::default(),
     });
 
+    let mut posture_engine = EngineInner::new();
+    let entity_id = posture_engine.add_test_entity(entity);
     apply_active_animation_start_state_side_effect(
-        &mut entity,
+        &mut posture_engine,
+        entity_id,
         OrderType::TransitionEquipBow,
         MotionState::Start,
     );
+    let entity = posture_engine.get_entity_mut(entity_id).unwrap();
 
     assert_eq!(entity.element_data().posture(), Posture::Upright);
     assert_eq!(
@@ -1048,14 +1100,14 @@ fn bow_equip_start_enters_aiming_state() {
         ActionState::AimingWithBow
     );
     assert!(forwards_pc_bow_action_on_start(
-        &entity,
+        entity,
         OrderType::TransitionEquipBow,
         MotionState::Start,
         false,
     ));
     assert!(
         !forwards_pc_bow_action_on_start(
-            &entity,
+            entity,
             OrderType::TransitionEquipBow,
             MotionState::Start,
             true,
@@ -1078,11 +1130,15 @@ fn bored_exit_completion_changes_pc_to_waiting() {
     });
     entity.actor_data_mut().unwrap().action_state = ActionState::Bored;
 
+    let mut posture_engine = EngineInner::new();
+    let entity_id = posture_engine.add_test_entity(entity);
     apply_active_animation_start_state_side_effect(
-        &mut entity,
+        &mut posture_engine,
+        entity_id,
         OrderType::TransitionWaitingUprightBoredWaitingUpright,
         MotionState::Done,
     );
+    let entity = posture_engine.get_entity_mut(entity_id).unwrap();
 
     assert_eq!(
         entity.actor_data().unwrap().action_state,
@@ -1121,7 +1177,15 @@ fn nonmovement_upright_exit_completion_changes_pc_to_waiting() {
         });
         entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
 
-        apply_active_animation_start_state_side_effect(&mut entity, animation, motion);
+        let mut posture_engine = EngineInner::new();
+        let entity_id = posture_engine.add_test_entity(entity);
+        apply_active_animation_start_state_side_effect(
+            &mut posture_engine,
+            entity_id,
+            animation,
+            motion,
+        );
+        let entity = posture_engine.get_entity_mut(entity_id).unwrap();
 
         assert_eq!(entity.element_data().posture(), expected_posture);
         assert_eq!(
@@ -1137,11 +1201,15 @@ fn civilian_idle_override_does_not_run_base_actor_state_changes() {
     let mut entity = civilian_actor();
     entity.actor_data_mut().unwrap().action_state = ActionState::Waiting;
 
+    let mut posture_engine = EngineInner::new();
+    let entity_id = posture_engine.add_test_entity(entity);
     apply_active_animation_start_state_side_effect(
-        &mut entity,
+        &mut posture_engine,
+        entity_id,
         OrderType::TransitionWaitingUprightWaitingUprightBored,
         MotionState::Done,
     );
+    let entity = posture_engine.get_entity_mut(entity_id).unwrap();
 
     assert_eq!(
         entity.actor_data().unwrap().action_state,
@@ -1156,11 +1224,15 @@ fn arrow_extraction_side_effect_only_runs_on_start() {
     entity.set_posture(Posture::Lying);
     entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
 
+    let mut posture_engine = EngineInner::new();
+    let entity_id = posture_engine.add_test_entity(entity);
     apply_arrow_extraction_start_side_effect(
-        &mut entity,
+        &mut posture_engine,
+        entity_id,
         OrderType::ExtractingArrowBow,
         MotionState::Terminated,
     );
+    let entity = posture_engine.get_entity_mut(entity_id).unwrap();
 
     assert_eq!(entity.element_data().posture(), Posture::Lying);
     assert_eq!(
@@ -1175,7 +1247,15 @@ fn standing_up_start_sets_upright_waiting() {
     entity.set_posture(Posture::Lying);
     entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
 
-    apply_standing_up_start_side_effect(&mut entity, OrderType::StandingUp, MotionState::Start);
+    let mut posture_engine = EngineInner::new();
+    let entity_id = posture_engine.add_test_entity(entity);
+    apply_standing_up_start_side_effect(
+        &mut posture_engine,
+        entity_id,
+        OrderType::StandingUp,
+        MotionState::Start,
+    );
+    let entity = posture_engine.get_entity_mut(entity_id).unwrap();
 
     assert_eq!(entity.element_data().posture(), Posture::Upright);
     assert_eq!(
@@ -1190,11 +1270,15 @@ fn standing_up_sword_start_sets_upright_waiting_sword() {
     entity.set_posture(Posture::Lying);
     entity.actor_data_mut().unwrap().action_state = ActionState::ParryingSword;
 
+    let mut posture_engine = EngineInner::new();
+    let entity_id = posture_engine.add_test_entity(entity);
     apply_standing_up_start_side_effect(
-        &mut entity,
+        &mut posture_engine,
+        entity_id,
         OrderType::StandingUpSword,
         MotionState::Start,
     );
+    let entity = posture_engine.get_entity_mut(entity_id).unwrap();
 
     assert_eq!(entity.element_data().posture(), Posture::Upright);
     assert_eq!(
@@ -1209,7 +1293,15 @@ fn standing_up_bow_start_preserves_bow_action() {
     entity.set_posture(Posture::Lying);
     entity.actor_data_mut().unwrap().action_state = ActionState::AimingWithBowUp;
 
-    apply_standing_up_start_side_effect(&mut entity, OrderType::StandingUpBow, MotionState::Start);
+    let mut posture_engine = EngineInner::new();
+    let entity_id = posture_engine.add_test_entity(entity);
+    apply_standing_up_start_side_effect(
+        &mut posture_engine,
+        entity_id,
+        OrderType::StandingUpBow,
+        MotionState::Start,
+    );
+    let entity = posture_engine.get_entity_mut(entity_id).unwrap();
 
     assert_eq!(entity.element_data().posture(), Posture::Upright);
     assert_eq!(
@@ -1228,7 +1320,10 @@ fn carried_body_start_sets_carried_waiting_for_human_actors() {
         entity.set_posture(Posture::Upright);
         entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
 
-        apply_carried_start_side_effect(&mut entity, anim, MotionState::Start);
+        let mut posture_engine = EngineInner::new();
+        let entity_id = posture_engine.add_test_entity(entity);
+        apply_carried_start_side_effect(&mut posture_engine, entity_id, anim, MotionState::Start);
+        let entity = posture_engine.get_entity_mut(entity_id).unwrap();
 
         assert_eq!(entity.element_data().posture(), Posture::Carried);
         assert_eq!(
@@ -1244,11 +1339,15 @@ fn active_provoking_start_sets_upright_waiting_sword() {
     entity.set_posture(Posture::Crouched);
     entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
 
+    let mut posture_engine = EngineInner::new();
+    let entity_id = posture_engine.add_test_entity(entity);
     apply_active_animation_start_state_side_effect(
-        &mut entity,
+        &mut posture_engine,
+        entity_id,
         OrderType::Provoking,
         MotionState::Start,
     );
+    let entity = posture_engine.get_entity_mut(entity_id).unwrap();
 
     assert_eq!(entity.element_data().posture(), Posture::Upright);
     assert_eq!(
@@ -1263,11 +1362,15 @@ fn active_waiting_shield_start_sets_upright_holding_shield() {
     entity.set_posture(Posture::Crouched);
     entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
 
+    let mut posture_engine = EngineInner::new();
+    let entity_id = posture_engine.add_test_entity(entity);
     apply_active_animation_start_state_side_effect(
-        &mut entity,
+        &mut posture_engine,
+        entity_id,
         OrderType::WaitingShield,
         MotionState::Start,
     );
+    let entity = posture_engine.get_entity_mut(entity_id).unwrap();
 
     assert_eq!(entity.element_data().posture(), Posture::Upright);
     assert_eq!(
@@ -1287,11 +1390,15 @@ fn active_taking_net_start_sets_upright_waiting_for_pc() {
     entity.set_posture(Posture::Crouched);
     entity.actor_data_mut().unwrap().action_state = ActionState::MovingFast;
 
+    let mut posture_engine = EngineInner::new();
+    let entity_id = posture_engine.add_test_entity(entity);
     apply_active_animation_start_state_side_effect(
-        &mut entity,
+        &mut posture_engine,
+        entity_id,
         OrderType::TakingNet,
         MotionState::Start,
     );
+    let entity = posture_engine.get_entity_mut(entity_id).unwrap();
 
     assert_eq!(entity.element_data().posture(), Posture::Upright);
     assert_eq!(
@@ -1315,11 +1422,15 @@ fn active_start_state_side_effect_ignores_non_start_motion() {
     entity.set_posture(Posture::Crouched);
     entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
 
+    let mut posture_engine = EngineInner::new();
+    let entity_id = posture_engine.add_test_entity(entity);
     apply_active_animation_start_state_side_effect(
-        &mut entity,
+        &mut posture_engine,
+        entity_id,
         OrderType::WaitingShield,
         MotionState::Done,
     );
+    let entity = posture_engine.get_entity_mut(entity_id).unwrap();
 
     assert_eq!(entity.element_data().posture(), Posture::Crouched);
     assert_eq!(
@@ -1334,11 +1445,15 @@ fn falling_hit_sword_start_and_termination_restore_original_states() {
     entity.set_posture(Posture::Upright);
     entity.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
 
+    let mut posture_engine = EngineInner::new();
+    let entity_id = posture_engine.add_test_entity(entity);
     apply_falling_start_side_effect(
-        &mut entity,
+        &mut posture_engine,
+        entity_id,
         OrderType::FallingHitWithSword,
         MotionState::Start,
     );
+    let entity = posture_engine.get_entity_mut(entity_id).unwrap();
 
     assert_eq!(entity.element_data().posture(), Posture::Flying);
     assert_eq!(
@@ -1347,10 +1462,12 @@ fn falling_hit_sword_start_and_termination_restore_original_states() {
     );
 
     apply_falling_completion_side_effect(
-        &mut entity,
+        &mut posture_engine,
+        entity_id,
         OrderType::FallingHitWithSword,
         MotionState::Terminated,
     );
+    let entity = posture_engine.get_entity_mut(entity_id).unwrap();
 
     assert_eq!(entity.element_data().posture(), Posture::Lying);
     assert_eq!(
@@ -1361,7 +1478,7 @@ fn falling_hit_sword_start_and_termination_restore_original_states() {
     // the enclosing flight action still restores its family afterward.
     entity.actor_data_mut().unwrap().action_state = ActionState::Menacing;
     finish_flight_action_state(
-        &mut entity,
+        entity,
         OrderType::FallingHitWithSword,
         MotionState::Terminated,
     );
@@ -1377,11 +1494,15 @@ fn harder_falling_hit_preserves_pose_until_action_lands() {
     entity.set_posture(Posture::Upright);
     entity.actor_data_mut().unwrap().action_state = ActionState::Menacing;
 
+    let mut posture_engine = EngineInner::new();
+    let entity_id = posture_engine.add_test_entity(entity);
     apply_falling_start_side_effect(
-        &mut entity,
+        &mut posture_engine,
+        entity_id,
         OrderType::FallingHitHarderWithSword,
         MotionState::Start,
     );
+    let entity = posture_engine.get_entity_mut(entity_id).unwrap();
 
     assert_eq!(entity.element_data().posture(), Posture::Upright);
     assert_eq!(
@@ -1390,10 +1511,12 @@ fn harder_falling_hit_preserves_pose_until_action_lands() {
     );
 
     apply_falling_completion_side_effect(
-        &mut entity,
+        &mut posture_engine,
+        entity_id,
         OrderType::FallingHitHarderWithSword,
         MotionState::Done,
     );
+    let entity = posture_engine.get_entity_mut(entity_id).unwrap();
 
     assert_eq!(entity.element_data().posture(), Posture::Lying);
     assert_eq!(
@@ -1403,10 +1526,12 @@ fn harder_falling_hit_preserves_pose_until_action_lands() {
     );
 
     apply_falling_completion_side_effect(
-        &mut entity,
+        &mut posture_engine,
+        entity_id,
         OrderType::FallingHitHarderWithSword,
         MotionState::Terminated,
     );
+    let entity = posture_engine.get_entity_mut(entity_id).unwrap();
 
     assert_eq!(entity.element_data().posture(), Posture::Lying);
     assert_eq!(
@@ -1446,11 +1571,15 @@ fn falling_pushed_bow_start_and_termination_restore_original_states() {
     entity.set_posture(Posture::Upright);
     entity.actor_data_mut().unwrap().action_state = ActionState::AimingWithBow;
 
+    let mut posture_engine = EngineInner::new();
+    let entity_id = posture_engine.add_test_entity(entity);
     apply_falling_start_side_effect(
-        &mut entity,
+        &mut posture_engine,
+        entity_id,
         OrderType::FallingPushedWithBow,
         MotionState::Start,
     );
+    let entity = posture_engine.get_entity_mut(entity_id).unwrap();
 
     assert_eq!(entity.element_data().posture(), Posture::Flying);
     assert_eq!(
@@ -1459,10 +1588,12 @@ fn falling_pushed_bow_start_and_termination_restore_original_states() {
     );
 
     apply_falling_completion_side_effect(
-        &mut entity,
+        &mut posture_engine,
+        entity_id,
         OrderType::FallingPushedWithBow,
         MotionState::Terminated,
     );
+    let entity = posture_engine.get_entity_mut(entity_id).unwrap();
 
     assert_eq!(entity.element_data().posture(), Posture::Lying);
     assert_eq!(
@@ -1471,7 +1602,7 @@ fn falling_pushed_bow_start_and_termination_restore_original_states() {
     );
     entity.actor_data_mut().unwrap().action_state = ActionState::Menacing;
     finish_flight_action_state(
-        &mut entity,
+        entity,
         OrderType::FallingPushedWithBow,
         MotionState::Terminated,
     );
@@ -1492,13 +1623,17 @@ fn smalltalk_start_sets_waiting_sword_and_termination_recovers_tiredness() {
         ..Default::default()
     });
 
+    let mut posture_engine = EngineInner::new();
+    let entity_id = posture_engine.add_test_entity(entity);
     apply_smalltalk_start_and_recovery_side_effect(
-        &mut entity,
+        &mut posture_engine,
+        entity_id,
         OrderType::ParryingLeftSmalltalk,
         MotionState::Start,
         &profiles,
         None,
     );
+    let entity = posture_engine.get_entity_mut(entity_id).unwrap();
 
     assert_eq!(entity.element_data().posture(), Posture::Upright);
     assert_eq!(
@@ -1507,12 +1642,14 @@ fn smalltalk_start_sets_waiting_sword_and_termination_recovers_tiredness() {
     );
 
     apply_smalltalk_start_and_recovery_side_effect(
-        &mut entity,
+        &mut posture_engine,
+        entity_id,
         OrderType::ParryingLeftSmalltalk,
         MotionState::Terminated,
         &profiles,
         None,
     );
+    let entity = posture_engine.get_entity_mut(entity_id).unwrap();
 
     assert_eq!(entity.human_data().unwrap().tiredness, 19);
 }
@@ -2096,11 +2233,15 @@ fn unconscious_sword_start_sets_lying_waiting_sword() {
     // The knock-out hold START states are owned by the human-level
     // dispatcher (they apply to PCs and soldiers alike), not the
     // soldier-only side-effect switch.
+    let mut posture_engine = EngineInner::new();
+    let entity_id = posture_engine.add_test_entity(entity);
     apply_active_animation_start_state_side_effect(
-        &mut entity,
+        &mut posture_engine,
+        entity_id,
         OrderType::BeingUnconsciousSword,
         MotionState::Start,
     );
+    let entity = posture_engine.get_entity_mut(entity_id).unwrap();
 
     assert_eq!(entity.element_data().posture(), Posture::Lying);
     assert_eq!(
@@ -2110,42 +2251,27 @@ fn unconscious_sword_start_sets_lying_waiting_sword() {
 }
 
 #[test]
-fn dead_random_bored_start_reports_rejected_nonlying_posture_request() {
+fn dead_random_bored_start_rechecks_radius_despite_rejected_posture() {
     let mut entity = weak_soldier_at_action_done(0);
     entity.element_data_mut().kind = ElementKind::ActorSoldier;
     entity.set_posture(Posture::DeadBack);
-
-    assert!(rejected_dead_idle_posture_callback_required(
-        &entity,
-        OrderType::WaitingUprightBoredRandom,
-        MotionState::Start,
-    ));
-    assert!(rejected_dead_idle_posture_callback_required(
-        &entity,
-        OrderType::WaitingUpright,
-        MotionState::Start,
-    ));
-    assert!(rejected_dead_idle_posture_callback_required(
-        &entity,
-        OrderType::WaitingUprightBored,
-        MotionState::Start,
-    ));
-    assert!(!rejected_dead_idle_posture_callback_required(
-        &entity,
-        OrderType::WaitingUprightBoredRandom,
-        MotionState::InProgress,
-    ));
+    entity.human_data_mut().unwrap().small_repulsive_radius = true;
+    let mut engine = EngineInner::new();
+    let entity_id = engine.add_test_entity(entity);
 
     apply_active_animation_start_state_side_effect(
-        &mut entity,
+        &mut engine,
+        entity_id,
         OrderType::WaitingUprightBoredRandom,
         MotionState::Start,
     );
+    let entity = engine.get_entity(entity_id).unwrap();
     assert_eq!(
         entity.element_data().posture(),
         Posture::DeadBack,
         "the callback is driven by the rejected Upright request, not an actual posture change"
     );
+    assert!(!entity.human_data().unwrap().small_repulsive_radius);
 }
 
 fn sequence_with_order(
@@ -2176,7 +2302,15 @@ fn lying_stuck_under_net_start_sets_original_states_for_alive_free_actor() {
     entity.set_posture(Posture::Upright);
     entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
 
-    apply_under_net_initialization_side_effect(sim, &mut entity, OrderType::LyingStuckUnderNet);
+    let mut posture_engine = EngineInner::new();
+    let entity_id = posture_engine.add_test_entity(entity);
+    apply_under_net_initialization_side_effect(
+        sim,
+        &mut posture_engine,
+        entity_id,
+        OrderType::LyingStuckUnderNet,
+    );
+    let entity = posture_engine.get_entity_mut(entity_id).unwrap();
 
     assert_eq!(entity.element_data().posture(), Posture::StuckUnderNet);
     assert_eq!(
@@ -2196,9 +2330,17 @@ fn wriggle_under_net_start_sets_state_direction_and_soldier_emoticon() {
             crate::element::AiBrain::Enemy(Box::new(crate::ai_enemy::EnemyAi::new(7)));
     }
 
+    let mut posture_engine = EngineInner::new();
+    let entity_id = posture_engine.add_test_entity(entity);
     crate::sim_rng::with_seed(1, |sim| {
-        apply_under_net_initialization_side_effect(sim, &mut entity, OrderType::WriggleUnderNet);
+        apply_under_net_initialization_side_effect(
+            sim,
+            &mut posture_engine,
+            entity_id,
+            OrderType::WriggleUnderNet,
+        );
     });
+    let entity = posture_engine.get_entity_mut(entity_id).unwrap();
 
     assert_eq!(entity.element_data().posture(), Posture::StuckUnderNet);
     assert_eq!(

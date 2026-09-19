@@ -190,8 +190,8 @@ impl EngineInner {
             frame,
             owner,
             format_args!(
-                "phase={phase} pending_special={} state={:?} substate={:?}",
-                ai.pending_special_strike, ai.base.current_state, ai.base.current_substate,
+                "phase={phase} state={:?} substate={:?}",
+                ai.base.current_state, ai.base.current_substate,
             ),
         );
     }
@@ -394,7 +394,8 @@ impl EngineInner {
         let profile_idx = {
             let entity = self.expect_entity_mut(attacker_id, "melee MotionState::Start owner");
             let profile_idx = get_hth_weapon_id_full(entity, &tcx.assets.profile_manager);
-            entity.set_posture(Posture::Upright);
+            self.set_entity_posture(attacker_id, Posture::Upright);
+            let entity = self.expect_entity_mut(attacker_id, "melee MotionState::Start owner");
             let actor = entity.actor_data_mut().unwrap_or_else(|| {
                 panic!("melee MotionState::Start owner {attacker_id:?} lost actor data")
             });
@@ -492,11 +493,9 @@ impl EngineInner {
 
     /// Per-frame melee maintenance outside the actor-owned Execute arms.
     ///
-    /// Active sequence strikes run in [`Self::tick_selected_melee_owner`] at
-    /// the attacker's legacy creation slot. This pass retains the periodic
-    /// combat diagnostics and the remaining global melee bookkeeping.
-    pub(crate) fn tick_melee_combat(&mut self, tcx: TickCtx<'_>) {
-        if self.actors_frozen() {
+    /// Periodic diagnostics for live combat state.
+    pub(crate) fn trace_combat_state(&self) {
+        if self.actors_frozen() || !tracing::enabled!(tracing::Level::DEBUG) {
             return;
         }
 
@@ -524,9 +523,6 @@ impl EngineInner {
                 );
             }
         }
-
-        self.tick_enemy_sword_attacks(tcx);
-        self.tick_refresh_purse_disable(tcx.assets);
     }
 
     /// Apply the parry hold countdown at the owning actor's legacy Execute
@@ -1969,11 +1965,13 @@ impl EngineInner {
                     .entities
                     .get_mut(owner)
                     .expect("ladder fall owner disappeared");
-                entity.set_posture(if entity.is_dead() {
+                let posture = if entity.is_dead() {
                     Posture::DeadBack
                 } else {
                     Posture::Lying
-                });
+                };
+                self.set_entity_posture(owner, posture);
+                let entity = self.expect_entity_mut(owner, "ladder fall owner");
                 entity
                     .actor_data_mut()
                     .expect("ladder fall owner is not an actor")
@@ -2203,31 +2201,6 @@ impl EngineInner {
         } else if let Some(entity) = self.world.entities.get_mut(entity_id) {
             let here = entity.element_data().position_map();
             stop_roll_at_current_position(entity.position_iface_mut(), here);
-        }
-    }
-
-    /// Reconcile the lifetime of already launched special-strike sequences.
-    pub(super) fn tick_enemy_sword_attacks(&mut self, tcx: TickCtx<'_>) {
-        let mut flagged: Vec<EntityId> = Vec::new();
-        for npc_id in self.world.entities.ai_owner_ids() {
-            if self
-                .world
-                .entities
-                .get(npc_id)
-                .and_then(Entity::enemy_ai)
-                .is_some_and(|ai| ai.pending_special_strike)
-            {
-                flagged.push(npc_id);
-            }
-        }
-        for npc_id in flagged {
-            let has_active = self
-                .orders
-                .sequence_manager
-                .has_live_element_for_actor_matching(npc_id, |cmd| {
-                    cmd.is_swordstrike() || cmd == crate::element::Command::WaitTimer
-                });
-            self.reconcile_ai_special_strike(tcx, npc_id, has_active);
         }
     }
 
@@ -2506,12 +2479,8 @@ impl EngineInner {
             );
         }
 
-        // Flag the pending special strike and cancel movement so the
-        // EnemyAi owner stands still during the delay.
-        // `begin_special_strike` sets the lifecycle latch and enters the
-        // observable legacy special-strike substate; the
-        // immediate stop-all side effect stays engine-side so it
-        // runs before the new strike sequence is queued.
+        // Enter the special-strike substate before stopping movement and launching
+        // the preparation sequence: completion callbacks can run during either call.
         self.begin_ai_special_strike(tcx, owner);
         self.stop_ai_owner(tcx, owner);
         if special_debug {

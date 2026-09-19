@@ -1238,7 +1238,6 @@ impl EngineInner {
                 _ => false,
             };
 
-        let mut set_posture_stuck_under_net = false;
         let animation = if let Some(pc_animation) = pc_posture_animation {
             Some(pc_animation)
         } else if is_soldier
@@ -1294,7 +1293,7 @@ impl EngineInner {
                 }
                 P::Lying => {
                     if is_stuck_under_net {
-                        set_posture_stuck_under_net = true;
+                        self.set_entity_posture(owner, P::StuckUnderNet);
                         Some(OT::LyingStuckUnderNet)
                     } else {
                         Some(match after_state {
@@ -1374,15 +1373,6 @@ impl EngineInner {
                 .expect_actor_data_mut(owner, format_args!("Wait translation listening owner"));
             const TIME_LISTEN_WAIT: u32 = 25;
             actor.wait_time = TIME_LISTEN_WAIT;
-        }
-        if set_posture_stuck_under_net {
-            let entity = self.world.entities.expect_entity_mut(
-                owner,
-                format_args!("Wait translation owner while setting net posture"),
-            );
-            entity
-                .element_data_mut()
-                .set_posture(crate::element::Posture::StuckUnderNet);
         }
 
         if let Some(falling) = heart_attack_animation {
@@ -1795,12 +1785,12 @@ impl EngineInner {
         };
 
         let old_posture = live_posture;
+        self.set_entity_posture(owner, transition.result_posture);
         let entity = self
             .world
             .entities
             .get_mut(owner)
             .expect("stealth command owner disappeared during dispatch");
-        entity.set_posture(transition.result_posture);
         if let Some(actor) = entity.actor_data_mut() {
             actor.action_state = transition.result_action_state;
         }

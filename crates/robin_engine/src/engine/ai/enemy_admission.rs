@@ -115,48 +115,12 @@ impl EngineInner {
     }
 
     pub(in crate::engine) fn begin_ai_special_strike(&mut self, tcx: TickCtx<'_>, owner: EntityId) {
-        self.observation_ai_mut(owner).pending_special_strike = true;
         self.duty_set_state(
             tcx,
             owner,
             AiState::Attacking,
             Substate::AttackingSwordfightSpecialStrike,
         );
-    }
-
-    pub(in crate::engine) fn reconcile_ai_special_strike(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        has_active: bool,
-    ) {
-        let ai = self.observation_ai_mut(owner);
-        if !ai.pending_special_strike || ai.base.ai_is_locked() {
-            return;
-        }
-        if !matches!(
-            ai.base.current_substate,
-            Substate::AttackingSwordfight | Substate::AttackingSwordfightSpecialStrike
-        ) {
-            ai.pending_special_strike = false;
-            return;
-        }
-        if has_active {
-            return;
-        }
-        ai.pending_special_strike = false;
-        if ai.base.current_substate == Substate::AttackingSwordfightSpecialStrike {
-            self.duty_set_state(
-                tcx,
-                owner,
-                AiState::Attacking,
-                Substate::AttackingSwordfight,
-            );
-            let frame = self.control.frame_counter;
-            let ai = self.observation_ai_mut(owner);
-            ai.base.launch_timer(20, frame);
-            ai.next_sword_strike_frame = frame + 20;
-        }
     }
 
     pub(in crate::engine) fn begin_enemy_think(

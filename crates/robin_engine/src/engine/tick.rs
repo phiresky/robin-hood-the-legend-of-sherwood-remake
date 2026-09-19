@@ -634,7 +634,7 @@ pub(super) enum HourglassPhase {
     Paths,
     Entities,
     EntitySystems,
-    GameplaySystems,
+    FinishOwnerUpdates,
     Sequences,
     DeferredEffectsEnd,
 }
@@ -653,14 +653,13 @@ pub(super) enum EntitySystemDetail {
     OwnerPrelude = 2,
     OwnerExecute = 3,
     NpcTail = 4,
-    CorpseUpdates = 5,
-    FrameSounds = 6,
-    BuildEntityViews = 7,
-    BuildWorldView = 8,
-    RefreshDetection = 9,
+    FrameSounds = 5,
+    BuildEntityViews = 6,
+    BuildWorldView = 7,
+    RefreshDetection = 8,
 }
 
-const ENTITY_SYSTEM_DETAIL_COUNT: usize = 10;
+const ENTITY_SYSTEM_DETAIL_COUNT: usize = 9;
 
 #[derive(Default)]
 struct EntitySystemDetailStats {
@@ -727,7 +726,6 @@ fn finish_entity_system_detail_frame() {
             owner_prelude_us = per_frame(EntitySystemDetail::OwnerPrelude),
             owner_execute_us = per_frame(EntitySystemDetail::OwnerExecute),
             npc_tail_us = per_frame(EntitySystemDetail::NpcTail),
-            corpse_us = per_frame(EntitySystemDetail::CorpseUpdates),
             frame_sounds_us = per_frame(EntitySystemDetail::FrameSounds),
             build_views_us = per_frame(EntitySystemDetail::BuildEntityViews),
             build_views_calls = calls(EntitySystemDetail::BuildEntityViews),
@@ -1419,8 +1417,8 @@ impl EngineInner {
             self.hourglass_phase_entity_systems(tcx)
         });
 
-        time_hourglass_phase(HourglassPhase::GameplaySystems, || {
-            self.hourglass_phase_gameplay_systems(tcx, display)
+        time_hourglass_phase(HourglassPhase::FinishOwnerUpdates, || {
+            self.hourglass_phase_finish_owner_updates()
         });
 
         time_hourglass_phase(HourglassPhase::Sequences, || {
@@ -2360,8 +2358,9 @@ impl EngineInner {
         sprite.compute_display_depth_relative_to(helper_depth, false);
 
         if motion == MotionState::Done {
-            carried.set_posture(Posture::Upright);
-            carried
+            self.set_entity_posture(carried_id, Posture::Upright);
+            self.get_entity_mut(carried_id)
+                .expect("shoulder rider disappeared after posture update")
                 .actor_data_mut()
                 .expect("PC has actor data")
                 .action_state = ActionState::Waiting;
@@ -2424,8 +2423,9 @@ impl EngineInner {
             carried
                 .element_data_mut()
                 .set_position_map_delayed(landing_position);
-            carried.set_posture(Posture::Upright);
-            carried
+            self.set_entity_posture(carried_id, Posture::Upright);
+            self.get_entity_mut(carried_id)
+                .expect("shoulder rider disappeared after landing posture update")
                 .actor_data_mut()
                 .expect("shoulder rider must be actor")
                 .action_state = ActionState::Waiting;

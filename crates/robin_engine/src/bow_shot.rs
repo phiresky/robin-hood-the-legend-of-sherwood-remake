@@ -278,7 +278,8 @@ pub(crate) fn is_active_bow_order(ot: OrderType) -> bool {
 }
 
 pub(crate) fn apply_bow_transition_state_side_effect(
-    entity: &mut Entity,
+    engine: &mut crate::engine::EngineInner,
+    entity_id: EntityId,
     order_type: OrderType,
     motion: SpriteMotionState,
 ) {
@@ -286,10 +287,12 @@ pub(crate) fn apply_bow_transition_state_side_effect(
         OrderType::TransitionEquipBow | OrderType::TransitionEquipBowAnonymous
             if motion == SpriteMotionState::Start =>
         {
-            if entity.element_data().posture() != Posture::AnonymousArcher {
-                entity
-                    .element_data_mut()
-                    .publish_order_posture(Posture::Upright);
+            if engine
+                .expect_entity(entity_id, "bow posture owner")
+                .posture()
+                != Posture::AnonymousArcher
+            {
+                engine.publish_entity_order_posture(entity_id, Posture::Upright);
             }
             Some(ActionState::AimingWithBow)
         }
@@ -315,9 +318,7 @@ pub(crate) fn apply_bow_transition_state_side_effect(
                 SpriteMotionState::Done | SpriteMotionState::Terminated
             ) =>
         {
-            entity
-                .element_data_mut()
-                .publish_order_posture(Posture::LeaningOut);
+            engine.publish_entity_order_posture(entity_id, Posture::LeaningOut);
             Some(ActionState::AimingWithBowDown)
         }
         OrderType::TransitionRaisingBowLeaningOut
@@ -326,9 +327,7 @@ pub(crate) fn apply_bow_transition_state_side_effect(
                 SpriteMotionState::Done | SpriteMotionState::Terminated
             ) =>
         {
-            entity
-                .element_data_mut()
-                .publish_order_posture(Posture::Upright);
+            engine.publish_entity_order_posture(entity_id, Posture::Upright);
             Some(ActionState::AimingWithBow)
         }
         OrderType::TransitionUnequipBow | OrderType::TransitionUnequipBowAnonymous
@@ -337,10 +336,12 @@ pub(crate) fn apply_bow_transition_state_side_effect(
                 SpriteMotionState::Start | SpriteMotionState::Done | SpriteMotionState::Terminated
             ) =>
         {
-            if entity.element_data().posture() != Posture::AnonymousArcher {
-                entity
-                    .element_data_mut()
-                    .publish_order_posture(Posture::Upright);
+            if engine
+                .expect_entity(entity_id, "bow posture owner")
+                .posture()
+                != Posture::AnonymousArcher
+            {
+                engine.publish_entity_order_posture(entity_id, Posture::Upright);
             }
             Some(ActionState::Waiting)
         }
@@ -353,7 +354,9 @@ pub(crate) fn apply_bow_transition_state_side_effect(
     };
 
     if let Some(action_state) = action_state
-        && let Some(actor) = entity.actor_data_mut()
+        && let Some(actor) = engine
+            .expect_entity_mut(entity_id, "bow state owner")
+            .actor_data_mut()
     {
         actor.action_state = action_state;
     }

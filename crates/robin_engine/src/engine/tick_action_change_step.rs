@@ -462,11 +462,5 @@ impl EngineInner {
                 "owner_tail_after_derived",
             );
         }
-
-        // Human posture changes update intersecting-corpse state
-        // synchronously. Close the owner-local
-        // boundary before the next creation slot samples this
-        // actor for anti-collision.
-        self.process_corpse_intersection_update_for(entity_id);
     }
 }

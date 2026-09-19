@@ -1018,12 +1018,12 @@ impl EngineInner {
                 _ => None,
             };
             if let Some((posture, action)) = states {
+                self.set_entity_posture(entity_id, posture);
                 let entity = self
                     .world
                     .entities
                     .get_mut(entity_id)
                     .expect("jump owner disappeared");
-                entity.set_posture(posture);
                 entity
                     .actor_data_mut()
                     .expect("jump owner is not an actor")
@@ -1066,12 +1066,6 @@ impl EngineInner {
                 .position_iface_mut();
             pi.set_old_map_position(pi.map_position());
         }
-        let entity = self
-            .world
-            .entities
-            .get_mut(entity_id)
-            .expect("jump owner disappeared");
-
         if matches!(
             anim,
             OrderType::TransitionWaitingUprightJumpingUp
@@ -1079,8 +1073,14 @@ impl EngineInner {
                 | OrderType::TransitionWaitingUprightJumpingLong
                 | OrderType::TransitionWaitingSwordJumpingLongSword
         ) {
-            entity.set_posture(Posture::Flying);
-            if let Some(actor) = entity.actor_data_mut() {
+            self.set_entity_posture(entity_id, Posture::Flying);
+            if let Some(actor) = self
+                .world
+                .entities
+                .get_mut(entity_id)
+                .expect("jump owner disappeared")
+                .actor_data_mut()
+            {
                 actor.action_state = if anim == OrderType::TransitionWaitingSwordJumpingLongSword {
                     ActionState::MovingSword
                 } else {
@@ -1089,6 +1089,11 @@ impl EngineInner {
             }
         }
 
+        let entity = self
+            .world
+            .entities
+            .get_mut(entity_id)
+            .expect("jump owner disappeared");
         if matches!(
             anim,
             OrderType::TransitionWaitingOnShouldersJumpingUp

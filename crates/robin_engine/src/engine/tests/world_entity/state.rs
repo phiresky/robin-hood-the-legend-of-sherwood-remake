@@ -75,7 +75,6 @@ fn live_state_change_releases_archery_ownership_without_clearing_special_strike(
     let ai = engine.enemy_mut(owner);
     ai.my_shooting_point = Some((0, 0));
     ai.my_archery_sector = Some(0);
-    ai.pending_special_strike = true;
     engine.duty_set_state(
         TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
@@ -85,7 +84,6 @@ fn live_state_change_releases_archery_ownership_without_clearing_special_strike(
     let ai = engine.enemy(owner);
     assert_eq!(ai.my_shooting_point, None);
     assert_eq!(ai.my_archery_sector, None);
-    assert!(ai.pending_special_strike);
     assert_eq!(engine.ai.global.archery_sectors[0].points[0].owner, None);
     assert_eq!(engine.ai.global.archery_sectors[0].num_owners, 0);
 }

@@ -274,10 +274,10 @@ pub(super) fn perform_seek_lost_actor_target(
     if let Some((posture, action_state)) =
         super::movement::movement_execute_state_effect(order_type, MotionState::Terminated)
     {
+        engine.set_entity_posture(owner, posture);
         let entity = engine
             .get_entity_mut(owner)
             .unwrap_or_else(|| panic!("lost-target seeking owner {owner:?} disappeared"));
-        entity.set_posture(posture);
         entity
             .actor_data_mut()
             .expect("lost-target seeking owner is not an actor")

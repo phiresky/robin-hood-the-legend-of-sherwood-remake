@@ -520,7 +520,7 @@ impl EngineInner {
         if let Some(Entity::Pc(pc)) = self.world.entities.get_mut(pc_id) {
             pc.human.concussion_of_the_brain = 0;
             pc.human.unconscious = false;
-            pc.element.set_posture(crate::element::Posture::Upright);
+            self.set_entity_posture(pc_id, crate::element::Posture::Upright);
         }
 
         self.hero_speaking(

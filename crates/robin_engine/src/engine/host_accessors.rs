@@ -951,21 +951,37 @@ impl EngineInner {
 
     /// Mutate a campaign value with the usual addition side effects; see
     /// [`MissionDomain::add_campaign_value`](super::state::MissionDomain::add_campaign_value).
-    pub(crate) fn add_campaign_value(&mut self, name: crate::campaign::CampaignValue, amount: i32) {
+    pub(crate) fn add_campaign_value(
+        &mut self,
+        assets: &LevelAssets,
+        name: crate::campaign::CampaignValue,
+        amount: i32,
+    ) {
         self.mission_domain.add_campaign_value(
             &mut self.feedback.pending_side_effects,
             self.control.frame_counter,
             name,
             amount,
         );
+        if name == crate::campaign::CampaignValue::Ransom {
+            self.mission_domain.campaign.update_purse_actions(
+                &mut self.world.entities,
+                &self.world.pc_ids,
+                &assets.profile_manager,
+            );
+        }
     }
 
     /// Force a campaign value with the usual assignment side effects.
     /// RANSOM emits the `CashWon` jingle when the new value is greater
     /// than the old one (and the universal frame counter has advanced
     /// past 0).
-    #[cfg(test)]
-    pub(crate) fn set_campaign_value(&mut self, name: crate::campaign::CampaignValue, value: i32) {
+    pub(crate) fn set_campaign_value(
+        &mut self,
+        assets: &LevelAssets,
+        name: crate::campaign::CampaignValue,
+        value: i32,
+    ) {
         let old = self.mission_domain.campaign.values[name];
         self.mission_domain.campaign.values[name] = value;
         Self::apply_value_set_side_effects(
@@ -975,9 +991,15 @@ impl EngineInner {
             old,
             value,
         );
+        if name == crate::campaign::CampaignValue::Ransom {
+            self.mission_domain.campaign.update_purse_actions(
+                &mut self.world.entities,
+                &self.world.pc_ids,
+                &assets.profile_manager,
+            );
+        }
     }
 
-    #[cfg(test)]
     fn apply_value_set_side_effects(
         side_effects: &mut HostEffects,
         frame_counter: u32,

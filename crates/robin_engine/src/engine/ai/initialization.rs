@@ -843,7 +843,8 @@ impl EngineInner {
                 human.concussion_of_the_brain = crate::combat::CONCUSSION_MAX;
                 human.unconscious = true;
             }
-            entity.set_posture(posture);
+            self.set_entity_posture(owner, posture);
+            let entity = self.expect_entity_mut(owner, "initial AI posture");
             entity
                 .actor_data_mut()
                 .expect("initial AI actor")

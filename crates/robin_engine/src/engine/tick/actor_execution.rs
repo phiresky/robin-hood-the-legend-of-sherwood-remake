@@ -638,17 +638,7 @@ impl EngineInner {
         let target_is_dead = target_entity.is_dead();
         let target_is_pc = target_entity.is_pc();
         if !target_is_dead {
-            if let Some(target_entity) = self.get_entity_mut(target) {
-                target_entity.set_posture(crate::element::Posture::Lying);
-            }
-            // Updating human posture calls
-            // corpse-intersection updates synchronously. Keep this
-            // cross-owner WAKING_UP write distinct from the target's
-            // later actor slot: a recovering target can enter Lying here
-            // and leave it again on StandingUp's START edge in that slot.
-            // Deferring both writes to the owner-tail sampler would see
-            // only Upright -> Upright and lose both corpse callbacks.
-            self.process_corpse_intersection_update_for(target);
+            self.set_entity_posture(target, crate::element::Posture::Lying);
             self.apply_concussion(tcx, target, 0, false);
             // Concussion handling synchronously sends FITAGAIN from
             // the WakingUp DONE stack. This AI consequence is immediate

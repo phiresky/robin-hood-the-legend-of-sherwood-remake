@@ -1338,7 +1338,6 @@ fn golden_human_fixture() -> HumanData {
         smalltalk_hint_opponent: Some(EntityId::Soldier(SoldierId(24))),
         relative_fighting_ability: 16,
         small_repulsive_radius: true,
-        last_is_lying_for_corpse_intersection: Some(true),
         killed_by_accident: true,
         parry_counter: 17,
         invulnerable: true,
@@ -1562,7 +1561,6 @@ fn golden_ai_actor_fixture(ai_brain: AiBrain, seed: u16) -> AiActorData {
 fn golden_entities_fixture() -> crate::entities::Entities {
     // Exercise persistent runtime values and immutable behavior identity.
     let enemy = EnemyAi {
-        pending_special_strike: true,
         pc_gone_away_in_this_direction: 3,
         thirsty: true,
         previous_state: crate::ai::StoredEnumWord::new(crate::ai::AiState::Default),

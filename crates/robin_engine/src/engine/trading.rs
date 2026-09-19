@@ -4,10 +4,9 @@ use crate::entity_id::BonusId;
 use crate::player_command::PlayerId;
 use crate::profiles::{Action, MissionLocation};
 use crate::sector_production::Type;
-use crate::sound::Jingle;
 use crate::trading::{TradeOutcome, TradeQuantity, TradeReceipt, TradeRejectReason, trade_item};
 
-use super::{EngineInner, LevelAssets, SoundCommand};
+use super::{EngineInner, LevelAssets};
 
 fn stored_stock(entities: &Entities, action: Action) -> u16 {
     let total: u32 = entities
@@ -157,15 +156,7 @@ impl EngineInner {
         // Deliberately bypass `add_campaign_value`: trade proceeds are
         // campaign currency, not mission-collected ransom or score/achievement
         // credit.  Preserve only the positive-cash acknowledgement jingle.
-        self.mission_domain
-            .campaign
-            .set_value(CampaignValue::Ransom, ransom_after);
-        if self.control.frame_counter > 0 {
-            self.feedback
-                .pending_side_effects
-                .sounds
-                .push(SoundCommand::Jingle(Jingle::CashWon));
-        }
+        self.set_campaign_value(assets, CampaignValue::Ransom, ransom_after);
 
         self.feedback
             .pending_side_effects

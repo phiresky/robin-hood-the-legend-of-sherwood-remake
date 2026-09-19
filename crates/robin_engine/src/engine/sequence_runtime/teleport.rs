@@ -227,24 +227,21 @@ impl EngineInner {
                 // it alone.
                 if final_sector_handle.is_some() {
                     let lift = self.get_sector_lift_type(final_sector_number);
-                    match lift {
+                    let posture = match lift {
                         Some(crate::sector::LiftType::Ladder) => {
-                            if let Some(entity) = self.world.entities.get_mut(owner) {
-                                entity.set_posture(crate::element::Posture::OnLadder);
-                                if let Some(actor) = entity.actor_data_mut() {
-                                    actor.action_state = crate::element::ActionState::Waiting;
-                                }
-                            }
+                            Some(crate::element::Posture::OnLadder)
                         }
                         Some(crate::sector::LiftType::Wall) => {
-                            if let Some(entity) = self.world.entities.get_mut(owner) {
-                                entity.set_posture(crate::element::Posture::OnWall);
-                                if let Some(actor) = entity.actor_data_mut() {
-                                    actor.action_state = crate::element::ActionState::Waiting;
-                                }
-                            }
+                            Some(crate::element::Posture::OnWall)
                         }
-                        _ => {}
+                        _ => None,
+                    };
+                    if let Some(posture) = posture {
+                        self.set_entity_posture(owner, posture);
+                        self.world
+                            .entities
+                            .expect_actor_data_mut(owner, format_args!("teleported lift owner"))
+                            .action_state = crate::element::ActionState::Waiting;
                     }
                 }
 

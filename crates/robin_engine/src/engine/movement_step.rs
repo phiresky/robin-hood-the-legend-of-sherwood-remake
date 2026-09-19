@@ -738,8 +738,14 @@ impl EngineInner {
             execute_order_initialising,
             decorative_building_trap_at_destination,
         ) {
-            elem.publish_order_posture(posture);
+            self.publish_entity_order_posture(entity_id, posture);
         }
+        let elem = self
+            .world
+            .entities
+            .get_mut(entity_id)
+            .expect("movement owner disappeared during execution")
+            .element_data_mut();
         if execute_order_initialising && let Some(climb_dir) = door_pass_climb_direction {
             let dir = if matches!(
                 (anim, elem.posture()),
@@ -1793,12 +1799,12 @@ impl EngineInner {
                 && let Some((posture, action_state)) =
                     movement_execute_state_effect(order_action, motion_state)
             {
+                self.set_entity_posture(entity_id, posture);
                 let entity = self
                     .world
                     .entities
                     .get_mut(entity_id)
                     .expect("movement Execute owner disappeared");
-                entity.set_posture(posture);
                 entity
                     .actor_data_mut()
                     .expect("movement Execute owner must be actor")
@@ -1814,12 +1820,12 @@ impl EngineInner {
                     .pc_data()
                     .and_then(|pc| pc.carried)
                     .expect("walking corpse carrier has no body");
+                self.set_entity_posture(carried, crate::element::Posture::Carried);
                 let body = self
                     .world
                     .entities
                     .get_mut(carried)
                     .expect("carried body disappeared");
-                body.set_posture(crate::element::Posture::Carried);
                 body.actor_data_mut()
                     .expect("carried body must be actor")
                     .action_state = crate::element::ActionState::Waiting;

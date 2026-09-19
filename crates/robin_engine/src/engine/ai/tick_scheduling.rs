@@ -113,7 +113,7 @@ impl EngineInner {
             }
         }
 
-        // Sword strikes are launched by `engine::melee::tick_enemy_sword_attacks`.
+        // Sword strikes are launched synchronously by the swordfight decision.
         // Keep this AI pass to target selection, pursuit, and swordfight
         // requests; applying direct damage here would bypass the
         // wait-timer + interaction sequence timing.

@@ -815,7 +815,7 @@ impl EngineInner {
                     .set_direction_instantly(direction);
             }
         }
-        let entity = self
+        let mut entity = self
             .world
             .entities
             .get_mut(entity_id)
@@ -825,7 +825,8 @@ impl EngineInner {
         {
             // The transition sets the helper's
             // states before playing the lowering animation.
-            entity.set_posture(crate::element::Posture::HelpingToClimb);
+            self.set_entity_posture(entity_id, crate::element::Posture::HelpingToClimb);
+            entity = self.expect_entity_mut(entity_id, "animation owner");
             entity
                 .actor_data_mut()
                 .expect("PC has actor data")
@@ -868,7 +869,8 @@ impl EngineInner {
             && let Some(direction) = door_pass_crenel_transition_dir
         {
             entity.element_data_mut().set_direction_instantly(direction);
-            entity.set_posture(crate::element::Posture::Flying);
+            self.set_entity_posture(entity_id, crate::element::Posture::Flying);
+            entity = self.expect_entity_mut(entity_id, "animation owner");
         }
         let special_speech_id = if anim_type == OrderType::Special && entity.is_soldier() {
             Some(
@@ -999,14 +1001,7 @@ impl EngineInner {
                     OrderType::LyingStuckUnderNet | OrderType::WriggleUnderNet
                 )
             {
-                apply_under_net_initialization_side_effect(
-                    tcx.sim,
-                    self.world
-                        .entities
-                        .get_mut(entity_id)
-                        .expect("animation owner disappeared"),
-                    anim_type,
-                );
+                apply_under_net_initialization_side_effect(tcx.sim, self, entity_id, anim_type);
             }
 
             let entity = self
@@ -1579,25 +1574,25 @@ impl EngineInner {
                 antagonist,
                 entity_id,
             );
+            apply_actor_walk_start_side_effect(self, entity_id, anim_type, motion_state);
             let entity = self
                 .world
                 .entities
                 .get_mut(entity_id)
                 .expect("animation owner disappeared");
-            apply_actor_walk_start_side_effect(entity, anim_type, motion_state);
             super::jump::apply_jump_down_takeoff_drop(entity, anim_type, motion_state);
-            let rejected_posture =
-                rejected_dead_idle_posture_callback_required(entity, anim_type, motion_state);
-            apply_active_animation_start_state_side_effect(entity, anim_type, motion_state);
+            apply_active_animation_start_state_side_effect(
+                self,
+                entity_id,
+                anim_type,
+                motion_state,
+            );
             let equip_bow = forwards_pc_bow_action_on_start(
-                entity,
+                self.expect_entity(entity_id, "animation owner"),
                 anim_type,
                 motion_state,
                 current_element_script_driven,
             );
-            if rejected_posture {
-                self.process_rejected_nonlying_posture_request_for(entity_id);
-            }
             if equip_bow {
                 self.execute_pc_bow_equip_action(tcx, entity_id);
             }
@@ -1657,20 +1652,21 @@ impl EngineInner {
                 antagonist,
                 entity_id,
             );
-            let entity = self
-                .world
-                .entities
-                .get_mut(entity_id)
-                .expect("animation owner disappeared");
             apply_sword_parry_side_effect(
-                entity,
+                self,
+                entity_id,
                 anim_type,
                 motion_state,
                 principal_frames_from_now,
             );
-            apply_under_net_termination_side_effect(entity, anim_type, motion_state);
+            apply_under_net_termination_side_effect(
+                self.expect_entity_mut(entity_id, "animation owner"),
+                anim_type,
+                motion_state,
+            );
             apply_smalltalk_start_and_recovery_side_effect(
-                entity,
+                self,
+                entity_id,
                 anim_type,
                 motion_state,
                 &tcx.assets.profile_manager,
@@ -1685,16 +1681,11 @@ impl EngineInner {
                 striking_down_sword_direction_goal,
                 entity_id,
             );
-            let entity = self
-                .world
-                .entities
-                .get_mut(entity_id)
-                .expect("animation owner disappeared");
-            apply_arrow_extraction_start_side_effect(entity, anim_type, motion_state);
-            apply_shield_transition_side_effect(entity, anim_type, motion_state);
+            apply_arrow_extraction_start_side_effect(self, entity_id, anim_type, motion_state);
+            apply_shield_transition_side_effect(self, entity_id, anim_type, motion_state);
             if anim_type == OrderType::RaisingShield && motion_state == MotionState::Done {
                 crate::bow_shot::refresh_retained_shield_obstacle(
-                    entity,
+                    self.expect_entity_mut(entity_id, "animation owner"),
                     &tcx.assets.profile_manager,
                 );
             }
@@ -1706,17 +1697,12 @@ impl EngineInner {
                 reusable_cloaks_enabled,
                 entity_id,
             );
-            let entity = self
-                .world
-                .entities
-                .get_mut(entity_id)
-                .expect("animation owner disappeared");
-            apply_standing_up_start_side_effect(entity, anim_type, motion_state);
-            apply_carried_start_side_effect(entity, anim_type, motion_state);
-            apply_falling_start_side_effect(entity, anim_type, motion_state);
-            apply_falling_completion_side_effect(entity, anim_type, motion_state);
-            apply_dying_start_side_effect(entity, anim_type, motion_state);
-            apply_being_dead_start_side_effect(entity, anim_type, motion_state);
+            apply_standing_up_start_side_effect(self, entity_id, anim_type, motion_state);
+            apply_carried_start_side_effect(self, entity_id, anim_type, motion_state);
+            apply_falling_start_side_effect(self, entity_id, anim_type, motion_state);
+            apply_falling_completion_side_effect(self, entity_id, anim_type, motion_state);
+            apply_dying_start_side_effect(self, entity_id, anim_type, motion_state);
+            apply_being_dead_start_side_effect(self, entity_id, anim_type, motion_state);
             if uses_perform_flight(anim_type) {
                 self.finish_combat_flight(tcx, entity_id, motion_state);
                 finish_flight_action_state(
@@ -1783,12 +1769,12 @@ impl EngineInner {
                 .pc_data()
                 .and_then(|pc| pc.carried)
                 .expect("waiting corpse carrier has no body");
+            self.set_entity_posture(carried, crate::element::Posture::Carried);
             let body = self
                 .world
                 .entities
                 .get_mut(carried)
                 .expect("carried body disappeared");
-            body.set_posture(crate::element::Posture::Carried);
             body.actor_data_mut()
                 .expect("carried body must be actor")
                 .action_state = crate::element::ActionState::Waiting;

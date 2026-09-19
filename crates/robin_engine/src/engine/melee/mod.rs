@@ -8,7 +8,7 @@
 //!
 //! ### Enemy AI strikes
 //! The enemy AI (`engine/ai.rs`) transitions soldiers into `AttackingSwordfight`
-//! substate when close to a PC. `tick_enemy_sword_attacks` proposes a strike
+//! substate when close to a PC. `execute_ai_sword_strike_proposal` proposes a strike
 //! with the sprite-frame timing inputs, then launches the wait-timer
 //! plus interaction sequence shape used by the malignity AI.
 //!

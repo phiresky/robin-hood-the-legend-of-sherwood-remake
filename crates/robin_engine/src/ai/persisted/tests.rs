@@ -209,7 +209,6 @@ fn ai_global_state_scalar_projection_matrix() {
 fn enemy_ai_scalar_projection_matrix() {
     for seed in 0..16u32 {
         let value = EnemyAi {
-            pending_special_strike: seed & (1 << 1) != 0,
             pc_missed: seed & (1 << 1) != 0,
             pc_gone_away_in_this_direction: (7u32 + seed) as u16,
             frame_when_missed_charly: (8u32 + seed),
@@ -250,7 +249,6 @@ fn enemy_ai_scalar_projection_matrix() {
             sword_range: (97u32 + seed) as u16,
             hth_weapon_id: (98u32 + seed),
             sword_is_charge_weapon: seed & (1 << 2) != 0,
-            next_sword_strike_frame: (100u32 + seed),
             company_number: (101u32 + seed) as u16,
             attentive: seed & (1 << 3) != 0,
             will_be_attentive: seed & (1 << 0) != 0,

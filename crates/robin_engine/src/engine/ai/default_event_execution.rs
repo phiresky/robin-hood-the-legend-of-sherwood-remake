@@ -144,10 +144,7 @@ impl AiOwnerCtx<'_> {
                         None
                     };
                     if let Some(posture) = posture {
-                        self.engine
-                            .entities_mut()
-                            .expect_entity_mut(self.owner, format_args!("post arrival posture"))
-                            .set_posture(posture);
+                        self.engine.set_entity_posture(self.owner, posture);
                     }
                     self.duty_set_state(AiState::Default, Substate::DefaultOnPost);
                     let frames = self.engine.ai_bored_time(self.tcx, self.owner);

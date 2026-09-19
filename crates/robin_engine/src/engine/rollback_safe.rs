@@ -1708,10 +1708,17 @@ impl Engine {
         profiles: &crate::profiles::ProfileManager,
     ) -> bool {
         let sim = self.inner.control.simulation_context();
-        self.inner
+        let closed = self
+            .inner
             .mission_domain
             .campaign
-            .buy_blazon(&sim, mission_index, profiles)
+            .buy_blazon(&sim, mission_index, profiles);
+        self.inner.mission_domain.campaign.update_purse_actions(
+            &mut self.inner.world.entities,
+            &self.inner.world.pc_ids,
+            profiles,
+        );
+        closed
     }
 
     /// Reset the campaign's `last_pseudo_mission_status` flag after the

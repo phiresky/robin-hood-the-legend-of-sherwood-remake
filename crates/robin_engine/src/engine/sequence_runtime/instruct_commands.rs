@@ -421,6 +421,7 @@ impl EngineInner {
             }) {
                 const SCORE_SOLDIER_KILLED_DURING_FIGHT: i32 = 50;
                 self.add_campaign_value(
+                    tcx.assets,
                     crate::campaign::CampaignValue::Score,
                     SCORE_SOLDIER_KILLED_DURING_FIGHT,
                 );
@@ -456,7 +457,7 @@ impl EngineInner {
             self.push_new_order(elem_ref, anim, 0.0, 0.0);
         } else {
             if victim.is_dead() {
-                victim.set_posture(crate::element::Posture::DeadBack);
+                self.set_entity_posture(owner, crate::element::Posture::DeadBack);
             }
             self.element_terminated(tcx, active_scripts, elem_ref);
         }

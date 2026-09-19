@@ -3067,11 +3067,18 @@ fn bow_transition_sets_action_state_on_animation_start(
 ) {
     let mut pc = make_pc(0.0, 0.0);
     pc.actor_data_mut().unwrap().action_state = initial;
+    let mut engine = crate::engine::EngineInner::new();
+    let pc = engine.add_test_entity(pc);
 
-    apply_bow_transition_state_side_effect(&mut pc, transition, SpriteMotionState::Start);
+    apply_bow_transition_state_side_effect(&mut engine, pc, transition, SpriteMotionState::Start);
 
     assert_eq!(
-        pc.actor_data().unwrap().action_state,
+        engine
+            .get_entity(pc)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .action_state,
         expected,
         "the bow transition sets its action state when motion starts"
     );
@@ -3152,26 +3159,46 @@ fn equip_and_unload_are_active_bow_transition_orders() {
 fn leaning_out_bow_transitions_update_posture_like_soldier_execute() {
     let mut soldier = make_soldier(0.0, 0.0);
     soldier.actor_data_mut().unwrap().action_state = ActionState::AimingWithBow;
+    let mut engine = crate::engine::EngineInner::new();
+    let soldier = engine.add_test_entity(soldier);
 
     apply_bow_transition_state_side_effect(
-        &mut soldier,
+        &mut engine,
+        soldier,
         OrderType::TransitionLoweringBowLeaningOut,
         SpriteMotionState::Done,
     );
-    assert_eq!(soldier.element_data().posture(), Posture::LeaningOut);
     assert_eq!(
-        soldier.actor_data().unwrap().action_state,
+        engine.get_entity(soldier).unwrap().element_data().posture(),
+        Posture::LeaningOut
+    );
+    assert_eq!(
+        engine
+            .get_entity(soldier)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .action_state,
         ActionState::AimingWithBowDown
     );
 
     apply_bow_transition_state_side_effect(
-        &mut soldier,
+        &mut engine,
+        soldier,
         OrderType::TransitionRaisingBowLeaningOut,
         SpriteMotionState::Done,
     );
-    assert_eq!(soldier.element_data().posture(), Posture::Upright);
     assert_eq!(
-        soldier.actor_data().unwrap().action_state,
+        engine.get_entity(soldier).unwrap().element_data().posture(),
+        Posture::Upright
+    );
+    assert_eq!(
+        engine
+            .get_entity(soldier)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .action_state,
         ActionState::AimingWithBow
     );
 }

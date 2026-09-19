@@ -528,8 +528,10 @@ impl EngineInner {
             )
         };
         if bow_shot::is_bow_transition_order(order_type) {
-            bow_shot::apply_bow_transition_state_side_effect(shooter, order_type, motion);
-            if shooter.is_pc()
+            bow_shot::apply_bow_transition_state_side_effect(self, shooter_id, order_type, motion);
+            if self
+                .expect_entity(shooter_id, "bow owner after transition")
+                .is_pc()
                 && !script_driven
                 && motion == MotionState::Start
                 && matches!(
@@ -551,13 +553,9 @@ impl EngineInner {
             let shooter = self.expect_entity_mut(shooter_id, "bow owner after release");
             shooter.actor_data_mut().unwrap().action_state = ActionState::AimingWithBow;
             if order_type == OrderType::ShootingWithBowLeaningOut {
-                shooter
-                    .element_data_mut()
-                    .publish_order_posture(Posture::LeaningOut);
+                self.publish_entity_order_posture(shooter_id, Posture::LeaningOut);
             } else if shooter.element_data().posture() != Posture::AnonymousArcher {
-                shooter
-                    .element_data_mut()
-                    .publish_order_posture(Posture::Upright);
+                self.publish_entity_order_posture(shooter_id, Posture::Upright);
             }
             return Some(motion);
         }
@@ -1867,60 +1865,6 @@ impl EngineInner {
         crate::inventory::find_action_slot(profile, action)
     }
 
-    /// Per-tick refresh of the Purse-action disable flag based on
-    /// campaign ransom and each PC's purse ammo.
-    ///
-    /// The Purse button is disabled when either the PC's
-    /// `num_purses == 0` or the campaign's ransom drops below
-    /// `COINS_PER_PURSE * COIN_VALUE`, and re-enables when both pass.
-    /// We piggyback on the per-tick sweep instead of hooking every
-    /// ransom mutation.
-    pub(super) fn tick_refresh_purse_disable(&mut self, assets: &LevelAssets) {
-        use crate::profiles::Action;
-        let ransom = Some(&self.mission_domain.campaign)
-            .map(|c| c.get_value(crate::campaign::CampaignValue::Ransom))
-            .unwrap_or(0);
-        let threshold =
-            crate::inventory::COINS_PER_PURSE as i32 * crate::inventory::COIN_VALUE as i32;
-        let ransom_ok = ransom >= threshold;
-        let pcs: Vec<EntityId> = self.world.entities.pcs().map(|(id, _)| id.into()).collect();
-        for pc_id in pcs {
-            // Only PCs that have the Purse action in their profile
-            // participate in the gate — Robin/Stuteley don't have Purse
-            // at all, and their slot array should stay untouched.
-            let has_purse = self
-                .get_entity(pc_id)
-                .and_then(|e| match e {
-                    Entity::Pc(pc) => {
-                        let idx = usize::from(pc.pc.profile_index);
-                        assets.profile_manager.characters.get(idx)
-                    }
-                    _ => None,
-                })
-                .map(|profile| profile.actions.contains(&Action::Purse))
-                .unwrap_or(false);
-            if !has_purse {
-                continue;
-            }
-            // Disable if `num_purses == 0` OR ransom below threshold;
-            // enable otherwise.  Purse ammo lives on the selected PC's
-            // campaign status block, matching the original game's status reference.
-            let num_purses = self
-                .get_entity(pc_id)
-                .and_then(|e| match e {
-                    Entity::Pc(pc) => self.pc_description_for_pc_data(&pc.pc),
-                    _ => None,
-                })
-                .map(|desc| desc.status.get_ammo(Action::Purse))
-                .unwrap_or(0);
-            if num_purses == 0 || !ransom_ok {
-                self.disable_pc_action(assets, pc_id, Action::Purse);
-            } else {
-                self.enable_pc_action(assets, pc_id, Action::Purse);
-            }
-        }
-    }
-
     /// Increase ammo for a PC and re-enable the action if it was disabled.
     ///
     /// After adding ammo, if the new count is > 0, the action slot is
@@ -2081,7 +2025,11 @@ impl EngineInner {
             // For a fresh world purse we always credit the full value.
             ObjectType::Purse => {
                 let value = crate::inventory::COINS_PER_PURSE as u32 * crate::inventory::COIN_VALUE;
-                self.add_campaign_value(crate::campaign::CampaignValue::Ransom, value as i32);
+                self.add_campaign_value(
+                    assets,
+                    crate::campaign::CampaignValue::Ransom,
+                    value as i32,
+                );
                 self.spawn_take_counter(pos, blayer, value as u16);
                 remove = true;
             }
@@ -2104,7 +2052,11 @@ impl EngineInner {
                 } else {
                     crate::inventory::COIN_VALUE
                 };
-                self.add_campaign_value(crate::campaign::CampaignValue::Ransom, value as i32);
+                self.add_campaign_value(
+                    assets,
+                    crate::campaign::CampaignValue::Ransom,
+                    value as i32,
+                );
                 self.spawn_take_counter(pos, blayer, value as u16);
                 remove = true;
             }
@@ -2112,8 +2064,13 @@ impl EngineInner {
             // ── Ransom bonus (gold bag): quantity -> ransom + score + counter ──
             ObjectType::BonusRansom => {
                 const SCORE_STOLEN_MONEY_HUNDRED: i32 = 10;
-                self.add_campaign_value(crate::campaign::CampaignValue::Ransom, quantity as i32);
                 self.add_campaign_value(
+                    assets,
+                    crate::campaign::CampaignValue::Ransom,
+                    quantity as i32,
+                );
+                self.add_campaign_value(
+                    assets,
                     crate::campaign::CampaignValue::Score,
                     SCORE_STOLEN_MONEY_HUNDRED * (quantity as i32) / 100,
                 );
@@ -2136,6 +2093,7 @@ impl EngineInner {
                     c.add_relic(relic_object_type_index(obj_type));
                 }
                 self.add_campaign_value(
+                    assets,
                     crate::campaign::CampaignValue::Score,
                     SCORE_COLLECTED_RELIC,
                 );
@@ -2345,7 +2303,7 @@ impl EngineInner {
     ///
     /// Awards `BOW_KILL_EXPERIENCE_POINTS` to the shooter's Bow skill
     /// via the campaign's `PcStatus`.
-    pub(super) fn award_bow_kill_xp(&mut self, shooter_id: EntityId) {
+    pub(super) fn award_bow_kill_xp(&mut self, assets: &LevelAssets, shooter_id: EntityId) {
         let Some(entity) = self.get_entity(shooter_id) else {
             return;
         };
@@ -2367,6 +2325,7 @@ impl EngineInner {
         );
         if capacity_increased {
             self.add_campaign_value(
+                assets,
                 crate::campaign::CampaignValue::Score,
                 crate::pc_status::PC_ADDITIONAL_CAPACITY_POINTS,
             );
@@ -3724,14 +3683,6 @@ mod tests {
         {
             let target = engine.ent_mut(target_id);
             target.element_data_mut().set_position_map(carried_position);
-            assert_eq!(
-                target
-                    .human_data()
-                    .unwrap()
-                    .last_is_lying_for_corpse_intersection,
-                None,
-                "freshly adopted carried bodies have no derived observer state"
-            );
         }
         let mut neighbour = TestActor::pc(Posture::Tied)
             .action_state(ActionState::Waiting)
@@ -3739,10 +3690,6 @@ mod tests {
         neighbour
             .element_data_mut()
             .set_position_map(crate::coordinates::MapPoint::new(110.0, 100.0));
-        neighbour
-            .human_data_mut()
-            .unwrap()
-            .last_is_lying_for_corpse_intersection = Some(true);
         let neighbour_id = engine.add_test_entity(neighbour);
 
         let assets = engine.test_runtime_assets();

@@ -1566,7 +1566,7 @@ impl EngineInner {
     /// `propose_good_sword_strike`, and launch the resulting strike
     /// as a sequence element interaction.  No hulk build-up, no
     /// preparation delay, no war-cry — those are soldier-only
-    /// embellishments handled in `tick_enemy_sword_attacks`.
+    /// embellishments handled in `execute_ai_sword_strike_proposal`.
     pub(super) fn pc_propose_and_launch_strike(
         &mut self,
         tcx: TickCtx<'_>,

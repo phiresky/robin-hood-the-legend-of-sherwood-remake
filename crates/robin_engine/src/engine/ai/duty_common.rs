@@ -461,28 +461,11 @@ mod tests {
         ai.base.current_substate = Substate::AttackingSwordfight;
         engine.control.frame_counter = 40;
         engine.begin_ai_special_strike(TickCtx::new(&sim, &assets), owner);
-        engine.reconcile_ai_special_strike(TickCtx::new(&sim, &assets), owner, true);
         let ai = enemy(&engine, owner);
-        assert!(ai.pending_special_strike);
         assert_eq!(
             ai.base.current_substate,
             Substate::AttackingSwordfightSpecialStrike
         );
-        for locks in [
-            AiLockFlags::BUSY,
-            AiLockFlags::FREEZE,
-            AiLockFlags::BUSY | AiLockFlags::FREEZE,
-        ] {
-            enemy_mut(&mut engine, owner).base.locks_flag_field = locks;
-            engine.control.frame_counter = 41;
-            engine.reconcile_ai_special_strike(TickCtx::new(&sim, &assets), owner, false);
-            let ai = enemy(&engine, owner);
-            assert!(ai.pending_special_strike);
-            assert_eq!(
-                ai.base.current_substate,
-                Substate::AttackingSwordfightSpecialStrike
-            );
-        }
         enemy_mut(&mut engine, owner).base.locks_flag_field = AiLockFlags::FREEZE;
         engine.control.frame_counter = 41;
         engine.execute_ai_callback(
@@ -490,9 +473,7 @@ mod tests {
             owner,
             &Stimulus::new(StimulusType::EventDone),
         );
-        engine.reconcile_ai_special_strike(TickCtx::new(&sim, &assets), owner, false);
         let ai = enemy_mut(&mut engine, owner);
-        assert!(ai.pending_special_strike);
         assert_eq!(
             ai.base
                 .stimulus_queue
@@ -514,9 +495,8 @@ mod tests {
             &event,
         );
         let ai = enemy_mut(&mut engine, owner);
-        assert!(!ai.pending_special_strike);
         assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
-        assert_eq!(ai.next_sword_strike_frame, 62);
+        assert_eq!(ai.base.when_does_timer_ring, 62);
         engine.control.frame_counter = 62;
         engine.begin_ai_special_strike(TickCtx::new(&sim, &assets), owner);
         engine.duty_set_state(
@@ -525,9 +505,7 @@ mod tests {
             AiState::Attacking,
             Substate::AttackingSwordfightParade,
         );
-        engine.reconcile_ai_special_strike(TickCtx::new(&sim, &assets), owner, false);
         let ai = enemy(&engine, owner);
-        assert!(!ai.pending_special_strike);
         assert_eq!(
             ai.base.current_substate,
             Substate::AttackingSwordfightParade

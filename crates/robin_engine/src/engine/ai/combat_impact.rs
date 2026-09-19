@@ -146,10 +146,11 @@ impl AiOwnerCtx<'_> {
             },
         );
         self.engine.launch_element(self.tcx, element);
+        self.engine
+            .set_entity_posture(self.owner, crate::element::Posture::Upright);
         let entity = self
             .engine
             .expect_entity_mut(self.owner, "incoming arrow shield pose");
-        entity.set_posture(crate::element::Posture::Upright);
         entity
             .actor_data_mut()
             .expect("shield owner is actor")
