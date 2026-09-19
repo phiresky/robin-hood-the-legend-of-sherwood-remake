@@ -75,12 +75,15 @@ Replace every masked untextured surface with the appropriate texture. Return the
     short:"Create an image from the provided reference sheet of 8 views of the same building. The untextured gray shaded areas mark missing textures. Use the mask. Fill in these regions logically and consistently across all views, preserving all existing pixels outside the mask exactly. Keep the same building design, textures, lighting, perspective, and black background.",
     detailed:"This image is a fixed 4-column by 2-row contact sheet of EIGHT orthographic views of ONE identical medieval gatehouse, azimuths 0,45,90,135 degrees on the top row and 180,225,270,315 on the bottom. Untextured gray shaded surfaces show existing 3D geometry where texture is missing. Use the mask. Preserve every pixel outside the mask, including the existing textured artwork and black background, exactly. Texture ONLY the editable shaded surfaces in ALL EIGHT views TOGETHER, deriving consistent weathered grey-brown masonry, small rounded reddish-brown roof shingles, metal roof caps, lighting and fine painterly pixel grain from the known views. Use the shading to understand the surface shape and depth. Preserve every tile's exact camera, silhouette, geometry, roof peaks, eaves, arches, occlusion edges, dimensions and pixel locations. Do not rearrange, resize, merge, crop, flip, rotate, or relayout views. Do not transfer the front camera to another tile. The building and material pattern must remain consistent across all eight azimuths. Continue small stone/shingle courses at the exact original physical scale; no new windows, doors, people, objects, lettering or geometry. Retain all existing image boundaries."
   };
-  const outputDirectory=path.join(directory,`generation-${variant}`);
+  const omitMask=process.argv.includes("--no-mask");
+  if(omitMask&&variant!=="short")throw new Error("The no-mask control currently requires --prompt-variant short");
+  const outputDirectory=path.join(directory,`generation-${variant}${omitMask?"-no-mask":""}`);
   await fs.mkdir(outputDirectory,{recursive:true});
-  const parameters={model,quality:"high",size:"1536x1024",n:"1",output_format:"png",prompt:prompts[variant]};
-  const hash=crypto.createHash("sha256").update(input).update(mask).update(JSON.stringify(parameters)).digest("hex");
+  const prompt=omitMask?"Create an image from the provided reference sheet of 8 views of the same building. The untextured gray shaded areas mark missing textures. Fill in these regions logically and consistently across all views, preserving all existing textured pixels exactly. Keep the same building design, textures, lighting, perspective, and black background.":prompts[variant];
+  const parameters={model,quality:"high",size:"1536x1024",n:"1",output_format:"png",prompt};
+  const hash=crypto.createHash("sha256").update(input).update(omitMask?Buffer.alloc(0):mask).update(JSON.stringify(parameters)).digest("hex");
   const cache=path.join(directory,"api-cache",hash);await fs.mkdir(cache,{recursive:true});
-  await fs.writeFile(path.join(cache,"request.json"),JSON.stringify({endpoint:"https://api.openai.com/v1/images/edits",parameters,input_sha256:crypto.createHash("sha256").update(input).digest("hex"),mask_sha256:crypto.createHash("sha256").update(mask).digest("hex")},null,2));
+  await fs.writeFile(path.join(cache,"request.json"),JSON.stringify({endpoint:"https://api.openai.com/v1/images/edits",parameters,input_sha256:crypto.createHash("sha256").update(input).digest("hex"),mask_sha256:omitMask?null:crypto.createHash("sha256").update(mask).digest("hex")},null,2));
   await fs.writeFile(path.join(cache,"input.png"),input);await fs.writeFile(path.join(cache,"mask.png"),mask);
   let response:{status:number;body:unknown};
   try { response=JSON.parse(await fs.readFile(path.join(cache,"response.json"),"utf8")); }
@@ -88,7 +91,7 @@ Replace every masked untextured surface with the appropriate texture. Return the
     if((error as NodeJS.ErrnoException).code!=="ENOENT")throw error;
     const form=new FormData();for(const [key,value]of Object.entries(parameters))form.append(key,value);
     form.append("image",new Blob([new Uint8Array(input)],{type:"image/png"}),"input.png");
-    form.append("mask",new Blob([new Uint8Array(mask)],{type:"image/png"}),"mask.png");
+    if(!omitMask)form.append("mask",new Blob([new Uint8Array(mask)],{type:"image/png"}),"mask.png");
     const raw=await fetch("https://api.openai.com/v1/images/edits",{method:"POST",headers:{Authorization:`Bearer ${requireEnv("OPENAI_API_KEY")}`},body:form});
     const text=await raw.text();let body:unknown;try{body=JSON.parse(text);}catch{body={text};}
     response={status:raw.status,body};await fs.writeFile(path.join(cache,"response.json"),JSON.stringify(response,null,2));
@@ -119,7 +122,7 @@ Replace every masked untextured surface with the appropriate texture. Return the
     }
   }
   await sharp(result,{raw:{width:manifest.layout.width,height:manifest.layout.height,channels:4}}).png().toFile(path.join(outputDirectory,"generated-preserved.png"));
-  const report={model,quality:parameters.quality,variant,prompt:parameters.prompt,status:response.status,filled,changedProtected,rawChangedProtected,
+  const report={model,quality:parameters.quality,variant,maskSent:!omitMask,prompt:parameters.prompt,status:response.status,filled,changedProtected,rawChangedProtected,
     protectedTexturePixels,rawChangedTexturePixels,rawChangedBackgroundPixels,
     rawProtectedTextureMeanAbsoluteError:protectedTexturePixels?rawTextureAbsoluteError/(3*protectedTexturePixels):0,cache,outputDirectory};
   await fs.writeFile(path.join(outputDirectory,"generation.json"),JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));
