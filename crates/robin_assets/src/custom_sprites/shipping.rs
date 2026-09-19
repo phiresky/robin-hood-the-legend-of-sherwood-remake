@@ -7,18 +7,18 @@ use assets_frame_holder::{RuntimeSprite, TRANSPARENT_COLOR_16};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::Path};
 
-// v3: VQ blobs use the match-gated sprite codec (shipping datadir v17).
-const MAGIC: &[u8] = b"RHMODVQ3";
+// v4: bounded bitcode documents; VQ blobs retain the v17 sprite codec.
+const MAGIC: &[u8] = b"RHMODVQ4";
 // Bound dictionaries below the u16 alphabet limit without lossy quantization.
 const GROUP_TILES: usize = 60_000;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 struct Bundle {
     metadata: HackableRhsCache,
     groups: Vec<Group>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 struct Group {
     dictionary: Vec<[u16; 4]>,
     sizes: Vec<(u16, u16)>,
@@ -268,7 +268,7 @@ mod tests {
             }],
         };
         let mut bytes = MAGIC.to_vec();
-        serde_json::to_writer(&mut bytes, &bundle).unwrap();
+        bytes.extend(bitcode::encode(&bundle));
         let compressed = zstd::stream::encode_all(bytes.as_slice(), 1).unwrap();
         let error = read_bytes(&compressed, "oversized fixture").unwrap_err();
         assert!(error.to_string().contains("pixels"), "{error:#}");
@@ -321,7 +321,7 @@ mod tests {
         let mut bundle: Bundle = admission::decode_document(&bytes, MAGIC).unwrap();
         bundle.metadata.version = 2;
         let mut bytes = MAGIC.to_vec();
-        serde_json::to_writer(&mut bytes, &bundle).unwrap();
+        bytes.extend(bitcode::encode(&bundle));
         let version_two = zstd::stream::encode_all(bytes.as_slice(), 1).unwrap();
         let decoded = read_bytes(&version_two, "version two bundle").unwrap();
         assert_eq!(bitcode::encode(&decoded), bitcode::encode(&loaded));

@@ -31,6 +31,7 @@ use crate::zoom_hud::ZoomTooltipTracker;
 mod atlas;
 mod frame;
 mod pipelines;
+pub(crate) use pipelines::{build_render_pipeline, tex_sampler_bgl, uniform_bgl};
 mod readback;
 mod resources;
 
@@ -627,44 +628,9 @@ impl Renderer {
         );
         let white_view = white_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let bgl_screen = gpu
-            .device
-            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("quad screen bgl"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
-        let bgl_tex = gpu
-            .device
-            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("quad tex bgl"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
+        let bgl_screen =
+            pipelines::uniform_bgl(&gpu.device, "quad screen bgl", wgpu::ShaderStages::VERTEX);
+        let bgl_tex = pipelines::tex_sampler_bgl(&gpu.device, "quad tex bgl");
         let screen_uniform = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("quad screen uniform"),
             size: std::mem::size_of::<ScreenUniform>() as u64,

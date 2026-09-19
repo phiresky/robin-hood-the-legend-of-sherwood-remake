@@ -349,22 +349,66 @@ mod tests {
         );
     }
 
-    #[test]
-    fn pc_fall_is_non_interruptable() {
-        let elem = make_elem(Command::Fall);
-        assert_eq!(
-            determine_priority(pc_ctx(), &elem),
-            SequencePriority::NonInterruptable,
-        );
-    }
-
-    #[test]
-    fn pc_take_is_normal() {
-        let elem = make_elem(Command::Take);
-        assert_eq!(
-            determine_priority(pc_ctx(), &elem),
-            SequencePriority::Normal
-        );
+    #[rstest::rstest]
+    #[case::pc_fall_is_non_interruptable(
+        pc_ctx(),
+        Command::Fall,
+        SequencePriority::NonInterruptable
+    )]
+    #[case::pc_take_is_normal(pc_ctx(), Command::Take, SequencePriority::Normal)]
+    #[case::pc_teleport_is_none(pc_ctx(), Command::Teleport, SequencePriority::None)]
+    #[case::soldier_wasp_sting_is_preference(
+        soldier_ctx(),
+        Command::ReceiveWaspSting,
+        SequencePriority::Preference
+    )]
+    #[case::soldier_gather_is_normal(
+        soldier_ctx(),
+        Command::GatherSoldiers,
+        SequencePriority::Normal
+    )]
+    #[case::civilian_receive_purse_is_normal(
+        civilian_ctx(),
+        Command::ReceivePurse,
+        SequencePriority::Normal
+    )]
+    #[case::human_receive_damage_is_injury(
+        soldier_ctx(),
+        Command::ReceiveDamage,
+        SequencePriority::Injury
+    )]
+    #[case::human_swordstrike_is_preference(
+        soldier_ctx(),
+        Command::SwordstrikeThrustC,
+        SequencePriority::Preference
+    )]
+    #[case::human_pass_door_is_non_interruptable(
+        soldier_ctx(),
+        Command::PassDoor,
+        SequencePriority::NonInterruptable
+    )]
+    #[case::human_wait_alive_falls_through_to_actor_none(
+        soldier_ctx(),
+        Command::Wait,
+        SequencePriority::None
+    )]
+    #[case::pc_jump_is_non_interruptable(
+        pc_ctx(),
+        Command::JumpCmd,
+        SequencePriority::NonInterruptable
+    )]
+    #[case::npc_fly_door_is_ko(soldier_ctx(), Command::FlyDoor, SequencePriority::Ko)]
+    #[case::npc_enter_attentive_is_postpone_but_injuries(
+        soldier_ctx(),
+        Command::EnterAttentiveMode,
+        SequencePriority::PostponeEverythingButInjuries
+    )]
+    fn priority_of(
+        #[case] ctx: ActorPriorityContext,
+        #[case] command: Command,
+        #[case] expected: SequencePriority,
+    ) {
+        assert_eq!(determine_priority(ctx, &make_elem(command)), expected);
     }
 
     #[test]
@@ -380,12 +424,6 @@ mod tests {
     }
 
     #[test]
-    fn pc_teleport_is_none() {
-        let elem = make_elem(Command::Teleport);
-        assert_eq!(determine_priority(pc_ctx(), &elem), SequencePriority::None);
-    }
-
-    #[test]
     fn enemy_ai_hero_overview_commands_use_npc_priority() {
         for command in [Command::LookLeft, Command::LookRight, Command::LeanOut] {
             assert_eq!(
@@ -394,60 +432,6 @@ mod tests {
                 "{command:?}",
             );
         }
-    }
-
-    #[test]
-    fn soldier_wasp_sting_is_preference() {
-        let elem = make_elem(Command::ReceiveWaspSting);
-        assert_eq!(
-            determine_priority(soldier_ctx(), &elem),
-            SequencePriority::Preference,
-        );
-    }
-
-    #[test]
-    fn soldier_gather_is_normal() {
-        let elem = make_elem(Command::GatherSoldiers);
-        assert_eq!(
-            determine_priority(soldier_ctx(), &elem),
-            SequencePriority::Normal,
-        );
-    }
-
-    #[test]
-    fn civilian_receive_purse_is_normal() {
-        let elem = make_elem(Command::ReceivePurse);
-        assert_eq!(
-            determine_priority(civilian_ctx(), &elem),
-            SequencePriority::Normal,
-        );
-    }
-
-    #[test]
-    fn human_receive_damage_is_injury() {
-        let elem = make_elem(Command::ReceiveDamage);
-        assert_eq!(
-            determine_priority(soldier_ctx(), &elem),
-            SequencePriority::Injury,
-        );
-    }
-
-    #[test]
-    fn human_swordstrike_is_preference() {
-        let elem = make_elem(Command::SwordstrikeThrustC);
-        assert_eq!(
-            determine_priority(soldier_ctx(), &elem),
-            SequencePriority::Preference,
-        );
-    }
-
-    #[test]
-    fn human_pass_door_is_non_interruptable() {
-        let elem = make_elem(Command::PassDoor);
-        assert_eq!(
-            determine_priority(soldier_ctx(), &elem),
-            SequencePriority::NonInterruptable,
-        );
     }
 
     #[test]
@@ -507,41 +491,5 @@ mod tests {
         let elem = make_elem(Command::Wait);
         let ctx = ActorPriorityContext::new(ElementKind::ActorSoldier, false, true);
         assert_eq!(determine_priority(ctx, &elem), SequencePriority::Ko);
-    }
-
-    #[test]
-    fn human_wait_alive_falls_through_to_actor_none() {
-        let elem = make_elem(Command::Wait);
-        assert_eq!(
-            determine_priority(soldier_ctx(), &elem),
-            SequencePriority::None,
-        );
-    }
-
-    #[test]
-    fn pc_jump_is_non_interruptable() {
-        let elem = make_elem(Command::JumpCmd);
-        assert_eq!(
-            determine_priority(pc_ctx(), &elem),
-            SequencePriority::NonInterruptable,
-        );
-    }
-
-    #[test]
-    fn npc_fly_door_is_ko() {
-        let elem = make_elem(Command::FlyDoor);
-        assert_eq!(
-            determine_priority(soldier_ctx(), &elem),
-            SequencePriority::Ko,
-        );
-    }
-
-    #[test]
-    fn npc_enter_attentive_is_postpone_but_injuries() {
-        let elem = make_elem(Command::EnterAttentiveMode);
-        assert_eq!(
-            determine_priority(soldier_ctx(), &elem),
-            SequencePriority::PostponeEverythingButInjuries,
-        );
     }
 }

@@ -1,4 +1,6 @@
 use super::*;
+use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct PreparedOwnerInstruction {
@@ -13,17 +15,24 @@ impl EngineInner {
     /// and live-FIFO continuation, including every re-entrant successor.
     pub(super) fn prepare_owner_instruction(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) -> Result<PreparedOwnerInstruction, bool> {
+        let SequenceElementRef {
+            sequence_id: seq_id,
+            element_index: elem_idx,
+        } = elem_ref;
         if let Some(actor) = self.get_entity_mut(owner).and_then(Entity::actor_data_mut) {
             actor.execution_frozen = false;
         }
-        if self.pc_instruct_early_completion(sim, assets, active_scripts, owner, seq_id, elem_idx) {
+        if self.pc_instruct_early_completion(
+            tcx,
+            active_scripts,
+            owner,
+            SequenceElementRef::new(seq_id, elem_idx),
+        ) {
             return Err(true);
         }
         self.debug_patrol_turn_instruct(owner, seq_id, elem_idx);
@@ -56,7 +65,11 @@ impl EngineInner {
             {
                 actor.execution_frozen = false;
             }
-            self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_impossible(
+                tcx,
+                active_scripts,
+                SequenceElementRef::new(seq_id, elem_idx),
+            );
             return Err(false);
         }
         if command.is_some_and(|command| self.pc_should_hold_shoot_bow(owner, command)) {
@@ -78,7 +91,11 @@ impl EngineInner {
                 .and_then(crate::element::Entity::actor_data_mut)
                 .expect("NULL actor instruction requires its actor owner")
                 .execution_frozen = false;
-            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_terminated(
+                tcx,
+                active_scripts,
+                SequenceElementRef::new(seq_id, elem_idx),
+            );
             return Err(true);
         }
 
@@ -109,7 +126,7 @@ impl EngineInner {
                                 == crate::element::Posture::Undefined)
                 });
         if needs_transition {
-            self.stamp_element_transition_state(owner, seq_id, elem_idx);
+            self.stamp_element_transition_state(owner, SequenceElementRef::new(seq_id, elem_idx));
         }
         // Original-game actor instruction handles a selected
         // NON_INTERRUPTABLE element before transition generation.
@@ -121,16 +138,25 @@ impl EngineInner {
         // it. The guard can also interrupt an older postponed
         // equal-priority command, so settle any resulting card at
         // this exact instruction boundary.
-        if self.non_interruptable_guard(sim, assets, active_scripts, owner, seq_id, elem_idx) {
+        if self.non_interruptable_guard(tcx, active_scripts, owner, seq_id, elem_idx) {
             return Err(true);
         }
         // Outside that special arm, Original generates the
         // incoming element's transition orders before normal
         // priority comparison with the selected element.
         if needs_transition
-            && !self.generate_transition(sim, assets, active_scripts, owner, seq_id, elem_idx)
+            && !self.generate_transition(
+                tcx,
+                active_scripts,
+                owner,
+                SequenceElementRef::new(seq_id, elem_idx),
+            )
         {
-            self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_impossible(
+                tcx,
+                active_scripts,
+                SequenceElementRef::new(seq_id, elem_idx),
+            );
 
             return Err(false);
         }
@@ -216,7 +242,11 @@ impl EngineInner {
                         })
             });
             if helper_is_entering {
-                self.postpone_element(sim, assets, active_scripts, seq_id, elem_idx);
+                self.postpone_element(
+                    tcx,
+                    active_scripts,
+                    SequenceElementRef::new(seq_id, elem_idx),
+                );
                 return Err(false);
             }
             if let Some(helper_id) = helper
@@ -227,7 +257,7 @@ impl EngineInner {
                     })
                     .map(|entity| entity.position_iface().get_position())
             {
-                let obstacles = self.world.sight_obstacles(assets);
+                let obstacles = self.world.sight_obstacles(tcx.assets);
                 if !abilities::can_carry_on_shoulders(helper_position, obstacles) {
                     // This retained interaction is a
                     // cross-actor validity retry. Retail
@@ -235,15 +265,18 @@ impl EngineInner {
                     // the climber's live idle element; only the
                     // helper receives the compensating leave.
                     self.launch_element(
-                        sim,
-                        assets,
+                        tcx,
                         crate::sequence::SequenceElement::new(
                             1,
                             Command::LeaveHelpingClimb,
                             Some(helper_id),
                         ),
                     );
-                    self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                    self.element_impossible(
+                        tcx,
+                        active_scripts,
+                        SequenceElementRef::new(seq_id, elem_idx),
+                    );
                     return Err(false);
                 }
             }
@@ -272,8 +305,7 @@ impl EngineInner {
                 Some((seq_id, elem_idx)),
             );
         }
-        let arbitration_accepted =
-            self.arbitrate_instruct(sim, assets, active_scripts, seq_id, elem_idx);
+        let arbitration_accepted = self.arbitrate_instruct(tcx, active_scripts, seq_id, elem_idx);
         if trace_path_owner {
             self.trace_path_owner_lifecycle(
                 if arbitration_accepted {
@@ -332,7 +364,11 @@ impl EngineInner {
         // than RECEIVE_PURSE / BEGGAR_SHOW_FACE / WAIT on
         // beggar civilians.
         if self.beggar_rejects_command(owner, cmd) {
-            self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_impossible(
+                tcx,
+                active_scripts,
+                SequenceElementRef::new(seq_id, elem_idx),
+            );
             return Err(false);
         }
         // Posture transitions (leave-disguise, stand-up, …)

@@ -354,26 +354,18 @@ mod tests {
 
         engine.set_entity_posture(corpse, Posture::Upright);
         assert_eq!(
-            engine.get_entity(corpse).unwrap().element_data().posture(),
+            engine.posture_of(corpse),
             Posture::DeadBack,
             "the base element rejects the requested upright posture"
         );
 
         for id in [corpse, pc] {
             assert!(
-                !engine
-                    .get_entity(id)
-                    .unwrap()
-                    .human_data()
-                    .unwrap()
-                    .small_repulsive_radius,
+                !engine.human(id).small_repulsive_radius,
                 "the outer removal and recursive re-add leave both bodies at full radius"
             );
         }
-        assert_eq!(
-            engine.get_entity(corpse).unwrap().element_data().posture(),
-            Posture::DeadBack
-        );
+        assert_eq!(engine.posture_of(corpse), Posture::DeadBack);
     }
 
     /// Stand up a default `EngineInner`, add two lying civilians within one
@@ -396,22 +388,8 @@ mod tests {
         )));
         engine.update_intersecting_corpses(a, true);
 
-        assert!(
-            engine
-                .get_entity(a)
-                .unwrap()
-                .human_data()
-                .unwrap()
-                .small_repulsive_radius
-        );
-        assert!(
-            engine
-                .get_entity(b)
-                .unwrap()
-                .human_data()
-                .unwrap()
-                .small_repulsive_radius
-        );
+        assert!(engine.human(a).small_repulsive_radius);
+        assert!(engine.human(b).small_repulsive_radius);
     }
 
     /// Distance > 2 * (R + AR) = 50 → no intersection, flags stay clear.
@@ -432,22 +410,8 @@ mod tests {
         )));
         engine.update_intersecting_corpses(a, true);
 
-        assert!(
-            !engine
-                .get_entity(a)
-                .unwrap()
-                .human_data()
-                .unwrap()
-                .small_repulsive_radius
-        );
-        assert!(
-            !engine
-                .get_entity(b)
-                .unwrap()
-                .human_data()
-                .unwrap()
-                .small_repulsive_radius
-        );
+        assert!(!engine.human(a).small_repulsive_radius);
+        assert!(!engine.human(b).small_repulsive_radius);
     }
 
     /// Standing humans are filtered out — only lying neighbours
@@ -469,22 +433,8 @@ mod tests {
         )));
         engine.update_intersecting_corpses(a, true);
 
-        assert!(
-            !engine
-                .get_entity(a)
-                .unwrap()
-                .human_data()
-                .unwrap()
-                .small_repulsive_radius
-        );
-        assert!(
-            !engine
-                .get_entity(b)
-                .unwrap()
-                .human_data()
-                .unwrap()
-                .small_repulsive_radius
-        );
+        assert!(!engine.human(a).small_repulsive_radius);
+        assert!(!engine.human(b).small_repulsive_radius);
     }
 
     /// A lying human in a different sector never counts as intersecting.
@@ -505,22 +455,8 @@ mod tests {
         )));
         engine.update_intersecting_corpses(a, true);
 
-        assert!(
-            !engine
-                .get_entity(a)
-                .unwrap()
-                .human_data()
-                .unwrap()
-                .small_repulsive_radius
-        );
-        assert!(
-            !engine
-                .get_entity(b)
-                .unwrap()
-                .human_data()
-                .unwrap()
-                .small_repulsive_radius
-        );
+        assert!(!engine.human(a).small_repulsive_radius);
+        assert!(!engine.human(b).small_repulsive_radius);
     }
 
     /// Three corpses in a line pairwise-intersecting.  Removing the
@@ -554,30 +490,9 @@ mod tests {
 
         engine.update_intersecting_corpses(b, false);
 
-        assert!(
-            !engine
-                .get_entity(b)
-                .unwrap()
-                .human_data()
-                .unwrap()
-                .small_repulsive_radius
-        );
-        assert!(
-            engine
-                .get_entity(a)
-                .unwrap()
-                .human_data()
-                .unwrap()
-                .small_repulsive_radius
-        );
-        assert!(
-            engine
-                .get_entity(c)
-                .unwrap()
-                .human_data()
-                .unwrap()
-                .small_repulsive_radius
-        );
+        assert!(!engine.human(b).small_repulsive_radius);
+        assert!(engine.human(a).small_repulsive_radius);
+        assert!(engine.human(c).small_repulsive_radius);
     }
 
     /// The Original removal walk tests actors against their current flag,
@@ -599,29 +514,10 @@ mod tests {
 
         engine.set_entity_posture(removed, Posture::Upright);
 
+        assert!(engine.human(a).small_repulsive_radius);
+        assert!(!engine.human(removed).small_repulsive_radius);
         assert!(
-            engine
-                .get_entity(a)
-                .unwrap()
-                .human_data()
-                .unwrap()
-                .small_repulsive_radius
-        );
-        assert!(
-            !engine
-                .get_entity(removed)
-                .unwrap()
-                .human_data()
-                .unwrap()
-                .small_repulsive_radius
-        );
-        assert!(
-            !engine
-                .get_entity(later)
-                .unwrap()
-                .human_data()
-                .unwrap()
-                .small_repulsive_radius,
+            !engine.human(later).small_repulsive_radius,
             "the live outer walk must revisit a later actor changed by recursion"
         );
     }
@@ -636,14 +532,7 @@ mod tests {
 
         engine.set_entity_posture(a, Posture::Lying);
 
-        assert!(
-            engine
-                .get_entity(a)
-                .unwrap()
-                .human_data()
-                .unwrap()
-                .small_repulsive_radius
-        );
+        assert!(engine.human(a).small_repulsive_radius);
     }
 
     #[test]
@@ -656,32 +545,17 @@ mod tests {
 
         engine.set_entity_posture(first, Posture::Dead);
         assert!(
-            !engine
-                .get_entity(first)
-                .unwrap()
-                .human_data()
-                .unwrap()
-                .small_repulsive_radius,
+            !engine.human(first).small_repulsive_radius,
             "the first fall has no lying neighbour yet"
         );
         engine.set_entity_posture(second, Posture::Dead);
 
         assert!(
-            engine
-                .get_entity(first)
-                .unwrap()
-                .human_data()
-                .unwrap()
-                .small_repulsive_radius,
+            engine.human(first).small_repulsive_radius,
             "the later fall must discover the already-processed earlier corpse"
         );
         assert!(
-            engine
-                .get_entity(second)
-                .unwrap()
-                .human_data()
-                .unwrap()
-                .small_repulsive_radius,
+            engine.human(second).small_repulsive_radius,
             "the later fall must immediately publish its own radius"
         );
     }
@@ -695,7 +569,7 @@ mod tests {
 
         engine.set_entity_posture(standing, Posture::Upright);
 
-        let entity = engine.get_entity(standing).unwrap();
+        let entity = engine.ent(standing);
         assert_eq!(entity.element_data().posture(), Posture::Upright);
         assert!(
             !entity.actor_data().unwrap().is_ignored_for_anti_collision,

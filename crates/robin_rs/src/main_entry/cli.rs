@@ -1265,7 +1265,6 @@ mod tests {
 
     #[test]
     fn save_preflight_rejects_malformed_campaign_profile_index() {
-        use robin_engine::engine::{Engine, LevelAssets};
         use robin_engine::mission::Mission;
         use robin_engine::profiles::MissionProfile;
 
@@ -1274,9 +1273,7 @@ mod tests {
             id: 10,
             ..Default::default()
         });
-        let mut assets = LevelAssets::new();
-        let mut engine =
-            Engine::new_for_test(800.0, 600.0, Campaign::default(), &mut assets).unwrap();
+        let (mut engine, assets) = robin_engine::test_support::fresh_engine();
         let mut malformed = Campaign::default();
         malformed.missions.push(Mission {
             profile_idx: Some(999),

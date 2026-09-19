@@ -3,6 +3,7 @@
 
 use crate::coordinates::MapPoint;
 use crate::element::{Command, EntityId};
+use crate::engine::TickCtx;
 use crate::engine::{EngineInner, LevelAssets};
 use crate::profiles::Action;
 use crate::sequence::{
@@ -12,8 +13,7 @@ use crate::sequence::{
 impl EngineInner {
     pub(super) fn dispatch_drop_ale(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         actor: &EntityId,
         target_pos: &MapPoint,
         running: &bool,
@@ -24,8 +24,7 @@ impl EngineInner {
     ) {
         let recording = self.players.qa_recording_for.contains(actor);
         self.apply_drop_ale_at(
-            sim,
-            assets,
+            tcx,
             *actor,
             *target_pos,
             *running,
@@ -41,8 +40,7 @@ impl EngineInner {
 
     pub(super) fn dispatch_drop_ammo(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         pc_id: &EntityId,
         action_id: &u32,
         amount: &u32,
@@ -54,13 +52,12 @@ impl EngineInner {
         // actor instruction call.
         let mut seq = Sequence::new();
         seq.append_element(elem);
-        self.launch_sequence(sim, assets, seq);
+        self.launch_sequence(tcx, seq);
     }
 
     pub(super) fn dispatch_scroll_read(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         actor: &EntityId,
         target: &EntityId,
         running: &bool,
@@ -102,7 +99,7 @@ impl EngineInner {
             }
         }
         let recording = self.players.qa_recording_for.contains(actor);
-        self.apply_scroll_read_with_seek(sim, assets, *actor, *target, *running);
+        self.apply_scroll_read_with_seek(tcx, *actor, *target, *running);
         if recording {
             self.stop_recording_macro();
         }
@@ -110,14 +107,13 @@ impl EngineInner {
 
     pub(super) fn dispatch_self_ability(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         actor: &EntityId,
         command: &Command,
     ) {
         let recording = self.players.qa_recording_for.contains(actor);
         if *command == Command::EnterCloak && !recording {
-            self.try_enter_reusable_cloak(sim, assets, *actor);
+            self.try_enter_reusable_cloak(tcx, *actor);
             return;
         }
         let elem = SequenceElement::new(1, *command, Some(*actor));
@@ -128,7 +124,7 @@ impl EngineInner {
         // order before that final Execute tick.
         let mut seq = Sequence::new();
         seq.append_element(elem);
-        self.launch_or_record_quick_action_sequence(sim, assets, *actor, seq);
+        self.launch_or_record_quick_action_sequence(tcx, *actor, seq);
         if recording {
             self.stop_recording_macro();
         }
@@ -352,8 +348,7 @@ impl EngineInner {
     ///
     pub(super) fn apply_drop_ale_at(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         actor: EntityId,
         target_pos: crate::coordinates::MapPoint,
         running: bool,
@@ -363,8 +358,7 @@ impl EngineInner {
         recorded_gate_path: Option<crate::gate::RecordedGatePath>,
     ) {
         self.apply_drop_ale_at_with_recovery(
-            sim,
-            assets,
+            tcx,
             actor,
             target_pos,
             running,
@@ -380,8 +374,7 @@ impl EngineInner {
     /// posture recovery in its post-seek sequence.
     pub(super) fn apply_drop_ale_at_with_recovery(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         actor: EntityId,
         target_pos: crate::coordinates::MapPoint,
         running: bool,
@@ -487,7 +480,7 @@ impl EngineInner {
 
         let mut sequence = Sequence::new();
         sequence.append_element(move_elem);
-        self.launch_or_record_quick_action_sequence(sim, assets, actor, sequence);
+        self.launch_or_record_quick_action_sequence(tcx, actor, sequence);
     }
 }
 

@@ -2,20 +2,13 @@
 
 use super::*;
 use crate::ai::{
-    AiEntityHandle, AiState, DutyFlags, GotoFlags, Position, Remark, ReportType, SpeechFlags,
-    Stimulus, StimulusInfo, Substate,
+    AiEntityHandle, AiState, GotoFlags, Position, Remark, ReportType, SpeechFlags, Stimulus,
+    StimulusInfo, Substate,
 };
-use crate::ai_enemy::{EnemyAi, SeekFlags, task_priority};
+use crate::ai_enemy::{SeekFlags, task_priority};
+use crate::engine::TickCtx;
 use crate::parameters_ai;
 use crate::profiles::ProfileRank;
-use crate::sim_rng::SimulationContext;
-
-struct Rendezvous<'a> {
-    engine: &'a mut EngineInner,
-    sim: &'a SimulationContext,
-    assets: &'a LevelAssets,
-    owner: EntityId,
-}
 
 #[cfg(test)]
 mod tests {
@@ -42,8 +35,7 @@ mod tests {
         member.base.current_state = AiState::Seeking;
         member.base.current_substate = Substate::SeekingGroupGoToOfficer;
         let result = engine.execute_ai_officer_rendezvous_event(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             &Stimulus::new(StimulusType::EventTimer),
         );
@@ -75,8 +67,7 @@ mod tests {
         ] {
             assert_eq!(
                 engine.execute_ai_officer_rendezvous_event(
-                    &crate::sim_rng::test_context(),
-                    &assets,
+                    TickCtx::new(&crate::sim_rng::test_context(), &assets),
                     owner,
                     &Stimulus::new(event)
                 ),
@@ -115,8 +106,7 @@ mod tests {
         ai.base.seek_position = report;
         assert_eq!(
             engine.execute_ai_officer_rendezvous_event(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 owner,
                 &Stimulus::new(StimulusType::EventTimer),
             ),
@@ -133,36 +123,13 @@ mod tests {
 impl EngineInner {
     pub(in crate::engine) fn execute_ai_officer_rendezvous_event(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         stimulus: &Stimulus,
     ) -> Option<bool> {
-        let substate = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("officer rendezvous"))
-            .current_substate;
+        let substate = self.ai(owner, "officer rendezvous").current_substate;
         use Substate::*;
-        if !matches!(
-            stimulus.stimulus_type,
-            StimulusType::EventReachPoint
-                | StimulusType::EventDone
-                | StimulusType::EventTimer
-                | StimulusType::EventSyncCharly
-                | StimulusType::CallCoordinate
-                | StimulusType::CallInstruction
-                | StimulusType::CallReport
-                | StimulusType::EventGaloppLoopEnd
-                | StimulusType::EventMyTalk0
-                | StimulusType::EventMyTalk1
-                | StimulusType::EventMyTalk2
-                | StimulusType::EventMyTalk3
-                | StimulusType::CallYourTalk0
-                | StimulusType::CallYourTalk1
-                | StimulusType::CallYourTalk2
-                | StimulusType::CallYourTalk3
-        ) {
+        if !stimulus.stimulus_type.is_expected_class() {
             return Option::None;
         }
         if !matches!(
@@ -209,80 +176,22 @@ impl EngineInner {
         {
             return Option::None;
         }
-        Some(
-            Rendezvous {
-                engine: self,
-                sim,
-                assets,
-                owner,
-            }
-            .event(substate, stimulus),
-        )
+        Some(AiOwnerCtx::new(self, tcx, owner).rendezvous_event(substate, stimulus))
     }
 }
 
-impl Rendezvous<'_> {
-    fn enemy(&self) -> &EnemyAi {
-        self.engine.seek_enemy(self.owner)
-    }
-    fn enemy_mut(&mut self) -> &mut EnemyAi {
-        self.engine.seek_enemy_mut(self.owner)
-    }
-    fn target(&self) -> EntityId {
-        let handle = self
-            .enemy()
-            .base
-            .antagonist
-            .expect("officer rendezvous requires an antagonist");
-        self.engine
-            .expect_human_id_for_ai_handle(handle.get(), "officer rendezvous antagonist")
-    }
+impl AiOwnerCtx<'_> {
     fn substate(&self, target: EntityId) -> Substate {
         self.engine
-            .world
-            .entities
-            .expect_ai_controller(target, format_args!("officer rendezvous target"))
+            .ai(target, "officer rendezvous target")
             .current_substate
-    }
-    fn state(&mut self, substate: Substate) {
-        self.engine.duty_set_state(
-            self.sim,
-            self.assets,
-            self.owner,
-            AiState::Seeking,
-            substate,
-        );
-    }
-    fn timer(&mut self, frames: u32) {
-        let frame = self.engine.control.frame_counter;
-        self.enemy_mut().base.launch_timer(frames, frame);
-    }
-    fn duty(&mut self) {
-        self.engine.execute_ai_return_to_duty(
-            self.sim,
-            self.assets,
-            self.owner,
-            DutyFlags::empty(),
-        );
-    }
-    fn say(&mut self, remark: Remark, flags: SpeechFlags) {
-        self.engine.execute_ai_speech(
-            self.sim,
-            self.assets,
-            self.owner,
-            crate::ai::AiSpeechAttempt {
-                remark,
-                flags: flags.bits(),
-            },
-        );
     }
     fn call(&mut self, target: EntityId, kind: StimulusType, human: bool) {
         let mut stimulus = Stimulus::new(kind);
         if human {
             stimulus.info = StimulusInfo::Human(AiEntityHandle::new(self.owner.index()));
         }
-        self.engine
-            .execute_ai_callback(self.sim, self.assets, target, &stimulus);
+        self.engine.execute_ai_callback(self.tcx, target, &stimulus);
     }
     fn face_target(&mut self) {
         let target = self.target();
@@ -292,28 +201,13 @@ impl Rendezvous<'_> {
             .expect_entity(target, "officer facing")
             .position_iface()
             .get_elevation() as i16 as f32;
-        self.engine.duty_face_position_at_elevation(
-            self.sim,
-            self.assets,
-            self.owner,
-            position,
-            elevation,
-        );
+        self.duty_face_position_at_elevation(position, elevation);
     }
     fn point(&mut self, position: Position) {
-        self.engine
-            .duty_point_to(self.sim, self.assets, self.owner, position);
+        self.duty_point_to(position);
     }
     fn seek(&mut self, point: Position, radius: u16, flags: SeekFlags) {
-        self.engine.execute_ai_seek_area(
-            self.sim,
-            self.assets,
-            self.owner,
-            point,
-            radius,
-            flags,
-            crate::ai_enemy::UNDEFINED_DIRECTION,
-        );
+        self.execute_ai_seek_area(point, radius, flags, crate::ai_enemy::UNDEFINED_DIRECTION);
     }
     fn group_officer_waiting(&self) -> bool {
         matches!(
@@ -324,7 +218,7 @@ impl Rendezvous<'_> {
                 | Substate::SeekingOfficerLeavingHouseToInstructGroup
         )
     }
-    fn event(&mut self, substate: Substate, stimulus: &Stimulus) -> bool {
+    fn rendezvous_event(&mut self, substate: Substate, stimulus: &Stimulus) -> bool {
         use StimulusType::*;
         use Substate::*;
         let event = stimulus.stimulus_type;
@@ -340,11 +234,8 @@ impl Rendezvous<'_> {
                         .is_some(),
                     "officer call requires enemy-soldier target {target:?}"
                 );
-                if self
-                    .engine
-                    .execute_ai_callback(self.sim, self.assets, target, &call)
-                {
-                    self.state(SeekingOfficerWaitForSoldier);
+                if self.engine.execute_ai_callback(self.tcx, target, &call) {
+                    self.seek_state(SeekingOfficerWaitForSoldier);
                     let frame = self.engine.control.frame_counter;
                     self.enemy_mut().base.set_transient_emoticon(
                         crate::ai::EmoticonType::XMark,
@@ -377,7 +268,7 @@ impl Rendezvous<'_> {
             SeekingGetAlertingReportFromCivilian if event == EventTimer => {
                 let point = self.enemy().base.seek_position;
                 let point = self.engine.position_to_point_3d(
-                    self.assets,
+                    self.tcx.assets,
                     point.sector,
                     point.level,
                     point.x,
@@ -392,13 +283,8 @@ impl Rendezvous<'_> {
                     point.x - body.x,
                     point.y - body.y,
                 );
-                self.engine.duty_face_direction(
-                    self.sim,
-                    self.assets,
-                    self.owner,
-                    direction as u16,
-                );
-                self.state(SeekingGetAlertingReportFromCivilianLook);
+                self.duty_face_direction(direction as u16);
+                self.seek_state(SeekingGetAlertingReportFromCivilianLook);
                 self.timer(30);
             }
             SeekingGetAlertingReportFromCivilianLook if event == EventTimer => {
@@ -423,13 +309,7 @@ impl Rendezvous<'_> {
                 _ => {}
             },
             SeekingOfficerGetAlertingReportFromSoldier if event == EventTimer => {
-                if !self.engine.execute_ai_alert_soldiers(
-                    self.sim,
-                    self.assets,
-                    self.owner,
-                    self.enemy().base.seek_position,
-                    0,
-                ) {
+                if !self.execute_ai_alert_soldiers(self.enemy().base.seek_position, 0) {
                     self.duty();
                 }
             }
@@ -446,7 +326,7 @@ impl Rendezvous<'_> {
                     }
                 }
                 CallCoordinate => {
-                    self.state(SeekingOfficerInstructSoldier);
+                    self.seek_state(SeekingOfficerInstructSoldier);
                     self.point(self.enemy().base.alert_soldiers_point);
                     self.timer(20);
                 }
@@ -456,7 +336,7 @@ impl Rendezvous<'_> {
                 CallYourTalk1 => self.say(Remark::OfficerSendsOutSoldier, SpeechFlags::MYTALK_1),
                 EventMyTalk1 => self.call(self.target(), CallYourTalk1, false),
                 CallYourTalk2 => {
-                    self.state(SeekingOfficerWaitForInstructedSoldier);
+                    self.seek_state(SeekingOfficerWaitForInstructedSoldier);
                     self.enemy_mut().missed_soldier_timer = 0;
                     self.timer(30);
                 }
@@ -473,9 +353,9 @@ impl Rendezvous<'_> {
                 CallYourTalk1 => self.say(Remark::OfficerAsksWhatsup, SpeechFlags::empty()),
                 EventTimer => {
                     let target = self.target();
-                    let visible = self
-                        .engine
-                        .live_ai_detects_180(self.assets, self.owner, target);
+                    let visible =
+                        self.engine
+                            .live_ai_detects_180(self.tcx.assets, self.owner, target);
                     let target_entity = self.engine.expect_entity(target, "instructed soldier");
                     if visible
                         && target_entity.human_life_points() > 0
@@ -483,9 +363,7 @@ impl Rendezvous<'_> {
                     {
                         if self
                             .engine
-                            .world
-                            .entities
-                            .expect_ai_controller(target, format_args!("instructed soldier state"))
+                            .ai(target, "instructed soldier state")
                             .current_state
                             == AiState::Seeking
                         {
@@ -499,13 +377,7 @@ impl Rendezvous<'_> {
                             self.enemy().missed_soldier_timer.wrapping_add(1);
                         if self.enemy().missed_soldier_timer > 100 {
                             let position = self.engine.live_ai_position(self.owner);
-                            if !self.engine.execute_ai_alert_soldiers(
-                                self.sim,
-                                self.assets,
-                                self.owner,
-                                position,
-                                0,
-                            ) {
+                            if !self.execute_ai_alert_soldiers(position, 0) {
                                 let position = self.engine.live_ai_position(self.owner);
                                 self.seek(
                                     position,
@@ -520,15 +392,8 @@ impl Rendezvous<'_> {
             },
             SeekingSoldierCalledByOfficer if event == EventTimer => {
                 let position = self.engine.live_ai_position(self.target());
-                self.engine.duty_go_near(
-                    self.sim,
-                    self.assets,
-                    self.owner,
-                    position,
-                    40,
-                    GotoFlags::empty(),
-                );
-                self.state(SeekingSoldierGoToOfficer);
+                self.duty_go_near(position, 40, GotoFlags::empty());
+                self.seek_state(SeekingSoldierGoToOfficer);
                 self.timer(20);
             }
             SeekingSoldierGoToOfficer => match event {
@@ -542,7 +407,7 @@ impl Rendezvous<'_> {
                 EventReachPoint => {
                     if self.substate(self.target()) == SeekingOfficerWaitForSoldier {
                         self.call(self.target(), CallCoordinate, true);
-                        self.state(SeekingSoldierGetInstructedByOfficer);
+                        self.seek_state(SeekingSoldierGetInstructedByOfficer);
                         self.timer(20);
                         self.say(Remark::AwaitsOrders, SpeechFlags::MYTALK_1);
                     } else {
@@ -556,15 +421,13 @@ impl Rendezvous<'_> {
                 CallYourTalk1 => {
                     let body = self
                         .engine
-                        .world
-                        .entities
-                        .expect_ai_controller(self.target(), format_args!("officer selected body"))
+                        .ai(self.target(), "officer selected body")
                         .detected_body;
                     if body
                         .is_some_and(|body| self.enemy().already_seen_bodies.contains(&body.get()))
                     {
                         self.call(self.target(), CallYourTalk2, false);
-                        self.state(SeekingSoldierReturnToOfficer);
+                        self.seek_state(SeekingSoldierReturnToOfficer);
                         self.call(self.owner, EventReachPoint, false);
                     } else {
                         self.say(Remark::GiveOrReceiveOrder, SpeechFlags::MYTALK_2);
@@ -573,9 +436,7 @@ impl Rendezvous<'_> {
                 EventMyTalk2 => {
                     let body = self
                         .engine
-                        .world
-                        .entities
-                        .expect_ai_controller(self.target(), format_args!("officer selected body"))
+                        .ai(self.target(), "officer selected body")
                         .detected_body;
                     self.call(self.target(), CallYourTalk2, false);
                     if let Some(body) = body {
@@ -584,9 +445,7 @@ impl Rendezvous<'_> {
                             .expect_human_id_for_ai_handle(body.get(), "instructed body");
                         let already_detectable = self
                             .engine
-                            .world
-                            .entities
-                            .expect_ai_actor_data(self.owner, format_args!("instructed soldier"))
+                            .ai_actor(self.owner, "instructed soldier")
                             .detectable_lists
                             [crate::element::DetectableType::Body as usize]
                             .iter()
@@ -602,12 +461,7 @@ impl Rendezvous<'_> {
                     self.enemy_mut().current_task_priority = task_priority::SEEKING;
                     let point = self
                         .engine
-                        .world
-                        .entities
-                        .expect_ai_controller(
-                            self.target(),
-                            format_args!("officer instruction point"),
-                        )
+                        .ai(self.target(), "officer instruction point")
                         .alert_soldiers_point;
                     self.enemy_mut().base.alert_soldiers_point = point;
                     let position = self.engine.live_ai_position(self.target());
@@ -628,10 +482,7 @@ impl Rendezvous<'_> {
                 _ => {}
             },
             SeekingOfficerCallGroup if event == EventTimer => {
-                if !self.engine.execute_ai_alert_soldiers(
-                    self.sim,
-                    self.assets,
-                    self.owner,
+                if !self.execute_ai_alert_soldiers(
                     self.enemy().base.seek_position,
                     self.enemy().seek_flags.bits(),
                 ) {
@@ -656,14 +507,14 @@ impl Rendezvous<'_> {
                     }
                 }
                 if count > 0 {
-                    self.state(SeekingOfficerInstructGroup);
+                    self.seek_state(SeekingOfficerInstructGroup);
                     self.timer(10);
                 } else {
                     self.duty();
                 }
             }
             SeekingOfficerInstructGroup if event == EventTimer => {
-                self.state(SeekingOfficerInstructGroupPointing);
+                self.seek_state(SeekingOfficerInstructGroupPointing);
                 let remark = if self.enemy().base.my_reconnaissance_report.report_type
                     == ReportType::MissedCharly
                 {
@@ -676,54 +527,30 @@ impl Rendezvous<'_> {
             }
             SeekingOfficerInstructGroupPointing if event == EventDone => self
                 .engine
-                .execute_ai_officer_instruct_group(self.sim, self.assets, self.owner),
+                .execute_ai_officer_instruct_group(self.tcx, self.owner),
             SeekingOfficerWaitForInstructedGroup if event == EventTimer => {
                 self.wait_for_instructed_group()
             }
             SeekingOfficerWaitInsideHouseToInstructGroup if event == EventTimer => {
-                self.state(SeekingOfficerLeavingHouseToInstructGroup);
-                self.engine.duty_go_to(
-                    self.sim,
-                    self.assets,
-                    self.owner,
-                    self.enemy().gather_position,
-                    GotoFlags::empty(),
-                );
+                self.seek_state(SeekingOfficerLeavingHouseToInstructGroup);
+                self.duty_go_to(self.enemy().gather_position, GotoFlags::empty());
             }
             SeekingOfficerLeavingHouseToInstructGroup => match event {
-                EventReachPoint => self.engine.duty_face_direction(
-                    self.sim,
-                    self.assets,
-                    self.owner,
-                    self.enemy().gather_direction,
-                ),
+                EventReachPoint => self.duty_face_direction(self.enemy().gather_direction),
                 EventDone => {
-                    self.state(SeekingOfficerWaitForGroup);
+                    self.seek_state(SeekingOfficerWaitForGroup);
                     self.timer(1);
                 }
                 _ => {}
             },
             SeekingGroupCalledByOfficer if event == EventTimer => {
                 if self.enemy().gather_position_instructed {
-                    self.engine.duty_go_to(
-                        self.sim,
-                        self.assets,
-                        self.owner,
-                        self.enemy().gather_position,
-                        GotoFlags::RUN,
-                    );
+                    self.duty_go_to(self.enemy().gather_position, GotoFlags::RUN);
                 } else {
                     let position = self.engine.live_ai_position(self.target());
-                    self.engine.duty_go_near(
-                        self.sim,
-                        self.assets,
-                        self.owner,
-                        position,
-                        parameters_ai::AI_TALK_DISTANCE,
-                        GotoFlags::RUN,
-                    );
+                    self.duty_go_near(position, parameters_ai::AI_TALK_DISTANCE, GotoFlags::RUN);
                 }
-                self.state(SeekingGroupGoToOfficer);
+                self.seek_state(SeekingGroupGoToOfficer);
                 self.timer(20);
             }
             SeekingGroupGoToOfficer => match event {
@@ -736,19 +563,14 @@ impl Rendezvous<'_> {
                 }
                 EventReachPoint => {
                     if self.enemy().gather_position_instructed {
-                        self.engine.duty_face_direction(
-                            self.sim,
-                            self.assets,
-                            self.owner,
-                            self.enemy().gather_direction,
-                        );
+                        self.duty_face_direction(self.enemy().gather_direction);
                     } else {
                         self.face_target();
                     }
                 }
                 EventDone => {
                     if self.group_officer_waiting() {
-                        self.state(SeekingGroupGetInstructedByOfficer);
+                        self.seek_state(SeekingGroupGetInstructedByOfficer);
                         self.call(self.target(), CallCoordinate, true);
                     } else {
                         self.duty();
@@ -796,11 +618,7 @@ impl Rendezvous<'_> {
             self.engine,
             self.engine
                 .expect_entity(target, "officer destination forecast"),
-            selected_actor_is_passing_door(
-                &self.engine.world.entities,
-                &self.engine.orders.sequence_manager,
-                target,
-            ),
+            selected_actor_is_passing_door(&self.engine.entities(), &self.engine.seq(), target),
         )
         .expect("officer forecast requires an actor");
         let destination = crate::ai::prepare_forecast_destination_for_ia(
@@ -809,17 +627,10 @@ impl Rendezvous<'_> {
             &self.engine.world.fast_grid.level.sectors,
             &self.engine.world.fast_grid.level.sector_number_map,
         )
-        .resolve(self.sim)
+        .resolve(self.tcx.sim)
         .position;
         self.enemy_mut().gather_position = destination;
-        self.engine.duty_go_near(
-            self.sim,
-            self.assets,
-            self.owner,
-            destination,
-            parameters_ai::AI_TALK_DISTANCE,
-            GotoFlags::RUN,
-        );
+        self.duty_go_near(destination, parameters_ai::AI_TALK_DISTANCE, GotoFlags::RUN);
     }
 
     fn running_to_officer(&mut self, event: StimulusType) {
@@ -838,11 +649,7 @@ impl Rendezvous<'_> {
             }
             StimulusType::EventReachPoint => {
                 let target = self.target();
-                let officer = self
-                    .engine
-                    .world
-                    .entities
-                    .expect_ai_controller(target, format_args!("officer arrival"));
+                let officer = self.engine.ai(target, "officer arrival");
                 if officer.current_state == AiState::Default
                     || matches!(
                         officer.current_substate,
@@ -865,13 +672,10 @@ impl Rendezvous<'_> {
                             crate::element::DetectableType::Friend,
                         );
 
-                        self.state(Substate::SeekingRunningToOfficerSeen);
+                        self.seek_state(Substate::SeekingRunningToOfficerSeen);
                         self.call(self.owner, StimulusType::EventReachPoint, false);
                     }
-                } else if !self
-                    .engine
-                    .execute_ai_alert_officer(self.sim, self.assets, self.owner)
-                {
+                } else if !self.engine.execute_ai_alert_officer(self.tcx, self.owner) {
                     self.duty();
                 }
             }
@@ -893,13 +697,13 @@ impl Rendezvous<'_> {
             return false;
         }
         self.enemy()
-            .profile(&self.assets.profile_manager)
+            .profile(&self.tcx.assets.profile_manager)
             .initiative
             >= 50
     }
 
     fn act_on_civilian_report(&mut self) {
-        match self.enemy().get_rank(&self.assets.profile_manager) {
+        match self.enemy().get_rank(&self.tcx.assets.profile_manager) {
             ProfileRank::Officer => {
                 if self.seek_before_alert() {
                     self.seek(
@@ -907,13 +711,7 @@ impl Rendezvous<'_> {
                         0,
                         SeekFlags::LOCATION_FIRST | SeekFlags::LOOK_FOR_HELP_AFTER,
                     );
-                } else if !self.engine.execute_ai_alert_soldiers(
-                    self.sim,
-                    self.assets,
-                    self.owner,
-                    self.enemy().base.seek_position,
-                    0,
-                ) {
+                } else if !self.execute_ai_alert_soldiers(self.enemy().base.seek_position, 0) {
                     self.duty();
                 }
             }
@@ -924,10 +722,7 @@ impl Rendezvous<'_> {
                         parameters_ai::AI_HINT_SEEK_RADIUS as u16,
                         SeekFlags::LOCATION_FIRST | SeekFlags::LOOK_FOR_HELP_AFTER,
                     );
-                } else if !self
-                    .engine
-                    .execute_ai_alert_officer(self.sim, self.assets, self.owner)
-                {
+                } else if !self.engine.execute_ai_alert_officer(self.tcx, self.owner) {
                     self.seek(
                         self.enemy().base.seek_position,
                         parameters_ai::AI_HINT_SEEK_RADIUS as u16,

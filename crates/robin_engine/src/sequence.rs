@@ -584,6 +584,7 @@ pub enum Field {
 impl Field {
     /// Discriminant used by the serialized command-field enumeration.
     #[doc(hidden)]
+    #[cfg(any(test, feature = "original-parity", feature = "test-helpers"))]
     pub(crate) fn original_ordinal(self) -> Option<u32> {
         use Field::*;
         Some(match self {

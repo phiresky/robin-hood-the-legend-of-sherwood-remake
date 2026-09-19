@@ -1,5 +1,6 @@
 //! Sequence manager selection responsibilities.
 use super::*;
+use crate::sequence::SequenceElementRef;
 
 impl SequenceManager {
     /// Resolve the current following chain after the owner's completion callback.
@@ -204,6 +205,7 @@ impl SequenceManager {
         Ok(())
     }
 
+    #[cfg(any(test, feature = "original-parity"))]
     pub(crate) fn has_pending_drop_ale_route_candidate(
         &self,
         actor: EntityId,
@@ -269,10 +271,11 @@ impl SequenceManager {
         }
     }
 
-    pub(crate) fn is_registered_to_go(&self, seq_id: SequenceId, elem_idx: usize) -> bool {
-        self.elements_to_go.contains(&(seq_id, elem_idx))
+    pub(crate) fn is_registered_to_go(&self, elem_ref: SequenceElementRef) -> bool {
+        self.elements_to_go
+            .contains(&(elem_ref.sequence_id, elem_ref.element_index))
             && self
-                .get_element(seq_id, elem_idx)
+                .get_element_at(elem_ref)
                 .is_some_and(|element| element.state != SequenceState::Interrupted)
     }
 
@@ -298,6 +301,24 @@ impl SequenceManager {
         elem_idx: usize,
     ) -> Option<&mut SequenceElement> {
         self.get_sequence_mut(seq_id)?.get_mut(elem_idx)
+    }
+
+    /// [`Self::get_element`] addressed by an element reference.
+    pub(crate) fn get_element_at(&self, elem_ref: SequenceElementRef) -> Option<&SequenceElement> {
+        self.get_element(elem_ref.sequence_id, elem_ref.element_index)
+    }
+
+    /// [`Self::get_element_mut`] addressed by an element reference.
+    pub(crate) fn get_element_at_mut(
+        &mut self,
+        elem_ref: SequenceElementRef,
+    ) -> Option<&mut SequenceElement> {
+        self.get_element_mut(elem_ref.sequence_id, elem_ref.element_index)
+    }
+
+    /// [`Self::push_order_on`] addressed by an element reference.
+    pub(crate) fn push_order_at(&mut self, elem_ref: SequenceElementRef, order: Order) {
+        self.push_order_on(elem_ref.sequence_id, elem_ref.element_index, order);
     }
 
     // ─── Launch ─────────────────────────────────────────────────
@@ -391,12 +412,12 @@ impl SequenceManager {
     /// Drop every queued `Order` on the given element, keeping the element
     /// itself live.  Panics on a stale handle for the same reason
     /// [`push_order_on`](Self::push_order_on) does.
-    pub fn clear_orders_on(&mut self, seq_id: SequenceId, elem_idx: usize) {
-        match self.get_element_mut(seq_id, elem_idx) {
+    pub fn clear_orders_on(&mut self, elem_ref: SequenceElementRef) {
+        match self.get_element_at_mut(elem_ref) {
             Some(elem) => elem.orders.clear(),
             None => panic!(
                 "clear_orders_on: no element at ({:?}, {}) — handle is stale",
-                seq_id, elem_idx
+                elem_ref.sequence_id, elem_ref.element_index
             ),
         }
     }
@@ -444,7 +465,7 @@ impl SequenceManager {
         let actor = actor.into();
         let set = self.actor_live.get(&actor)?;
         for elem_ref in set {
-            let Some(elem) = self.get_element(elem_ref.sequence_id, elem_ref.element_index) else {
+            let Some(elem) = self.get_element_at(*elem_ref) else {
                 panic!("actor_live contains stale element ref {elem_ref:?}");
             };
             if elem.state == SequenceState::InProgress && predicate(elem) {
@@ -473,7 +494,7 @@ impl SequenceManager {
         let actor = actor.into();
         let set = self.actor_live.get(&actor)?;
         for elem_ref in set {
-            let Some(elem) = self.get_element(elem_ref.sequence_id, elem_ref.element_index) else {
+            let Some(elem) = self.get_element_at(*elem_ref) else {
                 debug_assert!(false, "actor_live contains stale element ref");
                 continue;
             };
@@ -500,7 +521,7 @@ impl SequenceManager {
             return false;
         };
         set.iter().any(|elem_ref| {
-            let Some(elem) = self.get_element(elem_ref.sequence_id, elem_ref.element_index) else {
+            let Some(elem) = self.get_element_at(*elem_ref) else {
                 debug_assert!(false, "actor_live contains stale element ref");
                 return false;
             };

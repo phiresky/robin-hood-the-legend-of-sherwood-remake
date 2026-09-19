@@ -3,6 +3,7 @@
 use super::*;
 use crate::coordinates::{GroundPoint, MapPoint, MapVec, ScreenPoint, ScreenVec};
 use crate::element::EntityId;
+use crate::engine::TickCtx;
 use crate::shadow_polygon::ViewParameters;
 
 /// Tuple returned by `selected_view_cone_params`: (eye point, view
@@ -60,13 +61,12 @@ impl EngineInner {
     // directly for each render pass.
     pub(super) fn tick_display_state(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         display: &mut CameraDisplayState,
     ) -> u32 {
         // Director work is cinematic / script-driven; it targets the
         // single canonical cutscene camera and runs once per tick.
-        self.perform_director_work(sim, assets, display);
+        self.perform_director_work(tcx, display);
 
         // Skip rendering in fast-forward mode (draw every 32nd frame).
         // This is a frame-level gate, not per-seat — applies to every
@@ -288,18 +288,13 @@ impl EngineInner {
     }
 
     /// Apply one admitted `DIES IRAE` action.
-    pub(crate) fn try_ezekiel_instakill(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        id: EntityId,
-    ) -> bool {
+    pub(crate) fn try_ezekiel_instakill(&mut self, tcx: TickCtx<'_>, id: EntityId) -> bool {
         if !self.can_ezekiel_instakill(id) {
             return false;
         }
         // damage=10000 is a one-shot kill.
         let seq = crate::sequence::Sequence::single_damage(id, 10000, 0);
-        self.launch_sequence(sim, assets, seq);
+        self.launch_sequence(tcx, seq);
         true
     }
 

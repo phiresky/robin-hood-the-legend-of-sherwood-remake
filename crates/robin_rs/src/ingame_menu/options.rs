@@ -438,8 +438,8 @@ impl OptionsModalState {
                     self.child = Some(OptionsChild::Sounds(page));
                     return;
                 }
-                self.outcome.exit_requested |= page.exit_requested;
-                self.done |= page.exit_requested;
+                self.outcome.exit_requested |= page.close.exit_requested;
+                self.done |= page.close.exit_requested;
                 let changed = page.finish(&mut self.controller.sound.working);
                 self.outcome.changed |= changed;
                 if changed && self.scope.apply_live_preferences {
@@ -521,8 +521,8 @@ impl OptionsModalState {
                     self.child = Some(OptionsChild::Leaderboards(page, preferences));
                     return;
                 }
-                self.outcome.exit_requested |= page.exit_requested;
-                self.done |= page.exit_requested;
+                self.outcome.exit_requested |= page.close.exit_requested;
+                self.done |= page.close.exit_requested;
                 if page.commit(&mut preferences)
                     && let Err(error) = crate::leaderboard_preferences::persist(&preferences)
                 {
@@ -535,8 +535,8 @@ impl OptionsModalState {
                     self.child = Some(OptionsChild::Multiplayer(page));
                     return;
                 }
-                self.outcome.exit_requested |= page.exit_requested;
-                self.done |= page.exit_requested;
+                self.outcome.exit_requested |= page.close.exit_requested;
+                self.done |= page.close.exit_requested;
                 self.outcome.changed |= page.commit(&mut self.controller.multiplayer);
             }
         }

@@ -4,6 +4,7 @@ use crate::coordinates::MapPoint;
 #[cfg(test)]
 use crate::element::Camp;
 use crate::element::{Entity, EntityId};
+use crate::engine::TickCtx;
 use crate::profiles::ProfileRank;
 use crate::tactical_control::{
     CombatStance, TacticalDuty, TacticalFormation, TacticalPinnedGroup, TacticalUnitOrder,
@@ -383,14 +384,13 @@ impl EngineInner {
     /// soldier AI planned before the gesture was received.
     pub(super) fn prepare_tactical_player_combat_command(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         soldier: EntityId,
     ) {
         if !self.tactical_unit_is_selected(soldier) {
             return;
         }
-        self.prepare_direct_tactical_combat_command(sim, assets, soldier);
+        self.prepare_direct_tactical_combat_command(tcx, soldier);
     }
 
     /// Re-establish direct control for an automatic combat step even when the
@@ -399,26 +399,19 @@ impl EngineInner {
     /// no longer living and tactically controllable.
     pub(super) fn prepare_queued_tactical_combat_command(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         soldier: EntityId,
     ) -> bool {
         if !self.is_tactically_controllable(soldier) {
             return false;
         }
-        self.prepare_direct_tactical_combat_command(sim, assets, soldier);
+        self.prepare_direct_tactical_combat_command(tcx, soldier);
         true
     }
 
-    fn prepare_direct_tactical_combat_command(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        soldier: EntityId,
-    ) {
+    fn prepare_direct_tactical_combat_command(&mut self, tcx: TickCtx<'_>, soldier: EntityId) {
         self.stop_actor_orders(
-            sim,
-            assets,
+            tcx,
             &mut Vec::new(),
             soldier,
             crate::sequence::SequencePriority::Preference,
@@ -634,13 +627,7 @@ impl EngineInner {
         };
     }
 
-    fn set_tactical_ai_locked(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        id: EntityId,
-        locked: bool,
-    ) {
+    fn set_tactical_ai_locked(&mut self, tcx: TickCtx<'_>, id: EntityId, locked: bool) {
         let entity = self
             .get_entity_mut(id)
             .unwrap_or_else(|| panic!("controlled allied soldier {id:?} disappeared"));
@@ -658,7 +645,7 @@ impl EngineInner {
                 ai.remember_events = true;
             }
         } else if ai.script_locked {
-            self.execute_ai_script_unlock(sim, assets, id);
+            self.execute_ai_script_unlock(tcx, id);
         } else {
             ai.remember_events = false;
         }
@@ -851,8 +838,7 @@ impl EngineInner {
 
     fn move_tactical_to_slots(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         soldiers: &[EntityId],
         leaders: &[EntityId],
         destination: MapPoint,
@@ -864,16 +850,21 @@ impl EngineInner {
             .copied()
             .filter(|id| self.is_tactically_controllable(*id))
             .collect();
-        let slots =
-            self.tactical_formation_slots(assets, &valid, leaders, destination, formation, true);
+        let slots = self.tactical_formation_slots(
+            tcx.assets,
+            &valid,
+            leaders,
+            destination,
+            formation,
+            true,
+        );
         for &(id, _) in &slots {
-            self.set_tactical_ai_locked(sim, assets, id, true);
+            self.set_tactical_ai_locked(tcx, id, true);
         }
         let actor_ids: Vec<_> = slots.iter().map(|(id, _)| *id).collect();
         let destinations: Vec<_> = slots.iter().map(|(_, point)| *point).collect();
         self.perform_group_move_to_slots(
-            sim,
-            assets,
+            tcx,
             &actor_ids,
             destination,
             &destinations,
@@ -885,8 +876,7 @@ impl EngineInner {
 
     pub(crate) fn command_tactical_move(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         soldiers: &[EntityId],
         leaders: &[EntityId],
         destination: MapPoint,
@@ -904,8 +894,14 @@ impl EngineInner {
         for &id in &valid {
             self.replace_authored_tactical_patrol(id);
         }
-        let deployed_slots =
-            self.tactical_formation_slots(assets, &valid, leaders, destination, formation, false);
+        let deployed_slots = self.tactical_formation_slots(
+            tcx.assets,
+            &valid,
+            leaders,
+            destination,
+            formation,
+            false,
+        );
         let deployed_by_id: std::collections::BTreeMap<_, _> = deployed_slots.into_iter().collect();
         let leader_positions: Vec<_> = leaders
             .iter()
@@ -946,15 +942,9 @@ impl EngineInner {
         );
         let formation_anchor =
             formation_anchor_behind_leaders(centroid, destination, &leader_positions);
-        for (id, slot) in self.move_tactical_to_slots(
-            sim,
-            assets,
-            &valid,
-            leaders,
-            destination,
-            running,
-            formation,
-        ) {
+        for (id, slot) in
+            self.move_tactical_to_slots(tcx, &valid, leaders, destination, running, formation)
+        {
             let stance = self.initial_tactical_stance(id);
             self.players.tactical.orders.insert(
                 id,
@@ -978,8 +968,7 @@ impl EngineInner {
     /// The movement route itself is launched by the QA replay path.
     pub(crate) fn prepare_queued_tactical_move(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         soldier: EntityId,
         destination: MapPoint,
         formation: TacticalFormation,
@@ -988,7 +977,7 @@ impl EngineInner {
             return false;
         }
         self.replace_authored_tactical_patrol(soldier);
-        self.set_tactical_ai_locked(sim, assets, soldier, true);
+        self.set_tactical_ai_locked(tcx, soldier, true);
         let stance = self.initial_tactical_stance(soldier);
         self.players.tactical.orders.insert(
             soldier,
@@ -1008,8 +997,7 @@ impl EngineInner {
 
     pub(crate) fn set_tactical_stance(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         soldiers: &[EntityId],
         stance: CombatStance,
     ) {
@@ -1043,14 +1031,13 @@ impl EngineInner {
                 // Stopping only at Normal left an already-planned AI strike
                 // alive after switching to Hold.
                 self.stop_actor_orders(
-                    sim,
-                    assets,
+                    tcx,
                     &mut Vec::new(),
                     id,
                     crate::sequence::SequencePriority::Preference,
                 );
             }
-            self.set_tactical_ai_locked(sim, assets, id, stance != CombatStance::Aggressive);
+            self.set_tactical_ai_locked(tcx, id, stance != CombatStance::Aggressive);
         }
     }
 
@@ -1088,8 +1075,7 @@ impl EngineInner {
 
     pub(crate) fn set_tactical_patrol(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         soldiers: &[EntityId],
         destination: MapPoint,
         formation: TacticalFormation,
@@ -1099,8 +1085,7 @@ impl EngineInner {
                 self.replace_authored_tactical_patrol(id);
             }
         }
-        let slots =
-            self.move_tactical_to_slots(sim, assets, soldiers, &[], destination, false, formation);
+        let slots = self.move_tactical_to_slots(tcx, soldiers, &[], destination, false, formation);
         for (id, slot) in slots {
             let origin = self
                 .get_entity(id)
@@ -1130,8 +1115,7 @@ impl EngineInner {
 
     pub(crate) fn set_tactical_follow(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         soldiers: &[EntityId],
         hero: EntityId,
         formation: TacticalFormation,
@@ -1150,7 +1134,7 @@ impl EngineInner {
             .element_data()
             .position_map();
         let slots = self.tactical_formation_slots(
-            assets,
+            tcx.assets,
             &valid,
             std::slice::from_ref(&hero),
             hero_position,
@@ -1165,7 +1149,7 @@ impl EngineInner {
                 .element_data()
                 .position_map();
             let stance = self.initial_tactical_stance(id);
-            self.set_tactical_ai_locked(sim, assets, id, stance != CombatStance::Aggressive);
+            self.set_tactical_ai_locked(tcx, id, stance != CombatStance::Aggressive);
             self.players.tactical.orders.insert(
                 id,
                 TacticalUnitOrder {
@@ -1182,15 +1166,11 @@ impl EngineInner {
         }
     }
 
-    pub(crate) fn release_tactical_control(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
+    pub(crate) fn release_tactical_control(&mut self, tcx: TickCtx<'_>) {
         let controlled: Vec<_> = self.players.tactical.orders.keys().copied().collect();
         for id in controlled {
             if self.get_entity(id).is_some() {
-                self.set_tactical_ai_locked(sim, assets, id, false);
+                self.set_tactical_ai_locked(tcx, id, false);
             }
         }
         self.players.tactical = Default::default();
@@ -1225,11 +1205,7 @@ impl EngineInner {
         Some(fallback)
     }
 
-    pub(super) fn tick_tactical_control(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
+    pub(super) fn tick_tactical_control(&mut self, tcx: TickCtx<'_>) {
         if !self.control.frame_counter.is_multiple_of(5) {
             return;
         }
@@ -1269,7 +1245,7 @@ impl EngineInner {
             if was_ai_locked && !ai_locked && reached_hold_anchor {
                 self.store_tactical_current_position_as_post(id);
             }
-            self.set_tactical_ai_locked(sim, assets, id, ai_locked);
+            self.set_tactical_ai_locked(tcx, id, ai_locked);
             let deploy_destination = order.deploy_destination.filter(|_| {
                 matches!(
                     &order.duty,
@@ -1280,8 +1256,7 @@ impl EngineInner {
             });
             if ai_locked && let Some(destination) = deploy_destination {
                 self.perform_group_move(
-                    sim,
-                    assets,
+                    tcx,
                     &[id],
                     destination,
                     false,
@@ -1341,8 +1316,7 @@ impl EngineInner {
             };
             if let Some(destination) = destination {
                 self.perform_group_move(
-                    sim,
-                    assets,
+                    tcx,
                     &[id],
                     destination,
                     false,
@@ -1600,8 +1574,7 @@ mod tests {
         }));
 
         engine.set_tactical_ai_locked(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::default(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
             soldier,
             true,
         );
@@ -1699,10 +1672,12 @@ mod tests {
         let mut command =
             crate::sequence::SequenceElement::new(1, crate::element::Command::Point, Some(soldier));
         command.priority = crate::sequence::SequencePriority::Preference;
-        let sequence = engine.launch_element(&crate::sim_rng::test_context(), &assets, command);
+        let sequence = engine.launch_element(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            command,
+        );
         engine.prepare_tactical_player_combat_command(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             soldier,
         );
         assert_eq!(

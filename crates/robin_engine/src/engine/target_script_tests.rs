@@ -65,10 +65,9 @@ fn activated_by_function(
         name: name.to_string(),
         address: base_addr,
         num_parameters: 1,
-        size_of_return_value: 0,
         size_of_parameters: 4,
-        size_of_volatile: 0,
         size_of_temporary: 8,
+        ..Default::default()
     };
     (function, quads)
 }
@@ -80,11 +79,7 @@ fn empty_function(name: &str, base_addr: i32) -> (Function, Vec<Quad>) {
         Function {
             name: name.to_string(),
             address: base_addr,
-            num_parameters: 0,
-            size_of_return_value: 0,
-            size_of_parameters: 0,
-            size_of_volatile: 0,
-            size_of_temporary: 0,
+            ..Default::default()
         },
         vec![q_begin_function(0, 0), q_return()],
     )
@@ -115,10 +110,9 @@ fn build_test_scb() -> ScbFile {
     let startup = ClassEntry {
         source_file: "test.scs".into(),
         class_name: crate::engine::test_support::asm::STARTUP_CLASS.into(),
-        size_of_member_variables: 0,
-        member_variables: vec![],
         functions: vec![startup_init],
         quads: startup_quads,
+        ..Default::default()
     };
 
     // TestTarget: one record-to-global function per ActivatedBy*.
@@ -141,10 +135,9 @@ fn build_test_scb() -> ScbFile {
     let test_target = ClassEntry {
         source_file: "test.scs".into(),
         class_name: "TestTarget".into(),
-        size_of_member_variables: 0,
-        member_variables: vec![],
         functions: target_functions,
         quads: target_quads,
+        ..Default::default()
     };
 
     ScbFile {
@@ -209,7 +202,7 @@ fn launch_activation(engine: &mut EngineInner, target: EntityId, pc: EntityId, c
     elem.data = SequenceElementData::Interaction {
         antagonist: Some(pc),
     };
-    engine.launch_element(&crate::sim_rng::test_context(), &LevelAssets::new(), elem);
+    engine.t_launch_element(&LevelAssets::new(), elem);
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -339,7 +332,7 @@ fn hit_target_fires_activated_by_sword_when_defined() {
     elem.data = SequenceElementData::Interaction {
         antagonist: Some(target_id),
     };
-    engine.launch_element(&crate::sim_rng::test_context(), &LevelAssets::new(), elem);
+    engine.t_launch_element(&LevelAssets::new(), elem);
 
     let assets = LevelAssets::new();
     let mut dev = DevState::default();
@@ -361,7 +354,7 @@ fn handle_target_and_take_target_both_route_to_activated_by_hand() {
         elem.data = SequenceElementData::Interaction {
             antagonist: Some(target_id),
         };
-        engine.launch_element(&crate::sim_rng::test_context(), &LevelAssets::new(), elem);
+        engine.t_launch_element(&LevelAssets::new(), elem);
     }
 
     let assets = LevelAssets::new();

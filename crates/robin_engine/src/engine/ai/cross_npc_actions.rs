@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 
 impl EngineInner {
     fn required_cross_npc_enemy_mut(
@@ -10,7 +11,7 @@ impl EngineInner {
         // `HumanHandle` is the raw sparse element slot, not a SoldierId; an
         // AI-controlled hero therefore has to retain its ActorPc entity kind here.
         let target_id = self.expect_human_id_for_ai_handle(target, operation);
-        self.world.entities.expect_enemy_ai_mut(
+        self.entities_mut().expect_enemy_ai_mut(
             target_id,
             format_args!("cross-NPC {operation} target human {target}"),
         )
@@ -26,29 +27,20 @@ impl EngineInner {
     /// direct duty transition, movement construction, and recursive callbacks
     /// inside this engine-owned script barrier while leaving ordinary owner
     /// instruction to subsequent sequence processing.
-    pub(crate) fn script_remove_all_subordinates(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        chief: EntityId,
-    ) {
+    pub(crate) fn script_remove_all_subordinates(&mut self, tcx: TickCtx<'_>, chief: EntityId) {
         let member_count = self
-            .world
-            .entities
-            .expect_ai_controller(chief, format_args!("RemoveAllSubordinates chief"))
+            .ai(chief, "RemoveAllSubordinates chief")
             .theoretical_patrol
             .len();
 
         for index in 0..member_count {
             let member = *self
-                .world
-                .entities
-                .expect_ai_controller(chief, format_args!("RemoveAllSubordinates chief"))
+                .ai(chief, "RemoveAllSubordinates chief")
                 .theoretical_patrol
                 .get(index)
                 .expect("RemoveAllSubordinates callback shortened the captured patrol prefix");
             let should_return = {
-                let ai = self.world.entities.expect_ai_controller_mut(
+                let ai = self.entities_mut().expect_ai_controller_mut(
                     member,
                     format_args!(
                         "RemoveAllSubordinates chief {} references missing NPC member {}",
@@ -62,13 +54,12 @@ impl EngineInner {
             if !should_return {
                 continue;
             }
-            self.execute_ai_return_to_duty(sim, assets, member, crate::ai::DutyFlags::empty());
+            self.execute_ai_return_to_duty(tcx, member, crate::ai::DutyFlags::empty());
             // A forced duty call does not close a Think frame. Keep its
             // close-post latch available for the actor's actual completion.
         }
 
-        self.world
-            .entities
+        self.entities_mut()
             .get_mut(chief)
             .and_then(Entity::ai_controller_mut)
             .expect("validated RemoveAllSubordinates chief vanished")
@@ -101,7 +92,7 @@ impl EngineInner {
         // also drops authored elevation. Only inherit it when the supplied
         // source still describes this exact noise origin.
         let origin_sector = source_entity
-            .and_then(|id| self.world.entities.get(id))
+            .and_then(|id| self.entities().get(id))
             .filter(|entity| {
                 entity.element_data().position_map() == origin
                     && entity.element_data().optional_layer() == origin_layer
@@ -136,7 +127,7 @@ impl EngineInner {
         const HEARING_FACTOR: f32 = 1.0;
 
         let (npc_pos, npc_world) = {
-            let entity = self.world.entities.get(npc_id)?;
+            let entity = self.entities().get(npc_id)?;
             let include = match entity {
                 Entity::Civilian(_) => true,
                 Entity::Soldier(s) => self.camps_are_hostile(
@@ -194,8 +185,7 @@ impl EngineInner {
             .max_noise_covering_volume_for_3d(npc_pos.x, npc_pos.y, npc_world.z);
         let frame = self.control.frame_counter;
         let deafness = self
-            .world
-            .entities
+            .entities_mut()
             .expect_ai_actor_data_mut(
                 npc_id,
                 format_args!(
@@ -229,8 +219,7 @@ impl EngineInner {
     /// before returning.
     pub(in crate::engine) fn broadcast_noise_synchronously(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         noise_type: crate::ai::NoiseType,
         origin: crate::coordinates::MapPoint,
         origin_layer: Option<crate::position_interface::Layer>,
@@ -258,7 +247,7 @@ impl EngineInner {
             let stimulus = Stimulus::with_noise(StimulusType::EventHear, subjective_noise);
 
             // Each listener observes all mutations from the preceding call.
-            self.execute_ai_callback(sim, assets, npc_id, &stimulus);
+            self.execute_ai_callback(tcx, npc_id, &stimulus);
         }
         self.display_one_shot_noise(noise);
     }
@@ -323,18 +312,16 @@ impl EngineInner {
     /// before returning its handled result.
     pub(in crate::engine) fn dispatch_think_with_drain(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         npc_id: crate::element::EntityId,
         stimulus: &crate::ai::Stimulus,
-        assets: &LevelAssets,
     ) -> bool {
         let had_ai_at_entry = self
-            .world
-            .entities
+            .entities()
             .get(npc_id)
             .and_then(Entity::ai_controller)
             .is_some();
-        let handled = self.dispatch_filtered_stimulus_inner(sim, assets, npc_id, stimulus);
+        let handled = self.dispatch_filtered_stimulus_inner(tcx, npc_id, stimulus);
 
         // PCs can participate in direct swordfights but have no NPC AI
         // controller or AI-owned recovery effects to drain.
@@ -354,8 +341,7 @@ impl EngineInner {
 
     pub(in crate::engine) fn execute_ai_look_there(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         source_id: EntityId,
         position: crate::ai::Position,
         radius: u16,
@@ -410,7 +396,7 @@ impl EngineInner {
             let dy = target.y - caller.y;
             let dz = target.z - caller.z;
             if look_there_target_is_inside_radius(dx * dx + dy * dy + dz * dz, radius_squared) {
-                self.execute_ai_callback(sim, assets, target_id, &stimulus);
+                self.execute_ai_callback(tcx, target_id, &stimulus);
             }
         }
     }

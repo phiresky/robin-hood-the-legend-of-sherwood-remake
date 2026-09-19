@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 
 // ── QA macro playback / abort system tests ─────────────────────────
 
@@ -15,7 +16,7 @@ fn add_test_pc(engine: &mut EngineInner) -> crate::element::EntityId {
     // Macro playback dispatches real group-move commands, whose formation
     // geometry reads the mover's map position and move box. A default
     // entity has an empty (hyperspace) box, so give it real geometry.
-    let entity = engine.get_entity_mut(pc).unwrap();
+    let entity = engine.ent_mut(pc);
     entity
         .position_iface_mut()
         .set_move_box(crate::coordinates::MoveBox::from_corners(
@@ -50,19 +51,8 @@ fn add_group_move_test_sector(engine: &mut EngineInner) -> crate::fast_find_grid
             ],
             bounding_box: MapBBox::from_corners(min, max),
             sector_type: SectorType::MOTION | SectorType::AREA,
-            layer: 0,
             sector_number: SectorNumber::new(1),
-            door_index: None,
-            lift_type: None,
-            lift_direction: 0,
-            force_crouched: false,
-            building_index: None,
-            low_exit_point: None,
-            high_exit_point: None,
-            lowest_door_index: None,
-            jump_line_indices: Vec::new(),
-            gate_indices: Vec::new(),
-            underlying_sector: None,
+            ..Default::default()
         },
         0,
     );
@@ -231,13 +221,7 @@ fn stop_recording_macro_restores_occupied_slot_before_refreshing_portrait() {
         .get_mut(pc)
         .unwrap()
         .begin_recording(slot);
-    engine
-        .get_entity_mut(pc)
-        .unwrap()
-        .pc_data_mut()
-        .unwrap()
-        .portrait
-        .quick_icons[slot as usize] = Default::default();
+    engine.pc_mut(pc).portrait.quick_icons[slot as usize] = Default::default();
     engine.players.qa_recording_slot = slot;
     engine.players.qa_recording_for = vec![pc];
 
@@ -246,13 +230,7 @@ fn stop_recording_macro_restores_occupied_slot_before_refreshing_portrait() {
     let state = engine.players.macro_store.get(pc).unwrap();
     assert!(state.has_macro(slot as usize));
     assert_eq!(state.get_slot_titbit(slot as usize), Some(titbit));
-    let icon = engine
-        .get_entity(pc)
-        .unwrap()
-        .pc_data()
-        .unwrap()
-        .portrait
-        .quick_icons[slot as usize];
+    let icon = engine.pc(pc).portrait.quick_icons[slot as usize];
     assert_eq!(icon.titbit_id, Some(titbit));
     assert_eq!(
         icon.running,
@@ -297,13 +275,7 @@ fn stop_recording_macro_refreshes_empty_and_recorded_portraits() {
             .unwrap()
             .has_macro(slot as usize)
     );
-    let empty_icon = engine
-        .get_entity(empty_pc)
-        .unwrap()
-        .pc_data()
-        .unwrap()
-        .portrait
-        .quick_icons[slot as usize];
+    let empty_icon = engine.pc(empty_pc).portrait.quick_icons[slot as usize];
     assert_eq!(empty_icon.titbit_id, None);
     assert!(!empty_icon.running);
 
@@ -315,13 +287,7 @@ fn stop_recording_macro_refreshes_empty_and_recorded_portraits() {
             .unwrap()
             .has_macro(slot as usize)
     );
-    let recorded_icon = engine
-        .get_entity(recorded_pc)
-        .unwrap()
-        .pc_data()
-        .unwrap()
-        .portrait
-        .quick_icons[slot as usize];
+    let recorded_icon = engine.pc(recorded_pc).portrait.quick_icons[slot as usize];
     assert_eq!(recorded_icon.titbit_id, Some(titbit));
     assert_eq!(
         recorded_icon.running,
@@ -344,7 +310,7 @@ fn recorded_single_group_move_keeps_adjusted_destination_and_replays_exact_seek(
     let exact_sector = add_group_move_test_sector(&mut engine);
     let pc = add_test_pc(&mut engine);
     {
-        let entity = engine.get_entity_mut(pc).expect("test PC");
+        let entity = engine.ent_mut(pc);
         entity
             .position_iface_mut()
             .set_move_box(crate::coordinates::MoveBox::from_corners(
@@ -462,16 +428,8 @@ fn recorded_multi_pc_group_move_keeps_actor_order_and_individual_slots_without_l
     let exact_sector = add_group_move_test_sector(&mut engine);
     let pc_a = add_test_pc(&mut engine);
     let pc_b = add_test_pc(&mut engine);
-    engine
-        .get_entity_mut(pc_a)
-        .expect("first PC")
-        .element_data_mut()
-        .set_position_map(MapPoint::new(100.0, 100.0));
-    engine
-        .get_entity_mut(pc_b)
-        .expect("second PC")
-        .element_data_mut()
-        .set_position_map(MapPoint::new(120.0, 100.0));
+    engine.place_map(pc_a, MapPoint::new(100.0, 100.0));
+    engine.place_map(pc_b, MapPoint::new(120.0, 100.0));
     arm_group_move_recording(&mut engine, &[pc_a, pc_b]);
 
     engine.apply_command(
@@ -539,16 +497,8 @@ fn queued_multi_pc_group_move_records_resolved_formation_without_touching_manual
     let exact_sector = add_group_move_test_sector(&mut engine);
     let pc_a = add_test_pc(&mut engine);
     let pc_b = add_test_pc(&mut engine);
-    engine
-        .get_entity_mut(pc_a)
-        .expect("first PC")
-        .element_data_mut()
-        .set_position_map(MapPoint::new(100.0, 100.0));
-    engine
-        .get_entity_mut(pc_b)
-        .expect("second PC")
-        .element_data_mut()
-        .set_position_map(MapPoint::new(120.0, 100.0));
+    engine.place_map(pc_a, MapPoint::new(100.0, 100.0));
+    engine.place_map(pc_b, MapPoint::new(120.0, 100.0));
 
     // Keep both automatic entries pending so capture can be inspected before
     // replay, and arm manual recording to prove the planner never borrows that
@@ -564,13 +514,7 @@ fn queued_multi_pc_group_move_records_resolved_formation_without_touching_manual
             .orders
             .sequence_manager
             .start_sequence_level(sequence);
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            sequence,
-            0,
-        );
+        engine.t_element_in_progress(&assets, sequence, 0);
     }
     arm_group_move_recording(&mut engine, &[pc_a, pc_b]);
     let manual_a = engine
@@ -669,16 +613,8 @@ fn queued_multi_pc_group_move_replays_each_recorded_formation_seek() {
     let exact_sector = add_group_move_test_sector(&mut engine);
     let pc_a = add_test_pc(&mut engine);
     let pc_b = add_test_pc(&mut engine);
-    engine
-        .get_entity_mut(pc_a)
-        .expect("first PC")
-        .element_data_mut()
-        .set_position_map(MapPoint::new(100.0, 100.0));
-    engine
-        .get_entity_mut(pc_b)
-        .expect("second PC")
-        .element_data_mut()
-        .set_position_map(MapPoint::new(120.0, 100.0));
+    engine.place_map(pc_a, MapPoint::new(100.0, 100.0));
+    engine.place_map(pc_b, MapPoint::new(120.0, 100.0));
 
     let mut busy_sequences = Vec::new();
     for pc in [pc_a, pc_b] {
@@ -692,13 +628,7 @@ fn queued_multi_pc_group_move_replays_each_recorded_formation_seek() {
             .orders
             .sequence_manager
             .start_sequence_level(sequence);
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            sequence,
-            0,
-        );
+        engine.t_element_in_progress(&assets, sequence, 0);
         busy_sequences.push(sequence);
     }
     arm_group_move_recording(&mut engine, &[pc_a, pc_b]);
@@ -726,16 +656,10 @@ fn queued_multi_pc_group_move_replays_each_recorded_formation_seek() {
         },
     );
     for sequence in busy_sequences {
-        engine.element_terminated(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            sequence,
-            0,
-        );
+        engine.t_element_terminated(&assets, sequence, 0);
     }
     let mut camera = crate::engine::CameraDisplayState::default();
-    engine.advance_auto_quick_action_queues(&sim, &mut camera, &assets);
+    engine.advance_auto_quick_action_queues(TickCtx::new(&sim, &assets), &mut camera);
 
     for (pc, expected_destination) in [
         (pc_a, MapPoint::new(500.0, 477.0)),
@@ -784,16 +708,8 @@ fn group_move_recording_suppresses_only_armed_actor_and_launches_live_sibling() 
     let exact_sector = add_group_move_test_sector(&mut engine);
     let recording_pc = add_test_pc(&mut engine);
     let live_pc = add_test_pc(&mut engine);
-    engine
-        .get_entity_mut(recording_pc)
-        .expect("recording PC")
-        .element_data_mut()
-        .set_position_map(MapPoint::new(100.0, 100.0));
-    engine
-        .get_entity_mut(live_pc)
-        .expect("live PC")
-        .element_data_mut()
-        .set_position_map(MapPoint::new(120.0, 100.0));
+    engine.place_map(recording_pc, MapPoint::new(100.0, 100.0));
+    engine.place_map(live_pc, MapPoint::new(120.0, 100.0));
     arm_group_move_recording(&mut engine, &[recording_pc]);
 
     engine.apply_command(

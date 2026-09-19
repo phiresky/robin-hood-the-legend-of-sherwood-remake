@@ -34,6 +34,35 @@ pub struct SpawnArrowParams {
     pub lands_in_hole: bool,
 }
 
+#[cfg(test)]
+impl SpawnArrowParams {
+    /// Flat one-segment test shot from `bow_point` to `target_pos` at the bow
+    /// height: 30 damage, layer 0, 10-frame flight, unit velocity along +X.
+    /// Override individual fields with struct-update syntax.
+    pub(crate) fn test_flat(
+        shooter: EntityId,
+        target: EntityId,
+        bow_point: WorldPoint3D,
+        target_pos: MapPoint,
+    ) -> Self {
+        Self {
+            shooter,
+            bow_point,
+            trajectory_origin: MapPoint::new(bow_point.x, bow_point.y),
+            target,
+            target_pos,
+            trajectory: vec![TrajectoryPoint {
+                position: WorldPoint3D::new(target_pos.x, target_pos.y, bow_point.z),
+                time: 10,
+            }],
+            damage: 30,
+            layer: 0,
+            initial_velocity: WorldVec3D::new(1.0, 0.0, 0.0),
+            lands_in_hole: false,
+        }
+    }
+}
+
 /// Build a new arrow projectile `Entity` for a fired shot.
 ///
 /// Unlike the previous straight-line version, this takes a precomputed

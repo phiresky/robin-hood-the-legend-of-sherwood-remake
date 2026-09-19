@@ -1,6 +1,7 @@
 use super::*;
 use crate::coordinates::{MapPoint, MapVec};
 use crate::element::{ElementData, ElementFx, ElementKind, FxData};
+use crate::engine::TickCtx;
 use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
 
 fn inactive_civilian(position: MapPoint) -> Entity {
@@ -124,40 +125,22 @@ fn first_child_runs_master_once_and_freeze_all_only_suppresses_child_frames() {
         ..Default::default()
     };
 
-    let sprite_before =
-        serde_json::to_value(&engine.get_entity(first).unwrap().element_data().sprite).unwrap();
+    let sprite_before = serde_json::to_value(&engine.elem(first).sprite).unwrap();
     let frame_before = (
         sprite_before["current_frame"].clone(),
         sprite_before["frame_count"].clone(),
     );
 
-    engine.tick_actor_owner_envelopes(&sim_context, &assets);
+    engine.tick_actor_owner_envelopes(TickCtx::new(&sim_context, &assets));
     assert_eq!(engine.world.mobile_elements[0].position.x, 2.0);
-    assert_eq!(
-        engine
-            .get_entity(first)
-            .unwrap()
-            .element_data()
-            .position_map()
-            .x,
-        12.0
-    );
-    assert_eq!(
-        engine
-            .get_entity(second)
-            .unwrap()
-            .element_data()
-            .position_map()
-            .x,
-        22.0
-    );
+    assert_eq!(engine.map_pos_of(first).x, 12.0);
+    assert_eq!(engine.map_pos_of(second).x, 22.0);
 
     assert_eq!(
         engine.world.mobile_elements[0].position.x, 2.0,
         "later children must not retrigger the master"
     );
-    let sprite_after =
-        serde_json::to_value(&engine.get_entity(first).unwrap().element_data().sprite).unwrap();
+    let sprite_after = serde_json::to_value(&engine.elem(first).sprite).unwrap();
     let frame_after = (
         sprite_after["current_frame"].clone(),
         sprite_after["frame_count"].clone(),
@@ -189,8 +172,7 @@ fn production_walk_mobile_observations(actor_before: bool) -> Vec<f32> {
     };
     let mut observations = Vec::new();
     engine.tick_actor_owner_envelopes_with_test_owner_hook(
-        &sim_context,
-        &assets,
+        TickCtx::new(&sim_context, &assets),
         |engine, owner| {
             if engine
                 .get_entity(owner)
@@ -237,8 +219,7 @@ fn production_walk_runs_multiple_mobiles_once_across_a_hole_and_visits_spawned_t
     let visited = std::cell::RefCell::new(Vec::new());
     let spawned = std::cell::Cell::new(None);
     engine.tick_actor_owner_envelopes_with_test_owner_hook(
-        &sim_context,
-        &assets,
+        TickCtx::new(&sim_context, &assets),
         |engine, owner| {
             visited.borrow_mut().push(owner);
             if owner == first {
@@ -283,15 +264,18 @@ fn mobile_boundary_precedes_static_dispatch_in_live_owner_walk() {
     };
 
     let trace = std::cell::RefCell::new(Vec::new());
-    engine.tick_actor_owner_envelopes_with_test_owner_hook(&sim_context, &assets, |_, owner| {
-        if owner == child {
-            trace.borrow_mut().push("mobile");
-            return;
-        }
-        if owner == static_fx {
-            trace.borrow_mut().push("static");
-        }
-    });
+    engine.tick_actor_owner_envelopes_with_test_owner_hook(
+        TickCtx::new(&sim_context, &assets),
+        |_, owner| {
+            if owner == child {
+                trace.borrow_mut().push("mobile");
+                return;
+            }
+            if owner == static_fx {
+                trace.borrow_mut().push("static");
+            }
+        },
+    );
     assert_eq!(*trace.borrow(), vec!["mobile", "static"]);
 }
 
@@ -314,14 +298,16 @@ fn production_walk_uses_saved_original_creation_order_not_rust_slots() {
 
     let visited = std::cell::RefCell::new(Vec::new());
     engine.tick_actor_owner_envelopes_with_test_owner_hook(
-        &sim_context,
-        &LevelAssets {
-            navigation: crate::engine::LevelNavigationAssets {
-                hiking_paths: std::sync::Arc::new(vec![path()]),
+        TickCtx::new(
+            &sim_context,
+            &LevelAssets {
+                navigation: crate::engine::LevelNavigationAssets {
+                    hiking_paths: std::sync::Arc::new(vec![path()]),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
-            ..Default::default()
-        },
+        ),
         |_, owner| visited.borrow_mut().push(owner),
     );
 
@@ -367,7 +353,7 @@ fn reached_waypoint_uses_old_child_speed_then_new_speed_next_tick() {
         let ((_, trace), increments) =
             crate::engine::movement::capture_mobile_crossing_increments(|| {
                 crate::sim_rng::with_draw_trace(|| {
-                    engine.tick_mobile_child_owner_boundary(sim, &assets, child);
+                    engine.tick_mobile_child_owner_boundary(TickCtx::new(sim, &assets), child);
                 })
             });
         assert_eq!(increments.last().copied(), Some(MapVec::new(1.0, 0.0)));
@@ -390,7 +376,7 @@ fn reached_waypoint_uses_old_child_speed_then_new_speed_next_tick() {
             "this child update must retain the movement-frame speed"
         );
 
-        engine.tick_mobile_child_owner_boundary(sim, &assets, child);
+        engine.tick_mobile_child_owner_boundary(TickCtx::new(sim, &assets), child);
         assert_eq!(engine.world.mobile_elements[0].speed, 3.0);
         let next_speed = engine
             .get_entity(child)
@@ -424,34 +410,18 @@ fn stopped_master_returns_before_crossing_and_never_replays_old_position_delta()
         ..Default::default()
     };
     let (_, increments) = crate::engine::movement::capture_mobile_crossing_increments(|| {
-        engine.tick_mobile_child_owner_boundary(&sim_context, &assets, child);
+        engine.tick_mobile_child_owner_boundary(TickCtx::new(&sim_context, &assets), child);
     });
-    assert_eq!(
-        engine
-            .get_entity(child)
-            .unwrap()
-            .element_data()
-            .position_map()
-            .x,
-        10.0
-    );
+    assert_eq!(engine.map_pos_of(child).x, 10.0);
     assert_eq!(increments, []);
 
     engine.world.mobile_elements[0].stopped = false;
     engine.world.mobile_elements[0].active = false;
     engine.world.mobile_elements[0].old_position = MapPoint::new(-30.0, 0.0);
     let (_, increments) = crate::engine::movement::capture_mobile_crossing_increments(|| {
-        engine.tick_mobile_child_owner_boundary(&sim_context, &assets, child);
+        engine.tick_mobile_child_owner_boundary(TickCtx::new(&sim_context, &assets), child);
     });
-    assert_eq!(
-        engine
-            .get_entity(child)
-            .unwrap()
-            .element_data()
-            .position_map()
-            .x,
-        10.0
-    );
+    assert_eq!(engine.map_pos_of(child).x, 10.0);
     assert_eq!(increments, []);
 }
 
@@ -474,5 +444,5 @@ fn first_child_boundary_rejects_a_later_child_with_the_wrong_mobile_index() {
         ..Default::default()
     };
 
-    engine.tick_mobile_child_owner_boundary(&sim_context, &assets, first);
+    engine.tick_mobile_child_owner_boundary(TickCtx::new(&sim_context, &assets), first);
 }

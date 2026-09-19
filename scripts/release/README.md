@@ -21,3 +21,15 @@ resumes a draft, uploads missing assets, downloads and verifies their hashes,
 then publishes by release ID. It never replaces assets or modifies a published
 release. The creation response supplies the draft ID and upload URL, avoiding
 an immediate lookup through a releases list that may omit the new draft.
+
+The game crate keeps an explicit native release base version (`0.1.0`), separate
+from the unpublished workspace crates (`0.0.0`). Nightlies append the original
+workflow timestamp. Package versions must satisfy Velopack's `>= 0.0.1` floor
+and be strictly newer than every published Windows/Linux update-feed version;
+changing build metadata alone does not count as an update. The same candidate
+tag may be retried, with immutable assets verified by the publisher.
+
+The workflow checks versions before compiling. Promotion repeats the check on
+the actual packaged feeds and requires matching platform versions. A shared
+publication concurrency group serializes promotion across branches and tags.
+API errors and malformed feeds fail the check rather than removing the floor.

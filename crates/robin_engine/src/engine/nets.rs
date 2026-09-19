@@ -25,6 +25,7 @@ use super::*;
 use crate::coordinates::MapPoint;
 use crate::coordinates::WorldVec3D;
 use crate::element::{Command, Entity, EntityId};
+use crate::engine::TickCtx;
 
 // ─── Constants ───────────────────────────────────────────────────────
 
@@ -127,12 +128,7 @@ impl EngineInner {
     /// broadcast, and `EventNet` AI stimulus run on the next frame
     /// inside [`EngineInner::apply_net`] (`engine/melee.rs`) when the
     /// queued `Command::ReceiveNet` damage element dispatches.
-    pub(crate) fn apply_net_falling_effect(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        net_id: EntityId,
-    ) {
+    pub(crate) fn apply_net_falling_effect(&mut self, tcx: TickCtx<'_>, net_id: EntityId) {
         // ── Snapshot the net's state up front ──────────────────────
         let (already_crumpled, landing_pos, mut victims_snapshot) = match self.get_entity(net_id) {
             Some(Entity::Net(n)) => (n.net.crumpled, n.projectile.end, n.net.victims.clone()),
@@ -176,7 +172,8 @@ impl EngineInner {
             // Classify: VIP / Rider / Stuteley → crumple; else stick.
             let (is_vip, is_rider, is_stuteley) = match entity {
                 Entity::Soldier(s) => {
-                    let vip = assets
+                    let vip = tcx
+                        .assets
                         .profile_manager
                         .get_soldier(s.soldier.soldier_profile_index)
                         .unwrap_or_else(|| {
@@ -189,7 +186,8 @@ impl EngineInner {
                     (vip, s.soldier.rider, false)
                 }
                 Entity::Civilian(c) => {
-                    let vip = assets
+                    let vip = tcx
+                        .assets
                         .profile_manager
                         .civilians
                         .get(usize::from(c.civilian.civilian_profile_index))
@@ -207,7 +205,7 @@ impl EngineInner {
                     // In the shipping campaigns only Stuteley has the
                     // Net action in his main action slots, so the
                     // action check doubles as a Stuteley check.
-                    let stuteley = assets
+                    let stuteley = tcx.assets
                         .profile_manager
                         .get_character(pc.pc.profile_index)
                         .unwrap_or_else(|| {
@@ -227,8 +225,7 @@ impl EngineInner {
                 // path; this only fires for VIPs, not riders/Stuteley.
                 if is_vip {
                     self.execute_ai_speech(
-                        sim,
-                        assets,
+                        tcx,
                         actor_id,
                         crate::ai::AiSpeechAttempt {
                             remark: crate::ai::Remark::VipNetNo,
@@ -300,7 +297,7 @@ impl EngineInner {
                 crate::combat::increment_stuck_under_net(human);
             }
 
-            self.quit_swordfight(sim, assets, victim_id);
+            self.quit_swordfight(tcx, victim_id);
 
             // Launch a ReceiveNet damage element (damage/concussion = 0
             // — the handler reads only the origin pointer).
@@ -312,7 +309,7 @@ impl EngineInner {
                 0,
                 0,
             );
-            self.launch_element(sim, assets, elem);
+            self.launch_element(tcx, elem);
         }
 
         tracing::debug!(
@@ -339,12 +336,7 @@ impl EngineInner {
     ///    remove the victim from every other NPC's `Body` detectable
     ///    list.
     /// 5. Clear the net's `victims` list.
-    pub(crate) fn unapply_net_effect(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        net_id: EntityId,
-    ) {
+    pub(crate) fn unapply_net_effect(&mut self, tcx: TickCtx<'_>, net_id: EntityId) {
         // Snapshot + drain the victim list and the repulsive-point IDs
         // so we can iterate without re-borrowing the net entity.
         let (victims, repulsive_ids): (Vec<EntityId>, Vec<i32>) = match self.get_entity_mut(net_id)
@@ -407,15 +399,14 @@ impl EngineInner {
             // rewrite + path cancel runs (the bare
             // `SequenceManager::stop_owner` skips both).
             self.stop_actor_orders(
-                sim,
-                assets,
+                tcx,
                 &mut Vec::new(),
                 victim_id,
                 crate::sequence::SequencePriority::Injury,
             );
 
             // ── 3. Park the victim with a Wait element ──────────────
-            self.actor_wait(sim, assets, victim_id);
+            self.actor_wait(tcx, victim_id);
 
             // Release publishes the victim's own positional depth.
             if let Some(entity) = self.world.entities.get_mut(victim_id) {
@@ -430,8 +421,7 @@ impl EngineInner {
                 .unwrap_or(false);
             if victim_is_npc {
                 self.execute_ai_callback(
-                    sim,
-                    assets,
+                    tcx,
                     victim_id,
                     &crate::ai::Stimulus::new(crate::ai::StimulusType::EventNetAway),
                 );
@@ -498,12 +488,7 @@ impl EngineInner {
     ///   net-antagonist pickup, and the pickup branch in
     ///   `engine/tick.rs` calls [`EngineInner::unapply_net_effect`] +
     ///   despawns the net.
-    pub(crate) fn tick_net(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        net_id: EntityId,
-    ) {
+    pub(crate) fn tick_net(&mut self, tcx: TickCtx<'_>, net_id: EntityId) {
         let was_flying = match self.get_entity(net_id) {
             Some(Entity::Net(net)) => net.projectile.flying,
             _ => return,
@@ -600,12 +585,12 @@ impl EngineInner {
 
         // Phase 2: apply effects (mutable engine borrow released above).
         if apply {
-            self.apply_net_falling_effect(sim, assets, net_id);
+            self.apply_net_falling_effect(tcx, net_id);
             self.compute_net_victim_depths(net_id);
         }
         if just_landed {
-            self.apply_projectile_landing_resolution(assets, net_id);
-            self.snap_net_to_landing_obstacle(sim, assets, net_id);
+            self.apply_projectile_landing_resolution(tcx.assets, net_id);
+            self.snap_net_to_landing_obstacle(tcx, net_id);
             self.register_net_repulsive_points(net_id);
         }
         if was_flying {
@@ -664,7 +649,7 @@ impl EngineInner {
             observe_net_sprite_progression(net_id, progression);
             net.element
                 .sprite
-                .perform_virgin_increment(sim, progression);
+                .perform_virgin_increment(tcx.sim, progression);
         }
     }
 
@@ -679,12 +664,7 @@ impl EngineInner {
     /// When the net lands on bare ground (no obstacle at the landing
     /// 2D point) the elevation is also reset to a tiny positive
     /// epsilon to avoid Z-fighting — that's the `0.001` offset below.
-    fn snap_net_to_landing_obstacle(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        net_id: EntityId,
-    ) {
+    fn snap_net_to_landing_obstacle(&mut self, tcx: TickCtx<'_>, net_id: EntityId) {
         let (landing_xy, layer) = match self.get_entity(net_id) {
             Some(Entity::Net(n)) => (
                 (n.element.position().x, n.element.position().y),
@@ -701,7 +681,7 @@ impl EngineInner {
         //     so a crumpled-launched-no-layer net doesn't get clamped
         //     to 0.001.
         let obstacle_idx = self.find_landing_obstacle(
-            assets,
+            tcx.assets,
             crate::coordinates::WorldPoint3D {
                 x: landing_xy.0,
                 y: landing_xy.1,
@@ -712,14 +692,14 @@ impl EngineInner {
             (None, Some(_)) => None, // keep current elevation
             (None, None) => Some(0.001),
             (Some(_), Some(idx)) => Some(
-                assets
+                tcx.assets
                     .environment
                     .static_sight_obstacles
                     .get(idx)
                     .or_else(|| {
                         self.world
                             .dynamic_sight_obstacles
-                            .get(idx - assets.environment.static_sight_obstacles.len())
+                            .get(idx - tcx.assets.environment.static_sight_obstacles.len())
                     })
                     .map(|o| o.compute_top_z(landing_xy.0, landing_xy.1) + 0.001)
                     .unwrap_or(0.001),
@@ -742,8 +722,7 @@ impl EngineInner {
         // landed net.
         let origin = MapPoint::new(landing_xy.0, landing_xy.1);
         self.broadcast_noise_synchronously(
-            sim,
-            assets,
+            tcx,
             crate::ai::NoiseType::Bonk,
             origin,
             layer,

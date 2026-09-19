@@ -1,8 +1,9 @@
 use super::*;
 use crate::ai::{PathId, PatrolPath, ReportType};
 use crate::ai_enemy::SeekFlags;
-use crate::coordinates::{MapPoint, WorldPoint3D};
-use crate::engine::test_support::{actors::make_test_ai_soldier, square_sector};
+use crate::coordinates::WorldPoint3D;
+use crate::engine::TickCtx;
+use crate::engine::test_support::actors::make_test_ai_soldier;
 
 #[test]
 fn alert_camp_roster_preserves_load_order_and_reads_live_membership() {
@@ -65,15 +66,11 @@ fn alert_camp_roster_preserves_load_order_and_reads_live_membership() {
 
 fn group_fixture() -> (EngineInner, LevelAssets, [EntityId; 4]) {
     let mut engine = EngineInner::new();
-    engine.world.fast_grid_mut().size_map(256, 256);
-    engine.world.fast_grid_mut().allocate_layers(1);
-    let index = engine.world.fast_grid_mut().add_sector(
-        square_sector(1, 0, MapPoint::new(0.0, 0.0), MapPoint::new(4000.0, 4000.0)),
-        0,
+    let (sector, _) = crate::engine::test_support::extra_engine_combat::square_sector_map(
+        &mut engine,
+        (256, 256),
+        (4000.0, 4000.0),
     );
-    let sector = crate::ai::SectorHandle::new(1)
-        .unwrap()
-        .with_arena_index(crate::fast_find_grid::SectorIndex::new(index).unwrap());
     let ids = std::array::from_fn(|index| {
         let mut actor = make_test_ai_soldier(crate::element::Camp::Lacklandists);
         actor.element_data_mut().set_position(WorldPoint3D::new(
@@ -121,7 +118,10 @@ fn group_fixture() -> (EngineInner, LevelAssets, [EntityId; 4]) {
 #[test]
 fn officer_group_instruction_retries_location_first_after_refusal() {
     let (mut engine, assets, [owner, refused, second, third]) = group_fixture();
-    engine.execute_ai_officer_instruct_group(&crate::sim_rng::test_context(), &assets, owner);
+    engine.execute_ai_officer_instruct_group(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        owner,
+    );
     let officer = engine
         .world
         .entities
@@ -184,7 +184,10 @@ fn officer_group_path_advances_waypoint_on_refusal() {
         .expect_enemy_ai_mut(owner, format_args!("checkpoint report"));
     officer.base.my_reconnaissance_report.report_type = ReportType::MissedCharly;
     officer.base.my_reconnaissance_report.charly = Some(AiEntityHandle::new(refused.index()));
-    engine.execute_ai_officer_instruct_group(&crate::sim_rng::test_context(), &assets, owner);
+    engine.execute_ai_officer_instruct_group(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        owner,
+    );
     let officer = engine
         .world
         .entities
@@ -212,9 +215,7 @@ fn officer_group_path_advances_waypoint_on_refusal() {
 #[test]
 fn officer_group_path_reassignment_uses_live_waypoints_with_initial_stride() {
     use crate::engine::test_support::asm::*;
-    use crate::engine::types::MissionScript;
     use crate::natives::{NativeFn, ScriptHandleCodec};
-    use crate::scb::{ClassEntry, Function, ScbFile};
     let (mut engine, mut assets, [owner, refused, second, third]) = group_fixture();
     let sector = engine.live_ai_position(owner).sector.unwrap();
     assets.navigation.hiking_paths = std::sync::Arc::new(
@@ -257,46 +258,22 @@ fn officer_group_path_reassignment_uses_live_waypoints_with_initial_stride() {
         .unwrap()
         .script_class = "ChangePath".into();
     engine.scripts.mission = Some(
-        MissionScript::from_scb(ScbFile {
-            version: crate::scb::SCB_VERSION,
-            classes: vec![
-                ClassEntry {
-                    source_file: "path.scs".into(),
-                    class_name: "StartUp".into(),
-                    size_of_member_variables: 0,
-                    member_variables: vec![],
-                    functions: vec![],
-                    quads: vec![],
-                },
-                ClassEntry {
-                    source_file: "path.scs".into(),
-                    class_name: "ChangePath".into(),
-                    size_of_member_variables: 0,
-                    member_variables: vec![],
-                    functions: vec![Function {
-                        name: "FilterAIEvent".into(),
-                        address: 0,
-                        num_parameters: 3,
-                        size_of_return_value: 4,
-                        size_of_parameters: 12,
-                        size_of_volatile: 0,
-                        size_of_temporary: 8,
-                    }],
-                    quads: vec![
-                        q_begin_function(0, 2),
-                        q_aff0_iconstant(0xC000, handle),
-                        q_aff0_iconstant(0xC004, 1),
-                        q_native_param(0xC000),
-                        q_native_param(0xC004),
-                        q_native_call(NativeFn::AssignPath as u32),
-                        q_aff0_iconstant(0xC000, 1),
-                        q_return_val(0xC000),
-                        q_end_function(),
-                    ],
-                },
+        crate::engine::test_support::extra_engine_combat::filter_ai_event_mission(
+            "path.scs",
+            "ChangePath",
+            8,
+            vec![
+                q_begin_function(0, 2),
+                q_aff0_iconstant(0xC000, handle),
+                q_aff0_iconstant(0xC004, 1),
+                q_native_param(0xC000),
+                q_native_param(0xC004),
+                q_native_call(NativeFn::AssignPath as u32),
+                q_aff0_iconstant(0xC000, 1),
+                q_return_val(0xC000),
+                q_end_function(),
             ],
-        })
-        .expect("path reassignment script compiles"),
+        ),
     );
     engine.attach_script_bindings(&assets);
     engine
@@ -305,7 +282,10 @@ fn officer_group_path_reassignment_uses_live_waypoints_with_initial_stride() {
         .as_mut()
         .unwrap()
         .bind_actor(handle, "ChangePath");
-    engine.execute_ai_officer_instruct_group(&crate::sim_rng::test_context(), &assets, owner);
+    engine.execute_ai_officer_instruct_group(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        owner,
+    );
     assert_eq!(
         engine
             .world

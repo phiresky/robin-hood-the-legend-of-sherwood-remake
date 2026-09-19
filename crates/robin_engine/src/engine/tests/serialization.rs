@@ -555,8 +555,7 @@ fn sprite_serialization_surface_matches_v2_contract() {
     // clone; what matters for sim determinism is that the tick path treats
     // both copies identically after the normal runtime attachments are bound.
     let mut dev = DevState::default();
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut rehydrated, &mut assets);
+    let assets = rehydrated.test_runtime_assets();
     let mut clone = rehydrated.clone();
     for _ in 0..2 {
         rehydrated.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);

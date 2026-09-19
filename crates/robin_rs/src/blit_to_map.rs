@@ -29,6 +29,19 @@ pub fn drain_pending_bg_blits(frontend: &mut HostFrontend, effects: &mut HostEff
     }
 }
 
+/// Replace stale or missing map patches after a timeline jump.
+pub(crate) fn restore_background_patches(
+    engine: &robin_engine::engine::Engine,
+    assets: &robin_engine::engine::LevelAssets,
+    frontend: &mut HostFrontend,
+    effects: &mut HostEffectBatches,
+) {
+    frontend.resources.clear_background_decals();
+    // Queued events belong to the old position or intermediate seek frames.
+    effects.background_blits = engine.background_patch_blits(assets);
+    drain_pending_bg_blits(frontend, effects);
+}
+
 /// Render every persistent patch-effect background decal.
 ///
 /// Called after `Engine::draw_background` has queued the base map and before
@@ -150,6 +163,36 @@ fn build_background_decal(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn timeline_restore_discards_future_decals_and_queued_updates() {
+        let (engine, assets) = robin_engine::test_support::fresh_engine_sized(640.0, 480.0);
+        let mut frontend = HostFrontend::default();
+        let mut effects = HostEffectBatches::default();
+        let entity_id = engine_element::EntityId::Fx(engine_element::FxId(7));
+        frontend.resources.background_decals.insert(
+            entity_id,
+            BackgroundDecal {
+                bank_id: 1,
+                dst_x: 0,
+                dst_y: 0,
+                width: 4,
+                height: 4,
+                shadow_color: 0,
+                shadow_level: 0,
+            },
+        );
+        effects.background_blits.push(PendingBgBlit {
+            entity_id,
+            restore_only: false,
+            decal: None,
+        });
+        effects.request_sherwood_report();
+        restore_background_patches(&engine, &assets, &mut frontend, &mut effects);
+        assert!(frontend.resources.background_decals.is_empty());
+        assert!(effects.background_blits.is_empty());
+        assert!(effects.has_sherwood_report());
+    }
 
     #[test]
     fn restore_reports_absence_without_reordering_surviving_patches() {

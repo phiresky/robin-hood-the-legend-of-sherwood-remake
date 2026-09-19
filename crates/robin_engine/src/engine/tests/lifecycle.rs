@@ -1,5 +1,6 @@
 use super::scenarios::assets_with_test_pc_profile;
 use super::*;
+use crate::engine::TickCtx;
 use crate::engine::tick::capture_projectile_derived_tails;
 
 /// Give every live test PC its required campaign-description identity.
@@ -121,7 +122,7 @@ fn corpse_exit_initialization_fixture(
     let body = engine.add_test_entity(make_test_soldier(Posture::Carried));
     let carrier = engine.add_test_entity(make_test_pc(Posture::CarryingCorpse));
     {
-        let carrier_entity = engine.get_entity_mut(carrier).unwrap();
+        let carrier_entity = engine.ent_mut(carrier);
         carrier_entity.pc_data_mut().unwrap().carried = Some(body);
         carrier_entity
             .pc_data_mut()
@@ -132,7 +133,7 @@ fn corpse_exit_initialization_fixture(
             .set_direction_instantly(13);
     }
     {
-        let body_entity = engine.get_entity_mut(body).unwrap();
+        let body_entity = engine.ent_mut(body);
         body_entity.human_data_mut().unwrap().carrier = Some(carrier);
         body_entity.actor_data_mut().unwrap().execution_frozen = true;
         body_entity.element_data_mut().set_direction_instantly(4);
@@ -155,25 +156,17 @@ fn corpse_exit_initialization_fixture(
     conversion[transition as usize] = 0;
     let mut body_conversion = crate::engine::test_support::unmapped_conversion();
     body_conversion[OrderType::BeingDroppedPeasantC as usize] = 0;
-    let body_entity = engine.get_entity_mut(body).unwrap();
+    let body_entity = engine.ent_mut(body);
     body_entity.element_data_mut().sprite = crate::sprite::Sprite::new(
         std::sync::Arc::new(vec![script.clone(); 16]),
         std::sync::Arc::new(body_conversion),
     );
     body_entity.element_data_mut().set_direction_instantly(4);
-    engine
-        .get_entity_mut(carrier)
-        .unwrap()
-        .element_data_mut()
-        .sprite = crate::sprite::Sprite::new(
+    engine.elem_mut(carrier).sprite = crate::sprite::Sprite::new(
         std::sync::Arc::new(vec![script; 16]),
         std::sync::Arc::new(conversion),
     );
-    engine
-        .get_entity_mut(carrier)
-        .unwrap()
-        .element_data_mut()
-        .set_direction_instantly(13);
+    engine.face(carrier, 13);
 
     let order_id = engine.orders.allocate_order_id();
     let mut element = SequenceElement::new(1, command, Some(carrier));
@@ -196,13 +189,7 @@ fn corpse_exit_initialization_fixture(
         .sequence_manager
         .start_sequence_level(sequence);
     engine.select_sequence_element(carrier, Some((sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        sequence,
-        0,
-    );
+    engine.t_element_in_progress(&LevelAssets::new(), sequence, 0);
     (engine, carrier, body, sequence)
 }
 
@@ -268,13 +255,7 @@ fn install_owner_selected_test_melee_frames(
         .sequence_manager
         .push_order_on(sequence, 0, order);
     engine.select_sequence_element(attacker, Some((sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        sequence,
-        0,
-    );
+    engine.t_element_in_progress(&LevelAssets::new(), sequence, 0);
     bind_test_action_point(
         engine,
         attacker,
@@ -283,9 +264,7 @@ fn install_owner_selected_test_melee_frames(
         crate::coordinates::SpriteAnchor::ZERO,
     );
     let sim = crate::sim_rng::test_context();
-    let entity = engine
-        .get_entity_mut(attacker)
-        .expect("selected melee test attacker exists");
+    let entity = engine.ent_mut(attacker);
     let mut script = entity.element_data().sprite.scripts[0].clone();
     script.action_done = 1;
     script.frame_ids = (1..=animation_frames as u32).collect();
@@ -375,12 +354,7 @@ fn chained_straight_strike_target_life(interrupter_first: bool) -> i16 {
         (interrupter_id, chained_attacker_id)
     };
     let final_target_id = engine.add_test_entity(final_target);
-    engine
-        .get_entity_mut(chained_attacker_id)
-        .unwrap()
-        .ai_controller_mut()
-        .unwrap()
-        .me = chained_attacker_id.index();
+    engine.ai_ctrl_mut(chained_attacker_id).me = chained_attacker_id.index();
 
     for (attacker, target) in [
         (interrupter_id, chained_attacker_id),
@@ -415,21 +389,17 @@ fn chained_straight_strike_target_life(interrupter_first: bool) -> i16 {
         ..LevelAssets::new()
     };
     crate::sim_rng::with_seed(0xA_B_C, |sim| {
-        engine.tick_actor_owner_envelopes(sim, &assets);
+        engine.tick_actor_owner_envelopes(TickCtx::new(sim, &assets));
         assert_strike_damage_deferred_then_drain(
             &mut engine,
-            sim,
-            &assets,
+            TickCtx::new(sim, &assets),
             chained_attacker_id,
             final_target_id,
             interrupter_first,
         );
     });
 
-    let Entity::Pc(target) = engine
-        .get_entity(final_target_id)
-        .expect("final chained-strike target present")
-    else {
+    let Entity::Pc(target) = engine.ent(final_target_id) else {
         panic!("final chained-strike target must be a PC");
     };
     target.pc.life_points
@@ -441,8 +411,7 @@ fn chained_straight_strike_target_life(interrupter_first: bool) -> i16 {
 /// creation-slot order. Drains the manager phase before returning.
 fn assert_strike_damage_deferred_then_drain(
     engine: &mut EngineInner,
-    sim: &crate::sim_rng::SimulationContext,
-    assets: &LevelAssets,
+    tcx: TickCtx<'_>,
     chained_attacker_id: EntityId,
     final_target_id: EntityId,
     interrupter_first: bool,
@@ -465,7 +434,7 @@ fn assert_strike_damage_deferred_then_drain(
     );
 
     let mut display = HostDisplayState::default();
-    engine.hourglass_phase_sequences(sim, &mut display, assets);
+    engine.hourglass_phase_sequences(tcx, &mut display);
 }
 
 /// `(chained attacker soldier life, final target PC life)` for the chained
@@ -475,17 +444,11 @@ fn strike_life_points(
     chained_attacker_id: EntityId,
     final_target_id: EntityId,
 ) -> (i16, i16) {
-    let chained_life = match engine
-        .get_entity(chained_attacker_id)
-        .expect("chained attacker present after envelope pass")
-    {
+    let chained_life = match engine.ent(chained_attacker_id) {
         Entity::Soldier(soldier) => soldier.npc.life_points,
         _ => panic!("chained attacker must be a soldier"),
     };
-    let final_life = match engine
-        .get_entity(final_target_id)
-        .expect("final target present after envelope pass")
-    {
+    let final_life = match engine.ent(final_target_id) {
         Entity::Pc(pc) => pc.pc.life_points,
         _ => panic!("final target must be a PC"),
     };
@@ -573,12 +536,7 @@ fn chained_nonstraight_strike_lives(
         (interrupter_id, chained_attacker_id)
     };
     let final_target_id = engine.add_test_entity(final_target);
-    engine
-        .get_entity_mut(chained_attacker_id)
-        .unwrap()
-        .ai_controller_mut()
-        .unwrap()
-        .me = chained_attacker_id.index();
+    engine.ai_ctrl_mut(chained_attacker_id).me = chained_attacker_id.index();
 
     install_owner_selected_test_melee(
         &mut engine,
@@ -595,11 +553,7 @@ fn chained_nonstraight_strike_lives(
             // the thrust profile and it rotates only while the strike
             // animation is still playing, so give it a long tail.
             let facing = crate::position_interface::vector_to_sector_0_to_15(0.0, -1.0);
-            engine
-                .get_entity_mut(interrupter_id)
-                .expect("lateral attacker present")
-                .element_data_mut()
-                .set_direction_instantly(facing);
+            engine.face(interrupter_id, facing);
             install_owner_selected_test_melee_frames(
                 &mut engine,
                 interrupter_id,
@@ -662,7 +616,7 @@ fn chained_nonstraight_strike_lives(
         // phase drains them.
         let mut registered = Vec::new();
         for _ in 0..32 {
-            engine.tick_actor_owner_envelopes(sim, &assets);
+            engine.tick_actor_owner_envelopes(TickCtx::new(sim, &assets));
             assert_eq!(
                 strike_life_points(&engine, chained_attacker_id, final_target_id),
                 (1, 50),
@@ -681,20 +635,14 @@ fn chained_nonstraight_strike_lives(
             "both strikes must register their damage before the manager phase"
         );
         let mut display = HostDisplayState::default();
-        engine.hourglass_phase_sequences(sim, &mut display, &assets);
+        engine.hourglass_phase_sequences(TickCtx::new(sim, &assets), &mut display);
     });
 
-    let Entity::Pc(target) = engine
-        .get_entity(final_target_id)
-        .expect("final chained-strike target present")
-    else {
+    let Entity::Pc(target) = engine.ent(final_target_id) else {
         panic!("final chained-strike target must be a PC");
     };
     let final_target_life = target.pc.life_points;
-    let Entity::Soldier(chained_attacker) = engine
-        .get_entity(chained_attacker_id)
-        .expect("interrupted chained attacker remains present")
-    else {
+    let Entity::Soldier(chained_attacker) = engine.ent(chained_attacker_id) else {
         panic!("chained attacker must remain a soldier");
     };
     (final_target_life, chained_attacker.npc.life_points)

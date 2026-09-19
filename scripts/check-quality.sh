@@ -29,15 +29,12 @@ case "$1" in
         ;;
     engine) cargo test --locked -p robin_engine_types -p robin_legacy_save -p robin_level_data -p robin_engine ;;
     assets)
-        cargo test --locked -p robin_content
-        cargo test --locked -p robin_content --features simulation-codecs
         cargo test --locked -p robin_asset_codecs -p robin_assets -p robin_data_io
         cargo test --locked -p robin_assets --no-default-features
         python3 scripts/check_asset_boundary.py
         ;;
     protocols)
-        cargo test --locked -p robin_run_types -p robin_run_protocol -p robin_replay_format -p robin_ranked_verification -p robin_identity_signer
-        cargo test --locked -p robin_replay_format --features native-admission
+        cargo test --locked -p robin_run_types -p robin_run_protocol -p robin_replay_format -p robin_identity_signer
         ;;
     services)
         # Prove the production API lacks raw fixture access before opting in.
@@ -47,12 +44,10 @@ case "$1" in
         ;;
     parity) cargo test --locked -p robin_parity ;;
     client)
-        cargo build --locked -p robin_replay_format --features native-admission --bin robin-replay-admission
         cargo test --locked -p robin_rs
         cargo build --locked -p robin_rs --bin robin
         ;;
     client-release)
-        cargo build --locked -p robin_replay_format --features native-admission --bin robin-replay-admission
         cargo test --locked -p robin_rs --lib --no-default-features --features release
         cargo build --locked -p robin_rs --bin robin --no-default-features --features release
         cargo check --locked -p robin_rs --example audio_decode_bench --no-default-features --features release

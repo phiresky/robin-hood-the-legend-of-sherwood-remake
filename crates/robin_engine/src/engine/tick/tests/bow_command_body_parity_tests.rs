@@ -3,7 +3,9 @@ use crate::element::{
     ActionState, ActorData, ActorPc, ActorSoldier, ElementData, ElementKind, Entity, HumanData,
     NpcData, PcData, Posture,
 };
+use crate::engine::TickCtx;
 use crate::order::OrderType;
+use crate::sequence::SequenceElementRef;
 use crate::sequence::{SequenceElement, SequenceId, SequenceState};
 
 fn make_aiming_pc(action_state: ActionState) -> Entity {
@@ -27,11 +29,7 @@ fn launch_bow_command_and_tick(command: Command, action_state: ActionState) -> E
     let mut engine = EngineInner::new();
     let pc_id = engine.add_test_entity(make_aiming_pc(action_state));
     let assets = engine.test_runtime_assets();
-    engine.launch_element(
-        &crate::sim_rng::test_context(),
-        &assets,
-        SequenceElement::new(1, command, Some(pc_id)),
-    );
+    engine.t_launch_element(&assets, SequenceElement::new(1, command, Some(pc_id)));
 
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
@@ -87,22 +85,11 @@ fn install_test_lift_sector(
     let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level);
     level.sector_number_map.insert(sector_number, 0);
     level.sectors.push(crate::fast_find_grid::GridSector {
-        points: Vec::new(),
         bounding_box: crate::coordinates::MapBBox::new(),
         sector_type: crate::sector::SectorType::LIFT,
-        layer: 0,
         sector_number,
-        door_index: None,
         lift_type: Some(crate::sector::LiftType::Ladder),
-        lift_direction: 0,
-        force_crouched: false,
-        building_index: None,
-        low_exit_point: None,
-        high_exit_point: None,
-        lowest_door_index: None,
-        jump_line_indices: Vec::new(),
-        gate_indices: Vec::new(),
-        underlying_sector: None,
+        ..Default::default()
     });
 }
 
@@ -114,8 +101,7 @@ fn bow_lean_out_commands_keep_transition_order_live() {
         ActionState::AimingWithBow,
     ));
     let assets = engine.test_runtime_assets();
-    let seq_id = engine.launch_element(
-        &crate::sim_rng::test_context(),
+    let seq_id = engine.t_launch_element(
         &assets,
         SequenceElement::new(1, Command::LowerBowLeanOut, Some(soldier_id)),
     );
@@ -168,7 +154,7 @@ fn pre_timer_condolation_starts_successor_timer_before_the_scan() {
     timer.set_property(Field::Timer, FieldValue::Integer(2));
     sequence.append_element(timer);
     let assets = engine.test_runtime_assets();
-    engine.launch_sequence(&crate::sim_rng::test_context(), &assets, sequence);
+    engine.t_launch_sequence(&assets, sequence);
 
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
@@ -195,7 +181,7 @@ fn timer_expiry_condolation_starts_successor_after_the_scan() {
     successor.set_property(Field::Timer, FieldValue::Integer(2));
     sequence.append_element(successor);
     let assets = engine.test_runtime_assets();
-    engine.launch_sequence(&crate::sim_rng::test_context(), &assets, sequence);
+    engine.t_launch_sequence(&assets, sequence);
 
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
@@ -263,16 +249,9 @@ fn turn_context_sets_goal_without_snapping_and_books_turning() {
     let owner = engine.add_test_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
     let mut turn = SequenceElement::new_generic(1, Command::Turn, Some(owner));
     turn.set_property(Field::Direction, FieldValue::Integer(5));
-    let seq_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, turn);
+    let seq_id = engine.t_launch_element(&assets, turn);
 
-    let handled = engine.instruct_owner(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        owner,
-        seq_id,
-        0,
-    );
+    let handled = engine.t_instruct_owner(&assets, owner, seq_id, 0);
 
     assert!(handled);
     let entity = engine.world.entities.get(owner).unwrap();
@@ -313,16 +292,9 @@ fn wait_timer_context_arms_actor_and_books_upright_idle() {
     let owner = engine.add_test_entity(make_aiming_pc(ActionState::Waiting));
     let mut wait = SequenceElement::new_generic(1, Command::WaitTimer, Some(owner));
     wait.set_property(Field::Timer, FieldValue::Integer(7));
-    let seq_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, wait);
+    let seq_id = engine.t_launch_element(&assets, wait);
 
-    let handled = engine.instruct_owner(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        owner,
-        seq_id,
-        0,
-    );
+    let handled = engine.t_instruct_owner(&assets, owner, seq_id, 0);
 
     assert!(handled);
     assert_eq!(
@@ -371,34 +343,18 @@ fn wait_timer_context_arms_actor_and_books_upright_idle() {
         actor.seek_target = Some(owner);
         actor.post_seek_sequence = Some(crate::sequence::Sequence::new().into_post_seek());
     }
-    engine.element_interrupted(
-        &crate::sim_rng::test_context(),
+    engine.t_element_interrupted(
         &assets,
-        &mut Vec::new(),
         seq_id,
         0,
         crate::sequence::CascadeFlags::NEXT_LEVEL,
     );
     let mut idle = SequenceElement::new(1, Command::Wait, Some(owner));
     idle.priority = crate::sequence::SequencePriority::Wait;
-    let idle_sequence = engine.launch_element(&crate::sim_rng::test_context(), &assets, idle);
+    let idle_sequence = engine.t_launch_element(&assets, idle);
     engine.select_sequence_element(owner, Some((idle_sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        idle_sequence,
-        0,
-    );
-    assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .wait_time,
-        7
-    );
+    engine.t_element_in_progress(&assets, idle_sequence, 0);
+    assert_eq!(engine.actor(owner).wait_time, 7);
 }
 
 #[test]
@@ -410,19 +366,12 @@ fn frozen_all_wait_timer_still_completes_in_owner_slot() {
     let owner = engine.add_test_entity(make_aiming_pc(ActionState::Bored));
     let mut wait = SequenceElement::new_generic(1, Command::WaitTimer, Some(owner));
     wait.set_property(Field::Timer, FieldValue::Integer(0));
-    let seq_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, wait);
+    let seq_id = engine.t_launch_element(&assets, wait);
     engine.select_sequence_element(owner, None);
-    engine.instruct_owner(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        owner,
-        seq_id,
-        0,
-    );
+    engine.t_instruct_owner(&assets, owner, seq_id, 0);
     engine.set_actors_frozen(true);
 
-    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
+    engine.t_tick_actor_owner_envelopes(&assets);
 
     assert_eq!(
         engine
@@ -461,15 +410,9 @@ fn wait_timer_wraps_beggar_execute_and_generic_execute_once_each() {
 
         let mut wait = SequenceElement::new_generic(1, Command::WaitTimer, Some(owner));
         wait.priority = crate::sequence::SequencePriority::Normal;
-        let seq_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, wait);
+        let seq_id = engine.t_launch_element(&assets, wait);
         engine.select_sequence_element(owner, Some((seq_id, 0)));
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            seq_id,
-            0,
-        );
+        engine.t_element_in_progress(&assets, seq_id, 0);
         let order_id = engine.orders.allocate_order_id();
         engine.orders.sequence_manager.push_order_on(
             seq_id,
@@ -477,7 +420,7 @@ fn wait_timer_wraps_beggar_execute_and_generic_execute_once_each() {
             crate::order::Order::new(order_type, 0.0, 0.0, order_id),
         );
 
-        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
+        engine.t_tick_actor_owner_envelopes(&assets);
         let remaining = engine
             .world
             .entities
@@ -547,8 +490,7 @@ fn lazy_wait_publishes_start_before_preexisting_owner_instruction() {
     owner_entity.element_data_mut().sprite.current_row = 1;
     owner_entity.element_data_mut().sprite.last_action = OrderType::WalkingUpright;
     let owner = engine.add_test_entity(owner_entity);
-    let parry_sequence = engine.launch_element(
-        &crate::sim_rng::test_context(),
+    let parry_sequence = engine.t_launch_element(
         &assets,
         SequenceElement::new(1, Command::ParrySword, Some(owner)),
     );
@@ -563,7 +505,7 @@ fn lazy_wait_publishes_start_before_preexisting_owner_instruction() {
         "sequence-element launch must leave ordinary work unresolved until manager instruction"
     );
 
-    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
+    engine.t_tick_actor_owner_envelopes(&assets);
 
     let sprite = &engine
         .world
@@ -612,20 +554,12 @@ fn menace_instruction_accepts_transition_orders() {
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
-    let seq_id = engine.launch_element(
-        &crate::sim_rng::test_context(),
+    let seq_id = engine.t_launch_element(
         &assets,
         SequenceElement::new(1, Command::StartMenace, Some(owner)),
     );
 
-    let handled = engine.instruct_owner(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        owner,
-        seq_id,
-        0,
-    );
+    let handled = engine.t_instruct_owner(&assets, owner, seq_id, 0);
 
     assert!(handled);
     let element = engine
@@ -665,20 +599,12 @@ fn attention_instruction_accepts_alerted_look() {
         .and_then(Entity::enemy_ai_mut)
         .expect("test soldier has enemy AI")
         .attentive = true;
-    let seq_id = engine.launch_element(
-        &crate::sim_rng::test_context(),
+    let seq_id = engine.t_launch_element(
         &assets,
         SequenceElement::new(1, Command::LookLeft, Some(owner)),
     );
 
-    let handled = engine.instruct_owner(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        owner,
-        seq_id,
-        0,
-    );
+    let handled = engine.t_instruct_owner(&assets, owner, seq_id, 0);
 
     assert!(handled);
     let element = engine
@@ -699,20 +625,12 @@ fn stealth_context_crouches_and_preserves_terminated_order() {
     let mut engine = EngineInner::new();
     let assets = LevelAssets::new();
     let owner = engine.add_test_entity(make_aiming_pc(ActionState::Waiting));
-    let seq_id = engine.launch_element(
-        &crate::sim_rng::test_context(),
+    let seq_id = engine.t_launch_element(
         &assets,
         SequenceElement::new(1, Command::CrouchDown, Some(owner)),
     );
 
-    let handled = engine.instruct_owner(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        owner,
-        seq_id,
-        0,
-    );
+    let handled = engine.t_instruct_owner(&assets, owner, seq_id, 0);
 
     assert!(handled);
     // Translation only appends the crouch transition order; the posture
@@ -745,16 +663,9 @@ fn wait_timer_context_rejects_missing_timer_contextually() {
     let assets = LevelAssets::new();
     let owner = engine.add_test_entity(make_aiming_pc(ActionState::Waiting));
     let wait = SequenceElement::new_generic(1, Command::WaitTimer, Some(owner));
-    let seq_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, wait);
+    let seq_id = engine.t_launch_element(&assets, wait);
 
-    engine.instruct_owner(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        owner,
-        seq_id,
-        0,
-    );
+    engine.t_instruct_owner(&assets, owner, seq_id, 0);
 }
 
 #[test]
@@ -764,17 +675,15 @@ fn wait_context_rejects_stale_owner_contextually() {
     let assets = LevelAssets::new();
     let owner = engine.add_test_entity(make_aiming_pc(ActionState::Waiting));
     let wait = SequenceElement::new(1, Command::Wait, Some(owner));
-    let seq_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, wait);
+    let seq_id = engine.t_launch_element(&assets, wait);
     engine.remove_entity(owner);
 
     engine.dispatch_wait_command(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
         owner,
         Command::Wait,
-        seq_id,
-        0,
+        SequenceElementRef::new(seq_id, 0),
     );
 }
 
@@ -805,7 +714,7 @@ fn stealth_termination_splices_timer_successor_before_same_tick_scan() {
     timer.set_property(Field::Timer, FieldValue::Integer(2));
     sequence.append_element(timer);
     let assets = engine.test_runtime_assets();
-    engine.launch_sequence(&crate::sim_rng::test_context(), &assets, sequence);
+    engine.t_launch_sequence(&assets, sequence);
 
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
@@ -823,20 +732,12 @@ fn whistle_instruction_accepts_whistling_order() {
     let mut engine = EngineInner::new();
     let assets = LevelAssets::new();
     let owner = engine.add_test_entity(make_aiming_pc(ActionState::Waiting));
-    let seq_id = engine.launch_element(
-        &crate::sim_rng::test_context(),
+    let seq_id = engine.t_launch_element(
         &assets,
         SequenceElement::new(1, Command::WhistleCmd, Some(owner)),
     );
 
-    let handled = engine.instruct_owner(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        owner,
-        seq_id,
-        0,
-    );
+    let handled = engine.t_instruct_owner(&assets, owner, seq_id, 0);
 
     assert!(handled);
     let element = engine
@@ -867,20 +768,12 @@ fn eat_instruction_terminates_without_ammo() {
     let mut engine = EngineInner::new();
     let assets = LevelAssets::new();
     let owner = engine.add_test_entity(make_aiming_pc(ActionState::Waiting));
-    let seq_id = engine.launch_element(
-        &crate::sim_rng::test_context(),
+    let seq_id = engine.t_launch_element(
         &assets,
         SequenceElement::new(1, Command::EatCmd, Some(owner)),
     );
 
-    let handled = engine.instruct_owner(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        owner,
-        seq_id,
-        0,
-    );
+    let handled = engine.t_instruct_owner(&assets, owner, seq_id, 0);
 
     assert!(handled);
     let element = engine
@@ -897,20 +790,12 @@ fn throw_instruction_rejects_missing_target() {
     let mut engine = EngineInner::new();
     let assets = LevelAssets::new();
     let owner = engine.add_test_entity(make_aiming_pc(ActionState::Waiting));
-    let seq_id = engine.launch_element(
-        &crate::sim_rng::test_context(),
+    let seq_id = engine.t_launch_element(
         &assets,
         SequenceElement::new(1, Command::ThrowApple, Some(owner)),
     );
 
-    let handled = engine.instruct_owner(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        owner,
-        seq_id,
-        0,
-    );
+    let handled = engine.t_instruct_owner(&assets, owner, seq_id, 0);
 
     assert!(handled);
     assert_eq!(
@@ -944,16 +829,9 @@ fn position_assertion_context_interrupts_at_tolerance_boundary() {
         *destination = crate::coordinates::MapPoint::new(5.0, 0.0);
         *tolerance = 0.0;
     }
-    let seq_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, assertion);
+    let seq_id = engine.t_launch_element(&assets, assertion);
 
-    let handled = engine.instruct_owner(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        owner,
-        seq_id,
-        0,
-    );
+    let handled = engine.t_instruct_owner(&assets, owner, seq_id, 0);
 
     assert!(handled);
     assert_eq!(
@@ -995,16 +873,9 @@ fn position_assertion_context_accepts_nan_distance_like_original() {
         *destination = crate::coordinates::MapPoint::new(362.0, 1535.0);
         *tolerance = 10.0;
     }
-    let seq_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, assertion);
+    let seq_id = engine.t_launch_element(&assets, assertion);
 
-    let handled = engine.instruct_owner(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        owner,
-        seq_id,
-        0,
-    );
+    let handled = engine.t_instruct_owner(&assets, owner, seq_id, 0);
 
     assert!(handled);
     assert_eq!(
@@ -1047,18 +918,12 @@ fn lift_wait_context_keeps_blocked_lift_in_progress_and_reaches_splice() {
         *gate_id = Some(crate::gate::DoorIndex::new(0).expect("valid door index"));
         *sector = crate::position_interface::SectorHandle::new(42);
     }
-    let seq_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, wait);
+    let seq_id = engine.t_launch_element(&assets, wait);
 
-    engine.instruct_owner(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        owner,
-        seq_id,
-        0,
-    );
+    engine.t_instruct_owner(&assets, owner, seq_id, 0);
 
-    let authorized = engine.authorize_and_reserve_lift_wait(owner, seq_id, 0);
+    let authorized =
+        engine.authorize_and_reserve_lift_wait(owner, SequenceElementRef::new(seq_id, 0));
 
     assert!(!authorized);
     assert_eq!(
@@ -1112,17 +977,10 @@ fn lift_wait_context_rejects_crenel_lift_type_contextually() {
         *gate_id = Some(crate::gate::DoorIndex::new(0).expect("valid door index"));
         *sector = crate::position_interface::SectorHandle::new(42);
     }
-    let seq_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, wait);
-    engine.instruct_owner(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        owner,
-        seq_id,
-        0,
-    );
+    let seq_id = engine.t_launch_element(&assets, wait);
+    engine.t_instruct_owner(&assets, owner, seq_id, 0);
 
-    engine.authorize_and_reserve_lift_wait(owner, seq_id, 0);
+    engine.authorize_and_reserve_lift_wait(owner, SequenceElementRef::new(seq_id, 0));
 }
 
 #[test]
@@ -1152,21 +1010,18 @@ fn lift_wait_context_reserves_direction_before_terminating() {
         *gate_id = Some(crate::gate::DoorIndex::new(0).expect("valid door index"));
         *sector = crate::position_interface::SectorHandle::new(42);
     }
-    let seq_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, wait);
+    let seq_id = engine.t_launch_element(&assets, wait);
 
-    engine.instruct_owner(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        owner,
-        seq_id,
-        0,
-    );
+    engine.t_instruct_owner(&assets, owner, seq_id, 0);
 
-    let authorized = engine.authorize_and_reserve_lift_wait(owner, seq_id, 0);
+    let authorized =
+        engine.authorize_and_reserve_lift_wait(owner, SequenceElementRef::new(seq_id, 0));
 
     assert!(authorized);
-    engine.do_next_order(&crate::sim_rng::test_context(), &assets, seq_id, 0);
+    engine.do_next_order(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        SequenceElementRef::new(seq_id, 0),
+    );
     assert_eq!(
         engine
             .orders
@@ -1206,22 +1061,10 @@ fn lift_wait_reservation_is_consumed_by_production_leave_callback() {
         let outside_index = level.sectors.len();
         level.sector_number_map.insert(outside, outside_index);
         level.sectors.push(crate::fast_find_grid::GridSector {
-            points: Vec::new(),
             bounding_box: crate::coordinates::MapBBox::new(),
             sector_type: crate::sector::SectorType::MOTION | crate::sector::SectorType::AREA,
-            layer: 0,
             sector_number: outside,
-            door_index: None,
-            lift_type: None,
-            lift_direction: 0,
-            force_crouched: false,
-            building_index: None,
-            low_exit_point: None,
-            high_exit_point: None,
-            lowest_door_index: None,
-            jump_line_indices: Vec::new(),
-            gate_indices: Vec::new(),
-            underlying_sector: None,
+            ..Default::default()
         });
     }
     let door = crate::gate::Door {
@@ -1246,30 +1089,21 @@ fn lift_wait_reservation_is_consumed_by_production_leave_callback() {
         *gate_id = Some(crate::gate::DoorIndex::new(0).expect("valid door index"));
         *sector = crate::position_interface::SectorHandle::new(42);
     }
-    let seq_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, wait);
-    engine.instruct_owner(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        owner,
-        seq_id,
-        0,
-    );
+    let seq_id = engine.t_launch_element(&assets, wait);
+    engine.t_instruct_owner(&assets, owner, seq_id, 0);
 
-    assert!(engine.authorize_and_reserve_lift_wait(owner, seq_id, 0));
+    assert!(engine.authorize_and_reserve_lift_wait(owner, SequenceElementRef::new(seq_id, 0)));
     assert_eq!(engine.world.fast_grid_mut().lift_state_mut(0).occupants, 1);
 
     engine.execute_pass_door(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         crate::gate::DoorIndex::new(0).expect("valid door index"),
         true,
     );
     assert_eq!(engine.world.fast_grid_mut().lift_state_mut(0).occupants, 1);
     engine.execute_pass_door(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         crate::gate::DoorIndex::new(0).expect("valid door index"),
         false,
@@ -1295,15 +1129,11 @@ fn lift_wait_reservation_is_consumed_by_production_leave_callback() {
 
 #[test]
 fn frozen_all_lift_wait_rechecks_and_promotes_successor_in_authorizing_slot() {
+    let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let assets = LevelAssets::new();
     let owner = engine.add_test_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .npc_data_mut()
-        .unwrap()
-        .ai_brain = crate::element::AiBrain::Enemy(Box::default());
+    engine.npc_mut(owner).ai_brain = crate::element::AiBrain::Enemy(Box::default());
     let sector_number = crate::sector::SectorNumber::new(42);
     install_test_lift_sector(&mut engine, owner, sector_number);
     crate::engine::test_support::ensure_ordinary_sector(&mut engine, 0, 0);
@@ -1330,19 +1160,11 @@ fn frozen_all_lift_wait_rechecks_and_promotes_successor_in_authorizing_slot() {
         *gate_id = Some(crate::gate::DoorIndex::new(0).expect("valid door index"));
         *sector = crate::position_interface::SectorHandle::new(42);
     }
-    let seq_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, wait);
-    engine.instruct_owner(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        owner,
-        seq_id,
-        0,
-    );
+    let seq_id = engine.t_launch_element(&assets, wait);
+    engine.t_instruct_owner(&assets, owner, seq_id, 0);
     engine.set_actors_frozen(true);
-    let sim = crate::sim_rng::test_context();
 
-    engine.tick_actor_owner_envelopes(&sim, &assets);
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
     assert_eq!(engine.world.fast_grid_mut().lift_state_mut(0).wait_time, 1);
     assert_eq!(
         engine
@@ -1354,7 +1176,7 @@ fn frozen_all_lift_wait_rechecks_and_promotes_successor_in_authorizing_slot() {
         SequenceState::InProgress
     );
 
-    engine.tick_actor_owner_envelopes(&sim, &assets);
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
     assert_eq!(engine.world.fast_grid_mut().lift_state_mut(0).wait_time, 0);
     assert_eq!(
         engine
@@ -1367,7 +1189,7 @@ fn frozen_all_lift_wait_rechecks_and_promotes_successor_in_authorizing_slot() {
         "authorization returns false on the frame that decrements the cooldown to zero"
     );
 
-    engine.tick_actor_owner_envelopes(&sim, &assets);
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
     assert_eq!(
         engine
             .orders
@@ -1383,7 +1205,7 @@ fn frozen_all_lift_wait_rechecks_and_promotes_successor_in_authorizing_slot() {
     // The fallback idle Wait is no longer installed inside the
     // terminating owner slot: the null-order guard books it at the start
     // of the owner's next actor frame.
-    engine.tick_actor_owner_envelopes(&sim, &assets);
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
     assert_eq!(
         engine
             .world

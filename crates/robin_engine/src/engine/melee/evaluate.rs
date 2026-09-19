@@ -5,6 +5,7 @@
 use super::*;
 use crate::combat::{self};
 use crate::element::{ActionState, Command, Entity, EntityId};
+use crate::engine::TickCtx;
 use crate::profiles::WeaponThrustKind;
 use crate::weapons::SwordStrike;
 
@@ -770,8 +771,7 @@ impl EngineInner {
     ///   a reachable slot.
     pub(in crate::engine) fn update_swordfight_distance(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         entity_id: EntityId,
     ) -> bool {
         // Read all the geometry / profile data we need without holding
@@ -822,7 +822,7 @@ impl EngineInner {
             let weapon = required_hth_weapon_profile(
                 entity,
                 entity_id,
-                &assets.profile_manager,
+                &tcx.assets.profile_manager,
                 "swordfight evaluation distance range",
             );
             let my_max_range =
@@ -898,8 +898,7 @@ impl EngineInner {
                 return false;
             }
             self.launch_swordfight_distance_move(
-                sim,
-                assets,
+                tcx,
                 entity_id,
                 crate::coordinates::MapPoint {
                     x: dest.x,
@@ -929,7 +928,7 @@ impl EngineInner {
         let opp_max_range = required_hth_weapon_profile(
             opp,
             principal_id,
-            &assets.profile_manager,
+            &tcx.assets.profile_manager,
             "swordfight evaluation principal distance range",
         )
         .distance[crate::weapons::WeaponDistance::Maximal as usize]
@@ -984,7 +983,7 @@ impl EngineInner {
         } else {
             // Degenerate: pick a random direction.
             let sector = crate::sim_rng::u16(
-                sim,
+                tcx.sim,
                 crate::sim_rng::RngSite::MeleeDegenerateDirection,
                 0..16,
             ) as i16;
@@ -1029,8 +1028,7 @@ impl EngineInner {
         }
 
         self.launch_swordfight_distance_move(
-            sim,
-            assets,
+            tcx,
             entity_id,
             crate::coordinates::MapPoint {
                 x: destination.x,
@@ -1046,8 +1044,7 @@ impl EngineInner {
     /// adjustment.
     pub(super) fn launch_swordfight_distance_move(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         actor_id: EntityId,
         destination: crate::coordinates::MapPoint,
         layer: u16,
@@ -1073,18 +1070,13 @@ impl EngineInner {
             speed_factor: 1.0,
             post_seek_sequence: None,
         };
-        self.launch_element(sim, assets, elem);
+        self.launch_element(tcx, elem);
     }
 
     /// Run the non-animation work in one human actor's WaitingSword Execute
     /// arm. The caller has already turned and processed the action for this exact
     /// owner slot.
-    pub(crate) fn tick_waiting_sword_execute_for(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        entity_id: EntityId,
-    ) {
+    pub(crate) fn tick_waiting_sword_execute_for(&mut self, tcx: TickCtx<'_>, entity_id: EntityId) {
         let entity = self.expect_entity(entity_id, "WaitingSword Execute owner");
         let human = entity
             .human_data()
@@ -1101,11 +1093,11 @@ impl EngineInner {
 
         // Smalltalk-hint evaluation precedes swordfight evaluation and suppresses the
         // latter whenever it launches a useful parry.
-        if self.evaluate_smalltalk_hint(sim, assets, entity_id) {
+        if self.evaluate_smalltalk_hint(tcx, entity_id) {
             return;
         }
         self.trace_waiting_sword_evaluate_entry(entity_id);
-        self.evaluate_swordfight_for(sim, assets, entity_id);
+        self.evaluate_swordfight_for(tcx, entity_id);
     }
 
     /// Emit the authoritative sequence selection at the exact boundary where
@@ -1166,12 +1158,7 @@ impl EngineInner {
     }
 
     /// Owner-local swordfight evaluation.
-    fn evaluate_swordfight_for(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        entity_id: EntityId,
-    ) {
+    fn evaluate_swordfight_for(&mut self, tcx: TickCtx<'_>, entity_id: EntityId) {
         let opponents = self
             .expect_entity(entity_id, "swordfight evaluation owner")
             .human_data()
@@ -1191,8 +1178,7 @@ impl EngineInner {
 
         if opponents.is_empty() {
             self.launch_element(
-                sim,
-                assets,
+                tcx,
                 crate::sequence::SequenceElement::new(1, Command::QuitSwordfight, Some(entity_id)),
             );
             return;
@@ -1221,7 +1207,7 @@ impl EngineInner {
             let uber = required_hth_weapon_profile(
                 entity,
                 entity_id,
-                &assets.profile_manager,
+                &tcx.assets.profile_manager,
                 "swordfight evaluation extended range",
             )
             .distance[crate::weapons::WeaponDistance::Uber as usize] as f32;
@@ -1250,7 +1236,7 @@ impl EngineInner {
             let uber = required_hth_weapon_profile(
                 principal,
                 first_principal,
-                &assets.profile_manager,
+                &tcx.assets.profile_manager,
                 "swordfight evaluation principal extended range",
             )
             .distance[crate::weapons::WeaponDistance::Uber as usize] as f32;
@@ -1275,10 +1261,10 @@ impl EngineInner {
         // immediately when the fighters are on incompatible elevations.  In
         // particular, it never reaches the later visibility query.
         if elevation_prune {
-            self.delete_opponent(sim, assets, entity_id, first_principal);
-            self.delete_opponent(sim, assets, first_principal, entity_id);
-            self.evaluate_opponents(sim, assets, entity_id);
-            self.evaluate_opponents(sim, assets, first_principal);
+            self.delete_opponent(tcx, entity_id, first_principal);
+            self.delete_opponent(tcx, first_principal, entity_id);
+            self.evaluate_opponents(tcx, entity_id);
+            self.evaluate_opponents(tcx, first_principal);
             return;
         }
 
@@ -1307,17 +1293,17 @@ impl EngineInner {
                     )
                 });
             range_or_los_prune = !crate::sight_obstacle::is_reachable_3d(
-                self.sight_obstacles(assets),
+                self.sight_obstacles(tcx.assets),
                 [self_eye.x, self_eye.y, self_eye.z],
                 [principal_eye.x, principal_eye.y, principal_eye.z],
                 crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
             );
         }
         if range_or_los_prune {
-            self.delete_opponent(sim, assets, entity_id, first_principal);
-            self.delete_opponent(sim, assets, first_principal, entity_id);
-            self.evaluate_opponents(sim, assets, entity_id);
-            self.evaluate_opponents(sim, assets, first_principal);
+            self.delete_opponent(tcx, entity_id, first_principal);
+            self.delete_opponent(tcx, first_principal, entity_id);
+            self.evaluate_opponents(tcx, entity_id);
+            self.evaluate_opponents(tcx, first_principal);
             return;
         }
 
@@ -1330,8 +1316,7 @@ impl EngineInner {
         }
         if tiredness >= TIREDNESS_WEAK_THRESHOLD {
             self.launch_element(
-                sim,
-                assets,
+                tcx,
                 crate::sequence::SequenceElement::new(
                     1,
                     Command::SwordstrikeTired,
@@ -1343,9 +1328,13 @@ impl EngineInner {
 
         if is_pc
             && num_opponents >= 2
-            && crate::sim_rng::u32(sim, crate::sim_rng::RngSite::MeleePrincipalReshuffle, 0..3) == 0
+            && crate::sim_rng::u32(
+                tcx.sim,
+                crate::sim_rng::RngSite::MeleePrincipalReshuffle,
+                0..3,
+            ) == 0
         {
-            self.choose_principal_opponent(sim, entity_id);
+            self.choose_principal_opponent(tcx.sim, entity_id);
         }
 
         // Principal-opponent selection can swap the live list. Every subsequent
@@ -1395,10 +1384,13 @@ impl EngineInner {
                         )
                         .received_smalltalk_initiative = false;
                 } else {
-                    let loses =
-                        crate::sim_rng::u32(sim, crate::sim_rng::RngSite::MeleeInitiative, 0..100)
-                            <= u32::from(relative_ability);
-                    if loses || self.can_he_kill_me_but_me_not(entity_id, principal_id, assets) {
+                    let loses = crate::sim_rng::u32(
+                        tcx.sim,
+                        crate::sim_rng::RngSite::MeleeInitiative,
+                        0..100,
+                    ) <= u32::from(relative_ability);
+                    if loses || self.can_he_kill_me_but_me_not(entity_id, principal_id, tcx.assets)
+                    {
                         self.world
                             .entities
                             .expect_human_data_mut(
@@ -1420,12 +1412,12 @@ impl EngineInner {
                     }
                 }
             } else {
-                self.update_swordfight_distance(sim, assets, entity_id);
+                self.update_swordfight_distance(tcx, entity_id);
                 return;
             }
         } else {
             let roll =
-                crate::sim_rng::u32(sim, crate::sim_rng::RngSite::MeleeNonMutualGate, 0..100);
+                crate::sim_rng::u32(tcx.sim, crate::sim_rng::RngSite::MeleeNonMutualGate, 0..100);
             nonmutual_gate_roll = Some(roll);
             if roll >= 10 {
                 let frame = self.control.frame_counter;
@@ -1456,7 +1448,7 @@ impl EngineInner {
             let max = required_hth_weapon_profile(
                 entity,
                 entity_id,
-                &assets.profile_manager,
+                &tcx.assets.profile_manager,
                 "swordfight evaluation maximal range",
             )
             .distance[crate::weapons::WeaponDistance::Maximal as usize];
@@ -1494,7 +1486,7 @@ impl EngineInner {
             );
         }
         if !near {
-            self.update_swordfight_distance(sim, assets, entity_id);
+            self.update_swordfight_distance(tcx, entity_id);
             return;
         }
 
@@ -1504,10 +1496,10 @@ impl EngineInner {
             // every unselected PC. Command-interface ownership is unrelated:
             // rescue targets and other autonomous PCs still use this Human
             // combat behavior.
-            self.pc_propose_and_launch_strike(sim, assets, entity_id, principal_id);
+            self.pc_propose_and_launch_strike(tcx, entity_id, principal_id);
         }
 
-        if let Some(destination) = self.is_step_back_needed(sim, entity_id, assets) {
+        if let Some(destination) = self.is_step_back_needed(tcx, entity_id) {
             let layer = self
                 .expect_entity(entity_id, "swordfight evaluation step-back owner")
                 .element_data()
@@ -1517,19 +1509,18 @@ impl EngineInner {
             // member only from human action execution's terminated-motion branch. A
             // parry or injury can abort this Move before it reaches that arm,
             // in which case the preceding value must survive.
-            self.launch_evaluated_step_back(sim, assets, entity_id, destination, layer);
+            self.launch_evaluated_step_back(tcx, entity_id, destination, layer);
             return;
         }
 
-        let is_left = crate::sim_rng::bool(sim, crate::sim_rng::RngSite::SmalltalkStrikeSide);
+        let is_left = crate::sim_rng::bool(tcx.sim, crate::sim_rng::RngSite::SmalltalkStrikeSide);
         let command = if is_left {
             Command::SwordstrikeSmalltalkLeft
         } else {
             Command::SwordstrikeSmalltalkRight
         };
         self.launch_element(
-            sim,
-            assets,
+            tcx,
             crate::sequence::SequenceElement::new_interaction(
                 1,
                 command,
@@ -1542,8 +1533,7 @@ impl EngineInner {
 
     pub(super) fn launch_evaluated_step_back(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         entity_id: EntityId,
         destination: crate::coordinates::MapPoint,
         layer: u16,
@@ -1569,7 +1559,7 @@ impl EngineInner {
             speed_factor: 1.0,
             post_seek_sequence: None,
         };
-        self.launch_element(sim, assets, element);
+        self.launch_element(tcx, element);
     }
     /// Build the strike
     /// selection context for a non-selected PC, query
@@ -1579,8 +1569,7 @@ impl EngineInner {
     /// embellishments handled in `execute_ai_sword_strike_proposal`.
     pub(super) fn pc_propose_and_launch_strike(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         pc_id: EntityId,
         target_id: EntityId,
     ) -> bool {
@@ -1600,7 +1589,7 @@ impl EngineInner {
             Entity::Pc(p) => p,
             _ => panic!("swordfight evaluation strike proposal owner {pc_id:?} is not a PC"),
         };
-        let character = assets
+        let character = tcx.assets
             .profile_manager
             .get_character(pc_data.pc.profile_index)
             .unwrap_or_else(|| {
@@ -1620,7 +1609,7 @@ impl EngineInner {
         );
         let mut boredom = pc_data.human.sword_strike_boredom.clone();
         let is_swordfighting = !pc_data.human.opponents.is_empty();
-        let attacker_profile = assets
+        let attacker_profile = tcx.assets
             .profile_manager
             .get_hth_weapon(weapon_id)
             .unwrap_or_else(|| {
@@ -1658,7 +1647,7 @@ impl EngineInner {
 
         // Build the nearby-victim list (same shape as the soldier path).
         let nearby = self.collect_strike_estimation_victims(
-            assets,
+            tcx.assets,
             pc_id,
             attacker_pos,
             Some(target_id),
@@ -1698,7 +1687,7 @@ impl EngineInner {
         let rng_before = debug.and_then(|_| self.control.rng.original_replay_cursor());
         let mut sweep_rebase = None;
         let proposed = crate::combat::propose_good_sword_strike_with_debug(
-            sim,
+            tcx.sim,
             &ctx,
             &nearby,
             &mut boredom,
@@ -1707,7 +1696,7 @@ impl EngineInner {
             debug,
             &mut sweep_rebase,
         );
-        self.apply_strike_selection_sweep_rebase(assets, pc_id, sweep_rebase);
+        self.apply_strike_selection_sweep_rebase(tcx.assets, pc_id, sweep_rebase);
         if let Some(debug) = debug {
             self.trace_reactive_sword_proposal_boundary(
                 debug,
@@ -1735,7 +1724,7 @@ impl EngineInner {
         let cmd = strike.to_command();
         let elem =
             crate::sequence::SequenceElement::new_interaction(1, cmd, Some(pc_id), Some(target_id));
-        self.launch_element(sim, assets, elem);
+        self.launch_element(tcx, elem);
         true
     }
 
@@ -1766,9 +1755,8 @@ impl EngineInner {
     /// satisfy `is_straight_movement_authorized`.
     pub(super) fn is_step_back_needed(
         &self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         entity_id: impl Into<EntityId>,
-        assets: &LevelAssets,
     ) -> Option<crate::coordinates::MapPoint> {
         let entity_id = entity_id.into();
         let entity = self.expect_entity(entity_id, "swordfight evaluation step-back owner");
@@ -1822,7 +1810,7 @@ impl EngineInner {
             .map(|e| {
                 fighting_ability_from_profile(
                     e,
-                    &assets.profile_manager,
+                    &tcx.assets.profile_manager,
                     self.control.sim_config.difficulty,
                     &self.mission_domain.diplomacy,
                 )
@@ -1839,7 +1827,7 @@ impl EngineInner {
         let my_max_range = required_hth_weapon_profile(
             entity,
             entity_id,
-            &assets.profile_manager,
+            &tcx.assets.profile_manager,
             "swordfight evaluation step-back range",
         )
         .distance[crate::weapons::WeaponDistance::Maximal as usize]
@@ -1861,7 +1849,7 @@ impl EngineInner {
             let opp_max_range = required_hth_weapon_profile(
                 opp,
                 opp_id,
-                &assets.profile_manager,
+                &tcx.assets.profile_manager,
                 "swordfight evaluation opponent step-back range",
             )
             .distance[crate::weapons::WeaponDistance::Maximal as usize]
@@ -1872,8 +1860,8 @@ impl EngineInner {
             if sq_dist <= sq_range {
                 let fa = fighting_ability_from_profile(
                     opp,
-                    &assets.profile_manager,
-                    sim.config().difficulty,
+                    &tcx.assets.profile_manager,
+                    tcx.sim.config().difficulty,
                     &self.mission_domain.diplomacy,
                 );
                 opponents_ability = opponents_ability.saturating_add(fa);
@@ -1883,7 +1871,8 @@ impl EngineInner {
         }
 
         // A percentage draw times opponent ability must not exceed 100 times friend ability.
-        let roll = crate::sim_rng::u32(sim, crate::sim_rng::RngSite::MeleeStepBack, 0..100) as u64;
+        let roll =
+            crate::sim_rng::u32(tcx.sim, crate::sim_rng::RngSite::MeleeStepBack, 0..100) as u64;
         if roll * opponents_ability as u64 <= 100u64 * friends_ability as u64 {
             return None;
         }
@@ -1971,8 +1960,7 @@ impl EngineInner {
     /// Selected PCs never auto-parry (the player controls their parry).
     pub(super) fn warn_for_strike(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         attacker_id: EntityId,
         victims: &[EntityId],
         strike: SwordStrike,
@@ -1995,8 +1983,8 @@ impl EngineInner {
                 };
                 let ability = fighting_ability_from_profile(
                     victim,
-                    &assets.profile_manager,
-                    sim.config().difficulty,
+                    &tcx.assets.profile_manager,
+                    tcx.sim.config().difficulty,
                     &self.mission_domain.diplomacy,
                 );
                 let is_swordfighting = victim
@@ -2053,7 +2041,7 @@ impl EngineInner {
                     attacker_id.index(),
                 );
                 let rng_before = debug.and_then(|_| self.control.rng.original_replay_cursor());
-                self.dispatch_filtered_stimulus(sim, assets, victim_id, &stimulus);
+                self.dispatch_filtered_stimulus(tcx, victim_id, &stimulus);
                 if let Some(creation_order) = debug {
                     trace_reactive_sword(
                         frame,
@@ -2112,7 +2100,7 @@ impl EngineInner {
                 let Some(entity) = self.world.entities.get(victim_id) else {
                     continue;
                 };
-                let wid = get_hth_weapon_id_full(entity, &assets.profile_manager);
+                let wid = get_hth_weapon_id_full(entity, &tcx.assets.profile_manager);
                 let camp = if entity.is_pc() {
                     entity.camp()
                 } else {
@@ -2137,7 +2125,7 @@ impl EngineInner {
             };
 
             let pc_profile =
-                match pc_weapon_id.and_then(|id| assets.profile_manager.get_hth_weapon(id)) {
+                match pc_weapon_id.and_then(|id| tcx.assets.profile_manager.get_hth_weapon(id)) {
                     Some(p) => p,
                     None => continue,
                 };
@@ -2223,7 +2211,7 @@ impl EngineInner {
             // see adjacent enemies — same shape as the strike-launcher and
             // PC strike-propose paths.
             let nearby = self.collect_strike_estimation_victims(
-                assets,
+                tcx.assets,
                 victim_id,
                 pc_pos,
                 principal_opponent,
@@ -2249,7 +2237,7 @@ impl EngineInner {
             let rng_before = debug.and_then(|_| self.control.rng.original_replay_cursor());
             let mut sweep_rebase = None;
             let proposed = crate::combat::propose_good_sword_strike_with_debug(
-                sim,
+                tcx.sim,
                 &strike_ctx,
                 &nearby,
                 &mut pc_boredom,
@@ -2258,7 +2246,7 @@ impl EngineInner {
                 debug,
                 &mut sweep_rebase,
             );
-            self.apply_strike_selection_sweep_rebase(assets, victim_id, sweep_rebase);
+            self.apply_strike_selection_sweep_rebase(tcx.assets, victim_id, sweep_rebase);
             if let Some(debug) = debug {
                 self.trace_reactive_sword_proposal_boundary(
                     debug,
@@ -2294,7 +2282,7 @@ impl EngineInner {
                         victim_id,
                         None,
                     );
-                    let parry_sequence = self.launch_element(sim, assets, parry_elem);
+                    let parry_sequence = self.launch_element(tcx, parry_elem);
                     self.trace_reactive_sword_topology(
                         "after_parry_registration",
                         victim_id,
@@ -2316,7 +2304,7 @@ impl EngineInner {
                         Some(target),
                     );
                     seq.append_element(strike_elem);
-                    self.launch_sequence(sim, assets, seq);
+                    self.launch_sequence(tcx, seq);
                     tracing::debug!(
                         ?victim_id,
                         ?attacker_id,
@@ -2347,8 +2335,7 @@ impl EngineInner {
     /// - **Parade fallback**: if no good counter-strike, fall into parry stance.
     pub(crate) fn consider_to_begin_parade(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         victim_id: EntityId,
         attacker_id: EntityId,
         attacker_command_strike: Option<SwordStrike>,
@@ -2367,13 +2354,13 @@ impl EngineInner {
         };
 
         // ── 2. Record this strike experience (promote to head of list).
-        self.make_bad_sword_strike_experience(assets, victim_id, command_strike, true);
+        self.make_bad_sword_strike_experience(tcx.assets, victim_id, command_strike, true);
 
         let push_back_distance =
-            self.parade_push_back_distance(assets, attacker_id, animation_strike);
+            self.parade_push_back_distance(tcx.assets, attacker_id, animation_strike);
 
         let Some((victim, proposed)) =
-            self.parade_propose_counter_action(sim, assets, victim_id, attacker_id)
+            self.parade_propose_counter_action(tcx, victim_id, attacker_id)
         else {
             return;
         };
@@ -2383,8 +2370,7 @@ impl EngineInner {
             Some(crate::combat::ProposedCombatAction::Parry) => {
                 if self
                     .parade_try_step_back(
-                        sim,
-                        assets,
+                        tcx,
                         victim_id,
                         attacker_id,
                         victim,
@@ -2395,11 +2381,11 @@ impl EngineInner {
                 {
                     return;
                 }
-                self.parade_launch_parry(sim, assets, victim_id, attacker_id, animation_strike);
+                self.parade_launch_parry(tcx, victim_id, attacker_id, animation_strike);
             }
 
             Some(crate::combat::ProposedCombatAction::Strike(counter_strike)) => {
-                self.parade_counter_strike(sim, assets, victim_id, attacker_id, counter_strike);
+                self.parade_counter_strike(tcx, victim_id, attacker_id, counter_strike);
             }
 
             None => {
@@ -2519,8 +2505,7 @@ impl EngineInner {
     /// enemy-AI soldier and does not react.
     fn parade_propose_counter_action(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         victim_id: EntityId,
         attacker_id: EntityId,
     ) -> Option<(ParadeVictim, Option<crate::combat::ProposedCombatAction>)> {
@@ -2548,7 +2533,7 @@ impl EngineInner {
                 _ => return None,
             };
             let spi = s.soldier.soldier_profile_index;
-            let sp = assets.profile_manager.get_soldier(spi).unwrap_or_else(|| {
+            let sp = tcx.assets.profile_manager.get_soldier(spi).unwrap_or_else(|| {
                 panic!(
                     "ConsiderToBeginParade victim {victim_id:?} references missing soldier profile {spi}"
                 )
@@ -2559,8 +2544,8 @@ impl EngineInner {
             // counter-strike path.
             let fa = fighting_ability_from_profile(
                 victim_entity,
-                &assets.profile_manager,
-                sim.config().difficulty,
+                &tcx.assets.profile_manager,
+                tcx.sim.config().difficulty,
                 &self.mission_domain.diplomacy,
             );
             let is_rank = sp.rank == crate::profiles::ProfileRank::Soldier;
@@ -2592,7 +2577,8 @@ impl EngineInner {
             )
         };
 
-        let victim_profile = assets
+        let victim_profile = tcx
+            .assets
             .profile_manager
             .get_hth_weapon(victim_weapon_id)
             .unwrap_or_else(|| {
@@ -2604,7 +2590,7 @@ impl EngineInner {
         // `INVERSE_SWORDFIGHT_ASPECT_RATIO` (= 1.0 in the shipping
         // game).
         let inv_aspect = INVERSE_SWORDFIGHT_ASPECT_RATIO;
-        let obstacles = self.world.sight_obstacles(assets);
+        let obstacles = self.world.sight_obstacles(tcx.assets);
         let frame = self.control.frame_counter;
         let debug = reactive_sword_debug_frame_matches(frame)
             .then(|| {
@@ -2639,7 +2625,7 @@ impl EngineInner {
                     victim_id,
                     e,
                     eid,
-                    &assets.profile_manager,
+                    &tcx.assets.profile_manager,
                     &self.world.fast_grid,
                     obstacles,
                 );
@@ -2648,17 +2634,19 @@ impl EngineInner {
                 let dist = (vdx * vdx + vdy * vdy).sqrt();
                 let sector = crate::position_interface::vector_to_sector_0_to_15(vdx, vdy) as u8;
                 let def_wid = match e {
-                    Entity::Pc(pc) => assets
+                    Entity::Pc(pc) => tcx
+                        .assets
                         .profile_manager
                         .get_character(pc.pc.profile_index)
                         .map(|p| p.hth_weapon_id),
-                    Entity::Soldier(s) => assets
+                    Entity::Soldier(s) => tcx
+                        .assets
                         .profile_manager
                         .get_soldier(s.soldier.soldier_profile_index)
                         .map(|p| p.hth_weapon_id),
                     _ => None,
                 };
-                let def_prof = def_wid.and_then(|id| assets.profile_manager.get_hth_weapon(id));
+                let def_prof = def_wid.and_then(|id| tcx.assets.profile_manager.get_hth_weapon(id));
                 let lp = get_life_points(e);
                 let is_walking_with_sword = e
                     .actor_data()
@@ -2745,7 +2733,7 @@ impl EngineInner {
         let rng_before = debug.and_then(|_| self.control.rng.original_replay_cursor());
         let mut sweep_rebase = None;
         let proposed = crate::combat::propose_good_sword_strike_with_debug(
-            sim,
+            tcx.sim,
             &strike_ctx,
             &nearby,
             &mut victim_boredom,
@@ -2754,7 +2742,7 @@ impl EngineInner {
             debug,
             &mut sweep_rebase,
         );
-        self.apply_strike_selection_sweep_rebase(assets, victim_id, sweep_rebase);
+        self.apply_strike_selection_sweep_rebase(tcx.assets, victim_id, sweep_rebase);
         if let Some(debug) = debug {
             self.trace_reactive_sword_proposal_boundary(
                 debug,
@@ -2782,8 +2770,7 @@ impl EngineInner {
     /// the parade must not be launched.
     fn parade_try_step_back(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         victim_id: EntityId,
         attacker_id: EntityId,
         victim: ParadeVictim,
@@ -2809,12 +2796,12 @@ impl EngineInner {
             );
         }
 
-        self.stop_ai_owner(sim, assets, victim_id);
+        self.stop_ai_owner(tcx, victim_id);
 
         let victim_fighting_ability = fighting_ability_from_profile(
             self.expect_entity(victim_id, "parry capacity after stop"),
-            &assets.profile_manager,
-            sim.config().difficulty,
+            &tcx.assets.profile_manager,
+            tcx.sim.config().difficulty,
             &self.mission_domain.diplomacy,
         );
 
@@ -2851,8 +2838,7 @@ impl EngineInner {
             }
             if let Some(step_back_goal) = step_back_goal {
                 self.duty_set_state(
-                    sim,
-                    assets,
+                    tcx,
                     victim_id,
                     crate::ai::AiState::Attacking,
                     crate::ai::Substate::AttackingSwordfightStepBack,
@@ -2867,7 +2853,7 @@ impl EngineInner {
                 } else {
                     crate::ai::GotoFlags::RUN | crate::ai::GotoFlags::SWORD
                 };
-                self.duty_go_to(sim, assets, victim_id, step_back_goal, flags);
+                self.duty_go_to(tcx, victim_id, step_back_goal, flags);
                 if let Some(debug) = step_back_debug {
                     trace_reactive_step_back_after_goto(
                         debug,
@@ -2901,8 +2887,7 @@ impl EngineInner {
     /// the parry sequence and arm the parade heartbeat timer.
     fn parade_launch_parry(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         victim_id: EntityId,
         attacker_id: EntityId,
         animation_strike: SwordStrike,
@@ -2912,11 +2897,10 @@ impl EngineInner {
         let parry_elem =
             crate::sequence::SequenceElement::new(1, Command::ParrySword, Some(victim_id));
         seq.append_element(parry_elem);
-        self.launch_sequence(sim, assets, seq);
+        self.launch_sequence(tcx, seq);
 
         self.duty_set_state(
-            sim,
-            assets,
+            tcx,
             victim_id,
             crate::ai::AiState::Attacking,
             crate::ai::Substate::AttackingSwordfightParade,
@@ -2965,8 +2949,7 @@ impl EngineInner {
     /// Counter-strike arm of [`Self::consider_to_begin_parade`].
     fn parade_counter_strike(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         victim_id: EntityId,
         attacker_id: EntityId,
         counter_strike: SwordStrike,
@@ -2985,8 +2968,8 @@ impl EngineInner {
             ai.base.set_emoticon(crate::ai::EmoticonType::XMark);
         }
 
-        self.begin_ai_special_strike(sim, assets, victim_id);
-        self.stop_ai_owner(sim, assets, victim_id);
+        self.begin_ai_special_strike(tcx, victim_id);
+        self.stop_ai_owner(tcx, victim_id);
 
         // Launch counter-strike sequence
         let counter_cmd = counter_strike.to_command();
@@ -3009,7 +2992,7 @@ impl EngineInner {
             target,
         );
         seq.append_element(strike_elem);
-        self.launch_sequence(sim, assets, seq);
+        self.launch_sequence(tcx, seq);
 
         tracing::debug!(
             ?victim_id,

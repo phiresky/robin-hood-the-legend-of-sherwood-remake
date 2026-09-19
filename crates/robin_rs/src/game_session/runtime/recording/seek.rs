@@ -265,8 +265,7 @@ mod tests {
 
     #[test]
     fn imported_checkpoints_seek_both_directions_and_retain_load_dependencies() {
-        let mut assets = LevelAssets::default();
-        let initial = Engine::new_for_test(640.0, 480.0, Default::default(), &mut assets).unwrap();
+        let (initial, assets) = robin_engine::test_support::fresh_engine_sized(640.0, 480.0);
         let replay: ReplayData = ReplayFile {
             header: ReplayHeader {
                 mission_id: "fixture".into(),

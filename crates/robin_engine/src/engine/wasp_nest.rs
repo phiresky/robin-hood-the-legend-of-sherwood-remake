@@ -18,12 +18,15 @@
 //!    `RECEIVE_WASP_STING` sequence on its victim and then dies,
 //!    decrementing the nest's `flying_wasp_count`.
 
-use super::{EngineInner, LevelAssets};
+use super::EngineInner;
 use crate::bow_shot::{self, NUMBER_OF_WASPS};
 use crate::coordinates::{MapPoint, WorldPoint3D, WorldVec3D};
 #[cfg(test)]
 use crate::element::Camp;
 use crate::element::{Animation, Entity, EntityId, ObjectType};
+#[cfg(test)]
+use crate::engine::LevelAssets;
+use crate::engine::TickCtx;
 
 /// Buzz FX id played at the nest position each frame while wasps are
 /// in the air.
@@ -81,27 +84,18 @@ fn victim_detection_distance(
 impl EngineInner {
     /// Per-frame tick for wasp nests and their spawned wasps.
     #[cfg(test)]
-    pub(super) fn tick_wasp_nests(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
+    pub(super) fn tick_wasp_nests(&mut self, tcx: TickCtx<'_>) {
         let mut slot = 0;
         while slot < self.world.entities.len() {
             if let Some(id) = self.world.entities.id_at_legacy_slot(slot as u32) {
-                self.tick_wasp_nest_or_wasp(sim, assets, id);
+                self.tick_wasp_nest_or_wasp(tcx, id);
             }
             slot += 1;
         }
     }
 
     /// Advance one wasp nest or wasp at its creation-order position.
-    pub(super) fn tick_wasp_nest_or_wasp(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        id: EntityId,
-    ) {
+    pub(super) fn tick_wasp_nest_or_wasp(&mut self, tcx: TickCtx<'_>, id: EntityId) {
         let object_type = match self.get_entity(id) {
             Some(Entity::Projectile(projectile)) if projectile.element.active => {
                 projectile.object.object_type
@@ -109,7 +103,7 @@ impl EngineInner {
             _ => return,
         };
         if object_type == ObjectType::Wasp {
-            self.tick_single_wasp(sim, assets, id);
+            self.tick_single_wasp(tcx, id);
             return;
         }
         if !matches!(
@@ -128,7 +122,7 @@ impl EngineInner {
             _ => None,
         };
         if let Some((pos, layer)) = impact {
-            let resolution = self.apply_projectile_landing_resolution(assets, id);
+            let resolution = self.apply_projectile_landing_resolution(tcx.assets, id);
             let landed_layer = resolution
                 .filter(|r| !r.blocked_by_motion_obstacle)
                 .and_then(|r| r.layer)
@@ -192,12 +186,7 @@ impl EngineInner {
     }
 
     /// Advance a single wasp by one frame.
-    fn tick_single_wasp(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        wasp_id: EntityId,
-    ) {
+    fn tick_single_wasp(&mut self, tcx: TickCtx<'_>, wasp_id: EntityId) {
         // Load current state into locals.  Touch only fields that
         // exist on every `Projectile`, so later `get_mut` calls don't
         // need the object-type re-check.
@@ -218,12 +207,12 @@ impl EngineInner {
         //    the sting.
         if timeout == 0 {
             if !stinging {
-                self.wasp_change_victim(sim, assets, wasp_id);
-                self.wasp_change_direction(sim, assets, wasp_id);
+                self.wasp_change_victim(tcx, wasp_id);
+                self.wasp_change_direction(tcx, wasp_id);
                 // Reset timeout — `DIRECTION_CHANGE_TIMEOUT` plus a
                 // 0..3 jitter.
                 let jitter =
-                    crate::sim_rng::u32(sim, crate::sim_rng::RngSite::WaspDirectionTimer, 0..3);
+                    crate::sim_rng::u32(tcx.sim, crate::sim_rng::RngSite::WaspDirectionTimer, 0..3);
                 if let Some(Entity::Projectile(p)) = self.world.entities.get_mut(wasp_id) {
                     p.projectile.wasp.timeout = u32::from(DIRECTION_CHANGE_TIMEOUT) + jitter;
                 }
@@ -248,8 +237,7 @@ impl EngineInner {
                         // path request is cancelled (the bare
                         // `SequenceManager::stop_owner` skips both).
                         self.stop_actor_orders(
-                            sim,
-                            assets,
+                            tcx,
                             &mut Vec::new(),
                             victim_id,
                             crate::sequence::SequencePriority::Injury,
@@ -272,7 +260,7 @@ impl EngineInner {
                                 }
                             }
                         }
-                        self.launch_element(sim, assets, sting);
+                        self.launch_element(tcx, sting);
                     }
                 }
                 self.kill_wasp(wasp_id);
@@ -329,7 +317,7 @@ impl EngineInner {
                     // not the intended 10..=STINGING_MAX_TIMEOUT range.
                     // Preserved verbatim for parity.
                     let delay = crate::sim_rng::u32(
-                        sim,
+                        tcx.sim,
                         crate::sim_rng::RngSite::WaspStingTimer,
                         0..STINGING_MAX_TIMEOUT as u32,
                     ) + 1;
@@ -343,12 +331,7 @@ impl EngineInner {
     }
 
     /// Pick / drop the wasp's victim.
-    fn wasp_change_victim(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        wasp_id: EntityId,
-    ) {
+    fn wasp_change_victim(&mut self, tcx: TickCtx<'_>, wasp_id: EntityId) {
         let (cur_victim, wasp_pos) = match self.get_entity(wasp_id) {
             Some(Entity::Projectile(p)) => (p.projectile.wasp.victim, p.element.position()),
             _ => return,
@@ -382,7 +365,7 @@ impl EngineInner {
         }
 
         // No victim — pick one.
-        let new_victim = self.wasp_choose_victim(sim, assets, wasp_id);
+        let new_victim = self.wasp_choose_victim(tcx, wasp_id);
         if let Some(vid) = new_victim {
             if let Some(Entity::Projectile(p)) = self.world.entities.get_mut(wasp_id) {
                 p.projectile.wasp.victim = Some(vid);
@@ -402,12 +385,7 @@ impl EngineInner {
     ///   2. Nearest non-smelling soldier.
     ///
     /// VIPs are filtered out and trigger `VipWaspsNo`.
-    fn wasp_choose_victim(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        wasp_id: EntityId,
-    ) -> Option<EntityId> {
+    fn wasp_choose_victim(&mut self, tcx: TickCtx<'_>, wasp_id: EntityId) -> Option<EntityId> {
         let wasp_pos = match self.get_entity(wasp_id) {
             Some(Entity::Projectile(p)) => p.element.position(),
             _ => return None,
@@ -467,17 +445,16 @@ impl EngineInner {
                 .soldier_data()
                 .map(|s| s.apple_smell > 0)
                 .unwrap_or(false);
-            let detect = victim_detection_distance(sim.config().item_gameplay, smelling_apple);
+            let detect = victim_detection_distance(tcx.sim.config().item_gameplay, smelling_apple);
             if dist > detect {
                 continue;
             }
 
             // VIP filter — VIPs get the VipWaspsNo remark instead of
             // becoming a victim.
-            if super::melee::is_vip_from_profile(entity, &assets.profile_manager) {
+            if super::melee::is_vip_from_profile(entity, &tcx.assets.profile_manager) {
                 self.execute_ai_speech(
-                    sim,
-                    assets,
+                    tcx,
                     soldier_id,
                     crate::ai::AiSpeechAttempt {
                         remark: crate::ai::Remark::VipWaspsNo,
@@ -511,12 +488,7 @@ impl EngineInner {
     /// Up to `CHANGE_DIRECTION_TRIES` random candidates; accept the
     /// first one whose short-horizon trajectory is clear of SOLID
     /// obstacles.  On exhaustion the wasp gives up and kills itself.
-    fn wasp_change_direction(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        wasp_id: EntityId,
-    ) {
+    fn wasp_change_direction(&mut self, tcx: TickCtx<'_>, wasp_id: EntityId) {
         let (wasp_pos, nest_id) = match self.get_entity(wasp_id) {
             Some(Entity::Projectile(p)) => (p.element.position(), p.projectile.wasp.source_nest),
             _ => return,
@@ -541,11 +513,14 @@ impl EngineInner {
         let mut tries = CHANGE_DIRECTION_TRIES;
         loop {
             // Random 3D movement vector with each component in -6..=4.
-            let rx = (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::WaspMovement, 0..11) as i32
+            let rx = (crate::sim_rng::u32(tcx.sim, crate::sim_rng::RngSite::WaspMovement, 0..11)
+                as i32
                 - 6) as f32;
-            let ry = (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::WaspMovement, 0..11) as i32
+            let ry = (crate::sim_rng::u32(tcx.sim, crate::sim_rng::RngSite::WaspMovement, 0..11)
+                as i32
                 - 6) as f32;
-            let rz = (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::WaspMovement, 0..11) as i32
+            let rz = (crate::sim_rng::u32(tcx.sim, crate::sim_rng::RngSite::WaspMovement, 0..11)
+                as i32
                 - 6) as f32;
             let mut mv = WorldVec3D {
                 x: rx,
@@ -643,7 +618,7 @@ impl EngineInner {
             let origin = [wasp_pos.x, wasp_pos.y, wasp_pos.z];
             let dest = [estimated.x, estimated.y, estimated.z];
             let clear = {
-                let obstacles = self.sight_obstacles(assets);
+                let obstacles = self.sight_obstacles(tcx.assets);
                 crate::sight_obstacle::is_reachable_3d(
                     obstacles,
                     origin,
@@ -766,7 +741,7 @@ mod tests {
             let nest_id = make_nest_at(&mut engine);
             let assets = empty_assets();
 
-            engine.tick_wasp_nests(sim, &assets);
+            engine.tick_wasp_nests(TickCtx::new(sim, &assets));
 
             let nest = match engine.get_entity(nest_id).unwrap() {
                 Entity::Projectile(p) => p,
@@ -804,8 +779,8 @@ mod tests {
             let mut live_pass = parent_only.clone();
             let assets = empty_assets();
 
-            parent_only.tick_wasp_nest_or_wasp(sim, &assets, nest_id);
-            live_pass.tick_wasp_nests(sim, &assets);
+            parent_only.tick_wasp_nest_or_wasp(TickCtx::new(sim, &assets), nest_id);
+            live_pass.tick_wasp_nests(TickCtx::new(sim, &assets));
 
             let parent_wasps: Vec<_> = parent_only
                 .world
@@ -843,7 +818,7 @@ mod tests {
             let assets = empty_assets();
 
             engine.feedback.pending_side_effects.sounds.clear();
-            engine.tick_wasp_nests(sim, &assets);
+            engine.tick_wasp_nests(TickCtx::new(sim, &assets));
             let buzzes = engine.feedback.pending_side_effects
                 .sounds
                 .iter()
@@ -865,7 +840,7 @@ mod tests {
             let nest_id = make_nest_at(&mut engine);
             let assets = empty_assets();
 
-            engine.tick_wasp_nests(sim, &assets);
+            engine.tick_wasp_nests(TickCtx::new(sim, &assets));
 
             // Force-kill every wasp (mirrors what the per-wasp AI does
             // once each sting fires or each retry budget is exhausted).
@@ -888,7 +863,7 @@ mod tests {
             assert_eq!(nest.projectile.wasp.flying_wasp_count, 0);
 
             engine.feedback.pending_side_effects.sounds.clear();
-            engine.tick_wasp_nests(sim, &assets);
+            engine.tick_wasp_nests(TickCtx::new(sim, &assets));
             let buzzes = engine.feedback.pending_side_effects
                 .sounds
                 .iter()
@@ -930,7 +905,7 @@ mod tests {
             // Tick once to burst + run the first wasp AI pass.  The
             // freshly-spawned wasps have `timeout = 0`, so every wasp
             // selects a replacement victim on this very tick.
-            engine.tick_wasp_nests(sim, &assets);
+            engine.tick_wasp_nests(TickCtx::new(sim, &assets));
 
             let soldier = engine.get_entity(soldier_id).unwrap();
             let Some(npc) = soldier.npc_data() else {

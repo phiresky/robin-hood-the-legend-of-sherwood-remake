@@ -1,5 +1,6 @@
 use super::*;
 use crate::coordinates::MapPoint;
+use crate::engine::TickCtx;
 
 fn duty_fixture(
     mut ai: FriendlyAi,
@@ -48,7 +49,7 @@ fn civilian_return_to_duty() {
     ai.base.current_substate = Substate::FleeingPanic;
     ai.fleeing_seen_enemy_counter = 5;
     let (mut engine, assets, owner) = duty_fixture(ai);
-    engine.execute_ai_return_to_duty(&sim, &assets, owner, DutyFlags::empty());
+    engine.execute_ai_return_to_duty(TickCtx::new(&sim, &assets), owner, DutyFlags::empty());
     let ai = friendly(&engine, owner);
     assert_eq!(ai.base.current_state, AiState::Default);
     assert_eq!(ai.base.current_substate, Substate::DefaultOnPost);
@@ -64,8 +65,7 @@ fn think_expected_admiring_hero_returns_to_duty() {
     ai.fleeing_seen_enemy_counter = 5;
     let (mut engine, assets, owner) = duty_fixture(ai);
     engine.execute_ai_callback(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         owner,
         &Stimulus::new(StimulusType::EventTimer),
     );
@@ -84,8 +84,7 @@ fn think_unexpected_couldnt_reachpoint_returns_to_duty() {
     ai.fleeing_seen_enemy_counter = 5;
     let (mut engine, assets, owner) = duty_fixture(ai);
     engine.execute_ai_callback(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         owner,
         &Stimulus::new(StimulusType::EventCouldntReachPoint),
     );
@@ -108,18 +107,14 @@ fn after_script_queue_rebuilds_retained_view_antagonist() {
     let target = engine.add_test_entity(target);
     crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
     engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .ai_controller_mut()
-        .unwrap()
+        .ai_ctrl_mut(owner)
         .stimulus_queue
         .push(Stimulus::with_human(
             StimulusType::EventView,
             target.index(),
         ));
     engine.execute_ai_callback(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         owner,
         &Stimulus::new(StimulusType::EventAfterScriptGoOn),
     );
@@ -142,15 +137,9 @@ fn think_unexpected_fit_again_returns_to_duty() {
     ai.base.current_substate = Substate::SleepingUnconscious;
     ai.fleeing_seen_enemy_counter = 5;
     let (mut engine, assets, owner) = duty_fixture(ai);
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .npc_data_mut()
-        .unwrap()
-        .eye_status = crate::element::EyeStatus::Stare;
+    engine.npc_mut(owner).eye_status = crate::element::EyeStatus::Stare;
     engine.execute_ai_callback(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         owner,
         &Stimulus::new(StimulusType::EventFitAgain),
     );
@@ -159,12 +148,7 @@ fn think_unexpected_fit_again_returns_to_duty() {
     assert_eq!(ai.base.current_substate, Substate::DefaultOnPost);
     assert_eq!(ai.fleeing_seen_enemy_counter, 0);
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .npc_data()
-            .unwrap()
-            .eye_status,
+        engine.npc(owner).eye_status,
         crate::element::EyeStatus::LookForward,
     );
 }
@@ -178,8 +162,7 @@ fn fleeing_child_chased_end_returns_to_duty() {
     ai.fleeing_seen_enemy_counter = 5;
     let (mut engine, assets, owner) = duty_fixture(ai);
     engine.execute_ai_callback(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         owner,
         &Stimulus::new(StimulusType::EventTimer),
     );

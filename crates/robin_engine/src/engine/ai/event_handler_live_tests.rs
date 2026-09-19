@@ -11,11 +11,7 @@ fn failed_combat_routes_execute_overview_without_rebuilding_friends() {
         for decision_frame in [99, 100] {
             let (mut engine, assets, owner, target) = fixture(false);
             let friends = vec![owner.index(), target.index()];
-            let ai = engine
-                .get_entity_mut(owner)
-                .unwrap()
-                .enemy_ai_mut()
-                .unwrap();
+            let ai = engine.enemy_mut(owner);
             ai.base.current_substate = substate;
             ai.base.list_us = friends.clone();
             ai.base.ai_log.push(crate::ai::LogLine {
@@ -24,13 +20,10 @@ fn failed_combat_routes_execute_overview_without_rebuilding_friends() {
                 frame: decision_frame,
             });
             let stimulus = Stimulus::new(StimulusType::EventCouldntReachPoint);
-            engine.execute_ai_handler_body(
-                &crate::sim_rng::test_context(),
-                &assets,
-                owner,
-                &stimulus,
-            );
-            let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
+            engine
+                .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                .execute_ai_handler_body(&stimulus);
+            let ai = engine.enemy(owner);
             assert_eq!(
                 ai.base.current_substate,
                 Substate::AttackingOverviewLookLeft
@@ -43,28 +36,16 @@ fn failed_combat_routes_execute_overview_without_rebuilding_friends() {
 #[test]
 fn failed_body_route_examines_queued_body_before_searching() {
     let (mut engine, assets, owner, body) = fixture(false);
-    engine
-        .get_entity_mut(body)
-        .unwrap()
-        .human_data_mut()
-        .unwrap()
-        .unconscious = true;
+    engine.human_mut(body).unconscious = true;
     let body_position = engine.live_ai_position(body);
-    let ai = engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .enemy_ai_mut()
-        .unwrap();
+    let ai = engine.enemy_mut(owner);
     ai.base.current_state = AiState::Seeking;
     ai.base.current_substate = Substate::SeekingBody;
     ai.other_bodies_to_examine.push(body.index());
-    engine.execute_ai_handler_body(
-        &crate::sim_rng::test_context(),
-        &assets,
-        owner,
-        &Stimulus::new(StimulusType::EventCouldntReachPoint),
-    );
-    let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
+    engine
+        .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+        .execute_ai_handler_body(&Stimulus::new(StimulusType::EventCouldntReachPoint));
+    let ai = engine.enemy(owner);
     assert_eq!(
         ai.base.detected_body,
         Some(AiEntityHandle::new(body.index()))
@@ -102,11 +83,7 @@ fn body_route_failure_and_lost_roof_target_search_from_live_owner() {
                 id: id as u16,
             })
             .collect();
-        let ai = engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .enemy_ai_mut()
-            .unwrap();
+        let ai = engine.enemy_mut(owner);
         ai.base.current_state = if substate == Substate::SeekingBody {
             AiState::Seeking
         } else {
@@ -121,8 +98,10 @@ fn body_route_failure_and_lost_roof_target_search_from_live_owner() {
         } else {
             Stimulus::with_human(StimulusType::EventOutOfView, target.index())
         };
-        engine.execute_ai_handler_body(&crate::sim_rng::test_context(), &assets, owner, &stimulus);
-        let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
+        engine
+            .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+            .execute_ai_handler_body(&stimulus);
+        let ai = engine.enemy(owner);
         assert_eq!(ai.seek_center, live_position);
         assert_eq!(ai.actual_seek_point, Some(0));
         assert_eq!(ai.base.last_goto_destination, near_point);

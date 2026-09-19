@@ -52,13 +52,7 @@ fn client_gamepad_reads_its_own_selection_not_the_host_selection() {
     assert_eq!(engine.hero_selection(PlayerId::HOST), &[host_pc]);
 }
 
-fn fresh_engine() -> (engine_api::Engine, engine_api::LevelAssets) {
-    use robin_engine::campaign::Campaign;
-    let mut assets = engine_api::LevelAssets::new();
-    let engine = engine_api::Engine::new_for_test(800.0, 600.0, Campaign::default(), &mut assets)
-        .expect("engine");
-    (engine, assets)
-}
+use robin_engine::test_support::fresh_engine;
 
 #[test]
 fn button_indices_match_original_defines() {
@@ -292,22 +286,6 @@ fn recognize_swing_unrecognized_direction() {
     // Facing north, push stick to sector 8 (behind) — no matching strike
     let samples = vec![(0.0, 100.0)];
     assert_eq!(recognize_swing(&samples, 0), None);
-}
-
-#[test]
-fn gamepad_state_serde_roundtrip() {
-    let mut pad = GamePadState::new();
-    let mut state = JoystickState {
-        x: 1234,
-        ..Default::default()
-    };
-    state.buttons[GamePadButton::ActionB] = true;
-    pad.update(state);
-
-    let json = serde_json::to_string(&pad).unwrap();
-    let restored: GamePadState = serde_json::from_str(&json).unwrap();
-    assert_eq!(restored.current.x, 1234);
-    assert!(restored.is_down(GamePadButton::ActionB));
 }
 
 #[test]

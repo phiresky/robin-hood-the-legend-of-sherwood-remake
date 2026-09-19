@@ -1230,50 +1230,12 @@ impl IngameMenuResources {
             &mut owners,
             resource_ids::RHID_MENU_LIST_BOX,
         );
-        let list_scrollbar = [
-            load_surface_sub(
-                &mut res,
-                renderer,
-                &mut owners,
-                resource_ids::RHID_MENU_LIST_BOX,
-                0,
-            ),
-            load_surface_sub(
-                &mut res,
-                renderer,
-                &mut owners,
-                resource_ids::RHID_MENU_LIST_BOX,
-                1,
-            ),
-            load_surface_sub(
-                &mut res,
-                renderer,
-                &mut owners,
-                resource_ids::RHID_MENU_LIST_BOX,
-                2,
-            ),
-            load_surface_sub(
-                &mut res,
-                renderer,
-                &mut owners,
-                resource_ids::RHID_MENU_LIST_BOX,
-                3,
-            ),
-            load_surface_sub(
-                &mut res,
-                renderer,
-                &mut owners,
-                resource_ids::RHID_MENU_LIST_BOX,
-                4,
-            ),
-            load_surface_sub(
-                &mut res,
-                renderer,
-                &mut owners,
-                resource_ids::RHID_MENU_LIST_BOX,
-                5,
-            ),
-        ];
+        let list_scrollbar = load_surface_subs::<6>(
+            &mut res,
+            renderer,
+            &mut owners,
+            resource_ids::RHID_MENU_LIST_BOX,
+        );
         let separator = load_surface(
             &mut res,
             renderer,
@@ -1285,52 +1247,18 @@ impl IngameMenuResources {
         // Blazon-set sprite packs.  Both resource IDs carry 3 sub-
         // pictures in the order: 0=empty, 1=normal (won),
         // 2=castle (to collect).
-        let blazon_tiny = [
-            load_surface_sub(
-                &mut res,
-                renderer,
-                &mut owners,
-                resource_ids::RHID_BLAZON_TINY,
-                0,
-            ),
-            load_surface_sub(
-                &mut res,
-                renderer,
-                &mut owners,
-                resource_ids::RHID_BLAZON_TINY,
-                1,
-            ),
-            load_surface_sub(
-                &mut res,
-                renderer,
-                &mut owners,
-                resource_ids::RHID_BLAZON_TINY,
-                2,
-            ),
-        ];
-        let blazon_huge = [
-            load_surface_sub(
-                &mut res,
-                renderer,
-                &mut owners,
-                resource_ids::RHID_BLAZON_HUGE,
-                0,
-            ),
-            load_surface_sub(
-                &mut res,
-                renderer,
-                &mut owners,
-                resource_ids::RHID_BLAZON_HUGE,
-                1,
-            ),
-            load_surface_sub(
-                &mut res,
-                renderer,
-                &mut owners,
-                resource_ids::RHID_BLAZON_HUGE,
-                2,
-            ),
-        ];
+        let blazon_tiny = load_surface_subs::<3>(
+            &mut res,
+            renderer,
+            &mut owners,
+            resource_ids::RHID_BLAZON_TINY,
+        );
+        let blazon_huge = load_surface_subs::<3>(
+            &mut res,
+            renderer,
+            &mut owners,
+            resource_ids::RHID_BLAZON_HUGE,
+        );
 
         timer.step("backgrounds + widgets + blazons");
         let fonts = MenuFonts::load(&files);
@@ -1855,6 +1783,16 @@ fn load_surface_sub(
         id,
         sub_id,
     )
+}
+
+/// Load sub-pictures `0..N` of one resource, in ascending order.
+fn load_surface_subs<const N: usize>(
+    res: &mut ResourceManager,
+    renderer: &mut Renderer,
+    owners: &mut Vec<OwnedSurface>,
+    id: i32,
+) -> [Option<MenuSurface>; N] {
+    std::array::from_fn(|sub_id| load_surface_sub(res, renderer, owners, id, sub_id))
 }
 
 fn try_load_surface_sub(

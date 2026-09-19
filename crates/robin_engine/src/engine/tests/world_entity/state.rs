@@ -1,5 +1,6 @@
 use super::*;
 use crate::element::Human as _;
+use crate::engine::TickCtx;
 
 #[test]
 fn live_state_changes_preserve_formation_links_then_clear_both_reciprocals() {
@@ -9,37 +10,24 @@ fn live_state_changes_preserve_formation_links_then_clear_both_reciprocals() {
     let left = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let right = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     {
-        let ai = engine
-            .get_entity_mut(owner)
-            .and_then(Entity::enemy_ai_mut)
-            .unwrap();
+        let ai = engine.enemy_mut(owner);
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingOverviewLookLeft;
         ai.left_combat_neighbour = Some(AiEntityHandle::new(left.index()));
         ai.right_combat_neighbour = Some(AiEntityHandle::new(right.index()));
     }
-    engine
-        .get_entity_mut(left)
-        .and_then(Entity::enemy_ai_mut)
-        .unwrap()
-        .right_combat_neighbour = Some(AiEntityHandle::new(owner.index()));
-    engine
-        .get_entity_mut(right)
-        .and_then(Entity::enemy_ai_mut)
-        .unwrap()
-        .left_combat_neighbour = Some(AiEntityHandle::new(owner.index()));
+    engine.enemy_mut(left).right_combat_neighbour = Some(AiEntityHandle::new(owner.index()));
+    engine.enemy_mut(right).left_combat_neighbour = Some(AiEntityHandle::new(owner.index()));
     let sim = crate::sim_rng::test_context();
     engine.duty_set_state(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         owner,
         AiState::Attacking,
         Substate::AttackingRunningToPhalanx,
     );
-    let ai = engine.get_entity(owner).and_then(Entity::enemy_ai).unwrap();
+    let ai = engine.enemy(owner);
     assert_eq!(
         ai.left_combat_neighbour,
         Some(AiEntityHandle::new(left.index()))
@@ -49,31 +37,16 @@ fn live_state_changes_preserve_formation_links_then_clear_both_reciprocals() {
         Some(AiEntityHandle::new(right.index()))
     );
     engine.duty_set_state(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         owner,
         AiState::Attacking,
         Substate::AttackingOverviewLookLeft,
     );
-    let ai = engine.get_entity(owner).and_then(Entity::enemy_ai).unwrap();
+    let ai = engine.enemy(owner);
     assert_eq!(ai.left_combat_neighbour, None);
     assert_eq!(ai.right_combat_neighbour, None);
-    assert_eq!(
-        engine
-            .get_entity(left)
-            .and_then(Entity::enemy_ai)
-            .unwrap()
-            .right_combat_neighbour,
-        None
-    );
-    assert_eq!(
-        engine
-            .get_entity(right)
-            .and_then(Entity::enemy_ai)
-            .unwrap()
-            .left_combat_neighbour,
-        None
-    );
+    assert_eq!(engine.enemy(left).right_combat_neighbour, None);
+    assert_eq!(engine.enemy(right).left_combat_neighbour, None);
 }
 
 #[test]
@@ -83,8 +56,7 @@ fn live_state_change_releases_archery_ownership_without_clearing_special_strike(
     let mut engine = EngineInner::new();
     engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.ai.global.archery_sectors.push(SectorArchery {
         points: vec![PointArchery {
             position: Default::default(),
@@ -100,20 +72,16 @@ fn live_state_change_releases_archery_ownership_without_clearing_special_strike(
         num_shooting_points: 1,
         num_owners: 1,
     });
-    let ai = engine
-        .get_entity_mut(owner)
-        .and_then(Entity::enemy_ai_mut)
-        .unwrap();
+    let ai = engine.enemy_mut(owner);
     ai.my_shooting_point = Some((0, 0));
     ai.my_archery_sector = Some(0);
     engine.duty_set_state(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         AiState::Default,
         Substate::DefaultOnPost,
     );
-    let ai = engine.get_entity(owner).and_then(Entity::enemy_ai).unwrap();
+    let ai = engine.enemy(owner);
     assert_eq!(ai.my_shooting_point, None);
     assert_eq!(ai.my_archery_sector, None);
     assert_eq!(engine.ai.global.archery_sectors[0].points[0].owner, None);
@@ -135,23 +103,14 @@ fn removal_revalidates_stimuli_detached_across_a_synchronous_boundary() {
     // the target. Removal cannot edit the caller's local snapshot.
     let detached = vec![human, object];
     engine.remove_entity(target);
-    let ai = engine
-        .get_entity_mut(observer)
-        .unwrap()
-        .ai_controller_mut()
-        .unwrap();
+    let ai = engine.ai_ctrl_mut(observer);
     let history = ai.last_stimulus;
     engine.dispatch_optical_stimuli(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         observer,
-        &LevelAssets::new(),
         detached,
     );
-    let ai = engine
-        .get_entity(observer)
-        .unwrap()
-        .ai_controller()
-        .unwrap();
+    let ai = engine.ai_ctrl(observer);
     assert_eq!(
         ai.last_stimulus, history,
         "neither stale target is delivered to Think"
@@ -166,13 +125,7 @@ fn add_entity_assigns_original_script_element_index() {
 
     for id in [first, second] {
         assert_eq!(
-            u32::from(
-                engine
-                    .get_entity(id)
-                    .expect("inserted entity exists")
-                    .element_data()
-                    .index_in_elements_list
-            ),
+            u32::from(engine.elem(id).index_in_elements_list),
             id.index()
         );
     }
@@ -189,12 +142,7 @@ fn geometry_only_level_reserves_zero_ai_handle_before_first_actor() {
     let soldier = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Custom(2)));
     assert_eq!(soldier.index(), 1, "the first AI actor must not alias null");
     assert_eq!(
-        engine
-            .get_entity(soldier)
-            .and_then(Entity::enemy_ai)
-            .expect("test soldier has enemy AI")
-            .base
-            .me,
+        engine.enemy(soldier).base.me,
         1,
         "published AI self handle follows the reserved entity slot"
     );
@@ -213,7 +161,7 @@ fn mytalk_completion_obeys_exact_asset_duration_frame() {
         exclamation_id: Remark::Arrow as u16,
         duration_frames: 3,
     }]);
-    engine.hourglass_phase_deferred_effects_start(&sim, &assets, None);
+    engine.hourglass_phase_deferred_effects_start(TickCtx::new(&sim, &assets), None);
 
     assert_eq!(engine.feedback.sound_sim.playing_exclamations.len(), 1);
     assert_eq!(
@@ -225,14 +173,14 @@ fn mytalk_completion_obeys_exact_asset_duration_frame() {
     for frame in [101, 102] {
         engine.control.frame_counter = frame;
         super::super::tick::drain_matured_exclamations(&mut engine.feedback.sound_sim, frame);
-        engine.settle_npc_speech_completions(&sim, &assets);
+        engine.settle_npc_speech_completions(TickCtx::new(&sim, &assets));
         let ai = mytalk_ai(&engine, soldier_id);
         assert_eq!(ai.current_remark, Remark::Arrow);
     }
 
     engine.control.frame_counter = 103;
     super::super::tick::drain_matured_exclamations(&mut engine.feedback.sound_sim, 103);
-    engine.settle_npc_speech_completions(&sim, &assets);
+    engine.settle_npc_speech_completions(TickCtx::new(&sim, &assets));
     let ai = mytalk_ai(&engine, soldier_id);
     assert_eq!(ai.current_remark, Remark::TheSoundOfSilence);
     assert_eq!(
@@ -259,7 +207,7 @@ fn replay_host_resolution_without_logical_request_keeps_authoritative_completion
         exclamation_id: Remark::Arrow as u16,
         duration_frames: 3,
     }]);
-    engine.hourglass_phase_deferred_effects_start(&sim, &assets, None);
+    engine.hourglass_phase_deferred_effects_start(TickCtx::new(&sim, &assets), None);
 
     assert_eq!(engine.feedback.sound_sim.playing_exclamations.len(), 1);
     assert_eq!(
@@ -269,7 +217,7 @@ fn replay_host_resolution_without_logical_request_keeps_authoritative_completion
 
     engine.control.frame_counter = 103;
     super::super::tick::drain_matured_exclamations(&mut engine.feedback.sound_sim, 103);
-    engine.settle_npc_speech_completions(&sim, &assets);
+    engine.settle_npc_speech_completions(TickCtx::new(&sim, &assets));
     assert!(engine.feedback.sound_sim.playing_exclamations.is_empty());
     assert_eq!(
         mytalk_ai(&engine, soldier_id).current_remark,
@@ -304,7 +252,7 @@ fn replay_host_resolution_preserves_an_unrelated_reconstructed_pending_request()
         exclamation_id: Remark::Arrow as u16,
         duration_frames: 3,
     }]);
-    engine.hourglass_phase_deferred_effects_start(&sim, &assets, None);
+    engine.hourglass_phase_deferred_effects_start(TickCtx::new(&sim, &assets), None);
 
     assert_eq!(engine.feedback.sound_sim.pending_exclamations.len(), 1);
     let retained = &engine.feedback.sound_sim.pending_exclamations[0];
@@ -347,7 +295,10 @@ fn live_host_resolution_without_logical_request_remains_an_invariant_failure() {
         exclamation_id: Remark::Arrow as u16,
         duration_frames: 3,
     }]);
-    engine.hourglass_phase_deferred_effects_start(&crate::sim_rng::test_context(), &assets, None);
+    engine.hourglass_phase_deferred_effects_start(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        None,
+    );
 }
 
 #[test]
@@ -365,7 +316,7 @@ fn zero_duration_resolution_completes_mytalk_at_current_boundary() {
     let ai = mytalk_ai(&engine, soldier_id);
     assert_eq!(ai.current_remark, Remark::Arrow);
 
-    engine.hourglass_phase_deferred_effects_start(&sim, &assets, None);
+    engine.hourglass_phase_deferred_effects_start(TickCtx::new(&sim, &assets), None);
 
     let ai = mytalk_ai(&engine, soldier_id);
     assert_eq!(engine.control.frame_counter, 100);
@@ -398,15 +349,14 @@ fn pre_set_state_face_and_attentive_leave_register_then_preempt_in_manager_fifo(
     let owner = engine.add_test_entity(soldier_entity);
     let assets = engine.test_runtime_assets();
 
-    engine.duty_face_direction(&sim, &assets, owner, 7);
+    engine.duty_face_direction(TickCtx::new(&sim, &assets), owner, 7);
     engine.duty_set_state(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         owner,
         AiState::Default,
         Substate::DefaultGotoPostTurn,
     );
-    engine.set_soldier_attentive_mode(&sim, &assets, owner, false, false);
+    engine.set_soldier_attentive_mode(TickCtx::new(&sim, &assets), owner, false, false);
 
     // This is the movement-condolation mode that exposed the bug. Face and
     // attentive-mode changes both launch inline, but their ordinary
@@ -444,10 +394,7 @@ fn pre_set_state_face_and_attentive_leave_register_then_preempt_in_manager_fifo(
             .is_none(),
         "registered Face/Leave elements must not become actor-selected during the owner slot"
     );
-    let enemy = engine
-        .get_entity(owner)
-        .and_then(Entity::enemy_ai)
-        .expect("Enemy test AI remains live");
+    let enemy = engine.enemy(owner);
     assert!(
         !enemy.will_be_attentive,
         "attentive-mode changes update their gate immediately"
@@ -455,7 +402,7 @@ fn pre_set_state_face_and_attentive_leave_register_then_preempt_in_manager_fifo(
 
     // Repeating the already-requested target must observe will_be_attentive
     // and must not append a duplicate deferred Leave.
-    engine.set_soldier_attentive_mode(&sim, &assets, owner, false, false);
+    engine.set_soldier_attentive_mode(TickCtx::new(&sim, &assets), owner, false, false);
     assert_eq!(
         engine
             .orders
@@ -466,7 +413,7 @@ fn pre_set_state_face_and_attentive_leave_register_then_preempt_in_manager_fifo(
     );
 
     let mut display = HostDisplayState::default();
-    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+    engine.hourglass_phase_sequences(TickCtx::new(&sim, &assets), &mut display);
 
     let owned_after_manager: Vec<_> = engine
         .orders
@@ -527,18 +474,16 @@ fn consecutive_set_states_preserve_attentive_request_fifo() {
     let owner = engine.add_test_entity(soldier_entity);
     let assets = engine.test_runtime_assets();
 
-    engine.stop_ai_owner(&sim, &assets, owner);
+    engine.stop_ai_owner(TickCtx::new(&sim, &assets), owner);
 
     engine.duty_set_state(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         owner,
         AiState::Attacking,
         Substate::AttackingReactiontime,
     );
     engine.duty_set_state(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         owner,
         AiState::Attacking,
         Substate::AttackingTooProudToAttackApproach,
@@ -557,10 +502,7 @@ fn consecutive_set_states_preserve_attentive_request_fifo() {
         [(Command::LeaveAttentiveMode, SequenceState::Todo)],
         "Reactiontime's attentive=true observes the already-true will-be gate, then the immediately following TooProudApproach attentive=false launches the sole transition"
     );
-    let enemy = engine
-        .get_entity(owner)
-        .and_then(Entity::enemy_ai)
-        .expect("Enemy test AI remains live");
+    let enemy = engine.enemy(owner);
     assert!(enemy.attentive);
     assert!(!enemy.will_be_attentive);
     assert_eq!(enemy.base.current_state, AiState::Attacking);
@@ -588,9 +530,9 @@ fn opposite_attentive_transitions_launch_before_following_turn() {
     let owner = engine.add_test_entity(soldier_entity);
     let assets = engine.test_runtime_assets();
 
-    engine.set_soldier_attentive_mode(&sim, &assets, owner, true, false);
-    engine.set_soldier_attentive_mode(&sim, &assets, owner, false, false);
-    engine.duty_face_direction(&sim, &assets, owner, 14);
+    engine.set_soldier_attentive_mode(TickCtx::new(&sim, &assets), owner, true, false);
+    engine.set_soldier_attentive_mode(TickCtx::new(&sim, &assets), owner, false, false);
+    engine.duty_face_direction(TickCtx::new(&sim, &assets), owner, 14);
 
     let owned: Vec<_> = engine
         .orders
@@ -610,11 +552,7 @@ fn opposite_attentive_transitions_launch_before_following_turn() {
         "both opposite attentive-mode transitions register before the following facing step"
     );
     assert!(
-        !engine
-            .get_entity(owner)
-            .and_then(Entity::enemy_ai)
-            .expect("Enemy test AI remains live")
-            .will_be_attentive,
+        !engine.enemy(owner).will_be_attentive,
         "the final attentive request still owns the projected flag"
     );
 }
@@ -631,12 +569,11 @@ fn matured_mytalk_completion_precedes_following_console_command() {
         exclamation_id: Remark::Arrow as u16,
         duration_frames: 3,
     }]);
-    engine.hourglass_phase_deferred_effects_start(&sim, &assets, None);
+    engine.hourglass_phase_deferred_effects_start(TickCtx::new(&sim, &assets), None);
     engine.control.frame_counter = 103;
-    engine.hourglass_phase_deferred_effects_start(&sim, &assets, None);
+    engine.hourglass_phase_deferred_effects_start(TickCtx::new(&sim, &assets), None);
     engine.dispatch_sim_console_command(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         &mut Some(soldier_id),
         &crate::console::ConsoleCommand::Hades,
     );
@@ -677,8 +614,7 @@ fn category_rejection_completes_notification_before_returning_with_a_cleared_lat
         let owner = add_speech_test_npc(&mut engine, &mut assets, kind, 221);
         crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
         engine.execute_ai_speech(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             AiSpeechAttempt {
                 remark,
@@ -714,11 +650,7 @@ fn shared_cycle_advances_after_early_filters_but_before_busy_category_and_id_zer
         SpeechNpcKind::Soldier { vip: false },
         401,
     );
-    engine
-        .get_entity_mut(filtered)
-        .unwrap()
-        .element_data_mut()
-        .blipped = true;
+    engine.elem_mut(filtered).blipped = true;
     queue_and_settle_speech(
         &mut engine,
         &assets,
@@ -734,12 +666,7 @@ fn shared_cycle_advances_after_early_filters_but_before_busy_category_and_id_zer
         SpeechNpcKind::Soldier { vip: false },
         402,
     );
-    engine
-        .get_entity_mut(busy)
-        .unwrap()
-        .ai_controller_mut()
-        .unwrap()
-        .current_remark = Remark::Wounded;
+    engine.ai_ctrl_mut(busy).current_remark = Remark::Wounded;
     queue_and_settle_speech(
         &mut engine,
         &assets,
@@ -817,12 +744,7 @@ fn repeated_checkpoint_charly_replaces_the_live_target() {
         let second = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
         engine.execute_ai_set_checkpoint_charly(owner, Some(AiEntityHandle::new(first.index())));
         assert_eq!(
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .ai_actor_data()
-                .unwrap()
-                .detectable_lists[MissedFriend as usize][0]
+            engine.ent(owner).ai_actor_data().unwrap().detectable_lists[MissedFriend as usize][0]
                 .element,
             Some(first)
         );
@@ -830,12 +752,8 @@ fn repeated_checkpoint_charly_replaces_the_live_target() {
             owner,
             (!clear).then_some(AiEntityHandle::new(second.index())),
         );
-        let actual = engine
-            .get_entity(owner)
-            .unwrap()
-            .ai_actor_data()
-            .unwrap()
-            .detectable_lists[MissedFriend as usize]
+        let actual = engine.ent(owner).ai_actor_data().unwrap().detectable_lists
+            [MissedFriend as usize]
             .iter()
             .map(|entry| entry.element)
             .collect::<Vec<_>>();
@@ -852,8 +770,7 @@ fn fighter_registry_keeps_inactive_and_tied_members_with_live_ineligibility() {
     let other_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
 
     for id in [self_id, other_id] {
-        let Entity::Soldier(soldier) = engine.get_entity_mut(id).expect("test fighter exists")
-        else {
+        let Entity::Soldier(soldier) = engine.ent_mut(id) else {
             panic!("test fighter changed kind")
         };
         soldier.element.active = true;
@@ -869,17 +786,12 @@ fn fighter_registry_keeps_inactive_and_tied_members_with_live_ineligibility() {
 
     engine.test_runtime_assets();
 
-    let Entity::Soldier(self_soldier) =
-        engine.get_entity_mut(self_id).expect("self fighter exists")
-    else {
+    let Entity::Soldier(self_soldier) = engine.ent_mut(self_id) else {
         panic!("self fighter changed kind")
     };
     self_soldier.element.active = false;
 
-    let Entity::Soldier(other_soldier) = engine
-        .get_entity_mut(other_id)
-        .expect("other fighter exists")
-    else {
+    let Entity::Soldier(other_soldier) = engine.ent_mut(other_id) else {
         panic!("other fighter changed kind")
     };
     other_soldier.element.publish_order_posture(Posture::Tied);
@@ -888,11 +800,11 @@ fn fighter_registry_keeps_inactive_and_tied_members_with_live_ineligibility() {
     assert!(registry.contains(&self_id));
     assert!(registry.contains(&other_id));
     for id in [self_id, other_id] {
-        let Entity::Soldier(soldier) = engine.get_entity(id).expect("registered fighter") else {
+        let Entity::Soldier(soldier) = engine.ent(id) else {
             panic!("fighter changed kind")
         };
         assert!(!soldier.is_able_to_fight());
-        assert!(!engine.get_entity(id).unwrap().is_dead());
+        assert!(!engine.ent(id).is_dead());
         assert!(!soldier.human.unconscious);
     }
 }
@@ -903,9 +815,7 @@ fn full_fighter_registry_retains_dead_pc_for_held_ai_targets() {
     let self_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let dead_pc_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Dead));
 
-    let Entity::Soldier(self_soldier) =
-        engine.get_entity_mut(self_id).expect("test fighter exists")
-    else {
+    let Entity::Soldier(self_soldier) = engine.ent_mut(self_id) else {
         panic!("test fighter changed kind")
     };
     self_soldier.element.active = true;
@@ -918,10 +828,7 @@ fn full_fighter_registry_retains_dead_pc_for_held_ai_targets() {
         .base
         .me = self_id.index();
 
-    let Entity::Pc(dead_pc) = engine
-        .get_entity_mut(dead_pc_id)
-        .expect("dead test PC exists")
-    else {
+    let Entity::Pc(dead_pc) = engine.ent_mut(dead_pc_id) else {
         panic!("dead test PC changed kind")
     };
     dead_pc.element.active = true;
@@ -930,9 +837,7 @@ fn full_fighter_registry_retains_dead_pc_for_held_ai_targets() {
     engine.test_runtime_assets();
 
     assert!(engine.world.fighter_registry_ids.contains(&dead_pc_id));
-    let entity = engine
-        .get_entity(dead_pc_id)
-        .expect("held dead fighter remains live");
+    let entity = engine.ent(dead_pc_id);
     assert!(entity.is_dead());
     let Entity::Pc(pc) = entity else {
         panic!("dead fighter changed kind")
@@ -968,7 +873,7 @@ fn filtered_think_refreshes_live_friend_primary_target_for_battle_decisions() {
         (old_target_id, MapPoint::new(120.0, 100.0)),
         (new_target_id, MapPoint::new(130.0, 100.0)),
     ] {
-        let entity = engine.get_entity_mut(id).expect("test combatant exists");
+        let entity = engine.ent_mut(id);
         entity.element_data_mut().active = true;
         entity.element_data_mut().set_position_map(position);
         if let Some(npc) = entity.npc_data_mut() {
@@ -979,10 +884,7 @@ fn filtered_think_refreshes_live_friend_primary_target_for_battle_decisions() {
         (owner_id, Substate::AttackingReactiontime),
         (friend_id, Substate::AttackingSwordfight),
     ] {
-        let enemy = engine
-            .get_entity_mut(id)
-            .and_then(Entity::enemy_ai_mut)
-            .expect("test soldier has Enemy AI");
+        let enemy = engine.enemy_mut(id);
         enemy.base.me = id.index();
         {
             let ai = &mut enemy.base;
@@ -991,36 +893,22 @@ fn filtered_think_refreshes_live_friend_primary_target_for_battle_decisions() {
         }
         enemy.base.primary_target = Some(crate::ai::AiEntityHandle::new(old_target_id.index()));
     }
-    engine
-        .get_entity_mut(owner_id)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("owner has Enemy AI")
-        .list_them = vec![old_target_id.index()];
+    engine.enemy_mut(owner_id).list_them = vec![old_target_id.index()];
     let frame = engine.control.frame_counter;
-    let owner = engine
-        .get_entity_mut(owner_id)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("owner has Enemy AI");
+    let owner = engine.enemy_mut(owner_id);
     owner.base.launch_timer(0, frame);
     owner.base.timer_is_running = false;
 
     let assets = engine.test_runtime_assets();
-    let friend = engine
-        .get_entity_mut(friend_id)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("friend has Enemy AI");
+    let friend = engine.enemy_mut(friend_id);
     friend.base.primary_target = Some(crate::ai::AiEntityHandle::new(new_target_id.index()));
     engine.dispatch_think_with_drain(
-        &sim,
+        TickCtx::new(&sim, &assets),
         owner_id,
         &Stimulus::new(StimulusType::EventTimer),
-        &assets,
     );
 
-    let owner = engine
-        .get_entity(owner_id)
-        .and_then(Entity::enemy_ai)
-        .expect("owner retains Enemy AI");
+    let owner = engine.enemy(owner_id);
     assert!(owner.list_them.contains(&new_target_id.index()));
 }
 
@@ -1078,9 +966,7 @@ fn officer_call_rejection_closes_return_to_duty_actor_fixed_point() {
         1,
         0,
     ));
-    let officer = engine
-        .get_entity_mut(officer_id)
-        .expect("call-rejection officer exists");
+    let officer = engine.ent_mut(officer_id);
     officer
         .element_data_mut()
         .set_position_map(MapPoint::new(100.0, 100.0));
@@ -1106,28 +992,21 @@ fn officer_call_rejection_closes_return_to_duty_actor_fixed_point() {
     officer_ai.base.current_state = AiState::Seeking;
     officer_ai.base.current_substate = Substate::SeekingOfficerCallSoldier;
     {
-        let ai = &mut engine
-            .get_entity_mut(soldier_id)
-            .and_then(Entity::enemy_ai_mut)
-            .expect("call rejector has EnemyAi")
-            .base;
+        let ai = &mut engine.enemy_mut(soldier_id).base;
         ai.set_ai_state(AiState::Attacking);
         ai.current_substate = Substate::AttackingSwordfight;
     }
 
     assert_eq!(
         engine.execute_ai_officer_rendezvous_event(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             officer_id,
             &Stimulus::new(StimulusType::EventDone)
         ),
         Some(false),
     );
 
-    let officer = engine
-        .get_entity(officer_id)
-        .expect("call-rejection officer survives");
+    let officer = engine.ent(officer_id);
     let ai = officer
         .enemy_ai()
         .expect("call-rejection officer retains EnemyAi");
@@ -1174,7 +1053,7 @@ fn officer_call_rejection_closes_return_to_duty_actor_fixed_point() {
     );
 
     let mut display = HostDisplayState::default();
-    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+    engine.hourglass_phase_sequences(TickCtx::new(&sim, &assets), &mut display);
     let current = engine
         .world
         .entities
@@ -1208,22 +1087,10 @@ fn live_return_to_duty_publishes_goto_after_attentive_inline() {
     use crate::sector::{SectorNumber, SectorType};
 
     let make_sector = |sector_type| GridSector {
-        points: Vec::new(),
         bounding_box: crate::coordinates::MapBBox::new(),
         sector_type,
-        layer: 0,
         sector_number: SectorNumber::new(64),
-        door_index: None,
-        lift_type: None,
-        lift_direction: 0,
-        force_crouched: false,
-        building_index: None,
-        low_exit_point: None,
-        high_exit_point: None,
-        lowest_door_index: None,
-        jump_line_indices: Vec::new(),
-        gate_indices: Vec::new(),
-        underlying_sector: None,
+        ..Default::default()
     };
 
     let sim = crate::sim_rng::test_context();
@@ -1281,7 +1148,7 @@ fn live_return_to_duty_publishes_goto_after_attentive_inline() {
         crate::position_interface::SectorHandle::new(64),
         "a genuinely missing retained index remains number-only"
     );
-    let entity = engine.get_entity_mut(owner).unwrap();
+    let entity = engine.ent_mut(owner);
     entity.element_data_mut().active = true;
     entity
         .element_data_mut()
@@ -1304,7 +1171,7 @@ fn live_return_to_duty_publishes_goto_after_attentive_inline() {
     ai.attentive = true;
     ai.will_be_attentive = true;
 
-    engine.execute_ai_return_to_duty(&sim, &assets, owner, DutyFlags::empty());
+    engine.execute_ai_return_to_duty(TickCtx::new(&sim, &assets), owner, DutyFlags::empty());
     let commands = engine
         .orders
         .sequence_manager
@@ -1318,14 +1185,7 @@ fn live_return_to_duty_publishes_goto_after_attentive_inline() {
         commands.contains(&Command::Move),
         "different exact arenas with the same public number can only publish Move after the gate graph accepts the route"
     );
-    assert!(
-        !engine
-            .get_entity(owner)
-            .and_then(Entity::enemy_ai)
-            .unwrap()
-            .base
-            .couldnt_reachpoint
-    );
+    assert!(!engine.enemy(owner).base.couldnt_reachpoint);
 }
 
 #[test]
@@ -1336,9 +1196,7 @@ fn officer_call_acceptance_keeps_wait_state_timer_and_beggar() {
     let sim = crate::sim_rng::test_context();
     let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
 
-    let officer = engine
-        .get_entity_mut(officer_id)
-        .expect("call-acceptance officer exists");
+    let officer = engine.ent_mut(officer_id);
     officer
         .npc_data_mut()
         .expect("officer remains NPC")
@@ -1359,17 +1217,14 @@ fn officer_call_acceptance_keeps_wait_state_timer_and_beggar() {
 
     assert_eq!(
         engine.execute_ai_officer_rendezvous_event(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             officer_id,
             &Stimulus::new(StimulusType::EventDone)
         ),
         Some(false),
     );
 
-    let officer = engine
-        .get_entity(officer_id)
-        .expect("call-acceptance officer survives");
+    let officer = engine.ent(officer_id);
     let ai = officer
         .enemy_ai()
         .expect("call-acceptance officer retains EnemyAi");
@@ -1417,10 +1272,7 @@ fn officer_call_acceptance_keeps_wait_state_timer_and_beggar() {
             }),
         "accepted CALL_HEY must not publish a return-to-duty transition"
     );
-    let soldier = engine
-        .get_entity(soldier_id)
-        .and_then(Entity::enemy_ai)
-        .expect("accepted soldier retains EnemyAi");
+    let soldier = engine.enemy(soldier_id);
     assert_eq!(
         soldier.base.current_substate,
         Substate::SeekingSoldierCalledByOfficer
@@ -1440,14 +1292,8 @@ fn nested_reentrant_turn_remains_deferred_until_manager() {
     let sim = crate::sim_rng::test_context();
     let (mut engine, source_id, target_id, assets) = setup_review2_officer_and_soldier();
 
-    engine
-        .get_entity_mut(source_id)
-        .expect("nested-turn source exists")
-        .element_data_mut()
-        .set_position_map(MapPoint::new(0.0, 0.0));
-    let target = engine
-        .get_entity_mut(target_id)
-        .expect("nested-turn target exists");
+    engine.place_map(source_id, MapPoint::new(0.0, 0.0));
+    let target = engine.ent_mut(target_id);
     target
         .element_data_mut()
         .set_position_map(MapPoint::new(40.0, 0.0));
@@ -1459,10 +1305,9 @@ fn nested_reentrant_turn_remains_deferred_until_manager() {
     target_ai.base.antagonist = Some(crate::ai::AiEntityHandle::new(source_id.index()));
 
     engine.dispatch_think_with_drain(
-        &sim,
+        TickCtx::new(&sim, &assets),
         target_id,
         &crate::ai::Stimulus::with_human(StimulusType::CallCoordinate, source_id.index()),
-        &assets,
     );
 
     let turns: Vec<_> = engine
@@ -1483,12 +1328,7 @@ fn nested_reentrant_turn_remains_deferred_until_manager() {
         "nested Turn must remain uninstructed until the manager hourglass"
     );
     assert_eq!(
-        engine
-            .get_entity(target_id)
-            .and_then(Entity::enemy_ai)
-            .expect("nested-turn target retains EnemyAi")
-            .base
-            .current_substate,
+        engine.enemy(target_id).base.current_substate,
         Substate::SeekingOfficerLectureCharly
     );
 }
@@ -1501,20 +1341,14 @@ fn recursive_break_phalanx_preserves_enclosing_think_without_owning_end_think() 
     let sim = crate::sim_rng::test_context();
     let (mut engine, source_id, member_id, assets) = setup_review2_officer_and_soldier();
     engine.enter_ai_think_frame(source_id);
-    let Entity::Soldier(source_soldier) = engine
-        .get_entity_mut(source_id)
-        .expect("phalanx-break source exists")
-    else {
+    let Entity::Soldier(source_soldier) = engine.ent_mut(source_id) else {
         panic!("phalanx-break source changed kind")
     };
     // Keep battle planning on its active-enemy path; the empty synthetic
     // patrol fixture otherwise recurses through unrelated patrol setup.
     source_soldier.soldier.cached_camp = Camp::Royalists;
     {
-        let member = engine
-            .get_entity_mut(member_id)
-            .and_then(Entity::enemy_ai_mut)
-            .expect("phalanx-break member has EnemyAi");
+        let member = engine.enemy_mut(member_id);
         member.base.current_state = AiState::Attacking;
         member.base.current_substate = Substate::AttackingPhalanx;
         member.list_them = vec![source_id.index()];
@@ -1525,12 +1359,9 @@ fn recursive_break_phalanx_preserves_enclosing_think_without_owning_end_think() 
         member.base.already_on_point = true;
     }
 
-    engine.execute_ai_break_phalanx(&sim, &assets, member_id, false, false);
+    engine.execute_ai_break_phalanx(TickCtx::new(&sim, &assets), member_id, false, false);
 
-    engine
-        .get_entity(member_id)
-        .and_then(Entity::enemy_ai)
-        .expect("phalanx-break member retains EnemyAi");
+    engine.enemy(member_id);
     assert_eq!(
         engine.ai.think_call_stack,
         vec![source_id],
@@ -1544,14 +1375,9 @@ fn phalanx_gather_instruction_skips_a_member_who_already_left_the_formation() {
 
     let sim = crate::sim_rng::test_context();
     let (mut engine, _officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
-    let before = engine
-        .get_entity(soldier_id)
-        .and_then(Entity::enemy_ai)
-        .expect("phalanx gather target has EnemyAi")
-        .gather_position;
+    let before = engine.enemy(soldier_id).gather_position;
     engine.instruct_live_phalanx(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         &[soldier_id],
         Position {
             x: 55.0,
@@ -1564,10 +1390,7 @@ fn phalanx_gather_instruction_skips_a_member_who_already_left_the_formation() {
 
     // The target stands in DefaultOnPost, so the phalanx-correction loop
     // passes over it entirely: neither the slot nor the instruction lands.
-    let soldier = engine
-        .get_entity(soldier_id)
-        .and_then(Entity::enemy_ai)
-        .expect("phalanx gather target retains EnemyAi");
+    let soldier = engine.enemy(soldier_id);
     assert_eq!(soldier.gather_position, before);
     assert_eq!(soldier.gather_direction, 0);
     assert!(!soldier.gather_position_instructed);
@@ -1589,13 +1412,11 @@ fn selection_followup_retargets_recording_before_forwarding_returns() {
     let assets = engine.test_runtime_assets();
     let sim = crate::sim_rng::test_context();
     engine.forward_message(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         Message::pc(PcMessage::StartRecordingMacro, Some(first)),
     );
     engine.forward_message(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         Message::pc(PcMessage::SelectCharacter, Some(second)),
     );
 

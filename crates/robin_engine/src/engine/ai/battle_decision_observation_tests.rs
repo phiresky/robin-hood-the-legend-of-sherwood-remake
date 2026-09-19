@@ -52,7 +52,7 @@ pub(super) fn fixture(disconnected: bool) -> (EngineInner, LevelAssets, EntityId
             target_sector,
         ),
     ] {
-        let entity = engine.get_entity_mut(id).unwrap();
+        let entity = engine.ent_mut(id);
         entity
             .element_data_mut()
             .set_position(WorldPoint3D::new(x, 100.0, 0.0));
@@ -64,11 +64,7 @@ pub(super) fn fixture(disconnected: bool) -> (EngineInner, LevelAssets, EntityId
     engine.scripts.mission = Some(crate::engine::test_support::asm::empty_mission_script(
         "battle_observe.scs",
     ));
-    let ai = engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .enemy_ai_mut()
-        .unwrap();
+    let ai = engine.enemy_mut(owner);
     ai.base.current_state = AiState::Attacking;
     ai.base.current_substate = Substate::AttackingReactiontimeRunning;
     ai.base.primary_target = Some(AiEntityHandle::new(target.index()));
@@ -86,12 +82,7 @@ pub(super) fn fixture(disconnected: bool) -> (EngineInner, LevelAssets, EntityId
 fn stop_on_state(engine: &mut EngineInner, assets: &LevelAssets, owner: EntityId) {
     use crate::engine::test_support::asm::*;
     use crate::natives::NativeFn;
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .script_class = "ObserveStop".into();
+    engine.actor_mut(owner).script_class = "ObserveStop".into();
     let quads = vec![
         q_begin_function(0, 3),
         q_native_call(NativeFn::ThisActor as u32),
@@ -107,28 +98,14 @@ fn stop_on_state(engine: &mut EngineInner, assets: &LevelAssets, owner: EntityId
         q_return_val(0xc008),
         q_end_function(),
     ];
-    let class = crate::scb::ClassEntry {
-        source_file: "observe_stop.scs".into(),
-        class_name: "ObserveStop".into(),
-        size_of_member_variables: 0,
-        member_variables: vec![],
-        functions: vec![crate::scb::Function {
-            name: "FilterAIEvent".into(),
-            address: 0,
-            num_parameters: 3,
-            size_of_return_value: 4,
-            size_of_parameters: 12,
-            size_of_volatile: 0,
-            size_of_temporary: 12,
-        }],
-        quads,
-    };
+
     engine.scripts.mission = Some(
-        crate::engine::MissionScript::from_scb(crate::scb::ScbFile {
-            version: crate::scb::SCB_VERSION,
-            classes: vec![empty_startup_class("observe_stop.scs".into()), class],
-        })
-        .unwrap(),
+        crate::engine::test_support::extra_engine_combat::filter_ai_event_mission(
+            "observe_stop.scs",
+            "ObserveStop",
+            12,
+            quads,
+        ),
     );
     engine.scripts.mission.as_mut().unwrap().bind_actor(
         crate::natives::ScriptHandleCodec::actor_handle(owner),
@@ -170,27 +147,20 @@ fn observe_movement_is_registered_before_the_state_callback() {
             y: 350.0,
             ..engine.live_ai_position(owner)
         };
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .enemy_ai_mut()
-            .unwrap()
-            .base
-            .seek_position = previous_seek;
+        engine.enemy_mut(owner).base.seek_position = previous_seek;
         if stops_move {
             stop_on_state(&mut engine, &assets, owner);
         }
-        let decision = engine.execute_live_battle_decision(
-            &crate::sim_rng::test_context(),
-            &assets,
-            owner,
-            Decision::Observe,
-            Substate::AttackingReactiontimeRunning,
-            0,
-            false,
-        );
+        let decision = engine
+            .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+            .execute_live_battle_decision(
+                Decision::Observe,
+                Substate::AttackingReactiontimeRunning,
+                0,
+                false,
+            );
         assert_eq!(decision, Some(Decision::Observe));
-        let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
+        let ai = engine.enemy(owner);
         assert_eq!(
             ai.base.primary_target,
             Some(AiEntityHandle::new(target.index()))
@@ -211,15 +181,7 @@ fn observe_movement_is_registered_before_the_state_callback() {
         assert_eq!(ai.base.stop_before_end_of_path_distance, 200);
         let moves = pending_moves(&engine, owner);
         if stops_move {
-            assert_eq!(
-                engine
-                    .get_entity(owner)
-                    .unwrap()
-                    .npc_data()
-                    .unwrap()
-                    .custom_values[0],
-                1
-            );
+            assert_eq!(engine.npc(owner).custom_values[0], 1);
             assert!(
                 moves.is_empty(),
                 "the callback must stop the already registered Observe route"
@@ -257,17 +219,16 @@ fn failed_fight_executes_observe_on_the_same_think_stack() {
         ),
         Some(AiEntityHandle::new(target.index()))
     );
-    let decision = engine.execute_live_battle_decision(
-        &sim,
-        &assets,
-        owner,
-        Decision::Fight,
-        Substate::AttackingReactiontimeRunning,
-        0,
-        false,
-    );
+    let decision = engine
+        .ai_ctx(&sim, &assets, owner)
+        .execute_live_battle_decision(
+            Decision::Fight,
+            Substate::AttackingReactiontimeRunning,
+            0,
+            false,
+        );
     assert_eq!(decision, Some(Decision::Observe));
-    let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
+    let ai = engine.enemy(owner);
     assert_eq!(
         ai.base.primary_target,
         Some(AiEntityHandle::new(target.index()))

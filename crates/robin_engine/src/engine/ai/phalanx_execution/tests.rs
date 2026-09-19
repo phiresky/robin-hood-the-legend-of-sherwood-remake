@@ -1,5 +1,6 @@
 use super::*;
 use crate::element::{Camp, Detectable, DetectableType, Posture};
+use crate::engine::TickCtx;
 use crate::engine::test_support::{actors::make_test_ai_soldier, square_sector};
 use crate::sight_obstacle::{ObstaclePoint, SightObstacle};
 
@@ -59,13 +60,7 @@ fn phalanx_shield_reestablish_uses_raw_door_passing_target_position() {
             .sequence_manager
             .start_sequence_level(sequence);
         engine.select_sequence_element(target, Some((sequence, 0)));
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            &mut Vec::new(),
-            sequence,
-            0,
-        );
+        engine.t_element_in_progress(&LevelAssets::new(), sequence, 0);
         assert_eq!(
             engine.live_ai_position(target).map_point(),
             MapPoint::new(1158.0, 1627.0)
@@ -91,14 +86,16 @@ fn phalanx_shield_reestablish_uses_raw_door_passing_target_position() {
             .action_state = crate::element::ActionState::MovingShield;
         engine.enter_ai_think_frame(owner);
         if protecting {
-            assert!(engine.execute_ai_shield_expected_event(
-                &crate::sim_rng::test_context(),
-                &assets,
-                owner,
-                crate::ai::StimulusType::EventTimer
-            ));
+            assert!(
+                engine
+                    .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                    .execute_ai_shield_expected_event(crate::ai::StimulusType::EventTimer)
+            );
         } else {
-            engine.execute_ai_phalanx_timer(&crate::sim_rng::test_context(), &assets, owner);
+            engine.execute_ai_phalanx_timer(
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
+                owner,
+            );
         }
         let command = engine
             .orders
@@ -215,7 +212,10 @@ fn attack_gate_uses_literal_body_distance_including_elevation() {
     ai.base.current_substate = Substate::AttackingPhalanx;
     assert!(engine.live_ai_position(target).x < archer::PHALANX_ATTACK_DISTANCE as f32);
     engine.enter_ai_think_frame(right);
-    assert!(!engine.reconsider_live_phalanx(&crate::sim_rng::test_context(), &assets, right));
+    assert!(!engine.reconsider_live_phalanx(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        right
+    ));
     let ai = engine
         .world
         .entities

@@ -1,4 +1,5 @@
 use crate::element::EntityId;
+use crate::sequence::SequenceElementRef;
 use crate::sequence::SequenceManager;
 
 use super::super::{TimerEntry, movement};
@@ -67,8 +68,7 @@ impl OrderRuntime {
     /// order rewrites on that element can stamp fresh ids.
     pub(crate) fn element_with_order_ids_mut(
         &mut self,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) -> Option<(&mut crate::sequence::SequenceElement, &mut u32)> {
         let Self {
             next_order_id,
@@ -76,7 +76,7 @@ impl OrderRuntime {
             ..
         } = self;
         sequence_manager
-            .get_element_mut(seq_id, elem_idx)
+            .get_element_at_mut(elem_ref)
             .map(|element| (element, next_order_id))
     }
 

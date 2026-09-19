@@ -30,6 +30,7 @@ use crate::bow_shot::{self, COIN_SCATTER_MIN, NUMBER_OF_COINS_IN_PURSE};
 use crate::coordinates::MapPoint;
 use crate::coordinates::WorldPoint3D;
 use crate::element::{Animation, DetectableType, ElementProjectile, Entity, EntityId, ObjectType};
+use crate::engine::TickCtx;
 use crate::entity_id::EntityIdKind;
 
 /// Purse-impact FX id.
@@ -85,16 +86,14 @@ impl EngineInner {
 
     fn finish_projectile_water_impact(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         projectile_id: EntityId,
         position: WorldPoint3D,
         layer: u16,
     ) {
         let map = MapPoint::from_world_xyz(position.x, position.y, position.z);
         self.broadcast_noise_synchronously(
-            sim,
-            assets,
+            tcx,
             crate::ai::NoiseType::Plouf,
             map,
             crate::position_interface::Layer::new(layer),
@@ -120,8 +119,7 @@ impl EngineInner {
     /// child coins created by obstacle impact have been published.
     pub(super) fn publish_new_purse(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         thrower: EntityId,
         mut entity: Entity,
     ) -> EntityId {
@@ -141,8 +139,8 @@ impl EngineInner {
             panic!("ThrowPurseAt received a non-projectile entity")
         };
         assert_eq!(purse.object.object_type, ObjectType::Purse);
-        self.hydrate_unpublished_projectile(assets, purse);
-        self.materialize_terminal_projectile_runtime(assets, purse);
+        self.hydrate_unpublished_projectile(tcx.assets, purse);
+        self.materialize_terminal_projectile_runtime(tcx.assets, purse);
 
         let exhausted = purse.advance_projectile_hourglass();
         let old = purse.element.sprite.position_iface.old_position();
@@ -156,7 +154,7 @@ impl EngineInner {
         );
 
         if let Some(holder) = shield {
-            self.on_projectile_shield_hit(sim, assets, holder, Some(FX_PURSE_IMPACT));
+            self.on_projectile_shield_hit(tcx, holder, Some(FX_PURSE_IMPACT));
         }
         // TODO(original parity): projectile human-victim selection excludes purses
         // in its target-point switch and reads an uninitialized point.
@@ -179,8 +177,7 @@ impl EngineInner {
                 observe_water_impact_stage("reset");
                 if let Some(layer) = layer {
                     self.finish_projectile_water_impact(
-                        sim,
-                        assets,
+                        tcx,
                         future_purse_id,
                         position,
                         layer.get(),
@@ -193,7 +190,7 @@ impl EngineInner {
                     EntityIdKind::Projectile,
                 );
                 let impact_sound_position =
-                    self.burst_unpublished_purse(sim, assets, future_purse_id, purse);
+                    self.burst_unpublished_purse(tcx, future_purse_id, purse);
                 self.feedback
                     .pending_side_effects
                     .sounds
@@ -210,7 +207,7 @@ impl EngineInner {
         purse
             .element
             .sprite
-            .perform_virgin_increment(sim, crate::sprite::FrameProgression::SkipShadow);
+            .perform_virgin_increment(tcx.sim, crate::sprite::FrameProgression::SkipShadow);
 
         // The original game starts the trajectory after the entire specialized update,
         // including any synchronous obstacle/coin side effects.
@@ -311,8 +308,7 @@ impl EngineInner {
 
     pub(super) fn publish_primed_coin(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         mut entity: Entity,
         corrected_source: MapPoint,
         source_sector: Option<crate::position_interface::SectorHandle>,
@@ -324,8 +320,8 @@ impl EngineInner {
             panic!("coin primer received non-projectile entity")
         };
         assert_eq!(coin.object.object_type, ObjectType::Coin);
-        self.hydrate_unpublished_projectile(assets, coin);
-        self.materialize_terminal_projectile_runtime(assets, coin);
+        self.hydrate_unpublished_projectile(tcx.assets, coin);
+        self.materialize_terminal_projectile_runtime(tcx.assets, coin);
         let exhausted = coin.advance_projectile_hourglass();
         let shield = bow_shot::projectile_shield_holder(
             &self.world.entities,
@@ -335,7 +331,7 @@ impl EngineInner {
             coin.projectile.velocity_increment,
         );
         if let Some(holder) = shield {
-            self.on_projectile_shield_hit(sim, assets, holder, None);
+            self.on_projectile_shield_hit(tcx, holder, None);
         }
         if exhausted && shield.is_none() {
             let material = coin.element.material();
@@ -350,13 +346,7 @@ impl EngineInner {
                 coin.projectile.trajectory_runtime.clear();
                 observe_water_impact_stage("reset");
                 if let Some(layer) = layer {
-                    self.finish_projectile_water_impact(
-                        sim,
-                        assets,
-                        future_id,
-                        position,
-                        layer.get(),
-                    );
+                    self.finish_projectile_water_impact(tcx, future_id, position, layer.get());
                 }
             } else if material != crate::element::GameMaterial::Hole && !coin.projectile.disappear {
                 match coin.projectile.purse.layer_goal {
@@ -373,7 +363,7 @@ impl EngineInner {
         }
         coin.element
             .sprite
-            .perform_virgin_increment(sim, crate::sprite::FrameProgression::SkipShadow);
+            .perform_virgin_increment(tcx.sim, crate::sprite::FrameProgression::SkipShadow);
         coin.projectile.start_of_trajectory_x = corrected_source.x;
         coin.projectile.start_of_trajectory_y = corrected_source.y;
         coin.projectile.trajectory_origin_sector = source_sector.map(|sector| sector.get());
@@ -388,8 +378,7 @@ impl EngineInner {
 
     fn burst_unpublished_purse(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         future_purse_id: EntityId,
         purse: &mut ElementProjectile,
     ) -> MapPoint {
@@ -423,8 +412,7 @@ impl EngineInner {
             _ => raw_map,
         };
         self.broadcast_noise_synchronously(
-            sim,
-            assets,
+            tcx,
             crate::ai::NoiseType::Pling,
             corrected_map,
             layer,
@@ -440,11 +428,11 @@ impl EngineInner {
             let mut vector = crate::coordinates::MapVec::ZERO;
             for _ in 0..bow_shot::COIN_SCATTER_ATTEMPTS {
                 let direction =
-                    (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::PurseCoinScatter, ..) & 15)
-                        as i16;
+                    (crate::sim_rng::u32(tcx.sim, crate::sim_rng::RngSite::PurseCoinScatter, ..)
+                        & 15) as i16;
                 let magnitude = COIN_SCATTER_MIN
-                    + (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::PurseCoinScatter, ..) & 31)
-                        as f32;
+                    + (crate::sim_rng::u32(tcx.sim, crate::sim_rng::RngSite::PurseCoinScatter, ..)
+                        & 31) as f32;
                 let (ux, uy) = crate::element::direction_vector_16(direction);
                 let candidate_vector = crate::coordinates::MapVec {
                     x: ux * magnitude,
@@ -469,7 +457,7 @@ impl EngineInner {
             let stored_goal = MapPoint::new(corrected_map.x + vector.x, corrected_map.y + vector.y);
             let target = match layer {
                 Some(layer) => self.position_to_point_3d(
-                    assets,
+                    tcx.assets,
                     sector,
                     layer.get(),
                     stored_goal.x,
@@ -480,8 +468,8 @@ impl EngineInner {
             let coin = if layer.is_some() {
                 let obstacle_check = bow_shot::TrajectoryObstacleCheck {
                     fast_find_grid: &self.world.fast_grid,
-                    sight_obstacles: self.sight_obstacles(assets),
-                    water_zones: Some(&assets.environment.water_zones),
+                    sight_obstacles: self.sight_obstacles(tcx.assets),
+                    water_zones: Some(&tcx.assets.environment.water_zones),
                 };
                 bow_shot::spawn_coin(
                     Some(future_purse_id),
@@ -505,14 +493,7 @@ impl EngineInner {
                     None,
                 )
             };
-            children.push(self.publish_primed_coin(
-                sim,
-                assets,
-                coin,
-                corrected_map,
-                sector,
-                layer,
-            ));
+            children.push(self.publish_primed_coin(tcx, coin, corrected_map, sector, layer));
         }
         assert_eq!(
             self.world.entities.len() as u32,
@@ -545,15 +526,11 @@ impl EngineInner {
     ///   off the purse's `child_coins` list (the empty pouch stays alive
     ///   forever as decoration).
     #[cfg(test)]
-    pub(super) fn tick_purses_and_coins(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
-    ) {
+    pub(super) fn tick_purses_and_coins(&mut self, tcx: TickCtx<'_>) {
         let mut slot = 0;
         while slot < self.world.entities.len() {
             if let Some(id) = self.world.entities.id_at_legacy_slot(slot as u32) {
-                self.tick_purse_or_coin(sim, assets, id);
+                self.tick_purse_or_coin(tcx, id);
             }
             slot += 1;
         }
@@ -564,12 +541,7 @@ impl EngineInner {
     /// The original engine tick rechecks the element count after
     /// every dispatched update. Keeping this operation per entity lets the main
     /// tick reach coins appended by a purse impact later in the same pass.
-    pub(super) fn tick_purse_or_coin(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
-        id: EntityId,
-    ) -> bool {
+    pub(super) fn tick_purse_or_coin(&mut self, tcx: TickCtx<'_>, id: EntityId) -> bool {
         let (was_flying, object_type, mut base_result) = match self.get_entity(id) {
             Some(Entity::Projectile(projectile)) => (
                 projectile.projectile.flying,
@@ -652,8 +624,7 @@ impl EngineInner {
         {
             impact = None;
             self.on_projectile_shield_hit(
-                sim,
-                assets,
+                tcx,
                 holder,
                 (object_type == ObjectType::Purse).then_some(FX_PURSE_IMPACT),
             );
@@ -688,7 +659,7 @@ impl EngineInner {
                             purse.element.active = false;
                         }
                         observe_water_impact_stage("reset");
-                        self.finish_projectile_water_impact(sim, assets, id, pos, layer);
+                        self.finish_projectile_water_impact(tcx, id, pos, layer);
                         base_result = false;
                     } else if material == crate::element::GameMaterial::Hole || disappear {
                         let Some(Entity::Projectile(purse)) = self.world.entities.get_mut(id)
@@ -700,7 +671,7 @@ impl EngineInner {
                     } else {
                         // Trajectory calculation already bound exact dry terminal
                         // sector/layer/obstacle membership; do not re-query.
-                        self.burst_purse(sim, assets, id, pos, layer);
+                        self.burst_purse(tcx, id, pos, layer);
                     }
                 }
                 ImpactKind::CoinLanded { pos, layer } => {
@@ -721,7 +692,7 @@ impl EngineInner {
                             coin.projectile.trajectory_runtime.clear();
                         }
                         observe_water_impact_stage("reset");
-                        self.finish_projectile_water_impact(sim, assets, id, pos, layer);
+                        self.finish_projectile_water_impact(tcx, id, pos, layer);
                     } else if material != crate::element::GameMaterial::Hole && !disappear {
                         self.coin_landed(id, pos, layer);
                     }
@@ -796,7 +767,7 @@ impl EngineInner {
             projectile
                 .element
                 .sprite
-                .perform_virgin_increment(sim, progression);
+                .perform_virgin_increment(tcx.sim, progression);
         }
 
         match object_type {
@@ -817,8 +788,7 @@ impl EngineInner {
     /// coins scattered around the impact point.
     fn burst_purse(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         purse_id: EntityId,
         impact_pos: WorldPoint3D,
         layer: u16,
@@ -866,8 +836,7 @@ impl EngineInner {
 
         // PLING noise so nearby NPCs hear the impact.
         self.broadcast_noise_synchronously(
-            sim,
-            assets,
+            tcx,
             crate::ai::NoiseType::Pling,
             crate::coordinates::MapPoint::new(source_pos.x, source_pos.y),
             crate::position_interface::Layer::new(layer),
@@ -902,11 +871,11 @@ impl EngineInner {
                 // `rand() & 15` for direction and `10 + (rand() & 31)`
                 // for magnitude on each of seven attempts.
                 let sector =
-                    (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::PurseCoinScatter, ..) & 15)
-                        as i16;
+                    (crate::sim_rng::u32(tcx.sim, crate::sim_rng::RngSite::PurseCoinScatter, ..)
+                        & 15) as i16;
                 let magnitude = COIN_SCATTER_MIN
-                    + (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::PurseCoinScatter, ..) & 31)
-                        as f32;
+                    + (crate::sim_rng::u32(tcx.sim, crate::sim_rng::RngSite::PurseCoinScatter, ..)
+                        & 31) as f32;
                 let (ux, uy) = crate::element::direction_vector_16(sector);
                 // Y is compressed by ASPECT_RATIO to match isometric ground.
                 let scatter_x = ux * magnitude;
@@ -938,14 +907,14 @@ impl EngineInner {
                 .map(|e| e.position_iface().get_sector())
                 .unwrap_or(None);
             let target_pos: WorldPoint3D =
-                self.position_to_point_3d(assets, purse_sector, layer, goal_2d.x, goal_2d.y);
+                self.position_to_point_3d(tcx.assets, purse_sector, layer, goal_2d.x, goal_2d.y);
 
             let target_sector = purse_sector;
             let coin = {
                 let obstacle_check = bow_shot::TrajectoryObstacleCheck {
                     fast_find_grid: &self.world.fast_grid,
-                    sight_obstacles: self.sight_obstacles(assets),
-                    water_zones: Some(&assets.environment.water_zones),
+                    sight_obstacles: self.sight_obstacles(tcx.assets),
+                    water_zones: Some(&tcx.assets.environment.water_zones),
                 };
                 bow_shot::spawn_coin(
                     Some(purse_id),
@@ -959,8 +928,7 @@ impl EngineInner {
                 )
             };
             let coin_id = self.publish_primed_coin(
-                sim,
-                assets,
+                tcx,
                 coin,
                 corrected_2d,
                 purse_sector,
@@ -1219,7 +1187,9 @@ mod tests {
     }
 
     fn tick_purses(engine: &mut EngineInner, assets: &crate::engine::LevelAssets) {
-        engine.with_simulation_context(|engine, sim| engine.tick_purses_and_coins(sim, assets));
+        engine.with_simulation_context(|engine, sim| {
+            engine.tick_purses_and_coins(TickCtx::new(sim, assets))
+        });
     }
 
     #[test]
@@ -1349,7 +1319,7 @@ mod tests {
             .sprite
             .force_animation(Animation::ObjectFlying, 0);
         crate::sim_rng::with_seed(0xB057, |sim| {
-            engine.tick_purse_or_coin(sim, &assets, purse_id)
+            engine.tick_purse_or_coin(TickCtx::new(sim, &assets), purse_id)
         });
         let Some(Entity::Projectile(purse)) = engine.get_entity(purse_id) else {
             panic!("burst purse disappeared after landing tick")
@@ -1358,7 +1328,7 @@ mod tests {
         assert_eq!(purse.element.sprite.last_action, Animation::ObjectFlying);
 
         crate::sim_rng::with_seed(0xB057, |sim| {
-            engine.tick_purse_or_coin(sim, &assets, purse_id)
+            engine.tick_purse_or_coin(TickCtx::new(sim, &assets), purse_id)
         });
         let Some(Entity::Projectile(purse)) = engine.get_entity(purse_id) else {
             panic!("inactive purse disappeared on grounded update")
@@ -1369,7 +1339,7 @@ mod tests {
         assert_eq!(purse.element.sprite.current_frame, 1);
 
         crate::sim_rng::with_seed(0xB057, |sim| {
-            engine.tick_purse_or_coin(sim, &assets, purse_id)
+            engine.tick_purse_or_coin(TickCtx::new(sim, &assets), purse_id)
         });
         let Some(Entity::Projectile(purse)) = engine.get_entity(purse_id) else {
             panic!("already-bursting purse disappeared")
@@ -1399,7 +1369,7 @@ mod tests {
 
             let assets = purse_test_assets();
             let result = engine.with_simulation_context(|engine, sim| {
-                engine.tick_purse_or_coin(sim, &assets, purse_id)
+                engine.tick_purse_or_coin(TickCtx::new(sim, &assets), purse_id)
             });
             assert!(!result, "flying purse WATER/HOLE base result must be false");
             let Some(Entity::Projectile(purse)) = engine.get_entity(purse_id) else {
@@ -1441,7 +1411,7 @@ mod tests {
             let (result, impact_order) = WATER_IMPACT_ORDER.with(|order| {
                 order.capture(|| {
                     registered.with_simulation_context(|engine, sim| {
-                        engine.tick_purse_or_coin(sim, &assets, coin_id)
+                        engine.tick_purse_or_coin(TickCtx::new(sim, &assets), coin_id)
                     })
                 })
             });
@@ -1485,8 +1455,7 @@ mod tests {
                 order.capture(|| {
                     unpublished.with_simulation_context(|engine, sim| {
                         engine.publish_primed_coin(
-                            sim,
-                            &assets,
+                            TickCtx::new(sim, &assets),
                             landing_coin(material, dive, disappear),
                             MapPoint::new(100.0, 200.0),
                             None,
@@ -1528,7 +1497,7 @@ mod tests {
         coin.projectile.purse.sector_goal = None;
         let coin_id = engine.add_test_entity(dry);
         engine.with_simulation_context(|engine, sim| {
-            engine.tick_purse_or_coin(sim, &assets, coin_id)
+            engine.tick_purse_or_coin(TickCtx::new(sim, &assets), coin_id)
         });
         let Some(Entity::Projectile(coin)) = engine.get_entity(coin_id) else {
             panic!("ordinary landed coin disappeared")
@@ -1557,9 +1526,11 @@ mod tests {
         let assets = purse_test_assets();
 
         crate::sim_rng::with_seed(0xC01A, |sim| {
-            parent_only.tick_purse_or_coin(sim, &assets, purse_id)
+            parent_only.tick_purse_or_coin(TickCtx::new(sim, &assets), purse_id)
         });
-        crate::sim_rng::with_seed(0xC01A, |sim| live_pass.tick_purses_and_coins(sim, &assets));
+        crate::sim_rng::with_seed(0xC01A, |sim| {
+            live_pass.tick_purses_and_coins(TickCtx::new(sim, &assets))
+        });
 
         let child_ids = match parent_only.get_entity(purse_id) {
             Some(Entity::Projectile(purse)) => purse.projectile.purse.child_coins.clone(),

@@ -116,6 +116,13 @@ impl RewindBuffer {
         self.pending_recent = Some(Snapshot::new(frame, engine));
     }
 
+    /// Journal a seek tick without copying the network rollback cache.
+    /// Periodic checkpoints and commands still support ordinary rewind.
+    pub(crate) fn begin_seek_frame(&mut self, frame: u32, engine: &Engine) {
+        self.history.begin_frame(frame, engine);
+        self.pending_recent = None;
+    }
+
     /// Anchor a freshly reset timeline at a whole-state adoption boundary.
     /// Snapshot joins and save/load can land between the sparse tier's normal
     /// periodic frames, but their very next command must still be journaled.
@@ -328,9 +335,7 @@ mod tests {
 
     #[test]
     fn checkpoints_keep_ten_second_cadence_and_the_mission_start() {
-        let mut assets = LevelAssets::default();
-        let engine = Engine::new_for_test(640.0, 480.0, Default::default(), &mut assets)
-            .expect("fixture engine");
+        let (engine, assets) = robin_engine::test_support::fresh_engine_sized(640.0, 480.0);
         let mut buffer = RewindBuffer::new();
         assert_eq!(SNAPSHOT_INTERVAL, 250);
         for frame in 0..=1000 {
@@ -361,10 +366,36 @@ mod tests {
     }
 
     #[test]
+    fn seek_journal_reconstructs_intermediate_frames_without_recent_copies() {
+        let (mut engine, assets) = robin_engine::test_support::fresh_engine_sized(640.0, 480.0);
+        let mut buffer = RewindBuffer::new();
+        let mut hashes = Vec::new();
+        for frame in 0..=SNAPSHOT_INTERVAL + 3 {
+            hashes.push(robin_engine::replay::state_hash(&engine));
+            buffer.begin_seek_frame(frame, &engine);
+            let input = robin_engine::engine::SimulationFrameInput::default();
+            engine.advance_frame(&assets, input.clone()).unwrap();
+            buffer.end_frame_input(input);
+        }
+        assert!(
+            buffer
+                .restore_recent(&assets, 249, RestorePolicy::Exact)
+                .is_none()
+        );
+        for frame in [253, 251, 249, 1, 0] {
+            let restored = buffer
+                .rewind_to(&assets, frame)
+                .expect("sparse seek history remains rewindable");
+            assert_eq!(
+                robin_engine::replay::state_hash(&restored),
+                hashes[frame as usize]
+            );
+        }
+    }
+
+    #[test]
     fn session_pruning_keeps_the_target_and_handles_the_maximum_frame() {
-        let mut assets = LevelAssets::default();
-        let engine = Engine::new_for_test(640.0, 480.0, Default::default(), &mut assets)
-            .expect("fixture engine");
+        let (engine, assets) = robin_engine::test_support::fresh_engine_sized(640.0, 480.0);
         let frames = [0, 4, u32::MAX];
         for target in frames {
             let mut buffer = RewindBuffer::new();
@@ -399,14 +430,7 @@ mod tests {
 
     #[test]
     fn adopted_state_between_sparse_boundaries_journals_immediately() {
-        let mut assets = LevelAssets::default();
-        let engine = Engine::new_for_test(
-            640.0,
-            480.0,
-            robin_engine::campaign::Campaign::default(),
-            &mut assets,
-        )
-        .expect("fixture engine");
+        let (engine, assets) = robin_engine::test_support::fresh_engine_sized(640.0, 480.0);
         let frame = SNAPSHOT_INTERVAL + 7;
         let mut buffer = RewindBuffer::new();
 
@@ -530,14 +554,7 @@ mod tests {
         use robin_engine::player_command::{PlayerCommand, PlayerId, PlayerInput};
 
         let mut buf = RewindBuffer::new();
-        let mut assets = LevelAssets::default();
-        let engine = Engine::new_for_test(
-            640.0,
-            480.0,
-            robin_engine::campaign::Campaign::default(),
-            &mut assets,
-        )
-        .expect("fixture engine");
+        let (engine, _assets) = robin_engine::test_support::fresh_engine_sized(640.0, 480.0);
         for frame in 0..3 {
             buf.begin_frame(frame, &engine);
             buf.end_frame_input(robin_engine::engine::SimulationFrameInput::default());
@@ -561,14 +578,7 @@ mod tests {
         use robin_engine::sim_timeline::{RestoreError, RestorePolicy};
 
         let mut buf = RewindBuffer::new();
-        let mut assets = LevelAssets::default();
-        let engine = Engine::new_for_test(
-            640.0,
-            480.0,
-            robin_engine::campaign::Campaign::default(),
-            &mut assets,
-        )
-        .expect("fixture engine");
+        let (engine, assets) = robin_engine::test_support::fresh_engine_sized(640.0, 480.0);
         for frame in 0..=SNAPSHOT_INTERVAL {
             buf.begin_frame(frame, &engine);
             buf.end_frame_input(robin_engine::engine::SimulationFrameInput::default());

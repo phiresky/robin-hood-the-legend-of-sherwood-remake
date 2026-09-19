@@ -1,4 +1,6 @@
 use super::*;
+use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 #[test]
 fn removal_cleans_all_seats_and_owned_queues_without_reordering_survivors() {
@@ -33,14 +35,11 @@ fn removal_cleans_all_seats_and_owned_queues_without_reordering_survivors() {
     stale_object.info = StimulusInfo::Object(AiEntityHandle::new(removed.index()));
     let final_stimulus = Stimulus::new(StimulusType::EventReachPoint);
     let queued = vec![historical, stale, stale_object, final_stimulus];
-    let ai = engine
-        .get_entity_mut(observer)
-        .unwrap()
-        .ai_controller_mut()
-        .unwrap();
+    let ai = engine.ai_ctrl_mut(observer);
     ai.stimulus_queue = queued;
 
-    let request = |owner| PendingPathRequest::test_request(owner, SequenceId(1), 0);
+    let request =
+        |owner| PendingPathRequest::test_request(owner, SequenceElementRef::new(SequenceId(1), 0));
     let mut targeting_removed = request(first);
     targeting_removed.antagonist = Some(removed);
     let requests = vec![
@@ -60,13 +59,7 @@ fn removal_cleans_all_seats_and_owned_queues_without_reordering_survivors() {
     engine.remove_entity(removed); // idempotent, including queue ordering
     assert!(engine.get_entity(removed).is_none());
     assert_eq!(
-        u32::from(
-            engine
-                .get_entity(first)
-                .unwrap()
-                .element_data()
-                .index_in_elements_list
-        ),
+        u32::from(engine.elem(first).index_in_elements_list),
         first.index()
     );
     for seat in &engine.players.seats {
@@ -79,11 +72,7 @@ fn removal_cleans_all_seats_and_owned_queues_without_reordering_survivors() {
     assert_eq!(engine.players.seats[1].follow_element, Some(last));
     assert!(engine.players.seats[1].locker_active);
     assert_eq!(engine.players.selection_before_user_lock, [last, first]);
-    let ai = engine
-        .get_entity(observer)
-        .unwrap()
-        .ai_controller()
-        .unwrap();
+    let ai = engine.ai_ctrl(observer);
     for stimuli in [&ai.stimulus_queue] {
         assert_eq!(stimuli.len(), 2);
         assert_eq!(
@@ -314,61 +303,41 @@ fn far_opponent_removal_retains_owner_strength_and_runs_reciprocal_delete() {
     let assets = engine.test_runtime_assets();
 
     {
-        let human = engine
-            .get_entity_mut(owner)
-            .and_then(Entity::human_data_mut)
-            .unwrap();
+        let human = engine.human_mut(owner);
         human.opponents = vec![near, far].into();
         human.relative_fighting_ability = 17;
     }
-    engine
-        .get_entity_mut(near)
-        .and_then(Entity::human_data_mut)
-        .unwrap()
-        .opponents = vec![owner].into();
+    engine.human_mut(near).opponents = vec![owner].into();
     {
-        let human = engine
-            .get_entity_mut(far)
-            .and_then(Entity::human_data_mut)
-            .unwrap();
+        let human = engine.human_mut(far);
         human.opponents = vec![owner, far_partner].into();
         human.smalltalk_initiative = false;
         human.received_smalltalk_initiative = false;
     }
     {
-        let human = engine
-            .get_entity_mut(far_partner)
-            .and_then(Entity::human_data_mut)
-            .unwrap();
+        let human = engine.human_mut(far_partner);
         human.opponents = vec![far].into();
         human.smalltalk_initiative = true;
     }
 
-    engine.quit_swordfight_with_far_opponents(&sim, &assets, owner);
+    engine.quit_swordfight_with_far_opponents(TickCtx::new(&sim, &assets), owner);
 
-    let owner_human = engine.get_entity(owner).unwrap().human_data().unwrap();
+    let owner_human = engine.human(owner);
     assert_eq!(owner_human.opponents, vec![near]);
     assert_eq!(owner_human.relative_fighting_ability, 17);
 
-    let far_human = engine.get_entity(far).unwrap().human_data().unwrap();
+    let far_human = engine.human(far);
     assert_eq!(far_human.opponents, vec![far_partner]);
     assert!(far_human.smalltalk_initiative);
     assert!(far_human.received_smalltalk_initiative);
-    assert!(
-        !engine
-            .get_entity(far_partner)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .smalltalk_initiative
-    );
+    assert!(!engine.human(far_partner).smalltalk_initiative);
 }
 
 #[test]
 fn terminal_callbacks_finish_in_call_order_across_owners() {
+    let sim = crate::sim_rng::test_context();
     use crate::element::Command;
     use crate::sequence::SequenceElement;
-    let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let owners: Vec<_> = (0..3)
         .map(|_| engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists)))
@@ -384,8 +353,8 @@ fn terminal_callbacks_finish_in_call_order_across_owners() {
                 .orders
                 .sequence_manager
                 .start_sequence_level(sequence);
-            engine.element_in_progress(&sim, &assets, &mut Vec::new(), sequence, 0);
-            engine.element_terminated(&sim, &assets, &mut Vec::new(), sequence, 0);
+            engine.t_element_in_progress_with(&sim, &assets, sequence, 0);
+            engine.t_element_terminated_with(&sim, &assets, sequence, 0);
             assert_eq!(
                 engine
                     .orders
@@ -418,9 +387,7 @@ fn resumed_return_to_duty_uses_live_position_and_translates_its_goto() {
     let assets = engine.test_runtime_assets();
 
     let sector = crate::position_interface::SectorHandle::new(1);
-    let entity = engine
-        .get_entity_mut(owner)
-        .expect("return-to-duty owner exists");
+    let entity = engine.ent_mut(owner);
     entity.element_data_mut().active = true;
     entity
         .element_data_mut()
@@ -438,12 +405,9 @@ fn resumed_return_to_duty_uses_live_position_and_translates_its_goto() {
         sector,
         level: 0,
     };
-    engine.execute_ai_return_to_duty(&sim, &assets, owner, DutyFlags::empty());
+    engine.execute_ai_return_to_duty(TickCtx::new(&sim, &assets), owner, DutyFlags::empty());
 
-    let ai = engine
-        .get_entity(owner)
-        .and_then(Entity::enemy_ai)
-        .expect("return-to-duty owner retains Enemy AI");
+    let ai = engine.enemy(owner);
     assert_eq!(ai.base.current_state, AiState::Default);
     assert_eq!(ai.base.current_substate, Substate::DefaultGotoPost);
     assert!(
@@ -466,7 +430,7 @@ fn get_report_from_soldier_closes_body_deletions_at_owner_boundary() {
     let (mut engine, officer_id, soldier_id, mut assets) = setup_review2_officer_and_soldier();
     let mut add_body = || {
         let id = engine.add_test_entity(make_test_pc(Posture::Lying));
-        let Entity::Pc(body) = engine.get_entity_mut(id).expect("report body exists") else {
+        let Entity::Pc(body) = engine.ent_mut(id) else {
             panic!("report body changed kind")
         };
         body.element.active = true;
@@ -481,10 +445,7 @@ fn get_report_from_soldier_closes_body_deletions_at_owner_boundary() {
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     {
-        let officer = engine
-            .get_entity_mut(officer_id)
-            .and_then(Entity::enemy_ai_mut)
-            .expect("report officer has EnemyAi");
+        let officer = engine.enemy_mut(officer_id);
         {
             let base = &mut officer.base;
             base.set_ai_state(AiState::Seeking);
@@ -500,10 +461,7 @@ fn get_report_from_soldier_closes_body_deletions_at_owner_boundary() {
             vec![unknown_a.index(), already_known.index(), unknown_b.index()];
     }
     {
-        let Entity::Soldier(soldier) = engine
-            .get_entity_mut(soldier_id)
-            .expect("reporting soldier exists")
-        else {
+        let Entity::Soldier(soldier) = engine.ent_mut(soldier_id) else {
             panic!("reporting entity changed kind")
         };
         let ai = soldier
@@ -532,23 +490,18 @@ fn get_report_from_soldier_closes_body_deletions_at_owner_boundary() {
     }
 
     let report_before = engine
-        .get_entity(soldier_id)
-        .and_then(Entity::enemy_ai)
-        .expect("reporting soldier retains EnemyAi")
+        .enemy(soldier_id)
         .base
         .my_reconnaissance_report
         .clone();
 
     engine.dispatch_think_with_drain(
-        &sim,
+        TickCtx::new(&sim, &assets),
         officer_id,
         &Stimulus::with_human(StimulusType::CallReport, soldier_id.index()),
-        &assets,
     );
 
-    let recipient = engine
-        .get_entity(soldier_id)
-        .expect("reporting soldier remains present");
+    let recipient = engine.ent(soldier_id);
     let body_handles: Vec<_> = recipient
         .npc_data()
         .expect("recipient remains NPC")

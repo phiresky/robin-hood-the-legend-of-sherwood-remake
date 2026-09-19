@@ -1,19 +1,15 @@
 use super::*;
 use crate::coordinates::{MapPoint, WorldPoint3D};
 use crate::element::Camp;
-use crate::engine::test_support::{actors::make_test_ai_soldier, square_sector};
+use crate::engine::test_support::actors::make_test_ai_soldier;
 
 fn fixture(points: &[(f32, f32)]) -> (EngineInner, LevelAssets, Vec<EntityId>) {
     let mut engine = EngineInner::new();
-    engine.world.fast_grid_mut().size_map(128, 128);
-    engine.world.fast_grid_mut().allocate_layers(1);
-    let index = engine.world.fast_grid_mut().add_sector(
-        square_sector(1, 0, MapPoint::new(0.0, 0.0), MapPoint::new(4000.0, 4000.0)),
-        0,
+    let (sector, _) = crate::engine::test_support::extra_engine_combat::square_sector_map(
+        &mut engine,
+        (128, 128),
+        (4000.0, 4000.0),
     );
-    let sector = crate::ai::SectorHandle::new(1)
-        .unwrap()
-        .with_arena_index(crate::fast_find_grid::SectorIndex::new(index).unwrap());
     let ids: Vec<_> = points
         .iter()
         .enumerate()
@@ -35,9 +31,7 @@ fn fixture(points: &[(f32, f32)]) -> (EngineInner, LevelAssets, Vec<EntityId>) {
     crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
     for &id in &ids {
         engine
-            .get_entity_mut(id)
-            .unwrap()
-            .element_data_mut()
+            .elem_mut(id)
             .set_sector_topology(Some(sector), sector.arena_index());
     }
     std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0].distance
@@ -116,13 +110,7 @@ fn pride_range_uses_close_body_during_door_pass() {
         .sequence_manager
         .start_sequence_level(sequence);
     engine.select_sequence_element(target, Some((sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        sequence,
-        0,
-    );
+    engine.t_element_in_progress(&LevelAssets::new(), sequence, 0);
     assert_eq!(
         engine.live_ai_position(target).map_point(),
         MapPoint::new(2301.0, 381.0)
@@ -214,8 +202,7 @@ fn rejected_cover_keeps_computed_goal_and_clears_both_protection_links() {
     engine.ai.standard_view_polygon_radius = 0;
     assert_eq!(
         engine.execute_ai_battle_cover(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             bearer.index()
         ),
@@ -255,13 +242,14 @@ fn lost_execution_target_falls_back_to_the_source_decision() {
     let (mut engine, assets, ids) = fixture(&[(100.0, 100.0)]);
     let sim = crate::sim_rng::test_context();
     assert_eq!(
-        engine.execute_ai_battle_too_proud(&sim, &assets, ids[0], Substate::AttackingReactiontime),
+        engine
+            .ai_ctx(&sim, &assets, ids[0])
+            .execute_ai_battle_too_proud(Substate::AttackingReactiontime),
         ControlFlow::Continue(Decision::Reserve)
     );
     assert_eq!(
         engine.execute_ai_battle_archer_step_back(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             ids[0],
             Substate::AttackingReactiontime
         ),

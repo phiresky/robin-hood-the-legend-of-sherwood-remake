@@ -1954,14 +1954,7 @@ mod tests {
             commands.commands[0].command,
             PlayerCommand::QuitMissionRequested
         ));
-        let mut assets = robin_engine::engine::LevelAssets::new();
-        let mut engine = robin_engine::engine::Engine::new_for_test(
-            640.0,
-            480.0,
-            robin_engine::campaign::Campaign::default(),
-            &mut assets,
-        )
-        .expect("engine");
+        let (mut engine, assets) = robin_engine::test_support::fresh_engine_sized(640.0, 480.0);
         engine.test_set_mission_flags(false, false, true);
         engine
             .advance_frame(

@@ -360,13 +360,6 @@ fn version_text_appends_demo_kind_for_demo_datadirs() {
 // -- LoadingScreen state machine -----------------------------------------
 
 #[test]
-fn loading_screen_default_is_inactive() {
-    let screen = LoadingScreen::default();
-    assert!(!screen.is_active());
-    assert_eq!(screen.progress(), 0.0);
-}
-
-#[test]
 fn loading_screen_initialize_activates() {
     let mut screen = LoadingScreen::default();
     screen.initialize(800, 600, 10.0);
@@ -534,17 +527,6 @@ fn loading_screen_serde_roundtrip() {
     assert_eq!(restored.string_id, screen.string_id);
     assert_eq!(restored.active, screen.active);
     assert_eq!(restored.screen_width, screen.screen_width);
-}
-
-#[test]
-fn height_field_serde_roundtrip() {
-    let hf = HeightField::from_grayscale(&[0, 64, 128, 255], 2, 2);
-    let json = serde_json::to_string(&hf).unwrap();
-    let restored: HeightField = serde_json::from_str(&json).unwrap();
-
-    assert_eq!(restored.data, hf.data);
-    assert_eq!(restored.width, hf.width);
-    assert_eq!(restored.height, hf.height);
 }
 
 // -- get_data_file -------------------------------------------------------

@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 
 #[test]
 fn owner_walk_observes_live_geometry_in_original_creation_order() {
@@ -14,76 +15,33 @@ fn owner_walk_observes_live_geometry_in_original_creation_order() {
     );
     let assets = engine.test_runtime_assets();
     for (id, x) in [(earlier, 10.0), (owner, 30.0), (later, 50.0)] {
-        let entity = engine.get_entity_mut(id).unwrap();
+        let entity = engine.ent_mut(id);
         entity.element_data_mut().active = true;
         entity.npc_data_mut().unwrap().life_points = 100;
-        engine
-            .get_entity_mut(id)
-            .unwrap()
-            .element_data_mut()
-            .set_position_map(MapPoint::new(x, 0.0));
+        engine.place_map(id, MapPoint::new(x, 0.0));
     }
-    crate::ai_vision::focus_entity(
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .npc_data_mut()
-            .unwrap(),
-        later,
-    );
+    crate::ai_vision::focus_entity(engine.npc_mut(owner), later);
     let mut visits = Vec::new();
     let mut observed = None;
     engine.tick_actor_owner_envelopes_with_test_owner_hook(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         |engine, id| {
             visits.push(id);
             if id == earlier {
-                engine
-                    .get_entity_mut(earlier)
-                    .unwrap()
-                    .element_data_mut()
-                    .set_position_map(MapPoint::new(110.0, 0.0));
+                engine.place_map(earlier, MapPoint::new(110.0, 0.0));
                 // A callback may move a later actor before that actor's turn.
-                engine
-                    .get_entity_mut(later)
-                    .unwrap()
-                    .element_data_mut()
-                    .set_position_map(MapPoint::new(70.0, 0.0));
+                engine.place_map(later, MapPoint::new(70.0, 0.0));
             } else if id == owner {
-                observed = Some((
-                    engine
-                        .get_entity(earlier)
-                        .unwrap()
-                        .element_data()
-                        .position_map()
-                        .x,
-                    engine
-                        .get_entity(later)
-                        .unwrap()
-                        .element_data()
-                        .position_map()
-                        .x,
-                ));
+                observed = Some((engine.map_pos_of(earlier).x, engine.map_pos_of(later).x));
             } else if id == later {
-                engine
-                    .get_entity_mut(later)
-                    .unwrap()
-                    .element_data_mut()
-                    .set_position_map(MapPoint::new(150.0, 0.0));
+                engine.place_map(later, MapPoint::new(150.0, 0.0));
             }
         },
     );
     assert_eq!(visits, vec![earlier, owner, later]);
     assert_eq!(observed, Some((110.0, 70.0)));
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .npc_data()
-            .unwrap()
-            .stare_point
-            .x,
+        engine.npc(owner).stare_point.x,
         70.0,
         "view refresh must retain an earlier callback's mutation of a later actor"
     );
@@ -122,13 +80,12 @@ fn attentive_barrier_constructs_following_move_at_same_owner_boundary() {
     let owner = engine.add_test_entity(soldier_entity);
     let assets = engine.test_runtime_assets();
 
-    engine.set_soldier_attentive_mode(&sim, &assets, owner, false, false);
+    engine.set_soldier_attentive_mode(TickCtx::new(&sim, &assets), owner, false, false);
     let mut destination = engine.live_ai_position(owner);
     destination.x = 100.0;
     destination.y = 90.0;
     engine.duty_go_to(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         owner,
         destination,
         crate::ai::GotoFlags::empty(),
@@ -260,22 +217,10 @@ fn entity_building_sector_uses_exact_identity_before_public_number_fallback() {
     let mut engine = EngineInner::new();
     let public = crate::sector::SectorNumber::new(88);
     let make_sector = |sector_type| crate::fast_find_grid::GridSector {
-        points: Vec::new(),
         bounding_box: MapBBox::new(),
         sector_type,
-        layer: 0,
         sector_number: public,
-        door_index: None,
-        lift_type: None,
-        lift_direction: 0,
-        force_crouched: false,
-        building_index: None,
-        low_exit_point: None,
-        high_exit_point: None,
-        lowest_door_index: None,
-        jump_line_indices: Vec::new(),
-        gate_indices: Vec::new(),
-        underlying_sector: None,
+        ..Default::default()
     };
 
     let mut level = crate::fast_find_grid::LevelGrid::default();
@@ -357,7 +302,7 @@ fn live_positions_resolve_both_friend_and_target_through_selected_doors() {
     let friend = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let target = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
 
-    let Entity::Soldier(friend_soldier) = engine.get_entity_mut(friend).unwrap() else {
+    let Entity::Soldier(friend_soldier) = engine.ent_mut(friend) else {
         panic!("friend changed kind")
     };
     friend_soldier
@@ -380,7 +325,7 @@ fn live_positions_resolve_both_friend_and_target_through_selected_doors() {
     friend_ai.current_substate = crate::ai::Substate::AttackingRunningToEnemy;
     friend_ai.primary_target = Some(crate::ai::AiEntityHandle::new(target.index()));
 
-    let Entity::Pc(target_pc) = engine.get_entity_mut(target).unwrap() else {
+    let Entity::Pc(target_pc) = engine.ent_mut(target) else {
         panic!("target changed kind")
     };
     target_pc
@@ -419,13 +364,7 @@ fn live_positions_resolve_both_friend_and_target_through_selected_doors() {
             .sequence_manager
             .start_sequence_level(sequence_id);
         engine.select_sequence_element(passing, Some((sequence_id, 0)));
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            sequence_id,
-            0,
-        );
+        engine.t_element_in_progress(&assets, sequence_id, 0);
     }
 
     engine.script_domains.interactables.doors = vec![
@@ -492,23 +431,13 @@ fn live_ai_position_preserves_exact_duplicate_target_sector() {
         sector_number: SectorNumber::new(88),
         layer: 2,
         sector_type: SectorType::MOTION,
-        door_index: None,
-        lift_type: None,
-        lift_direction: 0,
-        force_crouched: false,
-        building_index: None,
-        low_exit_point: None,
-        high_exit_point: None,
-        lowest_door_index: None,
-        jump_line_indices: Vec::new(),
-        gate_indices: Vec::new(),
-        underlying_sector: None,
+        ..Default::default()
     };
     let grid = std::sync::Arc::make_mut(&mut engine.world.fast_grid);
     let level = std::sync::Arc::make_mut(&mut grid.level);
     level.sectors = vec![square(0.0, 100.0), square(600.0, 800.0)];
 
-    let Entity::Soldier(friend_soldier) = engine.get_entity_mut(friend).unwrap() else {
+    let Entity::Soldier(friend_soldier) = engine.ent_mut(friend) else {
         panic!("friend changed kind")
     };
     friend_soldier
@@ -524,7 +453,7 @@ fn live_ai_position_preserves_exact_duplicate_target_sector() {
         .unwrap()
         .primary_target = Some(crate::ai::AiEntityHandle::new(target.index()));
 
-    let target_element = engine.get_entity_mut(target).unwrap().element_data_mut();
+    let target_element = engine.elem_mut(target);
     target_element.set_position_map(MapPoint::new(684.1841, 745.0576));
     target_element.set_layer(2);
     target_element.set_sector(crate::position_interface::SectorHandle::new(88));
@@ -582,13 +511,7 @@ fn ai_position_ignores_misassociated_pass_door_for_non_actor() {
         .orders
         .sequence_manager
         .start_sequence_level(sequence_id);
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        sequence_id,
-        0,
-    );
+    engine.t_element_in_progress(&assets, sequence_id, 0);
 
     let doors = [Door {
         point_in: MapPoint::new(101.0, 102.0),
@@ -628,22 +551,10 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
         let level = engine.world.fast_grid_mut().level_mut();
         level.sectors = (0..=2)
             .map(|number| GridSector {
-                points: Vec::new(),
                 bounding_box: crate::coordinates::MapBBox::new(),
                 sector_type: SectorType::MOTION | SectorType::AREA,
-                layer: 0,
                 sector_number: SectorNumber::new(number),
-                door_index: None,
-                lift_type: None,
-                lift_direction: 0,
-                force_crouched: false,
-                building_index: None,
-                low_exit_point: None,
-                high_exit_point: None,
-                lowest_door_index: None,
-                jump_line_indices: Vec::new(),
-                gate_indices: Vec::new(),
-                underlying_sector: None,
+                ..Default::default()
             })
             .collect();
         level.sector_number_map = (0..=2)
@@ -667,7 +578,7 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
         (owner_id, MapPoint::new(100.0, 0.0)),
         (target_id, MapPoint::new(100.0, 25.0)),
     ] {
-        let entity = engine.get_entity_mut(id).expect("roof-wait actor exists");
+        let entity = engine.ent_mut(id);
         entity.element_data_mut().active = true;
         entity.element_data_mut().set_position_map(position);
         // Schema-12 actors can retain only the public sector number even
@@ -677,10 +588,7 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
         entity.element_data_mut().set_sector(me_sector);
         assert_eq!(entity.element_data().sector().unwrap().arena_index(), None);
     }
-    let owner = engine
-        .get_entity_mut(owner_id)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("roof-wait owner has Enemy AI");
+    let owner = engine.enemy_mut(owner_id);
     owner.base.me = owner_id.index();
     owner.base.primary_target = Some(crate::ai::AiEntityHandle::new(target_id.index()));
 
@@ -718,13 +626,7 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
         .sequence_manager
         .start_sequence_level(sequence_id);
     engine.select_sequence_element(target_id, Some((sequence_id, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        sequence_id,
-        0,
-    );
+    engine.t_element_in_progress(&assets, sequence_id, 0);
 
     let wait = crate::engine::ai::precompute_avenger_on_roof_wait_position(
         &engine.world.entities,
@@ -741,22 +643,14 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
     assert_eq!(wait.y, 100.0);
     assert_eq!(wait.sector, me_sector);
 
-    engine.element_terminated(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        sequence_id,
-        0,
-    );
+    engine.t_element_terminated(&assets, sequence_id, 0);
 
     // Result616 reaches the same lookup without a selected PassDoor: both
     // ordinary actor positions came from the legacy save as number-only
     // handles while every loaded gate endpoint was exact. Recover both
     // pointers before starting the identity-aware path walk.
     {
-        let target = engine
-            .get_entity_mut(target_id)
-            .expect("roof-wait target remains live");
+        let target = engine.ent_mut(target_id);
         target
             .element_data_mut()
             .set_position_map(MapPoint::new(100.0, 200.0));
@@ -781,11 +675,7 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
     // Without the selected PassDoor, both ordinary live positions are in the
     // same sector. The roof special case must remain absent so the caller can
     // retain couldn't-reachpoint and take its normal emergency fallback.
-    engine
-        .get_entity_mut(target_id)
-        .expect("roof-wait target remains live")
-        .element_data_mut()
-        .set_sector(me_sector);
+    engine.elem_mut(target_id).set_sector(me_sector);
     assert!(
         crate::engine::ai::precompute_avenger_on_roof_wait_position(
             &engine.world.entities,
@@ -828,8 +718,7 @@ fn seek_area_friend_scan_uses_selected_pass_door_without_runtime_latch() {
     let friend_raw_position = MapPoint::new(727.0, 1168.0);
 
     for (id, position) in [(owner_id, owner_position), (friend_id, friend_raw_position)] {
-        let Entity::Soldier(soldier) = engine.get_entity_mut(id).expect("test soldier exists")
-        else {
+        let Entity::Soldier(soldier) = engine.ent_mut(id) else {
             panic!("test soldier changed kind")
         };
         soldier.element.active = true;
@@ -843,10 +732,7 @@ fn seek_area_friend_scan_uses_selected_pass_door_without_runtime_latch() {
             .base
             .me = id.index();
     }
-    let friend = engine
-        .get_entity_mut(friend_id)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("friend has enemy AI");
+    let friend = engine.enemy_mut(friend_id);
     friend.base.view_alert_status = AlertLevel::Yellow;
     friend.base.current_substate = Substate::SeekingSeekpoint;
     friend.seek_flags.insert(SeekFlags::LOOK_FOR_HELP_AFTER);
@@ -887,13 +773,7 @@ fn seek_area_friend_scan_uses_selected_pass_door_without_runtime_latch() {
         .sequence_manager
         .start_sequence_level(sequence_id);
     engine.select_sequence_element(friend_id, Some((sequence_id, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        sequence_id,
-        0,
-    );
+    engine.t_element_in_progress(&assets, sequence_id, 0);
 
     let assets = engine.test_runtime_assets();
     let live_owner = engine.live_ai_position(owner_id).map_point();
@@ -903,13 +783,7 @@ fn seek_area_friend_scan_uses_selected_pass_door_without_runtime_latch() {
     let distance = live_friend - live_owner;
     assert!(distance.x * distance.x + distance.y * distance.y >= 500.0 * 500.0);
 
-    engine.element_terminated(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        sequence_id,
-        0,
-    );
+    engine.t_element_terminated(&assets, sequence_id, 0);
     let live_friend = engine.live_ai_position(friend_id).map_point();
     assert_eq!(live_friend, friend_raw_position);
     let distance = live_friend - live_owner;
@@ -925,7 +799,7 @@ fn optical_ai_position_follows_carrier_but_detects_target_stored_world_point() {
     let target = engine.add_test_entity(make_test_pc(crate::element::Posture::OnShoulders));
 
     let carrier_world = WorldPoint3D::new(321.25, 654.5, 11.0);
-    let Entity::Pc(carrier_pc) = engine.get_entity_mut(carrier).expect("carrier PC exists") else {
+    let Entity::Pc(carrier_pc) = engine.ent_mut(carrier) else {
         panic!("carrier changed kind")
     };
     carrier_pc.element.active = true;
@@ -936,7 +810,7 @@ fn optical_ai_position_follows_carrier_but_detects_target_stored_world_point() {
         .set_position_map(MapPoint::new(321.25, 640.0));
 
     let exact_target_world = WorldPoint3D::new(12.345_679, 98.765_434, 7.654_321);
-    let Entity::Pc(target_pc) = engine.get_entity_mut(target).expect("carried PC exists") else {
+    let Entity::Pc(target_pc) = engine.ent_mut(target) else {
         panic!("carried target changed kind")
     };
     target_pc.element.active = true;
@@ -975,11 +849,7 @@ fn optical_ai_position_follows_carrier_but_detects_target_stored_world_point() {
     // A callback changes the carrier before its next movement synchronizes
     // the body. Effective AI position follows it; optical geometry stays on
     // the carried human's own stored world point.
-    engine
-        .get_entity_mut(carrier)
-        .unwrap()
-        .element_data_mut()
-        .set_position_map(MapPoint::new(999.0, 999.0));
+    engine.place_map(carrier, MapPoint::new(999.0, 999.0));
     let (moved_ai, unmoved_optical) = engine.enemy_optical_geometry_for_test(&assets, target);
     assert_eq!((moved_ai.x, moved_ai.y), (999.0, 999.0));
     assert_eq!(unmoved_optical, expected_optical_point);

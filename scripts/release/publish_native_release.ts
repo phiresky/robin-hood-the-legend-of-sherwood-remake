@@ -1,6 +1,7 @@
 /** Publish a complete, hash-verified draft without replacing existing assets.
  * Runtime dependencies come from github-script; package dependencies are type-only.
  */
+import { verifyStagedPackageVersion } from './package_version.ts';
 import type * as actionsCore from '@actions/core';
 import type * as actionsGithub from '@actions/github';
 import { createHash } from 'node:crypto';
@@ -190,6 +191,7 @@ export async function publish(
   }
   ({ data: release } = await github.rest.repos.getRelease({ ...repo, release_id: releaseId }));
   await verifyRemote(github, repo, release, assets, false);
+  await verifyStagedPackageVersion(github, repo, assets, tag);
   await github.rest.repos.updateRelease({ ...repo, release_id: releaseId, draft: false });
   core.info(`published verified candidate ${tag}`);
 }

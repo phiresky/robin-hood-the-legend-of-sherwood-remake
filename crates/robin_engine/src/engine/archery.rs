@@ -5,6 +5,7 @@ use super::*;
 use crate::bow_shot::{self};
 use crate::coordinates::MapPoint;
 use crate::element::{Command, Entity, EntityId};
+use crate::engine::TickCtx;
 fn arrow_publication_debug_gate() -> &'static super::diagnostics::ParityGate<3> {
     static GATE: std::sync::OnceLock<super::diagnostics::ParityGate<3>> =
         std::sync::OnceLock::new();
@@ -196,8 +197,7 @@ impl EngineInner {
     /// shooter and returns its sequence id.
     pub(crate) fn shoot_bow_at(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         shooter: EntityId,
         target: EntityId,
     ) -> Option<crate::sequence::SequenceId> {
@@ -226,7 +226,7 @@ impl EngineInner {
             );
             return None;
         }
-        let Some((bow_profile_idx, _)) = self.bow_profile_and_ability(assets, shooter) else {
+        let Some((bow_profile_idx, _)) = self.bow_profile_and_ability(tcx.assets, shooter) else {
             tracing::warn!(
                 shooter = ?shooter,
                 target = ?target,
@@ -234,7 +234,7 @@ impl EngineInner {
             );
             return None;
         };
-        let Some(bow_profile) = assets.profile_manager.get_bow(bow_profile_idx) else {
+        let Some(bow_profile) = tcx.assets.profile_manager.get_bow(bow_profile_idx) else {
             tracing::warn!(
                 shooter = ?shooter,
                 target = ?target,
@@ -292,11 +292,7 @@ impl EngineInner {
             }
         }
 
-        Some(self.launch_element(
-            sim,
-            assets,
-            bow_shot::build_shoot_bow_element(shooter, target),
-        ))
+        Some(self.launch_element(tcx, bow_shot::build_shoot_bow_element(shooter, target)))
     }
 
     /// Look up the bow profile index and shooting ability for an entity.
@@ -392,8 +388,7 @@ impl EngineInner {
     /// synchronous there, before both the hit roll and arrow insertion.
     fn warn_shield_target_of_arrow(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         shooter: EntityId,
         target: EntityId,
     ) {
@@ -402,7 +397,8 @@ impl EngineInner {
         // `WaitingShield` animation row.
         let target_is_shield_soldier = match self.get_entity(target) {
             Some(Entity::Soldier(s)) => {
-                let soldier_profile = assets
+                let soldier_profile = tcx
+                    .assets
                     .profile_manager
                     .get_soldier(s.soldier.soldier_profile_index)
                     .unwrap_or_else(|| {
@@ -412,7 +408,8 @@ impl EngineInner {
                             s.soldier.soldier_profile_index
                         )
                     });
-                let weapon = assets
+                let weapon = tcx
+                    .assets
                     .profile_manager
                     .get_hth_weapon(soldier_profile.hth_weapon_id)
                     .unwrap_or_else(|| {
@@ -436,10 +433,9 @@ impl EngineInner {
 
         // This is a live cone + LOS query, not the detection cadence's stale
         // `seen_now` snapshot, matching the original game's immediate detection.
-        if self.npc_is_detecting_human(assets, target, shooter, self.control.frame_counter) {
+        if self.npc_is_detecting_human(tcx.assets, target, shooter, self.control.frame_counter) {
             self.execute_ai_callback(
-                sim,
-                assets,
+                tcx,
                 target,
                 &crate::ai::Stimulus::with_human(
                     crate::ai::StimulusType::EventArrowLaunched,
@@ -451,8 +447,7 @@ impl EngineInner {
     /// Execute one bow order and close its callbacks before returning to the actor loop.
     pub(crate) fn tick_bow_shot_for(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         shooter_id: EntityId,
         expected_order_id: std::num::NonZeroU32,
     ) -> Option<crate::sprite::MotionState> {
@@ -524,7 +519,7 @@ impl EngineInner {
             MotionState::InProgress
         } else {
             shooter.element_data_mut().sprite.perform_action(
-                sim,
+                tcx.sim,
                 Some(expected_order_id),
                 order_type,
                 direction,
@@ -544,13 +539,7 @@ impl EngineInner {
                     OrderType::TransitionEquipBow | OrderType::TransitionEquipBowAnonymous
                 )
             {
-                self.set_pc_action_from_message(
-                    sim,
-                    assets,
-                    0,
-                    shooter_id,
-                    crate::profiles::Action::Bow,
-                );
+                self.set_pc_action_from_message(tcx, 0, shooter_id, crate::profiles::Action::Bow);
             }
         } else if motion == MotionState::Done {
             let target_id = target_id.expect("bow release requires an interaction target");
@@ -560,7 +549,7 @@ impl EngineInner {
                 ActionState::AimingWithBowDown => crate::weapons::ShootMode::Down,
                 state => panic!("bow release requires an aiming action, got {state:?}"),
             };
-            self.release_bow_arrow(sim, assets, shooter_id, target_id, shoot_mode);
+            self.release_bow_arrow(tcx, shooter_id, target_id, shoot_mode);
             let shooter = self.expect_entity_mut(shooter_id, "bow owner after release");
             shooter.actor_data_mut().unwrap().action_state = ActionState::AimingWithBow;
             if order_type == OrderType::ShootingWithBowLeaningOut {
@@ -575,8 +564,7 @@ impl EngineInner {
 
     fn release_bow_arrow(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         shooter_id: EntityId,
         target_id: EntityId,
         shoot_mode: crate::weapons::ShootMode,
@@ -623,7 +611,7 @@ impl EngineInner {
 
         // ── Look up bow profile for damage and hit chance ────
         let Some((bow_profile_idx, shooting_ability)) =
-            self.bow_profile_and_ability(assets, shooter_id)
+            self.bow_profile_and_ability(tcx.assets, shooter_id)
         else {
             tracing::warn!(
                 shooter = ?shooter_id,
@@ -632,7 +620,7 @@ impl EngineInner {
             return None;
         };
 
-        let Some(bow_profile) = assets.profile_manager.get_bow(bow_profile_idx) else {
+        let Some(bow_profile) = tcx.assets.profile_manager.get_bow(bow_profile_idx) else {
             tracing::warn!(
                 shooter = ?shooter_id,
                 bow_profile_idx,
@@ -676,7 +664,7 @@ impl EngineInner {
             && shoot_mode == crate::weapons::ShootMode::Normal
         {
             let (belt_status, belt_mode) =
-                self.can_shoot_with_bow_at_point(assets, shooter_id, target_point, false);
+                self.can_shoot_with_bow_at_point(tcx.assets, shooter_id, target_point, false);
             let belt_failed =
                 belt_status != BowTarget::Valid || belt_mode == crate::weapons::ShootMode::Long;
             if belt_failed
@@ -709,7 +697,7 @@ impl EngineInner {
             target_movement,
         );
 
-        self.warn_shield_target_of_arrow(sim, assets, shooter_id, target_id);
+        self.warn_shield_target_of_arrow(tcx, shooter_id, target_id);
 
         // ── Hit chance roll ──────────────────────────────────
         // The original game only applies the bow's hit chance in the
@@ -732,7 +720,7 @@ impl EngineInner {
         // human-status capacity, not the difficulty-/alcohol-adjusted
         // shooting-ability value used by the hit-chance lookup.
         let bow_skill_capacity = self
-            .bow_skill_capacity(assets, shooter_id)
+            .bow_skill_capacity(tcx.assets, shooter_id)
             .unwrap_or_else(|| {
                 panic!(
                     "bow shot shooter {:?} is missing its authoritative bow skill capacity",
@@ -742,7 +730,7 @@ impl EngineInner {
 
         if target_is_human
             && let Some(bias) =
-                bow_shot::roll_hit_and_compute_bias(sim, hit_chance, bow_skill_capacity)
+                bow_shot::roll_hit_and_compute_bias(tcx.sim, hit_chance, bow_skill_capacity)
         {
             // Miss — deflect the velocity.
             velocity.x += bias.x;
@@ -764,11 +752,11 @@ impl EngineInner {
             target_is_fx_target && shooter_is_pc && self.world.weather.is_forest_level;
 
         // ── Compute ballistic trajectory ─────────────────────
-        let obstacle_list = self.sight_obstacles(assets);
+        let obstacle_list = self.sight_obstacles(tcx.assets);
         let obstacle_check = bow_shot::TrajectoryObstacleCheck {
             fast_find_grid: &self.world.fast_grid,
             sight_obstacles: obstacle_list,
-            water_zones: Some(&assets.environment.water_zones),
+            water_zones: Some(&tcx.assets.environment.water_zones),
         };
         let collision_debug_identity =
             crate::sight_obstacle::projectile_collision_debug_requested().then(|| {
@@ -949,7 +937,7 @@ impl EngineInner {
         }
         if let Some(resolution) = initial_landing_resolution {
             if projectile_landing_debug_matches(self.control.frame_counter, shooter_id, arrow_id) {
-                let obstacle_list = self.sight_obstacles(assets);
+                let obstacle_list = self.sight_obstacles(tcx.assets);
                 let obstacle = terminal_obstacle.map(|handle| {
                     let index = usize::from(handle);
                     let obstacle = obstacle_list.get(index).unwrap_or_else(|| {
@@ -992,7 +980,8 @@ impl EngineInner {
                         .collect::<Vec<_>>();
                     (obstacle.material, sectors)
                 });
-                let ground_material_inputs = assets
+                let ground_material_inputs = tcx
+                    .assets
                     .environment
                     .water_zones
                     .zones
@@ -1008,7 +997,7 @@ impl EngineInner {
                     })
                     .collect::<Vec<_>>();
                 let scoped_material = crate::water_zones::determine_water_hole_scoped(
-                    &assets.environment.water_zones,
+                    &tcx.assets.environment.water_zones,
                     terminal_obstacle_ref,
                     landing,
                 )
@@ -1099,7 +1088,7 @@ impl EngineInner {
         // Hydrate the arrow's sprite from the accessory registry so
         // the flying arrow renders its proper sprite instead of the
         // colored-rect fallback.
-        self.attach_accessory_sprite(assets, arrow_id);
+        self.attach_accessory_sprite(tcx.assets, arrow_id);
         if let Some(((frame_after, shooter_creation_order), projectile_creation_order)) =
             diagnostic_identity.zip(diagnostic_projectile_creation_order)
         {
@@ -1114,7 +1103,7 @@ impl EngineInner {
                     .expect("new arrow missing after accessory sprite attachment"),
             );
         }
-        self.tick_new_projectile_once(sim, assets, arrow_id);
+        self.tick_new_projectile_once(tcx, arrow_id);
         if let Some(((frame_after, shooter_creation_order), projectile_creation_order)) =
             diagnostic_identity.zip(diagnostic_projectile_creation_order)
         {
@@ -1142,7 +1131,7 @@ impl EngineInner {
 
         // ── Decrement bow ammo after shot ───────────────────
         // Decrement ammo by 1; disable the bow action if ammo hits 0.
-        self.decrement_bow_ammo(assets, shooter_id);
+        self.decrement_bow_ammo(tcx.assets, shooter_id);
 
         Some(arrow_id)
     }
@@ -1151,18 +1140,13 @@ impl EngineInner {
     /// branch: inverse sector (xor 8), `y * 10`, z velocity zero.  Used
     /// when a PC/Soldier is hit but not hurtable (same-camp friendly fire
     /// or a successful piercing-protection roll).
-    pub(super) fn start_arrow_ricochet(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        arrow_id: EntityId,
-    ) {
+    pub(super) fn start_arrow_ricochet(&mut self, tcx: TickCtx<'_>, arrow_id: EntityId) {
         let (entities, sight_obstacles, fast_find_grid, _) =
-            self.world.entities_mut_with_sight(assets);
+            self.world.entities_mut_with_sight(tcx.assets);
         let obstacle_check = bow_shot::TrajectoryObstacleCheck {
             fast_find_grid,
             sight_obstacles,
-            water_zones: Some(&assets.environment.water_zones),
+            water_zones: Some(&tcx.assets.environment.water_zones),
         };
         let Some(entity) = entities.get_mut(arrow_id) else {
             return;
@@ -1173,7 +1157,7 @@ impl EngineInner {
 
         if bow_shot::make_arrow_falling_down(proj, false, Some(&obstacle_check)) {
             // The nested update's retirement result does not retire its caller.
-            self.finish_projectile_landing(sim, assets, arrow_id);
+            self.finish_projectile_landing(tcx, arrow_id);
         }
     }
 
@@ -1199,8 +1183,7 @@ impl EngineInner {
     /// sequence element.
     pub(super) fn classify_arrow_hit(
         &self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         victim_id: EntityId,
         shooter_id: EntityId,
     ) -> ArrowHitOutcome {
@@ -1213,7 +1196,8 @@ impl EngineInner {
         // Arrow sails past silently, no impact sound.
         if victim.is_npc() {
             let is_vip = match victim {
-                Entity::Soldier(s) => match assets
+                Entity::Soldier(s) => match tcx
+                    .assets
                     .profile_manager
                     .soldiers
                     .get(usize::from(s.soldier.soldier_profile_index))
@@ -1296,7 +1280,8 @@ impl EngineInner {
         let apply_hurtable_filter = if shooter_is_npc {
             true
         } else if shooter_is_pc {
-            sim.config()
+            tcx.sim
+                .config()
                 .difficulty
                 .rules()
                 .protect_allies_from_pc_arrows
@@ -1313,15 +1298,17 @@ impl EngineInner {
         // Applies to PC and Soldier victims, only when the base filter
         // already flagged the victim hurtable.
         let piercing_protection = match victim {
-            Entity::Pc(pc) => assets
+            Entity::Pc(pc) => tcx
+                .assets
                 .profile_manager
                 .get_character(pc.pc.profile_index)
-                .and_then(|p| assets.profile_manager.get_hth_weapon(p.hth_weapon_id))
+                .and_then(|p| tcx.assets.profile_manager.get_hth_weapon(p.hth_weapon_id))
                 .map(|w| w.piercing_protection),
-            Entity::Soldier(s) => assets
+            Entity::Soldier(s) => tcx
+                .assets
                 .profile_manager
                 .get_soldier(s.soldier.soldier_profile_index)
-                .and_then(|p| assets.profile_manager.get_hth_weapon(p.hth_weapon_id))
+                .and_then(|p| tcx.assets.profile_manager.get_hth_weapon(p.hth_weapon_id))
                 .map(|w| w.piercing_protection),
             _ => None,
         };
@@ -1335,7 +1322,7 @@ impl EngineInner {
             match piercing_protection {
                 Some(protection) => {
                     let roll = crate::sim_rng::u32(
-                        sim,
+                        tcx.sim,
                         crate::sim_rng::RngSite::ArrowPiercingProtection,
                         0..101,
                     );
@@ -2357,8 +2344,7 @@ impl EngineInner {
     /// caller to apply the independently configurable feedback gate.
     pub(super) fn emit_noise_distraction_impact(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         projectile_id: EntityId,
         impact: MapPoint,
     ) -> bool {
@@ -2380,8 +2366,7 @@ impl EngineInner {
         };
 
         self.broadcast_noise_synchronously(
-            sim,
-            assets,
+            tcx,
             crate::ai::NoiseType::Distraction,
             impact,
             layer,
@@ -2423,8 +2408,7 @@ impl EngineInner {
     /// affect soldiers via the apple-smell AI hook.
     pub(super) fn on_apple_hit_human(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         apple: EntityId,
         victim: EntityId,
     ) {
@@ -2453,7 +2437,7 @@ impl EngineInner {
             return;
         }
         self.set_soldier_apple_smell(victim);
-        self.dispatch_event_apple(sim, assets, victim, trajectory_origin);
+        self.dispatch_event_apple(tcx, victim, trajectory_origin);
     }
 
     /// Stone lands on a human.  Non-VIPs that fail the
@@ -2461,8 +2445,7 @@ impl EngineInner {
     /// (VIP or armored soldier) receive an EventApple stimulus.
     pub(super) fn on_stone_hit_human(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         stone: EntityId,
         victim: EntityId,
         _shooter: EntityId,
@@ -2472,19 +2455,19 @@ impl EngineInner {
             None => return,
         };
         let is_vip =
-            crate::engine::melee::is_vip_from_profile(victim_entity, &assets.profile_manager);
+            crate::engine::melee::is_vip_from_profile(victim_entity, &tcx.assets.profile_manager);
         let is_npc = victim_entity.is_npc();
 
         // Piercing-protection roll for soldiers only:
         // `(!is_soldier) || (rand() % 100) >= protection`
         let protected = if let Entity::Soldier(s) = victim_entity {
             match soldier_piercing_protection(
-                &assets.profile_manager,
+                &tcx.assets.profile_manager,
                 s.soldier.soldier_profile_index,
             ) {
                 Some(protection) => {
                     let roll = crate::sim_rng::u32(
-                        sim,
+                        tcx.sim,
                         crate::sim_rng::RngSite::StonePiercingProtection,
                         0..100,
                     );
@@ -2521,8 +2504,7 @@ impl EngineInner {
                 return;
             }
             self.queue_projectile_damage(
-                sim,
-                assets,
+                tcx,
                 victim,
                 _shooter,
                 Command::ReceiveStoneDamage,
@@ -2544,7 +2526,7 @@ impl EngineInner {
                 );
                 return;
             };
-            self.dispatch_event_apple(sim, assets, victim, trajectory_origin);
+            self.dispatch_event_apple(tcx, victim, trajectory_origin);
         }
     }
 
@@ -2701,14 +2683,12 @@ impl EngineInner {
     /// projectile.  Used by both apple and stone impacts on NPCs.
     fn dispatch_event_apple(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         victim: EntityId,
         origin: crate::ai::Position,
     ) {
         self.execute_ai_callback(
-            sim,
-            assets,
+            tcx,
             victim,
             &crate::ai::Stimulus::with_position(crate::ai::StimulusType::EventApple, origin),
         );
@@ -2719,8 +2699,7 @@ impl EngineInner {
     /// shot origin.
     pub(super) fn dispatch_event_get_arrow(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         victim: EntityId,
         origin: crate::ai::Position,
     ) {
@@ -2731,8 +2710,7 @@ impl EngineInner {
         // is before or after the projectile.  Run the one Think inline while
         // retaining older deferred stimuli ahead of work emitted here.
         self.execute_ai_callback(
-            sim,
-            assets,
+            tcx,
             victim,
             &crate::ai::Stimulus::with_position(crate::ai::StimulusType::EventGetArrow, origin),
         );
@@ -2741,12 +2719,7 @@ impl EngineInner {
     /// If the arrow's landing position is inside a water or hole zone,
     /// spawn the splash titbit, broadcast a PLOUF noise, and play the
     /// plouf impact sound (FX 470).
-    pub(super) fn maybe_splash_on_landing(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        arrow: EntityId,
-    ) {
+    pub(super) fn maybe_splash_on_landing(&mut self, tcx: TickCtx<'_>, arrow: EntityId) {
         let proj_entity = match self.get_entity(arrow) {
             Some(e) => e,
             None => return,
@@ -2784,7 +2757,7 @@ impl EngineInner {
         // inheriting a projected ground-level water/hole polygon.
         let landing_map = position_map;
         let obstacle_handle = elem.obstacle_index();
-        let obstacles = self.sight_obstacles(assets);
+        let obstacles = self.sight_obstacles(tcx.assets);
         let landing_obstacle = obstacle_handle.map(|handle| {
             obstacles
                 .get(usize::from(handle))
@@ -2798,7 +2771,7 @@ impl EngineInner {
             Some(crate::sound_cache::Material::Water)
         } else {
             crate::water_zones::determine_water_hole_scoped(
-                &assets.environment.water_zones,
+                &tcx.assets.environment.water_zones,
                 landing_obstacle,
                 landing_map,
             )
@@ -2813,8 +2786,7 @@ impl EngineInner {
                 // own FX sound instead and don't emit the noise.
                 if matches!(object_type, crate::element::ObjectType::Arrow) {
                     self.broadcast_noise_synchronously(
-                        sim,
-                        assets,
+                        tcx,
                         crate::ai::NoiseType::Zonk,
                         position_map,
                         layer,
@@ -2863,8 +2835,7 @@ impl EngineInner {
         // Broadcast PLOUF noise so nearby NPCs react. Volume from
         // `parameters_ai::NOISE_VOLUME_PLOUF` (300).
         self.broadcast_noise_synchronously(
-            sim,
-            assets,
+            tcx,
             crate::ai::NoiseType::Plouf,
             position_map,
             layer,
@@ -2909,6 +2880,7 @@ mod tests {
         ActionState, ElementData, ElementKind, ElementProjectile, Entity, EntityId, ObjectData,
         Posture, ProjectileData,
     };
+    use crate::engine::TickCtx;
     use crate::engine::test_support::actors::TestActor;
     use crate::engine::{EngineInner, LevelAssets};
     use crate::order::OrderType;
@@ -2958,8 +2930,16 @@ mod tests {
         let sim = crate::sim_rng::test_context();
         let assets = LevelAssets::new();
         let impact = crate::coordinates::MapPoint::new(80.0, 120.0);
-        assert!(engine.emit_noise_distraction_impact(&sim, &assets, projectile_id, impact));
-        assert!(!engine.emit_noise_distraction_impact(&sim, &assets, projectile_id, impact));
+        assert!(engine.emit_noise_distraction_impact(
+            TickCtx::new(&sim, &assets),
+            projectile_id,
+            impact
+        ));
+        assert!(!engine.emit_noise_distraction_impact(
+            TickCtx::new(&sim, &assets),
+            projectile_id,
+            impact
+        ));
     }
 
     #[test]
@@ -2984,15 +2964,10 @@ mod tests {
                 ..Default::default()
             },
         }));
-        engine
-            .get_entity_mut(projectile_id)
-            .expect("inserted projectile")
-            .element_data_mut()
-            .clear_layer();
+        engine.elem_mut(projectile_id).clear_layer();
 
         engine.maybe_splash_on_landing(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
             projectile_id,
         );
 
@@ -3068,7 +3043,7 @@ mod tests {
             purse.projectile.trajectory.len()
         ];
 
-        let purse_id = engine.publish_new_purse(&sim, &assets, thrower, entity);
+        let purse_id = engine.publish_new_purse(TickCtx::new(&sim, &assets), thrower, entity);
         let Some(Entity::Projectile(purse)) = engine.get_entity(purse_id) else {
             panic!("published purse disappeared")
         };
@@ -3086,7 +3061,7 @@ mod tests {
             crate::position_interface::Layer::new(2)
         );
         let after_prime = purse.element.position();
-        engine.tick_projectile_or_net_hourglass(&sim, &assets, purse_id);
+        engine.tick_projectile_or_net_hourglass(TickCtx::new(&sim, &assets), purse_id);
         let Some(Entity::Projectile(purse)) = engine.get_entity(purse_id) else {
             panic!("published purse disappeared")
         };
@@ -3119,7 +3094,7 @@ mod tests {
         };
         empty_purse.projectile.trajectory.clear();
         empty_purse.projectile.trajectory_runtime.clear();
-        let empty_id = engine.publish_new_purse(&sim, &assets, thrower, empty);
+        let empty_id = engine.publish_new_purse(TickCtx::new(&sim, &assets), thrower, empty);
         let Some(Entity::Projectile(empty_purse)) = engine.get_entity(empty_id) else {
             panic!("published empty purse disappeared")
         };
@@ -3176,7 +3151,7 @@ mod tests {
             time: 1,
         }];
         one_purse.projectile.trajectory_runtime.clear();
-        let one_id = engine.publish_new_purse(&sim, &assets, thrower, one);
+        let one_id = engine.publish_new_purse(TickCtx::new(&sim, &assets), thrower, one);
         let Some(Entity::Projectile(one_purse)) = engine.get_entity(one_id) else {
             panic!("published one-step purse disappeared")
         };
@@ -3213,7 +3188,7 @@ mod tests {
             projectile.projectile.disappear = disappear;
             projectile.element.set_material(material);
 
-            let purse_id = engine.publish_new_purse(&sim, &assets, thrower, purse);
+            let purse_id = engine.publish_new_purse(TickCtx::new(&sim, &assets), thrower, purse);
             let Some(Entity::Projectile(projectile)) = engine.get_entity(purse_id) else {
                 panic!("published water/hole purse disappeared")
             };
@@ -3278,7 +3253,7 @@ mod tests {
             time: 1,
         }];
         projectile.projectile.trajectory_runtime.clear();
-        let purse_id = engine.publish_new_purse(&sim, &assets, thrower, purse);
+        let purse_id = engine.publish_new_purse(TickCtx::new(&sim, &assets), thrower, purse);
         let Some(Entity::Projectile(projectile)) = engine.get_entity(purse_id) else {
             panic!("published shielded purse disappeared")
         };
@@ -3395,7 +3370,7 @@ mod tests {
         profiles.soldiers[0].hth_weapon_id = 1;
         profiles.hth_weapons[0].shield = shield_weapon;
 
-        let Entity::Soldier(target) = engine.get_entity_mut(target_id).unwrap() else {
+        let Entity::Soldier(target) = engine.ent_mut(target_id) else {
             unreachable!()
         };
         target.actor.action_state = ActionState::HoldingShield;
@@ -3417,14 +3392,7 @@ mod tests {
                 Some(target_id),
             ));
         engine.orders.sequence_manager.start_sequence_level(lower);
-        engine.instruct_owner(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            target_id,
-            lower,
-            0,
-        );
+        engine.t_instruct_owner(&assets, target_id, lower, 0);
         assert_eq!(
             engine
                 .orders
@@ -3446,7 +3414,7 @@ mod tests {
         let (mut engine, assets, shooter, target, lower) = arrow_warning_fixture(true, 55.0);
         let optical_batch = vec![Stimulus::new(StimulusType::EventTimer)];
 
-        engine.warn_shield_target_of_arrow(&sim, &assets, shooter, target);
+        engine.warn_shield_target_of_arrow(TickCtx::new(&sim, &assets), shooter, target);
 
         assert_eq!(
             engine
@@ -3478,7 +3446,7 @@ mod tests {
                 .any(|line| line.line_type == crate::ai::LogLineType::Event
                     && line.info == StimulusType::EventTimer as u16)
         );
-        engine.dispatch_optical_stimuli(&sim, target, &assets, optical_batch);
+        engine.dispatch_optical_stimuli(TickCtx::new(&sim, &assets), target, optical_batch);
         let ai = engine
             .get_entity(target)
             .and_then(Entity::ai_controller)
@@ -3501,7 +3469,7 @@ mod tests {
             let (mut engine, assets, shooter, target, lower) =
                 arrow_warning_fixture(shield_weapon, shooter_x);
 
-            engine.warn_shield_target_of_arrow(&sim, &assets, shooter, target);
+            engine.warn_shield_target_of_arrow(TickCtx::new(&sim, &assets), shooter, target);
 
             assert_eq!(
                 engine
@@ -3529,12 +3497,12 @@ mod tests {
     fn arrow_warning_rejects_missing_authoritative_soldier_profile() {
         let sim = crate::sim_rng::test_context();
         let (mut engine, assets, shooter, target, _) = arrow_warning_fixture(true, 55.0);
-        let Entity::Soldier(soldier) = engine.get_entity_mut(target).unwrap() else {
+        let Entity::Soldier(soldier) = engine.ent_mut(target) else {
             unreachable!()
         };
         soldier.soldier.soldier_profile_index = SoldierProfileIdx(9);
 
-        engine.warn_shield_target_of_arrow(&sim, &assets, shooter, target);
+        engine.warn_shield_target_of_arrow(TickCtx::new(&sim, &assets), shooter, target);
     }
 
     fn attach_drop_test_sprite(entity: &mut Entity) {
@@ -3578,12 +3546,7 @@ mod tests {
         carrier.pc_data_mut().unwrap().carried = Some(target_id);
         carrier.element_data_mut().set_position_map(carrier_pos);
         let carrier_id = engine.add_test_entity(carrier);
-        engine
-            .get_entity_mut(target_id)
-            .unwrap()
-            .human_data_mut()
-            .unwrap()
-            .carrier = Some(carrier_id);
+        engine.human_mut(target_id).carrier = Some(carrier_id);
         (engine, carrier_id, target_id)
     }
 
@@ -3624,18 +3587,12 @@ mod tests {
         let obstacle = crate::position_interface::ObstacleHandle::new(221).unwrap();
         let (mut engine, carrier_id, target_id) = corpse_drop_pair(carrier_pos);
         let cached_position = crate::coordinates::WorldPoint3D::new(700.0, 1906.001, 225.001);
+        engine.place(target_id, cached_position);
         engine
-            .get_entity_mut(target_id)
-            .unwrap()
-            .element_data_mut()
-            .set_position(cached_position);
-        engine
-            .get_entity_mut(target_id)
-            .unwrap()
-            .element_data_mut()
+            .elem_mut(target_id)
             .set_material(crate::element::GameMaterial::Grass);
         {
-            let carrier = engine.get_entity_mut(carrier_id).unwrap();
+            let carrier = engine.ent_mut(carrier_id);
             let elem = carrier.element_data_mut();
             elem.set_layer(1);
             elem.set_obstacle_index(Some(obstacle), Some(plane));
@@ -3643,8 +3600,7 @@ mod tests {
 
         let assets = engine.test_runtime_assets();
         engine.apply_completed_corpse_drop(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             carrier_id,
             target_id,
             Posture::Lying,
@@ -3652,7 +3608,7 @@ mod tests {
             15,
         );
 
-        let target = engine.get_entity(target_id).unwrap();
+        let target = engine.ent(target_id);
         assert!(target.element_data().position_map_delayed);
         assert_eq!(target.element_data().layer(), 1);
         assert_eq!(
@@ -3664,12 +3620,10 @@ mod tests {
         assert_eq!(target.element_data().position(), cached_position);
 
         engine
-            .get_entity_mut(target_id)
-            .unwrap()
-            .element_data_mut()
+            .elem_mut(target_id)
             .apply_next_delayed_position()
             .expect("outdoor corpse drop must commit its delayed position next frame");
-        let target = engine.get_entity(target_id).unwrap();
+        let target = engine.ent(target_id);
         assert_eq!(target.element_data().position_map(), carrier_pos);
         assert_eq!(
             target.element_data().position().z.to_bits(),
@@ -3687,19 +3641,14 @@ mod tests {
         let carried_position = crate::coordinates::WorldPoint3D::new(3125.0, 2375.001, 225.001);
         let (mut engine, carrier_id, target_id) = corpse_drop_pair(carrier_pos);
         {
-            let target = engine.get_entity_mut(target_id).unwrap();
+            let target = engine.ent_mut(target_id);
             target.element_data_mut().set_position(carried_position);
         }
-        let carried_map = engine
-            .get_entity(target_id)
-            .unwrap()
-            .element_data()
-            .position_map();
+        let carried_map = engine.map_pos_of(target_id);
 
         let assets = engine.test_runtime_assets();
         engine.apply_completed_corpse_drop(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             carrier_id,
             target_id,
             Posture::DeadBack,
@@ -3707,7 +3656,7 @@ mod tests {
             0,
         );
 
-        let target = engine.get_entity(target_id).unwrap();
+        let target = engine.ent(target_id);
         assert!(target.element_data().position_map_delayed);
         assert_eq!(target.element_data().position(), carried_position);
         assert_eq!(target.element_data().position_map(), carried_map);
@@ -3715,12 +3664,10 @@ mod tests {
         assert_eq!(target.position_iface().get_plane(), None);
 
         engine
-            .get_entity_mut(target_id)
-            .unwrap()
-            .element_data_mut()
+            .elem_mut(target_id)
             .apply_next_delayed_position()
             .expect("outdoor corpse drop must commit its delayed position next frame");
-        let target = engine.get_entity(target_id).unwrap();
+        let target = engine.ent(target_id);
         assert_eq!(target.element_data().position_map(), carrier_pos);
         assert_eq!(
             target.element_data().position().z.to_bits(),
@@ -3734,7 +3681,7 @@ mod tests {
         let drop_position = crate::coordinates::MapPoint::new(300.0, 300.0);
         let (mut engine, carrier_id, target_id) = corpse_drop_pair(drop_position);
         {
-            let target = engine.get_entity_mut(target_id).unwrap();
+            let target = engine.ent_mut(target_id);
             target.element_data_mut().set_position_map(carried_position);
         }
         let mut neighbour = TestActor::pc(Posture::Tied)
@@ -3747,8 +3694,7 @@ mod tests {
 
         let assets = engine.test_runtime_assets();
         engine.apply_completed_corpse_drop(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             carrier_id,
             target_id,
             Posture::Tied,
@@ -3756,33 +3702,17 @@ mod tests {
             0,
         );
 
-        let target = engine.get_entity(target_id).unwrap();
+        let target = engine.ent(target_id);
         assert!(target.element_data().position_map_delayed);
         assert_eq!(target.element_data().position_map(), carried_position);
         assert!(target.human_data().unwrap().small_repulsive_radius);
-        assert!(
-            engine
-                .get_entity(neighbour_id)
-                .unwrap()
-                .human_data()
-                .unwrap()
-                .small_repulsive_radius
-        );
+        assert!(engine.human(neighbour_id).small_repulsive_radius);
 
         engine
-            .get_entity_mut(target_id)
-            .unwrap()
-            .element_data_mut()
+            .elem_mut(target_id)
             .apply_next_delayed_position()
             .expect("outdoor corpse drop must retain its delayed destination");
-        assert_eq!(
-            engine
-                .get_entity(target_id)
-                .unwrap()
-                .element_data()
-                .position_map(),
-            drop_position
-        );
+        assert_eq!(engine.map_pos_of(target_id), drop_position);
     }
 
     #[test]
@@ -3798,12 +3728,10 @@ mod tests {
         let (mut engine, carrier_id, target_id) = corpse_drop_pair(carrier_pos);
         install_corpse_drop_building_sector(&mut engine, 7);
         engine
-            .get_entity_mut(target_id)
-            .unwrap()
-            .element_data_mut()
+            .elem_mut(target_id)
             .set_material(crate::element::GameMaterial::Leaves);
         {
-            let carrier = engine.get_entity_mut(carrier_id).unwrap();
+            let carrier = engine.ent_mut(carrier_id);
             let elem = carrier.element_data_mut();
             elem.set_layer(3);
             elem.set_sector(Some(sector));
@@ -3812,8 +3740,7 @@ mod tests {
 
         let assets = engine.test_runtime_assets();
         engine.apply_completed_corpse_drop(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             carrier_id,
             target_id,
             Posture::Lying,
@@ -3821,7 +3748,7 @@ mod tests {
             4,
         );
 
-        let target = engine.get_entity(target_id).unwrap();
+        let target = engine.ent(target_id);
         assert!(!target.element_data().position_map_delayed);
         assert_eq!(target.element_data().position_map(), carrier_pos);
         assert_eq!(target.element_data().layer(), 3);
@@ -3933,12 +3860,7 @@ mod tests {
         };
         carrier_pc.pc.carried = Some(victim_id);
         let carrier_id = engine.add_test_entity(carrier);
-        engine
-            .get_entity_mut(victim_id)
-            .unwrap()
-            .human_data_mut()
-            .unwrap()
-            .carrier = Some(carrier_id);
+        engine.human_mut(victim_id).carrier = Some(carrier_id);
 
         // A flat solid slab from z=60 through z=70 intersects the exact
         // Shoulder-carry eligibility's vertical segment (z=50..90) at the default
@@ -4062,15 +3984,12 @@ mod tests {
         ));
         element.state = SequenceState::InProgress;
         let sequence = engine.orders.sequence_manager.insert_element(element);
-        engine
-            .get_entity_mut(carrier_id)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .selected_sequence_element =
+        engine.actor_mut(carrier_id).selected_sequence_element =
             Some(crate::sequence::SequenceElementRef::new(sequence, 0));
-        let executed =
-            engine.tick_actor_animation_for(&crate::sim_rng::test_context(), &assets, carrier_id);
+        let executed = engine.tick_actor_animation_for(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            carrier_id,
+        );
         assert!(executed.is_some());
         assert!(shoulder_drop_elements(&engine).is_empty());
     }
@@ -4101,12 +4020,7 @@ mod tests {
         ));
         let sequence = engine.orders.sequence_manager.insert_element(element);
         let selected = crate::sequence::SequenceElementRef::new(sequence, 0);
-        engine
-            .get_entity_mut(carrier)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .selected_sequence_element = Some(selected);
+        engine.actor_mut(carrier).selected_sequence_element = Some(selected);
 
         crate::abilities::initialize_carry_relationship(
             &mut engine.world.entities,
@@ -4115,13 +4029,13 @@ mod tests {
         );
         engine.apply_ability_carry_done(carrier, target);
 
-        let carrier = engine.get_entity(carrier).unwrap();
+        let carrier = engine.ent(carrier);
         assert_eq!(carrier.pc_data().unwrap().carried, Some(target));
         assert_eq!(
             carrier.actor_data().unwrap().selected_sequence_element,
             Some(selected)
         );
-        let target = engine.get_entity(target).unwrap();
+        let target = engine.ent(target);
         assert_eq!(target.posture(), Posture::Carried);
         assert_eq!(
             target.actor_data().unwrap().action_state,
@@ -4146,13 +4060,13 @@ mod tests {
         let (mut engine, assets, helper, climber) = blocked_shoulder_pair();
         let helper_position = crate::coordinates::MapPoint::new(80.0, 96.0);
         {
-            let helper = engine.get_entity_mut(helper).unwrap();
+            let helper = engine.ent_mut(helper);
             helper.element_data_mut().set_position_map(helper_position);
             helper.element_data_mut().set_direction_instantly(6);
             helper.actor_data_mut().unwrap().execution_frozen = true;
         }
         {
-            let climber_entity = engine.get_entity_mut(climber).unwrap();
+            let climber_entity = engine.ent_mut(climber);
             climber_entity.actor_data_mut().unwrap().execution_frozen = true;
             climber_entity.element_data_mut().sprite.display_order_ref = Some(helper);
             climber_entity
@@ -4162,13 +4076,12 @@ mod tests {
         }
 
         engine.apply_ability_climb_down_from_shoulders_done(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             climber,
             helper,
         );
 
-        let climber_entity = engine.get_entity(climber).unwrap();
+        let climber_entity = engine.ent(climber);
         assert_eq!(climber_entity.posture(), Posture::Upright);
         assert_eq!(climber_entity.human_data().unwrap().carrier, None);
         assert!(!climber_entity.actor_data().unwrap().execution_frozen);
@@ -4180,7 +4093,7 @@ mod tests {
         assert_eq!(climber_entity.sprite().display_order_ref, Some(helper));
         assert!(climber_entity.sprite().behind_display_order_ref);
         assert_eq!(climber_entity.sprite().display_depth, 0.0);
-        let helper_entity = engine.get_entity(helper).unwrap();
+        let helper_entity = engine.ent(helper);
         assert_eq!(helper_entity.posture(), Posture::HelpingToClimb);
         assert_eq!(helper_entity.pc_data().unwrap().carried, None);
         assert!(!helper_entity.actor_data().unwrap().execution_frozen);
@@ -4202,8 +4115,7 @@ mod tests {
         assert!(shoulder_drop_elements(&engine).is_empty());
 
         assert!(!engine.check_walking_shoulder_clearance(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             carrier_id,
         ));
 
@@ -4244,8 +4156,7 @@ mod tests {
         let victim = engine.add_test_entity(victim);
 
         engine.queue_projectile_damage(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
             victim,
             shooter,
             crate::element::Command::ReceiveArrowDamage,

@@ -206,19 +206,12 @@ impl EngineInner {
             "combat proposal primary is friendly"
         );
         let me = fighters.position(owner.index());
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("combat proposal primary"))
-            .primary_target = Some(primary);
+        self.ai_mut(owner, "combat proposal primary").primary_target = Some(primary);
         let mut possible =
             vec![self.live_combat_position(assets, owner, owner.index(), me, Some(primary))];
         self.generate_live_combat_positions(assets, owner, &mut possible);
 
-        let them = &self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("combat enemies"))
-            .list_them;
+        let them = &self.enemy_ai(owner, "combat enemies").list_them;
         let mut enemies = Vec::with_capacity(them.len());
         for &handle in them {
             let fighters = LiveCombatFighters {
@@ -236,11 +229,7 @@ impl EngineInner {
                 .primary_target_multiplicity_scratch
                 .insert(enemy.attacker.unwrap().get(), 0);
         }
-        let us = &self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("combat allies"))
-            .list_us;
+        let us = &self.ai(owner, "combat allies").list_us;
         let mut friends = Vec::with_capacity(us.len());
         for &handle in us {
             if handle == owner.index() {
@@ -279,10 +268,7 @@ impl EngineInner {
                 *count = u32::from((*count as u16).wrapping_add(1));
             }
         }
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("combat evaluator"));
+        let ai = self.enemy_ai(owner, "combat evaluator");
         let iq = ai.iq_for_difficulty(
             &assets.profile_manager,
             self.control.sim_config.difficulty,
@@ -329,15 +315,11 @@ impl EngineInner {
             );
         }
         let old_left = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("combat proposal left neighbour"))
+            .enemy_ai(owner, "combat proposal left neighbour")
             .left_combat_neighbour;
         self.apply_update_left_combat_neighbour(owner.index(), old_left, best.left_neighbour);
         let old_right = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("combat proposal right neighbour"))
+            .enemy_ai(owner, "combat proposal right neighbour")
             .right_combat_neighbour;
         self.apply_update_right_combat_neighbour(owner.index(), old_right, best.right_neighbour);
         best
@@ -409,12 +391,7 @@ impl EngineInner {
             .expect_entity(owner, "combat neighbour owner")
             .element_data()
             .position();
-        for &handle in &self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("combat neighbours"))
-            .list_us
-        {
+        for &handle in &self.ai(owner, "combat neighbours").list_us {
             if handle == owner.index() || !eligible(handle) {
                 continue;
             }
@@ -438,10 +415,7 @@ impl EngineInner {
         owner: EntityId,
         list: &mut Vec<CombatPosition>,
     ) {
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("combat generation"));
+        let ai = self.enemy_ai(owner, "combat generation");
         if ai.base.blood_alcohol > 0 {
             return;
         }
@@ -540,12 +514,7 @@ impl EngineInner {
             return;
         }
         let range = fighters.range(owner.index(), WeaponDistance::Uber) as f32;
-        for &enemy in &self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("combat line enemies"))
-            .list_them
-        {
+        for &enemy in &self.enemy_ai(owner, "combat line enemies").list_them {
             let position = fighters.position(enemy);
             let delta = position.map_point() - there.map_point();
             if delta.max_norm() >= range
@@ -582,10 +551,7 @@ impl EngineInner {
             assets,
             owner,
         };
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("combat ring owner"));
+        let ai = self.enemy_ai(owner, "combat ring owner");
         let me = fighters.position(owner.index());
         let position = fighters.position(enemy);
         let is_opponent = fighters
@@ -701,10 +667,7 @@ impl EngineInner {
             assets,
             owner,
         };
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("combat cleanup"));
+        let ai = self.enemy_ai(owner, "combat cleanup");
         let principal = fighters
             .principal(owner.index())
             .expect("combat cleanup principal");

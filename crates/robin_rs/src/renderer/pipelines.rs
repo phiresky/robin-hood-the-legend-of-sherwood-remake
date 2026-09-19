@@ -270,34 +270,23 @@ fn build_mask_stencil_pipeline(
         bind_group_layouts: &[Some(bgl_screen), Some(bgl_tex)],
         immediate_size: 0,
     });
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("quad/sprite_mask_stencil"),
-        layout: Some(&layout),
-        vertex: wgpu::VertexState {
-            module: &module,
-            entry_point: Some("vs_main"),
-            buffers: &[Some(quad_vertex_buffer_layout())],
-            compilation_options: Default::default(),
+    build_render_pipeline(
+        device,
+        "quad/sprite_mask_stencil",
+        &layout,
+        &module,
+        "fs_main",
+        &[Some(quad_vertex_buffer_layout())],
+        wgpu::ColorTargetState {
+            format: output_format,
+            blend: None,
+            write_mask: wgpu::ColorWrites::empty(),
         },
-        fragment: Some(wgpu::FragmentState {
-            module: &module,
-            entry_point: Some("fs_main"),
-            targets: &[Some(wgpu::ColorTargetState {
-                format: output_format,
-                blend: None,
-                write_mask: wgpu::ColorWrites::empty(),
-            })],
-            compilation_options: Default::default(),
-        }),
-        primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: Some(sprite_stencil_state(
+        Some(sprite_stencil_state(
             wgpu::CompareFunction::Always,
             wgpu::StencilOperation::Replace,
         )),
-        multisample: wgpu::MultisampleState::default(),
-        multiview_mask: None,
-        cache: None,
-    })
+    )
 }
 
 fn build_quad_pipelines(
@@ -316,27 +305,19 @@ fn build_quad_pipelines(
     ]
     .map(|(blend, normal_label, masked_label)| {
         let label = if masked { masked_label } else { normal_label };
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some(label),
-            layout: Some(layout),
-            vertex: wgpu::VertexState {
-                module,
-                entry_point: Some("vs_main"),
-                buffers: &[Some(quad_vertex_buffer_layout())],
-                compilation_options: Default::default(),
+        build_render_pipeline(
+            device,
+            label,
+            layout,
+            module,
+            "fs_main",
+            &[Some(quad_vertex_buffer_layout())],
+            wgpu::ColorTargetState {
+                format: output_format,
+                blend: blend.to_wgpu(),
+                write_mask: wgpu::ColorWrites::ALL,
             },
-            fragment: Some(wgpu::FragmentState {
-                module,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: output_format,
-                    blend: blend.to_wgpu(),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: if masked {
+            if masked {
                 Some(sprite_stencil_state(
                     wgpu::CompareFunction::Equal,
                     wgpu::StencilOperation::Keep,
@@ -349,10 +330,7 @@ fn build_quad_pipelines(
             } else {
                 None
             },
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        })
+        )
     })
 }
 
@@ -381,29 +359,101 @@ fn build_single_quad_pipeline(
     output_format: wgpu::TextureFormat,
     stencil_attachment: bool,
 ) -> wgpu::RenderPipeline {
+    build_render_pipeline(
+        device,
+        label,
+        layout,
+        module,
+        fragment_entry,
+        &[Some(quad_vertex_buffer_layout())],
+        wgpu::ColorTargetState {
+            format: output_format,
+            blend,
+            write_mask: wgpu::ColorWrites::ALL,
+        },
+        stencil_attachment.then(|| {
+            sprite_stencil_state(wgpu::CompareFunction::Always, wgpu::StencilOperation::Keep)
+        }),
+    )
+}
+
+/// Bind group layout for one filterable 2D texture (binding 0) plus a
+/// filtering sampler (binding 1), both fragment-visible.
+pub(crate) fn tex_sampler_bgl(device: &wgpu::Device, label: &str) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some(label),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
+    })
+}
+
+/// Bind group layout holding a single uniform buffer at binding 0.
+pub(crate) fn uniform_bgl(
+    device: &wgpu::Device,
+    label: &str,
+    visibility: wgpu::ShaderStages,
+) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some(label),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    })
+}
+
+/// Single-target render pipeline with the shared skeleton: one shader
+/// module, `vs_main` vertex entry, default primitive/multisample state.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_render_pipeline(
+    device: &wgpu::Device,
+    label: &str,
+    layout: &wgpu::PipelineLayout,
+    module: &wgpu::ShaderModule,
+    fragment_entry: &str,
+    vertex_buffers: &[Option<wgpu::VertexBufferLayout<'_>>],
+    target: wgpu::ColorTargetState,
+    depth_stencil: Option<wgpu::DepthStencilState>,
+) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
         layout: Some(layout),
         vertex: wgpu::VertexState {
             module,
             entry_point: Some("vs_main"),
-            buffers: &[Some(quad_vertex_buffer_layout())],
+            buffers: vertex_buffers,
             compilation_options: Default::default(),
         },
         fragment: Some(wgpu::FragmentState {
             module,
             entry_point: Some(fragment_entry),
-            targets: &[Some(wgpu::ColorTargetState {
-                format: output_format,
-                blend,
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
+            targets: &[Some(target)],
             compilation_options: Default::default(),
         }),
         primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: stencil_attachment.then(|| {
-            sprite_stencil_state(wgpu::CompareFunction::Always, wgpu::StencilOperation::Keep)
-        }),
+        depth_stencil,
         multisample: wgpu::MultisampleState::default(),
         multiview_mask: None,
         cache: None,

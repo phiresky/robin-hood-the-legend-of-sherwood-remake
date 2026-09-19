@@ -1104,11 +1104,27 @@ fn action_cursor(
             cursor
         }
         Action::Bow => cursor_for_bow(engine, host, assets, mouse_map_pt, modifiers),
-        Action::Hit | Action::HitHard => cursor_for_hit(engine, host, assets, mouse_map_pt),
+        Action::Hit | Action::HitHard => cursor_for_focus_target(
+            engine,
+            host,
+            assets,
+            mouse_map_pt,
+            Focus::Hit,
+            RHMOUSE_HIT_YES,
+            RHMOUSE_HIT_NO,
+        ),
         Action::Apple => cursor_for_apple(engine, host, assets, mouse_map_pt, modifiers),
         Action::Stone => cursor_for_stone(engine, host, assets, mouse_map_pt, modifiers),
         Action::Purse => cursor_for_purse(engine, host, assets, mouse_map_pt, modifiers),
-        Action::Heal => cursor_for_heal(engine, host, assets, mouse_map_pt),
+        Action::Heal => cursor_for_focus_target(
+            engine,
+            host,
+            assets,
+            mouse_map_pt,
+            Focus::Heal,
+            RHMOUSE_HEAL_YES,
+            RHMOUSE_HEAL_NO,
+        ),
         Action::WaspNest => cursor_for_wasp_nest(engine, host, assets, mouse_map_pt, modifiers),
         Action::HelpToClimb => {
             cursor_for_help_to_climb(engine, host, assets, mouse_map_pt, modifiers)
@@ -1119,9 +1135,25 @@ fn action_cursor(
             cursor_for_shield(engine, host, assets, mouse_map_pt, modifiers)
         }
         Action::Net => cursor_for_net(engine, host, assets, mouse_map_pt, modifiers),
-        Action::Lever => cursor_for_lever(engine, host, assets, mouse_map_pt),
+        Action::Lever => cursor_for_focus_target(
+            engine,
+            host,
+            assets,
+            mouse_map_pt,
+            Focus::Lever,
+            RHMOUSE_LEVER_YES,
+            RHMOUSE_LEVER_NO,
+        ),
         Action::Ale => cursor_for_ale(engine, host, mouse_map_pt),
-        Action::Strangle => cursor_for_strangle(engine, host, assets, mouse_map_pt),
+        Action::Strangle => cursor_for_focus_target(
+            engine,
+            host,
+            assets,
+            mouse_map_pt,
+            Focus::Strangle,
+            RHMOUSE_STRANGLE_YES,
+            RHMOUSE_STRANGLE_NO,
+        ),
         Action::Beggar => cursor_for_beggar(engine, host, assets, mouse_map_pt, modifiers),
         Action::Listen => cursor_for_listen(engine, host, assets, mouse_map_pt, modifiers),
         // Remaining actions.
@@ -1363,27 +1395,28 @@ fn bow_aim_cursor(
     }
 }
 
-/// Hit / HitHard cursor arm.
-fn cursor_for_hit(
+/// Cursor arm for actions that only need a focusable target under the
+/// mouse: records the focused entity and picks the yes/no cursor.
+fn cursor_for_focus_target(
     engine: &Engine,
     host: &mut Host,
     assets: &LevelAssets,
     mouse_map_pt: MapPoint,
+    focus: Focus,
+    yes_cursor: i32,
+    no_cursor: i32,
 ) -> i32 {
-    use robin_engine::resource_ids::*;
-    {
-        let focused = engine.find_focusable_entity(
-            assets,
-            &host.frontend.presentation.draw_order.ids,
-            mouse_map_pt,
-            Focus::Hit,
-        );
-        if let Some(eid) = focused {
-            host.frontend.input.feedback.focused_entity_id = Some(eid);
-            RHMOUSE_HIT_YES
-        } else {
-            RHMOUSE_HIT_NO
-        }
+    let focused = engine.find_focusable_entity(
+        assets,
+        &host.frontend.presentation.draw_order.ids,
+        mouse_map_pt,
+        focus,
+    );
+    if let Some(eid) = focused {
+        host.frontend.input.feedback.focused_entity_id = Some(eid);
+        yes_cursor
+    } else {
+        no_cursor
     }
 }
 
@@ -1705,30 +1738,6 @@ fn cursor_for_purse(
     }
 }
 
-/// Heal cursor arm.
-fn cursor_for_heal(
-    engine: &Engine,
-    host: &mut Host,
-    assets: &LevelAssets,
-    mouse_map_pt: MapPoint,
-) -> i32 {
-    use robin_engine::resource_ids::*;
-    {
-        let focused = engine.find_focusable_entity(
-            assets,
-            &host.frontend.presentation.draw_order.ids,
-            mouse_map_pt,
-            Focus::Heal,
-        );
-        if let Some(eid) = focused {
-            host.frontend.input.feedback.focused_entity_id = Some(eid);
-            RHMOUSE_HEAL_YES
-        } else {
-            RHMOUSE_HEAL_NO
-        }
-    }
-}
-
 /// WaspNest cursor arm.
 fn cursor_for_wasp_nest(
     engine: &Engine,
@@ -2028,30 +2037,6 @@ fn cursor_for_net(
     }
 }
 
-/// Lever cursor arm.
-fn cursor_for_lever(
-    engine: &Engine,
-    host: &mut Host,
-    assets: &LevelAssets,
-    mouse_map_pt: MapPoint,
-) -> i32 {
-    use robin_engine::resource_ids::*;
-    {
-        let focused = engine.find_focusable_entity(
-            assets,
-            &host.frontend.presentation.draw_order.ids,
-            mouse_map_pt,
-            Focus::Lever,
-        );
-        if let Some(eid) = focused {
-            host.frontend.input.feedback.focused_entity_id = Some(eid);
-            RHMOUSE_LEVER_YES
-        } else {
-            RHMOUSE_LEVER_NO
-        }
-    }
-}
-
 /// Ale cursor arm.
 fn cursor_for_ale(engine: &Engine, host: &mut Host, mouse_map_pt: MapPoint) -> i32 {
     use robin_engine::resource_ids::*;
@@ -2083,30 +2068,6 @@ fn cursor_for_ale(engine: &Engine, host: &mut Host, mouse_map_pt: MapPoint) -> i
             RHMOUSE_ALE_YES
         } else {
             RHMOUSE_ALE_NO
-        }
-    }
-}
-
-/// Strangle cursor arm.
-fn cursor_for_strangle(
-    engine: &Engine,
-    host: &mut Host,
-    assets: &LevelAssets,
-    mouse_map_pt: MapPoint,
-) -> i32 {
-    use robin_engine::resource_ids::*;
-    {
-        let focused = engine.find_focusable_entity(
-            assets,
-            &host.frontend.presentation.draw_order.ids,
-            mouse_map_pt,
-            Focus::Strangle,
-        );
-        if let Some(eid) = focused {
-            host.frontend.input.feedback.focused_entity_id = Some(eid);
-            RHMOUSE_STRANGLE_YES
-        } else {
-            RHMOUSE_STRANGLE_NO
         }
     }
 }
@@ -2378,7 +2339,15 @@ mod tests {
         let (mut engine, assets, mut host) = fixture();
         add_selected_pc(&mut engine, &assets);
 
-        let cursor = cursor_for_hit(&engine, &mut host, &assets, MapPoint::new(300.0, 300.0));
+        let cursor = cursor_for_focus_target(
+            &engine,
+            &mut host,
+            &assets,
+            MapPoint::new(300.0, 300.0),
+            Focus::Hit,
+            RHMOUSE_HIT_YES,
+            RHMOUSE_HIT_NO,
+        );
         assert_eq!(cursor, RHMOUSE_HIT_NO);
         assert_eq!(host.frontend.input.feedback.focused_entity_id, None);
     }
@@ -2388,7 +2357,15 @@ mod tests {
         let (mut engine, assets, mut host) = fixture();
         add_selected_pc(&mut engine, &assets);
 
-        let cursor = cursor_for_heal(&engine, &mut host, &assets, MapPoint::new(300.0, 300.0));
+        let cursor = cursor_for_focus_target(
+            &engine,
+            &mut host,
+            &assets,
+            MapPoint::new(300.0, 300.0),
+            Focus::Heal,
+            RHMOUSE_HEAL_YES,
+            RHMOUSE_HEAL_NO,
+        );
         assert_eq!(cursor, RHMOUSE_HEAL_NO);
     }
 
@@ -2397,7 +2374,15 @@ mod tests {
         let (mut engine, assets, mut host) = fixture();
         add_selected_pc(&mut engine, &assets);
 
-        let cursor = cursor_for_lever(&engine, &mut host, &assets, MapPoint::new(300.0, 300.0));
+        let cursor = cursor_for_focus_target(
+            &engine,
+            &mut host,
+            &assets,
+            MapPoint::new(300.0, 300.0),
+            Focus::Lever,
+            RHMOUSE_LEVER_YES,
+            RHMOUSE_LEVER_NO,
+        );
         assert_eq!(cursor, RHMOUSE_LEVER_NO);
         assert_eq!(host.frontend.input.feedback.focused_entity_id, None);
     }
@@ -2459,7 +2444,15 @@ mod tests {
         let (mut engine, assets, mut host) = fixture();
         add_selected_pc(&mut engine, &assets);
 
-        let cursor = cursor_for_strangle(&engine, &mut host, &assets, MapPoint::new(300.0, 300.0));
+        let cursor = cursor_for_focus_target(
+            &engine,
+            &mut host,
+            &assets,
+            MapPoint::new(300.0, 300.0),
+            Focus::Strangle,
+            RHMOUSE_STRANGLE_YES,
+            RHMOUSE_STRANGLE_NO,
+        );
         assert_eq!(cursor, RHMOUSE_STRANGLE_NO);
     }
 }

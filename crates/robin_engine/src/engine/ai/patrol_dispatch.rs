@@ -1,11 +1,68 @@
 use super::*;
+use crate::engine::TickCtx;
 
 impl EngineInner {
     pub(in crate::engine) fn dispatch_live_stimulus_to_patrol(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
+        stimulus: &crate::ai::Stimulus,
+    ) -> bool {
+        AiOwnerCtx::new(self, tcx, owner).dispatch_live_stimulus_to_patrol(stimulus)
+    }
+
+    pub(in crate::engine) fn execute_ai_patrol_broadcast(
+        &mut self,
+        tcx: TickCtx<'_>,
+        source_id: EntityId,
+        stimulus: crate::ai::Stimulus,
+        members: Vec<u32>,
+    ) {
+        self.execute_ai_callback(tcx, source_id, &stimulus);
+        self.execute_ai_patrol_member_broadcast(tcx, source_id, &stimulus, members);
+    }
+
+    fn execute_ai_patrol_member_broadcast(
+        &mut self,
+        tcx: TickCtx<'_>,
+        source_id: EntityId,
+        stimulus: &crate::ai::Stimulus,
+        members: Vec<u32>,
+    ) {
+        for member in members {
+            let member_id = self.entity_id_for_index(member).unwrap_or_else(|| {
+                panic!(
+                    "patrol broadcast from chief {} references missing member {member}",
+                    source_id.index()
+                )
+            });
+
+            let detected = matches!(
+                self.world
+                    .entities
+                    .expect_entity(member_id, format_args!("patrol broadcast member")),
+                Entity::Soldier(_)
+            ) && self.patrol_member_visible(tcx.assets, source_id, member_id);
+            tracing::trace!(
+                target: "patrol_relay",
+                chief = source_id.index(),
+                member,
+                stimulus_type = ?stimulus.stimulus_type,
+                detected,
+                "patrol broadcast member gate"
+            );
+            if !detected {
+                continue;
+            }
+
+            self.execute_ai_callback(tcx, member_id, stimulus);
+        }
+    }
+}
+
+impl AiOwnerCtx<'_> {
+    pub(in crate::engine) fn dispatch_live_stimulus_to_patrol(
+        &mut self,
         stimulus: &crate::ai::Stimulus,
     ) -> bool {
         use crate::ai::{AiState, StimulusType, Substate};
@@ -13,10 +70,7 @@ impl EngineInner {
         if stimulus.to_whole_patrol {
             return false;
         }
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("patrol dispatch owner"));
+        let ai = self.engine.enemy_ai(self.owner, "patrol dispatch owner");
         if matches!(
             stimulus.stimulus_type,
             StimulusType::EventSeesObject | StimulusType::EventHear | StimulusType::EventSeesBody
@@ -35,20 +89,24 @@ impl EngineInner {
         }
         if let Some(chief) = ai.base.patrol_chief {
             if matches!(
-                self.world
+                self.engine
+                    .world
                     .entities
                     .expect_entity(chief, format_args!("patrol chief")),
                 Entity::Soldier(_)
-            ) && self.patrol_member_visible(assets, owner, chief)
+            ) && self
+                .engine
+                .patrol_member_visible(self.tcx.assets, self.owner, chief)
             {
-                return self.dispatch_live_stimulus_to_patrol(sim, assets, chief, stimulus);
+                return self
+                    .engine
+                    .dispatch_live_stimulus_to_patrol(self.tcx, chief, stimulus);
             }
         }
 
         let ai = self
-            .world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("patrol dispatch owner"));
+            .engine
+            .enemy_ai_mut(self.owner, "patrol dispatch owner");
         ai.last_stimulus_dispatched_to_patrol = Some(*stimulus);
         if ai.base.patrol.is_empty() {
             return false;
@@ -58,57 +116,8 @@ impl EngineInner {
         let members = ai.base.patrol.iter().map(|member| member.index()).collect();
         let mut forwarded = *stimulus;
         forwarded.to_whole_patrol = true;
-        self.execute_ai_patrol_broadcast(sim, assets, owner, forwarded, members);
+        self.engine
+            .execute_ai_patrol_broadcast(self.tcx, self.owner, forwarded, members);
         true
-    }
-
-    pub(in crate::engine) fn execute_ai_patrol_broadcast(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        source_id: EntityId,
-        stimulus: crate::ai::Stimulus,
-        members: Vec<u32>,
-    ) {
-        self.execute_ai_callback(sim, assets, source_id, &stimulus);
-        self.execute_ai_patrol_member_broadcast(sim, assets, source_id, &stimulus, members);
-    }
-
-    fn execute_ai_patrol_member_broadcast(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        source_id: EntityId,
-        stimulus: &crate::ai::Stimulus,
-        members: Vec<u32>,
-    ) {
-        for member in members {
-            let member_id = self.entity_id_for_index(member).unwrap_or_else(|| {
-                panic!(
-                    "patrol broadcast from chief {} references missing member {member}",
-                    source_id.index()
-                )
-            });
-
-            let detected = matches!(
-                self.world
-                    .entities
-                    .expect_entity(member_id, format_args!("patrol broadcast member")),
-                Entity::Soldier(_)
-            ) && self.patrol_member_visible(assets, source_id, member_id);
-            tracing::trace!(
-                target: "patrol_relay",
-                chief = source_id.index(),
-                member,
-                stimulus_type = ?stimulus.stimulus_type,
-                detected,
-                "patrol broadcast member gate"
-            );
-            if !detected {
-                continue;
-            }
-
-            self.execute_ai_callback(sim, assets, member_id, stimulus);
-        }
     }
 }

@@ -21,10 +21,11 @@
 
 use crate::coordinates::{MapPoint, MapVec, WorldPoint3D, WorldVec3D};
 use crate::element::{ActionState, EntityId, Posture};
+use crate::engine::TickCtx;
 use crate::engine::{EngineInner, LevelAssets};
 use crate::jump_line::JumpLine;
 use crate::order::OrderType;
-use crate::sequence::SequenceId;
+use crate::sequence::SequenceElementRef;
 
 /// PC's vertical reach.  Jumps with `|Δh|` under this threshold run the
 /// long-jump branch; above it they split into `jump-up` / `jump-down`.
@@ -687,15 +688,13 @@ impl EngineInner {
     /// stall.
     pub(super) fn start_jump(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
-        seq_id: SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) -> bool {
         // Read jump-line IDs from the element.
         let (src_id, dst_id) = {
-            let elem = match self.orders.sequence_manager.get_element(seq_id, elem_idx) {
+            let elem = match self.orders.sequence_manager.get_element_at(elem_ref) {
                 Some(e) => e,
                 None => return false,
             };
@@ -787,7 +786,7 @@ impl EngineInner {
             };
         let is_long_branch = src_line.long_jump_forced || jump_height.abs() < pc_height_est;
         if is_swordfighting && !is_long_branch {
-            self.quit_swordfight(sim, assets, owner);
+            self.quit_swordfight(tcx, owner);
         }
 
         let src_line = &self.world.fast_grid.level.jump_lines[usize::from(src_id)];
@@ -842,12 +841,12 @@ impl EngineInner {
         let element = self
             .orders
             .sequence_manager
-            .get_element_mut(seq_id, elem_idx)
+            .get_element_at_mut(elem_ref)
             .expect("jump element disappeared during translation");
         element.orders.clear();
         element.orders.extend(orders);
         let installed = crate::element::InstalledActorOrder::new(
-            crate::sequence::SequenceElementRef::new(seq_id, elem_idx),
+            crate::sequence::SequenceElementRef::new(elem_ref.sequence_id, elem_ref.element_index),
             element
                 .current_order()
                 .expect("jump translation produced no orders"),
@@ -866,12 +865,7 @@ impl EngineInner {
     }
 
     /// Apply the selected jump order's initialization and turning in Execute.
-    pub(super) fn prepare_jump_order(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
+    pub(super) fn prepare_jump_order(&mut self, tcx: TickCtx<'_>, owner: EntityId) {
         let Some((seq_id, elem_idx, order)) = self
             .orders
             .sequence_manager
@@ -921,7 +915,7 @@ impl EngineInner {
                 .expect("jump owner is not human")
                 .carrier
                 .expect("shoulder jump has no carrier");
-            self.actor_wait(sim, assets, carrier);
+            self.actor_wait(tcx, carrier);
             self.world
                 .entities
                 .get_mut(carrier)
@@ -930,8 +924,7 @@ impl EngineInner {
                 .expect("shoulder carrier is not a PC")
                 .carried = None;
             self.launch_element(
-                sim,
-                assets,
+                tcx,
                 crate::sequence::SequenceElement::new(
                     1,
                     crate::element::Command::LeaveHelpingClimb,
@@ -964,8 +957,7 @@ impl EngineInner {
                     direction.into(),
                 ));
             self.forward_message(
-                sim,
-                assets,
+                tcx,
                 crate::messenger::Message::pc(
                     crate::messenger::PcMessage::DisableAllActionsTemp,
                     Some(owner),
@@ -987,8 +979,7 @@ impl EngineInner {
     /// Execute-side termination effects run before ordinary order retirement.
     pub(super) fn apply_jump_order_state(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         entity_id: EntityId,
         state: crate::sprite::MotionState,
     ) {
@@ -1066,7 +1057,7 @@ impl EngineInner {
                 .expect("jump owner disappeared")
                 .element_data_mut()
                 .set_position(target);
-            self.finalize_airborne_jump_landing(assets, entity_id, layer, sector, projection);
+            self.finalize_airborne_jump_landing(tcx.assets, entity_id, layer, sector, projection);
             let pi = self
                 .world
                 .entities
@@ -1142,14 +1133,9 @@ impl EngineInner {
             } else {
                 crate::messenger::PcMessage::EnableAllActionsTemp
             };
+            self.forward_message(tcx, crate::messenger::Message::pc(pc_msg, Some(entity_id)));
             self.forward_message(
-                sim,
-                assets,
-                crate::messenger::Message::pc(pc_msg, Some(entity_id)),
-            );
-            self.forward_message(
-                sim,
-                assets,
+                tcx,
                 crate::messenger::Message::new(crate::messenger::MessageType::Simple(
                     crate::messenger::SimpleMessage::Stature,
                 )),
@@ -1175,7 +1161,7 @@ impl EngineInner {
                             .element_data()
                             .sector()
                 {
-                    self.update_swordfight_distance(sim, assets, entity_id);
+                    self.update_swordfight_distance(tcx, entity_id);
                 }
             }
             if jump_landing_restores_anti_collision(anim) {
@@ -1633,7 +1619,11 @@ mod tests {
         let sim = crate::sim_rng::test_context();
         let assets = LevelAssets::new();
 
-        assert!(engine.start_jump(&sim, &assets, owner, seq_id, 0));
+        assert!(engine.start_jump(
+            TickCtx::new(&sim, &assets),
+            owner,
+            SequenceElementRef::new(seq_id, 0)
+        ));
         let element = engine
             .orders
             .sequence_manager
@@ -1675,7 +1665,10 @@ mod tests {
             .continuation
             .motion_state = crate::sprite::MotionState::Terminated;
 
-        engine.do_next_order(&sim, &assets, seq_id, 0);
+        engine.do_next_order(
+            TickCtx::new(&sim, &assets),
+            SequenceElementRef::new(seq_id, 0),
+        );
 
         let actor = engine
             .world
@@ -1707,21 +1700,9 @@ mod tests {
             (OrderType::JumpingDown, 20.0, 5),
         ] {
             let mut actor = TestActor::pc(Posture::Flying)
-                .at(WorldPoint3D {
-                    x: 0.0,
-                    y: 0.0,
-                    z: 0.0,
-                })
+                .at(WorldPoint3D::new(0.0, 0.0, 0.0))
                 .build();
-            start_airborne_jump_motion(
-                &mut actor,
-                animation,
-                WorldPoint3D {
-                    x: 120.0,
-                    y: 0.0,
-                    z: 0.0,
-                },
-            );
+            start_airborne_jump_motion(&mut actor, animation, WorldPoint3D::new(120.0, 0.0, 0.0));
             assert_eq!(actor.actor_data().unwrap().wait_time, ticks);
             for tick in 1..=ticks {
                 let motion =
@@ -1765,16 +1746,8 @@ mod tests {
     #[test]
     fn trajectory_ends_at_destination() {
         // Horizontal jump across 300 units with a 50-unit rise.
-        let start = WorldPoint3D {
-            x: 0.0,
-            y: 0.0,
-            z: 0.0,
-        };
-        let dest = WorldPoint3D {
-            x: 300.0,
-            y: 0.0,
-            z: 50.0,
-        };
+        let start = WorldPoint3D::new(0.0, 0.0, 0.0);
+        let dest = WorldPoint3D::new(300.0, 0.0, 50.0);
         let traj = compute_trajectory_jump(start, dest);
         assert!(
             !traj.is_empty(),

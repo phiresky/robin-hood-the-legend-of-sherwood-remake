@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 
 #[test]
 fn fused_owner_gates_keep_fried_frozen_and_inactive_original_boundaries() {
@@ -8,8 +9,7 @@ fn fused_owner_gates_keep_fried_frozen_and_inactive_original_boundaries() {
     let inactive = engine.add_test_entity(make_test_pc(crate::element::Posture::Dead));
     let fried = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     let npc = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let Entity::Pc(inactive_pc) = engine.get_entity_mut(inactive).expect("inactive PC exists")
-    else {
+    let Entity::Pc(inactive_pc) = engine.ent_mut(inactive) else {
         panic!("inactive PC changed kind")
     };
     inactive_pc.element.active = false;
@@ -17,7 +17,7 @@ fn fused_owner_gates_keep_fried_frozen_and_inactive_original_boundaries() {
         .element
         .set_position_map(MapPoint::new(77.0, 88.0));
     inactive_pc.human.tiredness = 100;
-    let Entity::Pc(fried_pc) = engine.get_entity_mut(fried).expect("fried PC exists") else {
+    let Entity::Pc(fried_pc) = engine.ent_mut(fried) else {
         panic!("fried PC changed kind")
     };
     fried_pc.pc.fried_psykokwack = true;
@@ -33,7 +33,7 @@ fn fused_owner_gates_keep_fried_frozen_and_inactive_original_boundaries() {
 
     let (_, trace) = capture_actor_owner_envelope(|| {
         crate::sim_rng::with_seed(0xA013_6A7E, |sim| {
-            engine.tick_actor_owner_envelopes(sim, &assets)
+            engine.tick_actor_owner_envelopes(TickCtx::new(sim, &assets))
         })
     });
 
@@ -69,12 +69,7 @@ fn fused_owner_gates_keep_fried_frozen_and_inactive_original_boundaries() {
         "inactive/dead humans still recover tiredness on their staggered slot"
     );
     assert!(
-        engine
-            .get_entity(fried)
-            .and_then(Entity::actor_data)
-            .expect("fried PC remains an actor")
-            .produced_noise
-            .is_none(),
+        engine.actor(fried).produced_noise.is_none(),
         "fried return must precede produced-noise refresh"
     );
 }
@@ -101,7 +96,7 @@ fn patrol_refresh_uses_owner_relative_member_positions_and_spawn_fallback() {
             .unwrap_or_else(|| engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists)));
 
         for id in [chief, member] {
-            let Entity::Soldier(soldier) = engine.get_entity_mut(id).unwrap() else {
+            let Entity::Soldier(soldier) = engine.ent_mut(id) else {
                 unreachable!()
             };
             soldier.element.active = true;
@@ -109,22 +104,14 @@ fn patrol_refresh_uses_owner_relative_member_positions_and_spawn_fallback() {
             soldier.npc.ai_brain.base_mut().unwrap().me = id.index();
             soldier.npc.ai_brain.base_mut().unwrap().current_state = AiState::Default;
         }
-        engine
-            .get_entity_mut(chief)
-            .unwrap()
-            .element_data_mut()
-            .set_position_map(MapPoint::new(0.0, 0.0));
+        engine.place_map(chief, MapPoint::new(0.0, 0.0));
         let member_after = if member_before_chief {
             MapPoint::new(500.0, 0.0)
         } else {
             MapPoint::new(50.0, 0.0)
         };
-        engine
-            .get_entity_mut(member)
-            .unwrap()
-            .element_data_mut()
-            .set_position_map(member_after);
-        let Entity::Soldier(chief_entity) = engine.get_entity_mut(chief).unwrap() else {
+        engine.place_map(member, member_after);
+        let Entity::Soldier(chief_entity) = engine.ent_mut(chief) else {
             unreachable!()
         };
         chief_entity.npc.view_radius = 100;
@@ -133,15 +120,9 @@ fn patrol_refresh_uses_owner_relative_member_positions_and_spawn_fallback() {
         chief_ai.theoretical_patrol = vec![member];
 
         crate::sim_rng::with_seed(0x0A01_3705, |sim| {
-            engine.tick_patrol_coordination_for_npc(sim, &assets, chief)
+            engine.tick_patrol_coordination_for_npc(TickCtx::new(sim, &assets), chief)
         });
-        engine
-            .get_entity(chief)
-            .unwrap()
-            .ai_controller()
-            .unwrap()
-            .patrol
-            .contains(&member)
+        engine.ai_ctrl(chief).patrol.contains(&member)
     }
 
     assert!(
@@ -170,7 +151,7 @@ fn locked_owner_stops_at_gate_without_blocking_later_unlocked_owner() {
     let unlocked = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let assets = engine.test_runtime_assets();
     for id in [locked, unlocked] {
-        let entity = engine.get_entity_mut(id).expect("gate owner exists");
+        let entity = engine.ent_mut(id);
         entity.element_data_mut().active = true;
         for list in &mut entity
             .npc_data_mut()
@@ -180,10 +161,7 @@ fn locked_owner_stops_at_gate_without_blocking_later_unlocked_owner() {
             list.clear();
         }
     }
-    let ai = engine
-        .get_entity_mut(locked)
-        .and_then(Entity::ai_controller_mut)
-        .expect("locked owner has AI");
+    let ai = engine.ai_ctrl_mut(locked);
     ai.locks_flag_field = AiLockFlags::FREEZE;
     ai.when_does_timer_ring = u32::MAX;
     ai.when_does_macro_timer_ring = u32::MAX;
@@ -191,7 +169,7 @@ fn locked_owner_stops_at_gate_without_blocking_later_unlocked_owner() {
 
     let (_, trace) = capture_npc_post_detection_tail_phases(|| {
         crate::sim_rng::with_seed(0xA013_10CC, |sim| {
-            engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets)
+            engine.tick_enemy_ai_with_creation_ordered_prelude(TickCtx::new(sim, &assets))
         })
     });
     let locked_trace: Vec<_> = trace
@@ -214,10 +192,7 @@ fn locked_owner_stops_at_gate_without_blocking_later_unlocked_owner() {
         Some(&(unlocked, Tail::QueuedStimuli)),
         "the later owner must execute its whole unlocked tail"
     );
-    let ai = engine
-        .get_entity(locked)
-        .and_then(Entity::ai_controller)
-        .expect("locked owner retains AI");
+    let ai = engine.ai_ctrl(locked);
     assert_eq!(ai.when_does_timer_ring, 0);
     assert_eq!(ai.when_does_macro_timer_ring, 0);
     assert_eq!(ai.emoticon_expiration_date, 0);
@@ -241,10 +216,7 @@ fn sampled_open_gate_does_not_recheck_lock_or_global_freeze_inside_suffix() {
     // Model a synchronous periodic-update/EVENT_TIMER consequence that acquires
     // both kinds of outer lock after the branch has already been entered.
     engine.set_actors_frozen(true);
-    let ai = engine
-        .get_entity_mut(npc_id)
-        .and_then(Entity::ai_controller_mut)
-        .expect("post-gate owner has AI");
+    let ai = engine.ai_ctrl_mut(npc_id);
     ai.locks_flag_field = AiLockFlags::FREEZE;
     ai.timer_is_running = true;
     ai.when_does_timer_ring = 100;
@@ -253,15 +225,12 @@ fn sampled_open_gate_does_not_recheck_lock_or_global_freeze_inside_suffix() {
     ai.current_substate = Substate::DefaultOnPost;
     ai.set_transient_emoticon(EmoticonType::QuestionMark, 1, 99);
 
-    engine.tick_ai_normal_timer_for_npc(sim, npc_id, &assets);
-    engine.tick_ai_macro_timer_for_npc(sim, npc_id, &assets);
+    engine.tick_ai_normal_timer_for_npc(TickCtx::new(sim, &assets), npc_id);
+    engine.tick_ai_macro_timer_for_npc(TickCtx::new(sim, &assets), npc_id);
     engine.tick_npc_emoticon_expiration_for_npc(npc_id);
-    engine.tick_ai_queued_stimuli_for_npc(sim, npc_id, &assets);
+    engine.tick_ai_queued_stimuli_for_npc(TickCtx::new(sim, &assets), npc_id);
 
-    let ai = engine
-        .get_entity(npc_id)
-        .and_then(Entity::ai_controller)
-        .expect("post-gate owner retains AI");
+    let ai = engine.ai_ctrl(npc_id);
     assert!(!ai.timer_is_running, "due normal timer is consumed");
     assert!(!ai.macro_timer_is_running, "due macro timer is consumed");
     assert_eq!(ai.current_emoticon_type, EmoticonType::None);
@@ -288,10 +257,7 @@ fn owner_tail_and_empty_common_drain_do_not_draw_unrelated_building_exit_gate() 
     let door_actor = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     let assets = engine.test_runtime_assets();
 
-    let Entity::Civilian(civilian) = engine
-        .get_entity_mut(quiet_owner)
-        .expect("quiet civilian exists")
-    else {
+    let Entity::Civilian(civilian) = engine.ent_mut(quiet_owner) else {
         panic!("quiet owner changed kind")
     };
     civilian.element.active = true;
@@ -313,10 +279,7 @@ fn owner_tail_and_empty_common_drain_do_not_draw_unrelated_building_exit_gate() 
         crate::ai::StimulusType::EventOutOfView,
     ));
 
-    let Entity::Pc(pc) = engine
-        .get_entity_mut(door_actor)
-        .expect("door-passing actor exists")
-    else {
+    let Entity::Pc(pc) = engine.ent_mut(door_actor) else {
         panic!("door-passing actor changed kind")
     };
     pc.element.active = true;
@@ -353,13 +316,7 @@ fn owner_tail_and_empty_common_drain_do_not_draw_unrelated_building_exit_gate() 
         .sequence_manager
         .start_sequence_level(pass_sequence);
     engine.select_sequence_element(door_actor, Some((pass_sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        pass_sequence,
-        0,
-    );
+    engine.t_element_in_progress(&assets, pass_sequence, 0);
 
     let building_sector = SectorNumber::new(8);
     engine.script_domains.interactables.doors = vec![
@@ -391,26 +348,14 @@ fn owner_tail_and_empty_common_drain_do_not_draw_unrelated_building_exit_gate() 
     {
         level.sector_number_map.insert(sector_number, index);
         level.sectors.push(GridSector {
-            points: Vec::new(),
             bounding_box: crate::coordinates::MapBBox::new(),
             sector_type: if index == 0 {
                 SectorType::BUILDING
             } else {
                 SectorType::MOTION | SectorType::AREA
             },
-            layer: 0,
             sector_number,
-            door_index: None,
-            lift_type: None,
-            lift_direction: 0,
-            force_crouched: false,
-            building_index: None,
-            low_exit_point: None,
-            high_exit_point: None,
-            lowest_door_index: None,
-            jump_line_indices: Vec::new(),
-            gate_indices: Vec::new(),
-            underlying_sector: None,
+            ..Default::default()
         });
     }
     engine.scripts.mission = Some(
@@ -434,7 +379,7 @@ fn owner_tail_and_empty_common_drain_do_not_draw_unrelated_building_exit_gate() 
     let (_, control_trace) = with_draw_trace(|| {
         let input = crate::engine::ai::extract_exact_forecast_input(
             &engine,
-            engine.get_entity(door_actor).expect("door actor exists"),
+            engine.ent(door_actor),
             crate::engine::ai::selected_actor_is_passing_door(
                 &engine.world.entities,
                 &engine.orders.sequence_manager,
@@ -455,8 +400,9 @@ fn owner_tail_and_empty_common_drain_do_not_draw_unrelated_building_exit_gate() 
         "the fixture must exercise BuildingExitGate when its prepared forecast is resolved"
     );
 
-    let (_, tail_trace) =
-        with_draw_trace(|| engine.tick_npc_post_detection_tail_for_npc(sim, quiet_owner, &assets));
+    let (_, tail_trace) = with_draw_trace(|| {
+        engine.tick_npc_post_detection_tail_for_npc(TickCtx::new(sim, &assets), quiet_owner)
+    });
     assert!(
         !tail_trace.contains(&RngSite::BuildingExitGate),
         "due macro and retained Think work must not forecast an unrelated door-passing actor"
@@ -475,18 +421,13 @@ fn enemy_tick_data_uses_patrol_chiefs_committed_pass_door_side() {
     let chief_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     let minion_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     {
-        let chief = engine.get_entity_mut(chief_id).unwrap();
+        let chief = engine.ent_mut(chief_id);
         chief
             .element_data_mut()
             .set_position_map(MapPoint::new(814.0, 1110.2));
         chief.ai_controller_mut().unwrap().current_state = AiState::Default;
     }
-    engine
-        .get_entity_mut(minion_id)
-        .unwrap()
-        .ai_controller_mut()
-        .unwrap()
-        .patrol_chief = Some(chief_id);
+    engine.ai_ctrl_mut(minion_id).patrol_chief = Some(chief_id);
 
     let assets = engine.test_runtime_assets();
     engine.scripts.mission = Some(crate::engine::test_support::asm::empty_mission_script(
@@ -527,13 +468,7 @@ fn enemy_tick_data_uses_patrol_chiefs_committed_pass_door_side() {
             .sequence_manager
             .start_sequence_level(pass_sequence);
         engine.select_sequence_element(chief_id, Some((pass_sequence, 0)));
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            pass_sequence,
-            0,
-        );
+        engine.t_element_in_progress(&assets, pass_sequence, 0);
         assert_eq!(engine.live_ai_position(chief_id).x, 821.0);
         assert_eq!(engine.live_ai_position(chief_id).y, 1124.0);
         assert_eq!(engine.live_ai_position(chief_id).level, 2);
@@ -585,7 +520,7 @@ fn optical_detection_uses_owner_relative_positions_and_spawned_current_fallback(
         profile.detection_speed_in_city = 100;
         profile.detection_speed_in_forest = 100;
 
-        let Entity::Soldier(observer) = engine.get_entity_mut(observer_id).unwrap() else {
+        let Entity::Soldier(observer) = engine.ent_mut(observer_id) else {
             unreachable!()
         };
         observer.element.active = true;
@@ -614,7 +549,7 @@ fn optical_detection_uses_owner_relative_positions_and_spawned_current_fallback(
         } else {
             MapPoint::new(5_000.0, 0.0)
         };
-        let Entity::Pc(target) = engine.get_entity_mut(target_id).unwrap() else {
+        let Entity::Pc(target) = engine.ent_mut(target_id) else {
             unreachable!()
         };
         target.element.active = true;
@@ -623,15 +558,9 @@ fn optical_detection_uses_owner_relative_positions_and_spawned_current_fallback(
 
         let sim = crate::sim_rng::test_context();
         engine.prepare_npc_owner_pass();
-        engine.tick_npc_owner_pass(&sim, &assets, observer_id);
+        engine.tick_npc_owner_pass(TickCtx::new(&sim, &assets), observer_id);
 
-        engine
-            .get_entity(observer_id)
-            .unwrap()
-            .npc_data()
-            .unwrap()
-            .detectable_lists[DetectableType::Enemy as usize][0]
-            .seen_last_frame
+        engine.npc(observer_id).detectable_lists[DetectableType::Enemy as usize][0].seen_last_frame
     }
 
     assert!(
@@ -671,10 +600,7 @@ fn inactive_building_viewer_runs_hearing_then_optics_while_outdoor_viewer_is_a_n
         let building = crate::position_interface::SectorHandle::new(42).unwrap();
         install_test_building_sector(&mut engine, 42);
 
-        let Entity::Soldier(observer) = engine
-            .get_entity_mut(observer_id)
-            .expect("inactive-viewer observer exists")
-        else {
+        let Entity::Soldier(observer) = engine.ent_mut(observer_id) else {
             panic!("inactive-viewer observer changed kind")
         };
         observer.element.active = true;
@@ -692,10 +618,7 @@ fn inactive_building_viewer_runs_hearing_then_optics_while_outdoor_viewer_is_a_n
             observer.element.set_sector(Some(building));
         }
 
-        let Entity::Pc(indoor_target) = engine
-            .get_entity_mut(indoor_target_id)
-            .expect("inactive same-building target exists")
-        else {
+        let Entity::Pc(indoor_target) = engine.ent_mut(indoor_target_id) else {
             panic!("inactive same-building target changed kind")
         };
         indoor_target.element.active = true;
@@ -708,10 +631,7 @@ fn inactive_building_viewer_runs_hearing_then_optics_while_outdoor_viewer_is_a_n
         indoor_target.element.set_sector(Some(building));
         indoor_target.pc.life_points = 100;
 
-        let Entity::Pc(inactive_outdoor) = engine
-            .get_entity_mut(inactive_outdoor_id)
-            .expect("inactive outdoor target exists")
-        else {
+        let Entity::Pc(inactive_outdoor) = engine.ent_mut(inactive_outdoor_id) else {
             panic!("inactive outdoor target changed kind")
         };
         inactive_outdoor.element.active = true;
@@ -723,10 +643,7 @@ fn inactive_building_viewer_runs_hearing_then_optics_while_outdoor_viewer_is_a_n
             .set_position_map(MapPoint::new(45.0, 0.0));
         inactive_outdoor.pc.life_points = 100;
 
-        let Entity::Pc(runner) = engine
-            .get_entity_mut(runner_id)
-            .expect("inactive-viewer runner exists")
-        else {
+        let Entity::Pc(runner) = engine.ent_mut(runner_id) else {
             panic!("inactive-viewer runner changed kind")
         };
         runner.element.active = true;
@@ -751,13 +668,7 @@ fn inactive_building_viewer_runs_hearing_then_optics_while_outdoor_viewer_is_a_n
             .sequence_manager
             .start_sequence_level(movement_sequence);
         engine.select_sequence_element(runner_id, Some((movement_sequence, 0)));
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            movement_sequence,
-            0,
-        );
+        engine.t_element_in_progress(&assets, movement_sequence, 0);
 
         assets = engine.test_runtime_assets();
         let profile = std::sync::Arc::make_mut(&mut assets.profile_manager)
@@ -767,23 +678,13 @@ fn inactive_building_viewer_runs_hearing_then_optics_while_outdoor_viewer_is_a_n
         profile.detection_speed_in_city = 100;
         profile.detection_speed_in_forest = 100;
 
-        let Entity::Pc(indoor_target) = engine
-            .get_entity_mut(indoor_target_id)
-            .expect("same-building target exists after fixture")
-        else {
+        let Entity::Pc(indoor_target) = engine.ent_mut(indoor_target_id) else {
             panic!("same-building target changed kind after fixture")
         };
         indoor_target.element.active = false;
-        engine
-            .get_entity_mut(inactive_outdoor_id)
-            .expect("inactive outdoor target exists after fixture")
-            .element_data_mut()
-            .active = false;
+        engine.set_active(inactive_outdoor_id, false);
 
-        let Entity::Soldier(observer) = engine
-            .get_entity_mut(observer_id)
-            .expect("inactive-viewer observer exists after fixture")
-        else {
+        let Entity::Soldier(observer) = engine.ent_mut(observer_id) else {
             panic!("inactive-viewer observer changed kind after fixture")
         };
         observer.element.active = false;
@@ -821,12 +722,11 @@ fn inactive_building_viewer_runs_hearing_then_optics_while_outdoor_viewer_is_a_n
         observer.npc.detection_suspects[DetectableType::Enemy as usize] = 999;
         observer.npc.maximal_detection_suspect = 777;
 
-        crate::sim_rng::with_seed(0xA013_1A51, |sim| engine.tick_enemy_ai(sim, &assets));
+        crate::sim_rng::with_seed(0xA013_1A51, |sim| {
+            engine.tick_enemy_ai(TickCtx::new(sim, &assets))
+        });
 
-        let observer = engine
-            .get_entity(observer_id)
-            .and_then(Entity::npc_data)
-            .expect("inactive-viewer observer remains an NPC");
+        let observer = engine.npc(observer_id);
         let ai = observer
             .ai_brain
             .enemy()
@@ -859,11 +759,7 @@ fn inactive_building_viewer_runs_hearing_then_optics_while_outdoor_viewer_is_a_n
             );
             assert_eq!(observer.maximal_detection_suspect, 0);
             assert_eq!(
-                engine
-                    .get_entity(indoor_target_id)
-                    .and_then(Entity::actor_data)
-                    .expect("inactive indoor target remains an actor")
-                    .last_noise_volume,
+                engine.actor(indoor_target_id).last_noise_volume,
                 0,
                 "retaining an inactive PC for same-building sight must not make it audible"
             );
@@ -902,10 +798,7 @@ fn inactive_npc_blip_detection_requires_door_or_building_eligibility() {
         let pc_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
         install_test_building_sector(&mut engine, 42);
 
-        let Entity::Soldier(observer) = engine
-            .get_entity_mut(observer_id)
-            .expect("blipped inactive observer exists")
-        else {
+        let Entity::Soldier(observer) = engine.ent_mut(observer_id) else {
             panic!("blipped inactive observer changed kind")
         };
         observer.element.active = true;
@@ -921,10 +814,7 @@ fn inactive_npc_blip_detection_requires_door_or_building_eligibility() {
             ));
         }
 
-        let Entity::Pc(pc) = engine
-            .get_entity_mut(pc_id)
-            .expect("blip-viewing PC exists")
-        else {
+        let Entity::Pc(pc) = engine.ent_mut(pc_id) else {
             panic!("blip-viewing PC changed kind")
         };
         pc.element.active = true;
@@ -935,20 +825,14 @@ fn inactive_npc_blip_detection_requires_door_or_building_eligibility() {
         pc.element.set_position_map(MapPoint::new(20.0, 0.0));
 
         let assets = engine.test_runtime_assets();
-        engine
-            .get_entity_mut(observer_id)
-            .expect("blipped observer exists after fixture")
-            .element_data_mut()
-            .active = false;
+        engine.set_active(observer_id, false);
 
-        crate::sim_rng::with_seed(0xA013_B11F, |sim| engine.tick_enemy_ai(sim, &assets));
+        crate::sim_rng::with_seed(0xA013_B11F, |sim| {
+            engine.tick_enemy_ai(TickCtx::new(sim, &assets))
+        });
 
         assert_eq!(
-            engine
-                .get_entity(observer_id)
-                .expect("blipped observer survives tick")
-                .element_data()
-                .blipped,
+            engine.elem(observer_id).blipped,
             !observer_inside,
             "inactive building NPCs run blip detection; inactive outdoor NPCs do not"
         );
@@ -973,10 +857,7 @@ fn inactive_door_transit_viewer_runs_blip_and_hearing_then_skips_optics() {
     let observer_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     let runner_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
 
-    let Entity::Soldier(observer) = engine
-        .get_entity_mut(observer_id)
-        .expect("door-transit observer exists")
-    else {
+    let Entity::Soldier(observer) = engine.ent_mut(observer_id) else {
         panic!("door-transit observer changed kind")
     };
     observer.element.active = true;
@@ -992,10 +873,7 @@ fn inactive_door_transit_viewer_runs_blip_and_hearing_then_skips_optics() {
     observer.npc.real_half_aperture = crate::ai_vision::NORMAL_HALF_APERTURE;
     observer.npc.eye_status = crate::element::EyeStatus::Stare;
 
-    let Entity::Pc(runner) = engine
-        .get_entity_mut(runner_id)
-        .expect("door-transit runner exists")
-    else {
+    let Entity::Pc(runner) = engine.ent_mut(runner_id) else {
         panic!("door-transit runner changed kind")
     };
     runner.element.active = true;
@@ -1021,20 +899,11 @@ fn inactive_door_transit_viewer_runs_blip_and_hearing_then_skips_optics() {
         .sequence_manager
         .start_sequence_level(movement_sequence);
     engine.select_sequence_element(runner_id, Some((movement_sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        movement_sequence,
-        0,
-    );
+    engine.t_element_in_progress(&assets, movement_sequence, 0);
 
     assets = engine.test_runtime_assets();
 
-    let Entity::Soldier(observer) = engine
-        .get_entity_mut(observer_id)
-        .expect("door-transit observer exists after fixture")
-    else {
+    let Entity::Soldier(observer) = engine.ent_mut(observer_id) else {
         panic!("door-transit observer changed kind after fixture")
     };
     observer.element.active = false;
@@ -1063,12 +932,11 @@ fn inactive_door_transit_viewer_runs_blip_and_hearing_then_skips_optics() {
     ai.base.locks_flag_field = AiLockFlags::BUSY;
     ai.base.max_visibility = 15;
 
-    crate::sim_rng::with_seed(0xA013_D00F, |sim| engine.tick_enemy_ai(sim, &assets));
+    crate::sim_rng::with_seed(0xA013_D00F, |sim| {
+        engine.tick_enemy_ai(TickCtx::new(sim, &assets))
+    });
 
-    let Entity::Soldier(observer) = engine
-        .get_entity(observer_id)
-        .expect("door-transit observer survives tick")
-    else {
+    let Entity::Soldier(observer) = engine.ent(observer_id) else {
         panic!("door-transit observer changed kind during tick")
     };
     let ai = observer
@@ -1105,17 +973,16 @@ fn inactive_door_transit_viewer_runs_blip_and_hearing_then_skips_optics() {
     expected = "Enemy cleanup target for NPC Soldier(SoldierId(0)): entity Soldier(SoldierId(999999)) disappeared"
 )]
 fn mixed_enemy_walk_rejects_missing_detectable_target_with_context() {
-    use crate::element::{DetectableType, Entity};
+    use crate::element::DetectableType;
 
     let (mut engine, assets, observer_id, _, _) = mixed_enemy_fifo_fixture(true);
-    let observer = engine
-        .get_entity_mut(observer_id)
-        .and_then(Entity::npc_data_mut)
-        .expect("missing-target observer retains NPC state");
+    let observer = engine.npc_mut(observer_id);
     observer.detectable_lists[DetectableType::Enemy as usize][0].element =
         Some(EntityId::Soldier(crate::entity_id::SoldierId(999_999)));
 
-    crate::sim_rng::with_seed(0xA013_BAD1, |sim| engine.tick_enemy_ai(sim, &assets));
+    crate::sim_rng::with_seed(0xA013_BAD1, |sim| {
+        engine.tick_enemy_ai(TickCtx::new(sim, &assets))
+    });
 }
 
 #[test]
@@ -1126,10 +993,7 @@ fn mixed_enemy_walk_rejects_missing_observer_ai_with_context() {
     let mut engine = EngineInner::new();
     let civilian_id = engine.add_test_entity(make_test_civilian(crate::element::Posture::Upright));
     let pc_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
-    let Entity::Civilian(civilian) = engine
-        .get_entity_mut(civilian_id)
-        .expect("missing-AI civilian exists")
-    else {
+    let Entity::Civilian(civilian) = engine.ent_mut(civilian_id) else {
         panic!("missing-AI observer changed kind")
     };
     civilian.element.active = true;
@@ -1141,24 +1005,20 @@ fn mixed_enemy_walk_rejects_missing_observer_ai_with_context() {
         ..Detectable::default()
     });
 
-    let Entity::Pc(pc) = engine
-        .get_entity_mut(pc_id)
-        .expect("missing-AI target exists")
-    else {
+    let Entity::Pc(pc) = engine.ent_mut(pc_id) else {
         panic!("missing-AI target changed kind")
     };
     pc.element.active = true;
     pc.pc.life_points = 100;
 
     let assets = engine.test_runtime_assets();
-    let Entity::Civilian(civilian) = engine
-        .get_entity_mut(civilian_id)
-        .expect("missing-AI civilian exists after fixture completion")
-    else {
+    let Entity::Civilian(civilian) = engine.ent_mut(civilian_id) else {
         panic!("missing-AI observer changed kind after fixture completion")
     };
     civilian.npc.ai_brain = crate::element::AiBrain::None;
-    crate::sim_rng::with_seed(0xA013_BAD2, |sim| engine.tick_enemy_ai(sim, &assets));
+    crate::sim_rng::with_seed(0xA013_BAD2, |sim| {
+        engine.tick_enemy_ai(TickCtx::new(sim, &assets))
+    });
 }
 
 #[test]
@@ -1168,19 +1028,13 @@ fn mixed_enemy_walk_rejects_friendly_ai_on_a_soldier() {
 
     let mut engine = EngineInner::new();
     let soldier_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
-    let Entity::Soldier(soldier) = engine
-        .get_entity_mut(soldier_id)
-        .expect("wrong-AI soldier exists")
-    else {
+    let Entity::Soldier(soldier) = engine.ent_mut(soldier_id) else {
         panic!("wrong-AI observer changed kind")
     };
     soldier.element.active = true;
     soldier.npc.life_points = 100;
     let _assets = engine.test_runtime_assets();
-    let Entity::Soldier(soldier) = engine
-        .get_entity_mut(soldier_id)
-        .expect("wrong-AI soldier survives fixture setup")
-    else {
+    let Entity::Soldier(soldier) = engine.ent_mut(soldier_id) else {
         panic!("wrong-AI observer changed kind after fixture")
     };
     soldier.npc.ai_brain = AiBrain::Friendly(Box::new(crate::ai_friendly::FriendlyAi::new(
@@ -1194,27 +1048,20 @@ fn mixed_enemy_cleanup_removes_negative_life_targets() {
     use crate::element::{DetectableType, Entity};
 
     let (mut engine, assets, observer_id, pc_id, royalist_id) = mixed_enemy_fifo_fixture(true);
-    let Entity::Pc(pc) = engine
-        .get_entity_mut(pc_id)
-        .expect("negative-life PC target exists")
-    else {
+    let Entity::Pc(pc) = engine.ent_mut(pc_id) else {
         panic!("negative-life PC target changed kind")
     };
     pc.pc.life_points = -5;
-    let Entity::Soldier(royalist) = engine
-        .get_entity_mut(royalist_id)
-        .expect("negative-life soldier target exists")
-    else {
+    let Entity::Soldier(royalist) = engine.ent_mut(royalist_id) else {
         panic!("negative-life soldier target changed kind")
     };
     royalist.npc.life_points = -7;
 
-    crate::sim_rng::with_seed(0xA013_DEAD, |sim| engine.tick_enemy_ai(sim, &assets));
+    crate::sim_rng::with_seed(0xA013_DEAD, |sim| {
+        engine.tick_enemy_ai(TickCtx::new(sim, &assets))
+    });
 
-    let observer = engine
-        .get_entity(observer_id)
-        .and_then(Entity::npc_data)
-        .expect("negative-life observer retains NPC state");
+    let observer = engine.npc(observer_id);
     assert!(
         observer.detectable_lists[DetectableType::Enemy as usize].is_empty(),
         "detectable cleanup must use life <= 0 for PCs and soldiers"
@@ -1232,10 +1079,7 @@ fn blipped_lacklandist_in_door_transit_is_inside_for_the_pre_cadence_gate() {
     // Lacklandist PC cadence.
     engine.control.frame_counter = 3;
 
-    let Entity::Soldier(royalist) = engine
-        .get_entity_mut(royalist_id)
-        .expect("door-transit rear target exists")
-    else {
+    let Entity::Soldier(royalist) = engine.ent_mut(royalist_id) else {
         panic!("door-transit rear target changed kind")
     };
     royalist
@@ -1245,10 +1089,7 @@ fn blipped_lacklandist_in_door_transit_is_inside_for_the_pre_cadence_gate() {
         .element
         .set_position_map(MapPoint::new(-120.0, 0.0));
 
-    let Entity::Soldier(observer) = engine
-        .get_entity_mut(observer_id)
-        .expect("door-transit optical observer exists")
-    else {
+    let Entity::Soldier(observer) = engine.ent_mut(observer_id) else {
         panic!("door-transit optical observer changed kind")
     };
     observer.element.blipped = true;
@@ -1264,12 +1105,11 @@ fn blipped_lacklandist_in_door_transit_is_inside_for_the_pre_cadence_gate() {
             .is_multiple_of(crate::ai_vision::DETECTION_FREQUENCY_ENEMY_NPC),
         "fixture must keep NPC blip auto-reveal closed"
     );
-    crate::sim_rng::with_seed(0xA013_D016, |sim| engine.tick_enemy_ai(sim, &assets));
+    crate::sim_rng::with_seed(0xA013_D016, |sim| {
+        engine.tick_enemy_ai(TickCtx::new(sim, &assets))
+    });
 
-    let observer = engine
-        .get_entity(observer_id)
-        .and_then(Entity::npc_data)
-        .expect("door-transit optical observer retains NPC state");
+    let observer = engine.npc(observer_id);
     let view_targets = observer
         .ai_brain
         .base()
@@ -1300,10 +1140,7 @@ fn civilian_enemy_optics_uses_the_common_npc_walk() {
     let civilian_id = engine.add_test_entity(make_test_civilian(crate::element::Posture::Upright));
     let pc_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
 
-    let Entity::Civilian(civilian) = engine
-        .get_entity_mut(civilian_id)
-        .expect("optical civilian exists")
-    else {
+    let Entity::Civilian(civilian) = engine.ent_mut(civilian_id) else {
         panic!("optical civilian changed kind")
     };
     civilian.element.active = true;
@@ -1318,10 +1155,7 @@ fn civilian_enemy_optics_uses_the_common_npc_walk() {
     civilian.npc.real_half_aperture = crate::ai_vision::NORMAL_HALF_APERTURE;
     civilian.npc.eye_status = crate::element::EyeStatus::Stare;
 
-    let Entity::Pc(pc) = engine
-        .get_entity_mut(pc_id)
-        .expect("civilian target exists")
-    else {
+    let Entity::Pc(pc) = engine.ent_mut(pc_id) else {
         panic!("civilian target changed kind")
     };
     pc.element.active = true;
@@ -1338,10 +1172,7 @@ fn civilian_enemy_optics_uses_the_common_npc_walk() {
     profile.detection_speed_in_city = 100;
     profile.detection_speed_in_forest = 100;
 
-    let Entity::Civilian(civilian) = engine
-        .get_entity_mut(civilian_id)
-        .expect("optical civilian exists after fixture")
-    else {
+    let Entity::Civilian(civilian) = engine.ent_mut(civilian_id) else {
         panic!("optical civilian changed kind after fixture")
     };
     let ai = civilian
@@ -1360,12 +1191,11 @@ fn civilian_enemy_optics_uses_the_common_npc_walk() {
     }];
     civilian.npc.detection_suspects[DetectableType::Enemy as usize] = 999;
 
-    crate::sim_rng::with_seed(0xA013_C1A0, |sim| engine.tick_enemy_ai(sim, &assets));
+    crate::sim_rng::with_seed(0xA013_C1A0, |sim| {
+        engine.tick_enemy_ai(TickCtx::new(sim, &assets))
+    });
 
-    let ai = engine
-        .get_entity(civilian_id)
-        .and_then(Entity::ai_controller)
-        .expect("optical civilian retains FriendlyAi");
+    let ai = engine.ai_ctrl(civilian_id);
     assert_eq!(ai.stimulus_queue.len(), 1);
     assert_eq!(ai.stimulus_queue[0].stimulus_type, StimulusType::EventView);
     assert_eq!(

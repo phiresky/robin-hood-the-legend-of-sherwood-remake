@@ -45,9 +45,7 @@ pub fn main() {
 /// Every other [`TraceRunError`] was a panic before it became a typed error and
 /// is re-raised here as a panic carrying the same message: the resulting exit
 /// status 101 and the runtime's `panicked at` line are consumed by the corpus
-/// tooling (`scripts/run_schema16_existing_corpora_orchestrator.sh` accepts
-/// status 101 as parity evidence when the log names an RNG or divergence
-/// failure, and `scripts/replay_state_db.py` classifies `panicked at` logs as
+/// tooling (`scripts/replay_state_db.py` classifies `panicked at` logs as
 /// runner crashes).
 // TODO: give non-storage failures their own exit status and log marker once
 // those scripts classify them explicitly, then drop the re-raise.

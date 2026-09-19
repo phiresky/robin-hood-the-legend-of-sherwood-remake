@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 
 /// Complete authored route input. Flags are named at construction sites;
 /// their order no longer depends on thirteen positional arguments.
@@ -65,14 +66,13 @@ impl EngineInner {
     /// Invalid routes are rejected by the same builder and remain visible in diagnostics.
     pub(crate) fn launch_gate_movement_order(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         request: GateRouteRequest,
     ) {
         let entity_id = request.entity_id;
         if self
-            .launch_gate_movement_sequence(sim, assets, active_scripts, request)
+            .launch_gate_movement_sequence(tcx, active_scripts, request)
             .is_none()
         {
             tracing::warn!(entity = ?entity_id, "gate movement order could not be launched");
@@ -125,8 +125,7 @@ impl EngineInner {
     #[must_use]
     pub(crate) fn launch_gate_movement_sequence(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         mut request: GateRouteRequest,
     ) -> Option<crate::sequence::SequenceId> {
@@ -215,13 +214,13 @@ impl EngineInner {
             ended_early: false,
         };
         let emission =
-            self.append_gate_elements(sim, &request, &gate_shots, has_lockpick, emission);
+            self.append_gate_elements(tcx.sim, &request, &gate_shots, has_lockpick, emission);
         let GateRouteEmission {
             mut seq,
             mut level,
             ended_early,
             ..
-        } = self.append_route_tail(sim, &request, &gate_shots, has_lockpick, emission);
+        } = self.append_route_tail(tcx.sim, &request, &gate_shots, has_lockpick, emission);
 
         for mut elem in request.tail_elements.drain(..) {
             elem.command_level = level;
@@ -260,7 +259,7 @@ impl EngineInner {
         }
 
         let seq_id = self
-            .launch_sequence_inline(sim, assets, active_scripts, seq)
+            .launch_sequence_inline(tcx, active_scripts, seq)
             .unwrap_or_else(|error| panic!("sequence launch failed: {error:?}"));
         tracing::trace!(
             entity = ?entity_id,

@@ -6,8 +6,10 @@
 mod tests;
 use super::*;
 use crate::coordinates::GroundPoint;
+use crate::engine::TickCtx;
 use crate::position_interface::SectorHandle;
 use crate::sequence::MoveFlags;
+use crate::sequence::SequenceElementRef;
 
 /// `(position, sector, current gameplay point)` of the FinalTol seek target.
 type LiveSeekTarget = Option<(MapPoint, Option<SectorHandle>, Option<MapPoint>)>;
@@ -153,8 +155,7 @@ impl EngineInner {
 
     pub(super) fn tick_one_movement_actor(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         entity_id: EntityId,
         mut selected: MovementOwnerSelection,
         actor_id: crate::entity_id::ActorId,
@@ -201,7 +202,7 @@ impl EngineInner {
 
         let mut order_compute_direction = selected_order.order_compute_direction;
         if let Some(motion) =
-            self.execute_non_sprite_movement_action(sim, assets, entity_id, selected_order)
+            self.execute_non_sprite_movement_action(tcx, entity_id, selected_order)
         {
             return Some(motion);
         }
@@ -228,7 +229,7 @@ impl EngineInner {
                 .pc_data()
                 .and_then(|pc| pc.carried)
                 .expect("carrying movement has no carried actor");
-            self.actor_freeze_execution(sim, assets, carried);
+            self.actor_freeze_execution(tcx, carried);
             if order_action == OrderType::WalkingCarryingOnShoulders {
                 let sprite = &mut self
                     .world
@@ -924,7 +925,7 @@ impl EngineInner {
             let (motion_state, frame_dist_raw) = if tolerance_arrival {
                 if !ft.has_post_seek {
                     sprite.perform_action(
-                        sim,
+                        tcx.sim,
                         Some(selected.order_id),
                         sprite_motion_order_for_nonanimation(anim),
                         u16::from(sprite.position_iface.get_direction().as_u8()),
@@ -933,7 +934,10 @@ impl EngineInner {
                     );
                     let (element, next_order_id) = self
                         .orders
-                        .element_with_order_ids_mut(selected.seq_id, selected.elem_idx)
+                        .element_with_order_ids_mut(SequenceElementRef::new(
+                            selected.seq_id,
+                            selected.elem_idx,
+                        ))
                         .expect("frozen seek lost its selected element");
                     let order = element
                         .orders
@@ -982,7 +986,7 @@ impl EngineInner {
                     sprite_row_diagnostic.then(|| sprite.sprite_row_diagnostic_pre());
                 let played_direction = u16::from(sprite.position_iface.get_direction().as_u8());
                 let result = sprite.perform_motion(
-                    sim,
+                    tcx.sim,
                     motion_order,
                     sprite_motion_order_for_nonanimation(anim),
                     played_direction,
@@ -1215,7 +1219,7 @@ impl EngineInner {
                             .expect("movement owner disappeared during execution");
                         let collision = super::anti_collision::CollisionWorld {
                             neighbours,
-                            profiles: &assets.profile_manager,
+                            profiles: &tcx.assets.profile_manager,
                         };
                         let mover =
                             super::anti_collision::CollisionMover::new(entity_id, collision_entity);
@@ -1427,8 +1431,7 @@ impl EngineInner {
                             self.insert_transition_distance_continuation(selected_order);
                         }
                         let cleanup = match self.hand_off_terminated_transition_seek(
-                            sim,
-                            assets,
+                            tcx,
                             entity_id,
                             selected_order,
                             ft,
@@ -1439,8 +1442,7 @@ impl EngineInner {
                             std::ops::ControlFlow::Continue(cleanup) => cleanup,
                         };
                         if let Some(motion) = self.hand_off_actor_owned_post_seek(
-                            sim,
-                            assets,
+                            tcx,
                             entity_id,
                             selected_order,
                             ft,
@@ -1517,7 +1519,7 @@ impl EngineInner {
             );
             refresh_pc_walking_shield_after_execute(
                 entity,
-                &assets.profile_manager,
+                &tcx.assets.profile_manager,
                 order_action,
             );
             break 'arrival_preparation None;
@@ -1537,8 +1539,7 @@ impl EngineInner {
         'arrival: loop {
             if post_step_arrival {
                 break 'ordinary Some(self.settle_movement_waypoint(
-                    sim,
-                    assets,
+                    tcx,
                     ft,
                     selected_order,
                     entity_id,
@@ -1572,7 +1573,7 @@ impl EngineInner {
                     .expect("movement owner disappeared during execution");
                 let collision = super::anti_collision::CollisionWorld {
                     neighbours,
-                    profiles: &assets.profile_manager,
+                    profiles: &tcx.assets.profile_manager,
                 };
                 let cached_increment = entity.position_iface().get_increment_map();
                 let anti_on = entity.position_iface().is_anti_collision_on();
@@ -1721,7 +1722,7 @@ impl EngineInner {
                 }
                 // The previous call may have expired the refresh countdown.
                 // Refresh before the next call ages it or advances the sprite.
-                if self.tick_refresh_seek_for_owner(sim, assets, entity_id) {
+                if self.tick_refresh_seek_for_owner(tcx, entity_id) {
                     break MotionState::InProgress;
                 }
                 let (seq_id, elem_idx) = self
@@ -1774,18 +1775,18 @@ impl EngineInner {
             if is_pc && order_action == OrderType::WalkingWithCorpse {
                 crate::abilities::sync_walking_corpse_for_carrier(
                     &mut self.world.entities,
-                    &assets.profile_manager,
+                    &tcx.assets.profile_manager,
                     entity_id,
                 );
             }
             if is_pc && order_action == OrderType::WalkingCarryingOnShoulders {
-                crate::abilities::step_shoulder_rider(sim, &mut self.world.entities, entity_id);
-                if !self.check_walking_shoulder_clearance(sim, assets, entity_id) {
+                crate::abilities::step_shoulder_rider(tcx.sim, &mut self.world.entities, entity_id);
+                if !self.check_walking_shoulder_clearance(tcx, entity_id) {
                     break 'execute_tail MotionState::Aborted;
                 }
             }
             if is_sword_motion {
-                self.quit_swordfight_with_far_opponents(sim, assets, entity_id);
+                self.quit_swordfight_with_far_opponents(tcx, entity_id);
             }
             let start_survives = motion_state != MotionState::Start
                 || self
@@ -1849,8 +1850,8 @@ impl EngineInner {
                     .and_then(Entity::human_data_mut)
                     .expect("sword movement owner lost human state")
                     .last_motion_was_step_back_in_combat = step_back;
-                if self.sword_movement_termination_warrants_provoke(assets, entity_id) {
-                    self.launch_sword_movement_termination_provoke(sim, assets, entity_id);
+                if self.sword_movement_termination_warrants_provoke(tcx.assets, entity_id) {
+                    self.launch_sword_movement_termination_provoke(tcx, entity_id);
                 }
             }
             refresh_pc_walking_shield_after_execute(
@@ -1858,7 +1859,7 @@ impl EngineInner {
                     .entities
                     .get_mut(entity_id)
                     .expect("movement Execute owner disappeared"),
-                &assets.profile_manager,
+                &tcx.assets.profile_manager,
                 order_action,
             );
             if door_pass_anim.is_some()
@@ -1869,7 +1870,7 @@ impl EngineInner {
                         | OrderType::TransitionClimbingLadderUpWaitingUprightAlerted
                 )
             {
-                self.apply_door_pass_transition_start_side_effects(assets, entity_id);
+                self.apply_door_pass_transition_start_side_effects(tcx.assets, entity_id);
             }
             if door_pass_anim.is_some()
                 && matches!(motion_state, MotionState::Done)
@@ -1885,7 +1886,7 @@ impl EngineInner {
                         | OrderType::TransitionClimbingLadderUpWaitingUprightAlerted
                 )
             {
-                self.apply_door_pass_transition_done_side_effects(assets, entity_id);
+                self.apply_door_pass_transition_done_side_effects(tcx.assets, entity_id);
             }
             if (is_transition_anim && !tolerance_arrival)
                 && !(raw_motion_state == MotionState::Terminated
@@ -1919,7 +1920,7 @@ impl EngineInner {
                         )
                     {
                         self.apply_door_pass_transition_completion_side_effects(
-                            assets,
+                            tcx.assets,
                             entity_id,
                             order_action,
                         );
@@ -1938,7 +1939,7 @@ impl EngineInner {
                 let frame_count = sprite.num_frames_for_anim(OrderType::RunningUpright);
                 let cur = sprite.current_frame;
                 if is_galopp_decision_frame(cur, frame_count) {
-                    self.dispatch_galopp_loop_event(sim, assets, entity_id);
+                    self.dispatch_galopp_loop_event(tcx, entity_id);
                 }
             }
             if is_pc {
@@ -1977,8 +1978,7 @@ impl EngineInner {
 
     fn execute_non_sprite_movement_action(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         entity_id: EntityId,
         selected_order: SelectedMovementOrder,
     ) -> Option<MotionState> {
@@ -1997,14 +1997,17 @@ impl EngineInner {
         if order_action == OrderType::Freezing {
             return Some(MotionState::InProgress);
         }
-        self.execute_passing_door_order(sim, assets, owner);
+        self.execute_passing_door_order(tcx, owner);
         Some(MotionState::Terminated)
     }
 
     fn insert_transition_distance_continuation(&mut self, selected_order: SelectedMovementOrder) {
-        let Some((element, next_order_id)) = self
-            .orders
-            .element_with_order_ids_mut(selected_order.move_seq_id, selected_order.move_elem_idx)
+        let Some((element, next_order_id)) =
+            self.orders
+                .element_with_order_ids_mut(SequenceElementRef::new(
+                    selected_order.move_seq_id,
+                    selected_order.move_elem_idx,
+                ))
         else {
             panic!("terminated movement transition lost its element");
         };
@@ -2036,8 +2039,7 @@ impl EngineInner {
 
     fn hand_off_terminated_transition_seek(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         entity_id: EntityId,
         selected_order: SelectedMovementOrder,
         ft: FinalTol,
@@ -2109,7 +2111,11 @@ impl EngineInner {
             // strands the actor at a standstill, and the refresh
             // then reads that as a walk rather than the run it was
             // already doing.
-            self.refresh_movement_transition_seek(sim, assets, eid, move_seq_id, move_elem_idx);
+            self.refresh_movement_transition_seek(
+                tcx,
+                eid,
+                SequenceElementRef::new(move_seq_id, move_elem_idx),
+            );
             return std::ops::ControlFlow::Break(MotionState::InProgress);
         }
         // Motion through the last frame can mutate the order list
@@ -2148,7 +2154,11 @@ impl EngineInner {
             let reach =
                 (f32::from(entity.sprite().distance_for_animation(next_action)) + ft.tol) * 1.05;
             if dx * dx + dy * dy > reach * reach {
-                self.refresh_movement_transition_seek(sim, assets, eid, move_seq_id, move_elem_idx);
+                self.refresh_movement_transition_seek(
+                    tcx,
+                    eid,
+                    SequenceElementRef::new(move_seq_id, move_elem_idx),
+                );
                 tracing::trace!(
                     ?eid,
                     ?next_action,
@@ -2215,8 +2225,7 @@ impl EngineInner {
             let actor = entity.actor_data_mut().expect("actor-only branch");
             if actor.post_seek_sequence.is_some() && selected_order.door_pass_anim.is_none() {
                 if self.start_post_seek_sequence(
-                    sim,
-                    assets,
+                    tcx,
                     &mut Vec::new(),
                     eid,
                     Some((move_seq_id, move_elem_idx)),
@@ -2239,8 +2248,7 @@ impl EngineInner {
 
     fn hand_off_actor_owned_post_seek(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         entity_id: EntityId,
         selected_order: SelectedMovementOrder,
         ft: FinalTol,
@@ -2346,8 +2354,7 @@ impl EngineInner {
         if final_actor_owned_post_seek_arrival {
             return Some(
                 if self.start_post_seek_sequence(
-                    sim,
-                    assets,
+                    tcx,
                     &mut Vec::new(),
                     eid,
                     Some((move_seq_id, move_elem_idx)),

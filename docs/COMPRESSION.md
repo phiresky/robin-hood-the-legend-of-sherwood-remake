@@ -1,5 +1,10 @@
 # Compression investigation — sprites and maps
 
+> Tooling note: the research examples `sprite_size_bench` and
+> `sprite_compression_probe` (and `scripts/sprite_compress_{atlas,streams}.sh`)
+> were removed once these experiments closed. Commands below that invoke them
+> are a historical record; recover the tools from Git history to rerun them.
+
 Summary of a benchmark sweep looking at whether we can shrink the shipping datadir. Tools: `crates/robin_rs/examples/sprite_size_bench.rs` (codec sweep), `crates/robin_rs/examples/datadir_breakdown.rs` (where-does-the-shipping-blob-budget-actually-go), `cargo run --bin convert_datadir -- --map-format jxl-{lossless,q90}` (the actual production conversion). Data: `datadirs/fullgame_gog` and `datadirs/demo_leicester_ecoste`.
 
 ## Latest recorded outcome
@@ -2969,7 +2974,7 @@ in `canonical::write_value`, `canonicalize_serde_value` and
 `simulation_opacity_sha256` after the change; all three were prominent before.
 
 Validation: the explicit `robin_engine`, `robin_run_protocol` (102 tests),
-`robin_manifest_tool` (144), `robin_ranked_verification`, `robin_replay_verifier`
+`robin_manifest_tool` (144), `robin_replay_verifier`
 (36) and `robin_rs --features projection-export` (1,510 active) suites pass,
 as do both exporter-example tests and all 83 browser leaderboard/signer tests.
 The original Leicester admission test independently prepares matching seals

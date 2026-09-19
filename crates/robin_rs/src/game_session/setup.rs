@@ -1787,9 +1787,7 @@ mod tests {
     }
 
     fn prepared_stage_fixture() -> PreparedMission {
-        let mut assets = LevelAssets::new();
-        let fixture = Engine::new_for_test(1024.0, 768.0, Campaign::default(), &mut assets)
-            .expect("fixture campaign");
+        let (fixture, assets) = robin_engine::test_support::fresh_engine_sized(1024.0, 768.0);
         let loaded = robin_engine::level_data::LoadedLevel::empty();
         let ambiance = engine_api::Ambiance::from_raw(loaded.mission.header.ambiance);
         let (r, g, b) = ambiance.night_color_rgb();
@@ -2009,8 +2007,7 @@ mod tests {
     #[test]
     fn peasant_registration_has_identical_cpu_and_portrait_bootstrap_identity() {
         use robin_engine::character_kind::CharacterKind;
-        let mut assets = LevelAssets::new();
-        let engine = Engine::new_for_test(1024.0, 768.0, Campaign::default(), &mut assets).unwrap();
+        let (engine, mut assets) = robin_engine::test_support::fresh_engine_sized(1024.0, 768.0);
         assets.peasant_firstnames = ["Peter", "Matt", "John"].map(str::to_owned).to_vec();
         assets.peasant_surnames = ["Hunter", "Little", "Chopper"].map(str::to_owned).to_vec();
         let mut graphical = engine.clone();
@@ -2048,9 +2045,7 @@ mod tests {
 
     #[test]
     fn missing_peasant_pool_does_not_fabricate_campaign_names() {
-        let mut assets = LevelAssets::new();
-        let mut engine =
-            Engine::new_for_test(1024.0, 768.0, Campaign::default(), &mut assets).unwrap();
+        let (mut engine, assets) = robin_engine::test_support::fresh_engine_sized(1024.0, 768.0);
         let before = robin_engine::replay::state_hash(&engine);
         let mut names = std::array::from_fn(|_| None);
         register_mission_peasant_names(&mut names, &mut engine, &assets);

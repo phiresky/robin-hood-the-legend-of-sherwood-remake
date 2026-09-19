@@ -31,8 +31,11 @@
 use super::movement::GoalShape;
 use crate::coordinates::{MapPoint, MapVec};
 use crate::element::{ActionState, Entity, EntityId};
+#[cfg(test)]
 use crate::engine::LevelAssets;
+use crate::engine::TickCtx;
 use crate::order::OrderType;
+use crate::sequence::SequenceElementRef;
 use crate::sequence::{
     CascadeFlags, MoveFlags, Sequence, SequenceElement, SequenceElementData, SequenceId,
 };
@@ -342,8 +345,7 @@ impl crate::engine::EngineInner {
     /// update slot.
     pub(super) fn tick_refreshing_seek_for_owner(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
     ) -> Option<MotionState> {
         let (seq_id, elem_idx) = self.world.entities.current_element_for_actor(owner)?;
@@ -394,8 +396,7 @@ impl crate::engine::EngineInner {
             .element_data()
             .position_map();
         self.apply_seek_refresh(
-            sim,
-            assets,
+            tcx,
             &mut Vec::new(),
             EntitySeekRequest {
                 owner,
@@ -437,8 +438,7 @@ impl crate::engine::EngineInner {
     /// offset, synchronous SEEK_STOP_NPC, and authorized-position snapping.
     pub(crate) fn resolve_entity_seek(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         target: EntityId,
         flags: MoveFlags,
@@ -541,7 +541,7 @@ impl crate::engine::EngineInner {
         // sends the target `EVENT_STOP` synchronously, and only afterwards
         // samples the destination and authorizes/builds the replacement.
         if stop_npc {
-            self.send_seek_stop_to_npc(sim, assets, target);
+            self.send_seek_stop_to_npc(tcx, target);
         }
 
         let owner_entity = self.get_entity(owner)?;
@@ -598,8 +598,7 @@ impl crate::engine::EngineInner {
     /// moving the replacement in the same owner slot.
     pub(super) fn tick_refresh_seek_for_owner(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
     ) -> bool {
         let Some(refresh) = self.selected_seek_refresh_decision(owner) else {
@@ -620,8 +619,7 @@ impl crate::engine::EngineInner {
             actor.action_state = actor.action_state.set_moving(false, false);
         }
         self.apply_seek_refresh(
-            sim,
-            assets,
+            tcx,
             &mut Vec::new(),
             EntitySeekRequest {
                 owner,
@@ -730,8 +728,7 @@ impl crate::engine::EngineInner {
     /// [`EngineInner::process_per_tick_movement`]).
     pub(super) fn apply_seek_refresh(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         request: EntitySeekRequest,
         new_target_pos: crate::coordinates::MapPoint,
@@ -754,7 +751,7 @@ impl crate::engine::EngineInner {
                     "entity-target seek-refresh owner {owner:?} has no positive base seek distance"
                 )
             });
-        if self.try_handle_same_sector_actor_seek_wait(sim, assets, active_scripts, request) {
+        if self.try_handle_same_sector_actor_seek_wait(tcx, active_scripts, request) {
             return;
         }
 
@@ -770,21 +767,18 @@ impl crate::engine::EngineInner {
             actor.wait_time = 25;
         }
 
-        if self.try_dispatch_cross_sector_entity_seek(
-            sim,
-            assets,
-            active_scripts,
-            request,
-            seek_distance,
-        ) {
+        if self.try_dispatch_cross_sector_entity_seek(tcx, active_scripts, request, seek_distance) {
             return;
         }
 
-        let Some(resolved) =
-            self.resolve_entity_seek(sim, assets, owner, target, flags, seek_distance)
+        let Some(resolved) = self.resolve_entity_seek(tcx, owner, target, flags, seek_distance)
         else {
             self.stop_selected_seek_for_refresh(owner);
-            self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_impossible(
+                tcx,
+                active_scripts,
+                SequenceElementRef::new(seq_id, elem_idx),
+            );
             return;
         };
         // Seek refresh's transient selected seek is replaced by the concrete
@@ -810,12 +804,10 @@ impl crate::engine::EngineInner {
         }
 
         self.relaunch_seek_replacement(
-            sim,
-            assets,
+            tcx,
             active_scripts,
             owner,
-            seq_id,
-            elem_idx,
+            SequenceElementRef::new(seq_id, elem_idx),
             new_elem,
         );
     }
@@ -833,8 +825,7 @@ impl crate::engine::EngineInner {
     /// re-resolution.
     pub(super) fn try_handle_same_sector_actor_seek_wait(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         request: EntitySeekRequest,
     ) -> bool {
@@ -872,13 +863,7 @@ impl crate::engine::EngineInner {
                 && let Some(owner_e) = self.get_entity_mut(owner)
             {
                 owner_e.position_iface_mut().set_map_position(pos);
-                self.start_post_seek_sequence(
-                    sim,
-                    assets,
-                    active_scripts,
-                    owner,
-                    Some((seq_id, elem_idx)),
-                );
+                self.start_post_seek_sequence(tcx, active_scripts, owner, Some((seq_id, elem_idx)));
             }
             return true;
         }
@@ -900,8 +885,7 @@ impl crate::engine::EngineInner {
     /// impossible after an authorized-position / gate-path failure.
     pub(super) fn try_dispatch_cross_sector_entity_seek(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         request: EntitySeekRequest,
         seek_distance: f32,
@@ -924,7 +908,11 @@ impl crate::engine::EngineInner {
                 )
             }
             None => {
-                self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                self.element_impossible(
+                    tcx,
+                    active_scripts,
+                    SequenceElementRef::new(seq_id, elem_idx),
+                );
                 return true;
             }
         };
@@ -938,7 +926,11 @@ impl crate::engine::EngineInner {
                 )
             }
             None => {
-                self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                self.element_impossible(
+                    tcx,
+                    active_scripts,
+                    SequenceElementRef::new(seq_id, elem_idx),
+                );
                 return true;
             }
         };
@@ -949,15 +941,18 @@ impl crate::engine::EngineInner {
             return false;
         }
 
-        let Some(resolved) =
-            self.resolve_entity_seek(sim, assets, owner, target, flags, seek_distance)
+        let Some(resolved) = self.resolve_entity_seek(tcx, owner, target, flags, seek_distance)
         else {
             // The original game marks the current movement during seek refresh
             // impossible silently when position authorization fails.
             // The unable-to-do bark belongs to movement-sequence construction's
             // gate-path failure below.
             self.stop_selected_seek_for_refresh(owner);
-            self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_impossible(
+                tcx,
+                active_scripts,
+                SequenceElementRef::new(seq_id, elem_idx),
+            );
             return true;
         };
 
@@ -1003,26 +998,28 @@ impl crate::engine::EngineInner {
 
         let Some(gate_path) = gate_path else {
             self.hero_speaking(
-                assets,
+                tcx.assets,
                 owner,
                 crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
             );
             self.stop_selected_seek_for_refresh(owner);
-            self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_impossible(
+                tcx,
+                active_scripts,
+                SequenceElementRef::new(seq_id, elem_idx),
+            );
             return true;
         };
 
         self.stop_selected_seek_for_refresh(owner);
         self.element_interrupted(
-            sim,
-            assets,
+            tcx,
             active_scripts,
-            seq_id,
-            elem_idx,
+            SequenceElementRef::new(seq_id, elem_idx),
             CascadeFlags::NEXT_LEVEL,
         );
 
-        self.launch_gate_movement_order(sim, assets, active_scripts, crate::engine::movement::GateRouteRequest { entity_id: owner, source_sector: Some(path_src_sector), gate_path: gate_path, goal: GoalShape::Seek {
+        self.launch_gate_movement_order(tcx, active_scripts, crate::engine::movement::GateRouteRequest { entity_id: owner, source_sector: Some(path_src_sector), gate_path: gate_path, goal: GoalShape::Seek {
                 point: resolved.destination,
                 target,
                 tolerance: resolved.tolerance,
@@ -1062,8 +1059,7 @@ impl crate::engine::EngineInner {
     /// element, leaving nothing for the flat relaunch to do.
     pub(super) fn try_dispatch_cross_sector_point_seek(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         request: PointSeekRequest,
     ) -> bool {
@@ -1179,12 +1175,16 @@ impl crate::engine::EngineInner {
             // returning false, and seek refresh then marks the element
             // impossible.
             self.hero_speaking(
-                assets,
+                tcx.assets,
                 owner,
                 crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
             );
             self.stop_selected_seek_for_refresh(owner);
-            self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_impossible(
+                tcx,
+                active_scripts,
+                SequenceElementRef::new(seq_id, elem_idx),
+            );
             return true;
         };
         if gate_path.is_empty() {
@@ -1193,15 +1193,13 @@ impl crate::engine::EngineInner {
 
         self.stop_selected_seek_for_refresh(owner);
         self.element_interrupted(
-            sim,
-            assets,
+            tcx,
             active_scripts,
-            seq_id,
-            elem_idx,
+            SequenceElementRef::new(seq_id, elem_idx),
             CascadeFlags::NEXT_LEVEL,
         );
 
-        self.launch_gate_movement_order(sim, assets, active_scripts, crate::engine::movement::GateRouteRequest { entity_id: owner, source_sector: Some(src_sector), gate_path: gate_path, goal: GoalShape::Point {
+        self.launch_gate_movement_order(tcx, active_scripts, crate::engine::movement::GateRouteRequest { entity_id: owner, source_sector: Some(src_sector), gate_path: gate_path, goal: GoalShape::Point {
                 point: destination,
                 tolerance: seek_distance,
             }, goal_layer: goal_layer, base_action: action, move_after_last_door: true, speed_factor: 1.0, initial_flags: flags | MoveFlags::SEEK, prefix_elements: Vec::new(), tail_elements: // The post-seek interaction lives on the actor, not on this
@@ -1226,27 +1224,18 @@ impl crate::engine::EngineInner {
     /// replacement becomes current.
     pub(super) fn relaunch_seek_replacement(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
-        seq_id: SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
         new_elem: SequenceElement,
     ) {
         self.stop_selected_seek_for_refresh(owner);
-        self.element_interrupted(
-            sim,
-            assets,
-            active_scripts,
-            seq_id,
-            elem_idx,
-            CascadeFlags::NEXT_LEVEL,
-        );
+        self.element_interrupted(tcx, active_scripts, elem_ref, CascadeFlags::NEXT_LEVEL);
 
         let mut seq = Sequence::new();
         seq.append_element(new_elem);
-        self.launch_sequence_inline(sim, assets, active_scripts, seq)
+        self.launch_sequence_inline(tcx, active_scripts, seq)
             .unwrap_or_else(|error| panic!("sequence launch failed: {error:?}"));
     }
 }

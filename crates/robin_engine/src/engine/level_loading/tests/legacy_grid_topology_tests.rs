@@ -44,22 +44,10 @@ fn runtime_position_sector(
     sector_type: crate::sector::SectorType,
 ) -> crate::fast_find_grid::GridSector {
     crate::fast_find_grid::GridSector {
-        points: Vec::new(),
         bounding_box: crate::coordinates::MapBBox::new(),
         sector_type,
-        layer: 0,
         sector_number: crate::sector::SectorNumber::new(number),
-        door_index: None,
-        lift_type: None,
-        lift_direction: 0,
-        force_crouched: false,
-        building_index: None,
-        low_exit_point: None,
-        high_exit_point: None,
-        lowest_door_index: None,
-        jump_line_indices: Vec::new(),
-        gate_indices: Vec::new(),
-        underlying_sector: None,
+        ..Default::default()
     }
 }
 

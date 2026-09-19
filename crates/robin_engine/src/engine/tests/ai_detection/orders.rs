@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 
 #[test]
 fn actor_owner_envelope_closes_each_legacy_slot_before_the_next_owner() {
@@ -66,16 +67,15 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
         fx: Default::default(),
         target: Default::default(),
     }));
-    engine
-        .get_entity_mut(listener)
-        .unwrap()
-        .element_data_mut()
-        .set_position(crate::coordinates::WorldPoint3D {
+    engine.place(
+        listener,
+        crate::coordinates::WorldPoint3D {
             x: 0.0,
             y: 0.0,
             z: 0.0,
-        });
-    let near_element = engine.get_entity_mut(near).unwrap().element_data_mut();
+        },
+    );
+    let near_element = engine.elem_mut(near);
     near_element.set_position_map(MapPoint::new(450.0, 0.0));
     near_element.set_layer(7);
     near_element.set_position(crate::coordinates::WorldPoint3D {
@@ -83,31 +83,21 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
         y: 0.0,
         z: 100.0,
     });
-    let exact_element = engine.get_entity_mut(exact).unwrap().element_data_mut();
+    let exact_element = engine.elem_mut(exact);
     exact_element.set_position_map(MapPoint::new(450.0, 0.0));
     exact_element.set_position(crate::coordinates::WorldPoint3D {
         x: 450.0,
         y: 0.0,
         z: 600.0,
     });
-    let listener_z = engine
-        .get_entity(listener)
-        .unwrap()
-        .element_data()
-        .position()
-        .z;
-    let near_z = engine.get_entity(near).unwrap().element_data().position().z;
-    let exact_z = engine
-        .get_entity(exact)
-        .unwrap()
-        .element_data()
-        .position()
-        .z;
+    let listener_z = engine.pos_of(listener).z;
+    let near_z = engine.pos_of(near).z;
+    let exact_z = engine.pos_of(exact).z;
     assert_eq!(near_z - listener_z, 100.0, "inside case must exercise Z");
     assert_eq!(exact_z - listener_z, 600.0, "boundary case must exercise Z");
     assert!(450.0_f32.powi(2) + 100.0_f32.powi(2) < 750.0_f32.powi(2));
     assert_eq!(450.0_f32.powi(2) + 600.0_f32.powi(2), 750.0_f32.powi(2));
-    let Entity::Target(target_entity) = engine.get_entity_mut(target).unwrap() else {
+    let Entity::Target(target_entity) = engine.ent_mut(target) else {
         unreachable!()
     };
     target_entity
@@ -126,18 +116,8 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
     let seq = engine.orders.sequence_manager.insert_element(element);
     engine.orders.sequence_manager.start_sequence_level(seq);
     engine.select_sequence_element(listener, Some((seq, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        seq,
-        0,
-    );
-    let actor = engine
-        .get_entity_mut(listener)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap();
+    engine.t_element_in_progress(&assets, seq, 0);
+    let actor = engine.actor_mut(listener);
     actor.wait_time = 0;
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
@@ -146,11 +126,7 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
     // generic ability tick would expose early order advancement immediately.
     let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[OrderType::Listening as usize] = 0;
-    engine
-        .get_entity_mut(listener)
-        .unwrap()
-        .element_data_mut()
-        .sprite = crate::sprite::Sprite::new(
+    engine.elem_mut(listener).sprite = crate::sprite::Sprite::new(
         std::sync::Arc::new(vec![crate::sprite_script::SpriteScript {
             action_id: OrderType::Listening as u16,
             action_done: 0,
@@ -175,11 +151,7 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
             &assets,
             &mut owner_dev,
         );
-        let owner_actor = owner_driven
-            .get_entity(listener)
-            .unwrap()
-            .actor_data()
-            .unwrap();
+        let owner_actor = owner_driven.actor(listener);
         assert_eq!(owner_actor.wait_time, expected_wait);
         assert_eq!(
             owner_actor.continuation.motion_state,
@@ -207,12 +179,7 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
             OrderType::Listening
         );
         assert_eq!(
-            owner_driven
-                .get_entity(listener)
-                .unwrap()
-                .element_data()
-                .sprite
-                .last_action,
+            owner_driven.elem(listener).sprite.last_action,
             OrderType::Listening,
             "countdown must keep driving the visual action while ignoring its completion"
         );
@@ -225,7 +192,7 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
     ] {
         let mut gated = engine.clone();
         gated.set_actors_frozen(frozen_all);
-        let Entity::Pc(pc) = gated.get_entity_mut(listener).unwrap() else {
+        let Entity::Pc(pc) = gated.ent_mut(listener) else {
             unreachable!()
         };
         pc.actor.execution_frozen = execution_frozen;
@@ -239,23 +206,13 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
         let mut dev = DevState::default();
         gated.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
         assert_eq!(
-            gated
-                .get_entity(listener)
-                .unwrap()
-                .actor_data()
-                .unwrap()
-                .wait_time,
+            gated.actor(listener).wait_time,
             expected,
             "{case} owner gate"
         );
         if frozen_all {
             assert_eq!(
-                gated
-                    .get_entity(listener)
-                    .unwrap()
-                    .element_data()
-                    .sprite
-                    .frame_count,
+                gated.elem(listener).sprite.frame_count,
                 7,
                 "FrozenAll must preserve the Listening sprite phase"
             );
@@ -265,62 +222,36 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
     // Direct Execute probes supply the initialization edge normally published
     // by owner selection. A restored zero timer does not restart or reveal.
     let mut restored = engine.clone();
-    restored
-        .get_entity_mut(listener)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .execute_order_initialising = false;
+    restored.actor_mut(listener).execute_order_initialising = false;
     assert_eq!(
-        restored.tick_enemy_ai_blip_detection_for_owner(&sim, &assets, listener),
+        restored.tick_enemy_ai_blip_detection_for_owner(TickCtx::new(&sim, &assets), listener),
         Some(crate::sprite::MotionState::InProgress)
     );
-    assert_eq!(
-        restored
-            .get_entity(listener)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .wait_time,
-        0
-    );
-    assert!(restored.get_entity(near).unwrap().element_data().blipped);
+    assert_eq!(restored.actor(listener).wait_time, 0);
+    assert!(restored.elem(near).blipped);
 
     for invocation in 1..25 {
-        engine
-            .get_entity_mut(listener)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .execute_order_initialising = invocation == 1;
+        engine.actor_mut(listener).execute_order_initialising = invocation == 1;
         assert_eq!(
-            engine.tick_enemy_ai_blip_detection_for_owner(&sim, &assets, listener),
+            engine.tick_enemy_ai_blip_detection_for_owner(TickCtx::new(&sim, &assets), listener),
             Some(crate::sprite::MotionState::InProgress)
         );
-        assert_eq!(
-            engine
-                .get_entity(listener)
-                .unwrap()
-                .actor_data()
-                .unwrap()
-                .wait_time,
-            25 - invocation
-        );
-        assert!(engine.get_entity(near).unwrap().element_data().blipped);
+        assert_eq!(engine.actor(listener).wait_time, 25 - invocation);
+        assert!(engine.elem(near).blipped);
     }
     assert_eq!(
-        engine.tick_enemy_ai_blip_detection_for_owner(&sim, &assets, listener),
+        engine.tick_enemy_ai_blip_detection_for_owner(TickCtx::new(&sim, &assets), listener),
         Some(crate::sprite::MotionState::Terminated)
     );
     assert!(
-        !engine.get_entity(near).unwrap().element_data().blipped,
+        !engine.elem(near).blipped,
         "450-100 strictly-near 3D cross-layer target reveals"
     );
     assert!(
-        engine.get_entity(exact).unwrap().element_data().blipped,
+        engine.elem(exact).blipped,
         "450-600-750 exact 3D boundary remains out"
     );
-    let Entity::Target(target_entity) = engine.get_entity(target).unwrap() else {
+    let Entity::Target(target_entity) = engine.ent(target) else {
         unreachable!()
     };
     assert!(
@@ -351,7 +282,7 @@ fn production_listen_creation_order_runs_heard_before_later_reveal() {
     let (mut engine, target) = crate::engine::target_script_tests::build_engine_with_target();
     let listener = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     let reveal = engine.add_test_entity(make_discovery_bonus(10.0));
-    let Entity::Target(target_entity) = engine.get_entity_mut(target).unwrap() else {
+    let Entity::Target(target_entity) = engine.ent_mut(target) else {
         unreachable!()
     };
     target_entity.target.action_filter = TargetFilter::LISTEN;
@@ -370,18 +301,8 @@ fn production_listen_creation_order_runs_heard_before_later_reveal() {
     let seq = engine.orders.sequence_manager.insert_element(element);
     engine.orders.sequence_manager.start_sequence_level(seq);
     engine.select_sequence_element(listener, Some((seq, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        seq,
-        0,
-    );
-    engine
-        .get_entity_mut(listener)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap();
+    engine.t_element_in_progress(&assets, seq, 0);
+    engine.actor_mut(listener);
     engine.set_actors_frozen(true);
 
     assets = engine.test_runtime_assets();
@@ -393,7 +314,7 @@ fn production_listen_creation_order_runs_heard_before_later_reveal() {
         }
     });
 
-    assert!(!engine.get_entity(reveal).unwrap().element_data().blipped);
+    assert!(!engine.elem(reveal).blipped);
     let [heard] = heard.as_slice() else {
         panic!("expected exactly one Heard callback, got {heard:?}");
     };
@@ -433,11 +354,7 @@ fn tiredness_recovery_uses_original_creation_order_cadence() {
         .endurance = 90;
 
     for owner in [restored, aligned] {
-        engine
-            .get_entity_mut(owner)
-            .and_then(Entity::human_data_mut)
-            .expect("tiredness fixture remains human")
-            .tiredness = 100;
+        engine.human_mut(owner).tiredness = 100;
     }
 
     let restored_order = (restored.index() + 17) & 31;
@@ -453,11 +370,7 @@ fn tiredness_recovery_uses_original_creation_order_cadence() {
     engine.control.frame_counter = restored.index() & 31;
     engine.tick_tiredness_for(restored, &assets);
     assert_eq!(
-        engine
-            .get_entity(restored)
-            .and_then(Entity::human_data)
-            .expect("restored fixture remains human")
-            .tiredness,
+        engine.human(restored).tiredness,
         100,
         "the kind-local entity slot must not open the recovered cadence"
     );
@@ -465,11 +378,7 @@ fn tiredness_recovery_uses_original_creation_order_cadence() {
     engine.control.frame_counter = restored_order;
     engine.tick_tiredness_for(restored, &assets);
     assert_eq!(
-        engine
-            .get_entity(restored)
-            .and_then(Entity::human_data)
-            .expect("restored fixture remains human")
-            .tiredness,
+        engine.human(restored).tiredness,
         91,
         "the restored Original creation-order slot subtracts endurance / 10"
     );
@@ -477,11 +386,7 @@ fn tiredness_recovery_uses_original_creation_order_cadence() {
     engine.control.frame_counter = aligned.index() & 31;
     engine.tick_tiredness_for(aligned, &assets);
     assert_eq!(
-        engine
-            .get_entity(aligned)
-            .and_then(Entity::human_data)
-            .expect("aligned fixture remains human")
-            .tiredness,
+        engine.human(aligned).tiredness,
         91,
         "aligned entity and creation-order slots retain the existing behavior"
     );
@@ -498,21 +403,17 @@ fn patrol_direction_instruction_registers_member_turn_before_returning() {
     let assets = engine.test_runtime_assets();
 
     for id in [chief, member] {
-        let Entity::Soldier(soldier) = engine.get_entity_mut(id).unwrap() else {
+        let Entity::Soldier(soldier) = engine.ent_mut(id) else {
             unreachable!()
         };
         soldier.element.active = true;
         soldier.npc.life_points = 100;
         soldier.npc.ai_brain.base_mut().unwrap().me = id.index();
     }
-    let chief_ai = engine
-        .get_entity_mut(chief)
-        .unwrap()
-        .ai_controller_mut()
-        .unwrap();
+    let chief_ai = engine.ai_ctrl_mut(chief);
     chief_ai.patrol = vec![member];
 
-    let Entity::Soldier(member_entity) = engine.get_entity_mut(member).unwrap() else {
+    let Entity::Soldier(member_entity) = engine.ent_mut(member) else {
         unreachable!()
     };
     member_entity.element.set_direction_instantly(3);
@@ -525,10 +426,10 @@ fn patrol_direction_instruction_registers_member_turn_before_returning() {
         .current_substate = Substate::DefaultPatrolEnrouteWaiting;
 
     crate::sim_rng::with_seed(0x0A01_3D1A, |sim| {
-        engine.instruct_patrol_direction_to_patrol_members(sim, chief, &assets, 7)
+        engine.instruct_patrol_direction_to_patrol_members(TickCtx::new(sim, &assets), chief, 7)
     });
 
-    let member_ai = engine.get_entity(member).unwrap().ai_controller().unwrap();
+    let member_ai = engine.ai_ctrl(member);
     assert_eq!(member_ai.patrol_direction, 7);
     // Facing launches a sequence; the Turn element becomes the actor's live
     // order only when the sequence manager promotes it, so the synchronous
@@ -550,7 +451,7 @@ fn civilian_timer_retained_self_and_macro_boundaries_launch_orders_immediately()
 
     fn add_ready_civilian(engine: &mut EngineInner) -> EntityId {
         let id = engine.add_test_entity(make_test_civilian(crate::element::Posture::Upright));
-        let Entity::Civilian(civilian) = engine.get_entity_mut(id).expect("civilian exists") else {
+        let Entity::Civilian(civilian) = engine.ent_mut(id) else {
             panic!("civilian changed kind")
         };
         civilian.element.active = true;
@@ -578,7 +479,7 @@ fn civilian_timer_retained_self_and_macro_boundaries_launch_orders_immediately()
     let periodic_owner = add_ready_civilian(&mut engine);
     let macro_owner = add_ready_civilian(&mut engine);
     let target = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
-    let Entity::Pc(pc) = engine.get_entity_mut(target).expect("face target exists") else {
+    let Entity::Pc(pc) = engine.ent_mut(target) else {
         panic!("face target changed kind")
     };
     pc.element.active = true;
@@ -586,10 +487,7 @@ fn civilian_timer_retained_self_and_macro_boundaries_launch_orders_immediately()
     pc.pc.life_points = 100;
     let assets = engine.test_runtime_assets();
 
-    let timer_ai = engine
-        .get_entity_mut(timer_owner)
-        .and_then(Entity::ai_controller_mut)
-        .expect("timer civilian has AI");
+    let timer_ai = engine.ai_ctrl_mut(timer_owner);
     timer_ai.current_state = AiState::Wondering;
     timer_ai.current_substate = Substate::WonderingCivilianAdmiringHero;
     timer_ai.initial_position = Position {
@@ -600,13 +498,9 @@ fn civilian_timer_retained_self_and_macro_boundaries_launch_orders_immediately()
     timer_ai.timer_is_running = true;
     timer_ai.when_does_timer_ring = 0;
     timer_ai.substate_at_last_timer_launch = timer_ai.current_substate;
-    engine.tick_ai_normal_timer_for_npc(sim, timer_owner, &assets);
+    engine.tick_ai_normal_timer_for_npc(TickCtx::new(sim, &assets), timer_owner);
     assert_eq!(
-        engine
-            .get_entity(timer_owner)
-            .and_then(Entity::ai_controller)
-            .expect("timer civilian retains AI")
-            .current_substate,
+        engine.ai_ctrl(timer_owner).current_substate,
         Substate::DefaultGotoPost,
         "normal timer Think must complete before the next owner"
     );
@@ -615,10 +509,7 @@ fn civilian_timer_retained_self_and_macro_boundaries_launch_orders_immediately()
         (retained_owner, Some(Stimulus::new(StimulusType::EventDone))),
         (self_owner, None),
     ] {
-        let ai = engine
-            .get_entity_mut(id)
-            .and_then(Entity::ai_controller_mut)
-            .expect("face civilian has AI");
+        let ai = engine.ai_ctrl_mut(id);
         ai.current_state = AiState::Seeking;
         ai.current_substate = Substate::SeekingCivilianGiveAlertingReportToSoldierPoint;
         ai.antagonist = Some(crate::ai::AiEntityHandle::new(target.index()));
@@ -626,21 +517,17 @@ fn civilian_timer_retained_self_and_macro_boundaries_launch_orders_immediately()
             ai.stimulus_queue.push(stimulus);
         }
     }
-    engine.tick_ai_queued_stimuli_for_npc(sim, retained_owner, &assets);
+    engine.tick_ai_queued_stimuli_for_npc(TickCtx::new(sim, &assets), retained_owner);
     assert_launched(&engine, retained_owner, Command::Turn, "retained Think");
     engine.execute_ai_callback(
-        sim,
-        &assets,
+        TickCtx::new(sim, &assets),
         self_owner,
         &Stimulus::new(StimulusType::EventDone),
     );
 
     assert_launched(&engine, self_owner, Command::Turn, "recursive self-Think");
 
-    let periodic_ai = engine
-        .get_entity_mut(periodic_owner)
-        .and_then(Entity::ai_controller_mut)
-        .expect("The16thFrame civilian has AI");
+    let periodic_ai = engine.ai_ctrl_mut(periodic_owner);
     periodic_ai.current_state = AiState::Default;
     periodic_ai.current_substate = Substate::DefaultGotoPost;
     periodic_ai.stuck_counter = 3;
@@ -653,21 +540,14 @@ fn civilian_timer_retained_self_and_macro_boundaries_launch_orders_immediately()
     // every fixture civilian), not its entity index: phase is
     // (frame & 255) - ((register + 100) & 255) and must be ≡ 0 mod 16.
     engine.control.frame_counter = 100;
-    engine.tick_periodic_ai_for_npc(sim, periodic_owner, &assets);
+    engine.tick_periodic_ai_for_npc(TickCtx::new(sim, &assets), periodic_owner);
     assert_eq!(
-        engine
-            .get_entity(periodic_owner)
-            .and_then(Entity::ai_controller)
-            .expect("The16thFrame civilian retains AI")
-            .stuck_counter,
+        engine.ai_ctrl(periodic_owner).stuck_counter,
         0,
         "the periodic update must run and hand its movement retry to the engine boundary"
     );
 
-    let macro_ai = engine
-        .get_entity_mut(macro_owner)
-        .and_then(Entity::ai_controller_mut)
-        .expect("macro civilian has AI");
+    let macro_ai = engine.ai_ctrl_mut(macro_owner);
     macro_ai.current_state = AiState::Default;
     macro_ai.current_substate = Substate::DefaultInMacro;
     macro_ai.macro_command = vec![3, 8, 0]; // CMD_FACE_TO(8)
@@ -675,7 +555,7 @@ fn civilian_timer_retained_self_and_macro_boundaries_launch_orders_immediately()
     macro_ai.number_of_remaining_macro_bytes = 3;
     macro_ai.macro_timer_is_running = true;
     macro_ai.when_does_macro_timer_ring = 0;
-    engine.tick_ai_macro_timer_for_npc(sim, macro_owner, &assets);
+    engine.tick_ai_macro_timer_for_npc(TickCtx::new(sim, &assets), macro_owner);
     assert_launched(&engine, macro_owner, Command::Turn, "macro VM");
 }
 
@@ -688,7 +568,7 @@ fn successful_patrol_dispatch_closes_chief_actor_boundary_before_returning() {
     let chief_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     let subordinate_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     for (id, x) in [(chief_id, 0.0), (subordinate_id, 10.0)] {
-        let Entity::Soldier(soldier) = engine.get_entity_mut(id).unwrap() else {
+        let Entity::Soldier(soldier) = engine.ent_mut(id) else {
             panic!("patrol-dispatch test NPC changed kind")
         };
         soldier.element.active = true;
@@ -698,22 +578,14 @@ fn successful_patrol_dispatch_closes_chief_actor_boundary_before_returning() {
         soldier.npc.ai_brain.base_mut().unwrap().me = id.index();
     }
     {
-        let chief = engine
-            .get_entity_mut(chief_id)
-            .and_then(Entity::ai_controller_mut)
-            .unwrap();
+        let chief = engine.ai_ctrl_mut(chief_id);
         chief.current_state = AiState::Default;
         chief.current_substate = Substate::DefaultOnPost;
         chief.patrol = vec![subordinate_id];
     }
 
     let assets = engine.test_runtime_assets();
-    engine
-        .get_entity_mut(subordinate_id)
-        .unwrap()
-        .ai_controller_mut()
-        .unwrap()
-        .patrol_chief = Some(chief_id);
+    engine.ai_ctrl_mut(subordinate_id).patrol_chief = Some(chief_id);
     let mut stimulus = Stimulus::new(StimulusType::EventSeesShadow);
     stimulus.info = StimulusInfo::Position(Position {
         x: 100.0,
@@ -722,13 +594,10 @@ fn successful_patrol_dispatch_closes_chief_actor_boundary_before_returning() {
     });
 
     crate::sim_rng::with_seed(0xA013_2640, |sim| {
-        engine.dispatch_filtered_stimulus(sim, &assets, subordinate_id, &stimulus);
+        engine.dispatch_filtered_stimulus(TickCtx::new(sim, &assets), subordinate_id, &stimulus);
     });
 
-    let chief = engine
-        .get_entity(chief_id)
-        .and_then(Entity::ai_controller)
-        .unwrap();
+    let chief = engine.ai_ctrl(chief_id);
     assert_eq!(chief.current_state, AiState::Default);
     assert_eq!(chief.current_substate, Substate::DefaultLookingShadow);
     assert!(
@@ -763,16 +632,12 @@ fn natural_recovery_finishes_inline_for_soldiers_and_civilians() {
         let npc_id = engine.add_test_entity(entity);
         // Install the active soldier profile before marking the actor
         // unconscious; the fixture intentionally skips unconscious soldiers.
-        engine
-            .get_entity_mut(npc_id)
-            .unwrap()
-            .element_data_mut()
-            .active = true;
+        engine.set_active(npc_id, true);
         let mut assets = engine.test_runtime_assets();
         if !civilian {
             std::sync::Arc::make_mut(&mut assets.profile_manager).soldiers[0].wake_up = 1;
         }
-        let entity = engine.get_entity_mut(npc_id).unwrap();
+        let entity = engine.ent_mut(npc_id);
         entity
             .element_data_mut()
             .publish_order_posture(Posture::Lying);
@@ -794,10 +659,10 @@ fn natural_recovery_finishes_inline_for_soldiers_and_civilians() {
         ai.current_substate = Substate::SleepingUnconscious;
 
         crate::sim_rng::with_seed(0x0A01_3F17, |sim| {
-            engine.tick_concussion_healing_for(sim, npc_id, &assets)
+            engine.tick_concussion_healing_for(TickCtx::new(sim, &assets), npc_id)
         });
 
-        let entity = engine.get_entity(npc_id).unwrap();
+        let entity = engine.ent(npc_id);
         assert!(!entity.human_data().unwrap().unconscious);
         let ai = entity.ai_controller().unwrap();
         assert_ne!(ai.current_substate, Substate::SleepingUnconscious);
@@ -826,10 +691,7 @@ fn playable_rescue_pc_without_command_interface_still_sees_blips() {
     let observer_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     let pc_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
 
-    let Entity::Soldier(observer) = engine
-        .get_entity_mut(observer_id)
-        .expect("blipped observer exists")
-    else {
+    let Entity::Soldier(observer) = engine.ent_mut(observer_id) else {
         panic!("blipped observer changed kind")
     };
     observer.element.active = true;
@@ -840,7 +702,7 @@ fn playable_rescue_pc_without_command_interface_still_sees_blips() {
         .set_position(crate::coordinates::WorldPoint3D::new(20.0, 0.0, 0.0));
     observer.element.set_position_map(MapPoint::new(20.0, 0.0));
 
-    let Entity::Pc(pc) = engine.get_entity_mut(pc_id).expect("rescue PC exists") else {
+    let Entity::Pc(pc) = engine.ent_mut(pc_id) else {
         panic!("rescue PC changed kind")
     };
     pc.element.active = true;
@@ -855,7 +717,9 @@ fn playable_rescue_pc_without_command_interface_still_sees_blips() {
     let assets = engine.test_runtime_assets();
 
     crate::sight_obstacle::begin_parity_visibility_capture();
-    crate::sim_rng::with_seed(0xA013_B11F, |sim| engine.tick_enemy_ai(sim, &assets));
+    crate::sim_rng::with_seed(0xA013_B11F, |sim| {
+        engine.tick_enemy_ai(TickCtx::new(sim, &assets))
+    });
     let queries = crate::sight_obstacle::take_parity_visibility_capture();
 
     assert_eq!(
@@ -865,11 +729,7 @@ fn playable_rescue_pc_without_command_interface_still_sees_blips() {
     );
     assert!(queries[0].result);
     assert!(
-        !engine
-            .get_entity(observer_id)
-            .expect("blipped observer survives tick")
-            .element_data()
-            .blipped,
+        !engine.elem(observer_id).blipped,
         "the playable rescue PC must reveal the nearby blip"
     );
 }
@@ -888,7 +748,7 @@ fn bonus_refresh_discovered_observes_owner_callback_order_and_spawned_later_slot
             let pc = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
             (pc, bonus)
         };
-        let Entity::Pc(pc) = engine.get_entity_mut(pc_id).unwrap() else {
+        let Entity::Pc(pc) = engine.ent_mut(pc_id) else {
             unreachable!()
         };
         pc.element.active = false;
@@ -901,13 +761,12 @@ fn bonus_refresh_discovered_observes_owner_callback_order_and_spawned_later_slot
         let mut spawned = None;
         crate::sim_rng::with_seed(0x0B0A_00CB, |sim| {
             engine.tick_actor_owner_envelopes_with_test_owner_hook(
-                sim,
-                &assets,
+                TickCtx::new(sim, &assets),
                 |engine, owner| {
                     if owner != pc_id {
                         return;
                     }
-                    let Entity::Pc(pc) = engine.get_entity_mut(pc_id).unwrap() else {
+                    let Entity::Pc(pc) = engine.ent_mut(pc_id) else {
                         unreachable!()
                     };
                     pc.element.active = true;
@@ -921,11 +780,9 @@ fn bonus_refresh_discovered_observes_owner_callback_order_and_spawned_later_slot
             );
         });
         (
-            !engine.get_entity(bonus_id).unwrap().element_data().blipped,
+            !engine.elem(bonus_id).blipped,
             !engine
-                .get_entity(spawned.expect("PC callback spawned a later bonus"))
-                .unwrap()
-                .element_data()
+                .elem(spawned.expect("PC callback spawned a later bonus"))
                 .blipped,
         )
     }

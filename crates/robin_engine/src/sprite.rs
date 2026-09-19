@@ -2453,8 +2453,7 @@ mod tests {
 
     #[test]
     fn test_increment_frame_default() {
-        let sim_context = crate::sim_rng::test_context();
-        let sim = &sim_context;
+        let sim = &crate::sim_rng::test_context();
         let mut s = make_test_sprite();
         s.current_row = 0;
         s.current_frame = 0;
@@ -2491,8 +2490,7 @@ mod tests {
 
     #[test]
     fn test_increment_frame_frozen() {
-        let sim_context = crate::sim_rng::test_context();
-        let sim = &sim_context;
+        let sim = &crate::sim_rng::test_context();
         let mut s = make_test_sprite();
         s.current_row = 0;
         s.current_frame = 2;
@@ -2506,8 +2504,7 @@ mod tests {
 
     #[test]
     fn test_increment_frame_cyclically() {
-        let sim_context = crate::sim_rng::test_context();
-        let sim = &sim_context;
+        let sim = &crate::sim_rng::test_context();
         let mut s = make_test_sprite();
         s.current_row = 0;
         s.current_frame = 3; // last frame
@@ -2522,8 +2519,7 @@ mod tests {
 
     #[test]
     fn test_increment_frame_freeze_when_terminated() {
-        let sim_context = crate::sim_rng::test_context();
-        let sim = &sim_context;
+        let sim = &crate::sim_rng::test_context();
         let mut s = make_test_sprite();
         s.current_row = 0;
         s.current_frame = 3; // last frame (index 3 of 4 frames)
@@ -2537,8 +2533,7 @@ mod tests {
 
     #[test]
     fn test_increment_frame_reversed() {
-        let sim_context = crate::sim_rng::test_context();
-        let sim = &sim_context;
+        let sim = &crate::sim_rng::test_context();
         let mut s = make_test_sprite();
         s.current_row = 0;
         s.current_frame = 1;
@@ -2598,8 +2593,7 @@ mod tests {
 
     #[test]
     fn test_perform_virgin_increment() {
-        let sim_context = crate::sim_rng::test_context();
-        let sim = &sim_context;
+        let sim = &crate::sim_rng::test_context();
         let mut s = make_test_sprite();
         s.current_row = 0;
         s.current_frame = 0;
@@ -2824,8 +2818,7 @@ mod tests {
 
     #[test]
     fn changed_motion_order_id_reinitializes_goal_without_reseed_warning() {
-        let sim_context = crate::sim_rng::test_context();
-        let sim = &sim_context;
+        let sim = &crate::sim_rng::test_context();
         let mut s = make_test_sprite();
         let old_order_id = std::num::NonZeroU32::new(42).unwrap();
         let new_order_id = std::num::NonZeroU32::new(43).unwrap();
@@ -2903,8 +2896,7 @@ mod tests {
 
     #[test]
     fn test_perform_action_basic() {
-        let sim_context = crate::sim_rng::test_context();
-        let sim = &sim_context;
+        let sim = &crate::sim_rng::test_context();
         let mut s = make_test_sprite();
 
         let state = s.perform_action(
@@ -2934,8 +2926,7 @@ mod tests {
 
     #[test]
     fn perform_action_start_tick_does_not_advance_frame() {
-        let sim_context = crate::sim_rng::test_context();
-        let sim = &sim_context;
+        let sim = &crate::sim_rng::test_context();
         let mut s = make_test_sprite();
 
         let state = s.perform_action(
@@ -3137,8 +3128,7 @@ mod tests {
 
     #[test]
     fn test_perform_action_invalid_anim() {
-        let sim_context = crate::sim_rng::test_context();
-        let sim = &sim_context;
+        let sim = &crate::sim_rng::test_context();
         let mut s = make_test_sprite();
 
         let state = s.perform_action(

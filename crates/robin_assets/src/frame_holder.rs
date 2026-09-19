@@ -25,9 +25,9 @@ use robin_data_io::sbfile::{SbFile, SbFileSystem};
 // SpriteVariant
 // ---------------------------------------------------------------------------
 
-// SpriteVariant lives in robin_content. Re-exported here
+// SpriteVariant lives in robin_engine_types. Re-exported here
 // for backward-compat with existing callers.
-pub use robin_content::SpriteVariant;
+pub use robin_engine_types::SpriteVariant;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -579,7 +579,7 @@ pub struct FrameHolder {
 /// a new COW generation and then published here, keeping every cloned
 /// `LevelAssets` handle on the same dictionary generation as the renderer.
 ///
-/// [`PixelOpacityLookup`]: robin_content::PixelOpacityLookup
+/// [`PixelOpacityLookup`]: robin_engine_types::PixelOpacityLookup
 #[derive(Debug)]
 pub struct PublishedFrameHolder {
     current: RwLock<Arc<FrameHolder>>,
@@ -1587,7 +1587,7 @@ impl FrameHolder {
     }
 }
 
-impl robin_content::PixelOpacityLookup for FrameHolder {
+impl robin_engine_types::PixelOpacityLookup for FrameHolder {
     fn sprite_dimensions(&self, bank_id: u32) -> Option<(u16, u16)> {
         self.sprites
             .get(bank_id as usize)
@@ -1680,7 +1680,7 @@ impl robin_content::PixelOpacityLookup for FrameHolder {
     }
 }
 
-impl robin_content::PixelOpacityLookup for PublishedFrameHolder {
+impl robin_engine_types::PixelOpacityLookup for PublishedFrameHolder {
     fn sprite_dimensions(&self, bank_id: u32) -> Option<(u16, u16)> {
         self.current
             .read()
@@ -1702,7 +1702,10 @@ impl robin_content::PixelOpacityLookup for PublishedFrameHolder {
             .current
             .read()
             .expect("published frame-holder read lock poisoned");
-        robin_content::PixelOpacityLookup::simulation_opacity_sha256(&**current, sorted_bank_ids)
+        robin_engine_types::PixelOpacityLookup::simulation_opacity_sha256(
+            &**current,
+            sorted_bank_ids,
+        )
     }
 }
 
@@ -2493,7 +2496,7 @@ mod tests {
     fn optimized_opacity_hash_matches_pixel_lookup_contract() {
         struct DefaultOpacity<'a>(&'a FrameHolder);
 
-        impl robin_content::PixelOpacityLookup for DefaultOpacity<'_> {
+        impl robin_engine_types::PixelOpacityLookup for DefaultOpacity<'_> {
             fn sprite_dimensions(&self, bank_id: u32) -> Option<(u16, u16)> {
                 self.0.sprite_dimensions(bank_id)
             }
@@ -2545,8 +2548,9 @@ mod tests {
         });
 
         let ids = [0, 1];
-        let optimized = robin_content::PixelOpacityLookup::simulation_opacity_sha256(&holder, &ids);
-        let reference = robin_content::PixelOpacityLookup::simulation_opacity_sha256(
+        let optimized =
+            robin_engine_types::PixelOpacityLookup::simulation_opacity_sha256(&holder, &ids);
+        let reference = robin_engine_types::PixelOpacityLookup::simulation_opacity_sha256(
             &DefaultOpacity(&holder),
             &ids,
         );

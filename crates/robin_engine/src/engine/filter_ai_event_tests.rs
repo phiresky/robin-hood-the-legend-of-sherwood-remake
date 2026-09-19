@@ -26,6 +26,7 @@ use crate::element::{
     Entity, EntityId, HumanData, NpcData, ObjectData, ObjectType, Posture,
 };
 use crate::engine::EngineInner;
+use crate::engine::TickCtx;
 use crate::engine::test_support::actors::TestActor;
 use crate::engine::test_support::asm::*;
 use crate::engine::types::{LevelAssets, MissionScript};
@@ -51,11 +52,7 @@ fn stub_fn(name: &str, addr: i32) -> (Function, Vec<Quad>) {
         Function {
             name: name.into(),
             address: addr,
-            num_parameters: 0,
-            size_of_return_value: 0,
-            size_of_parameters: 0,
-            size_of_volatile: 0,
-            size_of_temporary: 0,
+            ..Default::default()
         },
         vec![q_begin_function(0, 0), q_return(), q_end_function()],
     )
@@ -95,10 +92,9 @@ fn build_scb() -> ScbFile {
     let source_sensitive = ClassEntry {
         source_file: "test.scs".into(),
         class_name: "SourceSensitive".into(),
-        size_of_member_variables: 0,
-        member_variables: vec![],
         functions: source_functions,
         quads: source_quads,
+        ..Default::default()
     };
 
     // No-override class: stubs only, no FilterAIEvent.
@@ -118,10 +114,9 @@ fn build_scb() -> ScbFile {
     let no_override = ClassEntry {
         source_file: "test.scs".into(),
         class_name: "NoOverride".into(),
-        size_of_member_variables: 0,
-        member_variables: vec![],
         functions: noov_functions,
         quads: noov_quads,
+        ..Default::default()
     };
 
     let mut reject_quads = Vec::new();
@@ -154,10 +149,9 @@ fn build_scb() -> ScbFile {
     let reject_all = ClassEntry {
         source_file: "test.scs".into(),
         class_name: "RejectAll".into(),
-        size_of_member_variables: 0,
-        member_variables: vec![],
         functions: reject_functions,
         quads: reject_quads,
+        ..Default::default()
     };
 
     let startup = crate::engine::test_support::asm::empty_startup_class("test.scs".into());
@@ -246,7 +240,11 @@ fn filter_allows_when_script_returns_nonzero_for_actual_source() {
         .expect("valid robin handle") as u32;
     let stim = crate::ai::Stimulus::with_human(crate::ai::StimulusType::EventView, robin_human);
 
-    let allowed = engine.filter_stimulus(sim, &LevelAssets::new(), sensitive_handle, &stim);
+    let allowed = engine.filter_stimulus(
+        TickCtx::new(sim, &LevelAssets::new()),
+        sensitive_handle,
+        &stim,
+    );
     assert!(
         allowed,
         "non-zero source → script returns source → allow (got {allowed})"
@@ -265,7 +263,11 @@ fn filter_blocks_when_script_returns_zero_for_unknown_source() {
     // `filter_stimulus` passes source=0.
     let stim = crate::ai::Stimulus::new(crate::ai::StimulusType::EventView);
 
-    let allowed = engine.filter_stimulus(sim, &LevelAssets::new(), sensitive_handle, &stim);
+    let allowed = engine.filter_stimulus(
+        TickCtx::new(sim, &LevelAssets::new()),
+        sensitive_handle,
+        &stim,
+    );
     assert!(!allowed, "source=0 → script returns 0 → block");
 }
 
@@ -281,7 +283,11 @@ fn filter_runs_for_unmapped_stimulus_type() {
     // proves the -2 path invoked the filter when it blocks the stimulus.
     let stim = crate::ai::Stimulus::new(crate::ai::StimulusType::EventEnemyNear);
 
-    let allowed = engine.filter_stimulus(sim, &LevelAssets::new(), sensitive_handle, &stim);
+    let allowed = engine.filter_stimulus(
+        TickCtx::new(sim, &LevelAssets::new()),
+        sensitive_handle,
+        &stim,
+    );
     assert!(
         !allowed,
         "unmapped stimulus type must run FilterAIEvent(-2)"
@@ -298,7 +304,8 @@ fn filter_allows_when_actor_has_no_filter_override() {
     let (mut engine, _, _, noov_handle) = build_engine();
     let stim = crate::ai::Stimulus::new(crate::ai::StimulusType::EventView);
 
-    let allowed = engine.filter_stimulus(sim, &LevelAssets::new(), noov_handle, &stim);
+    let allowed =
+        engine.filter_stimulus(TickCtx::new(sim, &LevelAssets::new()), noov_handle, &stim);
     assert!(
         allowed,
         "no FilterAIEvent override → base returns 1 → allow"
@@ -323,7 +330,7 @@ fn reentrant_return_to_duty_uses_absent_live_order_not_stale_sprite_animation() 
         .expect("NoOverride soldier");
 
     {
-        let entity = engine.get_entity_mut(actor).expect("NoOverride soldier");
+        let entity = engine.ent_mut(actor);
         entity
             .position_iface_mut()
             .set_direction_instantly(crate::position_interface::Direction::from_raw(2));
@@ -344,24 +351,18 @@ fn reentrant_return_to_duty_uses_absent_live_order_not_stale_sprite_animation() 
     );
 
     engine.dispatch_filtered_stimulus(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         actor,
         &crate::ai::Stimulus::new(crate::ai::StimulusType::EventReturnToDuty),
     );
     // The Think boundary only registers the launched Turn with the sequence
     // manager; the manager's own update dispatches it later in the frame.
     engine.hourglass_phase_sequences(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut crate::engine::HostDisplayState::default(),
-        &assets,
     );
 
-    let ai = engine
-        .get_entity(actor)
-        .expect("NoOverride soldier")
-        .ai_controller()
-        .expect("soldier AI");
+    let ai = engine.ai_ctrl(actor);
     assert_eq!(
         ai.current_substate,
         crate::ai::Substate::DefaultGotoPostTurn,
@@ -381,11 +382,7 @@ fn reentrant_return_to_duty_uses_absent_live_order_not_stale_sprite_animation() 
         "ReturnToDuty must advance directly to the initial-view Turn, not launch a zero-distance Move"
     );
     assert_eq!(
-        engine
-            .get_entity(actor)
-            .expect("NoOverride soldier")
-            .position_iface()
-            .get_direction_goal(),
+        engine.ent(actor).position_iface().get_direction_goal(),
         crate::position_interface::Direction::from_raw(1)
     );
 }
@@ -410,11 +407,7 @@ fn remove_all_subordinates_force_returns_script_locked_civilian_to_duty() {
         .expect("SourceSensitive patrol chief");
 
     {
-        let ai = engine
-            .get_entity_mut(member)
-            .expect("civilian patrol member")
-            .ai_controller_mut()
-            .expect("civilian AI");
+        let ai = engine.ai_ctrl_mut(member);
         ai.me = member.index();
         ai.current_state = crate::ai::AiState::Default;
         ai.current_substate = crate::ai::Substate::DefaultPatrolEnrouteWaiting;
@@ -425,25 +418,14 @@ fn remove_all_subordinates_force_returns_script_locked_civilian_to_duty() {
         ai.script_locked = true;
         ai.patrol_chief = Some(chief);
     }
-    engine
-        .get_entity_mut(chief)
-        .expect("patrol chief")
-        .ai_controller_mut()
-        .expect("chief AI")
-        .theoretical_patrol = vec![member, member_at_post];
+    engine.ai_ctrl_mut(chief).theoretical_patrol = vec![member, member_at_post];
 
     {
-        let entity = engine
-            .get_entity(member_at_post)
-            .expect("on-post civilian patrol member");
+        let entity = engine.ent(member_at_post);
         let position = entity.element_data().position();
         let sector = entity.element_data().sector();
         let level = entity.element_data().layer();
-        let ai = engine
-            .get_entity_mut(member_at_post)
-            .expect("on-post civilian patrol member")
-            .ai_controller_mut()
-            .expect("on-post civilian AI");
+        let ai = engine.ai_ctrl_mut(member_at_post);
         ai.me = member_at_post.index();
         ai.current_state = crate::ai::AiState::Default;
         ai.current_substate = crate::ai::Substate::DefaultOnPost;
@@ -457,18 +439,14 @@ fn remove_all_subordinates_force_returns_script_locked_civilian_to_duty() {
     }
 
     let (_, draws) = crate::sim_rng::with_draw_trace(|| {
-        engine.script_remove_all_subordinates(&sim, &assets, chief);
+        engine.script_remove_all_subordinates(TickCtx::new(&sim, &assets), chief);
     });
     assert!(
         draws.contains(&crate::sim_rng::RngSite::AiRandomValueRectangle),
         "an unlocked on-post soldier completes its direct return and arms boredom timing"
     );
 
-    let member_ai = engine
-        .get_entity(member)
-        .expect("civilian patrol member")
-        .ai_controller()
-        .expect("civilian AI");
+    let member_ai = engine.ai_ctrl(member);
     assert!(
         member_ai.script_locked,
         "forced return to duty does not release the script lock"
@@ -487,11 +465,7 @@ fn remove_all_subordinates_force_returns_script_locked_civilian_to_duty() {
         "a direct forced return to duty must bypass the decision-entry script-lock gate"
     );
 
-    let on_post_ai = engine
-        .get_entity(member_at_post)
-        .expect("on-post civilian patrol member")
-        .ai_controller()
-        .expect("on-post civilian AI");
+    let on_post_ai = engine.ai_ctrl(member_at_post);
     assert_eq!(on_post_ai.patrol_chief, None);
     assert_eq!(
         on_post_ai.current_substate,
@@ -512,28 +486,14 @@ fn remove_all_subordinates_rereads_roster_after_member_state_callback() {
     let chief = engine.add_test_entity(make_scripted_soldier(""));
     let first = engine.add_test_entity(make_scripted_civilian("ClearChiefAgain"));
     let second = engine.add_test_entity(make_scripted_soldier(""));
-    let mut assets = LevelAssets::new();
-    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
-    engine
-        .get_entity_mut(chief)
-        .unwrap()
-        .ai_controller_mut()
-        .unwrap()
-        .theoretical_patrol = vec![first, second];
+    let assets = engine.test_runtime_assets();
+    engine.ai_ctrl_mut(chief).theoretical_patrol = vec![first, second];
     for owner in [first, second] {
-        let ai = engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .ai_controller_mut()
-            .unwrap();
+        let ai = engine.ai_ctrl_mut(owner);
         ai.patrol_chief = Some(chief);
         ai.special_action = true;
     }
-    let second_ai = engine
-        .get_entity_mut(second)
-        .unwrap()
-        .ai_controller_mut()
-        .unwrap();
+    let second_ai = engine.ai_ctrl_mut(second);
     second_ai.current_state = crate::ai::AiState::Seeking;
     second_ai.current_substate = crate::ai::Substate::SeekingJustWatching;
 
@@ -547,12 +507,11 @@ fn remove_all_subordinates_rereads_roster_after_member_state_callback() {
         member_variables: Vec::new(),
         functions: vec![Function {
             name: "FilterAIEvent".into(),
-            address: 0,
             num_parameters: 3,
             size_of_return_value: 4,
             size_of_parameters: 12,
-            size_of_volatile: 0,
             size_of_temporary: 4,
+            ..Default::default()
         }],
         quads: vec![
             q_begin_function(0, 1),
@@ -581,7 +540,7 @@ fn remove_all_subordinates_rereads_roster_after_member_state_callback() {
         crate::natives::ScriptHandleCodec::actor_handle(first),
         "ClearChiefAgain",
     );
-    engine.script_remove_all_subordinates(&sim, &assets, chief);
+    engine.script_remove_all_subordinates(TickCtx::new(&sim, &assets), chief);
 }
 
 #[test]
@@ -593,16 +552,9 @@ fn remove_all_subordinates_vm_yield_clears_before_following_add_as_subordinate()
     let old_member = engine.add_test_entity(make_scripted_soldier(""));
     let assets = engine.test_runtime_assets();
 
-    engine
-        .get_entity_mut(old_chief)
-        .and_then(Entity::ai_controller_mut)
-        .expect("old chief has AI")
-        .theoretical_patrol = vec![old_member];
+    engine.ai_ctrl_mut(old_chief).theoretical_patrol = vec![old_member];
     {
-        let member_ai = engine
-            .get_entity_mut(old_member)
-            .and_then(Entity::ai_controller_mut)
-            .expect("old member has AI");
+        let member_ai = engine.ai_ctrl_mut(old_member);
         member_ai.patrol_chief = Some(old_chief);
         // Keep this regression focused on the script VM boundary. The
         // default-member forced-return path has dedicated coverage above.
@@ -614,16 +566,10 @@ fn remove_all_subordinates_vm_yield_clears_before_following_add_as_subordinate()
     let startup = ClassEntry {
         source_file: "remove_then_add_test.scs".into(),
         class_name: STARTUP_CLASS.into(),
-        size_of_member_variables: 0,
-        member_variables: Vec::new(),
         functions: vec![Function {
             name: "Reassign".into(),
-            address: 0,
-            num_parameters: 0,
-            size_of_return_value: 0,
-            size_of_parameters: 0,
-            size_of_volatile: 0,
             size_of_temporary: 8,
+            ..Default::default()
         }],
         quads: vec![
             q_begin_function(0, 2),
@@ -638,6 +584,7 @@ fn remove_all_subordinates_vm_yield_clears_before_following_add_as_subordinate()
             q_return(),
             q_end_function(),
         ],
+        ..Default::default()
     };
     engine.scripts.mission = Some(
         MissionScript::from_scb(ScbFile {
@@ -650,8 +597,7 @@ fn remove_all_subordinates_vm_yield_clears_before_following_add_as_subordinate()
 
     engine
         .call_script_vm(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             super::ScriptVmKey::Global,
             "Reassign",
             &[],
@@ -660,20 +606,11 @@ fn remove_all_subordinates_vm_yield_clears_before_following_add_as_subordinate()
         .expect("remove-then-add callback completes");
 
     assert!(
-        engine
-            .get_entity(old_chief)
-            .and_then(Entity::ai_controller)
-            .expect("old chief remains an NPC")
-            .theoretical_patrol
-            .is_empty(),
+        engine.ai_ctrl(old_chief).theoretical_patrol.is_empty(),
         "the old patrol is cleared before the VM continues"
     );
     assert_eq!(
-        engine
-            .get_entity(new_chief)
-            .and_then(Entity::ai_controller)
-            .expect("new chief remains an NPC")
-            .theoretical_patrol,
+        engine.ai_ctrl(new_chief).theoretical_patrol,
         vec![old_chief],
         "the following AddAsSubordinate must observe old_chief.HasPatrol() == false"
     );
@@ -694,7 +631,11 @@ fn filter_allows_when_actor_not_bound_to_any_script() {
 
     let stim = crate::ai::Stimulus::new(crate::ai::StimulusType::EventView);
     assert!(
-        engine.filter_stimulus(sim, &LevelAssets::new(), unbound_handle, &stim),
+        engine.filter_stimulus(
+            TickCtx::new(sim, &LevelAssets::new()),
+            unbound_handle,
+            &stim
+        ),
         "no bound script → allow"
     );
 }
@@ -722,8 +663,11 @@ fn dispatch_handles_registered_actor_when_filter_blocks_and_skips_think() {
 
     // EventView with no human info → source=0 → script blocks.
     let stim = crate::ai::Stimulus::new(crate::ai::StimulusType::EventView);
-    let handled =
-        engine.dispatch_filtered_stimulus(sim, &LevelAssets::new(), sensitive_entity_id, &stim);
+    let handled = engine.dispatch_filtered_stimulus(
+        TickCtx::new(sim, &LevelAssets::new()),
+        sensitive_entity_id,
+        &stim,
+    );
     assert!(
         handled,
         "the dispatch wrapper handles a registered actor even when its script refuses Think"
@@ -756,15 +700,12 @@ fn combat_command_consumes_live_script_filter_refusal() {
         .expect("caller actor has an entity index") as u32;
     let caller_id = engine.entity_id_for_index(caller).expect("caller exists");
     let target_id = engine.entity_id_for_index(target).expect("target exists");
-    let mut assets = LevelAssets::new();
-    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    let mut assets = engine.test_runtime_assets();
     for (id, x, rank) in [
         (caller_id, 100.0, ProfileRank::Officer),
         (target_id, 125.0, ProfileRank::Soldier),
     ] {
-        let entity = engine
-            .get_entity_mut(id)
-            .expect("combat alert actor exists");
+        let entity = engine.ent_mut(id);
         entity
             .element_data_mut()
             .set_position_map(MapPoint::new(x, 100.0));
@@ -787,15 +728,12 @@ fn combat_command_consumes_live_script_filter_refusal() {
     };
 
     // Combat alerts carry a position, so SourceSensitive receives source zero.
-    assert!(engine.execute_ai_command_soldiers_to_attack(&sim, &assets, caller_id, center,));
-    assert_eq!(
-        engine
-            .get_entity(target_id)
-            .and_then(Entity::ai_controller)
-            .expect("target retains AI")
-            .current_state,
-        AiState::Default,
-    );
+    assert!(engine.execute_ai_command_soldiers_to_attack(
+        TickCtx::new(&sim, &assets),
+        caller_id,
+        center,
+    ));
+    assert_eq!(engine.ai_ctrl(target_id).current_state, AiState::Default,);
 
     // Allowing the filter also lets the accepted recipient execute its handler.
     engine
@@ -804,7 +742,11 @@ fn combat_command_consumes_live_script_filter_refusal() {
         .as_mut()
         .expect("mission remains loaded")
         .bind_actor(sensitive_handle, "NoOverride");
-    assert!(engine.execute_ai_command_soldiers_to_attack(&sim, &assets, caller_id, center,));
+    assert!(engine.execute_ai_command_soldiers_to_attack(
+        TickCtx::new(&sim, &assets),
+        caller_id,
+        center,
+    ));
 }
 
 #[test]
@@ -834,10 +776,7 @@ fn closure_review_alert_cap_counts_acceptances_after_script_refusals() {
         .chain(candidates.iter().copied())
         .enumerate()
     {
-        let Entity::Soldier(soldier) = engine
-            .get_entity_mut(id)
-            .expect("closure-review alert actor exists")
-        else {
+        let Entity::Soldier(soldier) = engine.ent_mut(id) else {
             panic!("closure-review alert actor changed kind")
         };
         soldier.soldier.cached_camp = crate::element::Camp::Lacklandists;
@@ -876,21 +815,19 @@ fn closure_review_alert_cap_counts_acceptances_after_script_refusals() {
         );
     }
 
-    assert!(engine.execute_ai_alert_soldiers(
-        &sim,
-        &assets,
-        officer_id,
-        Position {
-            x: 300.0,
-            ..Default::default()
-        },
-        0
-    ));
+    assert!(
+        engine
+            .ai_ctx(&sim, &assets, officer_id)
+            .execute_ai_alert_soldiers(
+                Position {
+                    x: 300.0,
+                    ..Default::default()
+                },
+                0
+            )
+    );
 
-    let officer = engine
-        .get_entity(officer_id)
-        .and_then(Entity::enemy_ai)
-        .expect("closure-review officer retains EnemyAi");
+    let officer = engine.enemy(officer_id);
     // Acceptances happen in roster order, but each accepted soldier is
     // inserted into the alerted list sorted by decreasing distance from the
     // officer; candidate distance grows with index here, so the list reads
@@ -944,10 +881,9 @@ fn build_nested_scb_with_default_inner() -> ScbFile {
     scb.classes.push(ClassEntry {
         source_file: "test.scs".into(),
         class_name: "DefaultInnerTarget".into(),
-        size_of_member_variables: 0,
-        member_variables: vec![],
         functions,
         quads,
+        ..Default::default()
     });
     scb
 }
@@ -1005,10 +941,9 @@ fn build_nested_scb_with_inner_native(inner_native: Option<crate::natives::Nativ
     let outer_class = ClassEntry {
         source_file: "test.scs".into(),
         class_name: "OuterCaller".into(),
-        size_of_member_variables: 0,
-        member_variables: vec![],
         functions: outer_functions,
         quads: outer_quads,
+        ..Default::default()
     };
 
     // Inner class. FilterAIEvent normally returns 42 as a recognisable
@@ -1050,10 +985,9 @@ fn build_nested_scb_with_inner_native(inner_native: Option<crate::natives::Nativ
     let inner_class = ClassEntry {
         source_file: "test.scs".into(),
         class_name: "InnerTarget".into(),
-        size_of_member_variables: 0,
-        member_variables: vec![],
         functions: inner_functions,
         quads: inner_quads,
+        ..Default::default()
     };
 
     let startup = crate::engine::test_support::asm::empty_startup_class("test.scs".into());
@@ -1256,15 +1190,17 @@ fn nested_callback_keeps_the_canonical_query_views() {
     let assets = LevelAssets::new();
     engine.attach_script_bindings(&assets);
     engine
-        .with_script_session(&crate::sim_rng::test_context(), &assets, |script, _, _| {
-            script.bind_actor(outer_handle, "OuterCaller");
-            script.bind_actor(inner_handle, "InnerTarget");
-        })
+        .with_script_session(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            |script, _, _| {
+                script.bind_actor(outer_handle, "OuterCaller");
+                script.bind_actor(inner_handle, "InnerTarget");
+            },
+        )
         .expect("mission installed");
     let result = engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Actor(outer_handle),
             "FilterAIEvent",
             &[inner_handle, 0, 0],
@@ -1288,8 +1224,7 @@ fn ordinary_actor_callback_binds_this_to_the_target_actor() {
     engine.attach_script_bindings(&assets);
     let result = engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Actor(inner_handle),
             "FilterAIEvent",
             &[0, 0],
@@ -1326,8 +1261,7 @@ fn scroll_callback_binds_this_scroll_and_unwinds_the_frame() {
         .with_current_scroll(scroll_handle);
     let result = engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Scroll(scroll_handle),
             "FilterAIEvent",
             &[0, 0],
@@ -1365,8 +1299,7 @@ fn prototype_filter_event_preserves_the_outer_this_actor() {
     engine.attach_script_bindings(&assets);
     let result = engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Actor(outer_handle),
             "FilterAIEvent",
             &[prototype_handle, 0, 0],
@@ -1420,8 +1353,7 @@ fn prototype_filter_event_dispatches_to_target_actor_script() {
     engine.attach_script_bindings(&assets);
     let result = engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Actor(outer_handle),
             "FilterAIEvent",
             &[inner_handle, 0, 0],
@@ -1451,8 +1383,7 @@ fn recursive_prototype_filter_event_stops_at_call_stack_limit() {
     engine.attach_script_bindings(&assets);
     let error = engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Actor(actor_a),
             "FilterAIEvent",
             &[actor_b, 0],
@@ -1486,7 +1417,7 @@ fn script_session_preserves_nested_pending_call_resume_and_restoration() {
     engine.attach_script_bindings(&assets);
 
     engine
-        .with_script_session(sim, &assets, |script, _, _| {
+        .with_script_session(TickCtx::new(sim, &assets), |script, _, _| {
             script.bind_actor(outer_handle, "OuterCaller");
             script.bind_actor(inner_handle, "InnerTarget");
         })
@@ -1494,8 +1425,7 @@ fn script_session_preserves_nested_pending_call_resume_and_restoration() {
 
     let result = engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Actor(outer_handle),
             "FilterAIEvent",
             &[inner_handle, 0, 0],
@@ -1526,8 +1456,7 @@ fn prototype_filter_event_missing_override_uses_actor_base_default() {
     engine.attach_script_bindings(&assets);
     let result = engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Actor(outer_handle),
             "FilterAIEvent",
             &[prototype_handle, 0, 0],
@@ -1565,8 +1494,7 @@ fn nested_prototype_callback_observes_outer_native_entity_mutation() {
     engine.attach_script_bindings(&assets);
     let result = engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Actor(outer_handle),
             "FilterAIEvent",
             &[prototype_handle, prototype_handle, 0],
@@ -1614,8 +1542,7 @@ fn nested_prototype_callback_observes_canonical_ai_global_mutation() {
 
     let result = engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Actor(outer_handle),
             "FilterAIEvent",
             &[prototype_handle, 0, 0],
@@ -1650,8 +1577,7 @@ fn prototype_filter_event_unbound_target_is_a_required_vm_error() {
     engine.attach_script_bindings(&assets);
     let error = engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Actor(outer_handle),
             "FilterAIEvent",
             &[99, 0, 0],
@@ -1671,18 +1597,15 @@ fn action_change_class(class_name: &str, temporary_count: u16, body: Vec<Quad>) 
     ClassEntry {
         source_file: "action_change_test.scs".into(),
         class_name: class_name.into(),
-        size_of_member_variables: 0,
-        member_variables: vec![],
         functions: vec![Function {
             name: "ActionChange".into(),
-            address: 0,
             num_parameters: 2,
-            size_of_return_value: 0,
             size_of_parameters: 8,
-            size_of_volatile: 0,
             size_of_temporary: i32::from(temporary_count) * 4,
+            ..Default::default()
         }],
         quads,
+        ..Default::default()
     }
 }
 
@@ -1765,13 +1688,7 @@ fn install_test_action(
         .sequence_manager
         .start_sequence_level(sequence);
     engine.select_sequence_element(actor, Some((sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        sequence,
-        0,
-    );
+    engine.t_element_in_progress(&assets, sequence, 0);
 }
 
 fn install_test_wait_timer(
@@ -1801,14 +1718,7 @@ fn install_test_wait_timer(
         .sequence_manager
         .start_sequence_level(sequence);
     engine.select_sequence_element(actor, None);
-    engine.instruct_owner(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        actor,
-        sequence,
-        0,
-    );
+    engine.t_instruct_owner(&assets, actor, sequence, 0);
     sequence
 }
 
@@ -1864,13 +1774,7 @@ fn install_test_order_queue(
         .sequence_manager
         .start_sequence_level(sequence);
     engine.select_sequence_element(actor, Some((sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        sequence,
-        0,
-    );
+    engine.t_element_in_progress(&assets, sequence, 0);
     sequence
 }
 
@@ -1922,18 +1826,10 @@ fn unlock_door_done_clears_every_lock_in_owner_slot_with_swapped_creation_order(
             .sequence_manager
             .start_sequence_level(sequence);
         engine.select_sequence_element(unlocker, Some((sequence, 0)));
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            sequence,
-            0,
-        );
+        engine.t_element_in_progress(&assets, sequence, 0);
 
         {
-            let entity = engine
-                .get_entity_mut(unlocker)
-                .expect("unlock owner exists for action-point priming");
+            let entity = engine.ent_mut(unlocker);
             entity
                 .position_iface_mut()
                 .set_direction_instantly(Direction::NORTH);
@@ -1950,8 +1846,7 @@ fn unlock_door_done_clears_every_lock_in_owner_slot_with_swapped_creation_order(
 
         let mut observer_saw_locked = None;
         engine.tick_actor_owner_envelopes_with_test_owner_hook(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             |engine, owner| {
                 if owner == observer {
                     observer_saw_locked =
@@ -1971,11 +1866,7 @@ fn unlock_door_done_clears_every_lock_in_owner_slot_with_swapped_creation_order(
             "only a later creation slot may observe the same-frame lockpick action point"
         );
         assert_eq!(
-            engine
-                .get_entity(unlocker)
-                .expect("unlock owner survives action point")
-                .element_data()
-                .direction(),
+            engine.direction_of(unlocker),
             1,
             "UnlockingDoor must execute the original per-tick Turn()"
         );
@@ -1987,7 +1878,7 @@ fn unlock_door_done_clears_every_lock_in_owner_slot_with_swapped_creation_order(
         assert_eq!(element.state, SequenceState::InProgress);
         assert_eq!(element.orders.len(), 1, "Done must not complete the order");
 
-        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
+        engine.t_tick_actor_owner_envelopes(&assets);
         assert_eq!(
             engine
                 .orders
@@ -2009,9 +1900,12 @@ fn bind_action_observer(engine: &mut EngineInner, assets: &LevelAssets, actor: E
     );
     engine.attach_script_bindings(assets);
     engine
-        .with_script_session(&crate::sim_rng::test_context(), assets, |script, _, _| {
-            script.bind_actor(handle, "ActionObserver");
-        })
+        .with_script_session(
+            TickCtx::new(&crate::sim_rng::test_context(), assets),
+            |script, _, _| {
+                script.bind_actor(handle, "ActionObserver");
+            },
+        )
         .expect("action-observer mission remains installed");
 }
 
@@ -2043,10 +1937,13 @@ fn action_change_ordering_engine(
     let assets = LevelAssets::new();
     engine.attach_script_bindings(&assets);
     engine
-        .with_script_session(&crate::sim_rng::test_context(), &assets, |script, _, _| {
-            script.bind_actor(mutator_handle, "PostureMutator");
-            script.bind_actor(observer_handle, "ActionObserver");
-        })
+        .with_script_session(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            |script, _, _| {
+                script.bind_actor(mutator_handle, "PostureMutator");
+                script.bind_actor(observer_handle, "ActionObserver");
+            },
+        )
         .expect("action-change mission remains installed");
 
     install_test_action(
@@ -2098,7 +1995,7 @@ fn action_change_unbound_nonempty_script_class_does_not_consume_transition() {
         crate::order::OrderType::WaitingUpright,
     );
 
-    engine.dispatch_actor_action_changes(&crate::sim_rng::test_context(), &assets);
+    engine.dispatch_actor_action_changes(TickCtx::new(&crate::sim_rng::test_context(), &assets));
 
     let actor_data = engine
         .world
@@ -2123,7 +2020,7 @@ fn action_change_unbound_nonempty_script_class_does_not_consume_transition() {
 fn action_change_earlier_callback_changes_later_actor_snapshot() {
     let (mut engine, assets, _mutator, observer) = action_change_ordering_engine(true);
 
-    engine.dispatch_actor_action_changes(&crate::sim_rng::test_context(), &assets);
+    engine.dispatch_actor_action_changes(TickCtx::new(&crate::sim_rng::test_context(), &assets));
 
     assert_eq!(
         observed_action_args(&engine, observer),
@@ -2140,7 +2037,7 @@ fn action_change_later_callback_mutation_waits_for_visited_actor_next_pass() {
     let (mut engine, assets, _mutator, observer) = action_change_ordering_engine(false);
     let sim = crate::sim_rng::test_context();
 
-    engine.dispatch_actor_action_changes(&sim, &assets);
+    engine.dispatch_actor_action_changes(TickCtx::new(&sim, &assets));
     assert_eq!(
         observed_action_args(&engine, observer),
         (
@@ -2150,7 +2047,7 @@ fn action_change_later_callback_mutation_waits_for_visited_actor_next_pass() {
         "an already visited actor keeps its pre-mutation callback arguments"
     );
 
-    engine.dispatch_actor_action_changes(&sim, &assets);
+    engine.dispatch_actor_action_changes(TickCtx::new(&sim, &assets));
     assert_eq!(
         observed_action_args(&engine, observer),
         (
@@ -2174,9 +2071,12 @@ fn action_change_self_mutation_stores_live_post_callback_animation() {
     let assets = LevelAssets::new();
     engine.attach_script_bindings(&assets);
     engine
-        .with_script_session(&crate::sim_rng::test_context(), &assets, |script, _, _| {
-            script.bind_actor(handle, "SelfPostureMutator");
-        })
+        .with_script_session(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            |script, _, _| {
+                script.bind_actor(handle, "SelfPostureMutator");
+            },
+        )
         .expect("self-mutation mission remains installed");
     install_test_action(
         &mut engine,
@@ -2186,7 +2086,7 @@ fn action_change_self_mutation_stores_live_post_callback_animation() {
         crate::order::OrderType::WaitingUpright,
     );
 
-    engine.dispatch_actor_action_changes(&crate::sim_rng::test_context(), &assets);
+    engine.dispatch_actor_action_changes(TickCtx::new(&crate::sim_rng::test_context(), &assets));
 
     assert_eq!(
         observed_action_args(&engine, actor),
@@ -2230,7 +2130,7 @@ fn sequence_launch_dispatches_immediate_engine_elements() {
     let mut timer = SequenceElement::new_generic(1, Command::Timer, None);
     timer.set_property(Field::Timer, FieldValue::Integer(12));
     sequence.append_element(timer);
-    engine.launch_sequence(&crate::sim_rng::test_context(), &assets, sequence);
+    engine.t_launch_sequence(&assets, sequence);
 
     assert_eq!(engine.orders.timer_elements.len(), 1);
     let timer_ref = engine.orders.timer_elements[0].element_ref;
@@ -2347,7 +2247,7 @@ fn animation_execution_gates_do_not_skip_action_change() {
             }
         }
 
-        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
+        engine.t_tick_actor_owner_envelopes(&assets);
 
         assert_eq!(
             observed_action_args(&engine, actor),
@@ -2442,16 +2342,12 @@ fn movement_owned_token_skip_does_not_sample_stale_execute_inputs() {
             .sequence_manager
             .start_sequence_level(sequence);
         engine.select_sequence_element(actor, Some((sequence, 0)));
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            sequence,
-            0,
-        );
+        engine.t_element_in_progress(&assets, sequence, 0);
 
-        let executed =
-            engine.tick_actor_animation_for(&crate::sim_rng::test_context(), &assets, actor);
+        let executed = engine.tick_actor_animation_for(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            actor,
+        );
 
         assert!(executed.is_none(), "{movement_order:?}");
         assert_eq!(
@@ -2502,12 +2398,15 @@ fn per_actor_wait_initialization_does_not_publish_later_wait_to_earlier_callback
     let assets = LevelAssets::new();
     engine.attach_script_bindings(&assets);
     engine
-        .with_script_session(&crate::sim_rng::test_context(), &assets, |script, _, _| {
-            script.bind_actor(first_handle, "WaitProbe");
-        })
+        .with_script_session(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            |script, _, _| {
+                script.bind_actor(first_handle, "WaitProbe");
+            },
+        )
         .expect("wait-isolation mission remains installed");
 
-    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
+    engine.t_tick_actor_owner_envelopes(&assets);
 
     assert_eq!(
         engine
@@ -2592,9 +2491,8 @@ fn combat_injury_think_finishes_before_same_slot_action_change() {
             crate::ai::StimulusType::EventTimer,
         ));
 
-    let (_, phases) = capture_actor_animation_boundary(|| {
-        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets)
-    });
+    let (_, phases) =
+        capture_actor_animation_boundary(|| engine.t_tick_actor_owner_envelopes(&assets));
 
     let think = phases
         .iter()
@@ -2648,7 +2546,7 @@ fn earlier_action_change_replacement_is_animated_at_the_later_actor_slot() {
         ],
     );
 
-    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
+    engine.t_tick_actor_owner_envelopes(&assets);
 
     assert_eq!(
         engine
@@ -2666,6 +2564,7 @@ fn earlier_action_change_replacement_is_animated_at_the_later_actor_slot() {
 
 #[test]
 fn later_action_change_replacement_defers_already_visited_actor_animation() {
+    let sim = crate::sim_rng::test_context();
     let (mut engine, assets, mutator, observer) = action_change_ordering_engine(false);
     bind_test_actor_animations(
         &mut engine,
@@ -2683,9 +2582,8 @@ fn later_action_change_replacement_defers_already_visited_actor_animation() {
             crate::order::OrderType::WaitingCrouched,
         ],
     );
-    let sim = crate::sim_rng::test_context();
 
-    engine.tick_actor_owner_envelopes(&sim, &assets);
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
     assert_eq!(
         engine
             .world
@@ -2699,7 +2597,7 @@ fn later_action_change_replacement_defers_already_visited_actor_animation() {
         "a later callback cannot retroactively replace animation at an already visited slot"
     );
 
-    engine.tick_actor_owner_envelopes(&sim, &assets);
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
     assert_eq!(
         engine
             .world
@@ -2730,18 +2628,21 @@ fn live_actor_walk_visits_callback_spawned_later_slot_and_skips_holes() {
     let mut spawned = None;
 
     let (_, phases) = capture_actor_owner_envelope(|| {
-        engine.tick_actor_owner_envelopes_with_test_owner_hook(&sim, &assets, |engine, owner| {
-            visited.push(owner);
-            if owner == first {
-                engine.remove_entity(removed_during_callback);
-                let id = engine.add_test_entity(make_pc(false));
-                assert!(
-                    id.index() > later.index(),
-                    "runtime entities are append-only"
-                );
-                spawned = Some(id);
-            }
-        });
+        engine.tick_actor_owner_envelopes_with_test_owner_hook(
+            TickCtx::new(&sim, &assets),
+            |engine, owner| {
+                visited.push(owner);
+                if owner == first {
+                    engine.remove_entity(removed_during_callback);
+                    let id = engine.add_test_entity(make_pc(false));
+                    assert!(
+                        id.index() > later.index(),
+                        "runtime entities are append-only"
+                    );
+                    spawned = Some(id);
+                }
+            },
+        );
     });
     let spawned = spawned.expect("the first owner's callback must spawn an actor");
 
@@ -2794,8 +2695,7 @@ fn earlier_owner_callback_installs_invalid_later_pc_init_order_rejected_same_fra
     let mut installed = None;
 
     engine.tick_actor_owner_envelopes_with_test_owner_hook(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         |engine, completed_owner| {
             if completed_owner != first || installed.is_some() {
                 return;
@@ -2811,13 +2711,7 @@ fn earlier_owner_callback_installs_invalid_later_pc_init_order_rejected_same_fra
                 .sequence_manager
                 .start_sequence_level(sequence);
             engine.select_sequence_element(later, Some((sequence, 0)));
-            engine.element_in_progress(
-                &crate::sim_rng::test_context(),
-                &assets,
-                &mut Vec::new(),
-                sequence,
-                0,
-            );
+            engine.t_element_in_progress(&assets, sequence, 0);
             installed = Some(sequence);
         },
     );
@@ -2889,7 +2783,7 @@ fn terminating_animation_promotes_next_order_before_same_actor_action_change() {
         sprite.action_done_counter = 0;
     }
 
-    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
+    engine.t_tick_actor_owner_envelopes(&assets);
 
     assert_eq!(
         observed_action_args(&engine, actor),
@@ -2941,7 +2835,7 @@ fn wait_timer_zero_completes_after_execute_and_before_action_change() {
         .old_action = OrderType::Pointing;
     let timer_sequence = install_test_wait_timer(&mut engine, &assets, actor, 0);
 
-    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
+    engine.t_tick_actor_owner_envelopes(&assets);
 
     assert_eq!(
         engine
@@ -3003,12 +2897,7 @@ fn sequence_manager_instruction_rewrites_terminated_motion_to_in_progress() {
     let mut engine = EngineInner::new();
     let actor = engine.add_test_entity(make_scripted_soldier(""));
     let assets = LevelAssets::new();
-    engine
-        .get_entity_mut(actor)
-        .and_then(|entity| entity.actor_data_mut())
-        .expect("sequence-manager actor is typed")
-        .continuation
-        .motion_state = crate::sprite::MotionState::Terminated;
+    engine.actor_mut(actor).continuation.motion_state = crate::sprite::MotionState::Terminated;
 
     let mut element = SequenceElement::new(1, Command::Generic, Some(actor));
     element.orders.push_back(Order::new(
@@ -3017,11 +2906,10 @@ fn sequence_manager_instruction_rewrites_terminated_motion_to_in_progress() {
         0.0,
         engine.orders.allocate_order_id(),
     ));
-    let successor = engine.launch_element(&crate::sim_rng::test_context(), &assets, element);
+    let successor = engine.t_launch_element(&assets, element);
     engine.hourglass_phase_sequences(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut crate::engine::HostDisplayState::default(),
-        &assets,
     );
 
     assert_eq!(
@@ -3029,12 +2917,7 @@ fn sequence_manager_instruction_rewrites_terminated_motion_to_in_progress() {
         Some((successor, 0))
     );
     assert_eq!(
-        engine
-            .get_entity(actor)
-            .and_then(|entity| entity.actor_data())
-            .expect("derived-tail actor remains typed")
-            .continuation
-            .motion_state,
+        engine.actor(actor).continuation.motion_state,
         crate::sprite::MotionState::InProgress,
         "accepted InstructOwner must perform the Original mmotionState rewrite"
     );
@@ -3048,22 +2931,15 @@ fn accepted_empty_generic_latches_motion_before_immediate_completion() {
     let mut engine = EngineInner::new();
     let actor = engine.add_test_entity(make_scripted_soldier(""));
     let assets = LevelAssets::new();
-    engine
-        .get_entity_mut(actor)
-        .and_then(|entity| entity.actor_data_mut())
-        .expect("sequence-manager actor is typed")
-        .continuation
-        .motion_state = crate::sprite::MotionState::Terminated;
+    engine.actor_mut(actor).continuation.motion_state = crate::sprite::MotionState::Terminated;
 
-    let sequence = engine.launch_element(
-        &crate::sim_rng::test_context(),
+    let sequence = engine.t_launch_element(
         &assets,
         SequenceElement::new(1, Command::Generic, Some(actor)),
     );
     engine.hourglass_phase_sequences(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut crate::engine::HostDisplayState::default(),
-        &assets,
     );
 
     assert_eq!(
@@ -3081,12 +2957,7 @@ fn accepted_empty_generic_latches_motion_before_immediate_completion() {
         "empty accepted carrier must complete in the same Instruct call"
     );
     assert_eq!(
-        engine
-            .get_entity(actor)
-            .and_then(|entity| entity.actor_data())
-            .expect("sequence-manager actor remains typed")
-            .continuation
-            .motion_state,
+        engine.actor(actor).continuation.motion_state,
         crate::sprite::MotionState::InProgress,
         "Original latches mmotionState before its empty-order termination"
     );
@@ -3101,7 +2972,7 @@ fn turning_selects_sprite_row_after_the_direction_step() {
 
     let mut engine = EngineInner::new();
     let actor = engine.add_test_entity(make_scripted_civilian(""));
-    let Entity::Civilian(civilian) = engine.get_entity_mut(actor).unwrap() else {
+    let Entity::Civilian(civilian) = engine.ent_mut(actor) else {
         unreachable!()
     };
     civilian.civilian.cached_camp = crate::element::Camp::Royalists;
@@ -3123,18 +2994,10 @@ fn turning_selects_sprite_row_after_the_direction_step() {
         .sequence_manager
         .start_sequence_level(sequence);
     engine.select_sequence_element(actor, Some((sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        sequence,
-        0,
-    );
+    engine.t_element_in_progress(&assets, sequence, 0);
 
     {
-        let entity = engine
-            .get_entity_mut(actor)
-            .expect("turning civilian remains installed");
+        let entity = engine.ent_mut(actor);
         entity
             .position_iface_mut()
             .set_direction_instantly(Direction::from_raw(0));
@@ -3144,11 +3007,9 @@ fn turning_selects_sprite_row_after_the_direction_step() {
         entity.sprite_mut().last_processed_order_id = order_id.get();
     }
 
-    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
+    engine.t_tick_actor_owner_envelopes(&assets);
 
-    let entity = engine
-        .get_entity(actor)
-        .expect("turning civilian survives its actor slot");
+    let entity = engine.ent(actor);
     assert_eq!(u8::from(entity.position_iface().get_direction()), 15);
     assert_eq!(
         entity.sprite().current_row,
@@ -3167,7 +3028,7 @@ fn turning_ignores_stale_sprite_done_while_body_still_rotates() {
 
     let mut engine = EngineInner::new();
     let actor = engine.add_test_entity(make_scripted_civilian(""));
-    let Entity::Civilian(civilian) = engine.get_entity_mut(actor).unwrap() else {
+    let Entity::Civilian(civilian) = engine.ent_mut(actor) else {
         unreachable!()
     };
     civilian.civilian.cached_camp = crate::element::Camp::Royalists;
@@ -3189,18 +3050,10 @@ fn turning_ignores_stale_sprite_done_while_body_still_rotates() {
         .sequence_manager
         .start_sequence_level(sequence);
     engine.select_sequence_element(actor, Some((sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        sequence,
-        0,
-    );
+    engine.t_element_in_progress(&assets, sequence, 0);
 
     {
-        let entity = engine
-            .get_entity_mut(actor)
-            .expect("turning civilian remains installed");
+        let entity = engine.ent_mut(actor);
         entity
             .position_iface_mut()
             .set_direction_instantly(Direction::from_raw(0));
@@ -3211,7 +3064,7 @@ fn turning_ignores_stale_sprite_done_while_body_still_rotates() {
         entity.sprite_mut().last_processed_order_id = order_id.get();
     }
 
-    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
+    engine.t_tick_actor_owner_envelopes(&assets);
 
     let element = engine
         .orders
@@ -3227,17 +3080,11 @@ fn turning_ignores_stale_sprite_done_while_body_still_rotates() {
         "the visual sprite's stale Done edge must not complete authoritative Turn motion"
     );
     assert_eq!(
-        u8::from(
-            engine
-                .get_entity(actor)
-                .unwrap()
-                .position_iface()
-                .get_direction()
-        ),
+        u8::from(engine.ent(actor).position_iface().get_direction()),
         15
     );
     assert_eq!(
-        engine.get_entity(actor).unwrap().sprite().last_motion_state,
+        engine.ent(actor).sprite().last_motion_state,
         Some(MotionState::InProgress),
         "Turn()'s authoritative result must replace the visual sprite edge"
     );
@@ -3245,6 +3092,7 @@ fn turning_ignores_stale_sprite_done_while_body_still_rotates() {
 
 #[test]
 fn wait_timer_nonzero_preserves_original_extra_zero_frame() {
+    let sim = crate::sim_rng::test_context();
     use crate::order::OrderType;
 
     let mut engine = EngineInner::new();
@@ -3252,9 +3100,8 @@ fn wait_timer_nonzero_preserves_original_extra_zero_frame() {
     let assets = LevelAssets::new();
     bind_test_actor_animations(&mut engine, actor, &[OrderType::WaitingUprightBored]);
     let timer_sequence = install_test_wait_timer(&mut engine, &assets, actor, 1);
-    let sim = crate::sim_rng::test_context();
 
-    engine.tick_actor_owner_envelopes(&sim, &assets);
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
     assert_eq!(
         engine
             .world
@@ -3287,7 +3134,7 @@ fn wait_timer_nonzero_preserves_original_extra_zero_frame() {
         "a positive counter is decremented after Execute without completing on the frame it reaches zero"
     );
 
-    engine.tick_actor_owner_envelopes(&sim, &assets);
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
     assert_eq!(
         engine
             .orders
@@ -3309,13 +3156,9 @@ fn execution_frozen_actor_with_installed_wait_timer_skips_execute_but_completes(
     let assets = LevelAssets::new();
     bind_test_actor_animations(&mut engine, actor, &[OrderType::WaitingUprightBored]);
     let timer_sequence = install_test_wait_timer(&mut engine, &assets, actor, 0);
-    engine
-        .get_entity_mut(actor)
-        .and_then(|entity| entity.actor_data_mut())
-        .expect("frozen timer owner is an actor")
-        .execution_frozen = true;
+    engine.actor_mut(actor).execution_frozen = true;
 
-    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
+    engine.t_tick_actor_owner_envelopes(&assets);
 
     assert_eq!(
         engine
@@ -3328,12 +3171,7 @@ fn execution_frozen_actor_with_installed_wait_timer_skips_execute_but_completes(
         "actor updates apply WAIT_TIMER after frozen execution returns InProgress"
     );
     assert_eq!(
-        engine
-            .get_entity(actor)
-            .expect("frozen timer owner remains installed")
-            .element_data()
-            .sprite
-            .last_action,
+        engine.elem(actor).sprite.last_action,
         OrderType::NonanimationEnd,
         "original-game actor execution returns before selecting the installed wait animation"
     );
@@ -3378,19 +3216,9 @@ fn wait_timer_termination_replaces_forwarded_completion_exactly_once() {
         .sequence_manager
         .start_sequence_level(sequence);
     engine.select_sequence_element(actor, Some((sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        sequence,
-        0,
-    );
+    engine.t_element_in_progress(&assets, sequence, 0);
     {
-        let sprite = &mut engine
-            .get_entity_mut(actor)
-            .expect("forwarding timer owner exists")
-            .element_data_mut()
-            .sprite;
+        let sprite = &mut engine.elem_mut(actor).sprite;
         sprite.last_processed_order_id = first_id.get();
         sprite.last_action = OrderType::Pointing;
         sprite.current_row = 0;
@@ -3400,7 +3228,7 @@ fn wait_timer_termination_replaces_forwarded_completion_exactly_once() {
         sprite.action_done_counter = 0;
     }
 
-    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
+    engine.t_tick_actor_owner_envelopes(&assets);
 
     let element = engine
         .orders
@@ -3457,8 +3285,7 @@ fn earlier_owner_callback_installs_later_timer_while_reverse_order_defers() {
         let mut timer_sequence = None;
 
         engine.tick_actor_owner_envelopes_with_test_owner_hook(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             |engine, completed_owner| {
                 if completed_owner != installer || timer_sequence.is_some() {
                     return;
@@ -3475,14 +3302,7 @@ fn earlier_owner_callback_installs_later_timer_while_reverse_order_defers() {
                     .sequence_manager
                     .start_sequence_level(sequence);
                 engine.select_sequence_element(target, None);
-                engine.instruct_owner(
-                    &crate::sim_rng::test_context(),
-                    &assets,
-                    &mut Vec::new(),
-                    target,
-                    sequence,
-                    0,
-                );
+                engine.t_instruct_owner(&assets, target, sequence, 0);
                 timer_sequence = Some(sequence);
             },
         );
@@ -3498,11 +3318,7 @@ fn earlier_owner_callback_installs_later_timer_while_reverse_order_defers() {
             crate::sequence::SequenceState::InProgress
         );
         assert_eq!(
-            engine
-                .get_entity(target)
-                .and_then(|entity| entity.actor_data())
-                .expect("callback timer target remains an actor")
-                .wait_time,
+            engine.actor(target).wait_time,
             if installer_before_target { 0 } else { 1 },
             "only a target whose live creation slot is still ahead may Execute the callback-installed timer this pass"
         );
@@ -3622,15 +3438,9 @@ fn waiting_sword_execute_faces_world_xy_not_projected_map_xy() {
             },
         ),
     ] {
-        engine
-            .get_entity_mut(id)
-            .expect("direction fixture actor exists")
-            .element_data_mut()
-            .set_position(position);
+        engine.place(id, position);
     }
-    let entity = engine
-        .get_entity_mut(actor)
-        .expect("direction owner exists");
+    let entity = engine.ent_mut(actor);
     entity
         .actor_data_mut()
         .expect("direction owner is actor")
@@ -3641,8 +3451,10 @@ fn waiting_sword_execute_faces_world_xy_not_projected_map_xy() {
         .opponents
         .push(opponent);
 
-    let execute_result =
-        engine.tick_actor_animation_for(&crate::sim_rng::test_context(), &assets, actor);
+    let execute_result = engine.tick_actor_animation_for(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        actor,
+    );
 
     assert_eq!(
         execute_result.expect("WaitingSword must execute"),
@@ -3654,9 +3466,7 @@ fn waiting_sword_execute_faces_world_xy_not_projected_map_xy() {
     assert_eq!(
         u8::from(
             engine
-                .get_entity(actor)
-                .expect("direction owner remains installed")
-                .element_data()
+                .elem(actor)
                 .sprite
                 .position_iface
                 .get_direction_goal()
@@ -3671,7 +3481,7 @@ fn earlier_smalltalk_hint_is_consumed_by_later_waiting_sword_slot() {
 
     let (mut engine, assets, _attacker, defender) = waiting_sword_pair(true);
     crate::sim_rng::with_seed(1, |sim| {
-        engine.tick_actor_owner_envelopes(sim, &assets);
+        engine.tick_actor_owner_envelopes(TickCtx::new(sim, &assets));
     });
 
     assert!(
@@ -3683,10 +3493,7 @@ fn earlier_smalltalk_hint_is_consumed_by_later_waiting_sword_slot() {
                 Command::ParrySmalltalkLeft | Command::ParrySmalltalkRight
             ))
     );
-    let human = engine
-        .get_entity(defender)
-        .and_then(|entity| entity.human_data())
-        .expect("defender remains human");
+    let human = engine.human(defender);
     assert_eq!(human.smalltalk_hint, crate::element::SmalltalkHint::None);
     assert_eq!(human.smalltalk_hint_opponent, None);
 }
@@ -3696,17 +3503,11 @@ fn frozen_all_keeps_waiting_sword_callbacks_live_without_selecting_sprites() {
     use crate::element::Command;
 
     let (mut engine, assets, attacker, defender) = waiting_sword_pair(true);
-    let before = [attacker, defender].map(|actor| {
-        engine
-            .get_entity(actor)
-            .expect("fighter exists")
-            .element_data()
-            .sprite
-            .last_processed_order_id
-    });
+    let before =
+        [attacker, defender].map(|actor| engine.elem(actor).sprite.last_processed_order_id);
     engine.set_actors_frozen(true);
     crate::sim_rng::with_seed(1, |sim| {
-        engine.tick_actor_owner_envelopes(sim, &assets);
+        engine.tick_actor_owner_envelopes(TickCtx::new(sim, &assets));
     });
 
     assert!(
@@ -3720,14 +3521,7 @@ fn frozen_all_keeps_waiting_sword_callbacks_live_without_selecting_sprites() {
         "freezing all suppresses action processing, not sword-waiting's synchronous smalltalk/swordfight evaluation tail"
     );
     assert_eq!(
-        [attacker, defender].map(|actor| {
-            engine
-                .get_entity(actor)
-                .expect("fighter remains live")
-                .element_data()
-                .sprite
-                .last_processed_order_id
-        }),
+        [attacker, defender].map(|actor| { engine.elem(actor).sprite.last_processed_order_id }),
         before,
         "FrozenAll must not stamp either selected sprite order identity"
     );
@@ -3767,40 +3561,18 @@ fn frozen_all_consumes_actor_initialisation_once_without_sprite_identity() {
         .start_sequence_level(sequence);
     let assets = LevelAssets::new();
     engine.select_sequence_element(soldier, Some((sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        sequence,
-        0,
-    );
+    engine.t_element_in_progress(&assets, sequence, 0);
     engine.set_actors_frozen(true);
 
-    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
-    assert_eq!(
-        engine
-            .get_entity(soldier)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .last_execute_order_id,
-        Some(order_id)
-    );
+    engine.t_tick_actor_owner_envelopes(&assets);
+    assert_eq!(engine.actor(soldier).last_execute_order_id, Some(order_id));
     assert_ne!(
-        engine
-            .get_entity(soldier)
-            .unwrap()
-            .sprite()
-            .last_processed_order_id,
+        engine.ent(soldier).sprite().last_processed_order_id,
         order_id.get()
     );
 
-    engine
-        .get_entity_mut(bottle)
-        .unwrap()
-        .element_data_mut()
-        .active = false;
-    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
+    engine.set_active(bottle, false);
+    engine.t_tick_actor_owner_envelopes(&assets);
     assert_eq!(
         engine
             .orders
@@ -3829,45 +3601,19 @@ fn frozen_all_runs_weak_sword_actor_initialisation_before_sprite_start() {
         OrderType::BeingWeakSword,
         OrderType::WaitingSword,
     );
-    engine
-        .get_entity_mut(weak)
-        .unwrap()
-        .human_data_mut()
-        .unwrap()
-        .opponents = vec![opponent].into();
-    engine
-        .get_entity_mut(opponent)
-        .unwrap()
-        .human_data_mut()
-        .unwrap()
-        .opponents = vec![weak].into();
-    engine
-        .get_entity_mut(weak)
-        .unwrap()
-        .human_data_mut()
-        .unwrap()
-        .smalltalk_initiative = true;
+    engine.human_mut(weak).opponents = vec![opponent].into();
+    engine.human_mut(opponent).opponents = vec![weak].into();
+    engine.human_mut(weak).smalltalk_initiative = true;
     engine.set_actors_frozen(true);
 
-    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
+    engine.t_tick_actor_owner_envelopes(&assets);
 
-    assert!(
-        !engine
-            .get_entity(weak)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .smalltalk_initiative
-    );
-    let opponent_human = engine.get_entity(opponent).unwrap().human_data().unwrap();
+    assert!(!engine.human(weak).smalltalk_initiative);
+    let opponent_human = engine.human(opponent);
     assert!(opponent_human.smalltalk_initiative);
     assert!(opponent_human.received_smalltalk_initiative);
     assert_eq!(
-        engine
-            .get_entity(weak)
-            .unwrap()
-            .sprite()
-            .last_processed_order_id,
+        engine.ent(weak).sprite().last_processed_order_id,
         u32::MAX,
         "weak/stunned initialization is actor-owned and precedes the frozen sprite boundary"
     );
@@ -3891,34 +3637,20 @@ fn frozen_all_stunned_sword_initialisation_preserves_smalltalk_initiative() {
         OrderType::WaitingSword,
     );
     {
-        let human = engine
-            .get_entity_mut(stunned)
-            .unwrap()
-            .human_data_mut()
-            .unwrap();
+        let human = engine.human_mut(stunned);
         human.opponents = vec![opponent].into();
         human.smalltalk_initiative = true;
     }
-    engine
-        .get_entity_mut(opponent)
-        .unwrap()
-        .human_data_mut()
-        .unwrap()
-        .opponents = vec![stunned].into();
+    engine.human_mut(opponent).opponents = vec![stunned].into();
     engine.set_actors_frozen(true);
 
-    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
+    engine.t_tick_actor_owner_envelopes(&assets);
 
     assert!(
-        engine
-            .get_entity(stunned)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .smalltalk_initiative,
+        engine.human(stunned).smalltalk_initiative,
         "BeingStunnedSword must not perform weakness execution's initiative handoff"
     );
-    let opponent_human = engine.get_entity(opponent).unwrap().human_data().unwrap();
+    let opponent_human = engine.human(opponent);
     assert!(!opponent_human.smalltalk_initiative);
     assert!(!opponent_human.received_smalltalk_initiative);
     assert!(
@@ -3948,14 +3680,9 @@ fn stunned_sword_initialisation_dispatches_adversary_weak_synchronously() {
         OrderType::BeingStunnedSword,
         OrderType::WaitingSword,
     );
-    engine
-        .get_entity_mut(stunned)
-        .unwrap()
-        .human_data_mut()
-        .unwrap()
-        .opponents = vec![opponent].into();
+    engine.human_mut(stunned).opponents = vec![opponent].into();
     {
-        let Entity::Soldier(soldier) = engine.get_entity_mut(opponent).unwrap() else {
+        let Entity::Soldier(soldier) = engine.ent_mut(opponent) else {
             unreachable!()
         };
         soldier.human.opponents = vec![stunned].into();
@@ -3976,11 +3703,10 @@ fn stunned_sword_initialisation_dispatches_adversary_weak_synchronously() {
 
     let mut synchronous_state = None;
     engine.tick_actor_owner_envelopes_with_test_owner_hook(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         |engine, owner| {
             if owner == stunned {
-                let ai = engine.get_entity(opponent).unwrap().enemy_ai().unwrap();
+                let ai = engine.enemy(opponent);
                 synchronous_state = Some((
                     ai.base.when_does_timer_ring,
                     ai.base
@@ -3998,7 +3724,7 @@ fn stunned_sword_initialisation_dispatches_adversary_weak_synchronously() {
         "the direct weak callback arms the timer and preserves deferred stimuli before the opponent's own slot"
     );
 
-    let opponent_ai = engine.get_entity(opponent).unwrap().enemy_ai().unwrap();
+    let opponent_ai = engine.enemy(opponent);
     assert!(
         opponent_ai.base.timer_is_running,
         "EVENT_ADVERSARY_WEAK must reconsider the swordfight before actor initialization returns"
@@ -4026,7 +3752,7 @@ fn civilian_random_speech_closes_its_owner_boundary_before_the_lock_gate() {
 
     let mut engine = EngineInner::new();
     let beggar = engine.add_test_entity(make_scripted_civilian(""));
-    if let Entity::Civilian(civilian) = engine.get_entity_mut(beggar).unwrap() {
+    if let Entity::Civilian(civilian) = engine.ent_mut(beggar) {
         civilian.civilian.cached_civilian_type = CivilianType::Beggar;
         civilian.npc.register_number = 0;
         civilian.npc.ai_brain.base_mut().unwrap().me = beggar.index();
@@ -4044,10 +3770,10 @@ fn civilian_random_speech_closes_its_owner_boundary_before_the_lock_gate() {
         });
 
     engine.with_simulation_context(|engine, sim| {
-        engine.tick_civilian_random_speech_for_npc(sim, beggar, &assets);
+        engine.tick_civilian_random_speech_for_npc(TickCtx::new(sim, &assets), beggar);
     });
 
-    let ai = engine.get_entity(beggar).unwrap().ai_controller().unwrap();
+    let ai = engine.ai_ctrl(beggar);
     assert!(
         ai.ai_log
             .iter()
@@ -4063,7 +3789,7 @@ fn civilian_random_speech_closes_its_owner_boundary_before_the_lock_gate() {
 fn civilian_owner_speech_rejects_missing_position_layer() {
     let mut engine = EngineInner::new();
     let id = engine.add_test_entity(make_scripted_civilian(""));
-    let Entity::Civilian(civilian) = engine.get_entity_mut(id).unwrap() else {
+    let Entity::Civilian(civilian) = engine.ent_mut(id) else {
         unreachable!()
     };
     civilian.element.clear_layer();
@@ -4071,7 +3797,7 @@ fn civilian_owner_speech_rejects_missing_position_layer() {
     civilian.npc.ai_brain.base_mut().unwrap().me = id.index();
     engine.control.frame_counter = 100;
     engine.with_simulation_context(|engine, sim| {
-        engine.tick_civilian_random_speech_for_npc(sim, id, &LevelAssets::new());
+        engine.tick_civilian_random_speech_for_npc(TickCtx::new(sim, &LevelAssets::new()), id);
     });
 }
 
@@ -4211,7 +3937,7 @@ fn later_smalltalk_hint_defers_for_already_visited_defender() {
 
     let (mut engine, assets, _attacker, defender) = waiting_sword_pair(false);
     crate::sim_rng::with_seed(1, |sim| {
-        engine.tick_actor_owner_envelopes(sim, &assets);
+        engine.tick_actor_owner_envelopes(TickCtx::new(sim, &assets));
     });
 
     assert!(
@@ -4224,11 +3950,7 @@ fn later_smalltalk_hint_defers_for_already_visited_defender() {
             ))
     );
     assert_ne!(
-        engine
-            .get_entity(defender)
-            .and_then(|entity| entity.human_data())
-            .expect("defender remains human")
-            .smalltalk_hint,
+        engine.human(defender).smalltalk_hint,
         crate::element::SmalltalkHint::None,
         "the later attacker mutates the already-visited defender, but the defender cannot consume the hint until its next slot"
     );
@@ -4240,15 +3962,12 @@ fn earlier_initiative_transfer_drives_later_recipient_slot() {
 
     let (mut engine, assets, attacker, defender) = waiting_sword_pair(true);
     {
-        let human = engine
-            .get_entity_mut(attacker)
-            .and_then(|entity| entity.human_data_mut())
-            .expect("attacker remains human");
+        let human = engine.human_mut(attacker);
         human.received_smalltalk_initiative = false;
         human.relative_fighting_ability = 100;
     }
     crate::sim_rng::with_seed(9, |sim| {
-        engine.tick_actor_owner_envelopes(sim, &assets);
+        engine.tick_actor_owner_envelopes(TickCtx::new(sim, &assets));
     });
 
     assert!(
@@ -4268,15 +3987,12 @@ fn later_initiative_transfer_cannot_reenter_visited_recipient_slot() {
 
     let (mut engine, assets, attacker, defender) = waiting_sword_pair(false);
     {
-        let human = engine
-            .get_entity_mut(attacker)
-            .and_then(|entity| entity.human_data_mut())
-            .expect("attacker remains human");
+        let human = engine.human_mut(attacker);
         human.received_smalltalk_initiative = false;
         human.relative_fighting_ability = 100;
     }
     crate::sim_rng::with_seed(9, |sim| {
-        engine.tick_actor_owner_envelopes(sim, &assets);
+        engine.tick_actor_owner_envelopes(TickCtx::new(sim, &assets));
     });
 
     assert!(
@@ -4288,10 +4004,7 @@ fn later_initiative_transfer_cannot_reenter_visited_recipient_slot() {
                 Command::SwordstrikeSmalltalkLeft | Command::SwordstrikeSmalltalkRight
             ))
     );
-    let human = engine
-        .get_entity(defender)
-        .and_then(|entity| entity.human_data())
-        .expect("defender remains human");
+    let human = engine.human(defender);
     assert!(human.smalltalk_initiative);
     assert!(human.received_smalltalk_initiative);
 }
@@ -4333,42 +4046,24 @@ fn earlier_opponent_prune_synchronously_quits_both_combatants() {
                 OrderType::WaitingSword,
                 OrderType::WaitingSword,
             );
-            engine
-                .get_entity_mut(actor)
-                .and_then(|entity| entity.actor_data_mut())
-                .expect("opponent-prune fighter is typed")
-                .action_state = ActionState::WaitingSword;
-            engine
-                .get_entity_mut(actor)
-                .and_then(Entity::enemy_ai_mut)
-                .expect("opponent-prune fighter has enemy AI")
-                .hth_weapon_id = 1;
+            engine.actor_mut(actor).action_state = ActionState::WaitingSword;
+            engine.enemy_mut(actor).hth_weapon_id = 1;
         }
         for (actor, x, z, sector) in [(pruner, 100.0, 0.0, 1), (mutated, 130.0, 41.0, 2)] {
-            let element = engine
-                .get_entity_mut(actor)
-                .expect("opponent-prune fighter exists")
-                .element_data_mut();
+            let element = engine.elem_mut(actor);
             element.set_position(crate::coordinates::WorldPoint3D { x, y: 100.0, z });
             element.set_sector(crate::position_interface::SectorHandle::new(sector));
         }
-        engine
-            .get_entity_mut(pruner)
-            .and_then(|entity| entity.human_data_mut())
-            .expect("pruner is human")
-            .opponents = vec![mutated].into();
+        engine.human_mut(pruner).opponents = vec![mutated].into();
         {
-            let human = engine
-                .get_entity_mut(mutated)
-                .and_then(|entity| entity.human_data_mut())
-                .expect("mutated fighter is human");
+            let human = engine.human_mut(mutated);
             human.opponents = vec![pruner].into();
             human.smalltalk_initiative = true;
             human.received_smalltalk_initiative = true;
         }
 
         crate::sim_rng::with_seed(5, |sim| {
-            engine.tick_actor_owner_envelopes(sim, &assets);
+            engine.tick_actor_owner_envelopes(TickCtx::new(sim, &assets));
         });
         // The prune launches both QuitSwordfight elements at the owner slot,
         // but a normal-priority launch is only registered with the sequence
@@ -4376,9 +4071,8 @@ fn earlier_opponent_prune_synchronously_quits_both_combatants() {
         // element update in the frame — dispatches and completes them.
         crate::sim_rng::with_seed(5, |sim| {
             engine.hourglass_phase_sequences(
-                sim,
+                TickCtx::new(sim, &assets),
                 &mut crate::engine::HostDisplayState::default(),
-                &assets,
             );
         });
         for actor in [pruner, mutated] {
@@ -4403,22 +4097,11 @@ fn earlier_opponent_prune_synchronously_quits_both_combatants() {
                 "both QuitSwordfight launches are instructed by the same frame's manager update"
             );
             assert_eq!(
-                engine
-                    .get_entity(actor)
-                    .and_then(|entity| entity.actor_data())
-                    .expect("pruned fighter remains an actor")
-                    .action_state,
+                engine.actor(actor).action_state,
                 ActionState::WaitingSword,
                 "the sword action state persists until the quit transition finishes"
             );
-            assert!(
-                engine
-                    .get_entity(actor)
-                    .and_then(|entity| entity.human_data())
-                    .expect("pruned fighter remains human")
-                    .opponents
-                    .is_empty()
-            );
+            assert!(engine.human(actor).opponents.is_empty());
         }
     }
 }
@@ -4468,7 +4151,7 @@ fn skipped_and_non_waiting_sword_slots_do_not_touch_combat_refs_or_rng() {
     );
 
     let observed = crate::sim_rng::with_seed(77, |sim| {
-        engine.tick_actor_owner_envelopes(sim, &assets);
+        engine.tick_actor_owner_envelopes(TickCtx::new(sim, &assets));
         crate::sim_rng::bool(sim, crate::sim_rng::RngSite::SmalltalkStrikeSide)
     });
     let expected = crate::sim_rng::with_seed(77, |sim| {
@@ -4552,11 +4235,7 @@ fn waking_up_creation_order_engine(
     // The target starts unconscious, so the shared fixture skips its combat
     // attachments — but it wakes up mid-test and then needs a live HtH
     // weapon profile for its fighter snapshot.
-    engine
-        .get_entity_mut(target)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("wake target has enemy AI")
-        .hth_weapon_id = 1;
+    engine.enemy_mut(target).hth_weapon_id = 1;
     (engine, assets, rescuer, target)
 }
 
@@ -4564,7 +4243,7 @@ fn waking_up_creation_order_engine(
 fn earlier_waking_up_done_changes_later_actor_before_its_animation_slot() {
     let (mut engine, assets, _rescuer, target) = waking_up_creation_order_engine(true);
 
-    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
+    engine.t_tick_actor_owner_envelopes(&assets);
 
     let target_entity = engine
         .world
@@ -4586,10 +4265,10 @@ fn earlier_waking_up_done_changes_later_actor_before_its_animation_slot() {
 
 #[test]
 fn later_waking_up_done_defers_already_visited_actor_recovery_animation() {
-    let (mut engine, assets, _rescuer, target) = waking_up_creation_order_engine(false);
     let sim = crate::sim_rng::test_context();
+    let (mut engine, assets, _rescuer, target) = waking_up_creation_order_engine(false);
 
-    engine.tick_actor_owner_envelopes(&sim, &assets);
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
     let target_entity = engine
         .world
         .entities
@@ -4607,7 +4286,7 @@ fn later_waking_up_done_defers_already_visited_actor_recovery_animation() {
         "later WAKING_UP DONE cannot retroactively animate an already visited target"
     );
 
-    engine.tick_actor_owner_envelopes(&sim, &assets);
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
     assert_eq!(
         engine
             .world
@@ -4625,13 +4304,9 @@ fn later_waking_up_done_defers_already_visited_actor_recovery_animation() {
 #[test]
 fn waking_up_done_does_not_force_awake_a_script_locked_npc() {
     let (mut engine, assets, _rescuer, target) = waking_up_creation_order_engine(true);
-    engine
-        .get_entity_mut(target)
-        .and_then(Entity::ai_controller_mut)
-        .expect("wake target has AI")
-        .script_locked = true;
+    engine.ai_ctrl_mut(target).script_locked = true;
 
-    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
+    engine.t_tick_actor_owner_envelopes(&assets);
 
     let target_entity = engine
         .world
@@ -4676,7 +4351,7 @@ fn actor_animation_missing_required_antagonist_fails_with_slot_context() {
         .expect("rescuer WakingUp order remains installed")
         .antagonist = None;
 
-    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
+    engine.t_tick_actor_owner_envelopes(&assets);
 }
 
 #[test]
@@ -4698,7 +4373,10 @@ fn npc_searching_animation_allows_missing_antagonist() {
         )],
     );
 
-    engine.tick_actor_animation_for(&crate::sim_rng::test_context(), &assets, actor);
+    engine.tick_actor_animation_for(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        actor,
+    );
 
     assert_eq!(
         engine
@@ -4734,7 +4412,10 @@ fn npc_searching_animation_rejects_present_stale_antagonist() {
         ],
     );
 
-    engine.tick_actor_animation_for(&crate::sim_rng::test_context(), &assets, actor);
+    engine.tick_actor_animation_for(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        actor,
+    );
 }
 
 // ───────── Owner-local state-change notifications ─────────
@@ -4769,32 +4450,28 @@ fn retained_human_stimulus_reads_target_position_after_filter() {
     use crate::natives::{NativeFn, ScriptHandleCodec};
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_scripted_civilian("MoveStimulusTarget"));
-    let Entity::Civilian(civilian) = engine.get_entity_mut(owner).unwrap() else {
+    let Entity::Civilian(civilian) = engine.ent_mut(owner) else {
         unreachable!()
     };
     civilian.civilian.cached_camp = crate::element::Camp::Royalists;
     let target = engine.add_test_entity(crate::engine::test_support::actors::make_test_ai_soldier(
         crate::element::Camp::Lacklandists,
     ));
-    let stale_target =
-        engine.add_test_entity(crate::engine::test_support::actors::make_test_ai_soldier(
-            engine.get_entity(owner).unwrap().camp(),
-        ));
+    let stale_target = engine.add_test_entity(
+        crate::engine::test_support::actors::make_test_ai_soldier(engine.ent(owner).camp()),
+    );
     let target_handle = ScriptHandleCodec::actor_handle(target);
     let location = ScriptHandleCodec::location_handle_from_index(0);
     let class = ClassEntry {
         source_file: "live_target_test.scs".into(),
         class_name: "MoveStimulusTarget".into(),
-        size_of_member_variables: 0,
-        member_variables: vec![],
         functions: vec![Function {
             name: "FilterAIEvent".into(),
-            address: 0,
             num_parameters: 3,
             size_of_return_value: 4,
             size_of_parameters: 12,
-            size_of_volatile: 0,
             size_of_temporary: 8,
+            ..Default::default()
         }],
         quads: vec![
             q_begin_function(0, 2),
@@ -4816,6 +4493,7 @@ fn retained_human_stimulus_reads_target_position_after_filter() {
             q_return_val(TMP0),
             q_end_function(),
         ],
+        ..Default::default()
     };
     let mut assets = install_state_change_script(&mut engine, state_change_scb(vec![class]));
     assets.scripts.location_count = 1;
@@ -4839,11 +4517,7 @@ fn retained_human_stimulus_reads_target_position_after_filter() {
         .with_arena_index(crate::fast_find_grid::SectorIndex::new(sector_index).unwrap());
     assets.scripts.location_sector_handles = std::sync::Arc::new(vec![Some(sector)]);
     for id in [owner, target, stale_target] {
-        engine
-            .get_entity_mut(id)
-            .unwrap()
-            .element_data_mut()
-            .set_sector(Some(sector));
+        engine.elem_mut(id).set_sector(Some(sector));
     }
     crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.attach_script_bindings(&assets);
@@ -4860,8 +4534,7 @@ fn retained_human_stimulus_reads_target_position_after_filter() {
         target.index(),
     ));
     engine.execute_ai_callback(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         &Stimulus::new(StimulusType::EventAfterScriptGoOn),
     );
@@ -5019,18 +4692,16 @@ fn state_change_filter_class(
     ClassEntry {
         source_file: "state_change_test.scs".into(),
         class_name: class_name.into(),
-        size_of_member_variables: 0,
-        member_variables: vec![],
         functions: vec![Function {
             name: "FilterAIEvent".into(),
-            address: 0,
             num_parameters: 3,
             size_of_return_value: 4,
             size_of_parameters: 12,
-            size_of_volatile: 0,
             size_of_temporary: 24,
+            ..Default::default()
         }],
         quads,
+        ..Default::default()
     }
 }
 
@@ -5092,29 +4763,24 @@ fn post_filter_panic_class(class_name: &str) -> ClassEntry {
     ClassEntry {
         source_file: "post_filter_panic_test.scs".into(),
         class_name: class_name.into(),
-        size_of_member_variables: 0,
-        member_variables: vec![],
         functions: vec![
             Function {
                 name: "FilterAIEvent".into(),
-                address: 0,
                 num_parameters: 3,
                 size_of_return_value: 4,
                 size_of_parameters: 12,
-                size_of_volatile: 0,
                 size_of_temporary: 20,
+                ..Default::default()
             },
             Function {
                 name: "Run".into(),
                 address: run_address,
-                num_parameters: 0,
-                size_of_return_value: 0,
-                size_of_parameters: 0,
-                size_of_volatile: 0,
                 size_of_temporary: 12,
+                ..Default::default()
             },
         ],
         quads,
+        ..Default::default()
     }
 }
 
@@ -5204,29 +4870,24 @@ fn ai_state_native_probe_class(
     ClassEntry {
         source_file: "ai_state_native_probe.scs".into(),
         class_name: class_name.into(),
-        size_of_member_variables: 0,
-        member_variables: vec![],
         functions: vec![
             Function {
                 name: "FilterAIEvent".into(),
-                address: 0,
                 num_parameters: 3,
                 size_of_return_value: 4,
                 size_of_parameters: 12,
-                size_of_volatile: 0,
                 size_of_temporary: 12,
+                ..Default::default()
             },
             Function {
                 name: "Run".into(),
                 address: run_address,
-                num_parameters: 0,
-                size_of_return_value: 0,
-                size_of_parameters: 0,
-                size_of_volatile: 0,
                 size_of_temporary: 16,
+                ..Default::default()
             },
         ],
         quads,
+        ..Default::default()
     }
 }
 
@@ -5272,8 +4933,7 @@ fn run_ai_state_native_probe(engine: &mut EngineInner, assets: &LevelAssets, act
     let handle = crate::natives::ScriptHandleCodec::actor_handle(actor);
     engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            assets,
+            TickCtx::new(&crate::sim_rng::test_context(), assets),
             crate::engine::ScriptVmKey::Actor(handle),
             "Run",
             &[],
@@ -5434,26 +5094,15 @@ fn install_unrelated_multi_exit_building_actor(
     {
         level.sector_number_map.insert(sector_number, index);
         level.sectors.push(GridSector {
-            points: Vec::new(),
             bounding_box: crate::coordinates::MapBBox::new(),
             sector_type: if index == 0 {
                 SectorType::BUILDING
             } else {
                 SectorType::MOTION | SectorType::AREA
             },
-            layer: 0,
             sector_number,
-            door_index: None,
-            lift_type: None,
-            lift_direction: 0,
-            force_crouched: false,
             building_index: (index == 0).then(|| crate::sector::BuildingIdx::new(0).unwrap()),
-            low_exit_point: None,
-            high_exit_point: None,
-            lowest_door_index: None,
-            jump_line_indices: Vec::new(),
-            gate_indices: Vec::new(),
-            underlying_sector: None,
+            ..Default::default()
         });
     }
     let probe_sector_index = crate::fast_find_grid::SectorIndex::new(
@@ -5461,9 +5110,7 @@ fn install_unrelated_multi_exit_building_actor(
     )
     .expect("probe sector arena index is valid");
     engine
-        .get_entity_mut(probe_owner)
-        .expect("state-change probe owner exists")
-        .element_data_mut()
+        .elem_mut(probe_owner)
         .sprite
         .position_iface
         .set_sector_topology(
@@ -5484,12 +5131,7 @@ fn select_unrelated_pass_door_fixture(
     // actor's retained door choreography. Keep this unrelated control actor
     // frozen so the synthetic PassDoor remains selected during fused owner
     // walks without trying to execute the intentionally minimal fixture.
-    engine
-        .get_entity_mut(door_actor)
-        .expect("unrelated door-passing actor exists")
-        .actor_data_mut()
-        .expect("unrelated door-passing actor has actor data")
-        .execution_frozen = true;
+    engine.actor_mut(door_actor).execution_frozen = true;
     let mut pass = crate::sequence::SequenceElement::new_movement(
         1,
         crate::element::Command::PassDoor,
@@ -5511,13 +5153,7 @@ fn select_unrelated_pass_door_fixture(
         .sequence_manager
         .start_sequence_level(pass_sequence);
     engine.select_sequence_element(door_actor, Some((pass_sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        pass_sequence,
-        0,
-    );
+    engine.t_element_in_progress(&assets, pass_sequence, 0);
 }
 
 fn resolve_test_actor_forecast(
@@ -5527,7 +5163,7 @@ fn resolve_test_actor_forecast(
 ) {
     let input = crate::engine::ai::extract_exact_forecast_input(
         engine,
-        engine.get_entity(owner).expect("forecast actor exists"),
+        engine.ent(owner),
         crate::engine::ai::selected_actor_is_passing_door(
             &engine.world.entities,
             &engine.orders.sequence_manager,
@@ -5605,12 +5241,9 @@ fn destination_forecast_uses_legacy_saved_live_door_without_runtime_pass() {
         "a live saved door outside selected PassDoor must use the current-position forecast"
     );
     assert_eq!(
-        super::ai::extract_forecast_input(
-            engine.get_entity(owner).expect("forecast owner exists"),
-            false
-        )
-        .expect("actor has forecast state")
-        .door_pass,
+        super::ai::extract_forecast_input(engine.ent(owner), false)
+            .expect("actor has forecast state")
+            .door_pass,
         None
     );
 
@@ -5623,13 +5256,7 @@ fn destination_forecast_uses_legacy_saved_live_door_without_runtime_pass() {
         .sequence_manager
         .start_sequence_level(sequence_id);
     engine.select_sequence_element(owner, Some((sequence_id, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        sequence_id,
-        0,
-    );
+    engine.t_element_in_progress(&assets, sequence_id, 0);
     let selected_pass_door = super::ai::selected_actor_is_passing_door(
         &engine.world.entities,
         &engine.orders.sequence_manager,
@@ -5637,11 +5264,8 @@ fn destination_forecast_uses_legacy_saved_live_door_without_runtime_pass() {
     );
     assert!(selected_pass_door);
 
-    let input = super::ai::extract_forecast_input(
-        engine.get_entity(owner).expect("forecast owner exists"),
-        selected_pass_door,
-    )
-    .expect("actor has forecast state");
+    let input = super::ai::extract_forecast_input(engine.ent(owner), selected_pass_door)
+        .expect("actor has forecast state");
     assert_eq!(
         input.door_pass,
         Some((DoorIndex::new(133).expect("valid door index"), true))
@@ -5769,8 +5393,7 @@ fn script_native_state_effects_stabilize_before_adjacent_instruction() {
         id: 0,
     });
     engine.duty_set_state(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         default,
         crate::ai::AiState::Seeking,
         crate::ai::Substate::SeekingJustWatching,
@@ -5915,8 +5538,7 @@ fn pre_existing_same_owner_moves_are_stopped_without_being_dispatched_as_causal_
         ..engine.live_ai_position(actor)
     };
     engine.launch_ai_move(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         actor,
         destination,
         crate::ai::GotoFlags::empty(),
@@ -5935,8 +5557,7 @@ fn pre_existing_same_owner_moves_are_stopped_without_being_dispatched_as_causal_
         unreachable!("new_movement must construct movement data")
     };
     *destination = deferred_destination;
-    let deferred_sequence =
-        engine.launch_element(&crate::sim_rng::test_context(), &assets, deferred);
+    let deferred_sequence = engine.t_launch_element(&assets, deferred);
 
     run_ai_state_native_probe(&mut engine, &assets, actor);
 
@@ -6077,11 +5698,7 @@ fn fused_owner_walk_does_not_forecast_rng_for_unrelated_actors() {
     let (mut engine, assets, owner) = setup_ai_state_native_probe("EnvelopeRngProbe", 3);
     let door_actor = install_unrelated_multi_exit_building_actor(&mut engine, owner);
     select_unrelated_pass_door_fixture(&mut engine, &assets, door_actor);
-    engine
-        .get_entity_mut(owner)
-        .expect("forecast control owner exists")
-        .element_data_mut()
-        .set_position(WorldPoint3D::new(198.0, 100.0, 0.0));
+    engine.place(owner, WorldPoint3D::new(198.0, 100.0, 0.0));
     let sim = crate::sim_rng::test_context();
 
     // Prove that the unrelated live actor's alternatives draw if queried.
@@ -6092,7 +5709,8 @@ fn fused_owner_walk_does_not_forecast_rng_for_unrelated_actors() {
         control_trace.contains(&RngSite::BuildingExitGate),
         "the fixture must prove that resolving the unrelated door actor's forecast would draw"
     );
-    let (_, fused_trace) = with_draw_trace(|| engine.tick_actor_owner_envelopes(&sim, &assets));
+    let (_, fused_trace) =
+        with_draw_trace(|| engine.t_tick_actor_owner_envelopes_with(&sim, &assets));
 
     assert!(engine.get_entity(owner).is_some());
     assert!(
@@ -6110,11 +5728,8 @@ fn unrelated_detection_event_does_not_resolve_entering_primary_or_officer_foreca
     let (mut engine, mut assets, owner) = setup_ai_state_native_probe("DetectionRngProbe", 3);
     let entering_primary = install_unrelated_multi_exit_building_actor(&mut engine, owner);
     let entering_officer = engine.add_test_entity(make_scripted_soldier(""));
-    let owner_camp = engine
-        .get_entity(owner)
-        .expect("detection RNG owner exists")
-        .camp();
-    let Entity::Soldier(officer) = engine.get_entity_mut(entering_officer).unwrap() else {
+    let owner_camp = engine.ent(owner).camp();
+    let Entity::Soldier(officer) = engine.ent_mut(entering_officer) else {
         unreachable!()
     };
     officer.element.active = true;
@@ -6130,18 +5745,14 @@ fn unrelated_detection_event_does_not_resolve_entering_primary_or_officer_foreca
     });
     officer_ai.hth_weapon_id = 1;
 
-    let owner_ai = engine
-        .get_entity_mut(owner)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("detection RNG owner has Enemy AI");
+    let owner_ai = engine.enemy_mut(owner);
     owner_ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(entering_primary.index()));
     owner_ai.missed_pc = Some(crate::ai::AiEntityHandle::new(entering_primary.index()));
     owner_ai.base.locks_flag_field = AiLockFlags::FREEZE;
     let sim = crate::sim_rng::test_context();
     let (_, trace) = with_draw_trace(|| {
         engine.dispatch_filtered_stimulus(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             owner,
             &Stimulus::with_human(StimulusType::EventView, entering_primary.index()),
         )
@@ -6348,8 +5959,7 @@ fn enemy_state_change_callback_is_owner_local_observes_outgoing_and_ignores_zero
     bind_state_change_actor(&mut engine, enemy, "StateMutator");
 
     engine.duty_set_state(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         enemy,
         crate::ai::AiState::Seeking,
         crate::ai::Substate::SeekingHeardsteps,
@@ -6434,8 +6044,7 @@ fn enemy_state_change_sources_and_same_substate_gate_match_original() {
         ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(target_raw));
     }
     engine.duty_set_state(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         enemy,
         crate::ai::AiState::Attacking,
         crate::ai::Substate::AttackingSwordfight,
@@ -6443,8 +6052,7 @@ fn enemy_state_change_sources_and_same_substate_gate_match_original() {
     assert_eq!(npc_custom_values(&engine, enemy)[0], target_handle);
 
     engine.duty_set_state(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         enemy,
         crate::ai::AiState::Attacking,
         crate::ai::Substate::AttackingSwordfight,
@@ -6466,8 +6074,7 @@ fn enemy_state_change_sources_and_same_substate_gate_match_original() {
         ai.base.primary_target = None;
     }
     engine.duty_set_state(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         enemy,
         crate::ai::AiState::Fleeing,
         crate::ai::Substate::FleeingPanic,
@@ -6506,8 +6113,7 @@ fn friendly_repeated_state_change_callbacks_see_target_alert_and_outgoing_state(
         ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(target.index()));
     }
     engine.duty_set_state(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         friendly,
         crate::ai::AiState::Fleeing,
         crate::ai::Substate::FleeingPanic,
@@ -6519,8 +6125,7 @@ fn friendly_repeated_state_change_callbacks_see_target_alert_and_outgoing_state(
     assert_eq!(first[3], crate::ai::AlertLevel::Yellow as i32);
 
     engine.duty_set_state(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         friendly,
         crate::ai::AiState::Fleeing,
         crate::ai::Substate::FleeingPanic,
@@ -6559,7 +6164,7 @@ fn owner_state_changes_complete_each_transition_inline() {
             crate::ai::Substate::DefaultOnPost,
         ),
     ] {
-        engine.duty_set_state(&sim, &assets, friendly, state, substate);
+        engine.duty_set_state(TickCtx::new(&sim, &assets), friendly, state, substate);
     }
     let values = npc_custom_values(&engine, friendly);
     assert_eq!(&values[4..7], &[102, 103, 101]);
@@ -6626,26 +6231,17 @@ fn initialization_caches_the_aspect_adjusted_initial_view_direction() {
     let diagonal = engine.add_test_entity(make_scripted_civilian(""));
     let cardinal = engine.add_test_entity(make_scripted_civilian(""));
     engine
-        .get_entity_mut(diagonal)
-        .expect("diagonal civilian")
+        .ent_mut(diagonal)
         .position_iface_mut()
         .set_direction_instantly(crate::position_interface::Direction::from_raw(2));
     engine
-        .get_entity_mut(cardinal)
-        .expect("cardinal civilian")
+        .ent_mut(cardinal)
         .position_iface_mut()
         .set_direction_instantly(crate::position_interface::Direction::from_raw(4));
 
     engine.initialize(&mut LevelAssets::new());
 
-    let initial_view = |actor| {
-        engine
-            .get_entity(actor)
-            .expect("initialized civilian")
-            .ai_controller()
-            .expect("civilian AI")
-            .initial_view_direction
-    };
+    let initial_view = |actor| engine.ai_ctrl(actor).initial_view_direction;
     assert_eq!(
         initial_view(diagonal),
         1,
@@ -6710,8 +6306,7 @@ fn run_cross_owner_state_change_order(mutator_first: bool) -> i32 {
     };
     for actor in order {
         engine.duty_set_state(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             actor,
             crate::ai::AiState::Seeking,
             crate::ai::Substate::SeekingJustWatching,
@@ -6797,8 +6392,7 @@ fn direct_parade_and_special_strike_drain_boundary_does_not_leak() {
         ai.base.current_substate = crate::ai::Substate::AttackingSwordfight;
     }
     engine.duty_set_state(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         enemy,
         crate::ai::AiState::Attacking,
         crate::ai::Substate::AttackingSwordfightParade,
@@ -6818,7 +6412,7 @@ fn direct_parade_and_special_strike_drain_boundary_does_not_leak() {
             .unwrap();
         ai.base.current_substate = crate::ai::Substate::AttackingSwordfight;
     }
-    engine.begin_ai_special_strike(&sim, &assets, enemy);
+    engine.begin_ai_special_strike(TickCtx::new(&sim, &assets), enemy);
     let ai = engine
         .world
         .entities
@@ -6839,15 +6433,9 @@ fn direct_parade_and_special_strike_drain_boundary_does_not_leak() {
 
 #[test]
 fn unavailable_state_change_callbacks_do_not_block_state_commit() {
-    fn change_to_seeking(
-        engine: &mut EngineInner,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        actor: EntityId,
-    ) {
+    fn change_to_seeking(engine: &mut EngineInner, tcx: TickCtx<'_>, actor: EntityId) {
         engine.duty_set_state(
-            sim,
-            assets,
+            tcx,
             actor,
             crate::ai::AiState::Seeking,
             crate::ai::Substate::SeekingJustWatching,
@@ -6869,7 +6457,7 @@ fn unavailable_state_change_callbacks_do_not_block_state_commit() {
 
     let mut no_mission = EngineInner::new();
     let actor = no_mission.add_test_entity(make_scripted_soldier("StateRecorder"));
-    change_to_seeking(&mut no_mission, &sim, &assets, actor);
+    change_to_seeking(&mut no_mission, TickCtx::new(&sim, &assets), actor);
     assert_committed(&no_mission, actor);
 
     let mut unbound = EngineInner::new();
@@ -6882,14 +6470,14 @@ fn unavailable_state_change_callbacks_do_not_block_state_commit() {
             None,
         )]),
     );
-    change_to_seeking(&mut unbound, &sim, &assets, actor);
+    change_to_seeking(&mut unbound, TickCtx::new(&sim, &assets), actor);
     assert_committed(&unbound, actor);
 
     let mut no_override = EngineInner::new();
     let actor = no_override.add_test_entity(make_scripted_soldier("NoOverride"));
     let assets = install_state_change_script(&mut no_override, build_scb());
     bind_state_change_actor(&mut no_override, actor, "NoOverride");
-    change_to_seeking(&mut no_override, &sim, &assets, actor);
+    change_to_seeking(&mut no_override, TickCtx::new(&sim, &assets), actor);
     assert_committed(&no_override, actor);
 
     let mut unscripted = EngineInner::new();
@@ -6903,7 +6491,7 @@ fn unavailable_state_change_callbacks_do_not_block_state_commit() {
         )]),
     );
     bind_state_change_actor(&mut unscripted, actor, "StateRecorder");
-    change_to_seeking(&mut unscripted, &sim, &assets, actor);
+    change_to_seeking(&mut unscripted, TickCtx::new(&sim, &assets), actor);
     assert_committed(&unscripted, actor);
     assert_eq!(
         npc_custom_values(&unscripted, actor)[9],
@@ -6927,7 +6515,7 @@ fn unavailable_state_change_callbacks_do_not_block_state_commit() {
         ..Default::default()
     };
     let disabled_sim = crate::sim_rng::SimulationContext::with_seed_and_config(1, config);
-    change_to_seeking(&mut disabled, &disabled_sim, &assets, actor);
+    change_to_seeking(&mut disabled, TickCtx::new(&disabled_sim, &assets), actor);
     assert_committed(&disabled, actor);
     assert_eq!(
         npc_custom_values(&disabled, actor)[9],
@@ -7003,8 +6591,7 @@ fn fit_again_engine_calls_surround_state_callback_in_original_order() {
         let (_, observations) = super::script::capture_ai_state_callback_observations(|| {
             crate::sim_rng::with_seed(0xA013_F17A, |sim| {
                 engine.dispatch_filtered_stimulus(
-                    sim,
-                    &assets,
+                    TickCtx::new(sim, &assets),
                     owner,
                     &Stimulus::new(StimulusType::EventFitAgain),
                 )
@@ -7090,8 +6677,7 @@ fn patrol_arrival_registers_turn_before_returning_without_halting_selected_move(
     ai.current_state = AiState::Default;
     ai.current_substate = Substate::DefaultGotoRoute;
     ai.patrol_path = Some(path);
-    let selected = engine.launch_element(
-        &crate::sim_rng::test_context(),
+    let selected = engine.t_launch_element(
         &assets,
         SequenceElement::new_movement(
             1,
@@ -7101,17 +6687,10 @@ fn patrol_arrival_registers_turn_before_returning_without_halting_selected_move(
         ),
     );
     engine.select_sequence_element(owner, Some((selected, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        selected,
-        0,
-    );
+    engine.t_element_in_progress(&assets, selected, 0);
 
     let handled = engine.dispatch_filtered_stimulus(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         &Stimulus::new(StimulusType::EventReachPoint),
     );
@@ -7204,18 +6783,16 @@ fn patrol_arrival_callback_can_lock_owner_before_recursive_done() {
                 ClassEntry {
                     source_file: "arrival.scs".into(),
                     class_name: "Arrival".into(),
-                    size_of_member_variables: 0,
-                    member_variables: vec![],
                     functions: vec![Function {
                         name: "FilterAIEvent".into(),
-                        address: 0,
                         num_parameters: 3,
                         size_of_return_value: 4,
                         size_of_parameters: 12,
-                        size_of_volatile: 0,
                         size_of_temporary: 12,
+                        ..Default::default()
                     }],
                     quads: std::mem::take(&mut quads),
+                    ..Default::default()
                 },
             ],
         })
@@ -7236,8 +6813,7 @@ fn patrol_arrival_callback_can_lock_owner_before_recursive_done() {
     ai.current_substate = Substate::DefaultGotoRoute;
     ai.patrol_path = PatrolPath::new(PathId::new(0).unwrap(), &assets.navigation.hiking_paths);
     engine.dispatch_filtered_stimulus(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         &Stimulus::new(StimulusType::EventReachPoint),
     );

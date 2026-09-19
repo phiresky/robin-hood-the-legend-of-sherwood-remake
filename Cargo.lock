@@ -594,7 +594,7 @@ dependencies = [
 [[package]]
 name = "bitcode"
 version = "0.6.9"
-source = "git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf#7ae88076943b74151e99713f33635ac5a5d4f4bf"
+source = "git+https://github.com/phiresky/bitcode.git?rev=59051e886ff8cd24bfc63ef0cef6321372829604#59051e886ff8cd24bfc63ef0cef6321372829604"
 dependencies = [
  "arrayvec",
  "bitcode_derive 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
@@ -1156,16 +1156,6 @@ dependencies = [
  "web-sys",
  "windows",
  "windows-core",
-]
-
-[[package]]
-name = "cpu-time"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e9e393a7668fe1fad3075085b86c781883000b4ede868f43627b34a87c8b7ded"
-dependencies = [
- "libc",
- "winapi",
 ]
 
 [[package]]
@@ -5560,15 +5550,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
 
 [[package]]
-name = "qoi"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f6d64c71eb498fe9eae14ce4ec935c555749aef511cca85b5568910d6e48001"
-dependencies = [
- "bytemuck",
-]
-
-[[package]]
 name = "quick-xml"
 version = "0.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5794,6 +5775,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
+name = "relative-path"
+version = "1.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba39f3699c378cd8970968dcbff9c43159ea4cfbd88d43c00b22f2ef10a435d2"
+
+[[package]]
 name = "renderdoc-sys"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5916,7 +5903,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "avif-parse",
- "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
+ "bitcode 0.6.9 (git+https://github.com/phiresky/bitcode.git?rev=59051e886ff8cd24bfc63ef0cef6321372829604)",
  "bytemuck",
  "bzip2",
  "clap",
@@ -5931,9 +5918,9 @@ dependencies = [
  "rav1d",
  "rayon",
  "robin_asset_codecs",
- "robin_content",
  "robin_data_io",
  "robin_engine",
+ "robin_engine_types",
  "robin_test_support",
  "robin_util",
  "serde",
@@ -5947,18 +5934,6 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-bindgen-rayon",
  "zstd",
-]
-
-[[package]]
-name = "robin_content"
-version = "0.0.0"
-dependencies = [
- "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
- "robin_state_hash_derive",
- "robin_util",
- "serde",
- "serde_json",
- "sha2 0.11.0",
 ]
 
 [[package]]
@@ -5986,9 +5961,8 @@ dependencies = [
 name = "robin_engine"
 version = "0.0.0"
 dependencies = [
- "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
+ "bitcode 0.6.9 (git+https://github.com/phiresky/bitcode.git?rev=59051e886ff8cd24bfc63ef0cef6321372829604)",
  "bitflags 2.13.2",
- "cpu-time",
  "enum-map",
  "fastrand",
  "geo",
@@ -5998,7 +5972,6 @@ dependencies = [
  "nonmax",
  "num_enum",
  "rayon",
- "robin_content",
  "robin_data_io",
  "robin_engine_types",
  "robin_legacy_save",
@@ -6008,6 +5981,7 @@ dependencies = [
  "robin_state_hash_derive",
  "robin_test_support",
  "robin_util",
+ "rstest",
  "serde",
  "serde-value",
  "serde_json",
@@ -6029,13 +6003,14 @@ dependencies = [
 name = "robin_engine_types"
 version = "0.0.0"
 dependencies = [
- "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
+ "bitcode 0.6.9 (git+https://github.com/phiresky/bitcode.git?rev=59051e886ff8cd24bfc63ef0cef6321372829604)",
  "geo",
  "robin_data_io",
  "robin_state_hash_derive",
  "robin_util",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "thiserror 2.0.20",
  "tracing",
 ]
@@ -6047,7 +6022,7 @@ dependencies = [
  "anyhow",
  "axum",
  "base64 0.23.1",
- "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
+ "bitcode 0.6.9 (git+https://github.com/phiresky/bitcode.git?rev=59051e886ff8cd24bfc63ef0cef6321372829604)",
  "bytes",
  "cap-std",
  "clap",
@@ -6118,7 +6093,7 @@ dependencies = [
 name = "robin_level_data"
 version = "0.0.0"
 dependencies = [
- "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
+ "bitcode 0.6.9 (git+https://github.com/phiresky/bitcode.git?rev=59051e886ff8cd24bfc63ef0cef6321372829604)",
  "json-patch",
  "num_enum",
  "robin_data_io",
@@ -6140,6 +6115,7 @@ version = "0.0.0"
 dependencies = [
  "mlua",
  "robin_engine",
+ "rstest",
  "serde_json",
  "tempfile",
  "thiserror 2.0.20",
@@ -6190,25 +6166,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "robin_ranked_verification"
-version = "0.0.0"
-dependencies = [
- "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
- "bytemuck",
- "robin_assets",
- "robin_engine",
- "robin_replay_format",
- "robin_run_types",
- "robin_util",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "thiserror 2.0.20",
- "tracing",
- "zstd",
-]
-
-[[package]]
 name = "robin_replay_admission_wasm"
 version = "0.0.0"
 dependencies = [
@@ -6221,15 +6178,10 @@ dependencies = [
 name = "robin_replay_format"
 version = "0.0.0"
 dependencies = [
- "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
- "hex",
- "libc",
+ "bitcode 0.6.9 (git+https://github.com/phiresky/bitcode.git?rev=59051e886ff8cd24bfc63ef0cef6321372829604)",
  "robin_engine",
- "robin_spellforge",
  "serde",
  "serde_json",
- "sha2 0.11.0",
- "tempfile",
  "thiserror 2.0.20",
  "zstd",
 ]
@@ -6238,14 +6190,16 @@ dependencies = [
 name = "robin_replay_verifier"
 version = "0.0.0"
 dependencies = [
- "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
+ "bitcode 0.6.9 (git+https://github.com/phiresky/bitcode.git?rev=59051e886ff8cd24bfc63ef0cef6321372829604)",
+ "bytemuck",
  "clap",
  "mimalloc",
  "nix",
+ "robin_assets",
  "robin_engine",
- "robin_ranked_verification",
  "robin_replay_format",
  "robin_run_protocol",
+ "robin_util",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -6256,14 +6210,14 @@ dependencies = [
 
 [[package]]
 name = "robin_rs"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "ab_glyph",
  "anyhow",
  "ash",
  "async-channel",
  "base64 0.23.1",
- "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
+ "bitcode 0.6.9 (git+https://github.com/phiresky/bitcode.git?rev=59051e886ff8cd24bfc63ef0cef6321372829604)",
  "bitflags 2.13.2",
  "bytemuck",
  "cc",
@@ -6307,7 +6261,6 @@ dependencies = [
  "percent-encoding",
  "png",
  "pollster 1.0.1",
- "qoi",
  "rand",
  "rayon",
  "reqwest",
@@ -6322,6 +6275,7 @@ dependencies = [
  "robin_spellforge",
  "robin_test_support",
  "robin_util",
+ "rstest",
  "rustls",
  "semver",
  "serde",
@@ -6337,6 +6291,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tiny_http",
  "tokio",
+ "toml",
  "tracing",
  "tracing-subscriber",
  "tracing-wasm",
@@ -6375,7 +6330,7 @@ dependencies = [
 name = "robin_run_types"
 version = "0.0.0"
 dependencies = [
- "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
+ "bitcode 0.6.9 (git+https://github.com/phiresky/bitcode.git?rev=59051e886ff8cd24bfc63ef0cef6321372829604)",
  "hex",
  "robin_display_text",
  "serde",
@@ -6388,7 +6343,7 @@ dependencies = [
 name = "robin_script_types"
 version = "0.0.0"
 dependencies = [
- "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
+ "bitcode 0.6.9 (git+https://github.com/phiresky/bitcode.git?rev=59051e886ff8cd24bfc63ef0cef6321372829604)",
  "hex",
  "num_enum",
  "robin_engine_types",
@@ -6536,6 +6491,32 @@ dependencies = [
  "num-traits",
  "serde",
  "smallvec",
+]
+
+[[package]]
+name = "rstest"
+version = "0.26.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f5a3193c063baaa2a95a33f03035c8a72b83d97a54916055ba22d35ed3839d49"
+dependencies = [
+ "rstest_macros",
+]
+
+[[package]]
+name = "rstest_macros"
+version = "0.26.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9c845311f0ff7951c5506121a9ad75aec44d083c31583b2ea5a30bcb0b0abba0"
+dependencies = [
+ "cfg-if",
+ "glob",
+ "proc-macro2",
+ "quote",
+ "regex",
+ "relative-path",
+ "rustc_version",
+ "syn 2.0.119",
+ "unicode-ident",
 ]
 
 [[package]]
@@ -8931,6 +8912,7 @@ dependencies = [
 [[package]]
 name = "wgpu-hal"
 version = "30.0.1"
+source = "git+https://github.com/phiresky/wgpu-hal.git?rev=1418048934ce0cfc00ce45c92de8a685d098cae7#1418048934ce0cfc00ce45c92de8a685d098cae7"
 dependencies = [
  "android_system_properties",
  "arrayvec",

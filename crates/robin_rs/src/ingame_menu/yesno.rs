@@ -17,10 +17,9 @@ use robin_engine::sprite::BBox;
 use serde::{Deserialize, Serialize};
 use winit::keyboard::KeyCode;
 
-use crate::focus_manager::{FrameButtonFocusManager, GroupOrientation};
 use crate::gfx_types::GameEvent;
 use crate::renderer::Renderer;
-use crate::ui::{UiEvent, UiMsg};
+use crate::ui::{KeyState as WidgetKeyState, TypeWriter, UiEvent, UiMsg};
 
 use super::layout::{
     FALLBACK_PANEL_EDGE, FALLBACK_PANEL_FILL, MenuRect, MenuTransform, TextAlign, TooltipState,
@@ -136,9 +135,9 @@ impl YesNoModalState {
         // and Numpad Enter to Yes and Escape to No. Keeping the buttons
         // non-navigable is intentional: Left/Right must not change the
         // original shortcut-only dialog behavior.
-        let mut focus = FrameButtonFocusManager::new(GroupOrientation::Horizontal);
-        focus.add_button(&frame, ID_YES, false);
-        focus.add_button(&frame, ID_NO, false);
+        let mut focus = FrameButtonFocusManager::new();
+        focus.add_button(&frame, ID_YES);
+        focus.add_button(&frame, ID_NO);
         focus.add_shortcut(ID_YES, KeyCode::Enter);
         focus.add_shortcut(ID_YES, KeyCode::NumpadEnter);
         focus.add_shortcut(ID_NO, KeyCode::Escape);
@@ -316,6 +315,225 @@ impl YesNoModalState {
     }
 }
 
+/// Shortcut focus for the two dialog buttons owned by the frame.
+///
+/// Stores widget IDs rather than parallel widget state, so mouse input and
+/// keyboard focus resolve through the same canonical [`UiEvent`] stream.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct FrameButtonFocusManager {
+    group: Vec<FrameButtonEntry>,
+    shortcuts: Vec<(KeyCode, crate::widget::WidgetId)>,
+    focused_idx: Option<usize>,
+    pending_shortcut: Option<KeyCode>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+struct FrameButtonEntry {
+    widget_id: crate::widget::WidgetId,
+}
+
+impl FrameButtonFocusManager {
+    fn new() -> Self {
+        Self {
+            group: Vec::new(),
+            shortcuts: Vec::new(),
+            focused_idx: None,
+            pending_shortcut: None,
+        }
+    }
+
+    /// Register a button already owned by `frame`.
+    ///
+    /// # Panics
+    ///
+    /// Panics for a missing/non-button widget or a duplicate ID. A focus
+    /// registration that points nowhere is a construction error, not an
+    /// inactive button.
+    fn add_button(&mut self, frame: &crate::widget::FrameWnd, widget_id: crate::widget::WidgetId) {
+        assert!(
+            matches!(
+                frame.widget(widget_id),
+                Some(crate::widget::Widget::Button(_))
+            ),
+            "focus button {widget_id} is missing from its frame"
+        );
+        assert!(
+            !self.group.iter().any(|entry| entry.widget_id == widget_id),
+            "focus button {widget_id} is already registered"
+        );
+        self.group.push(FrameButtonEntry { widget_id });
+    }
+
+    /// Bind a physical key to a registered button.
+    ///
+    /// Shortcut activation follows the original focus manager's two-edge
+    /// behavior: key-down focuses/selects and key-up emits
+    /// [`crate::ui::UiMsg::WidgetActivated`].
+    fn add_shortcut(&mut self, widget_id: crate::widget::WidgetId, key: KeyCode) {
+        assert!(
+            self.group.iter().any(|entry| entry.widget_id == widget_id),
+            "shortcut target {widget_id} is not registered"
+        );
+        self.shortcuts.retain(|(bound, _)| *bound != key);
+        self.shortcuts.push((key, widget_id));
+    }
+
+    #[cfg(test)]
+    fn focused_button(&self) -> Option<crate::widget::WidgetId> {
+        self.focused_idx.map(|idx| self.group[idx].widget_id)
+    }
+
+    /// Append keyboard focus events to the widget events produced by the
+    /// frame for this input pass.
+    fn process_input(
+        &mut self,
+        frame: &mut crate::widget::FrameWnd,
+        mut events: Vec<crate::ui::UiEvent>,
+        keyboard: &crate::ui::UiKeyboard,
+        mouse_captured: bool,
+    ) -> Vec<crate::ui::UiEvent> {
+        if mouse_captured || !keyboard.has_changed() {
+            return events;
+        }
+
+        let mut focus_events = self.process_navigation(frame, keyboard);
+        if focus_events.is_empty() {
+            focus_events = self.process_shortcuts(frame, keyboard);
+        }
+        if let Some(origin) = focus_events.first().map(|event| event.origin_widget_id) {
+            events.retain(|event| event.origin_widget_id != origin);
+        }
+        events.extend(focus_events);
+        events
+    }
+
+    fn process_navigation(
+        &mut self,
+        frame: &mut crate::widget::FrameWnd,
+        keyboard: &crate::ui::UiKeyboard,
+    ) -> Vec<crate::ui::UiEvent> {
+        // The dialog buttons are shortcut-only: arrow keys never move focus,
+        // but a repeating arrow still pre-empts Enter handling this pass.
+        if key_repeats(keyboard, KeyCode::ArrowLeft) || key_repeats(keyboard, KeyCode::ArrowRight) {
+            return Vec::new();
+        }
+        if keyboard.get_state_of_key(KeyCode::Enter) == WidgetKeyState::KeyDown
+            && keyboard.get_typewriter_state(KeyCode::Enter) == TypeWriter::None
+            && let Some(idx) = self.focused_idx
+        {
+            return button_mut(frame, self.group[idx].widget_id).set_group_selected(true);
+        }
+        if key_released(keyboard, KeyCode::Enter)
+            && let Some(idx) = self.focused_idx
+        {
+            return self.activate_focused(frame, idx);
+        }
+        Vec::new()
+    }
+
+    fn process_shortcuts(
+        &mut self,
+        frame: &mut crate::widget::FrameWnd,
+        keyboard: &crate::ui::UiKeyboard,
+    ) -> Vec<crate::ui::UiEvent> {
+        for &(key, widget_id) in &self.shortcuts {
+            if keyboard.get_state_of_key(key) == WidgetKeyState::KeyDown
+                && keyboard.get_typewriter_state(key) == TypeWriter::None
+                && self.focused_idx.is_none()
+            {
+                self.pending_shortcut = Some(key);
+                let mut events = self.focus_button(frame, widget_id);
+                events.extend(button_mut(frame, widget_id).set_group_selected(true));
+                return events;
+            }
+        }
+
+        if let Some(key) = self.pending_shortcut
+            && key_released(keyboard, key)
+        {
+            self.pending_shortcut = None;
+            let widget_id = self
+                .shortcuts
+                .iter()
+                .find_map(|&(bound, id)| (bound == key).then_some(id))
+                .expect("pending shortcut lost its registered button");
+            let idx = self
+                .focused_idx
+                .filter(|&idx| self.group[idx].widget_id == widget_id)
+                .expect("pending shortcut lost focus before key release");
+            return self.activate_focused(frame, idx);
+        }
+
+        Vec::new()
+    }
+
+    fn focus_button(
+        &mut self,
+        frame: &mut crate::widget::FrameWnd,
+        widget_id: crate::widget::WidgetId,
+    ) -> Vec<crate::ui::UiEvent> {
+        let mut events = self.clear_focus(frame);
+        let idx = self
+            .group
+            .iter()
+            .position(|entry| entry.widget_id == widget_id)
+            .expect("focus target is not registered");
+        self.focused_idx = Some(idx);
+        let target = button_mut(frame, widget_id);
+        target.hide_focus(false);
+        events.extend(target.set_group_focused(true));
+        events
+    }
+
+    fn clear_focus(&mut self, frame: &mut crate::widget::FrameWnd) -> Vec<crate::ui::UiEvent> {
+        let Some(idx) = self.focused_idx.take() else {
+            return Vec::new();
+        };
+        let target = button_mut(frame, self.group[idx].widget_id);
+        let mut events = target.set_group_focused(false);
+        events.extend(target.set_group_selected(false));
+        events
+    }
+
+    fn activate_focused(
+        &mut self,
+        frame: &mut crate::widget::FrameWnd,
+        idx: usize,
+    ) -> Vec<crate::ui::UiEvent> {
+        let widget_id = self.group[idx].widget_id;
+        self.pending_shortcut = None;
+        let mut events = self.clear_focus(frame);
+        events.extend(button_mut(frame, widget_id).activate());
+        events
+    }
+}
+
+fn key_repeats(keyboard: &crate::ui::UiKeyboard, key: KeyCode) -> bool {
+    keyboard.get_state_of_key(key) == WidgetKeyState::KeyDown
+        && matches!(
+            keyboard.get_typewriter_state(key),
+            TypeWriter::None | TypeWriter::Repeat
+        )
+}
+
+fn key_released(keyboard: &crate::ui::UiKeyboard, key: KeyCode) -> bool {
+    matches!(
+        keyboard.get_state_of_key(key),
+        WidgetKeyState::KeyPressed | WidgetKeyState::KeyDouble
+    ) && keyboard.has_key_changed(key)
+}
+
+fn button_mut(
+    frame: &mut crate::widget::FrameWnd,
+    widget_id: crate::widget::WidgetId,
+) -> &mut crate::widget::WidgetButton {
+    match frame.widget_mut(widget_id) {
+        Some(crate::widget::Widget::Button(button)) => button,
+        Some(_) => panic!("focus target {widget_id} is not a button"),
+        None => panic!("focus target {widget_id} is missing from its frame"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -326,9 +544,9 @@ mod tests {
             (ID_YES, "Yes", 0, 0, 80, 30),
             (ID_NO, "No", 100, 0, 80, 30),
         ]);
-        let mut focus = FrameButtonFocusManager::new(GroupOrientation::Horizontal);
-        focus.add_button(&frame, ID_YES, false);
-        focus.add_button(&frame, ID_NO, false);
+        let mut focus = FrameButtonFocusManager::new();
+        focus.add_button(&frame, ID_YES);
+        focus.add_button(&frame, ID_NO);
         focus.add_shortcut(ID_YES, KeyCode::Enter);
         focus.add_shortcut(ID_YES, KeyCode::NumpadEnter);
         focus.add_shortcut(ID_NO, KeyCode::Escape);

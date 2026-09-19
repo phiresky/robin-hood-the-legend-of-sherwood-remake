@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 
 #[test]
 fn reciprocal_swordfight_entry_preserves_existing_opponent_strength() {
@@ -8,33 +9,20 @@ fn reciprocal_swordfight_entry_preserves_existing_opponent_strength() {
     let opponent = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
     let assets = engine.test_runtime_assets();
 
-    engine
-        .get_entity_mut(initiator)
-        .and_then(Entity::human_data_mut)
-        .unwrap()
-        .relative_fighting_ability = 17;
+    engine.human_mut(initiator).relative_fighting_ability = 17;
     {
-        let human = engine
-            .get_entity_mut(opponent)
-            .and_then(Entity::human_data_mut)
-            .unwrap();
+        let human = engine.human_mut(opponent);
         human.opponents = vec![initiator].into();
         human.relative_fighting_ability = 42;
     }
 
-    assert!(engine.enter_swordfight(&sim, &assets, initiator, opponent, false));
+    assert!(engine.enter_swordfight(TickCtx::new(&sim, &assets), initiator, opponent, false));
 
-    let initiator_human = engine
-        .get_entity(initiator)
-        .and_then(Entity::human_data)
-        .unwrap();
+    let initiator_human = engine.human(initiator);
     assert_eq!(initiator_human.opponents, vec![opponent]);
     assert_eq!(initiator_human.relative_fighting_ability, 50);
 
-    let opponent_human = engine
-        .get_entity(opponent)
-        .and_then(Entity::human_data)
-        .unwrap();
+    let opponent_human = engine.human(opponent);
     assert_eq!(opponent_human.opponents, vec![initiator]);
     assert_eq!(opponent_human.relative_fighting_ability, 42);
 }
@@ -71,7 +59,7 @@ fn terminal_sword_provoke_observes_promoted_opponent_before_post_seek_speak() {
         (promoted, 18.567_36_f32),
     ];
     for (entity_id, x) in positions {
-        let entity = engine.get_entity_mut(entity_id).unwrap();
+        let entity = engine.ent_mut(entity_id);
         entity
             .element_data_mut()
             .set_position(WorldPoint3D::new(x, 0.0, 0.0));
@@ -79,48 +67,30 @@ fn terminal_sword_provoke_observes_promoted_opponent_before_post_seek_speak() {
             .element_data_mut()
             .set_position_map(MapPoint::new(x, 0.0));
     }
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .human_data_mut()
-        .unwrap()
-        .opponents = vec![old_principal, promoted].into();
+    engine.human_mut(owner).opponents = vec![old_principal, promoted].into();
     for opponent in [old_principal, promoted] {
-        engine
-            .get_entity_mut(opponent)
-            .unwrap()
-            .human_data_mut()
-            .unwrap()
-            .opponents = vec![owner].into();
+        engine.human_mut(opponent).opponents = vec![owner].into();
     }
 
     assert!(
         !engine.sword_movement_termination_warrants_provoke(&assets, owner),
         "the >UBER old principal must make a pre-removal snapshot false"
     );
-    engine.quit_swordfight_with_far_opponents(&sim, &assets, owner);
-    assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .opponents,
-        vec![promoted]
-    );
+    engine.quit_swordfight_with_far_opponents(TickCtx::new(&sim, &assets), owner);
+    assert_eq!(engine.human(owner).opponents, vec![promoted]);
     assert!(
         engine.sword_movement_termination_warrants_provoke(&assets, owner),
         "the promoted reciprocal opponent is inside the Provoke band"
     );
 
-    engine.launch_sword_movement_termination_provoke(&sim, &assets, owner);
+    engine.launch_sword_movement_termination_provoke(TickCtx::new(&sim, &assets), owner);
     let mut post_seek = Sequence::new();
     post_seek.append_element(SequenceElement::new(
         2,
         Command::SpeakHeroReachDestination,
         Some(owner),
     ));
-    engine.launch_sequence(&sim, &assets, post_seek);
+    engine.t_launch_sequence_with(&sim, &assets, post_seek);
     let owner_registrations = engine
         .orders
         .sequence_manager
@@ -168,7 +138,7 @@ fn sword_movement_start_gives_initiative_to_principal_promoted_by_far_pruning() 
         (old_principal, 0.0_f32),
         (promoted, 18.567_36_f32),
     ] {
-        let entity = engine.get_entity_mut(entity_id).unwrap();
+        let entity = engine.ent_mut(entity_id);
         entity
             .element_data_mut()
             .set_position(WorldPoint3D::new(x, 0.0, 0.0));
@@ -176,37 +146,22 @@ fn sword_movement_start_gives_initiative_to_principal_promoted_by_far_pruning() 
             .element_data_mut()
             .set_position_map(MapPoint::new(x, 0.0));
     }
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .human_data_mut()
-        .unwrap()
-        .opponents = vec![old_principal, promoted].into();
+    engine.human_mut(owner).opponents = vec![old_principal, promoted].into();
     for opponent in [old_principal, promoted] {
-        engine
-            .get_entity_mut(opponent)
-            .unwrap()
-            .human_data_mut()
-            .unwrap()
-            .opponents = vec![owner].into();
+        engine.human_mut(opponent).opponents = vec![owner].into();
     }
 
-    engine.quit_swordfight_with_far_opponents(&sim, &assets, owner);
+    engine.quit_swordfight_with_far_opponents(TickCtx::new(&sim, &assets), owner);
     engine.apply_sword_movement_start_initiative_transfer(owner);
 
-    let owner_human = engine.get_entity(owner).unwrap().human_data().unwrap();
+    let owner_human = engine.human(owner);
     assert_eq!(owner_human.opponents, vec![promoted]);
     assert!(!owner_human.smalltalk_initiative);
-    let promoted_human = engine.get_entity(promoted).unwrap().human_data().unwrap();
+    let promoted_human = engine.human(promoted);
     assert!(promoted_human.smalltalk_initiative);
     assert!(promoted_human.received_smalltalk_initiative);
     assert!(
-        !engine
-            .get_entity(old_principal)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .smalltalk_initiative,
+        !engine.human(old_principal).smalltalk_initiative,
         "the pruned old principal must not receive the START handoff"
     );
 }
@@ -282,27 +237,14 @@ fn soldier_death_detaches_guard_and_archery_before_forcing_quiet_music() {
     engine.ai.global.overall_alert_status = AlertLevel::Red;
 
     engine.set_live_guarded_pc(victim_id, Some(current_guarded_pc_typed));
-    assert_eq!(
-        engine
-            .get_entity(old_guarded_pc)
-            .unwrap()
-            .pc_data()
-            .unwrap()
-            .guard,
-        None
-    );
-    assert_eq!(
-        engine
-            .get_entity(current_guarded_pc)
-            .unwrap()
-            .pc_data()
-            .unwrap()
-            .guard,
-        Some(victim_id)
-    );
+    assert_eq!(engine.pc(old_guarded_pc).guard, None);
+    assert_eq!(engine.pc(current_guarded_pc).guard, Some(victim_id));
 
     let assets = engine.test_runtime_assets();
-    engine.handle_death(&crate::sim_rng::test_context(), &assets, victim_id);
+    engine.handle_death(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        victim_id,
+    );
 
     for guarded_pc in [old_guarded_pc, current_guarded_pc] {
         let Some(Entity::Pc(pc)) = engine.get_entity(guarded_pc) else {
@@ -401,7 +343,10 @@ fn soldier_death_detaches_both_combat_neighbours_without_touching_another_line()
     }
 
     let assets = engine.test_runtime_assets();
-    engine.handle_death(&crate::sim_rng::test_context(), &assets, victim);
+    engine.handle_death(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        victim,
+    );
 
     let links = |engine: &EngineInner, handle: u32| {
         let Some(Entity::Soldier(soldier)) = engine
@@ -488,7 +433,10 @@ fn soldier_death_clears_live_reciprocal_combat_neighbours() {
     victim_enemy.right_combat_neighbour = Some(crate::ai::AiEntityHandle::new(old_right_handle));
 
     let assets = engine.test_runtime_assets();
-    engine.handle_death(&crate::sim_rng::test_context(), &assets, victim);
+    engine.handle_death(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        victim,
+    );
 
     let links = |engine: &EngineInner, handle: u32| {
         let Some(Entity::Soldier(soldier)) = engine
@@ -536,12 +484,7 @@ fn enemy_ai_hero_cross_owner_combat_neighbours_preserve_pc_kind() {
     let owner = engine.add_test_entity(make_enemy_ai_hero());
     let left = engine.add_test_entity(make_enemy_ai_hero());
     for id in [owner, left] {
-        engine
-            .get_entity_mut(id)
-            .and_then(Entity::enemy_ai_mut)
-            .expect("AI-controlled hero has EnemyAi")
-            .base
-            .me = id.index();
+        engine.enemy_mut(id).base.me = id.index();
     }
     engine.test_runtime_assets();
     engine.apply_update_left_combat_neighbour(
@@ -550,18 +493,12 @@ fn enemy_ai_hero_cross_owner_combat_neighbours_preserve_pc_kind() {
         Some(crate::ai::AiEntityHandle::new(left.index())),
     );
 
-    let owner_enemy = engine
-        .get_entity(owner)
-        .and_then(Entity::enemy_ai)
-        .expect("owner PC retains EnemyAi");
+    let owner_enemy = engine.enemy(owner);
     assert_eq!(
         owner_enemy.left_combat_neighbour,
         Some(crate::ai::AiEntityHandle::new(left.index()))
     );
-    let left_enemy = engine
-        .get_entity(left)
-        .and_then(Entity::enemy_ai)
-        .expect("left PC retains EnemyAi");
+    let left_enemy = engine.enemy(left);
     assert_eq!(
         left_enemy.right_combat_neighbour,
         Some(crate::ai::AiEntityHandle::new(owner.index()))
@@ -595,33 +532,19 @@ fn enemy_ai_hero_death_detaches_pc_combat_neighbours() {
     let victim = engine.add_test_entity(make_enemy_ai_hero());
     let right = engine.add_test_entity(make_enemy_ai_hero());
     for id in [left, victim, right] {
-        engine
-            .get_entity_mut(id)
-            .and_then(Entity::enemy_ai_mut)
-            .expect("AI-controlled hero has EnemyAi")
-            .base
-            .me = id.index();
+        engine.enemy_mut(id).base.me = id.index();
     }
     {
-        let enemy = engine
-            .get_entity_mut(left)
-            .and_then(Entity::enemy_ai_mut)
-            .expect("left PC has EnemyAi");
+        let enemy = engine.enemy_mut(left);
         enemy.right_combat_neighbour = Some(crate::ai::AiEntityHandle::new(victim.index()));
     }
     {
-        let enemy = engine
-            .get_entity_mut(victim)
-            .and_then(Entity::enemy_ai_mut)
-            .expect("victim PC has EnemyAi");
+        let enemy = engine.enemy_mut(victim);
         enemy.left_combat_neighbour = Some(crate::ai::AiEntityHandle::new(left.index()));
         enemy.right_combat_neighbour = Some(crate::ai::AiEntityHandle::new(right.index()));
     }
     {
-        let enemy = engine
-            .get_entity_mut(right)
-            .and_then(Entity::enemy_ai_mut)
-            .expect("right PC has EnemyAi");
+        let enemy = engine.enemy_mut(right);
         enemy.left_combat_neighbour = Some(crate::ai::AiEntityHandle::new(victim.index()));
     }
 
@@ -630,24 +553,13 @@ fn enemy_ai_hero_death_detaches_pc_combat_neighbours() {
         .characters
         .push(crate::profiles::CharacterProfile::default());
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    engine.handle_death(&crate::sim_rng::test_context(), &assets, victim);
+    engine.handle_death(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        victim,
+    );
 
-    assert_eq!(
-        engine
-            .get_entity(left)
-            .and_then(Entity::enemy_ai)
-            .expect("left PC retains EnemyAi")
-            .right_combat_neighbour,
-        None
-    );
-    assert_eq!(
-        engine
-            .get_entity(right)
-            .and_then(Entity::enemy_ai)
-            .expect("right PC retains EnemyAi")
-            .left_combat_neighbour,
-        None
-    );
+    assert_eq!(engine.enemy(left).right_combat_neighbour, None);
+    assert_eq!(engine.enemy(right).left_combat_neighbour, None);
 }
 
 #[test]
@@ -656,14 +568,9 @@ fn review2_combat_alert_preserves_original_busy_lock_acceptance() {
 
     let sim = crate::sim_rng::test_context();
     let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
-    engine
-        .get_entity_mut(soldier_id)
-        .and_then(Entity::ai_controller_mut)
-        .expect("review2 combat-alert soldier has AI")
-        .locks_flag_field = AiLockFlags::BUSY;
+    engine.ai_ctrl_mut(soldier_id).locks_flag_field = AiLockFlags::BUSY;
     assert!(engine.execute_ai_command_soldiers_to_attack(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         officer_id,
         Position {
             x: 100.0,
@@ -672,9 +579,7 @@ fn review2_combat_alert_preserves_original_busy_lock_acceptance() {
     ));
     assert_eq!(
         engine
-            .get_entity(soldier_id)
-            .and_then(Entity::ai_controller)
-            .expect("review2 combat-alert soldier retains AI")
+            .ai_ctrl(soldier_id)
             .stimulus_queue
             .last()
             .map(|s| s.stimulus_type),
@@ -689,11 +594,7 @@ fn final_review_combat_alert_all_refused_enters_reserve_without_success_remark()
     let sim = crate::sim_rng::test_context();
     let (mut engine, officer_id, soldier_id, mut assets) = setup_review2_officer_and_soldier();
     {
-        let base = &mut engine
-            .get_entity_mut(soldier_id)
-            .and_then(Entity::enemy_ai_mut)
-            .expect("combat-alert recipient has EnemyAi")
-            .base;
+        let base = &mut engine.enemy_mut(soldier_id).base;
         base.set_ai_state(AiState::Fleeing);
         base.current_substate = Substate::FleeingRunToDoor;
     };
@@ -705,25 +606,17 @@ fn final_review_combat_alert_all_refused_enters_reserve_without_success_remark()
         .set_position_map(MapPoint::new(300.0, 0.0));
     let enemy_id = engine.add_test_entity(enemy);
     complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.enemy_mut(officer_id).list_them = vec![enemy_id.index()];
     engine
-        .get_entity_mut(officer_id)
-        .and_then(Entity::enemy_ai_mut)
-        .unwrap()
-        .list_them = vec![enemy_id.index()];
-    engine.execute_live_battle_decision(
-        &sim,
-        &assets,
-        officer_id,
-        Decision::AlertSoldiers,
-        Substate::AttackingReactiontime,
-        0,
-        false,
-    );
+        .ai_ctx(&sim, &assets, officer_id)
+        .execute_live_battle_decision(
+            Decision::AlertSoldiers,
+            Substate::AttackingReactiontime,
+            0,
+            false,
+        );
 
-    let officer = engine
-        .get_entity(officer_id)
-        .and_then(Entity::enemy_ai)
-        .expect("combat-alert caller retains EnemyAi");
+    let officer = engine.enemy(officer_id);
     assert!(officer.base.friends_are_alerted);
     assert!(officer.alerted_us.is_empty());
     assert_eq!(officer.base.current_state, AiState::Attacking);
@@ -756,10 +649,7 @@ fn command_soldiers_to_attack_does_not_overwrite_acceptor_gather_instruction() {
     let (mut engine, officer_id, refused_id, mut assets) = setup_review2_officer_and_soldier();
     let accepted_id =
         engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let Entity::Soldier(accepted) = engine
-        .get_entity_mut(accepted_id)
-        .expect("partial-refusal acceptor exists")
-    else {
+    let Entity::Soldier(accepted) = engine.ent_mut(accepted_id) else {
         panic!("partial-refusal acceptor changed kind")
     };
     accepted.element.active = true;
@@ -783,19 +673,14 @@ fn command_soldiers_to_attack_does_not_overwrite_acceptor_gather_instruction() {
     complete_test_runtime_fixture(&mut engine, &mut assets);
     install_test_open_field_bbox(&mut engine);
     engine
-        .get_entity_mut(officer_id)
-        .expect("partial-refusal officer exists")
+        .ent_mut(officer_id)
         .position_iface_mut()
         .set_move_box(crate::coordinates::MoveBox::from_coords(
             -5.0, -5.0, 5.0, 5.0,
         ));
 
     {
-        let base = &mut engine
-            .get_entity_mut(refused_id)
-            .and_then(Entity::enemy_ai_mut)
-            .expect("partial-refusal rejector has EnemyAi")
-            .base;
+        let base = &mut engine.enemy_mut(refused_id).base;
         base.set_ai_state(AiState::Fleeing);
         base.current_substate = Substate::FleeingRunToDoor;
     };
@@ -807,35 +692,24 @@ fn command_soldiers_to_attack_does_not_overwrite_acceptor_gather_instruction() {
         .set_position_map(MapPoint::new(300.0, 0.0));
     let enemy_id = engine.add_test_entity(enemy);
     complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.enemy_mut(officer_id).list_them = vec![enemy_id.index()];
     engine
-        .get_entity_mut(officer_id)
-        .and_then(Entity::enemy_ai_mut)
-        .unwrap()
-        .list_them = vec![enemy_id.index()];
-    engine.execute_live_battle_decision(
-        &sim,
-        &assets,
-        officer_id,
-        Decision::AlertSoldiers,
-        Substate::AttackingReactiontime,
-        0,
-        false,
-    );
+        .ai_ctx(&sim, &assets, officer_id)
+        .execute_live_battle_decision(
+            Decision::AlertSoldiers,
+            Substate::AttackingReactiontime,
+            0,
+            false,
+        );
 
-    let officer = engine
-        .get_entity(officer_id)
-        .and_then(Entity::enemy_ai)
-        .expect("partial-refusal caller retains EnemyAi");
+    let officer = engine.enemy(officer_id);
     assert!(officer.base.friends_are_alerted);
     assert_eq!(
         officer.base.current_substate,
         Substate::AttackingOfficerGivingOrders
     );
     assert_eq!(officer.base.current_remark, Remark::OfficerGivesAttackOrder);
-    let accepted = engine
-        .get_entity(accepted_id)
-        .and_then(Entity::enemy_ai)
-        .expect("partial-refusal acceptor retains EnemyAi");
+    let accepted = engine.enemy(accepted_id);
     assert!(
         !accepted.gather_position_instructed,
         "officer attack commands only use accepted soldiers to orient the officer; they never assign formation slots"
@@ -844,10 +718,7 @@ fn command_soldiers_to_attack_does_not_overwrite_acceptor_gather_instruction() {
         accepted.gather_direction, 10,
         "a combat alert must preserve a direction authored by an independent state such as DoorFight"
     );
-    let refused = engine
-        .get_entity(refused_id)
-        .and_then(Entity::enemy_ai)
-        .expect("partial-refusal rejector retains EnemyAi");
+    let refused = engine.enemy(refused_id);
     assert!(!refused.gather_position_instructed);
 }
 
@@ -866,8 +737,7 @@ fn final_review_combat_alert_requires_recipient_360_detection() {
         .expect("360-degree recipient is a soldier")
         .view_radius = 10;
     assert!(!engine.execute_ai_command_soldiers_to_attack(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         officer_id,
         Position {
             x: 300.0,
@@ -903,10 +773,7 @@ fn closure_review_combat_alert_uses_exact_is_able_to_fight_under_retained_lock()
         Ineligible::Hitting,
     ] {
         let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
-        let Entity::Soldier(soldier) = engine
-            .get_entity_mut(soldier_id)
-            .expect("eligibility recipient exists")
-        else {
+        let Entity::Soldier(soldier) = engine.ent_mut(soldier_id) else {
             panic!("eligibility recipient changed kind")
         };
         soldier
@@ -971,18 +838,14 @@ fn closure_review_combat_alert_uses_exact_is_able_to_fight_under_retained_lock()
             }
         }
 
-        let accepted = start_review_command_soldiers(&mut engine, &sim, &assets, officer_id);
+        let accepted =
+            start_review_command_soldiers(&mut engine, TickCtx::new(&sim, &assets), officer_id);
         assert!(
             !accepted,
             "case {case:?} must be rejected before retained-lock Think"
         );
         assert!(
-            engine
-                .get_entity(soldier_id)
-                .and_then(Entity::ai_controller)
-                .expect("eligibility caller retains AI")
-                .stimulus_queue
-                .is_empty(),
+            engine.ai_ctrl(soldier_id).stimulus_queue.is_empty(),
             "case {case:?} must not be called"
         );
     }
@@ -995,10 +858,7 @@ fn closure_review_combat_alert_closed_eyes_do_not_disable_360_detection() {
 
     let sim = crate::sim_rng::test_context();
     let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
-    let Entity::Soldier(soldier) = engine
-        .get_entity_mut(soldier_id)
-        .expect("closed-eye recipient exists")
-    else {
+    let Entity::Soldier(soldier) = engine.ent_mut(soldier_id) else {
         panic!("closed-eye recipient changed kind")
     };
     soldier.npc.eye_status = EyeStatus::Closed;
@@ -1012,15 +872,12 @@ fn closure_review_combat_alert_closed_eyes_do_not_disable_360_detection() {
 
     assert!(start_review_command_soldiers(
         &mut engine,
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         officer_id
     ));
     assert_eq!(
         engine
-            .get_entity(soldier_id)
-            .and_then(Entity::ai_controller)
-            .expect("closed-eye recipient retains AI")
+            .ai_ctrl(soldier_id)
             .stimulus_queue
             .last()
             .map(|stimulus| stimulus.stimulus_type),

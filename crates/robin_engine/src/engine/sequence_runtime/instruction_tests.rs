@@ -1,6 +1,8 @@
 use super::*;
 use crate::element::{ActionState, Posture};
+use crate::engine::TickCtx;
 use crate::order::OrderType;
+use crate::sequence::SequenceElementRef;
 use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
 use crate::sprite::MotionState;
 
@@ -17,9 +19,7 @@ fn same_building_seek_keeps_synchronously_launched_post_seek_selection() {
     ));
     for actor in [owner, target] {
         engine
-            .get_entity_mut(actor)
-            .unwrap()
-            .element_data_mut()
+            .elem_mut(actor)
             .set_sector(crate::position_interface::SectorHandle::new(1));
     }
     let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level);
@@ -28,22 +28,10 @@ fn same_building_seek_keeps_synchronously_launched_post_seek_selection() {
         .sector_number_map
         .insert(crate::sector::SectorNumber::new(1), 0);
     level.sectors.push(crate::fast_find_grid::GridSector {
-        points: Vec::new(),
         bounding_box: level.map_bbox,
         sector_type: crate::sector::SectorType::BUILDING,
-        layer: 0,
         sector_number: crate::sector::SectorNumber::new(1),
-        door_index: None,
-        lift_type: None,
-        lift_direction: 0,
-        force_crouched: false,
-        building_index: None,
-        low_exit_point: None,
-        high_exit_point: None,
-        lowest_door_index: None,
-        jump_line_indices: Vec::new(),
-        gate_indices: Vec::new(),
-        underlying_sector: None,
+        ..Default::default()
     });
     let replacement_order = engine.orders.allocate_order_id();
     let mut replacement = SequenceElement::new(1, Command::Generic, Some(owner));
@@ -74,7 +62,12 @@ fn same_building_seek_keeps_synchronously_launched_post_seek_selection() {
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
-    assert!(engine.instruct_owner(&sim, &assets, &mut Vec::new(), owner, sequence, 0));
+    assert!(engine.instruct_owner(
+        TickCtx::new(&sim, &assets),
+        &mut Vec::new(),
+        owner,
+        SequenceElementRef::new(sequence, 0)
+    ));
     let selected = engine
         .world
         .entities
@@ -83,10 +76,7 @@ fn same_building_seek_keeps_synchronously_launched_post_seek_selection() {
     assert_ne!(selected, (sequence, 0));
     assert_eq!(
         engine
-            .get_entity(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap()
+            .actor(owner)
             .installed_order
             .unwrap()
             .resolve(&engine.orders.sequence_manager)
@@ -132,10 +122,15 @@ fn halt_keeps_selection_order_and_goal_installed_by_termination_callback() {
     };
     let (outgoing, _) = make_carrier();
     let (nested, nested_order) = make_carrier();
-    assert!(engine.instruct_owner(&sim, &assets, &mut Vec::new(), owner, outgoing, 0));
+    assert!(engine.instruct_owner(
+        TickCtx::new(&sim, &assets),
+        &mut Vec::new(),
+        owner,
+        SequenceElementRef::new(outgoing, 0)
+    ));
     let mut pending = SequenceElement::new(1, Command::Generic, Some(owner));
     pending.priority = SequencePriority::Normal;
-    let pending = engine.launch_element(&sim, &assets, pending);
+    let pending = engine.t_launch_element_with(&sim, &assets, pending);
     let goal = crate::coordinates::MapPoint::new(23.0, 41.0);
     let callback_assets = assets.clone();
     EngineInner::with_condolation_callback(
@@ -143,27 +138,24 @@ fn halt_keeps_selection_order_and_goal_installed_by_termination_callback() {
             if card.seq_id == pending {
                 assert_eq!(engine.world.entities.current_element_for_actor(owner), None);
                 assert!(engine.instruct_owner(
-                    &crate::sim_rng::test_context(),
-                    &callback_assets,
+                    TickCtx::new(&crate::sim_rng::test_context(), &callback_assets),
                     &mut Vec::new(),
                     owner,
-                    nested,
-                    0
+                    SequenceElementRef::new(nested, 0)
                 ));
                 engine
-                    .get_entity_mut(owner)
-                    .unwrap()
+                    .ent_mut(owner)
                     .position_iface_mut()
                     .set_map_goal(goal);
             }
         },
-        || engine.halt_actor(&sim, &assets, owner),
+        || engine.halt_actor(TickCtx::new(&sim, &assets), owner),
     );
     assert_eq!(
         engine.world.entities.current_element_for_actor(owner),
         Some((nested, 0))
     );
-    let entity = engine.get_entity(owner).unwrap();
+    let entity = engine.ent(owner);
     assert_eq!(
         entity
             .actor_data()
@@ -207,7 +199,12 @@ fn nested_instruction_selection_survives_outer_callback_return() {
         let outgoing = insert(true);
         let incoming = insert(true);
         let nested = insert(nested_has_order);
-        assert!(engine.instruct_owner(&sim, &assets, &mut Vec::new(), owner, outgoing, 0));
+        assert!(engine.instruct_owner(
+            TickCtx::new(&sim, &assets),
+            &mut Vec::new(),
+            owner,
+            SequenceElementRef::new(outgoing, 0)
+        ));
         EngineInner::with_condolation_callback(
             move |engine, card| {
                 if card.seq_id == outgoing {
@@ -216,24 +213,27 @@ fn nested_instruction_selection_survives_outer_callback_return() {
                         Some((incoming, 0))
                     );
                     assert!(engine.instruct_owner(
-                        &crate::sim_rng::test_context(),
-                        &LevelAssets::new(),
+                        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
                         &mut Vec::new(),
                         owner,
-                        nested,
-                        0,
+                        SequenceElementRef::new(nested, 0),
                     ));
                 }
             },
             || {
-                assert!(!engine.instruct_owner(&sim, &assets, &mut Vec::new(), owner, incoming, 0));
+                assert!(!engine.instruct_owner(
+                    TickCtx::new(&sim, &assets),
+                    &mut Vec::new(),
+                    owner,
+                    SequenceElementRef::new(incoming, 0)
+                ));
             },
         );
         assert_eq!(
             engine.world.entities.current_element_for_actor(owner),
             nested_has_order.then_some((nested, 0)),
         );
-        let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+        let actor = engine.actor(owner);
         assert_eq!(actor.installed_order.is_some(), nested_has_order);
         assert_eq!(
             engine
@@ -255,7 +255,7 @@ fn retained_shot_refreshes_transition_state_when_aiming_resumes() {
     let owner = engine.add_test_entity(crate::engine::test_support::actors::make_test_pc(
         Posture::Upright,
     ));
-    let entity = engine.get_entity_mut(owner).unwrap();
+    let entity = engine.ent_mut(owner);
     entity.actor_data_mut().unwrap().action_state = ActionState::AimingWithBow;
     entity.element_data_mut().sprite.last_action = OrderType::TransitionLoadingBow;
     let mut shot = SequenceElement::new_interaction(1, Command::ShootBow, Some(owner), None);
@@ -263,15 +263,10 @@ fn retained_shot_refreshes_transition_state_when_aiming_resumes() {
     // Retained work may still carry transition operands from an earlier admission.
     shot.posture_after_transition = Posture::Sitting;
     shot.action_state_after_transition = ActionState::Waiting;
-    let sequence = engine.launch_element(&sim, &assets, shot);
+    let sequence = engine.t_launch_element_with(&sim, &assets, shot);
 
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .element_data_mut()
-        .sprite
-        .last_action = OrderType::AimingWithBow;
-    engine.process_shoot_list_for(&sim, &assets, owner);
+    engine.elem_mut(owner).sprite.last_action = OrderType::AimingWithBow;
+    engine.process_shoot_list_for(TickCtx::new(&sim, &assets), owner);
 
     let shot = engine
         .orders
@@ -284,38 +279,30 @@ fn retained_shot_refreshes_transition_state_when_aiming_resumes() {
         ActionState::AimingWithBow
     );
     assert_eq!(shot.state, SequenceState::Impossible);
-    assert!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .pending_shoots
-            .is_empty()
-    );
+    assert!(engine.human(owner).pending_shoots.is_empty());
 }
 
 #[test]
 fn held_bow_instruction_unfreezes_before_retaining_the_shot() {
+    let sim = crate::sim_rng::test_context();
     for priority in [SequencePriority::Wait, SequencePriority::Normal] {
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
-        let sim = crate::sim_rng::test_context();
         let owner = engine.add_test_entity(crate::engine::test_support::actors::make_test_pc(
             Posture::Upright,
         ));
-        let entity = engine.get_entity_mut(owner).unwrap();
+        let entity = engine.ent_mut(owner);
         entity.actor_data_mut().unwrap().execution_frozen = true;
         entity.element_data_mut().sprite.last_action = OrderType::TransitionLoadingBow;
         let mut shot = SequenceElement::new_interaction(1, Command::ShootBow, Some(owner), None);
         shot.priority = priority;
 
-        let sequence = engine.launch_element(&sim, &assets, shot);
+        let sequence = engine.t_launch_element_with(&sim, &assets, shot);
         if priority == SequencePriority::Normal {
-            engine.hourglass_phase_sequences(&sim, &mut HostDisplayState::default(), &assets);
+            engine.t_hourglass_phase_sequences_with(&sim, &assets);
         }
 
-        let entity = engine.get_entity(owner).unwrap();
+        let entity = engine.ent(owner);
         assert!(!entity.actor_data().unwrap().execution_frozen);
         assert_eq!(
             entity.human_data().unwrap().pending_shoots,
@@ -339,31 +326,27 @@ fn held_bow_instruction_unfreezes_before_retaining_the_shot() {
 
 #[test]
 fn whistle_translation_is_identical_for_immediate_and_registered_instructions() {
+    let sim = crate::sim_rng::test_context();
     for priority in [SequencePriority::Wait, SequencePriority::Normal] {
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
-        let sim = crate::sim_rng::test_context();
         let owner = engine.add_test_entity(crate::engine::test_support::actors::make_test_pc(
             Posture::Upright,
         ));
-        let actor = engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap();
+        let actor = engine.actor_mut(owner);
         actor.action_state = ActionState::Waiting;
         actor.continuation.motion_state = MotionState::Terminated;
         let mut whistle = SequenceElement::new(1, Command::WhistleCmd, Some(owner));
         whistle.priority = priority;
 
-        let sequence = engine.launch_element(&sim, &assets, whistle);
+        let sequence = engine.t_launch_element_with(&sim, &assets, whistle);
         if priority == SequencePriority::Normal {
             assert_eq!(
                 engine.world.entities.current_element_for_actor(owner),
                 None,
                 "registered instructions must wait for the sequence phase"
             );
-            engine.hourglass_phase_sequences(&sim, &mut HostDisplayState::default(), &assets);
+            engine.t_hourglass_phase_sequences_with(&sim, &assets);
         }
 
         assert_eq!(
@@ -384,7 +367,7 @@ fn whistle_translation_is_identical_for_immediate_and_registered_instructions() 
                 .collect::<Vec<_>>(),
             vec![OrderType::Whistling]
         );
-        let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+        let actor = engine.actor(owner);
         assert_eq!(actor.wait_time, 25);
         assert_eq!(actor.continuation.motion_state, MotionState::InProgress);
     }
@@ -392,18 +375,14 @@ fn whistle_translation_is_identical_for_immediate_and_registered_instructions() 
 
 #[test]
 fn completion_during_translation_does_not_latch_instruction_motion() {
+    let sim = crate::sim_rng::test_context();
     for priority in [SequencePriority::Wait, SequencePriority::Normal] {
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
-        let sim = crate::sim_rng::test_context();
         let owner = engine.add_test_entity(crate::engine::test_support::actors::make_test_pc(
             Posture::Upright,
         ));
-        let actor = engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap();
+        let actor = engine.actor_mut(owner);
         actor.action_state = ActionState::Waiting;
         actor.continuation.motion_state = MotionState::Terminated;
         let mut assertion = SequenceElement::new_movement(
@@ -414,9 +393,9 @@ fn completion_during_translation_does_not_latch_instruction_motion() {
         );
         assertion.priority = priority;
 
-        let sequence = engine.launch_element(&sim, &assets, assertion);
+        let sequence = engine.t_launch_element_with(&sim, &assets, assertion);
         if priority == SequencePriority::Normal {
-            engine.hourglass_phase_sequences(&sim, &mut HostDisplayState::default(), &assets);
+            engine.t_hourglass_phase_sequences_with(&sim, &assets);
         }
 
         assert_eq!(
@@ -430,13 +409,7 @@ fn completion_during_translation_does_not_latch_instruction_motion() {
         );
         assert_eq!(engine.world.entities.current_element_for_actor(owner), None);
         assert_eq!(
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .actor_data()
-                .unwrap()
-                .continuation
-                .motion_state,
+            engine.motion_state_of(owner),
             MotionState::Terminated,
             "a translation that clears selection must skip the ordinary instruction epilogue"
         );

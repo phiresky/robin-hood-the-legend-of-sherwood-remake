@@ -1,4 +1,6 @@
 use super::*;
+use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 #[test]
 fn sector_to_angle_keeps_original_double_intermediate_rounding() {
@@ -100,11 +102,7 @@ fn straight_strike_range_uses_stored_world_position() {
     let mut engine = EngineInner::new();
     let attacker = engine.add_test_entity(make_soldier(WorldPoint3D::ZERO, None));
     let target = engine.add_test_entity(make_soldier(WorldPoint3D::ZERO, None));
-    engine
-        .get_entity_mut(target)
-        .unwrap()
-        .element_data_mut()
-        .set_position(WorldPoint3D::new(60.0, 40.0, 40.0));
+    engine.place(target, WorldPoint3D::new(60.0, 40.0, 40.0));
 
     // The isometric projection subtracts elevation from world Y, so
     // these actors are only 60 map units apart while Original's
@@ -133,15 +131,9 @@ fn thrust_a_translates_for_an_existing_opponent_during_ordinary_door_transit() {
         },
         crate::position_interface::SectorHandle::new(43),
     ));
-    engine
-        .get_entity_mut(attacker)
-        .unwrap()
-        .human_data_mut()
-        .unwrap()
-        .opponents
-        .push(target);
+    engine.human_mut(attacker).opponents.push(target);
     {
-        let target_entity = engine.get_entity_mut(target).unwrap();
+        let target_entity = engine.ent_mut(target);
         target_entity
             .human_data_mut()
             .unwrap()
@@ -175,14 +167,12 @@ fn thrust_a_translates_for_an_existing_opponent_during_ordinary_door_transit() {
         id
     };
     engine.dispatch_sword_strike(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
         attacker,
         target,
         SwordStrike::A,
-        sequence,
-        0,
+        SequenceElementRef::new(sequence, 0),
     );
 
     let element = engine
@@ -213,27 +203,20 @@ fn circle_tail_retains_candidate_past_final_in_the_same_sector() {
         [SwordStrike::F as usize]
         .rotation_angle = 43;
     install_test_melee_order(&mut engine, attacker, pending_victim, SwordStrike::F, true);
-    engine
-        .get_entity_mut(attacker)
-        .unwrap()
-        .human_data_mut()
-        .unwrap()
-        .sword_sweep = crate::element::HumanSwordSweepState {
+    engine.human_mut(attacker).sword_sweep = crate::element::HumanSwordSweepState {
         victims: vec![pending_victim],
         initial_angle: 0.0,
         current_angle: 0.0,
         final_angle: 0.70,
     };
 
-    engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, false);
+    engine.tick_sweep_for(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        attacker,
+        false,
+    );
 
-    let current = engine
-        .get_entity(attacker)
-        .unwrap()
-        .human_data()
-        .unwrap()
-        .sword_sweep
-        .current_angle;
+    let current = engine.human(attacker).sword_sweep.current_angle;
     assert!(
         (current - strike_profile_angle(43)).abs() < f32::EPSILON,
         "a candidate past 0.70 in the same final sector must be retained instead of clamped"
@@ -256,7 +239,7 @@ fn domino_propagates_to_actors_in_flight_path() {
 
     let motion =
         engine.perform_combat_flight_position(flyer, crate::sprite::MotionState::InProgress);
-    engine.finish_combat_flight(sim, &LevelAssets::default(), flyer, motion);
+    engine.finish_combat_flight(TickCtx::new(sim, &LevelAssets::default()), flyer, motion);
 
     assert_eq!(
         count_domino_hits_for(&engine, mid, hitter),

@@ -1,10 +1,17 @@
 //! Shared fixtures and unwind-safe, observational test instrumentation.
 pub(crate) mod actors;
 pub(crate) mod asm;
+pub(crate) mod extra_ai_ctx;
+pub(crate) mod extra_engine_combat;
+pub(crate) mod extra_engine_core;
+pub(crate) mod pair_fixture;
+pub(crate) mod shortcuts;
 
 use super::commands::SelectionCommandBatchMode;
 use super::{EngineInner, HostDisplayState, InputState, LevelAssets};
+use crate::engine::TickCtx;
 use crate::player_command::{PlayerCommand, PlayerInput};
+use crate::sequence::SequenceElementRef;
 
 /// Sprite action-conversion table with every action unmapped; tests then map
 /// the few rows their synthetic scripts provide.
@@ -23,7 +30,7 @@ impl EngineInner {
         let element =
             crate::sequence::SequenceElement::new(1, crate::element::Command::Wait, Some(owner));
         let sequence = self.orders.sequence_manager.insert_element(element);
-        self.push_new_order(sequence, 0, action, 0.0, 0.0);
+        self.push_new_order(SequenceElementRef::new(sequence, 0), action, 0.0, 0.0);
         let installed = crate::element::InstalledActorOrder::new(
             crate::sequence::SequenceElementRef::new(sequence, 0),
             self.orders
@@ -92,7 +99,7 @@ impl EngineInner {
     ) {
         let event_start = self.feedback.pending_side_effects.host_events.len();
         let mut camera = self.feedback.cutscene_camera.display.clone();
-        self.apply_commands_authoritative(sim, &mut camera, assets, commands, mode);
+        self.apply_commands_authoritative(TickCtx::new(sim, assets), &mut camera, commands, mode);
         self.feedback.cutscene_camera.display = camera;
         for event in self.feedback.pending_side_effects.host_events[event_start..]
             .iter()
@@ -168,17 +175,7 @@ pub(crate) fn square_sector(
         sector_type: crate::sector::SectorType::MOTION | crate::sector::SectorType::AREA,
         layer,
         sector_number: crate::sector::SectorNumber::new(number),
-        door_index: None,
-        lift_type: None,
-        lift_direction: 0,
-        force_crouched: false,
-        building_index: None,
-        low_exit_point: None,
-        high_exit_point: None,
-        lowest_door_index: None,
-        jump_line_indices: Vec::new(),
-        gate_indices: Vec::new(),
-        underlying_sector: None,
+        ..Default::default()
     }
 }
 
@@ -207,17 +204,7 @@ pub(crate) fn ensure_ordinary_sector(
                 sector_type: crate::sector::SectorType::MOTION | crate::sector::SectorType::AREA,
                 layer,
                 sector_number: number,
-                door_index: None,
-                lift_type: None,
-                lift_direction: 0,
-                force_crouched: false,
-                building_index: None,
-                low_exit_point: None,
-                high_exit_point: None,
-                lowest_door_index: None,
-                jump_line_indices: Vec::new(),
-                gate_indices: Vec::new(),
-                underlying_sector: None,
+                ..Default::default()
             },
             layer,
         );

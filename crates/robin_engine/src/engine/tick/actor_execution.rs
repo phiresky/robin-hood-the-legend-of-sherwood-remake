@@ -1,13 +1,14 @@
 //! Actor execution operations. Each call finishes before its Execute arm continues.
 
 use super::*;
+use crate::engine::TickCtx;
 use crate::engine::sequence_runtime::required_canonical_door_mut;
+use crate::sequence::SequenceElementRef;
 
 impl EngineInner {
     pub(in crate::engine) fn execute_waiting_upright(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         effect: EntityId,
     ) {
         let owner = effect;
@@ -30,8 +31,7 @@ impl EngineInner {
             // directly: enabling attentive mode would suppress the repair
             // precisely because desired attentiveness is already true.
             self.launch_element(
-                sim,
-                assets,
+                tcx,
                 crate::sequence::SequenceElement::new(1, Command::EnterAttentiveMode, Some(owner)),
             );
         }
@@ -39,8 +39,7 @@ impl EngineInner {
 
     pub(in crate::engine) fn execute_waiting_alerted(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         effect: EntityId,
     ) {
         let owner = effect;
@@ -63,8 +62,7 @@ impl EngineInner {
             // desired attentiveness is already false, while this corrective
             // Execute arm exists specifically for that inconsistent state.
             self.launch_element(
-                sim,
-                assets,
+                tcx,
                 crate::sequence::SequenceElement::new(1, Command::LeaveAttentiveMode, Some(owner)),
             );
         }
@@ -80,7 +78,7 @@ impl EngineInner {
             .opponents
             .is_empty();
         if still_swordfighting {
-            self.quit_swordfight(sim, assets, owner);
+            self.quit_swordfight(tcx, owner);
         }
     }
 
@@ -90,16 +88,14 @@ impl EngineInner {
     ) {
         let (seq_id, elem_idx) = effect;
         self.orders.sequence_manager.set_element_priority(
-            seq_id,
-            elem_idx,
+            SequenceElementRef::new(seq_id, elem_idx),
             crate::sequence::SequencePriority::NonInterruptable,
         );
     }
 
     pub(in crate::engine) fn execute_corpse_drop_done(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         effect: EntityId,
     ) {
         // Player-character execution drops the corpse from inside the terminal
@@ -141,8 +137,7 @@ impl EngineInner {
             )
         };
         self.apply_completed_corpse_drop(
-            sim,
-            assets,
+            tcx,
             carrier_id,
             target_id,
             drop_posture,
@@ -153,21 +148,19 @@ impl EngineInner {
 
     pub(in crate::engine) fn execute_seq_advance(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         effect: (crate::sequence::SequenceId, usize),
     ) {
         let (seq_id, elem_idx) = effect;
         // `do_next_order` semantics: pop the just-completed
         // order; advance to the next if one exists, otherwise
         // terminate the element.
-        self.do_next_order(sim, assets, seq_id, elem_idx);
+        self.do_next_order(tcx, SequenceElementRef::new(seq_id, elem_idx));
     }
 
     pub(in crate::engine) fn execute_wasp_next_cycle(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         effect: (crate::sequence::SequenceId, usize, u16),
     ) {
         // Wasp struggle-cycle refill: push a fresh `GettingFreeFromWasp`
@@ -184,23 +177,25 @@ impl EngineInner {
         self.orders
             .sequence_manager
             .push_order_on(seq_id, elem_idx, order);
-        self.do_next_order(sim, assets, seq_id, elem_idx);
+        self.do_next_order(tcx, SequenceElementRef::new(seq_id, elem_idx));
     }
 
     pub(in crate::engine) fn execute_seq_terminate(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         effect: (crate::sequence::SequenceId, usize),
     ) {
         let (seq_id, elem_idx) = effect;
-        self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
+        self.element_terminated(
+            tcx,
+            &mut Vec::new(),
+            SequenceElementRef::new(seq_id, elem_idx),
+        );
     }
 
     pub(in crate::engine) fn execute_play_anim_frozen(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         effect: (EntityId, u16, crate::order::OrderType),
     ) {
         let (actor, command_level, anim) = effect;
@@ -213,13 +208,12 @@ impl EngineInner {
             crate::sequence::Field::AnimationId,
             crate::sequence::FieldValue::Animation(anim),
         );
-        self.launch_element(sim, assets, elem);
+        self.launch_element(tcx, elem);
     }
 
     pub(in crate::engine) fn execute_seq_impossible(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         effect: (crate::sequence::SequenceId, usize),
     ) {
         let (seq_id, elem_idx) = effect;
@@ -241,9 +235,17 @@ impl EngineInner {
             // ABORTED for that unknown action; the release build then
             // sets even this NonInterruptable injury Impossible and
             // synchronously releases its postponed successor.
-            self.element_impossible_from_execute(sim, assets, &mut Vec::new(), seq_id, elem_idx);
+            self.element_impossible_from_execute(
+                tcx,
+                &mut Vec::new(),
+                SequenceElementRef::new(seq_id, elem_idx),
+            );
         } else {
-            self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
+            self.element_impossible(
+                tcx,
+                &mut Vec::new(),
+                SequenceElementRef::new(seq_id, elem_idx),
+            );
         }
     }
 
@@ -384,8 +386,7 @@ impl EngineInner {
 
     pub(in crate::engine) fn execute_pc_bow_equip_action(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         effect: EntityId,
     ) {
         let pc_id = effect;
@@ -393,13 +394,12 @@ impl EngineInner {
         // the TransitionEquipBow START arm after setting AimingWithBow.
         // An unselected PC only restores its remembered action; a
         // selected PC also restores the messenger-global action.
-        self.set_pc_action_from_message(sim, assets, 0, pc_id, crate::profiles::Action::Bow);
+        self.set_pc_action_from_message(tcx, 0, pc_id, crate::profiles::Action::Bow);
     }
 
     pub(in crate::engine) fn execute_pc_bow_unequip_action(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         effect: (EntityId, bool),
     ) {
         let (pc_id, script_driven) = effect;
@@ -408,7 +408,7 @@ impl EngineInner {
         // (regardless of the script flag); otherwise non-script elements
         // forward MSG_UNSELECT_ACTION(BOW).
         if self.get_pc_ammo_count(pc_id, crate::profiles::Action::Bow) == 0 {
-            self.disable_pc_action(assets, pc_id, crate::profiles::Action::Bow);
+            self.disable_pc_action(tcx.assets, pc_id, crate::profiles::Action::Bow);
         } else if !script_driven {
             // Messenger preprocessing for MSG_UNSELECT_ACTION drops the
             // message unless the unselected action is the messenger's
@@ -418,15 +418,14 @@ impl EngineInner {
             // cleanup sequence is launched).
             if self.players.seats[0].selected_action == crate::profiles::Action::Bow {
                 self.players.seats[0].selected_action = crate::profiles::Action::NoAction;
-                self.unselect_action(sim, assets, pc_id);
+                self.unselect_action(tcx, pc_id);
             }
         }
     }
 
     pub(in crate::engine) fn execute_pc_helping_climb_action(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         effect: EntityId,
     ) {
         let pc_id = effect;
@@ -437,13 +436,7 @@ impl EngineInner {
         // Normal priority, which interrupts whatever the entry transition
         // postponed behind itself — the move the player queued while the
         // PC was kneeling down never resumes.
-        self.set_pc_action_from_message(
-            sim,
-            assets,
-            0,
-            pc_id,
-            crate::profiles::Action::HelpToClimb,
-        );
+        self.set_pc_action_from_message(tcx, 0, pc_id, crate::profiles::Action::HelpToClimb);
     }
 
     pub(in crate::engine) fn execute_hidden_titbit_removals(&mut self, effect: EntityId) {
@@ -456,16 +449,15 @@ impl EngineInner {
 
     pub(in crate::engine) fn execute_beggar_wait_handoffs(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         effect: (EntityId, bool),
     ) {
         let (pc_id, entering) = effect;
         // Wait registers against the still-executing transition. The following
         // action selection can synchronously stop that postponed wait.
-        self.actor_wait(sim, assets, pc_id);
+        self.actor_wait(tcx, pc_id);
         if entering {
-            self.set_pc_action_from_message(sim, assets, 0, pc_id, crate::profiles::Action::Beggar);
+            self.set_pc_action_from_message(tcx, 0, pc_id, crate::profiles::Action::Beggar);
         } else if self.players.seats[0].selection.contains(&pc_id) {
             // Leaving forwards MSG_UNSELECT_ACTION(BEGGAR) for a
             // selected PC. The messenger drops the message unless Beggar
@@ -474,7 +466,7 @@ impl EngineInner {
             // survive both the transition and this callback.
             if self.players.seats[0].selected_action == crate::profiles::Action::Beggar {
                 self.players.seats[0].selected_action = crate::profiles::Action::NoAction;
-                self.unselect_action(sim, assets, pc_id);
+                self.unselect_action(tcx, pc_id);
             }
         } else if let Some(pc) = self
             .get_entity_mut(pc_id)
@@ -504,8 +496,7 @@ impl EngineInner {
 
     pub(in crate::engine) fn execute_smalltalk_strikes(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         effect: (EntityId, EntityId, crate::weapons::SwordStrike),
     ) {
         let (actor_id, target_id, strike) = effect;
@@ -537,12 +528,12 @@ impl EngineInner {
             let profile_idx = self
                 .get_entity(actor_id)
                 .and_then(|entity| {
-                    super::melee::get_hth_weapon_id_full(entity, &assets.profile_manager)
+                    super::melee::get_hth_weapon_id_full(entity, &tcx.assets.profile_manager)
                 })
                 .unwrap_or_else(|| {
                     panic!("smalltalk attacker {actor_id:?} has no HtH weapon profile")
                 });
-            self.queue_sword_damage(sim, assets, target_id, actor_id, strike, profile_idx);
+            self.queue_sword_damage(tcx, target_id, actor_id, strike, profile_idx);
             return;
         }
 
@@ -559,12 +550,12 @@ impl EngineInner {
             }
             let pos = entity.element_data().position_map();
             let weapon1 =
-                super::melee::weapon_material_from_profile(entity, &assets.profile_manager);
+                super::melee::weapon_material_from_profile(entity, &tcx.assets.profile_manager);
             (pos, weapon1)
         };
         let weapon2 = self
             .get_entity(target_id)
-            .map(|e| super::melee::weapon_material_from_profile(e, &assets.profile_manager))
+            .map(|e| super::melee::weapon_material_from_profile(e, &tcx.assets.profile_manager))
             .unwrap_or(crate::profiles::WeaponMaterial::SteelAndWood);
         self.feedback
             .pending_side_effects
@@ -579,8 +570,7 @@ impl EngineInner {
 
     pub(in crate::engine) fn execute_killed_at_bottom(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         effect: (EntityId, EntityId),
     ) {
         let (victim_id, killer_id) = effect;
@@ -591,7 +581,7 @@ impl EngineInner {
             Some(killer_id),
         );
         elem.priority = crate::sequence::SequencePriority::Lethal;
-        self.launch_element(sim, assets, elem);
+        self.launch_element(tcx, elem);
     }
 
     pub(in crate::engine) fn execute_deactivate_entities(&mut self, effect: EntityId) {
@@ -605,8 +595,7 @@ impl EngineInner {
 
     pub(in crate::engine) fn execute_pc_target_activations(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         effect: (EntityId, EntityId, Command),
     ) {
         let (pc, target, activation_cmd) = effect;
@@ -626,13 +615,12 @@ impl EngineInner {
         activation.data = crate::sequence::SequenceElementData::Interaction {
             antagonist: Some(pc),
         };
-        self.launch_element(sim, assets, activation);
+        self.launch_element(tcx, activation);
     }
 
     pub(in crate::engine) fn execute_waking_up_done(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         effect: (EntityId, EntityId),
     ) {
         let (rescuer, target) = effect;
@@ -651,7 +639,7 @@ impl EngineInner {
         let target_is_pc = target_entity.is_pc();
         if !target_is_dead {
             self.set_entity_posture(target, crate::element::Posture::Lying);
-            self.apply_concussion(sim, assets, target, 0, false);
+            self.apply_concussion(tcx, target, 0, false);
             // Concussion handling synchronously sends FITAGAIN from
             // the WakingUp DONE stack. This AI consequence is immediate
             // even when the target's creation-ordered actor slot has
@@ -662,18 +650,17 @@ impl EngineInner {
             // element even while the old unconscious Wait is live, so
             // ordinary equal-priority arbitration replaces and
             // retranslates it immediately as StandingUp.
-            self.actor_wait(sim, assets, target);
+            self.actor_wait(tcx, target);
         }
 
         if target_is_pc {
-            self.hero_speaking(assets, target, crate::engine::melee::HERO_RECOVER);
+            self.hero_speaking(tcx.assets, target, crate::engine::melee::HERO_RECOVER);
         }
     }
 
     pub(in crate::engine) fn execute_taking_net_ticks(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         effect: crate::engine::animation::TakingNetTick,
     ) {
         use crate::coordinates::MapVec;
@@ -695,7 +682,7 @@ impl EngineInner {
                     .sequence_manager
                     .get_element(seq_id, elem_idx)
                     .expect("TakingNet live element disappeared");
-                self.check_sequence_element_validity(assets, tick.taker, element, true)
+                self.check_sequence_element_validity(tcx.assets, tick.taker, element, true)
             };
             if !valid {
                 self.get_entity_mut(tick.taker)
@@ -704,11 +691,9 @@ impl EngineInner {
                     .continuation
                     .motion_state = crate::sprite::MotionState::Aborted;
                 self.element_impossible_from_execute(
-                    sim,
-                    assets,
+                    tcx,
                     &mut Vec::new(),
-                    seq_id,
-                    elem_idx,
+                    SequenceElementRef::new(seq_id, elem_idx),
                 );
                 return;
             }
@@ -803,10 +788,10 @@ impl EngineInner {
                     .expect("TakingNet net disappeared during deactivation")
                     .element_data_mut()
                     .active = false;
-                self.unapply_net_effect(sim, assets, tick.net);
+                self.unapply_net_effect(tcx, tick.net);
                 if taker_is_pc {
                     self.increase_ammo_and_enable(
-                        assets,
+                        tcx.assets,
                         tick.taker,
                         crate::profiles::Action::Net,
                         1,
@@ -832,8 +817,7 @@ impl EngineInner {
 
     pub(in crate::engine) fn execute_pickups(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         effect: (EntityId, EntityId),
     ) {
         // TAKING DONE — dispatches by taker + object_type.
@@ -881,7 +865,7 @@ impl EngineInner {
         };
         let is_scroll = matches!(object_entity, crate::element::Entity::Scroll(_));
         if is_scroll {
-            self.scroll_is_taken(sim, assets, object, taker);
+            self.scroll_is_taken(tcx, object, taker);
             return;
         }
 
@@ -904,9 +888,14 @@ impl EngineInner {
 
         match object_type {
             Some(_) if is_landed_net => {
-                self.unapply_net_effect(sim, assets, object);
+                self.unapply_net_effect(tcx, object);
                 if taker_is_pc {
-                    self.increase_ammo_and_enable(assets, taker, crate::profiles::Action::Net, 1);
+                    self.increase_ammo_and_enable(
+                        tcx.assets,
+                        taker,
+                        crate::profiles::Action::Net,
+                        1,
+                    );
                 }
                 self.remove_entity(object);
             }
@@ -917,7 +906,7 @@ impl EngineInner {
             // When the script returns non-zero the status
             // advances to Taken; otherwise it rests at Opened.
             Some(crate::element::ObjectType::Scroll) => {
-                self.take_scroll(sim, assets, taker, object);
+                self.take_scroll(tcx, taker, object);
             }
             Some(obj_type) if taker_is_pc => {
                 // Snapshot the object's position/layer/quantity/
@@ -933,7 +922,7 @@ impl EngineInner {
                 let elem = obj_entity.element_data();
                 let (bx, by, blayer) = (elem.position_map().x, elem.position_map().y, elem.layer());
                 self.apply_pc_take_object(
-                    assets,
+                    tcx.assets,
                     taker,
                     object,
                     obj_type,
@@ -1102,8 +1091,7 @@ impl EngineInner {
 
     pub(in crate::engine) fn execute_wasp_sting_remark(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         effect: EntityId,
     ) {
         // GETTING_FREE_FROM_WASP START — `Say(REMARK_WASP_STING)`.
@@ -1119,8 +1107,7 @@ impl EngineInner {
             .is_some()
         {
             self.execute_ai_speech(
-                sim,
-                assets,
+                tcx,
                 speaker,
                 crate::ai::AiSpeechAttempt {
                     remark: crate::ai::Remark::WaspSting,
@@ -1130,12 +1117,7 @@ impl EngineInner {
         }
     }
 
-    pub(in crate::engine) fn execute_special_remark(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        effect: EntityId,
-    ) {
+    pub(in crate::engine) fn execute_special_remark(&mut self, tcx: TickCtx<'_>, effect: EntityId) {
         // Shield bearers speak unconditionally. Other soldiers draw only
         // while silent, before entering the synchronous speech operation.
         let speaker = effect;
@@ -1148,7 +1130,7 @@ impl EngineInner {
         {
             return;
         }
-        let flags = if self.live_ai_is_shield_bearer(assets, speaker) {
+        let flags = if self.live_ai_is_shield_bearer(tcx.assets, speaker) {
             crate::ai::SpeechFlags::ALWAYS.bits()
         } else {
             let silent = self
@@ -1158,15 +1140,15 @@ impl EngineInner {
                 .current_remark
                 == crate::ai::Remark::TheSoundOfSilence;
             if !silent
-                || crate::sim_rng::u32(sim, crate::sim_rng::RngSite::SpecialActionRemark, 0..3) != 0
+                || crate::sim_rng::u32(tcx.sim, crate::sim_rng::RngSite::SpecialActionRemark, 0..3)
+                    != 0
             {
                 return;
             }
             0
         };
         self.execute_ai_speech(
-            sim,
-            assets,
+            tcx,
             speaker,
             crate::ai::AiSpeechAttempt {
                 remark: crate::ai::Remark::SpecialAction,
@@ -1177,8 +1159,7 @@ impl EngineInner {
 
     pub(in crate::engine) fn execute_cry_for_help_under_net(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         effect: EntityId,
     ) {
         // LYING_STUCK_UNDER_NET 1/31 cycle — NPCs say
@@ -1207,8 +1188,7 @@ impl EngineInner {
             .is_some()
         {
             self.execute_ai_speech(
-                sim,
-                assets,
+                tcx,
                 speaker,
                 crate::ai::AiSpeechAttempt { remark, flags: 0 },
             );
@@ -1224,8 +1204,7 @@ impl EngineInner {
             .z
             .max(0.0) as u16;
         self.broadcast_noise_synchronously(
-            sim,
-            assets,
+            tcx,
             crate::ai::NoiseType::Heeelp,
             origin,
             crate::position_interface::Layer::new(layer),
@@ -1377,7 +1356,7 @@ mod tests {
         };
         let assets = LevelAssets::new();
         for expected_remaining in (0..8).rev() {
-            engine.execute_taking_net_ticks(&sim_context, &assets, tick);
+            engine.execute_taking_net_ticks(TickCtx::new(&sim_context, &assets), tick);
             assert!(engine.get_entity(net).is_some());
             assert_eq!(
                 engine
@@ -1398,7 +1377,7 @@ mod tests {
             8.0
         );
 
-        engine.execute_taking_net_ticks(&sim_context, &assets, tick);
+        engine.execute_taking_net_ticks(TickCtx::new(&sim_context, &assets), tick);
         assert!(
             !engine
                 .get_entity(net)

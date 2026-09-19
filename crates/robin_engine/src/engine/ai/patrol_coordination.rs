@@ -1,10 +1,11 @@
 use super::*;
+use crate::engine::TickCtx;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ai::{AiState, AlertLevel, Position, StimulusInfo, Substate};
-    use crate::engine::test_support::{actors::make_test_ai_soldier, square_sector};
+    use crate::engine::test_support::actors::make_test_ai_soldier;
 
     fn assembly_fixture(points: &[(f32, f32, f32)]) -> (EngineInner, LevelAssets, Vec<EntityId>) {
         let mut engine = EngineInner::new();
@@ -67,11 +68,10 @@ mod tests {
             (102.0, 100.0, 0.0),
             (103.0, 100.0, 0.0),
         ]);
-        engine
-            .get_entity_mut(ids[3])
-            .unwrap()
-            .element_data_mut()
-            .set_position(crate::coordinates::WorldPoint3D::new(f32::NAN, 100.0, 0.0));
+        engine.place(
+            ids[3],
+            crate::coordinates::WorldPoint3D::new(f32::NAN, 100.0, 0.0),
+        );
         engine.initialize_patrol_for_npc(&assets, ids[0]);
         assert_eq!(
             engine
@@ -136,13 +136,7 @@ mod tests {
             .sequence_manager
             .start_sequence_level(sequence);
         engine.select_sequence_element(ids[2], Some((sequence, 0)));
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            sequence,
-            0,
-        );
+        engine.t_element_in_progress(&assets, sequence, 0);
         assert_eq!(
             engine.live_ai_position(ids[2]).map_point(),
             MapPoint::new(100.0, 99.0)
@@ -178,19 +172,9 @@ mod tests {
             (130.0, 100.0, 0.0),
             (140.0, 100.0, 0.0),
         ]);
-        engine
-            .get_entity_mut(ids[1])
-            .unwrap()
-            .enemy_ai_mut()
-            .unwrap()
-            .base
-            .current_state = AiState::Attacking;
-        engine
-            .get_entity_mut(ids[2])
-            .unwrap()
-            .element_data_mut()
-            .active = false;
-        let dead = engine.get_entity_mut(ids[4]).unwrap();
+        engine.enemy_mut(ids[1]).base.current_state = AiState::Attacking;
+        engine.set_active(ids[2], false);
+        let dead = engine.ent_mut(ids[4]);
         dead.element_data_mut().active = false;
         dead.npc_data_mut().unwrap().life_points = 0;
         crate::sight_obstacle::begin_parity_visibility_capture();
@@ -242,15 +226,11 @@ mod tests {
             ),
         ] {
             let mut engine = EngineInner::new();
-            engine.world.fast_grid_mut().size_map(128, 128);
-            engine.world.fast_grid_mut().allocate_layers(1);
-            let index = engine.world.fast_grid_mut().add_sector(
-                square_sector(1, 0, MapPoint::new(0.0, 0.0), MapPoint::new(2000.0, 2000.0)),
-                0,
+            let (sector, _) = crate::engine::test_support::extra_engine_combat::square_sector_map(
+                &mut engine,
+                (128, 128),
+                (2000.0, 2000.0),
             );
-            let sector = crate::ai::SectorHandle::new(1)
-                .unwrap()
-                .with_arena_index(crate::fast_find_grid::SectorIndex::new(index).unwrap());
             let mut ids = Vec::new();
             for x in [100.0, 200.0] {
                 let mut entity = make_test_ai_soldier(crate::element::Camp::Lacklandists);
@@ -291,17 +271,14 @@ mod tests {
                 crate::ai::AlertFlags::empty(),
             );
 
-            engine.execute_ai_coordinate_patrol(
-                &crate::sim_rng::test_context(),
-                &assets,
-                owner,
-                &StimulusInfo::Position(Position {
+            engine
+                .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                .execute_ai_coordinate_patrol(&StimulusInfo::Position(Position {
                     x: 100.0 + distance,
                     y: 100.0,
                     sector: Some(sector),
                     level: 0,
-                }),
-            );
+                }));
 
             let ai = engine
                 .world
@@ -321,112 +298,18 @@ mod tests {
 }
 
 impl EngineInner {
-    pub(in crate::engine) fn execute_ai_coordinate_patrol(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        info: &crate::ai::StimulusInfo,
-    ) {
-        use crate::ai::{AiState, GotoFlags, StimulusInfo, Substate};
-
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("patrol coordinate owner"));
-        if ai.patrol_chief.is_none() {
-            return;
-        }
-        let StimulusInfo::Position(target) = *info else {
-            return;
-        };
-        match ai.current_substate {
-            Substate::DefaultInMacro
-            | Substate::DefaultEnroute
-            | Substate::DefaultGotoPost
-            | Substate::DefaultGotoPostTurn
-            | Substate::DefaultOnPost
-            | Substate::DefaultGotoChief
-            | Substate::DefaultOnPostLookingSidewards => {
-                self.stop_ai_owner(sim, assets, owner);
-            }
-            Substate::DefaultPatrolEnroute
-            | Substate::DefaultPatrolEnrouteRunning
-            | Substate::DefaultPatrolEnrouteWaiting => {}
-            _ => return,
-        }
-
-        let position = self.live_ai_position(owner);
-        let chief = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("patrol coordinate owner"))
-            .patrol_chief
-            .expect("patrol chief disappeared during stop");
-        let chief_position = self.live_ai_position(chief);
-        let to_point = [target.x - position.x, target.y - position.y];
-        let to_chief = [chief_position.x - position.x, chief_position.y - position.y];
-        let distance = (to_point[0] * to_point[0] + to_point[1] * to_point[1]).sqrt();
-        let speed = crate::ai::PATROL_SPEED_BASE + distance / crate::ai::PATROL_SPEED_DIVISOR;
-        let inverse_aspect = crate::position_interface::INVERSE_ASPECT_RATIO;
-        if distance <= 30.0
-            && to_chief[0] * to_point[0]
-                + to_chief[1] * inverse_aspect * to_point[1] * inverse_aspect
-                < 0.0
-        {
-            let direction = crate::position_interface::vector_to_sector_0_to_15(
-                to_chief[0] * crate::position_interface::ASPECT_RATIO,
-                to_chief[1],
-            ) as u16;
-            self.duty_face_direction(sim, assets, owner, direction);
-            return;
-        }
-
-        let walking = speed <= 2.0;
-        let substate = if walking {
-            Substate::DefaultPatrolEnroute
-        } else {
-            Substate::DefaultPatrolEnrouteRunning
-        };
-        self.duty_set_state(sim, assets, owner, AiState::Default, substate);
-        let (flags, speed) = if walking {
-            let flags = self
-                .world
-                .entities
-                .expect_ai_controller(owner, format_args!("patrol walking flags"))
-                .default_path_walking_flags;
-            (GotoFlags::NO_HALT | GotoFlags::DONT_STOP | flags, speed)
-        } else {
-            (
-                GotoFlags::RUN | GotoFlags::NO_HALT | GotoFlags::DONT_STOP,
-                1.0,
-            )
-        };
-        self.duty_go_to_speed(sim, assets, owner, target, flags, speed);
-    }
-
     /// Apply facing from the two actor values it actually reads. In particular,
     /// this runs after coordinate Think, so callback changes are visible.
-    fn instruct_patrol_direction(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        member: EntityId,
-        direction: u16,
-    ) {
+    fn instruct_patrol_direction(&mut self, tcx: TickCtx<'_>, member: EntityId, direction: u16) {
         let entity = self
-            .world
-            .entities
+            .entities()
             .expect_entity(member, format_args!("patrol direction member"));
         let current_direction = entity.element_data().direction() as u16;
         let action_state = entity
             .actor_data()
             .expect("patrol member has no actor data")
             .action_state;
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller_mut(member, format_args!("patrol direction member"));
+        let ai = self.ai_mut(member, "patrol direction member");
         ai.patrol_direction = direction;
         if ai.current_substate == crate::ai::Substate::DefaultPatrolEnrouteWaiting {
             if direction == current_direction
@@ -437,33 +320,25 @@ impl EngineInner {
             {
                 ai.already_turned = true;
             } else {
-                self.launch_live_ai_turn(sim, assets, member, direction as i16, false);
+                self.launch_live_ai_turn(tcx, member, direction as i16, false);
             }
         }
     }
 
     pub(in crate::engine) fn instruct_patrol_direction_to_patrol_members(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         owner: EntityId,
-        assets: &LevelAssets,
         direction: u16,
     ) {
-        let member_count = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("patrol direction chief"))
-            .patrol
-            .len();
+        let member_count = self.ai(owner, "patrol direction chief").patrol.len();
         for index in 0..member_count {
             let member = *self
-                .world
-                .entities
-                .expect_ai_controller(owner, format_args!("patrol direction chief"))
+                .ai(owner, "patrol direction chief")
                 .patrol
                 .get(index)
                 .expect("patrol shrank during direction callback");
-            self.instruct_patrol_direction(sim, assets, member, direction);
+            self.instruct_patrol_direction(tcx, member, direction);
             // Register turns now; owner instruction belongs to the later
             // sequence-manager pass, as with coordinate Think below.
         }
@@ -474,8 +349,7 @@ impl EngineInner {
     /// their owners, without an all-NPC patrol snapshot.
     pub(in crate::engine) fn tick_patrol_coordination_for_npc(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
     ) {
         use crate::ai::{AiState, Stimulus, StimulusType, Substate};
@@ -483,25 +357,17 @@ impl EngineInner {
         if self.actors_frozen() || self.is_very_very_busy(owner) {
             return;
         }
-        let Some(ai) = self
-            .world
-            .entities
-            .get(owner)
-            .and_then(Entity::ai_controller)
-        else {
+        let Some(ai) = self.entities().get(owner).and_then(Entity::ai_controller) else {
             return;
         };
         if !ai.needs_patrol_reinit && ai.patrol.is_empty() && ai.missed_patrol_members.is_empty() {
             return;
         }
         if ai.needs_patrol_reinit {
-            self.initialize_patrol_for_npc(assets, owner);
+            self.initialize_patrol_for_npc(tcx.assets, owner);
         }
 
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("patrol chief"));
+        let ai = self.ai(owner, "patrol chief");
         if (ai.patrol.is_empty() && ai.missed_patrol_members.is_empty())
             || ai.patrol_stopped
             || ai.current_state != AiState::Default
@@ -545,9 +411,7 @@ impl EngineInner {
             path.compute_patrol_positions(ai.patrol.len(), Some(&self.world.fast_grid), &bounds);
         for (index, (target, direction)) in positions.into_iter().enumerate() {
             let member = *self
-                .world
-                .entities
-                .expect_ai_controller(owner, format_args!("patrol chief"))
+                .ai(owner, "patrol chief")
                 .patrol
                 .get(index)
                 .expect("patrol shrank during coordinate callback");
@@ -561,31 +425,27 @@ impl EngineInner {
             }
             let stimulus = Stimulus::with_position(StimulusType::CallPatrolCoordinate, target);
             self.debug_patrol_turn_lifecycle("before_coordinate_think", member);
-            self.execute_ai_callback(sim, assets, member, &stimulus);
+            self.execute_ai_callback(tcx, member, &stimulus);
             // Construct Move before applying direction, but leave its deferred
             // InstructOwner for the normal sequence-manager phase.
             self.debug_patrol_turn_lifecycle("after_coordinate_think", member);
             let member = *self
-                .world
-                .entities
-                .expect_ai_controller(owner, format_args!("patrol chief after coordinate"))
+                .ai(owner, "patrol chief after coordinate")
                 .patrol
                 .get(index)
                 .expect("patrol shrank during coordinate callback");
-            self.instruct_patrol_direction(sim, assets, member, direction);
+            self.instruct_patrol_direction(tcx, member, direction);
             self.debug_patrol_turn_lifecycle("after_instructed_direction_emit", member);
 
             self.debug_patrol_turn_lifecycle("after_instructed_direction_drain", member);
         }
-        self.reacquire_patrol_members(assets, owner);
+        self.reacquire_patrol_members(tcx.assets, owner);
     }
 
     fn reacquire_patrol_members(&mut self, assets: &LevelAssets, owner: EntityId) {
         let mut index = 0;
         while let Some(&member) = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("patrol chief"))
+            .ai(owner, "patrol chief")
             .missed_patrol_members
             .get(index)
         {
@@ -607,19 +467,91 @@ impl EngineInner {
                 able_to_help,
                 npc.ai_state(),
             ) {
-                let ai = self
-                    .world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("patrol chief"));
+                let ai = self.ai_mut(owner, "patrol chief");
                 ai.missed_patrol_members.remove(index);
                 ai.patrol.push(member);
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(member, format_args!("reacquired patrol member"))
-                    .patrol_chief = Some(owner);
+                self.ai_mut(member, "reacquired patrol member").patrol_chief = Some(owner);
             } else {
                 index += 1;
             }
         }
+    }
+}
+
+impl AiOwnerCtx<'_> {
+    pub(in crate::engine) fn execute_ai_coordinate_patrol(
+        &mut self,
+        info: &crate::ai::StimulusInfo,
+    ) {
+        use crate::ai::{AiState, GotoFlags, StimulusInfo, Substate};
+
+        let ai = self.engine.ai(self.owner, "patrol coordinate owner");
+        if ai.patrol_chief.is_none() {
+            return;
+        }
+        let StimulusInfo::Position(target) = *info else {
+            return;
+        };
+        match ai.current_substate {
+            Substate::DefaultInMacro
+            | Substate::DefaultEnroute
+            | Substate::DefaultGotoPost
+            | Substate::DefaultGotoPostTurn
+            | Substate::DefaultOnPost
+            | Substate::DefaultGotoChief
+            | Substate::DefaultOnPostLookingSidewards => {
+                self.stop_ai_owner();
+            }
+            Substate::DefaultPatrolEnroute
+            | Substate::DefaultPatrolEnrouteRunning
+            | Substate::DefaultPatrolEnrouteWaiting => {}
+            _ => return,
+        }
+
+        let position = self.engine.live_ai_position(self.owner);
+        let chief = self
+            .engine
+            .ai(self.owner, "patrol coordinate owner")
+            .patrol_chief
+            .expect("patrol chief disappeared during stop");
+        let chief_position = self.engine.live_ai_position(chief);
+        let to_point = [target.x - position.x, target.y - position.y];
+        let to_chief = [chief_position.x - position.x, chief_position.y - position.y];
+        let distance = (to_point[0] * to_point[0] + to_point[1] * to_point[1]).sqrt();
+        let speed = crate::ai::PATROL_SPEED_BASE + distance / crate::ai::PATROL_SPEED_DIVISOR;
+        let inverse_aspect = crate::position_interface::INVERSE_ASPECT_RATIO;
+        if distance <= 30.0
+            && to_chief[0] * to_point[0]
+                + to_chief[1] * inverse_aspect * to_point[1] * inverse_aspect
+                < 0.0
+        {
+            let direction = crate::position_interface::vector_to_sector_0_to_15(
+                to_chief[0] * crate::position_interface::ASPECT_RATIO,
+                to_chief[1],
+            ) as u16;
+            self.duty_face_direction(direction);
+            return;
+        }
+
+        let walking = speed <= 2.0;
+        let substate = if walking {
+            Substate::DefaultPatrolEnroute
+        } else {
+            Substate::DefaultPatrolEnrouteRunning
+        };
+        self.duty_set_state(AiState::Default, substate);
+        let (flags, speed) = if walking {
+            let flags = self
+                .engine
+                .ai(self.owner, "patrol walking flags")
+                .default_path_walking_flags;
+            (GotoFlags::NO_HALT | GotoFlags::DONT_STOP | flags, speed)
+        } else {
+            (
+                GotoFlags::RUN | GotoFlags::NO_HALT | GotoFlags::DONT_STOP,
+                1.0,
+            )
+        };
+        self.duty_go_to_speed(target, flags, speed);
     }
 }

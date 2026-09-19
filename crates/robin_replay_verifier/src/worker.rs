@@ -249,7 +249,7 @@ fn verify(
         )
     })?;
 
-    let files = robin_ranked_verification::ranked_verifier::confined_official_files(
+    let files = crate::ranked_verification::ranked_verifier::confined_official_files(
         content_root,
         &job.resource_locale_root,
     )
@@ -260,7 +260,7 @@ fn verify(
             "official_content_unavailable",
         )
     })?;
-    let profiles = robin_ranked_verification::ranked_verifier::load_official_profiles(&files)
+    let profiles = crate::ranked_verification::ranked_verifier::load_official_profiles(&files)
         .map_err(|error| {
             tracing::warn!(%error, "cannot load official profiles");
             stage.infrastructure(
@@ -285,7 +285,7 @@ fn verify(
         )
     })?;
 
-    let preparation = robin_ranked_verification::ranked_verifier::prepare_ranked_replay_mission(
+    let preparation = crate::ranked_verification::ranked_verifier::prepare_ranked_replay_mission(
         files,
         &profiles,
         &header.campaign,
@@ -412,9 +412,9 @@ enum FailureKind {
 }
 
 fn ranked_loader_failure(
-    error: &robin_ranked_verification::ranked_verifier::RankedVerifierLoadError,
+    error: &crate::ranked_verification::ranked_verifier::RankedVerifierLoadError,
 ) -> (FailureKind, &'static str) {
-    use robin_ranked_verification::ranked_verifier::RankedVerifierLoadError;
+    use crate::ranked_verification::ranked_verifier::RankedVerifierLoadError;
     match error {
         RankedVerifierLoadError::Campaign(_) | RankedVerifierLoadError::CampaignContent(_) => (
             FailureKind::Rejected(VerificationRejectionCodeV1::StartingStateMismatch),

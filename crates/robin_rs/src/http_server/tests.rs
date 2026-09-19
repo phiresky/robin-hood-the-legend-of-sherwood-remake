@@ -486,9 +486,8 @@ mod dispatch_tests {
     #[test]
     fn shared_dispatch_preserves_admission_commands_queries_and_capability_differences() {
         for graphical in [false, true] {
-            let mut assets = LevelAssets::new();
-            let mut engine = Engine::new_for_test(1024.0, 768.0, Default::default(), &mut assets)
-                .expect("RPC fixture engine");
+            let (mut engine, assets) =
+                robin_engine::test_support::fresh_engine_sized(1024.0, 768.0);
             let mut host = crate::host::Host::scratch(1024.0, 768.0);
             let mut ingress = SessionIngress::detached_for_test();
             // Cancellation must occur before taint accounting or mutation.
@@ -572,9 +571,8 @@ mod dispatch_tests {
     #[test]
     fn headless_diagnostic_policy_omits_rng_without_mutating_live_engine() {
         for graphical in [false, true] {
-            let mut assets = LevelAssets::new();
-            let mut engine =
-                Engine::new_for_test(1024.0, 768.0, Default::default(), &mut assets).unwrap();
+            let (mut engine, mut assets) =
+                robin_engine::test_support::fresh_engine_sized(1024.0, 768.0);
             engine = Engine::new(engine_api::EngineArgs {
                 campaign: engine.campaign().clone(),
                 level: engine_api::LevelLoadArgs {

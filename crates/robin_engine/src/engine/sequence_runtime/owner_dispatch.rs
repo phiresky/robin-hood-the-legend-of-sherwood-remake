@@ -1,4 +1,6 @@
 use super::*;
+use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 impl EngineInner {
     /// Instruct an actor at the caller's scheduling boundary. The result
@@ -6,15 +8,21 @@ impl EngineInner {
     /// postponement and completion during translation.
     pub(in crate::engine) fn instruct_owner(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) -> bool {
-        let prepared =
-            self.prepare_owner_instruction(sim, assets, active_scripts, owner, seq_id, elem_idx);
+        let SequenceElementRef {
+            sequence_id: seq_id,
+            element_index: elem_idx,
+        } = elem_ref;
+        let prepared = self.prepare_owner_instruction(
+            tcx,
+            active_scripts,
+            owner,
+            SequenceElementRef::new(seq_id, elem_idx),
+        );
         let PreparedOwnerInstruction {
             owner,
             cmd,
@@ -24,13 +32,11 @@ impl EngineInner {
             Err(handled) => return handled,
         };
         self.translate_instructed_command(
-            sim,
-            assets,
+            tcx,
             active_scripts,
             owner,
             cmd,
-            seq_id,
-            elem_idx,
+            SequenceElementRef::new(seq_id, elem_idx),
         );
         // Translation can synchronously finish this element or instruct another
         // one. Only the instruction still selected by the actor owns acceptance.
@@ -48,7 +54,11 @@ impl EngineInner {
             return true;
         }
         actor.continuation.motion_state = crate::sprite::MotionState::InProgress;
-        self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
+        self.element_in_progress(
+            tcx,
+            active_scripts,
+            SequenceElementRef::new(seq_id, elem_idx),
+        );
         self.world
             .entities
             .expect_actor_data_mut(owner, format_args!("accepted instruction owner"))
@@ -65,7 +75,11 @@ impl EngineInner {
             // Clear selection before completion callbacks: this accepted empty
             // instruction no longer owns the actor's goal or any nested order.
             self.select_sequence_element(owner, None);
-            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_terminated(
+                tcx,
+                active_scripts,
+                SequenceElementRef::new(seq_id, elem_idx),
+            );
         } else {
             self.world
                 .entities
@@ -84,8 +98,7 @@ impl EngineInner {
 
     pub(in crate::engine) fn dispatch_sequence_phase_action(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         action: crate::sequence::SequenceAction,
     ) {
         {
@@ -96,12 +109,10 @@ impl EngineInner {
                     element_index,
                 } => {
                     self.instruct_owner(
-                        sim,
-                        assets,
+                        tcx,
                         &mut Vec::new(),
                         owner,
-                        sequence_id,
-                        element_index,
+                        SequenceElementRef::new(sequence_id, element_index),
                     );
                 }
                 crate::sequence::SequenceAction::ExecuteImmediateOwner {
@@ -110,8 +121,7 @@ impl EngineInner {
                     element_index: elem_idx,
                 } => {
                     self.dispatch_script_synchronous_action(
-                        sim,
-                        assets,
+                        tcx,
                         crate::sequence::SequenceAction::ExecuteImmediateOwner {
                             owner,
                             sequence_id: seq_id,
@@ -129,11 +139,16 @@ impl EngineInner {
                     sequence_id: seq_id,
                     element_index: elem_idx,
                 } => {
-                    if let Some((msg, arg1, arg2)) =
-                        self.dispatch_engine_or_execute_immediate(sim, assets, seq_id, elem_idx)
-                    {
-                        self.dispatch_sequence_messages(sim, assets, &[], &[(msg, arg1, arg2)]);
-                        self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
+                    if let Some((msg, arg1, arg2)) = self.dispatch_engine_or_execute_immediate(
+                        tcx,
+                        SequenceElementRef::new(seq_id, elem_idx),
+                    ) {
+                        self.dispatch_sequence_messages(tcx, &[], &[(msg, arg1, arg2)]);
+                        self.element_terminated(
+                            tcx,
+                            &mut Vec::new(),
+                            SequenceElementRef::new(seq_id, elem_idx),
+                        );
                     }
                 }
             }
@@ -146,45 +161,35 @@ impl EngineInner {
     /// matches together form one match over disjoint command patterns.
     fn translate_instructed_command(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         cmd: Command,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
         match cmd {
             Command::Move | Command::Seek => self.dispatch_ordered_move_seek_instruct(
-                sim,
-                assets,
+                tcx,
                 active_scripts,
                 owner,
-                seq_id,
-                elem_idx,
+                elem_ref.sequence_id,
+                elem_ref.element_index,
             ),
             Command::ShootBow | Command::ShootBowOnce => {
-                self.instruct_shoot_bow(sim, assets, active_scripts, owner, seq_id, elem_idx, cmd)
+                self.instruct_shoot_bow(tcx, active_scripts, owner, elem_ref, cmd)
             }
             Command::PassDoor => {
-                self.instruct_pass_door(sim, assets, active_scripts, owner, seq_id, elem_idx);
+                self.instruct_pass_door(tcx, active_scripts, owner, elem_ref);
             }
             // ── CHANGE_POSITION ────────────────────────
             // Instant teleport to a new position.
             Command::ChangePosition => {
-                self.instruct_change_position(sim, assets, active_scripts, owner, seq_id, elem_idx)
+                self.instruct_change_position(tcx, active_scripts, owner, elem_ref)
             }
             // ── ASSERT_POSITION ────────────────────────
             // Check actor is at expected position/sector.
             Command::AssertPosition => {
-                self.dispatch_position_assertion(
-                    sim,
-                    assets,
-                    active_scripts,
-                    owner,
-                    seq_id,
-                    elem_idx,
-                );
+                self.dispatch_position_assertion(tcx, active_scripts, owner, elem_ref);
             }
             // ── WAIT_FREE_LIFT ──────────────────────
             // Translation is identical to WAIT: book the
@@ -195,13 +200,11 @@ impl EngineInner {
             // instruction boundary.
             Command::WaitFreeLift => {
                 self.dispatch_wait_command(
-                    sim,
-                    assets,
+                    tcx,
                     active_scripts,
                     owner,
                     Command::WaitFreeLift,
-                    seq_id,
-                    elem_idx,
+                    elem_ref,
                 );
             }
             // ── Sword strike commands ────────────────
@@ -213,44 +216,27 @@ impl EngineInner {
             | Command::SwordstrikeThrustF
             | Command::SwordstrikeThrustG
             | Command::SwordstrikeThrustH
-            | Command::SwordstrikeThrustI => self.instruct_swordstrike_thrust_a(
-                sim,
-                assets,
-                active_scripts,
-                owner,
-                seq_id,
-                elem_idx,
-            ),
+            | Command::SwordstrikeThrustI => {
+                self.instruct_swordstrike_thrust_a(tcx, active_scripts, owner, elem_ref)
+            }
 
             // ── Swordfight enter/quit ───────────────
             Command::EnterSwordfight | Command::PrepareSwordfight => {
-                self.instruct_enter_swordfight(sim, assets, active_scripts, owner, seq_id, elem_idx)
+                self.instruct_enter_swordfight(tcx, active_scripts, owner, elem_ref)
             }
             Command::QuitSwordfight => {
-                self.dispatch_quit_swordfight(sim, assets, active_scripts, owner, seq_id, elem_idx)
+                self.dispatch_quit_swordfight(tcx, active_scripts, owner, elem_ref)
             }
 
             // ── Parry commands ──────────────────────
-            Command::ParrySword => self.dispatch_parry_sword(
-                sim,
-                assets,
-                active_scripts,
-                owner,
-                false,
-                seq_id,
-                elem_idx,
-            ),
-            Command::ParrySwordLow => self.dispatch_parry_sword(
-                sim,
-                assets,
-                active_scripts,
-                owner,
-                true,
-                seq_id,
-                elem_idx,
-            ),
+            Command::ParrySword => {
+                self.dispatch_parry_sword(tcx, active_scripts, owner, false, elem_ref)
+            }
+            Command::ParrySwordLow => {
+                self.dispatch_parry_sword(tcx, active_scripts, owner, true, elem_ref)
+            }
             Command::StopParrySword => {
-                self.dispatch_stop_parry(sim, assets, active_scripts, owner, seq_id, elem_idx)
+                self.dispatch_stop_parry(tcx, active_scripts, owner, elem_ref)
             }
 
             // ── Damage reception commands ───────────
@@ -261,7 +247,7 @@ impl EngineInner {
             | Command::ReceiveHitDamage
             | Command::ReceiveMobileDamage
             | Command::ReceiveNet => {
-                self.dispatch_receive_damage(sim, assets, active_scripts, owner, seq_id, elem_idx)
+                self.dispatch_receive_damage(tcx, active_scripts, owner, elem_ref)
             }
 
             // ── Shoulder-fall sub-sequence ──────────
@@ -269,7 +255,7 @@ impl EngineInner {
             // the carrier/carried partner when shoulder-
             // damage lands on the other side of the carry.
             Command::Fall => {
-                self.dispatch_fall(sim, assets, owner, seq_id, elem_idx);
+                self.dispatch_fall(tcx, owner, elem_ref);
             }
 
             // ── NPC head-turn / lean-out commands ────
@@ -284,33 +270,19 @@ impl EngineInner {
             // overwrote the first and only one of the
             // two head turns played.
             Command::LookLeft | Command::LookRight | Command::LeanOut => {
-                self.dispatch_npc_attention_command(
-                    sim,
-                    assets,
-                    active_scripts,
-                    owner,
-                    cmd,
-                    seq_id,
-                    elem_idx,
-                );
+                self.dispatch_npc_attention_command(tcx, active_scripts, owner, cmd, elem_ref);
             }
 
             // ── Attentive-mode transitions ───────────
             Command::EnterAttentiveMode
             | Command::LeaveAttentiveMode
-            | Command::LeaveAttentiveModeOfficer => self.instruct_attentive_mode(
-                sim,
-                assets,
-                active_scripts,
-                owner,
-                seq_id,
-                elem_idx,
-                cmd,
-            ),
+            | Command::LeaveAttentiveModeOfficer => {
+                self.instruct_attentive_mode(tcx, active_scripts, owner, elem_ref, cmd)
+            }
 
             // ── Wasp sting ─────────────────────────
             Command::ReceiveWaspSting => {
-                self.dispatch_receive_wasp_sting(sim, assets, owner, seq_id, elem_idx);
+                self.dispatch_receive_wasp_sting(tcx, owner, elem_ref);
             }
 
             // ── Stealth posture commands ────────────
@@ -322,29 +294,17 @@ impl EngineInner {
             | Command::LeaveHelpingClimb
             | Command::EnterCloak
             | Command::LeaveSpy
-            | Command::LeaveTree => self.instruct_stealth_posture(
-                sim,
-                assets,
-                active_scripts,
-                owner,
-                seq_id,
-                elem_idx,
-                cmd,
-            ),
+            | Command::LeaveTree => {
+                self.instruct_stealth_posture(tcx, active_scripts, owner, elem_ref, cmd)
+            }
 
             // ── Shield commands ─────────────────────
             Command::RaiseShield
             | Command::RaiseShieldInstantly
             | Command::LowerShield
-            | Command::ParryShield => self.instruct_raise_shield(
-                sim,
-                assets,
-                active_scripts,
-                owner,
-                seq_id,
-                elem_idx,
-                cmd,
-            ),
+            | Command::ParryShield => {
+                self.instruct_raise_shield(tcx, active_scripts, owner, elem_ref, cmd)
+            }
             // ── Bow equip / raise / lower ───────────
             //
             // The original game's actor translation appends
@@ -357,15 +317,9 @@ impl EngineInner {
             | Command::EquipBowDown
             | Command::UnequipBow
             | Command::RaiseBow
-            | Command::LowerBow => self.dispatch_bow_transition(
-                sim,
-                assets,
-                active_scripts,
-                owner,
-                cmd,
-                seq_id,
-                elem_idx,
-            ),
+            | Command::LowerBow => {
+                self.dispatch_bow_transition(tcx, active_scripts, owner, cmd, elem_ref)
+            }
             // ── Hide behind shield ──────────────────
             //
             // 1. Holder must be holding-shield (HOLDING/
@@ -380,29 +334,19 @@ impl EngineInner {
             // 3. Push the HIDING_BEHIND_SHIELD non-animation
             //    order with the shield holder as antagonist.
             Command::HideBehindShield => {
-                self.instruct_hide_behind_shield(sim, assets, active_scripts, seq_id, elem_idx)
+                self.instruct_hide_behind_shield(tcx, active_scripts, elem_ref)
             }
 
             // ── Other sword-related commands ────────
             Command::SwordstrikeDown => {
-                self.instruct_swordstrike_down(sim, assets, active_scripts, owner, seq_id, elem_idx)
+                self.instruct_swordstrike_down(tcx, active_scripts, owner, elem_ref)
             }
-            Command::GetKilledAtBottom => self.instruct_get_killed_at_bottom(
-                sim,
-                assets,
-                active_scripts,
-                owner,
-                seq_id,
-                elem_idx,
-            ),
-            Command::SwordstrikeTired => self.instruct_swordstrike_tired(
-                sim,
-                assets,
-                active_scripts,
-                owner,
-                seq_id,
-                elem_idx,
-            ),
+            Command::GetKilledAtBottom => {
+                self.instruct_get_killed_at_bottom(tcx, active_scripts, owner, elem_ref)
+            }
+            Command::SwordstrikeTired => {
+                self.instruct_swordstrike_tired(tcx, active_scripts, owner, elem_ref)
+            }
             // ── Smalltalk strikes / parries (Wait priority) ─
             // WAIT-priority launch is synchronous. Use the same
             // narrow translator from both the normal sequence
@@ -411,15 +355,7 @@ impl EngineInner {
             | Command::SwordstrikeSmalltalkRight
             | Command::ParrySmalltalkLeft
             | Command::ParrySmalltalkRight => {
-                self.dispatch_smalltalk_command(
-                    sim,
-                    assets,
-                    active_scripts,
-                    owner,
-                    cmd,
-                    seq_id,
-                    elem_idx,
-                );
+                self.dispatch_smalltalk_command(tcx, active_scripts, owner, cmd, elem_ref);
             }
             // ── Provoke (taunt) ─────────────────────
             // Say `ProvokesCombat` and queue a `Provoking`
@@ -430,31 +366,19 @@ impl EngineInner {
             // `melee::process_pc_combat_anim_speech`
             // fires `HERO_PROVOKE_OPPONENT` for PCs.
             Command::Provoke => {
-                self.dispatch_provoke(sim, assets, owner, seq_id, elem_idx);
+                self.dispatch_provoke(tcx, owner, elem_ref.sequence_id, elem_ref.element_index);
             }
             Command::Fainted
             | Command::Recover
             | Command::StandUp
             | Command::WakeUp
-            | Command::Knee => self.dispatch_recovery_command(
-                sim,
-                assets,
-                active_scripts,
-                owner,
-                cmd,
-                seq_id,
-                elem_idx,
-            ),
+            | Command::Knee => {
+                self.dispatch_recovery_command(tcx, active_scripts, owner, cmd, elem_ref)
+            }
 
-            _ => self.translate_instructed_ability_command(
-                sim,
-                assets,
-                active_scripts,
-                owner,
-                cmd,
-                seq_id,
-                elem_idx,
-            ),
+            _ => {
+                self.translate_instructed_ability_command(tcx, active_scripts, owner, cmd, elem_ref)
+            }
         }
     }
 
@@ -463,25 +387,37 @@ impl EngineInner {
     /// catch-all for commands without an owner translation.
     fn translate_instructed_ability_command(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         cmd: Command,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
+        let SequenceElementRef {
+            sequence_id: seq_id,
+            element_index: elem_idx,
+        } = elem_ref;
         match cmd {
             // ── Ability commands ─────────────────────
-            Command::TakeCorpse => {
-                self.instruct_take_corpse(sim, assets, active_scripts, owner, seq_id, elem_idx)
-            }
-            Command::DropCorpse => {
-                self.instruct_drop_corpse(sim, assets, active_scripts, owner, seq_id, elem_idx)
-            }
-            Command::HitCmd | Command::StrangleCmd => {
-                self.instruct_hit_cmd(sim, assets, active_scripts, owner, seq_id, elem_idx, cmd)
-            }
+            Command::TakeCorpse => self.instruct_take_corpse(
+                tcx,
+                active_scripts,
+                owner,
+                SequenceElementRef::new(seq_id, elem_idx),
+            ),
+            Command::DropCorpse => self.instruct_drop_corpse(
+                tcx,
+                active_scripts,
+                owner,
+                SequenceElementRef::new(seq_id, elem_idx),
+            ),
+            Command::HitCmd | Command::StrangleCmd => self.instruct_hit_cmd(
+                tcx,
+                active_scripts,
+                owner,
+                SequenceElementRef::new(seq_id, elem_idx),
+                cmd,
+            ),
             Command::TieCmd
             | Command::Untie
             | Command::HealCmd
@@ -494,33 +430,44 @@ impl EngineInner {
             | Command::ThrowPurse
             | Command::ThrowWaspNest
             | Command::ThrowApple
-            | Command::ThrowStone => {
-                self.instruct_tie_cmd(sim, assets, active_scripts, owner, seq_id, elem_idx, cmd)
-            }
-            Command::ClimbDownFromShoulders => self.instruct_climb_down_from_shoulders(
-                sim,
-                assets,
+            | Command::ThrowStone => self.instruct_tie_cmd(
+                tcx,
                 active_scripts,
                 owner,
-                seq_id,
-                elem_idx,
+                SequenceElementRef::new(seq_id, elem_idx),
+                cmd,
+            ),
+            Command::ClimbDownFromShoulders => self.instruct_climb_down_from_shoulders(
+                tcx,
+                active_scripts,
+                owner,
+                SequenceElementRef::new(seq_id, elem_idx),
             ),
             Command::ClimbUpOnShoulders => self.instruct_climb_up_on_shoulders(
-                sim,
-                assets,
+                tcx,
                 active_scripts,
                 owner,
-                seq_id,
-                elem_idx,
+                SequenceElementRef::new(seq_id, elem_idx),
             ),
-            Command::Pay => self.instruct_pay(sim, assets, active_scripts, owner, seq_id, elem_idx),
-            Command::DropAmmo => {
-                self.instruct_drop_ammo(sim, assets, active_scripts, owner, seq_id, elem_idx)
-            }
+            Command::Pay => self.instruct_pay(
+                tcx,
+                active_scripts,
+                owner,
+                SequenceElementRef::new(seq_id, elem_idx),
+            ),
+            Command::DropAmmo => self.instruct_drop_ammo(
+                tcx,
+                active_scripts,
+                owner,
+                SequenceElementRef::new(seq_id, elem_idx),
+            ),
             // ── Drop ale bottle ───────────────────────
-            Command::DropAle => {
-                self.instruct_drop_ale(sim, assets, active_scripts, owner, seq_id, elem_idx)
-            }
+            Command::DropAle => self.instruct_drop_ale(
+                tcx,
+                active_scripts,
+                owner,
+                SequenceElementRef::new(seq_id, elem_idx),
+            ),
             // ── Turn ───────────────────────────────
             // Rotate the actor to face the `CameraPoint`
             // property (or `Direction` property if no
@@ -532,13 +479,15 @@ impl EngineInner {
             // element and push Turning onto the order
             // queue; only Upright posture is legal.
             Command::Turn | Command::TurnFast => {
-                self.dispatch_turn_command(owner, cmd, seq_id, elem_idx)
+                self.dispatch_turn_command(owner, cmd, SequenceElementRef::new(seq_id, elem_idx))
             }
 
             // Face the element's antagonist, then push
             // Turning.  Carried by
             // `SequenceElementData::Interaction`.
-            Command::TurnElement => self.dispatch_turn_command(owner, cmd, seq_id, elem_idx),
+            Command::TurnElement => {
+                self.dispatch_turn_command(owner, cmd, SequenceElementRef::new(seq_id, elem_idx))
+            }
 
             // Owner-ful Freeze pushes a `Freezing` order
             // onto the element.  The engine-side
@@ -546,7 +495,9 @@ impl EngineInner {
             // (`dispatch_engine_or_execute_immediate`)
             // handles non-owner Freeze
             // (which collapses into FreezeAll).
-            Command::Freeze => self.dispatch_turn_command(owner, cmd, seq_id, elem_idx),
+            Command::Freeze => {
+                self.dispatch_turn_command(owner, cmd, SequenceElementRef::new(seq_id, elem_idx))
+            }
 
             // ── Point / GatherSoldiers ─────────────
             // Each pushes a single one-shot animation
@@ -558,7 +509,7 @@ impl EngineInner {
             // element on animation completion, wired via
             // `AiAnimCompletion::SequenceElement`.
             Command::Point | Command::GatherSoldiers => {
-                self.dispatch_turn_command(owner, cmd, seq_id, elem_idx)
+                self.dispatch_turn_command(owner, cmd, SequenceElementRef::new(seq_id, elem_idx))
             }
 
             // ── Wait (soldier-specific override) ───
@@ -577,13 +528,11 @@ impl EngineInner {
             // `translate_instructed_command`, then rechecked by its
             // owner after Execute.
             Command::Wait | Command::WaitTimer => self.dispatch_wait_command(
-                sim,
-                assets,
+                tcx,
                 active_scripts,
                 owner,
                 cmd,
-                seq_id,
-                elem_idx,
+                SequenceElementRef::new(seq_id, elem_idx),
             ),
             // ── NPC-specific one-shot anims ────────
             // Each command appends one animation order
@@ -602,7 +551,7 @@ impl EngineInner {
             // already been queued ahead of the command's own
             // animation.
             Command::SitDown | Command::BeggarShowFace | Command::EnterLeisure => {
-                self.dispatch_npc_state_command(cmd, seq_id, elem_idx)
+                self.dispatch_npc_state_command(cmd, SequenceElementRef::new(seq_id, elem_idx))
             }
             // ── Menace / Sleep transitions ─────────
             // Each pushes a fixed sequence of transition
@@ -616,7 +565,9 @@ impl EngineInner {
             | Command::StopMenace
             | Command::StopSleep
             | Command::LowerBowLeanOut
-            | Command::RaiseBowLeanOut => self.dispatch_npc_state_command(cmd, seq_id, elem_idx),
+            | Command::RaiseBowLeanOut => {
+                self.dispatch_npc_state_command(cmd, SequenceElementRef::new(seq_id, elem_idx))
+            }
             // ── DrinkAle / Take ────────────────────
             // DrinkAle / Take push a single interaction
             // order whose animation (DRINKING_ALE /
@@ -629,7 +580,11 @@ impl EngineInner {
             // `apply_soldier_execute_side_effects`
             // handler picks up the target.
             Command::DrinkAle | Command::Take => {
-                self.dispatch_object_interaction_command(owner, cmd, seq_id, elem_idx);
+                self.dispatch_object_interaction_command(
+                    owner,
+                    cmd,
+                    SequenceElementRef::new(seq_id, elem_idx),
+                );
             }
 
             // ── UnlockDoor ─────────────────────────
@@ -643,12 +598,17 @@ impl EngineInner {
             // happen on animation end.  Target door is
             // read from the `Field::Door` property set
             // by `launch_gate_movement_sequence`.
-            Command::UnlockDoor => self.instruct_unlock_door(owner, seq_id, elem_idx),
+            Command::UnlockDoor => {
+                self.instruct_unlock_door(owner, SequenceElementRef::new(seq_id, elem_idx))
+            }
 
             // ── Jump ────────────────────────────────
-            Command::JumpCmd => {
-                self.instruct_jump(sim, assets, active_scripts, owner, seq_id, elem_idx)
-            }
+            Command::JumpCmd => self.instruct_jump(
+                tcx,
+                active_scripts,
+                owner,
+                SequenceElementRef::new(seq_id, elem_idx),
+            ),
 
             Command::ActivateApple
             | Command::ActivateArrow
@@ -659,33 +619,33 @@ impl EngineInner {
             | Command::ActivateSearch
             | Command::ActivateStone
             | Command::ActivateSword => self.instruct_activate_target(
-                sim,
-                assets,
+                tcx,
                 active_scripts,
                 owner,
-                seq_id,
-                elem_idx,
+                SequenceElementRef::new(seq_id, elem_idx),
                 cmd,
             ),
 
             Command::PlayAnim
             | Command::PlayAnimLoop
             | Command::PlayAnimFreeze
-            | Command::PlayAnimFrozen => {
-                self.instruct_play_anim(sim, assets, active_scripts, owner, seq_id, elem_idx, cmd)
-            }
+            | Command::PlayAnimFrozen => self.instruct_play_anim(
+                tcx,
+                active_scripts,
+                owner,
+                SequenceElementRef::new(seq_id, elem_idx),
+                cmd,
+            ),
 
             Command::HitTarget
             | Command::HandleTarget
             | Command::UseLever
             | Command::TakeTarget
             | Command::SearchCmd => self.instruct_target_interaction(
-                sim,
-                assets,
+                tcx,
                 active_scripts,
                 owner,
-                seq_id,
-                elem_idx,
+                SequenceElementRef::new(seq_id, elem_idx),
                 cmd,
             ),
 

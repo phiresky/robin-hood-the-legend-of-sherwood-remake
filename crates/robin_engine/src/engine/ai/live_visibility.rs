@@ -13,15 +13,13 @@ impl EngineInner {
         target_id: EntityId,
     ) -> bool {
         let viewer = self
-            .world
-            .entities
+            .entities()
             .expect_entity(viewer_id, format_args!("180-degree viewer"));
         if self.entity_data_in_building_sector(viewer.element_data()) || !viewer.is_active() {
             return false;
         }
         let target = self
-            .world
-            .entities
+            .entities()
             .expect_entity(target_id, format_args!("180-degree target"));
         assert!(
             target.human_data().is_some(),

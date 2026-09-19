@@ -208,22 +208,10 @@ fn no_script_mode_still_constructs_doors_lifts_and_sector_links() {
             .sector_number_map
             .insert(crate::sector::SectorNumber::new(sector_number), grid_index);
         level.sectors.push(crate::fast_find_grid::GridSector {
-            points: Vec::new(),
             bounding_box: crate::coordinates::MapBBox::new(),
             sector_type: crate::sector::SectorType::MOTION | crate::sector::SectorType::AREA,
-            layer: 0,
             sector_number: crate::sector::SectorNumber::new(sector_number),
-            door_index: None,
-            lift_type: None,
-            lift_direction: 0,
-            force_crouched: false,
-            building_index: None,
-            low_exit_point: None,
-            high_exit_point: None,
-            lowest_door_index: None,
-            jump_line_indices: Vec::new(),
-            gate_indices: Vec::new(),
-            underlying_sector: None,
+            ..Default::default()
         });
     }
     let grid_allocation = std::sync::Arc::as_ptr(&engine.world.fast_grid.level);
@@ -259,22 +247,10 @@ fn reinforcement_door_resolves_exact_out_of_map_endpoint_identity() {
             .level_mut()
             .sectors
             .push(crate::fast_find_grid::GridSector {
-                points: Vec::new(),
                 bounding_box: crate::coordinates::MapBBox::new(),
                 sector_type: crate::sector::SectorType::MOTION | crate::sector::SectorType::AREA,
-                layer: 0,
                 sector_number: crate::sector::SectorNumber::new(sector_number),
-                door_index: None,
-                lift_type: None,
-                lift_direction: 0,
-                force_crouched: false,
-                building_index: None,
-                low_exit_point: None,
-                high_exit_point: None,
-                lowest_door_index: None,
-                jump_line_indices: Vec::new(),
-                gate_indices: Vec::new(),
-                underlying_sector: None,
+                ..Default::default()
             });
     }
     engine
@@ -312,22 +288,10 @@ fn reinforcement_door_resolves_exact_out_of_map_endpoint_identity() {
 #[test]
 fn reinforcement_install_resolves_sparse_slot_across_public_sector_collision() {
     let motion_area = |public| crate::fast_find_grid::GridSector {
-        points: Vec::new(),
         bounding_box: crate::coordinates::MapBBox::new(),
         sector_type: crate::sector::SectorType::MOTION | crate::sector::SectorType::AREA,
-        layer: 0,
         sector_number: crate::sector::SectorNumber::new(public),
-        door_index: None,
-        lift_type: None,
-        lift_direction: 0,
-        force_crouched: false,
-        building_index: None,
-        low_exit_point: None,
-        high_exit_point: None,
-        lowest_door_index: None,
-        jump_line_indices: Vec::new(),
-        gate_indices: Vec::new(),
-        underlying_sector: None,
+        ..Default::default()
     };
     let mut engine = EngineInner::new();
     engine.world.fast_grid_mut().level_mut().sectors =
@@ -534,10 +498,7 @@ fn building_trap_tenant_uses_canonical_adapted_first_door() {
     let mut engine = EngineInner::new();
     let carried_id = engine.add_test_entity(civilian());
     {
-        let carried = engine
-            .get_entity_mut(carried_id)
-            .expect("carried fixture exists")
-            .element_data_mut();
+        let carried = engine.elem_mut(carried_id);
         carried.set_layer(2);
         carried.set_sector(crate::position_interface::SectorHandle::new(12));
         carried.set_position_map(MapPoint::new(80.0, 90.0));
@@ -595,9 +556,7 @@ fn building_trap_tenant_uses_canonical_adapted_first_door() {
     assert_eq!(tenant_sector.arena_index(), Some(adapted_sector_index));
     assert!(!tenant.element_data().active);
 
-    let carried = engine
-        .get_entity(carried_id)
-        .expect("carried tenant fixture remains live");
+    let carried = engine.ent(carried_id);
     assert!(
         carried.element_data().active,
         "occupant initialization changes the tenant's active state, not its carried actor's"

@@ -9,7 +9,9 @@
 //! flow, and state transitions.
 
 mod ability_execution;
+mod accessors_short;
 mod ai;
+use crate::sequence::SequenceElementRef;
 pub(crate) use ai::debug_detectable_mutation_load_snapshot;
 mod achievements;
 pub use achievements::PcExperienceSnapshot;
@@ -84,6 +86,8 @@ pub(crate) mod test_support;
 #[cfg(test)]
 mod tests;
 mod tick;
+mod tick_ctx;
+pub(crate) use tick_ctx::TickCtx;
 mod titbit_sync;
 mod trading;
 mod transitions;
@@ -105,10 +109,12 @@ pub(crate) use movement::{
     adapt_source_to_current_door_with_identity, current_door_for_route_source,
 };
 pub use peripherals::{CameraDisplayState, DebugFlags, DevState, HostDisplayState};
+#[cfg(any(test, feature = "original-parity"))]
+pub use rollback_safe::ParityReplaySetup;
 pub use rollback_safe::{
     CompressedEngineSnapshot, Engine, EngineArgs, GroundMarkSpriteData, HostConsoleDispatch,
-    LevelLoadArgs, MinimapWidgetSetup, MissionBootstrapCompletion, ParityReplaySetup,
-    PresentationEngine, SnapshotGridComponent, SnapshotRestoreError, SpatialPresentationSnapshot,
+    LevelLoadArgs, MinimapWidgetSetup, MissionBootstrapCompletion, PresentationEngine,
+    SnapshotGridComponent, SnapshotRestoreError, SpatialPresentationSnapshot,
 };
 pub use scroll_reveal::{BeggarRemark, ScrollStatus};
 pub use seat::SeatState;
@@ -170,8 +176,7 @@ pub const GROUP_LIMIT_MIN: u16 = 10;
 /// Camera slide speed in frames.
 pub const CAMERA_COUNTER: u16 = 15;
 
-/// Frame timing target: 40ms = 25fps.
-pub const FRAME_TIME_MS: u32 = 40;
+pub use robin_run_types::FRAME_TIME_MS;
 /// Slow-motion multiplier.
 pub const SLOW_MOTION_FRAME_TIME_MS: u32 = 400;
 
@@ -736,7 +741,11 @@ impl EngineInner {
         // now that AI initialization's typed state changes synchronously dispatch
         // FilterAIEvent through the bound actor VMs.
         if self.scripts.mission.is_some() {
-            self.initialize_mission_script_with(sim, assets, 0, &assets.navigation.hiking_paths);
+            self.initialize_mission_script_with(
+                TickCtx::new(sim, assets),
+                0,
+                &assets.navigation.hiking_paths,
+            );
         }
 
         tracing::debug!(
@@ -794,7 +803,7 @@ impl EngineInner {
                 self.is_pc_selectable(assets, pc_id),
                 "highest-priority playable PC {pc_id:?} is not selectable after mission initialization"
             );
-            self.select_pc(sim, assets, 0, pc_id, false, false);
+            self.select_pc(TickCtx::new(sim, assets), 0, pc_id, false, false);
             assert_eq!(
                 self.players.seats[0].selection.as_slice(),
                 &[pc_id],
@@ -885,13 +894,13 @@ impl EngineInner {
     /// and clear the slot. Called before latching a new camera command
     /// onto [`CameraState::sequence_element`]; the previous element is
     /// transitioned to `Terminated` and the slot nulled.
-    pub(super) fn terminate_prev_camera_sequence_element(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
+    pub(super) fn terminate_prev_camera_sequence_element(&mut self, tcx: TickCtx<'_>) {
         if let Some(r) = self.feedback.cutscene_camera.sequence_element.take() {
-            self.element_terminated(sim, assets, &mut Vec::new(), r.sequence_id, r.element_index);
+            self.element_terminated(
+                tcx,
+                &mut Vec::new(),
+                SequenceElementRef::new(r.sequence_id, r.element_index),
+            );
         }
     }
 
@@ -940,8 +949,7 @@ impl EngineInner {
     ///
     pub(crate) fn apply_quit_mission_updates(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         exit_code: crate::game_operation::GameCode,
         difficulty: crate::player_profile::DifficultyLevel,
         completed_at_unix_seconds: Option<i64>,
@@ -956,10 +964,10 @@ impl EngineInner {
         if won {
             // A terminal script may have moved or spawned actors after the
             // preceding regular tick scan. Freeze the exact terminal layout.
-            self.refresh_achievement_progress(assets);
+            self.refresh_achievement_progress(tcx.assets);
         }
 
-        let profiles = &assets.profile_manager;
+        let profiles = &tcx.assets.profile_manager;
         let campaign = self.mission_domain.campaign_mut();
         if campaign.current_mission_idx.is_some() {
             campaign.set_mission_done(won, None, profiles);
@@ -967,7 +975,7 @@ impl EngineInner {
 
         let (living, dead) = self.count_soldiers_at_quit();
 
-        self.reset_all_pc_comas(sim, assets);
+        self.reset_all_pc_comas(tcx);
 
         if won && self.mission_domain.campaign().current_mission_idx.is_some() {
             // The LIVING/DEAD/SCORE value additions are gated on
@@ -977,7 +985,7 @@ impl EngineInner {
             self.mission_domain.apply_won_updates(
                 &mut self.feedback.pending_side_effects,
                 self.control.frame_counter,
-                sim,
+                tcx.sim,
                 profiles,
                 living,
                 dead,
@@ -990,7 +998,7 @@ impl EngineInner {
         }
 
         if won {
-            self.evaluate_campaign_deeds(assets);
+            self.evaluate_campaign_deeds(tcx.assets);
             self.mission_domain.achievements.finalize_success();
         }
 
@@ -1100,11 +1108,7 @@ impl EngineInner {
     ///
     /// Iterates all PCs and calls ResetComa on any that are in coma
     /// (amulet death-save).
-    pub(crate) fn reset_all_pc_comas(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
+    pub(crate) fn reset_all_pc_comas(&mut self, tcx: TickCtx<'_>) {
         let coma_pc_ids: Vec<EntityId> = {
             let campaign = self.mission_domain.campaign();
             self.world
@@ -1122,7 +1126,7 @@ impl EngineInner {
                 .collect()
         };
         for pc_id in coma_pc_ids {
-            self.reset_coma(sim, assets, pc_id);
+            self.reset_coma(tcx, pc_id);
         }
     }
 
@@ -1863,8 +1867,7 @@ impl EngineInner {
     /// immediate command whitelist.
     pub(crate) fn launch_element(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         elem: crate::sequence::SequenceElement,
     ) -> crate::sequence::SequenceId {
         let attentive_owner = elem.owner.filter(|_| {
@@ -1884,7 +1887,7 @@ impl EngineInner {
             );
         }
         let seq_id = self
-            .launch_element_inline(sim, assets, &mut Vec::new(), elem)
+            .launch_element_inline(tcx, &mut Vec::new(), elem)
             .unwrap_or_else(|error| panic!("sequence element launch failed: {error:?}"));
         if let Some(owner) = attentive_owner {
             self.trace_attentive_owner_handoff(
@@ -1902,16 +1905,14 @@ impl EngineInner {
     #[cfg(test)]
     pub(crate) fn launch_element_for_owner(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         elem: crate::sequence::SequenceElement,
     ) -> crate::sequence::SequenceId {
         let owner = elem.owner.expect("instruction fixture requires an owner");
         let seq_id = self.orders.sequence_manager.insert_element(elem);
         self.orders.sequence_manager.start_sequence_level(seq_id);
         self.dispatch_sequence_phase_action(
-            sim,
-            assets,
+            tcx,
             crate::sequence::SequenceAction::InstructOwner {
                 owner,
                 sequence_id: seq_id,
@@ -1965,12 +1966,7 @@ impl EngineInner {
     /// un-stamped element (leaving the field at `Posture::Undefined`)
     /// would cause the alerted transition animation to silently not
     /// fire.
-    fn stamp_element_transition_state(
-        &mut self,
-        owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
-    ) {
+    fn stamp_element_transition_state(&mut self, owner: EntityId, elem_ref: SequenceElementRef) {
         let (actor_posture, actor_action_state) = self
             .get_entity(owner)
             .map(|e| {
@@ -1979,11 +1975,7 @@ impl EngineInner {
                 (posture, action_state)
             })
             .unwrap_or_default();
-        if let Some(elem) = self
-            .orders
-            .sequence_manager
-            .get_element_mut(seq_id, elem_idx)
-        {
+        if let Some(elem) = self.orders.sequence_manager.get_element_at_mut(elem_ref) {
             elem.posture_after_transition = actor_posture;
             elem.action_state_after_transition = actor_action_state;
         }
@@ -2050,8 +2042,7 @@ impl EngineInner {
     /// `false` otherwise.
     fn non_interruptable_guard(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         new_seq: crate::sequence::SequenceId,
@@ -2098,19 +2089,15 @@ impl EngineInner {
             // The move will be invalid after this newly-instructed door
             // pass executes. Once Execute has run, the lifecycle flag is
             // cleared and later moves are postponed normally.
-            self.element_impossible(sim, assets, active_scripts, new_seq, new_idx);
+            self.element_impossible(
+                tcx,
+                active_scripts,
+                SequenceElementRef::new(new_seq, new_idx),
+            );
         } else {
             // `new.Postpone(current)` — current is the blocker, new is
             // the waiter.
-            self.engine_postpone(
-                sim,
-                assets,
-                active_scripts,
-                cur_seq,
-                cur_idx,
-                new_seq,
-                new_idx,
-            );
+            self.engine_postpone(tcx, active_scripts, cur_seq, cur_idx, new_seq, new_idx);
         }
         true
     }
@@ -2122,14 +2109,13 @@ impl EngineInner {
     /// pre-event command.
     pub(crate) fn actor_wait(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
     ) -> crate::sequence::SequenceId {
         let mut wait_elem =
             crate::sequence::SequenceElement::new(1, crate::element::Command::Wait, Some(owner));
         wait_elem.priority = crate::sequence::SequencePriority::Wait;
-        self.launch_element(sim, assets, wait_elem)
+        self.launch_element(tcx, wait_elem)
     }
 
     /// Freeze an actor's execution and cascade-interrupt the
@@ -2142,12 +2128,7 @@ impl EngineInner {
     /// which left any in-progress element in `InProgress` state; when
     /// the freeze was later cleared, the animation driver re-read a
     /// stale InProgress element instead of the postponed successor.
-    pub(crate) fn actor_freeze_execution(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
+    pub(crate) fn actor_freeze_execution(&mut self, tcx: TickCtx<'_>, owner: EntityId) {
         use crate::sequence::CascadeFlags;
 
         if let Some(entity) = self.world.entities.get_mut(owner)
@@ -2164,11 +2145,9 @@ impl EngineInner {
             // hero-speech on an actor that has been frozen / killed.
             crate::engine::order_arbitration::stop_owner_active_mechanics(&mut self.orders, owner);
             self.element_interrupted(
-                sim,
-                assets,
+                tcx,
                 &mut Vec::new(),
-                cur_seq,
-                cur_idx,
+                SequenceElementRef::new(cur_seq, cur_idx),
                 CascadeFlags::NEXT_LEVEL,
             );
         }
@@ -2183,12 +2162,10 @@ impl EngineInner {
     /// speech, and cascade `Impossible` into later posture recovery work.
     fn pc_instruct_early_completion(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) -> bool {
         if !self.get_entity(owner).is_some_and(Entity::is_pc) {
             return false;
@@ -2196,7 +2173,7 @@ impl EngineInner {
         let command = self
             .orders
             .sequence_manager
-            .get_element(seq_id, elem_idx)
+            .get_element_at(elem_ref)
             .map(|element| element.command);
         if matches!(
             command,
@@ -2207,7 +2184,7 @@ impl EngineInner {
                 .and_then(Entity::human_data)
                 .is_some_and(|human| !human.opponents.is_empty())
             {
-                self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                self.element_impossible(tcx, active_scripts, elem_ref);
                 return true;
             }
             // Posture commands stop nonmovement work before transition
@@ -2221,8 +2198,7 @@ impl EngineInner {
                 .is_some_and(|element| !element.command.is_part_of_movement());
             if current_is_nonmovement {
                 self.stop_actor_orders(
-                    sim,
-                    assets,
+                    tcx,
                     active_scripts,
                     owner,
                     crate::sequence::SequencePriority::Preference,
@@ -2239,8 +2215,8 @@ impl EngineInner {
             }
             _ => return false,
         };
-        self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
-        self.hero_speaking(assets, owner, expression);
+        self.element_terminated(tcx, active_scripts, elem_ref);
+        self.hero_speaking(tcx.assets, owner, expression);
         true
     }
 
@@ -2253,11 +2229,10 @@ impl EngineInner {
     /// registration and dispatch.
     pub(crate) fn launch_sequence(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         seq: crate::sequence::Sequence,
     ) -> crate::sequence::SequenceId {
-        self.launch_sequence_inline(sim, assets, &mut Vec::new(), seq)
+        self.launch_sequence_inline(tcx, &mut Vec::new(), seq)
             .unwrap_or_else(|error| panic!("sequence launch failed: {error:?}"))
     }
 
@@ -2356,8 +2331,7 @@ impl EngineInner {
     /// seek element, and launches the stored sequence at info priority.
     pub(crate) fn start_post_seek_sequence(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         seek_element: Option<(crate::sequence::SequenceId, usize)>,
@@ -2391,21 +2365,24 @@ impl EngineInner {
             && self.get_entity(target_id).is_some_and(|e| e.is_pc())
         {
             self.stop_actor_orders(
-                sim,
-                assets,
+                tcx,
                 active_scripts,
                 target_id,
                 crate::sequence::SequencePriority::Normal,
             );
         }
         if let Some((seq_id, elem_idx)) = seek_element {
-            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_terminated(
+                tcx,
+                active_scripts,
+                SequenceElementRef::new(seq_id, elem_idx),
+            );
         }
 
         // Termination callbacks can register the parent's next command level.
         // Register the post-seek sequence after that successor while retaining
         // the live script context throughout the synchronous callbacks.
-        self.launch_sequence_inline(sim, assets, active_scripts, post_seek.into_sequence())
+        self.launch_sequence_inline(tcx, active_scripts, post_seek.into_sequence())
             .unwrap_or_else(|error| panic!("post-seek sequence launch failed: {error:?}"));
         true
     }
@@ -2429,12 +2406,7 @@ impl EngineInner {
     /// dispatches that should not fire from a halt.
     ///
     /// Movement calls halt here unless `GotoFlags::NO_HALT` is set.
-    pub(crate) fn halt_actor(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
+    pub(crate) fn halt_actor(&mut self, tcx: TickCtx<'_>, owner: EntityId) {
         if let Some(entity) = self.get_entity_mut(owner)
             && let Some(ai) = entity.ai_controller_mut()
         {
@@ -2443,8 +2415,7 @@ impl EngineInner {
         self.orders.sequence_manager.set_halt_pending(true);
 
         self.stop_actor_orders(
-            sim,
-            assets,
+            tcx,
             &mut Vec::new(),
             owner,
             crate::sequence::SequencePriority::Preference,
@@ -2474,15 +2445,13 @@ impl EngineInner {
     /// resolved eagerly.
     pub(crate) fn launch_damage(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         actor: EntityId,
         hp: u16,
         concussion: u16,
     ) -> crate::sequence::SequenceId {
         self.launch_sequence(
-            sim,
-            assets,
+            tcx,
             crate::sequence::Sequence::single_damage(actor, hp, concussion),
         )
     }
@@ -2585,6 +2554,7 @@ impl EngineInner {
 
 #[cfg(test)]
 mod campaign_lifecycle_tests {
+    use crate::engine::TickCtx;
     use std::sync::Arc;
 
     use super::{EngineInner, LevelAssets};
@@ -2653,8 +2623,7 @@ mod campaign_lifecycle_tests {
         let mut engine = EngineInner::new_with_campaign(campaign);
 
         engine.apply_quit_mission_updates(
-            sim,
-            &LevelAssets::default(),
+            TickCtx::new(sim, &LevelAssets::default()),
             GameCode::LevelFailed,
             DifficultyLevel::Medium,
             None,
@@ -2684,8 +2653,7 @@ mod campaign_lifecycle_tests {
         engine.mission_domain.mission_stat.total_soldier_count = 5;
         engine.mission_domain.mission_stat.new_peasant_count = 99;
         engine.apply_quit_mission_updates(
-            sim,
-            &assets,
+            TickCtx::new(sim, &assets),
             GameCode::LevelSucceeded,
             DifficultyLevel::Medium,
             None,
@@ -2724,8 +2692,7 @@ mod campaign_lifecycle_tests {
             .record_evaluation(AchievementId::Ghost, AchievementEvaluation::Earned)
             .unwrap();
         failed.apply_quit_mission_updates(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             GameCode::LevelFailed,
             DifficultyLevel::Medium,
             None,
@@ -2740,8 +2707,7 @@ mod campaign_lifecycle_tests {
             .record_evaluation(AchievementId::Ghost, AchievementEvaluation::Earned)
             .unwrap();
         succeeded.apply_quit_mission_updates(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             GameCode::LevelSucceeded,
             DifficultyLevel::Medium,
             None,
@@ -2773,8 +2739,7 @@ mod campaign_lifecycle_tests {
         engine.add_test_entity(lacklandist_soldier(0));
 
         engine.apply_quit_mission_updates(
-            sim,
-            &assets,
+            TickCtx::new(sim, &assets),
             GameCode::LevelSucceeded,
             DifficultyLevel::Medium,
             None,

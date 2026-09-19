@@ -5,61 +5,29 @@ use crate::ai::{
     AiEntityHandle, AiSpeechAttempt, AiState, DutyFlags, GotoFlags, Remark, ReportType, Substate,
 };
 use crate::ai_enemy::SeekFlags;
-use crate::sim_rng::SimulationContext;
+use crate::engine::TickCtx;
 
 impl EngineInner {
-    pub(in crate::engine) fn execute_finish_exhausted_search(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
-        let enemy = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("completed search"));
-        if enemy.base.my_reconnaissance_report.report_type <= ReportType::Noise
-            && !enemy
-                .seek_flags
-                .intersects(SeekFlags::REPORT_OFFICER_AFTER | SeekFlags::LOOK_FOR_HELP_AFTER)
-        {
-            self.execute_ai_speech(
-                sim,
-                assets,
-                owner,
-                AiSpeechAttempt {
-                    remark: Remark::EndsSearch,
-                    flags: 0,
-                },
-            );
-        }
-    }
-
     pub(in crate::engine) fn execute_kill_nearby_sleeping_enemies(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         observer_camp: Camp,
     ) {
         self.execute_ai_unfocus(owner);
 
         let trainer = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("sleeping enemy search duty gate"))
+            .enemy_ai(owner, "sleeping enemy search duty gate")
             .combat_trainer;
         let entity = self.expect_entity(owner, "sleeping enemy search forest gate");
         let forest_foot_soldier = self.is_player_aligned_camp(entity.camp())
             && self.world.weather.is_forest_level
             && !entity.soldier_data().is_some_and(|soldier| soldier.rider);
         if trainer || forest_foot_soldier {
-            self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
+            self.execute_ai_return_to_duty(tcx, owner, DutyFlags::empty());
         }
 
-        self.world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("sleeping enemy list reset"))
+        self.enemy_ai_mut(owner, "sleeping enemy list reset")
             .list_them
             .clear();
         // Registry membership is selected after duty callbacks. No callback occurs
@@ -75,38 +43,32 @@ impl EngineInner {
                     .expect("fighter must be human")
                     .carrier
                     .is_some()
-                || !self.patrol_member_visible(assets, owner, target)
+                || !self.patrol_member_visible(tcx.assets, owner, target)
                 || !self.sleeping_enemy_attack_allowed(owner, target)
             {
                 continue;
             }
-            self.world
-                .entities
-                .expect_enemy_ai_mut(owner, format_args!("sleeping enemy list insertion"))
+            self.enemy_ai_mut(owner, "sleeping enemy list insertion")
                 .list_them
                 .push(target.index());
         }
 
-        self.approach_selected_sleeping_enemy(sim, assets, owner);
+        self.approach_selected_sleeping_enemy(tcx, owner);
     }
 
     pub(in crate::engine) fn execute_approach_sleeping_enemies(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         targets: Vec<crate::ai::HumanHandle>,
     ) {
-        let enemy = self
-            .world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("retained sleeping enemies"));
+        let enemy = self.enemy_ai_mut(owner, "retained sleeping enemies");
         assert!(
             enemy.list_them.is_empty(),
             "retained sleeping enemies require an empty hostile list"
         );
         enemy.list_them = targets;
-        self.approach_selected_sleeping_enemy(sim, assets, owner);
+        self.approach_selected_sleeping_enemy(tcx, owner);
     }
 
     pub(in crate::engine) fn select_nearest_battle_target(
@@ -117,40 +79,27 @@ impl EngineInner {
             .map(|target| self.expect_human_id_for_ai_handle(target.get(), "nearest battle target"))
     }
 
-    fn approach_selected_sleeping_enemy(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
+    fn approach_selected_sleeping_enemy(&mut self, tcx: TickCtx<'_>, owner: EntityId) {
         let nearest = self.select_nearest_battle_target(owner);
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("sleeping enemy primary target"))
+        self.ai_mut(owner, "sleeping enemy primary target")
             .primary_target = nearest.map(|id| AiEntityHandle::new(id.index()));
         if nearest.is_some() {
             self.duty_set_state(
-                sim,
-                assets,
+                tcx,
                 owner,
                 AiState::Attacking,
                 Substate::AttackingApproachingSleepingEnemy,
             );
             let target = self
-                .world
-                .entities
-                .expect_ai_controller(
-                    owner,
-                    format_args!("sleeping enemy primary after state change"),
-                )
+                .ai(owner, "sleeping enemy primary after state change")
                 .primary_target
                 .expect("sleeping enemy approach requires primary target");
             let target =
                 self.expect_human_id_for_ai_handle(target.get(), "sleeping enemy approach target");
             let position = self.live_ai_position(target);
-            self.duty_go_near(sim, assets, owner, position, 20, GotoFlags::RUN);
+            self.duty_go_near(tcx, owner, position, 20, GotoFlags::RUN);
         } else {
-            self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
+            self.execute_ai_return_to_duty(tcx, owner, DutyFlags::empty());
         }
     }
 
@@ -160,13 +109,27 @@ impl EngineInner {
         target: EntityId,
     ) -> bool {
         let vip = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("sleeping enemy attack authorization"))
+            .enemy_ai(owner, "sleeping enemy attack authorization")
             .is_vip;
         let target = self.expect_entity(target, "sleeping enemy authorization target");
         (!vip || matches!(target, Entity::Pc(pc) if pc.pc.robin))
             && (matches!(target, Entity::Pc(_)) || !target.is_vip())
+    }
+}
+
+impl AiOwnerCtx<'_> {
+    pub(in crate::engine) fn execute_finish_exhausted_search(&mut self) {
+        let enemy = self.engine.enemy_ai(self.owner, "completed search");
+        if enemy.base.my_reconnaissance_report.report_type <= ReportType::Noise
+            && !enemy
+                .seek_flags
+                .intersects(SeekFlags::REPORT_OFFICER_AFTER | SeekFlags::LOOK_FOR_HELP_AFTER)
+        {
+            self.execute_ai_speech(AiSpeechAttempt {
+                remark: Remark::EndsSearch,
+                flags: 0,
+            });
+        }
     }
 }
 
@@ -175,25 +138,18 @@ mod tests {
     use super::*;
     use crate::coordinates::WorldPoint3D;
     use crate::element::Posture;
-    use crate::engine::test_support::{
-        actors::{make_test_ai_soldier, make_test_pc},
-        square_sector,
-    };
+    use crate::engine::test_support::actors::{make_test_ai_soldier, make_test_pc};
 
     fn sleeping_pair(
         first: MapPoint,
         second: MapPoint,
     ) -> (EngineInner, LevelAssets, EntityId, [EntityId; 2]) {
         let mut engine = EngineInner::new();
-        engine.world.fast_grid_mut().size_map(128, 128);
-        engine.world.fast_grid_mut().allocate_layers(1);
-        let index = engine.world.fast_grid_mut().add_sector(
-            square_sector(1, 0, MapPoint::new(0.0, 0.0), MapPoint::new(2000.0, 2000.0)),
-            0,
+        let (sector, _) = crate::engine::test_support::extra_engine_combat::square_sector_map(
+            &mut engine,
+            (128, 128),
+            (2000.0, 2000.0),
         );
-        let sector = crate::position_interface::SectorHandle::new(1)
-            .unwrap()
-            .with_arena_index(crate::fast_find_grid::SectorIndex::new(index).unwrap());
         let owner = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
         let targets = [
             engine.add_test_entity(make_test_pc(Posture::Lying)),
@@ -204,7 +160,7 @@ mod tests {
             (targets[0], first),
             (targets[1], second),
         ] {
-            let entity = engine.get_entity_mut(id).unwrap();
+            let entity = engine.ent_mut(id);
             entity.element_data_mut().set_sector(Some(sector));
             entity
                 .element_data_mut()
@@ -213,8 +169,7 @@ mod tests {
             entity.human_data_mut().unwrap().unconscious = id != owner;
         }
         engine
-            .get_entity_mut(owner)
-            .unwrap()
+            .ent_mut(owner)
             .ai_actor_data_mut()
             .unwrap()
             .view_radius = 500;
@@ -266,8 +221,7 @@ mod tests {
         enemy.base.current_substate = Substate::AttackingBowObserving;
         enemy.list_them = vec![owner.index()];
         engine.execute_kill_nearby_sleeping_enemies(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             Camp::Lacklandists,
         );
@@ -293,8 +247,7 @@ mod tests {
             MapPoint::new(1417.7587, 185.4791),
         );
         engine.execute_approach_sleeping_enemies(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             targets.map(|id| id.index()).to_vec(),
         );
@@ -310,11 +263,7 @@ mod tests {
             enemy.base.current_substate,
             Substate::AttackingApproachingSleepingEnemy
         );
-        engine
-            .get_entity_mut(targets[0])
-            .unwrap()
-            .element_data_mut()
-            .set_position(WorldPoint3D::new(1378.0, 252.0, 0.0));
+        engine.place(targets[0], WorldPoint3D::new(1378.0, 252.0, 0.0));
         assert_eq!(engine.select_nearest_battle_target(owner), Some(targets[0]));
     }
 
@@ -328,16 +277,8 @@ mod tests {
             .expect_enemy_ai_mut(owner, format_args!("test sleeper order"))
             .list_them = targets.map(|id| id.index()).to_vec();
         assert_eq!(engine.select_nearest_battle_target(owner), Some(targets[0]));
-        let first_position = engine
-            .get_entity(targets[0])
-            .unwrap()
-            .element_data()
-            .position();
-        engine
-            .get_entity_mut(targets[1])
-            .unwrap()
-            .element_data_mut()
-            .set_position(first_position);
+        let first_position = engine.pos_of(targets[0]);
+        engine.place(targets[1], first_position);
         assert_eq!(engine.select_nearest_battle_target(owner), Some(targets[0]));
     }
 }

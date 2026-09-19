@@ -1,4 +1,6 @@
 use super::*;
+use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 #[test]
 fn zoom_dispatch_uses_supplied_camera_display_not_owned_placeholder() {
@@ -126,7 +128,7 @@ fn pending_sequence_animation_starts_after_entity_hourglass_boundary() {
     element.posture_after_transition = Posture::Upright;
     let sequence_id = {
         let launch_assets = engine.test_runtime_assets();
-        engine.launch_element(&crate::sim_rng::test_context(), &launch_assets, element)
+        engine.t_launch_element(&launch_assets, element)
     };
 
     let mut display = HostDisplayState::default();
@@ -146,24 +148,14 @@ fn pending_sequence_animation_starts_after_entity_hourglass_boundary() {
         .order_id
         .get();
     assert_eq!(
-        engine
-            .get_entity(soldier_id)
-            .expect("soldier present")
-            .element_data()
-            .sprite
-            .last_processed_order_id,
+        engine.elem(soldier_id).sprite.last_processed_order_id,
         u32::MAX,
         "an order dispatched by the sequence manager after the entity loop must not animate in that same frame"
     );
 
     engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
     assert_eq!(
-        engine
-            .get_entity(soldier_id)
-            .expect("soldier present")
-            .element_data()
-            .sprite
-            .last_processed_order_id,
+        engine.elem(soldier_id).sprite.last_processed_order_id,
         order_id,
         "the dispatched animation must start on the following entity frame"
     );
@@ -208,13 +200,13 @@ fn carried_corpse_transition_drops_before_following_whistle_order() {
     let carried = engine.add_test_entity(make_test_soldier(Posture::Carried));
     let carrier = engine.add_test_entity(make_test_pc(Posture::CarryingCorpse));
     {
-        let entity = engine.get_entity_mut(carrier).unwrap();
+        let entity = engine.ent_mut(carrier);
         let pc = entity.pc_data_mut().unwrap();
         pc.carried = Some(carried);
         pc.set_live_carried_posture(Posture::Lying);
     }
     {
-        let entity = engine.get_entity_mut(carried).unwrap();
+        let entity = engine.ent_mut(carried);
         entity.human_data_mut().unwrap().carrier = Some(carrier);
         entity.actor_data_mut().unwrap().execution_frozen = true;
     }
@@ -238,11 +230,7 @@ fn carried_corpse_transition_drops_before_following_whistle_order() {
         std::sync::Arc::new(vec![dropped_script; 16]),
         std::sync::Arc::new(dropped_conversion),
     );
-    engine
-        .get_entity_mut(carried)
-        .unwrap()
-        .element_data_mut()
-        .sprite = dropped_sprite;
+    engine.elem_mut(carried).sprite = dropped_sprite;
 
     let transition = OrderType::TransitionCarryingCorpseWaitingUpright;
     let script = SpriteScript {
@@ -263,16 +251,8 @@ fn carried_corpse_transition_drops_before_following_whistle_order() {
         std::sync::Arc::new(vec![script; 16]),
         std::sync::Arc::new(conversion),
     );
-    engine
-        .get_entity_mut(carrier)
-        .unwrap()
-        .element_data_mut()
-        .sprite = sprite;
-    engine
-        .get_entity_mut(carrier)
-        .unwrap()
-        .element_data_mut()
-        .set_direction_instantly(13);
+    engine.elem_mut(carrier).sprite = sprite;
+    engine.face(carrier, 13);
 
     let transition_id = engine.orders.allocate_order_id();
     let transition_order = Order::new(transition, 0.0, 0.0, transition_id);
@@ -283,30 +263,23 @@ fn carried_corpse_transition_drops_before_following_whistle_order() {
     element.orders.push_back(whistle_order);
     let sequence = {
         let launch_assets = engine.test_runtime_assets();
-        engine.launch_element(&crate::sim_rng::test_context(), &launch_assets, element)
+        engine.t_launch_element(&launch_assets, element)
     };
     engine.select_sequence_element(carrier, Some((sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        sequence,
-        0,
-    );
+    engine.t_element_in_progress(&LevelAssets::new(), sequence, 0);
 
-    let sim = crate::sim_rng::test_context();
     let assets = assets_with_test_pc_profile();
     for _ in 0..8 {
-        engine.tick_actor_owner_envelopes(&sim, &assets);
-        if engine.get_entity(carrier).unwrap().posture() == Posture::Upright {
+        engine.t_tick_actor_owner_envelopes(&assets);
+        if engine.posture_of(carrier) == Posture::Upright {
             break;
         }
     }
 
-    let carrier_entity = engine.get_entity(carrier).unwrap();
+    let carrier_entity = engine.ent(carrier);
     assert_eq!(carrier_entity.posture(), Posture::Upright);
     assert_eq!(carrier_entity.pc_data().unwrap().carried, None);
-    let carried_entity = engine.get_entity(carried).unwrap();
+    let carried_entity = engine.ent(carried);
     assert_eq!(carried_entity.posture(), Posture::Lying);
     assert_eq!(carried_entity.human_data().unwrap().carrier, None);
     assert!(!carried_entity.actor_data().unwrap().execution_frozen);
@@ -347,7 +320,7 @@ fn selected_action_stop_drops_mid_grab_before_the_body_actor_slot() {
     let body = engine.add_test_entity(make_test_soldier(Posture::Tied));
     let carrier = engine.add_test_entity(make_test_pc(Posture::Upright));
     {
-        let carrier_entity = engine.get_entity_mut(carrier).unwrap();
+        let carrier_entity = engine.ent_mut(carrier);
         carrier_entity.pc_data_mut().unwrap().carried = Some(body);
         carrier_entity
             .pc_data_mut()
@@ -370,7 +343,7 @@ fn selected_action_stop_drops_mid_grab_before_the_body_actor_slot() {
         };
         let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[tied as usize] = 0;
-        let body_entity = engine.get_entity_mut(body).unwrap();
+        let body_entity = engine.ent_mut(body);
         body_entity.element_data_mut().sprite = crate::sprite::Sprite::new(
             std::sync::Arc::new(vec![script; 16]),
             std::sync::Arc::new(conversion),
@@ -391,16 +364,10 @@ fn selected_action_stop_drops_mid_grab_before_the_body_actor_slot() {
     ));
     let take_sequence = {
         let launch_assets = engine.test_runtime_assets();
-        engine.launch_element(&crate::sim_rng::test_context(), &launch_assets, take)
+        engine.t_launch_element(&launch_assets, take)
     };
     engine.select_sequence_element(carrier, Some((take_sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        take_sequence,
-        0,
-    );
+    engine.t_element_in_progress(&LevelAssets::new(), take_sequence, 0);
     engine.players.seats[0].selection = vec![carrier];
 
     let sim = crate::sim_rng::test_context();
@@ -419,12 +386,7 @@ fn selected_action_stop_drops_mid_grab_before_the_body_actor_slot() {
     );
 
     assert_eq!(
-        engine
-            .get_entity(body)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .carrier,
+        engine.human(body).carrier,
         None,
         "SelectAction's synchronous stop completion must release the body before the update"
     );
@@ -437,8 +399,8 @@ fn selected_action_stop_drops_mid_grab_before_the_body_actor_slot() {
     assert_eq!(selected.command, Command::Wait);
     let expected_order_id = selected.current_order().map(|order| order.order_id);
 
-    engine.tick_actor_owner_envelopes(&sim, &assets);
-    let body_entity = engine.get_entity(body).unwrap();
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
+    let body_entity = engine.ent(body);
     assert_eq!(body_entity.sprite().last_action, OrderType::BeingTied);
     assert_eq!(
         body_entity.actor_data().unwrap().last_execute_order_id,
@@ -457,11 +419,7 @@ fn inactive_actor_hourglass_installs_and_advances_idle_wait() {
 
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .element_data_mut()
-        .active = false;
+    engine.set_active(owner, false);
 
     assert!(
         engine
@@ -474,9 +432,9 @@ fn inactive_actor_hourglass_installs_and_advances_idle_wait() {
 
     let sim = crate::sim_rng::test_context();
     let mut assets = engine.test_runtime_assets();
-    engine.tick_actor_owner_envelopes(&sim, &assets);
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
 
-    let entity = engine.get_entity(owner).unwrap();
+    let entity = engine.ent(owner);
     assert!(!entity.is_active());
     assert_eq!(
         engine
@@ -504,7 +462,7 @@ fn inactive_actor_hourglass_installs_and_advances_idle_wait() {
     };
     let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[OrderType::WaitingUpright as usize] = 0;
-    let entity = engine.get_entity_mut(animated).unwrap();
+    let entity = engine.ent_mut(animated);
     entity.element_data_mut().active = false;
     entity.actor_data_mut().unwrap().action_state = crate::element::ActionState::Waiting;
     entity.element_data_mut().sprite = crate::sprite::Sprite::new(
@@ -516,29 +474,23 @@ fn inactive_actor_hourglass_installs_and_advances_idle_wait() {
     selected
         .orders
         .push_back(Order::test_new(OrderType::WaitingUpright, 0.0, 0.0));
-    let sequence = engine.launch_element(&crate::sim_rng::test_context(), &assets, selected);
+    let sequence = engine.t_launch_element(&assets, selected);
     engine.select_sequence_element(animated, Some((sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        sequence,
-        0,
-    );
+    engine.t_element_in_progress(&LevelAssets::new(), sequence, 0);
 
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     let mut executed_idle = false;
     let mut forwarded_termination = false;
     for _ in 0..16 {
-        let executed = engine.tick_actor_animation_for(&sim, &assets, animated);
+        let executed = engine.tick_actor_animation_for(TickCtx::new(&sim, &assets), animated);
         executed_idle |= executed.is_some();
         forwarded_termination |= executed == Some(MotionState::Terminated);
         if forwarded_termination {
             break;
         }
     }
-    let entity = engine.get_entity(animated).unwrap();
+    let entity = engine.ent(animated);
     assert!(
         executed_idle,
         "inactive actor updates must execute the selected idle order"
@@ -565,15 +517,9 @@ fn unconscious_tied_wait_keeps_advancing_its_hold_animation() {
     let order = Order::test_new(OrderType::BeingTied, 0.0, 0.0);
     let order_id = order.order_id;
     selected.orders.push_back(order);
-    let sequence = engine.launch_element(&crate::sim_rng::test_context(), &assets, selected);
+    let sequence = engine.t_launch_element(&assets, selected);
     engine.select_sequence_element(owner, Some((sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        sequence,
-        0,
-    );
+    engine.t_element_in_progress(&LevelAssets::new(), sequence, 0);
 
     let script = SpriteScript {
         action_id: OrderType::BeingTied as u16,
@@ -589,7 +535,7 @@ fn unconscious_tied_wait_keeps_advancing_its_hold_animation() {
     };
     let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[OrderType::BeingTied as usize] = 0;
-    let entity = engine.get_entity_mut(owner).unwrap();
+    let entity = engine.ent_mut(owner);
     entity.human_data_mut().unwrap().unconscious = true;
     entity.actor_data_mut().unwrap().action_state = ActionState::Waiting;
     entity.element_data_mut().sprite = crate::sprite::Sprite::new(
@@ -600,8 +546,7 @@ fn unconscious_tied_wait_keeps_advancing_its_hold_animation() {
     entity.element_data_mut().sprite.last_processed_order_id = order_id.get();
 
     let executed = engine.tick_actor_animation_for(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         owner,
     );
 
@@ -614,13 +559,16 @@ fn unconscious_tied_wait_keeps_advancing_its_hold_animation() {
     // sprite's 0xFFFF frame-count sentinel wraps to 0 on the first tick and
     // advances to 1 on the second. A frozen hold would leave it untouched.
     assert_eq!(
-        engine.get_entity(owner).unwrap().sprite().frame_count,
+        engine.ent(owner).sprite().frame_count,
         0,
         "the tied hold must advance by one action step on its first tick"
     );
-    engine.tick_actor_animation_for(&crate::sim_rng::test_context(), &LevelAssets::new(), owner);
+    engine.tick_actor_animation_for(
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
+        owner,
+    );
     assert_eq!(
-        engine.get_entity(owner).unwrap().sprite().frame_count,
+        engine.ent(owner).sprite().frame_count,
         1,
         "the tied hold must retain the original game's per-tick action processing"
     );
@@ -653,26 +601,22 @@ fn face_to_waits_for_manager_after_live_halt() {
         80.0,
         NonZeroU32::new(777).unwrap(),
     ));
-    let movement_sequence =
-        engine.launch_element(&crate::sim_rng::test_context(), &assets, movement);
+    let movement_sequence = engine.t_launch_element(&assets, movement);
     engine.select_sequence_element(owner, Some((movement_sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        movement_sequence,
-        0,
-    );
+    engine.t_element_in_progress(&LevelAssets::new(), movement_sequence, 0);
     {
-        let entity = engine.get_entity_mut(owner).unwrap();
+        let entity = engine.ent_mut(owner);
         let actor = entity.actor_data_mut().unwrap();
         actor.action_state = ActionState::Moving;
         entity
             .position_iface_mut()
             .set_map_goal(MapPoint::new(70.0, 80.0));
     }
-    engine.halt_actor(&crate::sim_rng::test_context(), &LevelAssets::new(), owner);
-    engine.duty_face_direction(&sim, &assets, owner, 9);
+    engine.halt_actor(
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
+        owner,
+    );
+    engine.duty_face_direction(TickCtx::new(&sim, &assets), owner, 9);
 
     let turn_sequence = engine
         .orders
@@ -690,17 +634,13 @@ fn face_to_waits_for_manager_after_live_halt() {
         "an ordinary walking actor must not execute or translate an AI-tail Turn in the same owner slot"
     );
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .position_iface()
-            .map_goal(),
+        engine.ent(owner).position_iface().map_goal(),
         MapPoint::ZERO,
         "an explicit StopAll before Face must not resurrect the stopped movement goal"
     );
     let turn_sequence_id = turn_sequence.id;
 
-    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+    engine.hourglass_phase_sequences(TickCtx::new(&sim, &assets), &mut display);
 
     let instructed = engine
         .orders
@@ -742,8 +682,7 @@ fn ordered_ability_dispatch_does_not_advance_a_later_actor() {
         );
         let sequence_id = {
             let launch_assets = engine.test_runtime_assets();
-            engine.launch_element(
-                &crate::sim_rng::test_context(),
+            engine.t_launch_element(
                 &launch_assets,
                 SequenceElement::new(1, Command::EatCmd, Some(actor_id)),
             )
@@ -753,42 +692,25 @@ fn ordered_ability_dispatch_does_not_advance_a_later_actor() {
                 &mut engine.world.entities,
                 &mut engine.orders.sequence_manager,
                 actor_id,
-                sequence_id,
-                0,
+                SequenceElementRef::new(sequence_id, 0),
                 &mut engine.orders.next_order_id,
             ),
             crate::abilities::BeginResult::Started
         );
         engine.select_sequence_element(actor_id, Some((sequence_id, 0)));
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            &mut Vec::new(),
-            sequence_id,
-            0,
-        );
+        engine.t_element_in_progress(&LevelAssets::new(), sequence_id, 0);
     }
 
     let assets = LevelAssets::new();
-    engine.tick_selected_ability(sim, &assets, first, engine.actors_frozen());
+    engine.tick_selected_ability(TickCtx::new(sim, &assets), first, engine.actors_frozen());
 
     assert_ne!(
-        engine
-            .get_entity(first)
-            .expect("first ability actor present")
-            .element_data()
-            .sprite
-            .last_processed_order_id,
+        engine.elem(first).sprite.last_processed_order_id,
         u32::MAX,
         "the actor at the current creation slot must advance"
     );
     assert_eq!(
-        engine
-            .get_entity(second)
-            .expect("later ability actor present")
-            .element_data()
-            .sprite
-            .last_processed_order_id,
+        engine.elem(second).sprite.last_processed_order_id,
         u32::MAX,
         "a later actor's ability cannot advance from an earlier actor's update"
     );
@@ -812,7 +734,7 @@ fn invalid_eat_initialization_short_circuits_the_full_execute_owner_slot() {
     let mut engine = EngineInner::new_with_campaign(campaign);
     let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
     {
-        let pc = engine.get_entity_mut(owner).unwrap().pc_data_mut().unwrap();
+        let pc = engine.pc_mut(owner);
         pc.campaign_description_index = Some(0);
         pc.life_points = crate::pc_status::LIFEPOINTS_PC;
     }
@@ -826,8 +748,7 @@ fn invalid_eat_initialization_short_circuits_the_full_execute_owner_slot() {
 
     let sequence = {
         let launch_assets = engine.test_runtime_assets();
-        engine.launch_element(
-            &crate::sim_rng::test_context(),
+        engine.t_launch_element(
             &launch_assets,
             SequenceElement::new(1, Command::EatCmd, Some(owner)),
         )
@@ -837,24 +758,17 @@ fn invalid_eat_initialization_short_circuits_the_full_execute_owner_slot() {
             &mut engine.world.entities,
             &mut engine.orders.sequence_manager,
             owner,
-            sequence,
-            0,
+            SequenceElementRef::new(sequence, 0),
             &mut engine.orders.next_order_id,
         ),
         crate::abilities::BeginResult::Started
     );
     engine.select_sequence_element(owner, Some((sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        sequence,
-        0,
-    );
+    engine.t_element_in_progress(&LevelAssets::new(), sequence, 0);
 
     let assets = engine.test_runtime_assets();
     let sprite_before = {
-        let sprite = engine.get_entity(owner).unwrap().sprite();
+        let sprite = engine.ent(owner).sprite();
         (
             sprite.current_row,
             sprite.current_frame,
@@ -864,8 +778,7 @@ fn invalid_eat_initialization_short_circuits_the_full_execute_owner_slot() {
     };
     let mut selected_ability = None;
     engine.tick_actor_owner_envelopes_with_test_owner_hook(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         |engine, selected_owner| {
             let ability = crate::abilities::selected_ability(
                 &engine.world.entities,
@@ -892,16 +805,10 @@ fn invalid_eat_initialization_short_circuits_the_full_execute_owner_slot() {
         SequenceState::Terminated
     );
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .continuation
-            .motion_state,
+        engine.motion_state_of(owner),
         crate::sprite::MotionState::Terminated
     );
-    let sprite = engine.get_entity(owner).unwrap().sprite();
+    let sprite = engine.ent(owner).sprite();
     assert_eq!(
         (
             sprite.current_row,
@@ -914,12 +821,7 @@ fn invalid_eat_initialization_short_circuits_the_full_execute_owner_slot() {
     );
     assert_eq!(engine.campaign().characters[0].status.num_rations, 1);
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .pc_data()
-            .unwrap()
-            .life_points,
+        engine.pc(owner).life_points,
         crate::pc_status::LIFEPOINTS_PC,
         "the rejected ability must apply neither ammo nor healing side effects"
     );
@@ -943,19 +845,13 @@ fn instant_shield_raise_remains_selected_until_redundant_current_owner_raise_rep
     let mut display = HostDisplayState::default();
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .action_state = ActionState::Waiting;
+    engine.set_action_state_of(owner, ActionState::Waiting);
 
-    let first = engine.launch_element(
-        &crate::sim_rng::test_context(),
+    let first = engine.t_launch_element(
         &assets,
         SequenceElement::new_generic(1, Command::RaiseShieldInstantly, Some(owner)),
     );
-    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+    engine.hourglass_phase_sequences(TickCtx::new(&sim, &assets), &mut display);
 
     let first_element = engine
         .orders
@@ -976,12 +872,11 @@ fn instant_shield_raise_remains_selected_until_redundant_current_owner_raise_rep
     // A second normal-priority instant raise is a real current-owner control:
     // from HOLDING_SHIELD Original generates LOWERING_SHIELD, interrupts the
     // first normal element, and installs the replacement's WAITING_SHIELD.
-    let redundant = engine.launch_element(
-        &crate::sim_rng::test_context(),
+    let redundant = engine.t_launch_element(
         &assets,
         SequenceElement::new_generic(1, Command::RaiseShieldInstantly, Some(owner)),
     );
-    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+    engine.hourglass_phase_sequences(TickCtx::new(&sim, &assets), &mut display);
 
     assert_eq!(
         engine
@@ -1036,7 +931,7 @@ fn production_receive_purse_reveals_before_advancing_waiting_order_identity() {
 
     let mut engine = EngineInner::new();
     let beggar = engine.add_test_entity(make_test_civilian(Posture::Upright));
-    let Entity::Civilian(civilian) = engine.get_entity_mut(beggar).unwrap() else {
+    let Entity::Civilian(civilian) = engine.ent_mut(beggar) else {
         unreachable!()
     };
     civilian.civilian.beggar_scroll_sets = Some(vec![vec![]]);
@@ -1054,11 +949,7 @@ fn production_receive_purse_reveals_before_advancing_waiting_order_identity() {
     };
     let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[OrderType::WaitingWithPurse as usize] = 0;
-    engine
-        .get_entity_mut(beggar)
-        .unwrap()
-        .element_data_mut()
-        .sprite = crate::sprite::Sprite::new(
+    engine.elem_mut(beggar).sprite = crate::sprite::Sprite::new(
         std::sync::Arc::new(vec![script]),
         std::sync::Arc::new(conversion),
     );
@@ -1073,16 +964,10 @@ fn production_receive_purse_reveals_before_advancing_waiting_order_identity() {
     ));
     let seq = {
         let launch_assets = engine.test_runtime_assets();
-        engine.launch_element(&crate::sim_rng::test_context(), &launch_assets, element)
+        engine.t_launch_element(&launch_assets, element)
     };
     engine.select_sequence_element(beggar, Some((seq, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        seq,
-        0,
-    );
+    engine.t_element_in_progress(&LevelAssets::new(), seq, 0);
 
     let mut assets = LevelAssets::new();
     std::sync::Arc::make_mut(&mut assets.profile_manager)
@@ -1094,8 +979,7 @@ fn production_receive_purse_reveals_before_advancing_waiting_order_identity() {
     for _ in 0..10 {
         let (_, tick_reveals) = crate::engine::archery::capture_receive_purse_reveals(|| {
             engine.tick_actor_owner_envelopes_with_test_owner_hook(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 |_, _| {},
             );
         });
@@ -1137,25 +1021,15 @@ fn selected_beggar_exit_preserves_action_that_replaced_beggar() {
     let pc = engine.add_test_entity(make_test_pc(Posture::Upright));
     engine.players.seats[0].selection.push(pc);
     engine.players.seats[0].selected_action = Action::Net;
-    engine
-        .get_entity_mut(pc)
-        .unwrap()
-        .pc_data_mut()
-        .unwrap()
-        .current_action = Action::Net;
+    engine.pc_mut(pc).current_action = Action::Net;
     let mut assets = assets_with_test_pc_profile();
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
-    engine.execute_beggar_wait_handoffs(&sim, &assets, (pc, false));
+    engine.execute_beggar_wait_handoffs(TickCtx::new(&sim, &assets), (pc, false));
 
     assert_eq!(engine.players.seats[0].selected_action, Action::Net);
     assert_eq!(
-        engine
-            .get_entity(pc)
-            .unwrap()
-            .pc_data()
-            .unwrap()
-            .current_action,
+        engine.pc(pc).current_action,
         Action::Net,
         "the engine must never see a beggar-action deselection after the messenger rejects its stale action"
     );
@@ -1171,27 +1045,14 @@ fn selected_beggar_exit_clears_action_while_beggar_is_still_selected() {
     let pc = engine.add_test_entity(make_test_pc(Posture::Upright));
     engine.players.seats[0].selection.push(pc);
     engine.players.seats[0].selected_action = Action::Beggar;
-    engine
-        .get_entity_mut(pc)
-        .unwrap()
-        .pc_data_mut()
-        .unwrap()
-        .current_action = Action::Beggar;
+    engine.pc_mut(pc).current_action = Action::Beggar;
     let mut assets = assets_with_test_pc_profile();
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
-    engine.execute_beggar_wait_handoffs(&sim, &assets, (pc, false));
+    engine.execute_beggar_wait_handoffs(TickCtx::new(&sim, &assets), (pc, false));
 
     assert_eq!(engine.players.seats[0].selected_action, Action::NoAction);
-    assert_eq!(
-        engine
-            .get_entity(pc)
-            .unwrap()
-            .pc_data()
-            .unwrap()
-            .current_action,
-        Action::NoAction
-    );
+    assert_eq!(engine.pc(pc).current_action, Action::NoAction);
 }
 
 #[test]
@@ -1217,7 +1078,7 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
         };
         let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[action as usize] = 0;
-        engine.get_entity_mut(id).unwrap().element_data_mut().sprite = crate::sprite::Sprite::new(
+        engine.elem_mut(id).sprite = crate::sprite::Sprite::new(
             std::sync::Arc::new(vec![script; 16]),
             std::sync::Arc::new(conversion),
         );
@@ -1228,27 +1089,17 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
     let _null_handle_slot = engine.add_test_entity(make_test_pc(Posture::Upright));
     let attacker = engine.add_test_entity(make_test_pc(Posture::Upright));
     let victim = engine.add_test_entity(make_test_soldier(Posture::Upright));
-    engine
-        .get_entity_mut(attacker)
-        .unwrap()
-        .element_data_mut()
-        .active = true;
-    engine
-        .get_entity_mut(victim)
-        .unwrap()
-        .element_data_mut()
-        .active = true;
+    engine.set_active(attacker, true);
+    engine.set_active(victim, true);
     bind(&mut engine, attacker, OrderType::Strangling);
     bind(&mut engine, victim, OrderType::BeingStrangled);
     for id in [attacker, victim] {
-        engine
-            .get_entity_mut(id)
-            .unwrap()
-            .position_iface_mut()
-            .set_move_box(crate::coordinates::MoveBox::from_corners(
+        engine.ent_mut(id).position_iface_mut().set_move_box(
+            crate::coordinates::MoveBox::from_corners(
                 crate::coordinates::MapVec::new(-5.0, -5.0),
                 crate::coordinates::MapVec::new(5.0, 5.0),
-            ));
+            ),
+        );
     }
     let mut assets = LevelAssets::new();
     let mut profiles = crate::profiles::ProfileManager::new();
@@ -1259,14 +1110,8 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
     });
     assets.profile_manager = std::sync::Arc::new(profiles);
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    engine
-        .get_entity_mut(victim)
-        .unwrap()
-        .npc_data_mut()
-        .unwrap()
-        .eye_status = crate::element::EyeStatus::LookToTheLeft;
-    let seq = engine.launch_element(
-        &crate::sim_rng::test_context(),
+    engine.npc_mut(victim).eye_status = crate::element::EyeStatus::LookToTheLeft;
+    let seq = engine.t_launch_element(
         &assets,
         SequenceElement::new_interaction(1, Command::StrangleCmd, Some(attacker), Some(victim)),
     );
@@ -1276,85 +1121,56 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
             &mut engine.orders.sequence_manager,
             attacker,
             victim,
-            seq,
-            0,
+            SequenceElementRef::new(seq, 0),
             &mut engine.orders.next_order_id
         ),
         crate::abilities::BeginResult::Started
     );
-    engine
-        .get_entity_mut(attacker)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .execute_order_initialising = false;
+    engine.actor_mut(attacker).execute_order_initialising = false;
     engine.select_sequence_element(attacker, Some((seq, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        seq,
-        0,
-    );
+    engine.t_element_in_progress(&LevelAssets::new(), seq, 0);
 
     for _ in 0..10 {
-        engine.tick_selected_ability(&sim, &assets, attacker, engine.actors_frozen());
-        if engine
-            .get_entity(attacker)
-            .unwrap()
-            .sprite()
-            .last_motion_state
-            == Some(crate::sprite::MotionState::Done)
+        engine.tick_selected_ability(
+            TickCtx::new(&sim, &assets),
+            attacker,
+            engine.actors_frozen(),
+        );
+        if engine.ent(attacker).sprite().last_motion_state == Some(crate::sprite::MotionState::Done)
         {
             break;
         }
     }
     assert!(
-        (engine
-            .get_entity(attacker)
-            .unwrap()
-            .sprite()
-            .last_motion_state
-            == Some(crate::sprite::MotionState::Done))
+        (engine.ent(attacker).sprite().last_motion_state == Some(crate::sprite::MotionState::Done))
     );
     assert_eq!(
-        engine
-            .get_entity(victim)
-            .unwrap()
-            .element_data()
-            .sprite
-            .last_action,
+        engine.elem(victim).sprite.last_action,
         OrderType::BeingStrangled,
         "attacker Done must force the victim animation before its same-invocation increment"
     );
     assert!(
-        engine
-            .get_entity(victim)
-            .unwrap()
-            .element_data()
-            .sprite
-            .current_frame
-            > 0,
+        engine.elem(victim).sprite.current_frame > 0,
         "victim virgin increment must occur during initial attacker Done setup"
     );
     // Once DONE has latched, a fast-turn short-circuit still executes the
     // strangling tail exactly once without also executing the normal action tail.
     {
-        let attacker_entity = engine.get_entity_mut(attacker).unwrap();
+        let attacker_entity = engine.ent_mut(attacker);
         attacker_entity
             .element_data_mut()
             .set_direction_instantly(0);
         attacker_entity.element_data_mut().set_direction_goal(1);
-        let victim_sprite = &mut engine
-            .get_entity_mut(victim)
-            .unwrap()
-            .element_data_mut()
-            .sprite;
+        let victim_sprite = &mut engine.elem_mut(victim).sprite;
         victim_sprite.current_frame = 0;
         victim_sprite.frame_count = 0;
     }
-    engine.tick_selected_ability(&sim, &assets, attacker, engine.actors_frozen());
-    let victim_sprite = &engine.get_entity(victim).unwrap().element_data().sprite;
+    engine.tick_selected_ability(
+        TickCtx::new(&sim, &assets),
+        attacker,
+        engine.actors_frozen(),
+    );
+    let victim_sprite = &engine.elem(victim).sprite;
     assert_eq!(
         (victim_sprite.current_frame, victim_sprite.frame_count),
         (1, 0),
@@ -1364,7 +1180,7 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
     let (_, condolation_order) =
         crate::engine::soldier_helpers::capture_strangle_condolation_order(|| {
             for _ in 0..10 {
-                engine.tick_actor_owner_envelopes(&sim, &assets);
+                engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
                 if !crate::abilities::selected_ability(
                     &engine.world.entities,
                     &engine.orders.sequence_manager,
@@ -1419,7 +1235,7 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
         .collect();
     assert_eq!(victim_waits.len(), 1);
     assert!(victim_waits[0].0 > seq);
-    let victim_entity = engine.get_entity(victim).unwrap();
+    let victim_entity = engine.ent(victim);
     assert!(!victim_entity.ai_controller().unwrap().ai_is_locked());
     assert_eq!(
         victim_entity.npc_data().unwrap().eye_status,
@@ -1440,7 +1256,11 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
         "the direct retaliation and condolation EventGotHit handlers must both execute synchronously"
     );
     let sequence_count = engine.orders.sequence_manager.sequences_iter().count();
-    engine.tick_selected_ability(&sim, &assets, attacker, engine.actors_frozen());
+    engine.tick_selected_ability(
+        TickCtx::new(&sim, &assets),
+        attacker,
+        engine.actors_frozen(),
+    );
     assert_eq!(
         engine.orders.sequence_manager.sequences_iter().count(),
         sequence_count,
@@ -1472,11 +1292,7 @@ fn selected_ability_catalog_order_executes_without_separate_binding() {
     };
     let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[OrderType::ThrowingApple as usize] = 0;
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .element_data_mut()
-        .sprite = crate::sprite::Sprite::new(
+    engine.elem_mut(owner).sprite = crate::sprite::Sprite::new(
         std::sync::Arc::new(vec![script; 16]),
         std::sync::Arc::new(conversion),
     );
@@ -1484,20 +1300,14 @@ fn selected_ability_catalog_order_executes_without_separate_binding() {
     element
         .orders
         .push_back(Order::test_new(OrderType::ThrowingApple, 0.0, 0.0));
-    let sequence = engine.launch_element(&crate::sim_rng::test_context(), &assets, element);
+    let sequence = engine.t_launch_element(&assets, element);
     engine.select_sequence_element(owner, Some((sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        sequence,
-        0,
-    );
+    engine.t_element_in_progress(&LevelAssets::new(), sequence, 0);
 
-    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::new());
+    engine.t_tick_actor_owner_envelopes(&LevelAssets::new());
 
     assert_eq!(
-        engine.get_entity(owner).unwrap().sprite().last_action,
+        engine.ent(owner).sprite().last_action,
         OrderType::ThrowingApple
     );
     assert!(
@@ -1512,11 +1322,11 @@ fn selected_ability_catalog_order_executes_without_separate_binding() {
 
 #[test]
 fn ability_done_applies_once_retains_owner_and_only_terminated_releases() {
+    let sim = crate::sim_rng::test_context();
     use crate::element::{Command, Posture};
     use crate::order::{Order, OrderType};
     use crate::sequence::SequenceElement;
 
-    let sim = crate::sim_rng::test_context();
     let mut description = crate::campaign::PcDescription {
         character_profile_idx: Some(crate::profiles::CharacterProfileIdx(0)),
         ..Default::default()
@@ -1526,12 +1336,7 @@ fn ability_done_applies_once_retains_owner_and_only_terminated_releases() {
     campaign.characters.push(description);
     let mut engine = EngineInner::new_with_campaign(campaign);
     let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .pc_data_mut()
-        .unwrap()
-        .life_points = 20;
+    engine.pc_mut(owner).life_points = 20;
     bind_test_action_point(
         &mut engine,
         owner,
@@ -1555,11 +1360,7 @@ fn ability_done_applies_once_retains_owner_and_only_terminated_releases() {
         };
         let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[OrderType::Eating as usize] = 0;
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .element_data_mut()
-            .sprite = crate::sprite::Sprite::new(
+        engine.elem_mut(owner).sprite = crate::sprite::Sprite::new(
             std::sync::Arc::new(vec![script]),
             std::sync::Arc::new(conversion),
         );
@@ -1567,27 +1368,20 @@ fn ability_done_applies_once_retains_owner_and_only_terminated_releases() {
     let element = SequenceElement::new(1, Command::EatCmd, Some(owner));
     let seq = {
         let launch_assets = engine.test_runtime_assets();
-        engine.launch_element(&crate::sim_rng::test_context(), &launch_assets, element)
+        engine.t_launch_element(&launch_assets, element)
     };
     assert_eq!(
         crate::abilities::begin_eat(
             &mut engine.world.entities,
             &mut engine.orders.sequence_manager,
             owner,
-            seq,
-            0,
+            SequenceElementRef::new(seq, 0),
             &mut engine.orders.next_order_id
         ),
         crate::abilities::BeginResult::Started
     );
     engine.select_sequence_element(owner, Some((seq, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        seq,
-        0,
-    );
+    engine.t_element_in_progress(&LevelAssets::new(), seq, 0);
     engine
         .orders
         .sequence_manager
@@ -1607,10 +1401,9 @@ fn ability_done_applies_once_retains_owner_and_only_terminated_releases() {
 
     let mut done_count = 0;
     for _ in 0..10 {
-        engine.tick_actor_owner_envelopes(&sim, &assets);
+        engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
         done_count += usize::from(
-            engine.get_entity(owner).unwrap().sprite().last_motion_state
-                == Some(crate::sprite::MotionState::Done),
+            engine.ent(owner).sprite().last_motion_state == Some(crate::sprite::MotionState::Done),
         );
         if crate::abilities::selected_ability(
             &engine.world.entities,
@@ -1643,7 +1436,7 @@ fn ability_done_applies_once_retains_owner_and_only_terminated_releases() {
     );
 
     for _ in 0..10 {
-        engine.tick_actor_owner_envelopes(&sim, &assets);
+        engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
         if !crate::abilities::selected_ability(
             &engine.world.entities,
             &engine.orders.sequence_manager,
@@ -1672,15 +1465,7 @@ fn ability_done_applies_once_retains_owner_and_only_terminated_releases() {
             .order_type,
         OrderType::WaitingUpright
     );
-    assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .pc_data()
-            .unwrap()
-            .life_points,
-        60
-    );
+    assert_eq!(engine.pc(owner).life_points, 60);
     assert_eq!(engine.campaign().characters[0].status.num_rations, 1);
 }
 
@@ -1691,24 +1476,18 @@ fn unselected_listen_done_clears_action_without_dispatching_leave_listen() {
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
     {
-        let pc = engine.get_entity_mut(owner).unwrap();
+        let pc = engine.ent_mut(owner);
         pc.actor_data_mut().unwrap().action_state = ActionState::Listening;
         pc.pc_data_mut().unwrap().current_action = crate::profiles::Action::Listen;
     }
 
     engine.apply_listen_done_action_handoff(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         owner,
     );
 
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .pc_data()
-            .unwrap()
-            .current_action,
+        engine.pc(owner).current_action,
         crate::profiles::Action::NoAction
     );
     assert!(
@@ -1729,8 +1508,7 @@ fn listen_done_rejects_non_pc_owner() {
     let owner = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
 
     engine.apply_listen_done_action_handoff(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         owner,
     );
 }
@@ -1835,7 +1613,7 @@ fn enter_helping_climb_from_tree_retains_exit_prefix_until_animation_done() {
         crate::element::Command::EnterHelpingClimb,
         Some(pc_id),
     );
-    engine.launch_element(&crate::sim_rng::test_context(), &assets, elem);
+    engine.t_launch_element(&assets, elem);
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     let result = engine
@@ -1843,7 +1621,7 @@ fn enter_helping_climb_from_tree_retains_exit_prefix_until_animation_done() {
         .code;
 
     assert_eq!(result, GameCode::LevelInProgress);
-    let pc = engine.get_entity(pc_id).expect("pc still exists");
+    let pc = engine.ent(pc_id);
     assert_eq!(
         pc.element_data().posture(),
         crate::element::Posture::Tree,
@@ -1943,41 +1721,27 @@ fn quit_instruction_unlinks_but_defers_state_change_to_lowering_start() {
     let opponent = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
 
     {
-        let owner_entity = engine.get_entity_mut(owner).unwrap();
+        let owner_entity = engine.ent_mut(owner);
         owner_entity.actor_data_mut().unwrap().action_state =
             crate::element::ActionState::WaitingSword;
         owner_entity.human_data_mut().unwrap().opponents = vec![opponent].into();
     }
-    engine
-        .get_entity_mut(opponent)
-        .unwrap()
-        .human_data_mut()
-        .unwrap()
-        .opponents = vec![owner].into();
+    engine.human_mut(opponent).opponents = vec![owner].into();
 
-    let sequence = engine.launch_element(
-        &crate::sim_rng::test_context(),
+    let sequence = engine.t_launch_element(
         &assets,
         SequenceElement::new(1, Command::QuitSwordfight, Some(owner)),
     );
-    assert!(engine.instruct_owner(&sim, &assets, &mut Vec::new(), owner, sequence, 0));
+    assert!(engine.instruct_owner(
+        TickCtx::new(&sim, &assets),
+        &mut Vec::new(),
+        owner,
+        SequenceElementRef::new(sequence, 0)
+    ));
 
-    assert!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .opponents
-            .is_empty()
-    );
+    assert!(engine.human(owner).opponents.is_empty());
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .action_state,
+        engine.action_state_of(owner),
         crate::element::ActionState::WaitingSword,
         "translation must not switch to Waiting before lowering-sword START"
     );

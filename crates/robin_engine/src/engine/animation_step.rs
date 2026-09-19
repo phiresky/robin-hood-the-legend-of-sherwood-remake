@@ -2,6 +2,7 @@
 //! synchronous callbacks; the actor update handles the returned completion.
 
 use super::*;
+use crate::engine::TickCtx;
 use std::ops::ControlFlow;
 
 /// Freeze and diagnostic facts sampled at Execute entry.
@@ -569,8 +570,7 @@ impl EngineInner {
     /// Order identity and explicit entry operands survive synchronous callbacks.
     pub(super) fn execute_actor_animation(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         entity_id: EntityId,
         selected_generic_order: bool,
         entry: ActorAnimationEntry,
@@ -672,15 +672,15 @@ impl EngineInner {
         } else {
             None
         };
-        self.prepare_jump_order(sim, assets, entity_id);
+        self.prepare_jump_order(tcx, entity_id);
         let owner = self.expect_entity(entity_id, "animation owner");
         if owner.is_soldier() {
             match anim_type {
                 OrderType::WaitingUpright if owner.enemy_ai().is_some() => {
-                    self.execute_waiting_upright(sim, assets, entity_id);
+                    self.execute_waiting_upright(tcx, entity_id);
                 }
                 OrderType::WaitingAlerted => {
-                    self.execute_waiting_alerted(sim, assets, entity_id);
+                    self.execute_waiting_alerted(tcx, entity_id);
                 }
                 _ => {}
             }
@@ -770,14 +770,14 @@ impl EngineInner {
                 .pc_data()
                 .and_then(|pc| pc.carried)
                 .expect("waiting corpse carrier has no body");
-            self.actor_freeze_execution(sim, assets, carried);
+            self.actor_freeze_execution(tcx, carried);
         }
         let entity = self.expect_entity(entity_id, "animation owner");
         if order_is_initialising
             && anim_type == OrderType::WaitingCarryingOnShoulders
             && let Some(carried_id) = entity.pc_data().and_then(|pc| pc.carried)
         {
-            self.actor_wait(sim, assets, carried_id);
+            self.actor_wait(tcx, carried_id);
         }
         if anim_type == OrderType::TransitionHelpingClimbingDown {
             let carried = self
@@ -786,7 +786,7 @@ impl EngineInner {
                 .and_then(|pc| pc.carried);
             if let Some(carried) = carried {
                 if order_is_initialising {
-                    self.actor_freeze_execution(sim, assets, carried);
+                    self.actor_freeze_execution(tcx, carried);
                     self.install_actor_order(carried, None);
                 }
                 let direction = (self
@@ -877,7 +877,7 @@ impl EngineInner {
                 entity
                     .soldier_data()
                     .and_then(|soldier| {
-                        assets
+                        tcx.assets
                             .profile_manager
                             .get_soldier(soldier.soldier_profile_index)
                     })
@@ -893,16 +893,11 @@ impl EngineInner {
             weak_stunned_start_action_before_perform(entity, anim_type, order_is_initialising);
 
         if weak_stunned_action_before_perform.is_some() {
-            self.add_weak_stunned_combat(
-                sim,
-                assets,
-                entity_id,
-                anim_type == OrderType::BeingWeakSword,
-            );
+            self.add_weak_stunned_combat(tcx, entity_id, anim_type == OrderType::BeingWeakSword);
         }
         const SPEECH_ID_HELBARDMAN: u32 = 0x4c484453;
         if let Some(speech_id) = special_speech_id.filter(|id| *id != SPEECH_ID_HELBARDMAN) {
-            self.execute_special_remark_at_sprite_point(sim, assets, entity_id, speech_id);
+            self.execute_special_remark_at_sprite_point(tcx, entity_id, speech_id);
         }
 
         let mut weak_sword_held = false;
@@ -918,7 +913,7 @@ impl EngineInner {
                 let sprite_before_turn = effective_anim == OrderType::TurningAlerted;
                 if !globally_frozen && sprite_before_turn {
                     entity.element_data_mut().sprite.perform_action(
-                        sim,
+                        tcx.sim,
                         order_id,
                         effective_anim,
                         direction_before_turn,
@@ -947,7 +942,7 @@ impl EngineInner {
                     );
                     let sprite = &mut entity.element_data_mut().sprite;
                     let _ = sprite.perform_action(
-                        sim,
+                        tcx.sim,
                         order_id,
                         effective_anim,
                         row,
@@ -1006,7 +1001,7 @@ impl EngineInner {
                     OrderType::LyingStuckUnderNet | OrderType::WriggleUnderNet
                 )
             {
-                apply_under_net_initialization_side_effect(sim, self, entity_id, anim_type);
+                apply_under_net_initialization_side_effect(tcx.sim, self, entity_id, anim_type);
             }
 
             let entity = self
@@ -1184,7 +1179,7 @@ impl EngineInner {
                     // actually changed the facing direction.
                     crate::bow_shot::refresh_retained_shield_obstacle(
                         entity,
-                        &assets.profile_manager,
+                        &tcx.assets.profile_manager,
                     );
                 }
                 if matches!(anim_type, OrderType::GettingFreeFromWasp) {
@@ -1356,7 +1351,7 @@ impl EngineInner {
                     };
                     return Some(super::jump::perform_jump_ground_motion(
                         entity,
-                        sim,
+                        tcx.sim,
                         motion_order,
                         played,
                         row,
@@ -1365,7 +1360,7 @@ impl EngineInner {
                 if jump_airborne_step {
                     return Some(super::jump::perform_jump_airborne_motion(
                         entity,
-                        sim,
+                        tcx.sim,
                         order_id,
                         played,
                         row,
@@ -1383,7 +1378,7 @@ impl EngineInner {
                 // last_action and the movement forecast remain
                 // live until the following tick.
                 let raw_motion = sprite.perform_action(
-                    sim,
+                    tcx.sim,
                     order_id,
                     played,
                     row,
@@ -1432,13 +1427,13 @@ impl EngineInner {
             if uses_perform_flight(anim_type) {
                 self.perform_combat_flight_position(entity_id, state)
             } else if anim_type == OrderType::FallingLadderWall {
-                self.execute_ladder_fall_position(sim, assets, entity_id, state)
+                self.execute_ladder_fall_position(tcx, entity_id, state)
             } else {
                 state
             }
         });
         if let Some(speech_id) = special_speech_id.filter(|id| *id == SPEECH_ID_HELBARDMAN) {
-            self.execute_special_remark_at_sprite_point(sim, assets, entity_id, speech_id);
+            self.execute_special_remark_at_sprite_point(tcx, entity_id, speech_id);
         }
 
         if anim_type == OrderType::StrikingDownSword {
@@ -1458,7 +1453,7 @@ impl EngineInner {
             if !super::sequence_validity::striking_down_sword_valid_without_position(
                 actor,
                 victim,
-                self.is_entity_vip(assets, victim),
+                self.is_entity_vip(tcx.assets, victim),
             ) {
                 return Some(MotionState::Terminated);
             }
@@ -1500,7 +1495,7 @@ impl EngineInner {
                 | OrderType::TransitionCarryingCorpseWaitingUpright => {
                     crate::abilities::sync_corpse_animation_for_carrier(
                         &mut self.world.entities,
-                        &assets.profile_manager,
+                        &tcx.assets.profile_manager,
                         entity_id,
                         anim_type,
                     );
@@ -1551,9 +1546,9 @@ impl EngineInner {
         // TRANSITION_SITTING / BEGGAR_SHOWING_FACE) — it
         // applies to both soldier and civilian NPCs.
         if let Some(motion_state) = motion {
-            self.apply_jump_order_state(sim, assets, entity_id, motion_state);
+            self.apply_jump_order_state(tcx, entity_id, motion_state);
             if anim_type == OrderType::TransitionHelpingClimbingDown {
-                self.execute_helper_shoulder_dismount(sim, assets, entity_id, motion_state);
+                self.execute_helper_shoulder_dismount(tcx, entity_id, motion_state);
             }
             let entity = self.expect_entity(entity_id, "animation owner");
             let owner_is_pc = entity.is_pc();
@@ -1561,12 +1556,11 @@ impl EngineInner {
                 && anim_type == OrderType::TransitionCarryingCorpseWaitingUpright
                 && motion_state == MotionState::Terminated
             {
-                self.execute_corpse_drop_done(sim, assets, entity_id);
+                self.execute_corpse_drop_done(tcx, entity_id);
             }
             apply_soldier_execute_side_effects(
                 self,
-                sim,
-                assets,
+                tcx,
                 anim_type,
                 motion_state,
                 antagonist,
@@ -1574,7 +1568,7 @@ impl EngineInner {
             );
             apply_npc_execute_side_effects(
                 self,
-                assets,
+                tcx.assets,
                 anim_type,
                 motion_state,
                 antagonist,
@@ -1600,7 +1594,7 @@ impl EngineInner {
                 current_element_script_driven,
             );
             if equip_bow {
-                self.execute_pc_bow_equip_action(sim, assets, entity_id);
+                self.execute_pc_bow_equip_action(tcx, entity_id);
             }
             if owner_is_pc
                 && motion_state == MotionState::Start
@@ -1609,37 +1603,32 @@ impl EngineInner {
                     OrderType::TransitionUnequipBow | OrderType::TransitionUnequipBowAnonymous
                 )
             {
-                self.execute_pc_bow_unequip_action(
-                    sim,
-                    assets,
-                    (entity_id, current_element_script_driven),
-                );
+                self.execute_pc_bow_unequip_action(tcx, (entity_id, current_element_script_driven));
             }
             if owner_is_pc && motion_state == MotionState::Done {
                 if matches!(
                     anim_type,
                     OrderType::DroppingAle | OrderType::DroppingAleCrouched
                 ) {
-                    self.execute_drop_ale_done(assets, entity_id);
+                    self.execute_drop_ale_done(tcx.assets, entity_id);
                 }
                 match anim_type {
                     OrderType::TransitionWaitingUprightSimulatingBeggar
                     | OrderType::TransitionSimulatingBeggarWaitingUpright => {
                         let entering =
                             anim_type == OrderType::TransitionWaitingUprightSimulatingBeggar;
-                        self.execute_beggar_wait_handoffs(sim, assets, (entity_id, entering));
-                        self.execute_beggar_coin_flags(assets, (entity_id, entering));
+                        self.execute_beggar_wait_handoffs(tcx, (entity_id, entering));
+                        self.execute_beggar_coin_flags(tcx.assets, (entity_id, entering));
                     }
                     OrderType::TransitionWaitingUprightHelpingClimbing => {
-                        self.execute_pc_helping_climb_action(sim, assets, entity_id);
+                        self.execute_pc_helping_climb_action(tcx, entity_id);
                     }
                     _ => {}
                 }
             }
             apply_taking_net_side_effect(
                 self,
-                sim,
-                assets,
+                tcx,
                 anim_type,
                 motion_state,
                 antagonist,
@@ -1648,26 +1637,16 @@ impl EngineInner {
             );
             apply_waking_up_done_side_effect(
                 self,
-                sim,
-                assets,
+                tcx,
                 anim_type,
                 motion_state,
                 antagonist,
                 entity_id,
             );
-            apply_pc_taking_side_effect(
-                self,
-                sim,
-                assets,
-                anim_type,
-                motion_state,
-                antagonist,
-                entity_id,
-            );
+            apply_pc_taking_side_effect(self, tcx, anim_type, motion_state, antagonist, entity_id);
             apply_pc_target_interaction_side_effect(
                 self,
-                sim,
-                assets,
+                tcx,
                 anim_type,
                 motion_state,
                 antagonist,
@@ -1690,13 +1669,12 @@ impl EngineInner {
                 entity_id,
                 anim_type,
                 motion_state,
-                &assets.profile_manager,
+                &tcx.assets.profile_manager,
                 tiredness_probe,
             );
             apply_striking_down_sword_side_effect(
                 self,
-                sim,
-                assets,
+                tcx,
                 anim_type,
                 motion_state,
                 antagonist,
@@ -1708,7 +1686,7 @@ impl EngineInner {
             if anim_type == OrderType::RaisingShield && motion_state == MotionState::Done {
                 crate::bow_shot::refresh_retained_shield_obstacle(
                     self.expect_entity_mut(entity_id, "animation owner"),
-                    &assets.profile_manager,
+                    &tcx.assets.profile_manager,
                 );
             }
             apply_pc_disguise_exit_side_effect(
@@ -1726,7 +1704,7 @@ impl EngineInner {
             apply_dying_start_side_effect(self, entity_id, anim_type, motion_state);
             apply_being_dead_start_side_effect(self, entity_id, anim_type, motion_state);
             if uses_perform_flight(anim_type) {
-                self.finish_combat_flight(sim, assets, entity_id, motion_state);
+                self.finish_combat_flight(tcx, entity_id, motion_state);
                 finish_flight_action_state(
                     self.world
                         .entities
@@ -1736,7 +1714,7 @@ impl EngineInner {
                     motion_state,
                 );
             }
-            apply_combat_injury_side_effect(self, sim, assets, anim_type, motion_state, entity_id);
+            apply_combat_injury_side_effect(self, tcx, anim_type, motion_state, entity_id);
             if motion_state == MotionState::Done {
                 let strike = match anim_type {
                     OrderType::StrikingLeftSmalltalk | OrderType::StrikingLowLeftSmalltalk => {
@@ -1749,8 +1727,7 @@ impl EngineInner {
                 };
                 if let Some(strike) = strike {
                     self.execute_smalltalk_strikes(
-                        sim,
-                        assets,
+                        tcx,
                         (
                             entity_id,
                             antagonist.expect("smalltalk strike order must retain its antagonist"),
@@ -1775,8 +1752,7 @@ impl EngineInner {
             }
             if play_anim_freeze_completed(motion_state, cur_command, anim_type) {
                 self.execute_play_anim_frozen(
-                    sim,
-                    assets,
+                    tcx,
                     (
                         entity_id,
                         cur_command_level,
@@ -1821,10 +1797,10 @@ impl EngineInner {
             seq_id,
             elem_idx,
             engine: self,
-            assets,
+            assets: tcx.assets,
         };
         Some(finish_actor_execute_result(
-            sim,
+            tcx.sim,
             anim_type,
             motion,
             &mut arm_ctx,
@@ -1833,8 +1809,7 @@ impl EngineInner {
 
     fn execute_special_remark_at_sprite_point(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         entity_id: EntityId,
         speech_id: u32,
     ) {
@@ -1842,7 +1817,7 @@ impl EngineInner {
             .expect_entity(entity_id, "special action owner")
             .sprite();
         if special_remark_due_at_sprite_phase(speech_id, sprite.current_frame, sprite.frame_count) {
-            self.execute_special_remark(sim, assets, entity_id);
+            self.execute_special_remark(tcx, entity_id);
         }
     }
 }

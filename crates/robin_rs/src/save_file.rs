@@ -1170,13 +1170,7 @@ mod tests {
         .unwrap()
     }
 
-    fn fresh_engine() -> (Engine, engine_api::LevelAssets) {
-        use robin_engine::campaign::Campaign;
-        let mut assets = engine_api::LevelAssets::new();
-        let engine = Engine::new_for_test(800.0, 600.0, Campaign::default(), &mut assets)
-            .expect("new_for_test");
-        (engine, assets)
-    }
+    use robin_engine::test_support::fresh_engine;
 
     #[test]
     #[ignore = "requires a captured native QuickSave via ROBIN_REPLAY_LOAD_SAVE_FIXTURE"]
@@ -1650,24 +1644,21 @@ mod tests {
         let mut fixture = serde_json::to_value(&engine).unwrap();
         fixture["scripts"]["globals"] = serde_json::json!(expected);
         let engine: Engine = serde_json::from_value(fixture).unwrap();
-        assert_eq!(engine.parity_engine_state().script_globals, expected);
+        assert_eq!(engine.script_globals(), expected);
 
         let host = Host::scratch(800.0, 600.0);
         let save = GameSaveFile::capture(&engine, &host, 7, "canonical globals".into());
-        assert_eq!(save.engine.parity_engine_state().script_globals, expected);
+        assert_eq!(save.engine.script_globals(), expected);
         let bytes = serde_json::to_vec(&save).unwrap();
         let decoded: GameSaveFile = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(
-            decoded.engine.parity_engine_state().script_globals,
-            expected
-        );
+        assert_eq!(decoded.engine.script_globals(), expected);
 
         let (mut restored, assets) = fresh_engine();
         let mut restored_host = Host::scratch(800.0, 600.0);
         decoded
             .apply_to(&mut restored, &mut restored_host, &assets)
             .expect("apply populated canonical-global save");
-        assert_eq!(restored.parity_engine_state().script_globals, expected);
+        assert_eq!(restored.script_globals(), expected);
     }
 
     #[test]
@@ -1862,206 +1853,40 @@ mod tests {
         assert_eq!(loaded.engine.frame_counter(), 999);
     }
 
-    #[test]
-    fn read_rejects_v46_before_deserializing_previous_script_effects_payload() {
+    // Every retired schema must fail at the header: the engine payload is
+    // intentionally incomplete and must never reach the current decoder.
+    #[rstest::rstest]
+    #[case::v46_previous_script_effects_payload(46, true)]
+    #[case::v59_previous_rust_achievement_schema(59, true)]
+    #[case::v75_pre_fifo_schema(75, false)]
+    #[case::v76_pre_canonical_script_globals(76, false)]
+    #[case::v77_duplicate_post_initialize_and_stale_messenger(77, false)]
+    #[case::v78_unused_sound_and_ai_claim_layout(78, false)]
+    #[case::v79_obsolete_recorder_wrapper(79, false)]
+    #[case::v80_unused_location_and_object_fields(80, false)]
+    #[case::v81_duplicate_soldier_presence_flags(81, false)]
+    #[case::v82_deferred_ai_state(82, false)]
+    fn read_rejects_retired_schema_before_deserializing_engine(
+        #[case] version: u32,
+        #[case] full_header: bool,
+    ) {
         let dir = tempdir().unwrap();
         let path = dir.path().join("old_save.json");
-        let old_save = serde_json::json!({
-            "header": {
-                "magic": SAVE_MAGIC,
-                "version": 46,
-                "mission_id": 1,
-                "timestamp_unix": 0,
-                "display_text": "Old Save"
-            },
-            "engine": {
-                "mission": {}
-            }
-        });
+        let mut header = serde_json::json!({ "magic": SAVE_MAGIC, "version": version });
+        if full_header {
+            header["mission_id"] = 1.into();
+            header["timestamp_unix"] = 0.into();
+            header["display_text"] = "Old Save".into();
+        }
+        let old_save = serde_json::json!({ "header": header, "engine": {} });
         fs::write(&path, serde_json::to_vec(&old_save).unwrap()).unwrap();
 
         let error = GameSaveFile::read_from(&path)
             .err()
-            .expect("v46 saves must be rejected");
-        let message = format!("{error:#}");
-        assert_eq!(
-            message,
-            format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 46")
-        );
-    }
-
-    #[test]
-    fn read_rejects_pre_fifo_schema_before_deserializing_engine() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("pre_fifo_save.json");
-        // The intentionally incomplete engine must not be decoded using the
-        // new queue layout, even if all old pending queues would be empty.
-        let old_save = serde_json::json!({
-            "header": { "magic": SAVE_MAGIC, "version": 75 },
-            "engine": {}
-        });
-        fs::write(&path, serde_json::to_vec(&old_save).unwrap()).unwrap();
-        let error = GameSaveFile::read_from(&path)
-            .err()
-            .expect("pre-FIFO snapshots must be rejected at the header");
+            .expect("retired save schemas must be rejected at the header");
         assert_eq!(
             format!("{error:#}"),
-            format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 75")
-        );
-    }
-
-    #[test]
-    fn read_rejects_pre_canonical_script_globals_before_deserializing_engine() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("pre_canonical_globals_save.json");
-        // Even empty globals used a different native layout in v76. Reject
-        // the header before trying to deserialize this incomplete engine.
-        let old_save = serde_json::json!({
-            "header": { "magic": SAVE_MAGIC, "version": 76 },
-            "engine": {}
-        });
-        fs::write(&path, serde_json::to_vec(&old_save).unwrap()).unwrap();
-        let error = GameSaveFile::read_from(&path)
-            .err()
-            .expect("pre-canonical script globals must be rejected at the header");
-        assert_eq!(
-            format!("{error:#}"),
-            format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 76")
-        );
-    }
-
-    #[test]
-    fn read_rejects_duplicate_post_initialize_and_stale_messenger_before_engine_decode() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("pre_single_post_initialize_save.json");
-        // Reject the obsolete native layout before attempting to decode this
-        // incomplete engine, regardless of the old flag/blob contents.
-        let old_save = serde_json::json!({
-            "header": { "magic": SAVE_MAGIC, "version": 77 },
-            "engine": {}
-        });
-        fs::write(&path, serde_json::to_vec(&old_save).unwrap()).unwrap();
-        let error = GameSaveFile::read_from(&path)
-            .err()
-            .expect("duplicate PostInitialize/stale Messenger snapshots must fail at the header");
-        assert_eq!(
-            format!("{error:#}"),
-            format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 77")
-        );
-    }
-
-    #[test]
-    fn read_rejects_unused_sound_and_ai_claim_layout_before_engine_decode() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("pre_sound_and_ai_claim_cleanup_save.json");
-        let old_save = serde_json::json!({
-            "header": { "magic": SAVE_MAGIC, "version": 78 },
-            "engine": {}
-        });
-        fs::write(&path, serde_json::to_vec(&old_save).unwrap()).unwrap();
-        let error = GameSaveFile::read_from(&path)
-            .err()
-            .expect("obsolete sound/AI claim snapshots must fail at the header");
-        assert_eq!(
-            format!("{error:#}"),
-            format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 78")
-        );
-    }
-
-    #[test]
-    fn read_rejects_obsolete_recorder_wrapper_before_engine_decode() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("pre_canonical_recording_session_save.json");
-        let old_save = serde_json::json!({
-            "header": { "magic": SAVE_MAGIC, "version": 79 },
-            "engine": {}
-        });
-        fs::write(&path, serde_json::to_vec(&old_save).unwrap()).unwrap();
-        let error = GameSaveFile::read_from(&path)
-            .err()
-            .expect("obsolete recorder-wrapper snapshots must fail at the header");
-        assert_eq!(
-            format!("{error:#}"),
-            format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 79")
-        );
-    }
-
-    #[test]
-    fn read_rejects_unused_location_and_object_fields_before_engine_decode() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("pre_location_and_object_cleanup_save.json");
-        let old_save = serde_json::json!({
-            "header": { "magic": SAVE_MAGIC, "version": 80 },
-            "engine": {}
-        });
-        fs::write(&path, serde_json::to_vec(&old_save).unwrap()).unwrap();
-        let error = GameSaveFile::read_from(&path)
-            .err()
-            .expect("obsolete location/object snapshots must fail at the header");
-        assert_eq!(
-            format!("{error:#}"),
-            format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 80")
-        );
-    }
-
-    #[test]
-    fn read_rejects_duplicate_soldier_presence_flags_before_engine_decode() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("pre_canonical_soldier_camps_save.json");
-        let old_save = serde_json::json!({
-            "header": { "magic": SAVE_MAGIC, "version": 81 },
-            "engine": {}
-        });
-        fs::write(&path, serde_json::to_vec(&old_save).unwrap()).unwrap();
-        let error = GameSaveFile::read_from(&path)
-            .err()
-            .expect("duplicate soldier-presence snapshots must fail at the header");
-        assert_eq!(
-            format!("{error:#}"),
-            format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 81")
-        );
-    }
-
-    #[test]
-    fn read_rejects_deferred_ai_state_before_engine_decode() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("deferred_ai_save.json");
-        let old_save = serde_json::json!({
-            "header": { "magic": SAVE_MAGIC, "version": 82 },
-            "engine": {}
-        });
-        fs::write(&path, serde_json::to_vec(&old_save).unwrap()).unwrap();
-        let error = GameSaveFile::read_from(&path)
-            .err()
-            .expect("obsolete AI state must fail before decoding its fields");
-        assert_eq!(
-            format!("{error:#}"),
-            format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 82")
-        );
-    }
-
-    #[test]
-    fn read_rejects_previous_rust_achievement_schema_at_header() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("previous_rust_save.json");
-        let old_save = serde_json::json!({
-            "header": {
-                "magic": SAVE_MAGIC,
-                "version": 59,
-                "mission_id": 1,
-                "timestamp_unix": 0,
-                "display_text": "Previous Rust Save"
-            },
-            "engine": {}
-        });
-        fs::write(&path, serde_json::to_vec(&old_save).unwrap()).unwrap();
-
-        let error = GameSaveFile::read_from(&path)
-            .err()
-            .expect("previous Rust achievement schema must be rejected");
-        assert_eq!(
-            format!("{error:#}"),
-            format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 59")
+            format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got {version}")
         );
     }
 

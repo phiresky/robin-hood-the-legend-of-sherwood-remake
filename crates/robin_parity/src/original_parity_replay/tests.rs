@@ -328,162 +328,99 @@ fn trace_actor_order(
 
 #[test]
 fn legacy_blocked_box_reset_requires_perform_motion_execute_arm() {
+    use robin_engine::order::OrderType;
+    use robin_engine::sprite::MotionState::{InProgress, Start};
     let soldier = EntityId::new(122, robin_engine::element::EntityIdKind::Soldier);
-    assert!(!original_reset_blocked_box_this_frame(
-        &trace_actor_order(
-            robin_engine::order::OrderType::TransitionWaitingUprightBoredWaitingUpright,
-            true,
-            robin_engine::sprite::MotionState::Start,
-            10,
-        ),
-        soldier,
-        10,
-        false,
-        None,
-        None,
-        None,
-    ));
-    assert!(!original_reset_blocked_box_this_frame(
-        &trace_actor_order(
-            robin_engine::order::OrderType::TransitionWalkingUprightWaitingUpright,
-            false,
-            robin_engine::sprite::MotionState::Start,
-            10,
-        ),
-        soldier,
-        10,
-        false,
-        None,
-        None,
-        None,
-    ));
-    assert!(original_reset_blocked_box_this_frame(
-        &trace_actor_order(
-            robin_engine::order::OrderType::WalkingUpright,
-            true,
-            robin_engine::sprite::MotionState::Start,
-            10,
-        ),
-        soldier,
-        10,
-        false,
-        None,
-        None,
-        None,
-    ));
-    assert!(original_reset_blocked_box_this_frame(
-        &trace_actor_order(
-            robin_engine::order::OrderType::WalkingUpright,
-            true,
-            robin_engine::sprite::MotionState::InProgress,
-            11,
-        ),
-        soldier,
-        10,
-        true,
-        None,
-        None,
-        None,
-    ));
-    assert!(!original_reset_blocked_box_this_frame(
-        &trace_actor_order(
-            robin_engine::order::OrderType::WalkingUpright,
-            true,
-            robin_engine::sprite::MotionState::InProgress,
-            10,
-        ),
-        soldier,
-        10,
-        true,
-        None,
-        None,
-        None,
-    ));
-    assert!(original_reset_blocked_box_this_frame(
-        &trace_actor_order(
-            robin_engine::order::OrderType::WalkingUpright,
-            true,
-            robin_engine::sprite::MotionState::InProgress,
-            10,
-        ),
-        soldier,
-        10,
-        true,
-        Some(10),
-        None,
-        None,
-    ));
-    assert!(!original_reset_blocked_box_this_frame(
-        &trace_actor_order(
-            robin_engine::order::OrderType::WalkingUpright,
-            true,
-            robin_engine::sprite::MotionState::InProgress,
-            11,
-        ),
-        soldier,
-        10,
-        false,
-        None,
-        None,
-        None,
-    ));
     let pc = EntityId::new(101, robin_engine::element::EntityIdKind::Pc);
-    assert!(original_reset_blocked_box_this_frame(
-        &trace_actor_order(
-            robin_engine::order::OrderType::RunningWithSword,
+    let bored = OrderType::TransitionWaitingUprightBoredWaitingUpright;
+    let stop_walk = OrderType::TransitionWalkingUprightWaitingUpright;
+    let walk = OrderType::WalkingUpright;
+    let sword_run = OrderType::RunningWithSword;
+    // (order, movement sequence, motion, current order id, actor, last
+    //  processed order id, moved this frame, prior pending motion order id,
+    //  expected reset)
+    let rows = [
+        (bored, true, Start, 10, soldier, 10, false, None, false),
+        (stop_walk, false, Start, 10, soldier, 10, false, None, false),
+        (walk, true, Start, 10, soldier, 10, false, None, true),
+        (walk, true, InProgress, 11, soldier, 10, true, None, true),
+        (walk, true, InProgress, 10, soldier, 10, true, None, false),
+        (
+            walk,
             true,
-            robin_engine::sprite::MotionState::InProgress,
+            InProgress,
+            10,
+            soldier,
+            10,
+            true,
+            Some(10),
+            true,
+        ),
+        (walk, true, InProgress, 11, soldier, 10, false, None, false),
+        (
+            sword_run,
+            true,
+            InProgress,
             30,
-        ),
-        pc,
-        30,
-        false,
-        Some(30),
-        None,
-        None,
-    ));
-    assert!(!original_reset_blocked_box_this_frame(
-        &trace_actor_order(
-            robin_engine::order::OrderType::RunningWithSword,
-            true,
-            robin_engine::sprite::MotionState::InProgress,
+            pc,
             30,
-        ),
-        pc,
-        30,
-        false,
-        Some(29),
-        None,
-        None,
-    ));
-    assert!(!original_reset_blocked_box_this_frame(
-        &trace_actor_order(
-            robin_engine::order::OrderType::RunningWithSword,
-            true,
-            robin_engine::sprite::MotionState::InProgress,
-            31,
-        ),
-        pc,
-        30,
-        false,
-        Some(30),
-        None,
-        None,
-    ));
-    assert!(!original_reset_blocked_box_this_frame(
-        &trace_actor_order(
-            robin_engine::order::OrderType::RunningWithSword,
             false,
-            robin_engine::sprite::MotionState::InProgress,
-            30,
+            Some(30),
+            true,
         ),
-        pc,
-        30,
-        false,
-        Some(30),
-        None,
-        None,
-    ));
+        (
+            sword_run,
+            true,
+            InProgress,
+            30,
+            pc,
+            30,
+            false,
+            Some(29),
+            false,
+        ),
+        (
+            sword_run,
+            true,
+            InProgress,
+            31,
+            pc,
+            30,
+            false,
+            Some(30),
+            false,
+        ),
+        (
+            sword_run,
+            false,
+            InProgress,
+            30,
+            pc,
+            30,
+            false,
+            Some(30),
+            false,
+        ),
+    ];
+    for (
+        row,
+        (order, movement, motion, order_id, actor, last_processed, moved, pending, expected),
+    ) in rows.into_iter().enumerate()
+    {
+        assert_eq!(
+            original_reset_blocked_box_this_frame(
+                &trace_actor_order(order, movement, motion, order_id),
+                actor,
+                last_processed,
+                moved,
+                pending,
+                None,
+                None,
+            ),
+            expected,
+            "row {row}"
+        );
+    }
 }
 
 #[test]
@@ -500,42 +437,27 @@ fn legacy_blocked_box_reset_recognizes_hidden_stop_movement_rewrite() {
         stop_animation: robin_engine::order::OrderType::TransitionWalkingUprightWaitingUpright
             as u32,
     };
-    assert!(original_reset_blocked_box_this_frame(
-        &turn_after_stop,
-        soldier,
-        25,
-        false,
-        None,
-        Some(prior_walking),
-        Some(20),
-    ));
-    assert!(!original_reset_blocked_box_this_frame(
-        &turn_after_stop,
-        soldier,
-        25,
-        false,
-        None,
-        Some(prior_walking),
-        Some(19),
-    ));
-    assert!(!original_reset_blocked_box_this_frame(
-        &turn_after_stop,
-        soldier,
-        30,
-        false,
-        None,
-        Some(prior_walking),
-        Some(20),
-    ));
-    assert!(!original_reset_blocked_box_this_frame(
-        &turn_after_stop,
-        soldier,
-        25,
-        true,
-        None,
-        Some(prior_walking),
-        Some(20),
-    ));
+    // (last processed order id, moved this frame, prior last processed, expected)
+    for (last_processed, moved, prior_last_processed, expected) in [
+        (25, false, 20, true),
+        (25, false, 19, false),
+        (30, false, 20, false),
+        (25, true, 20, false),
+    ] {
+        assert_eq!(
+            original_reset_blocked_box_this_frame(
+                &turn_after_stop,
+                soldier,
+                last_processed,
+                moved,
+                None,
+                Some(prior_walking),
+                Some(prior_last_processed),
+            ),
+            expected,
+            "last_processed={last_processed} moved={moved} prior={prior_last_processed}"
+        );
+    }
 
     for (action, stop_animation) in [
         (
@@ -1895,6 +1817,26 @@ fn retained_terminal_success_repair_is_emitted_exactly_once() {
     ));
 }
 
+/// `legacy_presentation_sprite_rng_burst` for an empty-command frame of the
+/// current schema whose simulation body ran while the level was in progress.
+fn live_sprite_rng_burst(
+    scroll_count: usize,
+    has_teleport_star_lifecycle: bool,
+    gameplay_callsite_offsets: &[u32],
+    gameplay_values: &[u32],
+) -> Option<usize> {
+    legacy_presentation_sprite_rng_burst(
+        TRACE_SCHEMA_VERSION,
+        true,
+        GameCode::LevelInProgress as i32,
+        true,
+        scroll_count,
+        has_teleport_star_lifecycle,
+        gameplay_callsite_offsets,
+        gameplay_values,
+    )
+}
+
 #[test]
 fn legacy_presentation_sprite_rng_requires_exact_new_terminal_burst() {
     let offsets = [11, 12, 91, 91, 91, 91];
@@ -1913,11 +1855,7 @@ fn legacy_presentation_sprite_rng_requires_exact_new_terminal_burst() {
         Some(4),
     );
     assert_eq!(
-        legacy_presentation_sprite_rng_burst(
-            TRACE_SCHEMA_VERSION,
-            true,
-            GameCode::LevelInProgress as i32,
-            true,
+        live_sprite_rng_burst(
             4,
             false,
             &[11, 12, 91, 91, 91, 91, 91, 91],
@@ -1978,86 +1916,26 @@ fn legacy_presentation_sprite_rng_requires_exact_new_terminal_burst() {
         ),
         None
     );
-    assert_eq!(
-        legacy_presentation_sprite_rng_burst(
-            TRACE_SCHEMA_VERSION,
-            true,
-            GameCode::LevelInProgress as i32,
-            true,
-            5,
-            false,
-            &offsets,
-            &values,
-        ),
-        None
-    );
+    assert_eq!(live_sprite_rng_burst(5, false, &offsets, &values,), None);
 }
 
 #[test]
 fn legacy_presentation_sprite_rng_rejects_ambiguous_bursts() {
     assert_eq!(
-        legacy_presentation_sprite_rng_burst(
-            TRACE_SCHEMA_VERSION,
-            true,
-            GameCode::LevelInProgress as i32,
-            true,
-            4,
-            false,
-            &[91, 12, 91, 91, 91, 91],
-            &[1, 2, 3, 4, 5, 6],
-        ),
+        live_sprite_rng_burst(4, false, &[91, 12, 91, 91, 91, 91], &[1, 2, 3, 4, 5, 6],),
         None
     );
     assert_eq!(
-        legacy_presentation_sprite_rng_burst(
-            TRACE_SCHEMA_VERSION,
-            true,
-            GameCode::LevelInProgress as i32,
-            true,
-            4,
-            false,
-            &[91, 91, 92, 91, 91, 91],
-            &[1, 2, 3, 4, 5, 6],
-        ),
+        live_sprite_rng_burst(4, false, &[91, 91, 92, 91, 91, 91], &[1, 2, 3, 4, 5, 6],),
         None
     );
     assert_eq!(
-        legacy_presentation_sprite_rng_burst(
-            TRACE_SCHEMA_VERSION,
-            true,
-            GameCode::LevelInProgress as i32,
-            true,
-            4,
-            false,
-            &[91, 91, 91, 91],
-            &[1, 2, 3, 4],
-        ),
+        live_sprite_rng_burst(4, false, &[91, 91, 91, 91], &[1, 2, 3, 4],),
         None
     );
+    assert_eq!(live_sprite_rng_burst(0, false, &[11, 12], &[1, 2],), None);
     assert_eq!(
-        legacy_presentation_sprite_rng_burst(
-            TRACE_SCHEMA_VERSION,
-            true,
-            GameCode::LevelInProgress as i32,
-            true,
-            0,
-            false,
-            &[11, 12],
-            &[1, 2],
-        ),
-        None
-    );
-    assert_eq!(
-        legacy_presentation_sprite_rng_burst(
-            TRACE_SCHEMA_VERSION,
-            true,
-            GameCode::LevelInProgress as i32,
-            true,
-            3,
-            false,
-            &[11, 12, 91, 91, 91, 91],
-            &[1, 2, 3, 4, 3, 6],
-        ),
+        live_sprite_rng_burst(3, false, &[11, 12, 91, 91, 91, 91], &[1, 2, 3, 4, 3, 6],),
         None
     );
 }
@@ -2078,11 +1956,7 @@ fn legacy_mobile_vibration_rng_accepts_only_new_terminal_xy_pairs() {
         Some(6),
     );
     assert_eq!(
-        legacy_presentation_sprite_rng_burst(
-            TRACE_SCHEMA_VERSION,
-            true,
-            GameCode::LevelInProgress as i32,
-            true,
+        live_sprite_rng_burst(
             3,
             false,
             &[71, 12, 71, 72, 71, 72, 71, 72],
@@ -2092,11 +1966,7 @@ fn legacy_mobile_vibration_rng_accepts_only_new_terminal_xy_pairs() {
         "either X/Y site appearing in the gameplay prefix is ambiguous",
     );
     assert_eq!(
-        legacy_presentation_sprite_rng_burst(
-            TRACE_SCHEMA_VERSION,
-            true,
-            GameCode::LevelInProgress as i32,
-            true,
+        live_sprite_rng_burst(
             3,
             false,
             &[11, 72, 71, 72, 71, 72, 71, 72],
@@ -2106,16 +1976,7 @@ fn legacy_mobile_vibration_rng_accepts_only_new_terminal_xy_pairs() {
         "either X/Y site appearing in the gameplay prefix is ambiguous",
     );
     assert_eq!(
-        legacy_presentation_sprite_rng_burst(
-            TRACE_SCHEMA_VERSION,
-            true,
-            GameCode::LevelInProgress as i32,
-            true,
-            3,
-            false,
-            &[11, 12, 71, 72],
-            &[1, 2, 3, 4],
-        ),
+        live_sprite_rng_burst(3, false, &[11, 12, 71, 72], &[1, 2, 3, 4],),
         None,
         "one X/Y pair is not a repeated mobile-child burst",
     );
@@ -2202,42 +2063,12 @@ fn legacy_teleport_star_rng_requires_exact_retained_lifecycle_and_ten_draws() {
     let offsets = [11, 12, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91];
     let values = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
     assert_eq!(
-        legacy_presentation_sprite_rng_burst(
-            TRACE_SCHEMA_VERSION,
-            true,
-            GameCode::LevelInProgress as i32,
-            true,
-            29,
-            true,
-            &offsets,
-            &values,
-        ),
+        live_sprite_rng_burst(29, true, &offsets, &values,),
         Some(10)
     );
+    assert_eq!(live_sprite_rng_burst(29, false, &offsets, &values,), None);
     assert_eq!(
-        legacy_presentation_sprite_rng_burst(
-            TRACE_SCHEMA_VERSION,
-            true,
-            GameCode::LevelInProgress as i32,
-            true,
-            29,
-            false,
-            &offsets,
-            &values,
-        ),
-        None
-    );
-    assert_eq!(
-        legacy_presentation_sprite_rng_burst(
-            TRACE_SCHEMA_VERSION,
-            true,
-            GameCode::LevelInProgress as i32,
-            true,
-            29,
-            true,
-            &offsets[..11],
-            &values[..11],
-        ),
+        live_sprite_rng_burst(29, true, &offsets[..11], &values[..11],),
         None
     );
 

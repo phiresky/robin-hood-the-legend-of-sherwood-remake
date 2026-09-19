@@ -1461,10 +1461,7 @@ mod operation_outcome_tests {
         let mut host =
             crate::host::Host::new(context.clone().try_into().unwrap(), 640.0, 480.0).unwrap();
         let mut callbacks = RustCallbacks::new(context).unwrap();
-        let mut assets = engine_api::LevelAssets::default();
-        let mut engine =
-            engine_api::Engine::new_for_test(640.0, 480.0, Campaign::default(), &mut assets)
-                .unwrap();
+        let (mut engine, assets) = robin_engine::test_support::fresh_engine_sized(640.0, 480.0);
         let mut game = crate::game::Game::default();
         let profiles = ProfileManager::default();
         callbacks.queue_operation(SaveLoadRequest::QuickLoad { use_backup: false });

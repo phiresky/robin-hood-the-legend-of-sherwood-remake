@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 use crate::position_interface::SectorHandle;
 
 fn fixture() -> (EngineInner, LevelAssets, EntityId) {
@@ -30,8 +31,7 @@ fn invalid_patrol_assignment_preserves_original_partial_mutation() {
     ai.macro_timer_is_running = true;
 
     let assigned = engine.execute_ai_assign_patrol_path(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         PatrolAssignment::Index(PathId::new(3).unwrap()),
         false,
@@ -115,8 +115,7 @@ fn detached_patrol_status_preserves_original_cursor_history_across_reassignment(
     let mut assets = assets;
     assets.navigation.hiking_paths = std::sync::Arc::new(paths);
     assert!(engine.execute_ai_assign_patrol_path(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         PatrolAssignment::Index(path_id),
         false
@@ -165,8 +164,7 @@ fn script_way_assignment_keeps_special_action() {
     let mut assets = assets;
     assets.navigation.hiking_paths = std::sync::Arc::new(paths.clone());
     let assigned = engine.execute_ai_assign_patrol_path(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         PatrolAssignment::ScriptWay(PathId::new(0).unwrap()),
         true,
@@ -194,8 +192,7 @@ fn script_way_assignment_keeps_special_action() {
     let mut assets = assets;
     assets.navigation.hiking_paths = std::sync::Arc::new(paths.clone());
     let assigned = engine.execute_ai_assign_patrol_path(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         PatrolAssignment::Index(PathId::new(0).unwrap()),
         false,

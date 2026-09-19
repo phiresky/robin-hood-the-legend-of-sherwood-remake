@@ -3,6 +3,7 @@
 //! Extracted from the original `melee.rs` mega-file.
 
 use super::*;
+use crate::engine::TickCtx;
 
 /// `PARITY_DEBUG_SWORD_DAMAGE=1` traces every sword-damage application and
 /// every sweep-strike lifecycle step (seed, per-frame phase, per-frame arc
@@ -389,15 +390,10 @@ fn is_circle_sweep(kind: WeaponThrustKind) -> bool {
 }
 
 impl EngineInner {
-    fn begin_selected_melee_motion(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        attacker_id: EntityId,
-    ) {
+    fn begin_selected_melee_motion(&mut self, tcx: TickCtx<'_>, attacker_id: EntityId) {
         let profile_idx = {
             let entity = self.expect_entity_mut(attacker_id, "melee MotionState::Start owner");
-            let profile_idx = get_hth_weapon_id_full(entity, &assets.profile_manager);
+            let profile_idx = get_hth_weapon_id_full(entity, &tcx.assets.profile_manager);
             self.set_entity_posture(attacker_id, Posture::Upright);
             let entity = self.expect_entity_mut(attacker_id, "melee MotionState::Start owner");
             let actor = entity.actor_data_mut().unwrap_or_else(|| {
@@ -435,13 +431,13 @@ impl EngineInner {
         // Do not create a sweep for an ordinary fresh strike here; its real
         // victim list is still initialized only at MotionState::Done.
         self.apply_strike_selection_sweep_rebase(
-            assets,
+            tcx.assets,
             attacker_id,
             Some(crate::combat::StrikeSelectionSweepRebase { strike }),
         );
 
         let mut victims =
-            self.collect_sword_strike_warning_victims(assets, attacker_id, strike, profile_idx);
+            self.collect_sword_strike_warning_victims(tcx.assets, attacker_id, strike, profile_idx);
         // Human-actor execution warns the list produced by
         // sword-strike victim collection. Every multi-victim collector fills
         // that list by walking actors in engine order, whose
@@ -450,7 +446,7 @@ impl EngineInner {
         // legacy save is adopted, so restore the authoritative actor order
         // before these synchronous callbacks consume RNG.
         victims.sort_by_key(|&victim_id| self.world.original_creation_order(victim_id));
-        self.warn_for_strike(sim, assets, attacker_id, &victims, strike);
+        self.warn_for_strike(tcx, attacker_id, &victims, strike);
     }
 
     fn selected_melee_identity_is_live(
@@ -474,8 +470,7 @@ impl EngineInner {
     /// because synchronous damage and callbacks may replace it mid-dispatch.
     pub(in crate::engine) fn tick_selected_melee_owner(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         attacker_id: EntityId,
         selected: super::tick::MeleeOwnerSelection,
     ) -> Option<crate::sprite::MotionState> {
@@ -490,8 +485,8 @@ impl EngineInner {
         if !self.selected_melee_identity_is_live(attacker_id, selected) {
             return None;
         }
-        self.tick_straight_melee_for(sim, assets, attacker_id, selected)
-            .or_else(|| self.tick_nonstraight_melee_for(sim, assets, attacker_id, selected))
+        self.tick_straight_melee_for(tcx, attacker_id, selected)
+            .or_else(|| self.tick_nonstraight_melee_for(tcx, attacker_id, selected))
     }
 
     // ─── Per-frame melee tick ───────────────────────────────────────
@@ -538,8 +533,7 @@ impl EngineInner {
     /// an earlier-created defender just queued.
     pub(in crate::engine) fn tick_parry_counter_for_execute(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         order_type: crate::order::OrderType,
         motion: &mut crate::sprite::MotionState,
@@ -569,7 +563,7 @@ impl EngineInner {
                     crate::sequence::SequenceElement::new(1, Command::StopParrySword, Some(owner));
                 // Ordinary instructions retain their sequence FIFO order
                 // alongside later actors' damage instructions.
-                self.launch_element(sim, assets, elem);
+                self.launch_element(tcx, elem);
             }
         }
     }
@@ -602,8 +596,7 @@ impl EngineInner {
 
     pub(super) fn evaluate_smalltalk_hint<I: Into<EntityId>>(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         entity_id: I,
     ) -> bool {
         let entity_id = entity_id.into();
@@ -649,7 +642,7 @@ impl EngineInner {
             Some(entity_id),
             Some(opponent_id),
         );
-        self.launch_element(sim, assets, elem);
+        self.launch_element(tcx, elem);
         true
     }
 
@@ -663,8 +656,7 @@ impl EngineInner {
     /// helper is the narrow straight/assault owner-slot path.
     pub(in crate::engine) fn tick_straight_melee_for(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         attacker_id: EntityId,
         selected: super::tick::MeleeOwnerSelection,
     ) -> Option<crate::sprite::MotionState> {
@@ -711,10 +703,10 @@ impl EngineInner {
             .gesture_quality;
         let profile_idx = self
             .get_entity(attacker_id)
-            .map(|entity| get_hth_weapon_id_full(entity, &assets.profile_manager))
+            .map(|entity| get_hth_weapon_id_full(entity, &tcx.assets.profile_manager))
             .unwrap_or_else(|| panic!("selected melee attacker {attacker_id:?} disappeared"));
         let strike_kind = profile_idx
-            .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
+            .and_then(|idx| tcx.assets.profile_manager.get_hth_weapon(idx))
             .map(|profile| profile.thrusts[strike as usize].kind)
             .unwrap_or(WeaponThrustKind::Straight);
         if !matches!(
@@ -739,7 +731,7 @@ impl EngineInner {
         let entity = self.expect_entity_mut(attacker_id, "selected melee attacker");
         let direction = entity.element_data().direction() as u16;
         let motion = entity.element_data_mut().sprite.perform_action(
-            sim,
+            tcx.sim,
             Some(selected.order_id),
             animation,
             direction,
@@ -786,13 +778,12 @@ impl EngineInner {
         }
 
         if started {
-            self.begin_selected_melee_motion(sim, assets, attacker_id);
+            self.begin_selected_melee_motion(tcx, attacker_id);
         }
 
         if hit {
             self.resolve_straight_melee_hit(
-                sim,
-                assets,
+                tcx,
                 attacker_id,
                 target_id,
                 strike,
@@ -801,15 +792,14 @@ impl EngineInner {
             );
         }
         if motion == crate::sprite::MotionState::Terminated {
-            self.complete_melee_strike(sim, assets, attacker_id, strike, profile_idx);
+            self.complete_melee_strike(tcx, attacker_id, strike, profile_idx);
         }
         Some(motion)
     }
 
     fn resolve_straight_melee_hit(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         attacker_id: EntityId,
         victim_id: EntityId,
         strike: SwordStrike,
@@ -822,7 +812,7 @@ impl EngineInner {
         // Assault fallback on its existing metric; Original reaches this
         // helper only for STRAIGHT weapon thrusts.
         let profile = profile_idx.map(|idx| {
-            assets.profile_manager.get_hth_weapon(idx).unwrap_or_else(|| {
+            tcx.assets.profile_manager.get_hth_weapon(idx).unwrap_or_else(|| {
                 panic!(
                     "straight-strike attacker {attacker_id:?} references missing HtH weapon profile {idx}"
                 )
@@ -851,8 +841,7 @@ impl EngineInner {
         if in_range {
             if let Some(profile_idx) = profile_idx {
                 self.queue_scaled_sword_damage(
-                    sim,
-                    assets,
+                    tcx,
                     victim_id,
                     attacker_id,
                     strike,
@@ -872,14 +861,13 @@ impl EngineInner {
 
     pub(super) fn complete_melee_strike(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         actor_id: EntityId,
         strike: SwordStrike,
         profile_idx: Option<u32>,
     ) {
         let clears_shared_sweep = profile_idx
-            .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
+            .and_then(|idx| tcx.assets.profile_manager.get_hth_weapon(idx))
             .is_some_and(|profile| {
                 !matches!(
                     profile.thrusts[strike as usize].kind,
@@ -895,7 +883,7 @@ impl EngineInner {
         // interrupted before it terminated survive until the next push
         // strike's DONE refills them.
         let completes_push_strike = profile_idx
-            .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
+            .and_then(|idx| tcx.assets.profile_manager.get_hth_weapon(idx))
             .is_some_and(|profile| {
                 matches!(
                     profile.thrusts[strike as usize].kind,
@@ -917,10 +905,10 @@ impl EngineInner {
                 if should_enter_swordfight_after_strike(
                     attacker,
                     victim,
-                    &assets.profile_manager,
+                    &tcx.assets.profile_manager,
                     &self.mission_domain.diplomacy,
                 ) {
-                    self.launch_enter_swordfight_after_strike(sim, assets, victim_id, actor_id);
+                    self.launch_enter_swordfight_after_strike(tcx, victim_id, actor_id);
                 }
                 self.expect_entity_mut(actor_id, "push completion attacker")
                     .human_data_mut()
@@ -938,7 +926,7 @@ impl EngineInner {
                 .clear();
         }
 
-        match profile_idx.and_then(|idx| assets.profile_manager.get_hth_weapon(idx)) {
+        match profile_idx.and_then(|idx| tcx.assets.profile_manager.get_hth_weapon(idx)) {
             Some(profile) => {
                 let energy = combat::strike_energy_cost(profile, strike);
                 let frame = self.control.frame_counter;
@@ -979,11 +967,7 @@ impl EngineInner {
     /// Production update orchestration runs every strike kind in its
     /// creation-ordered entity pass.
     #[cfg(test)]
-    pub(crate) fn tick_melee_strikes(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
+    pub(crate) fn tick_melee_strikes(&mut self, tcx: TickCtx<'_>) {
         let actor_ids: Vec<EntityId> = self
             .world
             .entities
@@ -1007,7 +991,7 @@ impl EngineInner {
             else {
                 continue;
             };
-            self.tick_selected_melee_owner(sim, assets, actor_id, selected);
+            self.tick_selected_melee_owner(tcx, actor_id, selected);
         }
     }
 
@@ -1015,8 +999,7 @@ impl EngineInner {
     /// creation-order slot.
     pub(in crate::engine) fn tick_nonstraight_melee_for(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         attacker_id: EntityId,
         selected: super::tick::MeleeOwnerSelection,
     ) -> Option<crate::sprite::MotionState> {
@@ -1066,10 +1049,10 @@ impl EngineInner {
             .gesture_quality;
         let profile_idx = self
             .get_entity(attacker_id)
-            .map(|entity| get_hth_weapon_id_full(entity, &assets.profile_manager))
+            .map(|entity| get_hth_weapon_id_full(entity, &tcx.assets.profile_manager))
             .unwrap_or_else(|| panic!("selected melee attacker {attacker_id:?} disappeared"));
         let (strike_kind, strike_direction) = profile_idx
-            .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
+            .and_then(|idx| tcx.assets.profile_manager.get_hth_weapon(idx))
             .map(|profile| {
                 let thrust = &profile.thrusts[strike as usize];
                 (thrust.kind, thrust.direction)
@@ -1148,7 +1131,7 @@ impl EngineInner {
                 }
                 let direction = entity.element_data().direction() as u16;
                 motion = entity.element_data_mut().sprite.perform_action(
-                    sim,
+                    tcx.sim,
                     Some(selected.order_id),
                     animation,
                     direction,
@@ -1178,7 +1161,7 @@ impl EngineInner {
         }
 
         if started {
-            self.begin_selected_melee_motion(sim, assets, attacker_id);
+            self.begin_selected_melee_motion(tcx, attacker_id);
         }
 
         // Apply the hit before returning to the actor update.
@@ -1202,9 +1185,9 @@ impl EngineInner {
                 // rejects it (for example, a lateral target outside the
                 // strike arc).
                 let all_victims =
-                    self.execute_multi_target_strike(assets, attacker_id, strike, profile_idx);
+                    self.execute_multi_target_strike(tcx.assets, attacker_id, strike, profile_idx);
                 self.initialize_sweep(
-                    assets,
+                    tcx.assets,
                     attacker_id,
                     strike,
                     profile_idx,
@@ -1219,12 +1202,11 @@ impl EngineInner {
                 // EnterSwordfight command to the strike's completion
                 // by stashing victim IDs on the actor.
                 let all_victims =
-                    self.execute_multi_target_strike(assets, attacker_id, strike, profile_idx);
+                    self.execute_multi_target_strike(tcx.assets, attacker_id, strike, profile_idx);
                 for victim_id in &all_victims {
                     if let Some(profile_idx) = profile_idx {
                         self.queue_scaled_sword_damage(
-                            sim,
-                            assets,
+                            tcx,
                             *victim_id,
                             attacker_id,
                             strike,
@@ -1240,8 +1222,7 @@ impl EngineInner {
                 }
             } else {
                 self.resolve_straight_melee_hit(
-                    sim,
-                    assets,
+                    tcx,
                     attacker_id,
                     target_id,
                     strike,
@@ -1252,7 +1233,7 @@ impl EngineInner {
         }
 
         if motion == crate::sprite::MotionState::Terminated {
-            self.complete_melee_strike(sim, assets, attacker_id, strike, profile_idx);
+            self.complete_melee_strike(tcx, attacker_id, strike, profile_idx);
         }
         if self.selected_melee_identity_is_live(attacker_id, selected) {
             let phase = if initialized_sweep {
@@ -1260,15 +1241,14 @@ impl EngineInner {
             } else {
                 sweep_phase
             };
-            self.tick_selected_sweep_phase(sim, assets, attacker_id, phase);
+            self.tick_selected_sweep_phase(tcx, attacker_id, phase);
         }
         Some(motion)
     }
 
     pub(super) fn tick_selected_sweep_phase(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         attacker_id: EntityId,
         phase: SweepTickPhase,
     ) {
@@ -1278,7 +1258,7 @@ impl EngineInner {
         match phase {
             SweepTickPhase::Dormant | SweepTickPhase::Start => {}
             SweepTickPhase::Initialized => {
-                self.tick_sweep_for(sim, assets, attacker_id, true);
+                self.tick_sweep_for(tcx, attacker_id, true);
             }
             SweepTickPhase::InProgress => {
                 // Circle sword-strike execution advances its retained angles only
@@ -1301,13 +1281,13 @@ impl EngineInner {
                     });
                 let entity =
                     self.expect_entity(attacker_id, "selected non-straight melee attacker");
-                let profile_idx = get_hth_weapon_id_full(entity, &assets.profile_manager)
+                let profile_idx = get_hth_weapon_id_full(entity, &tcx.assets.profile_manager)
                     .unwrap_or_else(|| {
                         panic!(
                             "selected non-straight melee attacker {attacker_id:?} has no melee weapon profile"
                         )
                     });
-                let profile = assets
+                let profile = tcx.assets
                     .profile_manager
                     .get_hth_weapon(profile_idx)
                     .unwrap_or_else(|| {
@@ -1346,10 +1326,10 @@ impl EngineInner {
                     // gate only protects the tail angle advance.  Preserve
                     // the retained victim/angle geometry, but rebind the
                     // payload and direction to the replacement strike.
-                    self.tick_sweep_for_mode(sim, assets, attacker_id, false, true);
+                    self.tick_sweep_for_mode(tcx, attacker_id, false, true);
                     return;
                 }
-                self.tick_sweep_for(sim, assets, attacker_id, false);
+                self.tick_sweep_for(tcx, attacker_id, false);
             }
         }
     }
@@ -1547,18 +1527,16 @@ impl EngineInner {
     ///
     pub(crate) fn tick_sweep_for(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         attacker_id: EntityId,
         initialized_this_hourglass: bool,
     ) {
-        self.tick_sweep_for_mode(sim, assets, attacker_id, initialized_this_hourglass, false);
+        self.tick_sweep_for_mode(tcx, attacker_id, initialized_this_hourglass, false);
     }
 
     fn tick_sweep_for_mode(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         attacker_id: EntityId,
         initialized_this_hourglass: bool,
         effect_only_before_action_point: bool,
@@ -1572,7 +1550,7 @@ impl EngineInner {
         {
             return;
         }
-        let profile_idx = get_hth_weapon_id_full(entity, &assets.profile_manager)
+        let profile_idx = get_hth_weapon_id_full(entity, &tcx.assets.profile_manager)
             .expect("sweep attacker must have a melee weapon");
         let (sequence_id, element_index, order) = self
             .orders
@@ -1587,7 +1565,8 @@ impl EngineInner {
             .get_element(sequence_id, element_index)
             .expect("selected sweep sequence must exist")
             .gesture_quality;
-        let thrust = &assets
+        let thrust = &tcx
+            .assets
             .profile_manager
             .get_hth_weapon(profile_idx)
             .expect("sweep weapon profile must exist")
@@ -1700,8 +1679,7 @@ impl EngineInner {
             }
             if hit == Some(true) {
                 self.queue_scaled_sword_damage(
-                    sim,
-                    assets,
+                    tcx,
                     victim_id,
                     attacker_id,
                     strike,
@@ -1719,11 +1697,11 @@ impl EngineInner {
                 && should_enter_swordfight_after_strike(
                     self.expect_entity(attacker_id, "sweep attacker"),
                     self.expect_entity(victim_id, "sweep victim"),
-                    &assets.profile_manager,
+                    &tcx.assets.profile_manager,
                     &self.mission_domain.diplomacy,
                 )
             {
-                self.launch_enter_swordfight_after_strike(sim, assets, victim_id, attacker_id);
+                self.launch_enter_swordfight_after_strike(tcx, victim_id, attacker_id);
             }
         }
         if circle && !effect_only_before_action_point {
@@ -1739,8 +1717,7 @@ impl EngineInner {
     /// Launch swordfight entry after the victim's damage instruction.
     pub(in crate::engine) fn launch_enter_swordfight_after_strike(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         victim_id: EntityId,
         attacker_id: EntityId,
     ) {
@@ -1761,7 +1738,7 @@ impl EngineInner {
             crate::sequence::Field::SwordfightPrepared,
             crate::sequence::FieldValue::Bool(false),
         );
-        self.launch_element(sim, assets, element);
+        self.launch_element(tcx, element);
     }
 
     // ─── Push flight tick ─────────────────────────────────────────
@@ -1872,8 +1849,7 @@ impl EngineInner {
     /// Human flight callbacks follow the sprite position and posture updates.
     pub(in crate::engine) fn finish_combat_flight(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         motion: crate::sprite::MotionState,
     ) {
@@ -1885,7 +1861,7 @@ impl EngineInner {
             .2
             .antagonist;
         if motion == crate::sprite::MotionState::Terminated {
-            self.update_script_sectors_after_flight(sim, assets, owner);
+            self.update_script_sectors_after_flight(tcx, owner);
         }
         if let Some(antagonist) = antagonist {
             let increment = self
@@ -1895,15 +1871,14 @@ impl EngineInner {
                 .expect("flight owner disappeared")
                 .position_iface()
                 .get_increment();
-            self.apply_domino_effect(sim, assets, owner, antagonist, increment.x, increment.y);
+            self.apply_domino_effect(tcx, owner, antagonist, increment.x, increment.y);
         }
     }
 
     /// A ladder fall uses its selected destination and the actor's shared timer.
     pub(in crate::engine) fn execute_ladder_fall_position(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         motion: crate::sprite::MotionState,
     ) -> crate::sprite::MotionState {
@@ -1940,7 +1915,7 @@ impl EngineInner {
                     .sector()
                     .expect("ladder fall has no lift sector");
                 let low = self
-                    .find_lift_low_entry(assets, u16::from(sector))
+                    .find_lift_low_entry(tcx.assets, u16::from(sector))
                     .expect("ladder fall lift has no low exit");
                 self.world
                     .entities
@@ -1957,9 +1932,13 @@ impl EngineInner {
                 entity
                     .element_data_mut()
                     .set_sector_topology(Some(low.sector), low.sector.arena_index());
-                let obstacle =
-                    self.get_projection_area_index(assets, low.sector, low.layer, target.to_map());
-                self.set_obstacle_and_material(assets, owner, obstacle);
+                let obstacle = self.get_projection_area_index(
+                    tcx.assets,
+                    low.sector,
+                    low.layer,
+                    target.to_map(),
+                );
+                self.set_obstacle_and_material(tcx.assets, owner, obstacle);
                 let entity = self
                     .world
                     .entities
@@ -1980,7 +1959,7 @@ impl EngineInner {
                 let life_points = get_life_points(entity);
                 let new_value =
                     crate::combat::compute_concussion_effect(concussion, 71, life_points);
-                self.apply_concussion(sim, assets, owner, new_value, false);
+                self.apply_concussion(tcx, owner, new_value, false);
                 let entity = self
                     .world
                     .entities
@@ -2016,7 +1995,7 @@ impl EngineInner {
             Self::publish_flight_position(entity);
         }
         if motion == MotionState::Terminated {
-            self.update_script_sectors_after_flight(sim, assets, owner);
+            self.update_script_sectors_after_flight(tcx, owner);
         }
         motion
     }
@@ -2043,8 +2022,7 @@ impl EngineInner {
     /// further domino cascades.
     pub(super) fn apply_domino_effect(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         flyer_id: EntityId,
         hitter_id: EntityId,
         inc_x: f32,
@@ -2148,7 +2126,7 @@ impl EngineInner {
                 0,             // damage stays 0
                 DOMINO_DAMAGE, // concussion
             );
-            self.launch_element(sim, assets, elem);
+            self.launch_element(tcx, elem);
             tracing::trace!(
                 ?flyer_id,
                 ?hitter_id,
@@ -2229,8 +2207,7 @@ impl EngineInner {
     /// Propose and launch one strike at the current swordfight decision statement.
     pub(in crate::engine) fn execute_ai_sword_strike_proposal(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
     ) {
         let current_frame = self.control.frame_counter;
@@ -2274,13 +2251,13 @@ impl EngineInner {
             self.expect_entity_id_for_index(target_handle.get(), "sword-strike principal");
         let fighting_ability = fighting_ability_from_profile(
             attacker,
-            &assets.profile_manager,
-            sim.config().difficulty,
+            &tcx.assets.profile_manager,
+            tcx.sim.config().difficulty,
             &self.mission_domain.diplomacy,
         );
         let blood_alcohol = ai.base.blood_alcohol;
         let is_rank_soldier =
-            ai.profile(&assets.profile_manager).rank == crate::profiles::ProfileRank::Soldier;
+            ai.profile(&tcx.assets.profile_manager).rank == crate::profiles::ProfileRank::Soldier;
         let attacker_direction = attacker.element_data().direction();
         let attacker_camp = attacker.camp();
         let map = attacker.element_data().position_map();
@@ -2303,7 +2280,8 @@ impl EngineInner {
         let distance = entity_distance(&self.world.entities, owner, target_id);
 
         // Select the best strike using the shared proposal logic.
-        let attacker_profile = assets
+        let attacker_profile = tcx
+            .assets
             .profile_manager
             .get_hth_weapon(weapon_id)
             .unwrap_or_else(|| {
@@ -2376,7 +2354,7 @@ impl EngineInner {
         // (= 1.0): the isometric correction is intentionally
         // disabled for sword-fight math.
         let nearby = self.collect_strike_estimation_victims(
-            assets,
+            tcx.assets,
             owner,
             attacker_pos,
             Some(target_id),
@@ -2416,7 +2394,7 @@ impl EngineInner {
         let rng_before = debug.and_then(|_| self.control.rng.original_replay_cursor());
         let mut sweep_rebase = None;
         let proposed = crate::combat::propose_good_sword_strike_with_debug(
-            sim,
+            tcx.sim,
             &ctx,
             &nearby,
             &mut boredom,
@@ -2425,7 +2403,7 @@ impl EngineInner {
             debug,
             &mut sweep_rebase,
         );
-        self.apply_strike_selection_sweep_rebase(assets, owner, sweep_rebase);
+        self.apply_strike_selection_sweep_rebase(tcx.assets, owner, sweep_rebase);
         if special_debug {
             self.trace_special_strike(
                 current_frame,
@@ -2485,7 +2463,7 @@ impl EngineInner {
                 elem.current_outline = crate::element::OutlineColorName::Striking;
                 elem.outline_width = 2;
             }
-            compute_special_strike_preparation_time(sim.config().difficulty, fighting_ability)
+            compute_special_strike_preparation_time(tcx.sim.config().difficulty, fighting_ability)
         } else {
             0
         };
@@ -2503,8 +2481,8 @@ impl EngineInner {
 
         // Enter the special-strike substate before stopping movement and launching
         // the preparation sequence: completion callbacks can run during either call.
-        self.begin_ai_special_strike(sim, assets, owner);
-        self.stop_ai_owner(sim, assets, owner);
+        self.begin_ai_special_strike(tcx, owner);
+        self.stop_ai_owner(tcx, owner);
         if special_debug {
             self.trace_special_strike_state(current_frame, owner, "after_begin");
         }
@@ -2519,10 +2497,9 @@ impl EngineInner {
             SwordStrike::C | SwordStrike::F | SwordStrike::G | SwordStrike::H | SwordStrike::I
         ) {
             let owner_entity = self.expect_entity(owner, "warcry owner");
-            let is_vip = is_vip_from_profile(owner_entity, &assets.profile_manager);
+            let is_vip = is_vip_from_profile(owner_entity, &tcx.assets.profile_manager);
             self.execute_ai_speech(
-                sim,
-                assets,
+                tcx,
                 owner,
                 crate::ai::AiSpeechAttempt {
                     remark: if is_vip {
@@ -2564,7 +2541,7 @@ impl EngineInner {
         strike_elem.priority = crate::sequence::SequencePriority::Preference;
         seq.append_element(strike_elem);
 
-        self.launch_sequence(sim, assets, seq);
+        self.launch_sequence(tcx, seq);
 
         if special_debug {
             self.trace_special_strike_state(current_frame, owner, "after_launch");
@@ -2582,14 +2559,9 @@ impl EngineInner {
 
     /// Run one human's concussion prelude and close a natural/script wake
     /// synchronously before the owner's base actor update begins.
-    pub(crate) fn tick_concussion_healing_for(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        owner: EntityId,
-        assets: &LevelAssets,
-    ) {
+    pub(crate) fn tick_concussion_healing_for(&mut self, tcx: TickCtx<'_>, owner: EntityId) {
         let mut recover = None;
-        let is_sherwood = self.is_sherwood(&assets.profile_manager);
+        let is_sherwood = self.is_sherwood(&tcx.assets.profile_manager);
         let naturally_woke = {
             let entity = self
                 .world
@@ -2619,7 +2591,7 @@ impl EngineInner {
                     self.control.sim_config.difficulty,
                 );
                 let healing_speed =
-                    concussion_healing_speed_for_entity(entity, &assets.profile_manager);
+                    concussion_healing_speed_for_entity(entity, &tcx.assets.profile_manager);
                 let was_unconscious = entity
                     .human_data()
                     .expect("validated concussion owner lost HumanData")
@@ -2681,7 +2653,7 @@ impl EngineInner {
         };
 
         if let Some(element) = recover {
-            self.launch_element(sim, assets, element);
+            self.launch_element(tcx, element);
         }
 
         let owner_has_ai = self
@@ -2691,8 +2663,7 @@ impl EngineInner {
             .is_some_and(|entity| entity.ai_controller().is_some());
         if naturally_woke && owner_has_ai {
             self.execute_ai_callback(
-                sim,
-                assets,
+                tcx,
                 owner,
                 &crate::ai::Stimulus::new(crate::ai::StimulusType::EventFitAgain),
             );
@@ -2731,7 +2702,7 @@ mod tests {
         let motion =
             engine.perform_combat_flight_position(victim, crate::sprite::MotionState::Start);
         assert_eq!(motion, crate::sprite::MotionState::Start);
-        let entity = engine.get_entity(victim).unwrap();
+        let entity = engine.ent(victim);
         assert_eq!(
             entity.element_data().position_map(),
             MapPoint::new(15.0, 20.0)
@@ -2760,7 +2731,7 @@ mod tests {
             .unwrap()
             .2
             .order_id;
-        let entity = engine.get_entity_mut(victim).unwrap();
+        let entity = engine.ent_mut(victim);
         let actor = entity.actor_data_mut().unwrap();
         actor.last_execute_order_id = Some(order_id);
         actor.execute_order_initialising = false;
@@ -2771,10 +2742,10 @@ mod tests {
         );
         engine.set_actors_frozen(true);
 
-        let motion = engine.tick_actor_animation_for(&sim, &assets, victim);
+        let motion = engine.tick_actor_animation_for(TickCtx::new(&sim, &assets), victim);
 
         assert_eq!(motion, Some(crate::sprite::MotionState::InProgress));
-        let entity = engine.get_entity(victim).unwrap();
+        let entity = engine.ent(victim);
         assert_eq!(
             entity.element_data().position(),
             WorldPoint3D::new(15.0, 20.0, 0.0)
@@ -2855,15 +2826,14 @@ mod tests {
             .orders
             .sequence_manager
             .start_sequence_level(sequence);
-        engine.push_new_order(sequence, 0, OrderType::FallingPushedUpright, 0.0, 0.0);
-        engine.select_sequence_element(victim, Some((sequence, 0)));
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            sequence,
-            0,
+        engine.push_new_order(
+            SequenceElementRef::new(sequence, 0),
+            OrderType::FallingPushedUpright,
+            0.0,
+            0.0,
         );
+        engine.select_sequence_element(victim, Some((sequence, 0)));
+        engine.t_element_in_progress(&assets, sequence, 0);
         engine.publish_selected_order_as_installed(victim);
     }
 
@@ -2875,11 +2845,7 @@ mod tests {
             let reference = engine.add_test_entity(falling_pushed_soldier(false));
             for display_reference in [None, Some(reference)] {
                 let victim = engine.add_test_entity(falling_pushed_soldier(false));
-                let sprite = &mut engine
-                    .get_entity_mut(victim)
-                    .unwrap()
-                    .element_data_mut()
-                    .sprite;
+                let sprite = &mut engine.elem_mut(victim).sprite;
                 sprite.display_order_ref = display_reference;
                 sprite.behind_display_order_ref = behind;
                 sprite.display_depth = -77.0;
@@ -2889,7 +2855,7 @@ mod tests {
                     MotionState::Terminated,
                 ] {
                     engine.perform_combat_flight_position(victim, motion);
-                    let sprite = engine.get_entity(victim).unwrap().sprite();
+                    let sprite = engine.ent(victim).sprite();
                     assert_eq!(sprite.display_order_ref, display_reference, "{motion:?}");
                     assert_eq!(sprite.behind_display_order_ref, behind, "{motion:?}");
                     assert_eq!(
@@ -2907,7 +2873,7 @@ mod tests {
         let mut engine = EngineInner::new();
         let victim = engine.add_test_entity(falling_pushed_soldier(false));
         install_falling_pushed_order(&mut engine, victim);
-        let position = engine.get_entity_mut(victim).unwrap().position_iface_mut();
+        let position = engine.ent_mut(victim).position_iface_mut();
         position.set_flight_goal_and_increment(
             WorldPoint3D::new(4.0, 14.0, 0.0),
             WorldVec3D::new(-2.0, -2.0, 0.0),
@@ -2915,12 +2881,9 @@ mod tests {
             SectorHandle::new(4).and_then(SectorHandle::arena_index),
         );
         engine.perform_combat_flight_position(victim, crate::sprite::MotionState::InProgress);
-        assert_eq!(
-            engine.get_entity(victim).unwrap().element_data().position(),
-            WorldPoint3D::new(8.0, 18.0, 0.0)
-        );
+        assert_eq!(engine.pos_of(victim), WorldPoint3D::new(8.0, 18.0, 0.0));
         engine.perform_combat_flight_position(victim, crate::sprite::MotionState::Terminated);
-        let entity = engine.get_entity(victim).unwrap();
+        let entity = engine.ent(victim);
         assert_eq!(
             entity.element_data().position(),
             WorldPoint3D::new(4.0, 14.0, 0.0)
@@ -3030,7 +2993,12 @@ mod tests {
             .orders
             .sequence_manager
             .start_sequence_level(sequence);
-        engine.push_new_order(sequence, 0, OrderType::FallingLadderWall, 0.0, 0.0);
+        engine.push_new_order(
+            SequenceElementRef::new(sequence, 0),
+            OrderType::FallingLadderWall,
+            0.0,
+            0.0,
+        );
         engine
             .orders
             .sequence_manager
@@ -3041,13 +3009,7 @@ mod tests {
             .unwrap()
             .destination_3d = [15.0, 20.0, 0.0];
         engine.select_sequence_element(victim, Some((sequence, 0)));
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            sequence,
-            0,
-        );
+        engine.t_element_in_progress(&assets, sequence, 0);
         engine.publish_selected_order_as_installed(victim);
     }
 
@@ -3068,11 +3030,7 @@ mod tests {
         let mut engine = EngineInner::new();
         let victim = engine.add_test_entity(falling_ladder_pc(200));
         {
-            let actor = engine
-                .get_entity_mut(victim)
-                .unwrap()
-                .actor_data_mut()
-                .unwrap();
+            let actor = engine.actor_mut(victim);
             actor.wait_time = 1;
             actor.seek_target = Some(victim);
             actor.post_seek_sequence = Some(crate::sequence::Sequence::new().into_post_seek());
@@ -3080,13 +3038,12 @@ mod tests {
         install_falling_ladder_order(&mut engine, victim);
 
         engine.execute_ladder_fall_position(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             victim,
             crate::sprite::MotionState::InProgress,
         );
 
-        let actor = engine.get_entity(victim).unwrap().actor_data().unwrap();
+        let actor = engine.actor(victim);
         assert_eq!(actor.wait_time, 0);
         assert_eq!(actor.seek_target, Some(victim));
         assert!(actor.post_seek_sequence.is_some());
@@ -3107,8 +3064,7 @@ mod tests {
         install_falling_pushed_order(&mut engine, victim_id);
         engine.perform_combat_flight_position(victim_id, crate::sprite::MotionState::InProgress);
         let state = engine
-            .get_entity(victim_id)
-            .unwrap()
+            .ent(victim_id)
             .position_iface()
             .v48_serialized_state();
         assert_eq!(state.computed_position.bits(), 7);
@@ -3131,8 +3087,7 @@ mod tests {
         let victim_id = engine.add_test_entity(falling_pushed_soldier(true));
         let goal_sector_index = crate::fast_find_grid::SectorIndex::new(44).unwrap();
         engine
-            .get_entity_mut(victim_id)
-            .unwrap()
+            .ent_mut(victim_id)
             .position_iface_mut()
             .set_flight_goal_and_increment(
                 WorldPoint3D::new(15.0, 20.0, 0.0),
@@ -3142,7 +3097,7 @@ mod tests {
             );
         install_falling_pushed_order(&mut engine, victim_id);
         engine.perform_combat_flight_position(victim_id, crate::sprite::MotionState::InProgress);
-        let victim = engine.get_entity(victim_id).unwrap();
+        let victim = engine.ent(victim_id);
         assert_eq!(victim.element_data().posture(), Posture::Flying);
         assert_eq!(
             victim.actor_data().unwrap().action_state,
@@ -3159,7 +3114,7 @@ mod tests {
             WorldVec3D::new(5.0, 0.0, 0.0)
         );
         engine.perform_combat_flight_position(victim_id, crate::sprite::MotionState::Terminated);
-        let victim = engine.get_entity(victim_id).unwrap();
+        let victim = engine.ent(victim_id);
         assert_eq!(
             victim.element_data().position_map(),
             MapPoint::new(15.0, 20.0)
@@ -3198,7 +3153,7 @@ mod tests {
         let victim_id = engine.add_test_entity(entity);
         install_falling_pushed_order(&mut engine, victim_id);
         engine.perform_combat_flight_position(victim_id, crate::sprite::MotionState::Terminated);
-        let victim = engine.get_entity(victim_id).unwrap();
+        let victim = engine.ent(victim_id);
         assert_eq!(victim.element_data().position_map(), exact_goal);
         assert_eq!(victim.position_iface().old_map_position(), near_goal);
         assert!(victim.position_iface().is_moving_map());
@@ -3264,7 +3219,7 @@ mod tests {
         install_falling_pushed_order(&mut engine, victim_id);
         engine.perform_combat_flight_position(victim_id, crate::sprite::MotionState::Terminated);
 
-        let victim = engine.get_entity(victim_id).unwrap();
+        let victim = engine.ent(victim_id);
         assert_eq!(
             victim.position_iface().get_elevation().to_bits(),
             goal_z.to_bits()
@@ -3304,7 +3259,7 @@ mod tests {
             crate::movement_diagnostics::take_parity_flight_capture().expect("capture started");
         let _ =
             crate::movement_diagnostics::take_parity_movement_capture().expect("capture started");
-        let victim = engine.get_entity(victim_id).unwrap();
+        let victim = engine.ent(victim_id);
         assert_eq!(victim.element_data().position_map(), exact_goal);
         assert_eq!(victim.position_iface().old_map_position(), near_goal);
         assert!(victim.position_iface().is_moving_map());
@@ -3328,33 +3283,15 @@ mod tests {
         crate::movement_diagnostics::begin_parity_movement_capture();
         engine.perform_combat_flight_position(earlier, crate::sprite::MotionState::InProgress);
 
+        assert_eq!(engine.map_pos_of(earlier), MapPoint::new(15.0, 20.0));
         assert_eq!(
-            engine
-                .get_entity(earlier)
-                .unwrap()
-                .element_data()
-                .position_map(),
-            MapPoint::new(15.0, 20.0)
-        );
-        assert_eq!(
-            engine
-                .get_entity(later)
-                .unwrap()
-                .element_data()
-                .position_map(),
+            engine.map_pos_of(later),
             MapPoint::new(10.0, 20.0),
             "a later actor must retain its pre-update position"
         );
 
         engine.perform_combat_flight_position(later, crate::sprite::MotionState::InProgress);
-        assert_eq!(
-            engine
-                .get_entity(later)
-                .unwrap()
-                .element_data()
-                .position_map(),
-            MapPoint::new(15.0, 20.0)
-        );
+        assert_eq!(engine.map_pos_of(later), MapPoint::new(15.0, 20.0));
         let flights =
             crate::movement_diagnostics::take_parity_flight_capture().expect("capture started");
         let _ =
@@ -3402,20 +3339,14 @@ mod tests {
         let mut engine = EngineInner::new();
         let victim = engine.add_test_entity(entity);
         install_falling_ladder_order(&mut engine, victim);
-        let installed = engine
-            .get_entity(victim)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .installed_order;
+        let installed = engine.actor(victim).installed_order;
         let motion = engine.execute_ladder_fall_position(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             victim,
             crate::sprite::MotionState::InProgress,
         );
         assert_eq!(motion, crate::sprite::MotionState::Terminated);
-        let entity = engine.get_entity(victim).unwrap();
+        let entity = engine.ent(victim);
         let actor = entity.actor_data().unwrap();
         assert_eq!(
             actor.continuation.motion_state,
@@ -3463,53 +3394,28 @@ mod tests {
         soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::new(enemy_ai));
         let opponent = engine.add_test_entity(opponent_entity);
         {
-            let ai = engine
-                .get_entity_mut(opponent)
-                .unwrap()
-                .ai_controller_mut()
-                .unwrap();
+            let ai = engine.ai_ctrl_mut(opponent);
             ai.set_ai_state(crate::ai::AiState::Attacking);
             ai.current_substate = crate::ai::Substate::AttackingSwordfight;
             ai.primary_target = Some(crate::ai::AiEntityHandle::new(victim.index()));
         }
-        engine
-            .get_entity_mut(victim)
-            .unwrap()
-            .human_data_mut()
-            .unwrap()
-            .opponents = vec![opponent].into();
-        engine
-            .get_entity_mut(opponent)
-            .unwrap()
-            .human_data_mut()
-            .unwrap()
-            .opponents = vec![victim].into();
+        engine.human_mut(victim).opponents = vec![opponent].into();
+        engine.human_mut(opponent).opponents = vec![victim].into();
         install_falling_ladder_order(&mut engine, victim);
 
         engine.execute_ladder_fall_position(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             victim,
             crate::sprite::MotionState::InProgress,
         );
 
         for fighter in [victim, opponent] {
             assert!(
-                engine
-                    .get_entity(fighter)
-                    .unwrap()
-                    .human_data()
-                    .unwrap()
-                    .opponents
-                    .is_empty(),
+                engine.human(fighter).opponents.is_empty(),
                 "knockout must synchronously remove both reciprocal relationships"
             );
         }
-        let opponent_ai = engine
-            .get_entity(opponent)
-            .unwrap()
-            .ai_controller()
-            .unwrap();
+        let opponent_ai = engine.ai_ctrl(opponent);
         assert_eq!(
             opponent_ai.current_substate,
             crate::ai::Substate::AttackingQuittingSwordfight
@@ -3536,53 +3442,19 @@ mod tests {
         let mut engine = EngineInner::new();
         let victim = engine.add_test_entity(falling_ladder_pc(200));
         let opponent = engine.add_test_entity(falling_pushed_soldier(false));
-        engine
-            .get_entity_mut(victim)
-            .unwrap()
-            .human_data_mut()
-            .unwrap()
-            .opponents = vec![opponent].into();
-        engine
-            .get_entity_mut(opponent)
-            .unwrap()
-            .human_data_mut()
-            .unwrap()
-            .opponents = vec![victim].into();
+        engine.human_mut(victim).opponents = vec![opponent].into();
+        engine.human_mut(opponent).opponents = vec![victim].into();
         install_falling_ladder_order(&mut engine, victim);
 
         engine.execute_ladder_fall_position(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             victim,
             crate::sprite::MotionState::InProgress,
         );
 
-        assert!(
-            !engine
-                .get_entity(victim)
-                .unwrap()
-                .human_data()
-                .unwrap()
-                .unconscious
-        );
-        assert_eq!(
-            engine
-                .get_entity(victim)
-                .unwrap()
-                .human_data()
-                .unwrap()
-                .opponents,
-            vec![opponent]
-        );
-        assert_eq!(
-            engine
-                .get_entity(opponent)
-                .unwrap()
-                .human_data()
-                .unwrap()
-                .opponents,
-            vec![victim]
-        );
+        assert!(!engine.human(victim).unconscious);
+        assert_eq!(engine.human(victim).opponents, vec![opponent]);
+        assert_eq!(engine.human(opponent).opponents, vec![victim]);
     }
 
     #[test]
@@ -3600,23 +3472,9 @@ mod tests {
         let motion = engine
             .perform_combat_flight_position(victim_id, crate::sprite::MotionState::InProgress);
         assert_eq!(motion, crate::sprite::MotionState::InProgress);
-        assert_eq!(
-            engine
-                .get_entity(victim_id)
-                .unwrap()
-                .element_data()
-                .position_map(),
-            MapPoint::new(15.0, 20.0)
-        );
+        assert_eq!(engine.map_pos_of(victim_id), MapPoint::new(15.0, 20.0));
         engine.perform_combat_flight_position(victim_id, crate::sprite::MotionState::Terminated);
-        assert_eq!(
-            engine
-                .get_entity(victim_id)
-                .unwrap()
-                .element_data()
-                .position_map(),
-            MapPoint::new(14.0, 20.0)
-        );
+        assert_eq!(engine.map_pos_of(victim_id), MapPoint::new(14.0, 20.0));
     }
 
     #[test]
@@ -3629,7 +3487,7 @@ mod tests {
         let motion = engine
             .perform_combat_flight_position(victim_id, crate::sprite::MotionState::InProgress);
         assert_eq!(motion, crate::sprite::MotionState::InProgress);
-        let victim = engine.get_entity(victim_id).unwrap();
+        let victim = engine.ent(victim_id);
         assert_eq!(victim.element_data().posture(), Posture::Flying);
         assert_eq!(
             victim.actor_data().unwrap().action_state,
@@ -3662,35 +3520,21 @@ mod tests {
         let attacker_id = engine.add_test_entity(attacker);
         let victim_id = engine.add_test_entity(victim);
 
-        engine
-            .get_entity_mut(attacker_id)
-            .unwrap()
-            .human_data_mut()
-            .unwrap()
-            .sword_sweep
-            .victims = vec![victim_id];
+        engine.human_mut(attacker_id).sword_sweep.victims = vec![victim_id];
         engine.complete_melee_strike(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             attacker_id,
             SwordStrike::A,
             Some(1),
         );
         assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
 
-        if let Entity::Soldier(soldier) = engine.get_entity_mut(victim_id).unwrap() {
+        if let Entity::Soldier(soldier) = engine.ent_mut(victim_id) {
             soldier.soldier.cached_camp = Camp::Royalists;
         }
-        engine
-            .get_entity_mut(attacker_id)
-            .unwrap()
-            .human_data_mut()
-            .unwrap()
-            .sword_sweep
-            .victims = vec![victim_id];
+        engine.human_mut(attacker_id).sword_sweep.victims = vec![victim_id];
         engine.complete_melee_strike(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             attacker_id,
             SwordStrike::A,
             Some(1),

@@ -1,14 +1,14 @@
 use super::*;
+use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 impl EngineInner {
     pub(super) fn execute_teleport(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
         // Read destination + layer + sector off the
         // movement element, snap the actor there, and spawn
@@ -21,7 +21,7 @@ impl EngineInner {
         // new-side star burst when the validation step
         // gives up.
         let (dest, dest_layer) = {
-            let elem = self.orders.sequence_manager.get_element(seq_id, elem_idx);
+            let elem = self.orders.sequence_manager.get_element_at(elem_ref);
             match elem.map(|e| &e.data) {
                 Some(crate::sequence::SequenceElementData::Movement {
                     destination, layer, ..
@@ -37,8 +37,7 @@ impl EngineInner {
             // so the actor doesn't resume pathing toward
             // its old destination on the next tick.
             self.stop_actor_orders(
-                sim,
-                assets,
+                tcx,
                 active_scripts,
                 owner,
                 crate::sequence::SequencePriority::Normal,
@@ -51,7 +50,7 @@ impl EngineInner {
                 let entity = match self.get_entity(owner) {
                     Some(e) => e,
                     None => {
-                        self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+                        self.element_terminated(tcx, active_scripts, elem_ref);
                         return;
                     }
                 };
@@ -207,7 +206,7 @@ impl EngineInner {
                 // same finalization path used by jump and
                 // door/lift transitions.
                 self.finalize_special_move_position(
-                    assets,
+                    tcx.assets,
                     owner,
                     super::special_motion::SpecialMovePosition::Map(final_dest),
                     Some(final_layer),
@@ -264,7 +263,7 @@ impl EngineInner {
                         .unwrap_or((None, None));
                     for partner in [carried, carrier].into_iter().flatten() {
                         self.finalize_special_move_position(
-                            assets,
+                            tcx.assets,
                             partner,
                             super::special_motion::SpecialMovePosition::Map(final_dest),
                             Some(final_layer),
@@ -285,7 +284,7 @@ impl EngineInner {
             // `update_opponents_jump_lines` for both the
             // teleporter and any carry partner that was
             // synced above.
-            self.update_opponents_jump_lines(assets, owner);
+            self.update_opponents_jump_lines(tcx.assets, owner);
             if is_pc {
                 let (carried, carrier) = self
                     .get_entity(owner)
@@ -296,7 +295,7 @@ impl EngineInner {
                     })
                     .unwrap_or((None, None));
                 for partner in [carried, carrier].into_iter().flatten() {
-                    self.update_opponents_jump_lines(assets, partner);
+                    self.update_opponents_jump_lines(tcx.assets, partner);
                 }
             }
 
@@ -320,11 +319,11 @@ impl EngineInner {
                 }
             }
         }
-        self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+        self.element_terminated(tcx, active_scripts, elem_ref);
         // `actor_wait` parks the actor in a low-priority
         // idle element after the teleport so the AI
         // re-enters its default loop instead of resuming
         // whatever command was running before.
-        self.actor_wait(sim, assets, owner);
+        self.actor_wait(tcx, owner);
     }
 }

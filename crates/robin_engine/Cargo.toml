@@ -13,6 +13,9 @@ default = []
 # round-trip tests.  Enabled via `[dev-dependencies]` in `robin_rs`
 # so production builds keep the minimal sim-mutation surface.
 test-helpers = []
+# Expose `robin_engine::test_support` (shared engine fixtures) to other
+# crates' tests. Enable ONLY from `[dev-dependencies]`.
+test-support = ["test-helpers"]
 # Explicit reconstruction authority for the Original parity tool. Never add
 # this to a gameplay feature bundle: it permits mutations outside frame admission.
 original-parity = []
@@ -22,7 +25,6 @@ robin_level_data.workspace = true
 robin_legacy_save.workspace = true
 robin_script_types.workspace = true
 robin_engine_types.workspace = true
-robin_content = { workspace = true, features = ["simulation-codecs"] }
 serde-value.workspace = true
 hex.workspace = true
 serde = { workspace = true, features = ["derive", "rc"] }
@@ -60,7 +62,7 @@ smart-default = "0.7"
 rayon = "1"
 
 [dev-dependencies]
-cpu-time = "1"
+rstest.workspace = true
 robin_test_support.workspace = true
 tempfile.workspace = true
 tracing-subscriber.workspace = true

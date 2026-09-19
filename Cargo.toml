@@ -3,7 +3,6 @@ cargo-features = ["codegen-backend"]
 [workspace]
 resolver = "2"
 members = [
-    "crates/robin_content",
     "crates/robin_identity_signer",
     "crates/robin_data_io",
     "crates/robin_display_text",
@@ -18,7 +17,6 @@ members = [
     "crates/robin_legacy_save",
     "crates/robin_level_data",
     "crates/robin_lua",
-    "crates/robin_ranked_verification",
     "crates/robin_run_protocol",
     "crates/robin_run_types",
     "crates/robin_spellforge",
@@ -61,7 +59,6 @@ result_large_err = "allow"
 
 [workspace.dependencies]
 # Workspace crates
-robin_content = { path = "crates/robin_content" }
 robin_data_io = { path = "crates/robin_data_io" }
 robin_display_text = { path = "crates/robin_display_text" }
 robin_assets = { path = "crates/robin_assets" }
@@ -73,7 +70,6 @@ robin_level_data = { path = "crates/robin_level_data" }
 robin_lua = { path = "crates/robin_lua" }
 robin_modding_tools = { path = "crates/robin_modding_tools", default-features = false }
 robin_replay_format = { path = "crates/robin_replay_format" }
-robin_ranked_verification = { path = "crates/robin_ranked_verification" }
 # Simulation consumers need wire types, not Ed25519. Authentication callers
 # opt into the protocol's authentication feature in their member manifest.
 robin_run_protocol = { path = "crates/robin_run_protocol", default-features = false }
@@ -83,6 +79,7 @@ robin_spellforge = { path = "crates/robin_spellforge" }
 robin_script_types = { path = "crates/robin_script_types" }
 robin_state_hash_derive = { path = "crates/robin_state_hash_derive" }
 robin_test_support = { path = "crates/robin_test_support" }
+rstest = { version = "0.26", default-features = false }
 robin_util = { path = "crates/robin_util" }
 
 # Dependencies shared by multiple workspace crates. Keep crate-specific feature
@@ -137,8 +134,9 @@ zip = { version = "8", default-features = false, features = ["deflate"] }
 zstd = "0.14"
 
 [patch.crates-io]
-# Vulkan presentation hooks; provenance: vendor/wgpu-hal/ROBIN_PATCHES.md.
-wgpu-hal = { path = "vendor/wgpu-hal" }
+# crates.io wgpu-hal 30.0.1 plus Vulkan presentation hooks; provenance:
+# ROBIN_PATCHES.md in the fork. Drop once upstream ships equivalent hooks.
+wgpu-hal = { git = "https://github.com/phiresky/wgpu-hal.git", rev = "1418048934ce0cfc00ce45c92de8a685d098cae7" }
 # Deterministic VM patch provenance and upgrade procedure: vendor/rilua/ROBIN_PATCHES.md.
 rilua = { path = "vendor/rilua" }
 # winit 0.30.13 pins a hidden+Confined cursor to a 1x1 ClipCursor rect at the
@@ -183,6 +181,16 @@ codegen-backend = "cranelift"
 [profile.dev.package."*"]
 opt-level = 3
 
+# Sprite entropy decoding processes millions of tiles during mod preload.
+# Keep this small codec crate optimized while game/asset orchestration stays
+# debuggable. Cranelift does not provide LLVM's loop optimizations here.
+[profile.dev.package.robin_asset_codecs]
+opt-level = 1
+codegen-backend = "llvm"
+[profile.test.package.robin_asset_codecs]
+opt-level = 1
+codegen-backend = "llvm"
+
 # Proc macros execute again on incremental rebuilds. Optimize their host code
 # and parsing dependencies with LLVM while keeping game code on Cranelift.
 # This also covers build scripts and is inherited by the test/dev-opt1 profiles.
@@ -219,13 +227,17 @@ codegen-backend = "llvm"
 # rav1d (native AVIF decode: mod terrain, converter quality gates, tests) is
 # built without asm; unoptimized it decodes a 6 MP terrain map in minutes.
 # Optimize it with LLVM in the dev/test profiles so native mod loading and
-# its tests stay usable.
+# its tests stay usable. Its debug borrow tracking captures a backtrace for
+# every pixel-buffer borrow, making terrain decode stall when backtraces are
+# enabled. Use release-mode borrow handling for this dependency only.
 [profile.dev.package.rav1d]
 codegen-backend = "llvm"
 opt-level = 3
+debug-assertions = false
 [profile.test.package.rav1d]
 codegen-backend = "llvm"
 opt-level = 3
+debug-assertions = false
 
 # curve25519-dalek (ed25519 signing for leaderboards and replays) compiles its
 # AVX-512 IFMA backend on nightly and runtime-dispatches to it on capable
@@ -360,3 +372,8 @@ codegen-backend = "llvm"
 inherits = "release"
 codegen-backend = "llvm"
 panic = "abort"
+
+# Keep the pinned bitcode wire format while bounding untrusted sprite decode.
+[patch."https://github.com/SoftbearStudios/bitcode.git"]
+# Fork adds `decode_with_limit`; see LOCAL_CHANGES.md on branch robin-decode-limit.
+bitcode = { git = "https://github.com/phiresky/bitcode.git", rev = "59051e886ff8cd24bfc63ef0cef6321372829604" }

@@ -492,6 +492,7 @@ impl GridLine {
 /// filtering, and references to related objects (doors, lifts).
 #[derive(
     Debug,
+    Default,
     Clone,
     Serialize,
     Deserialize,
@@ -990,42 +991,33 @@ impl LiftRuntimeState {
 
     /// Mark an actor as entering/leaving the lift going downwards.
     pub fn set_occupied_downwards(&mut self, entering: bool, is_pc: bool) {
-        if entering {
-            self.occupants += 1;
-            if is_pc {
-                self.occupants_pc += 1;
-            }
-            self.occupied_downwards = true;
-            self.wait_time = 100;
-        } else {
-            // The original game decrements its unsigned 16-bit value and then interprets the
-            // result as signed, clamping an underflowed zero back to zero.
-            // Wall routes deliberately exercise that behavior because,
-            // unlike ladder routes, they do not reserve the lift first.
-            self.occupants = self.occupants.saturating_sub(1);
-            if is_pc {
-                self.occupants_pc = self.occupants_pc.saturating_sub(1);
-            }
-            if self.occupants == 0 {
-                self.wait_time = 0;
-                self.occupied_downwards = false;
-                self.occupied_upwards = false;
-            }
-        }
+        self.set_occupied(entering, is_pc, false);
     }
 
     /// Mark an actor as entering/leaving the lift going upwards.
     pub fn set_occupied_upwards(&mut self, entering: bool, is_pc: bool) {
+        self.set_occupied(entering, is_pc, true);
+    }
+
+    fn set_occupied(&mut self, entering: bool, is_pc: bool, upwards: bool) {
         if entering {
             self.occupants += 1;
             if is_pc {
                 self.occupants_pc += 1;
             }
-            self.occupied_upwards = true;
-            self.wait_time = 80;
+            if upwards {
+                self.occupied_upwards = true;
+                self.wait_time = 80;
+            } else {
+                self.occupied_downwards = true;
+                self.wait_time = 100;
+            }
         } else {
-            // See `set_occupied_downwards`: an unmatched release is an
-            // intentional no-op in the Original's counter arithmetic.
+            // The original game decrements its unsigned 16-bit value and then interprets the
+            // result as signed, clamping an underflowed zero back to zero.
+            // Wall routes deliberately exercise that behavior because,
+            // unlike ladder routes, they do not reserve the lift first: an
+            // unmatched release is an intentional no-op.
             self.occupants = self.occupants.saturating_sub(1);
             if is_pc {
                 self.occupants_pc = self.occupants_pc.saturating_sub(1);
@@ -1837,9 +1829,26 @@ impl FastFindGrid {
         bbox: &MapBBox,
         position: MapPoint,
     ) -> Vec<crate::mask::MaskIndex> {
-        let rect = match bbox.0 {
-            Some(r) => r,
-            None => return Vec::new(),
+        self.collect_masks_in_bbox(
+            layer,
+            bbox,
+            |mask| mask.is_character(),
+            |mask| mask.is_applied_to_point_character(position),
+        )
+    }
+
+    /// Shared grid walk of the mask-occlusion queries: iterates the blocks
+    /// overlapping `bbox`, deduplicates by index, and keeps active masks that
+    /// intersect `bbox` and satisfy `applies`.
+    fn collect_masks_in_bbox(
+        &self,
+        layer: u16,
+        bbox: &MapBBox,
+        kind: impl Fn(&crate::mask::RuntimeMask) -> bool,
+        applies: impl Fn(&crate::mask::RuntimeMask) -> bool,
+    ) -> Vec<crate::mask::MaskIndex> {
+        let Some(rect) = bbox.0 else {
+            return Vec::new();
         };
         if (layer as usize) >= self.level.layers.len() {
             return Vec::new();
@@ -1861,13 +1870,11 @@ impl FastFindGrid {
                         continue;
                     }
                     let mask = &self.level.masks[usize::from(mask_idx)];
-                    if !self.is_mask_active(mask_idx) || !mask.is_character() {
-                        continue;
-                    }
-                    if !mask.bbox.intersects_bbox(bbox) {
-                        continue;
-                    }
-                    if mask.is_applied_to_point_character(position) {
+                    if self.is_mask_active(mask_idx)
+                        && kind(mask)
+                        && mask.bbox.intersects_bbox(bbox)
+                        && applies(mask)
+                    {
                         result.push(mask_idx);
                     }
                 }
@@ -1953,43 +1960,12 @@ impl FastFindGrid {
         is_human: bool,
         obstacles: crate::sight_obstacle::ObstacleList<'_>,
     ) -> Vec<crate::mask::MaskIndex> {
-        let rect = match bbox.0 {
-            Some(r) => r,
-            None => return Vec::new(),
-        };
-        if (layer as usize) >= self.level.layers.len() {
-            return Vec::new();
-        }
-
-        let (x_min, y_min, x_max, y_max) =
-            rect_to_cell_range(&rect, self.level.grid_width, self.level.grid_height);
-
-        let mut visited = QueryVisited::new(self.level.masks.len());
-        let mut result: Vec<crate::mask::MaskIndex> = Vec::new();
-        for cy in y_min..=y_max {
-            for cx in x_min..=x_max {
-                let block_idx = self.block_index_from_cell(cx, cy, layer);
-                if block_idx >= self.level.blocks.len() {
-                    continue;
-                }
-                for &mask_idx in &self.level.blocks[block_idx].mask_indices {
-                    if !visited.try_mark(usize::from(mask_idx)) {
-                        continue;
-                    }
-                    let mask = &self.level.masks[usize::from(mask_idx)];
-                    if !self.is_mask_active(mask_idx) || !mask.is_projectile() {
-                        continue;
-                    }
-                    if !mask.bbox.intersects_bbox(bbox) {
-                        continue;
-                    }
-                    if mask.is_applied_to_point_3d(position, is_human, obstacles) {
-                        result.push(mask_idx);
-                    }
-                }
-            }
-        }
-        result
+        self.collect_masks_in_bbox(
+            layer,
+            bbox,
+            |mask| mask.is_projectile(),
+            |mask| mask.is_applied_to_point_3d(position, is_human, obstacles),
+        )
     }
 
     /// Get all active sectors matching `type_filter` at a given block index.
@@ -2502,43 +2478,31 @@ impl FastFindGrid {
         let Some(rect) = bbox.0 else {
             return Vec::new();
         };
-        let (x_min, y_min, x_max, y_max) =
-            rect_to_cell_range(&rect, self.level.grid_width, self.level.grid_height);
-
         let query_line = GridLine::new(
             MapPoint::new(segment.start.x, segment.start.y),
             MapPoint::new(segment.end.x, segment.end.y),
             false,
         );
-        let mut visited = QueryVisited::new(self.level.lines.len());
         let mut result = Vec::new();
-        for cy in y_min..=y_max {
-            for cx in x_min..=x_max {
+        self.visit_lines_in_cells(
+            layer,
+            &rect,
+            |cx, cy| {
                 let cell_min =
                     MapPoint::new(cx as f32 * GRID_CELL_SIZE_F, cy as f32 * GRID_CELL_SIZE_F);
                 let cell = MapBBox::from_corners(
                     cell_min,
                     MapPoint::new(cell_min.x + GRID_CELL_SIZE_F, cell_min.y + GRID_CELL_SIZE_F),
                 );
-                if !query_line.intersects_bbox(&cell) {
-                    continue;
+                query_line.intersects_bbox(&cell)
+            },
+            |line_idx, line| {
+                if line.is_motion && self.is_line_active(line_idx) {
+                    result.push(line_idx);
                 }
-
-                let block_idx = self.block_index_from_cell(cx, cy, layer);
-                if block_idx >= self.level.blocks.len() {
-                    continue;
-                }
-                for &line_idx in &self.level.blocks[block_idx].line_indices {
-                    let line = &self.level.lines[usize::from(line_idx)];
-                    if line.is_motion
-                        && self.is_line_active(line_idx)
-                        && visited.try_mark(usize::from(line_idx))
-                    {
-                        result.push(line_idx);
-                    }
-                }
-            }
-        }
+                true
+            },
+        );
 
         result.retain(|&idx| self.level.lines[usize::from(idx)].intersects_segment(segment));
         result
@@ -2550,28 +2514,54 @@ impl FastFindGrid {
         bbox: &MapBBox,
         mut visit: impl FnMut(LineIndex) -> bool,
     ) {
-        let rect = match bbox.0 {
-            Some(r) => r,
-            None => return,
+        let Some(rect) = bbox.0 else {
+            return;
         };
+        self.visit_lines_in_rect(layer, &rect, |line_idx, line| {
+            !(line.is_motion
+                && self.is_line_active(line_idx)
+                && line.intersects_bbox(bbox)
+                && !visit(line_idx))
+        });
+    }
 
+    /// Visit every line registered in the grid cells covered by `rect` on
+    /// `layer`, row-major by cell and then in block registration order. Each
+    /// line is visited at most once. `visit` returns `false` to stop early.
+    fn visit_lines_in_rect(
+        &self,
+        layer: u16,
+        rect: &Rect<f32>,
+        visit: impl FnMut(LineIndex, &GridLine) -> bool,
+    ) {
+        self.visit_lines_in_cells(layer, rect, |_, _| true, visit);
+    }
+
+    /// [`Self::visit_lines_in_rect`] restricted to the cells accepted by
+    /// `cell_filter(cx, cy)`.
+    fn visit_lines_in_cells(
+        &self,
+        layer: u16,
+        rect: &Rect<f32>,
+        mut cell_filter: impl FnMut(u16, u16) -> bool,
+        mut visit: impl FnMut(LineIndex, &GridLine) -> bool,
+    ) {
         let (x_min, y_min, x_max, y_max) =
-            rect_to_cell_range(&rect, self.level.grid_width, self.level.grid_height);
+            rect_to_cell_range(rect, self.level.grid_width, self.level.grid_height);
 
         let mut visited = QueryVisited::new(self.level.lines.len());
         for cy in y_min..=y_max {
             for cx in x_min..=x_max {
+                if !cell_filter(cx, cy) {
+                    continue;
+                }
                 let block_idx = self.block_index_from_cell(cx, cy, layer);
                 if block_idx >= self.level.blocks.len() {
                     continue;
                 }
                 for &line_idx in &self.level.blocks[block_idx].line_indices {
-                    let line = &self.level.lines[usize::from(line_idx)];
-                    if line.is_motion
-                        && self.is_line_active(line_idx)
-                        && visited.try_mark(usize::from(line_idx))
-                        && line.intersects_bbox(bbox)
-                        && !visit(line_idx)
+                    if visited.try_mark(usize::from(line_idx))
+                        && !visit(line_idx, &self.level.lines[usize::from(line_idx)])
                     {
                         return;
                     }
@@ -2603,34 +2593,17 @@ impl FastFindGrid {
     /// uses this to fetch wall / sector-perimeter pushes so actors
     /// don't scrape along motion lines.
     pub fn get_active_repulsive_line_indices(&self, layer: u16, bbox: &MapBBox) -> Vec<LineIndex> {
-        let bbox_geo = bbox.to_geo();
-        let rect = match bbox_geo.0 {
-            Some(r) => r,
-            None => return Vec::new(),
+        let Some(rect) = bbox.to_geo().0 else {
+            return Vec::new();
         };
 
-        let (x_min, y_min, x_max, y_max) =
-            rect_to_cell_range(&rect, self.level.grid_width, self.level.grid_height);
-
-        let mut visited = QueryVisited::new(self.level.lines.len());
         let mut result = Vec::new();
-        for cy in y_min..=y_max {
-            for cx in x_min..=x_max {
-                let block_idx = self.block_index_from_cell(cx, cy, layer);
-                if block_idx >= self.level.blocks.len() {
-                    continue;
-                }
-                for &line_idx in &self.level.blocks[block_idx].line_indices {
-                    let line = &self.level.lines[usize::from(line_idx)];
-                    if line.is_repulsive
-                        && self.is_line_active(line_idx)
-                        && visited.try_mark(usize::from(line_idx))
-                    {
-                        result.push(line_idx);
-                    }
-                }
+        self.visit_lines_in_rect(layer, &rect, |line_idx, line| {
+            if line.is_repulsive && self.is_line_active(line_idx) {
+                result.push(line_idx);
             }
-        }
+            true
+        });
         result
     }
 
@@ -2647,55 +2620,39 @@ impl FastFindGrid {
         new_pos: MapPoint,
     ) -> Vec<LineIndex> {
         let bbox = map_bbox_from_points(old_pos, new_pos);
-        let rect = match bbox.0 {
-            Some(r) => r,
-            None => return Vec::new(),
+        let Some(rect) = bbox.0 else {
+            return Vec::new();
         };
 
-        let (x_min, y_min, x_max, y_max) =
-            rect_to_cell_range(&rect, self.level.grid_width, self.level.grid_height);
-
-        let mut visited = QueryVisited::new(self.level.lines.len());
         let mut result = Vec::new();
         let movement = geo2d::segment(old_pos.to_geo(), new_pos.to_geo());
-        for cy in y_min..=y_max {
-            for cx in x_min..=x_max {
-                let block_idx = self.block_index_from_cell(cx, cy, layer);
-                if block_idx >= self.level.blocks.len() {
-                    continue;
-                }
-                for &line_idx in &self.level.blocks[block_idx].line_indices {
-                    if !visited.try_mark(usize::from(line_idx)) {
-                        continue;
-                    }
-                    let line = &self.level.lines[usize::from(line_idx)];
-                    if !line.is_elevation {
-                        continue;
-                    }
-                    let active = self.is_line_active(line_idx);
-                    let intersects = line.intersects_segment(movement);
-                    tracing::trace!(
-                        target: "robin_engine::elevation_crossing",
-                        layer,
-                        ?line_idx,
-                        line_ax = line.a.x,
-                        line_ay = line.a.y,
-                        line_bx = line.b.x,
-                        line_by = line.b.y,
-                        active,
-                        intersects,
-                        old_x = old_pos.x,
-                        old_y = old_pos.y,
-                        new_x = new_pos.x,
-                        new_y = new_pos.y,
-                        "tested elevation line"
-                    );
-                    if active && intersects {
-                        result.push(line_idx);
-                    }
-                }
+        self.visit_lines_in_rect(layer, &rect, |line_idx, line| {
+            if !line.is_elevation {
+                return true;
             }
-        }
+            let active = self.is_line_active(line_idx);
+            let intersects = line.intersects_segment(movement);
+            tracing::trace!(
+                target: "robin_engine::elevation_crossing",
+                layer,
+                ?line_idx,
+                line_ax = line.a.x,
+                line_ay = line.a.y,
+                line_bx = line.b.x,
+                line_by = line.b.y,
+                active,
+                intersects,
+                old_x = old_pos.x,
+                old_y = old_pos.y,
+                new_x = new_pos.x,
+                new_y = new_pos.y,
+                "tested elevation line"
+            );
+            if active && intersects {
+                result.push(line_idx);
+            }
+            true
+        });
         self.remove_duplicate_elevation_crossings(&mut result);
         self.remove_old_position_elevation_crossings(&mut result, old_pos);
         result
@@ -2743,56 +2700,6 @@ impl FastFindGrid {
         });
     }
 
-    /// Return every active `LINE_PATCH` line whose segment the movement
-    /// vector `(old_pos → new_pos)` intersects on `layer`. Used by the
-    /// per-PC patch-crossing dispatch.
-    pub fn get_crossing_patch_line_indices(
-        &self,
-        layer: u16,
-        old_pos: MapPoint,
-        new_pos: MapPoint,
-    ) -> Vec<LineIndex> {
-        let bbox = map_bbox_from_points(old_pos, new_pos);
-        let rect = match bbox.0 {
-            Some(r) => r,
-            None => return Vec::new(),
-        };
-
-        let (x_min, y_min, x_max, y_max) =
-            rect_to_cell_range(&rect, self.level.grid_width, self.level.grid_height);
-
-        let movement = geo2d::segment(old_pos.to_geo(), new_pos.to_geo());
-
-        let mut visited = QueryVisited::new(self.level.lines.len());
-        let mut result = Vec::new();
-        for cy in y_min..=y_max {
-            for cx in x_min..=x_max {
-                let block_idx = self.block_index_from_cell(cx, cy, layer);
-                if block_idx >= self.level.blocks.len() {
-                    continue;
-                }
-                for &line_idx in &self.level.blocks[block_idx].line_indices {
-                    if !visited.try_mark(usize::from(line_idx)) {
-                        continue;
-                    }
-                    let line = &self.level.lines[usize::from(line_idx)];
-                    if !line.is_patch || !self.is_line_active(line_idx) {
-                        continue;
-                    }
-                    // Actor line-crossing detection uses line lookup, whose final
-                    // filter is line intersection. Its old-position
-                    // guard is applied later, after all LINE_CROSS kinds have
-                    // been collected.  In particular, keep a segment that
-                    // passes exactly through a boundary endpoint here.
-                    if geo2d::segments_intersect(line.segment(), movement) {
-                        result.push(line_idx);
-                    }
-                }
-            }
-        }
-        result
-    }
-
     /// Construct `LINE_PATCH | LINE_CROSS` boundary segments for a
     /// `SECTOR_CROSS | SECTOR_PATCH` (non-MOUSE) sector and register
     /// them in the grid via `add_line`.
@@ -2809,22 +2716,32 @@ impl FastFindGrid {
         patch_index: crate::patch::PatchIndex,
         sector_active: bool,
     ) -> Vec<LineIndex> {
-        let (points, point_count) = {
-            let Some(sector) = self.level.sectors.get(sector_grid_idx as usize) else {
-                return Vec::new();
-            };
-            if sector.points.is_empty() {
-                return Vec::new();
-            }
-            (sector.points.clone(), sector.points.len())
+        let Some(sector) = self.level.sectors.get(sector_grid_idx as usize) else {
+            return Vec::new();
         };
+        if sector.points.is_empty() {
+            return Vec::new();
+        }
+        let points = sector.points.clone();
+        self.add_polygon_lines(layer, &points, sector_active, |last, current| {
+            GridLine::new_patch(last, current, patch_index)
+        })
+    }
 
-        let mut indices = Vec::with_capacity(point_count);
-        let mut last = points[point_count - 1];
-        for &current in &points {
-            let line = GridLine::new_patch(last, current, patch_index);
-            let idx = self.add_line(line, layer);
-            self.set_line_active(idx, sector_active);
+    /// Register one line per `[last → current]` edge of a closed polygon,
+    /// built by `make_line`, and return their indices in edge order.
+    fn add_polygon_lines(
+        &mut self,
+        layer: u16,
+        points: &[MapPoint],
+        active: bool,
+        make_line: impl Fn(MapPoint, MapPoint) -> GridLine,
+    ) -> Vec<LineIndex> {
+        let mut indices = Vec::with_capacity(points.len());
+        let mut last = points[points.len() - 1];
+        for &current in points {
+            let idx = self.add_line(make_line(last, current), layer);
+            self.set_line_active(idx, active);
             indices.push(idx);
             last = current;
         }
@@ -2851,107 +2768,9 @@ impl FastFindGrid {
         if points.len() < 2 {
             return Vec::new();
         }
-        let mut indices = Vec::with_capacity(points.len());
-        let mut last = points[points.len() - 1];
-        for &current in points {
-            let line = GridLine::new_sound(last, current, material_sector_index);
-            let idx = self.add_line(line, layer);
-            self.set_line_active(idx, sector_active);
-            indices.push(idx);
-            last = current;
-        }
-        indices
-    }
-
-    /// Return every active `LINE_SOUND` line whose segment the
-    /// movement vector `(old_pos → new_pos)` intersects on `layer`.
-    /// Used by the per-actor sound-crossing dispatch.
-    pub fn get_crossing_sound_line_indices(
-        &self,
-        layer: u16,
-        old_pos: MapPoint,
-        new_pos: MapPoint,
-    ) -> Vec<LineIndex> {
-        let bbox = map_bbox_from_points(old_pos, new_pos);
-        let rect = match bbox.0 {
-            Some(r) => r,
-            None => return Vec::new(),
-        };
-
-        let (x_min, y_min, x_max, y_max) =
-            rect_to_cell_range(&rect, self.level.grid_width, self.level.grid_height);
-
-        let movement = geo2d::segment(old_pos.to_geo(), new_pos.to_geo());
-
-        let mut visited = QueryVisited::new(self.level.lines.len());
-        let mut result = Vec::new();
-        for cy in y_min..=y_max {
-            for cx in x_min..=x_max {
-                let block_idx = self.block_index_from_cell(cx, cy, layer);
-                if block_idx >= self.level.blocks.len() {
-                    continue;
-                }
-                for &line_idx in &self.level.blocks[block_idx].line_indices {
-                    if !visited.try_mark(usize::from(line_idx)) {
-                        continue;
-                    }
-                    let line = &self.level.lines[usize::from(line_idx)];
-                    if !line.is_sound || !self.is_line_active(line_idx) {
-                        continue;
-                    }
-                    if geo2d::segments_intersect(line.segment(), movement) {
-                        result.push(line_idx);
-                    }
-                }
-            }
-        }
-        result
-    }
-
-    /// Return every active `LINE_SCRIPT` boundary crossed by an actor move.
-    ///
-    /// The original game dispatches script-sector entry/exit callbacks from
-    /// actor line-crossing checks; it does not rescan every
-    /// actor against every script polygon once per frame.
-    pub fn get_crossing_script_line_indices(
-        &self,
-        layer: u16,
-        old_pos: MapPoint,
-        new_pos: MapPoint,
-    ) -> Vec<LineIndex> {
-        let bbox = map_bbox_from_points(old_pos, new_pos);
-        let rect = match bbox.0 {
-            Some(r) => r,
-            None => return Vec::new(),
-        };
-
-        let (x_min, y_min, x_max, y_max) =
-            rect_to_cell_range(&rect, self.level.grid_width, self.level.grid_height);
-        let movement = geo2d::segment(old_pos.to_geo(), new_pos.to_geo());
-
-        let mut visited = QueryVisited::new(self.level.lines.len());
-        let mut result = Vec::new();
-        for cy in y_min..=y_max {
-            for cx in x_min..=x_max {
-                let block_idx = self.block_index_from_cell(cx, cy, layer);
-                if block_idx >= self.level.blocks.len() {
-                    continue;
-                }
-                for &line_idx in &self.level.blocks[block_idx].line_indices {
-                    if !visited.try_mark(usize::from(line_idx)) {
-                        continue;
-                    }
-                    let line = &self.level.lines[usize::from(line_idx)];
-                    if !line.is_script || !self.is_line_active(line_idx) {
-                        continue;
-                    }
-                    if geo2d::segments_intersect(line.segment(), movement) {
-                        result.push(line_idx);
-                    }
-                }
-            }
-        }
-        result
+        self.add_polygon_lines(layer, points, sector_active, |last, current| {
+            GridLine::new_sound(last, current, material_sector_index)
+        })
     }
 
     /// Return the actor's single active `LINE_CROSS` candidate list in the
@@ -2973,47 +2792,34 @@ impl FastFindGrid {
             return Vec::new();
         };
 
-        let (x_min, y_min, x_max, y_max) =
-            rect_to_cell_range(&rect, self.level.grid_width, self.level.grid_height);
         let movement = geo2d::segment(old_pos.to_geo(), new_pos.to_geo());
 
-        let mut visited = QueryVisited::new(self.level.lines.len());
         let mut result = Vec::new();
-        for cy in y_min..=y_max {
-            for cx in x_min..=x_max {
+        self.visit_lines_in_cells(
+            layer,
+            &rect,
+            |cx, cy| {
                 let block_bbox = MapBBox::from_coords(
                     f32::from(cx) * GRID_CELL_SIZE_F,
                     f32::from(cy) * GRID_CELL_SIZE_F,
                     f32::from(cx) * GRID_CELL_SIZE_F + GRID_CELL_SIZE_F,
                     f32::from(cy) * GRID_CELL_SIZE_F + GRID_CELL_SIZE_F,
                 );
-                let movement_touches_block = block_bbox.0.is_some_and(|rect| {
+                block_bbox.0.is_some_and(|rect| {
                     use geo::Intersects;
                     rect.intersects(&movement)
-                });
-                if !movement_touches_block {
-                    continue;
+                })
+            },
+            |line_idx, line| {
+                if line.effective_type_mask() & GridLine::LINE_CROSS != 0
+                    && self.is_line_active(line_idx)
+                    && geo2d::segments_intersect(line.segment(), movement)
+                {
+                    result.push(line_idx);
                 }
-                let block_idx = self.block_index_from_cell(cx, cy, layer);
-                if block_idx >= self.level.blocks.len() {
-                    continue;
-                }
-                for &line_idx in &self.level.blocks[block_idx].line_indices {
-                    if !visited.try_mark(usize::from(line_idx)) {
-                        continue;
-                    }
-                    let line = &self.level.lines[usize::from(line_idx)];
-                    if line.effective_type_mask() & GridLine::LINE_CROSS == 0
-                        || !self.is_line_active(line_idx)
-                    {
-                        continue;
-                    }
-                    if geo2d::segments_intersect(line.segment(), movement) {
-                        result.push(line_idx);
-                    }
-                }
-            }
-        }
+                true
+            },
+        );
         let same_type = |left: &GridLine, right: &GridLine| {
             left.effective_type_mask() == right.effective_type_mask()
         };
@@ -3083,26 +2889,16 @@ impl FastFindGrid {
         script_zone_index: u16,
         sector_active: bool,
     ) -> Vec<LineIndex> {
-        let (points, point_count) = {
-            let Some(sector) = self.level.sectors.get(sector_grid_idx as usize) else {
-                return Vec::new();
-            };
-            if sector.points.is_empty() {
-                return Vec::new();
-            }
-            (sector.points.clone(), sector.points.len())
+        let Some(sector) = self.level.sectors.get(sector_grid_idx as usize) else {
+            return Vec::new();
         };
-
-        let mut indices = Vec::with_capacity(point_count);
-        let mut last = points[point_count - 1];
-        for &current in &points {
-            let line = GridLine::new_script(last, current, script_zone_index);
-            let idx = self.add_line(line, layer);
-            self.set_line_active(idx, sector_active);
-            indices.push(idx);
-            last = current;
+        if sector.points.is_empty() {
+            return Vec::new();
         }
-        indices
+        let points = sector.points.clone();
+        self.add_polygon_lines(layer, &points, sector_active, |last, current| {
+            GridLine::new_script(last, current, script_zone_index)
+        })
     }
 
     /// Collect active motion lines overlapping grid blocks that intersect
@@ -3117,18 +2913,15 @@ impl FastFindGrid {
         seg2: geo::Line<f32>,
         bbox: &MapBBox,
     ) -> Vec<LineIndex> {
-        let rect = match bbox.0 {
-            Some(r) => r,
-            None => return Vec::new(),
+        let Some(rect) = bbox.0 else {
+            return Vec::new();
         };
 
-        let (x_min, y_min, x_max, y_max) =
-            rect_to_cell_range(&rect, self.level.grid_width, self.level.grid_height);
-
-        let mut visited = QueryVisited::new(self.level.lines.len());
         let mut result = Vec::new();
-        for cy in y_min..=y_max {
-            for cx in x_min..=x_max {
+        self.visit_lines_in_cells(
+            layer,
+            &rect,
+            |cx, cy| {
                 // Check if the cell box intersects either segment
                 let cell_min =
                     MapPoint::new(cx as f32 * GRID_CELL_SIZE_F, cy as f32 * GRID_CELL_SIZE_F);
@@ -3139,26 +2932,15 @@ impl FastFindGrid {
                 let cell_rect = cell_bbox.0.unwrap();
 
                 use geo::Intersects;
-                if !cell_rect.intersects(&seg1) && !cell_rect.intersects(&seg2) {
-                    // Rect<f32>.intersects(Line<f32>)
-                    continue;
+                cell_rect.intersects(&seg1) || cell_rect.intersects(&seg2)
+            },
+            |line_idx, line| {
+                if line.is_motion && self.is_line_active(line_idx) {
+                    result.push(line_idx);
                 }
-
-                let block_idx = self.block_index_from_cell(cx, cy, layer);
-                if block_idx >= self.level.blocks.len() {
-                    continue;
-                }
-                for &line_idx in &self.level.blocks[block_idx].line_indices {
-                    let line = &self.level.lines[usize::from(line_idx)];
-                    if line.is_motion
-                        && self.is_line_active(line_idx)
-                        && visited.try_mark(usize::from(line_idx))
-                    {
-                        result.push(line_idx);
-                    }
-                }
-            }
-        }
+                true
+            },
+        );
         result
     }
 
@@ -4490,18 +4272,6 @@ mod tests {
         let old_pos = MapPoint::new(0.0, 0.0);
         let new_pos = MapPoint::new(128.0, 128.0);
         assert_eq!(
-            grid.get_crossing_script_line_indices(0, old_pos, new_pos),
-            vec![script_line]
-        );
-        assert_eq!(
-            grid.get_crossing_patch_line_indices(0, old_pos, new_pos),
-            vec![patch_line]
-        );
-        assert_eq!(
-            grid.get_crossing_sound_line_indices(0, old_pos, new_pos),
-            vec![sound_line]
-        );
-        assert_eq!(
             grid.get_actor_non_elevation_crossing_line_indices(0, old_pos, new_pos),
             vec![script_line, patch_line, sound_line]
         );
@@ -4674,17 +4444,7 @@ mod tests {
             sector_type,
             layer,
             sector_number: crate::sector::SectorNumber::new(sector_number),
-            door_index: None,
-            lift_type: None,
-            lift_direction: 0,
-            force_crouched: false,
-            building_index: None,
-            low_exit_point: None,
-            high_exit_point: None,
-            lowest_door_index: None,
-            jump_line_indices: Vec::new(),
-            gate_indices: Vec::new(),
-            underlying_sector: None,
+            ..Default::default()
         }
     }
 

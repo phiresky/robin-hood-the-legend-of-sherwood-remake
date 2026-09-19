@@ -3,25 +3,17 @@
 mod tests;
 use super::*;
 use crate::ai::{
-    AiEntityHandle, AiState, DutyFlags, EmoticonType, GotoFlags, Position, Remark, SpeechFlags,
-    Stimulus, StimulusInfo, Substate,
+    AiEntityHandle, AiState, EmoticonType, GotoFlags, Position, Remark, SpeechFlags, Stimulus,
+    StimulusInfo, Substate,
 };
-use crate::ai_enemy::{EnemyAi, SeekFlags};
+use crate::ai_enemy::SeekFlags;
+use crate::engine::TickCtx;
 use crate::profiles::ProfileRank;
-use crate::sim_rng::SimulationContext;
-
-struct OfficerRpc<'a> {
-    engine: &'a mut EngineInner,
-    sim: &'a SimulationContext,
-    assets: &'a LevelAssets,
-    owner: EntityId,
-}
 
 impl EngineInner {
     pub(in crate::engine) fn execute_ai_officer_rpc(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         stimulus: &Stimulus,
     ) -> Option<bool> {
@@ -37,13 +29,7 @@ impl EngineInner {
             event,
             StimulusType::EventTimer | StimulusType::EventDone | StimulusType::EventSyncCharly
         ) {
-            OfficerRpc {
-                engine: self,
-                sim,
-                assets,
-                owner,
-            }
-            .charly_event(substate, stimulus);
+            AiOwnerCtx::new(self, tcx, owner).charly_event(substate, stimulus);
             return Some(false);
         }
         if matches!(
@@ -72,13 +58,7 @@ impl EngineInner {
                 | Substate::SeekingCharly
                 | Substate::SeekingCharlyWatching
         ) {
-            OfficerRpc {
-                engine: self,
-                sim,
-                assets,
-                owner,
-            }
-            .charly_event(substate, stimulus);
+            AiOwnerCtx::new(self, tcx, owner).charly_event(substate, stimulus);
             return Some(false);
         }
         if self.observation_ai(owner).base.current_substate == Substate::SeekingCharlyGoToOfficer
@@ -87,13 +67,7 @@ impl EngineInner {
                 StimulusType::EventTimer | StimulusType::EventReachPoint
             )
         {
-            OfficerRpc {
-                engine: self,
-                sim,
-                assets,
-                owner,
-            }
-            .report_back(event);
+            AiOwnerCtx::new(self, tcx, owner).report_back(event);
             return Some(false);
         }
         if !matches!(
@@ -111,66 +85,20 @@ impl EngineInner {
             panic!("officer call {event:?} requires a human sender");
         };
         let target = self.expect_human_id_for_ai_handle(target.get(), "officer call sender");
-        Some(
-            OfficerRpc {
-                engine: self,
-                sim,
-                assets,
-                owner,
-            }
-            .event(event, target),
-        )
+        Some(AiOwnerCtx::new(self, tcx, owner).rpc_event(event, target))
     }
 }
 
-impl OfficerRpc<'_> {
-    fn ai(&self) -> &EnemyAi {
-        self.engine.observation_ai(self.owner)
-    }
-    fn ai_mut(&mut self) -> &mut EnemyAi {
-        self.engine.observation_ai_mut(self.owner)
-    }
-
-    fn state(&mut self, substate: Substate) {
-        self.engine.duty_set_state(
-            self.sim,
-            self.assets,
-            self.owner,
-            AiState::Seeking,
-            substate,
-        );
-    }
-    fn timer(&mut self, frames: u32) {
-        self.engine.observation_timer(self.owner, frames);
-    }
-    fn duty(&mut self) {
-        self.engine.execute_ai_return_to_duty(
-            self.sim,
-            self.assets,
-            self.owner,
-            DutyFlags::empty(),
-        );
-    }
-    fn target(&self) -> EntityId {
-        self.engine.expect_human_id_for_ai_handle(
-            self.ai()
-                .base
-                .antagonist
-                .expect("officer call requires an antagonist")
-                .get(),
-            "officer call antagonist",
-        )
-    }
+impl AiOwnerCtx<'_> {
     fn halt(&mut self) {
-        self.engine.halt_actor(self.sim, self.assets, self.owner);
+        self.engine.halt_actor(self.tcx, self.owner);
     }
     fn face(&mut self, target: EntityId) {
-        self.engine
-            .observation_face_entity(self.sim, self.assets, self.owner, target, false);
+        self.observation_face_entity(target, false);
     }
     fn face_position(&mut self, point: Position) {
         let target = self.engine.position_to_point_3d(
-            self.assets,
+            self.tcx.assets,
             point.sector,
             point.level,
             point.x,
@@ -185,51 +113,37 @@ impl OfficerRpc<'_> {
             target.x - body.x,
             target.y - body.y,
         );
-        self.engine
-            .duty_face_direction(self.sim, self.assets, self.owner, direction as u16);
+        self.duty_face_direction(direction as u16);
     }
     fn emoticon(&mut self, emoticon: EmoticonType) {
         let frame = self.engine.control.frame_counter;
-        self.ai_mut()
+        self.enemy_mut()
             .base
             .set_transient_emoticon(emoticon, 20, frame);
     }
-    fn say(&mut self, remark: Remark, flags: SpeechFlags) {
-        self.engine.execute_ai_speech(
-            self.sim,
-            self.assets,
-            self.owner,
-            crate::ai::AiSpeechAttempt {
-                remark,
-                flags: flags.bits(),
-            },
-        );
-    }
     fn priority(&self) -> bool {
-        self.ai().base.blood_alcohol as i32 <= crate::parameters_ai::AI_DEBILITY_ALCOHOL_LIMIT
-            && self.ai().has_the_new_task_priority()
+        self.enemy().base.blood_alcohol as i32 <= crate::parameters_ai::AI_DEBILITY_ALCOHOL_LIMIT
+            && self.enemy().has_the_new_task_priority()
     }
     fn rank(&self, target: EntityId) -> ProfileRank {
         self.engine
-            .world
-            .entities
-            .expect_enemy_ai(target, format_args!("officer call rank"))
-            .get_rank(&self.assets.profile_manager)
+            .enemy_ai(target, "officer call rank")
+            .get_rank(&self.tcx.assets.profile_manager)
     }
     fn accept(&mut self, state: Substate) {
-        self.state(state);
+        self.seek_state(state);
         self.timer(20);
         self.emoticon(EmoticonType::QuestionMark);
     }
-    fn event(&mut self, event: StimulusType, target: EntityId) -> bool {
+    fn rpc_event(&mut self, event: StimulusType, target: EntityId) -> bool {
         use StimulusType::*;
         use Substate::*;
         match event {
             EventSeesSoldier => {
-                if self.ai().base.current_state != AiState::Default
-                    && !(self.ai().base.current_state == AiState::Seeking
+                if self.enemy().base.current_state != AiState::Default
+                    && !(self.enemy().base.current_state == AiState::Seeking
                         && matches!(
-                            self.ai().base.current_substate,
+                            self.enemy().base.current_substate,
                             SeekingOfficerLookingForSoldiers1
                                 | SeekingOfficerLookingForSoldiers1Sidewards
                                 | SeekingOfficerLookingForSoldiers2
@@ -241,40 +155,37 @@ impl OfficerRpc<'_> {
                 {
                     return false;
                 }
-                match self.ai().get_rank(&self.assets.profile_manager) {
+                match self.enemy().get_rank(&self.tcx.assets.profile_manager) {
                     ProfileRank::Soldier => {
-                        self.ai_mut().base.antagonist = Some(AiEntityHandle::new(target.index()));
+                        self.enemy_mut().base.antagonist =
+                            Some(AiEntityHandle::new(target.index()));
                         if self.engine.execute_ai_callback(
-                            self.sim,
-                            self.assets,
+                            self.tcx,
                             target,
                             &Stimulus::with_human(CallAlert, self.owner.index()),
                         ) {
-                            self.state(SeekingRunningToOfficerSeen);
+                            self.seek_state(SeekingRunningToOfficerSeen);
                             self.say(Remark::CallsOfficer, SpeechFlags::MYTALK_0);
                             let officer = self.target();
                             let input = extract_exact_forecast_input(
                                 self.engine,
                                 self.engine.expect_entity(officer, "officer forecast"),
                                 selected_actor_is_passing_door(
-                                    &self.engine.world.entities,
-                                    &self.engine.orders.sequence_manager,
+                                    &self.engine.entities(),
+                                    &self.engine.seq(),
                                     officer,
                                 ),
                             )
                             .expect("officer forecast requires actor");
                             let position = crate::ai::forecast_destination_for_ia(
-                                self.sim,
+                                self.tcx.sim,
                                 &input,
                                 &self.engine.script_domains.interactables.doors,
                                 &self.engine.world.fast_grid.level.sectors,
                                 &self.engine.world.fast_grid.level.sector_number_map,
                             )
                             .position;
-                            self.engine.duty_go_near(
-                                self.sim,
-                                self.assets,
-                                self.owner,
+                            self.duty_go_near(
                                 position,
                                 crate::parameters_ai::AI_TALK_DISTANCE,
                                 GotoFlags::RUN,
@@ -289,10 +200,11 @@ impl OfficerRpc<'_> {
                             self.engine.expect_entity(target, "seen soldier"),
                             Entity::Soldier(_)
                         ));
-                        self.ai_mut().base.antagonist = Some(AiEntityHandle::new(target.index()));
+                        self.enemy_mut().base.antagonist =
+                            Some(AiEntityHandle::new(target.index()));
                         if self.engine.can_call_ai_soldier(self.owner, target) {
                             self.face(self.target());
-                            self.state(SeekingOfficerCallSoldier);
+                            self.seek_state(SeekingOfficerCallSoldier);
                             self.engine.execute_ai_delete_detectable_type(
                                 self.owner,
                                 crate::element::DetectableType::Friend,
@@ -303,21 +215,21 @@ impl OfficerRpc<'_> {
                 }
             }
             CallGoToOfficer => {
-                if self.ai().base.current_state != AiState::Default
-                    && self.ai().base.current_substate != SleepingAwakening
+                if self.enemy().base.current_state != AiState::Default
+                    && self.enemy().base.current_substate != SleepingAwakening
                 {
                     return false;
                 }
-                self.ai_mut().base.antagonist = Some(AiEntityHandle::new(target.index()));
-                self.state(SeekingCharlySentToOfficer);
-                self.ai_mut().base.set_emoticon(EmoticonType::None);
+                self.enemy_mut().base.antagonist = Some(AiEntityHandle::new(target.index()));
+                self.seek_state(SeekingCharlySentToOfficer);
+                self.enemy_mut().base.set_emoticon(EmoticonType::None);
 
                 self.timer(30);
-                self.ai_mut().reported_to_officer = true;
+                self.enemy_mut().reported_to_officer = true;
                 return true;
             }
             CallHey => {
-                self.ai_mut().base.antagonist = Some(AiEntityHandle::new(target.index()));
+                self.enemy_mut().base.antagonist = Some(AiEntityHandle::new(target.index()));
                 if matches!(
                     self.engine.expect_entity(target, "officer hail"),
                     Entity::Civilian(_)
@@ -326,37 +238,37 @@ impl OfficerRpc<'_> {
                     return false;
                 }
                 let react = matches!(
-                    self.ai().base.current_state,
+                    self.enemy().base.current_state,
                     AiState::Default | AiState::Wondering
-                ) || self.ai().base.current_state == AiState::Seeking
+                ) || self.enemy().base.current_state == AiState::Seeking
                     && matches!(
-                        self.ai().base.current_substate,
+                        self.enemy().base.current_substate,
                         SeekingRunningToOfficer
                             | SeekingRunningToOfficerSeen
                             | SeekingHeardstepsReactiontime
                             | SeekingBodyReactiontime
                     );
                 if !react
-                    || self.ai().get_rank(&self.assets.profile_manager) != ProfileRank::Soldier
+                    || self.enemy().get_rank(&self.tcx.assets.profile_manager)
+                        != ProfileRank::Soldier
                     || !self.priority()
                 {
                     return false;
                 }
-                self.ai_mut().current_task_priority = self.ai().new_task_priority;
-                self.engine
-                    .observation_stop(self.sim, self.assets, self.owner);
+                self.enemy_mut().current_task_priority = self.enemy().new_task_priority;
+                self.observation_stop();
                 assert_eq!(self.rank(self.target()), ProfileRank::Officer);
                 self.face(self.target());
                 self.accept(SeekingSoldierCalledByOfficer);
                 return true;
             }
             CallAlert => {
-                self.ai_mut().base.antagonist = Some(AiEntityHandle::new(target.index()));
+                self.enemy_mut().base.antagonist = Some(AiEntityHandle::new(target.index()));
                 if matches!(
                     self.engine.expect_entity(target, "alert sender"),
                     Entity::Civilian(_)
                 ) {
-                    if self.ai().base.current_state != AiState::Default {
+                    if self.enemy().base.current_state != AiState::Default {
                         return false;
                     }
                     self.halt();
@@ -364,14 +276,14 @@ impl OfficerRpc<'_> {
                     self.accept(SeekingWaitForAlertingCivilian);
                     return true;
                 }
-                match self.ai().get_rank(&self.assets.profile_manager) {
+                match self.enemy().get_rank(&self.tcx.assets.profile_manager) {
                     ProfileRank::Soldier => {
                         let react = matches!(
-                            self.ai().base.current_state,
+                            self.enemy().base.current_state,
                             AiState::Default | AiState::Wondering
-                        ) || self.ai().base.current_state == AiState::Seeking
+                        ) || self.enemy().base.current_state == AiState::Seeking
                             && matches!(
-                                self.ai().base.current_substate,
+                                self.enemy().base.current_substate,
                                 SeekingSoldierGiveReportToOfficer
                                     | SeekingSoldierGiveAlertingReportToOfficerStart
                                     | SeekingSoldierGiveAlertingReportToOfficerPoint
@@ -381,13 +293,13 @@ impl OfficerRpc<'_> {
                             return false;
                         }
                         self.halt();
-                        self.ai_mut().current_task_priority = self.ai().new_task_priority;
-                        self.ai_mut().gather_position_instructed = false;
-                        self.ai_mut().base.friends_are_alerted = true;
+                        self.enemy_mut().current_task_priority = self.enemy().new_task_priority;
+                        self.enemy_mut().gather_position_instructed = false;
+                        self.enemy_mut().base.friends_are_alerted = true;
                         assert_eq!(self.rank(self.target()), ProfileRank::Officer);
                         let position = self.engine.live_ai_position(self.target());
-                        self.ai_mut().officers_position = position;
-                        self.face_position(self.ai().officers_position);
+                        self.enemy_mut().officers_position = position;
+                        self.face_position(self.enemy().officers_position);
                         self.accept(SeekingGroupCalledByOfficer);
                         return true;
                     }
@@ -396,7 +308,7 @@ impl OfficerRpc<'_> {
                             return false;
                         }
                         self.halt();
-                        self.ai_mut().base.friends_are_alerted = true;
+                        self.enemy_mut().base.friends_are_alerted = true;
                         assert_eq!(self.rank(self.target()), ProfileRank::Soldier);
                         self.face(self.target());
                         self.accept(SeekingOfficerWaitForAlertingSoldier);
@@ -408,9 +320,9 @@ impl OfficerRpc<'_> {
                 }
             }
             CallMrOfficerIAmBack => {
-                self.ai_mut().base.antagonist = Some(AiEntityHandle::new(target.index()));
-                if self.ai().base.current_state == AiState::Seeking
-                    && self.ai().base.current_substate == SeekingOfficerWaitForCharly
+                self.enemy_mut().base.antagonist = Some(AiEntityHandle::new(target.index()));
+                if self.enemy().base.current_state == AiState::Seeking
+                    && self.enemy().base.current_substate == SeekingOfficerWaitForCharly
                 {
                     return true;
                 }
@@ -420,14 +332,14 @@ impl OfficerRpc<'_> {
                 self.halt();
                 assert_eq!(self.rank(self.target()), ProfileRank::Soldier);
                 self.face(self.target());
-                self.state(SeekingOfficerWaitForCharly);
+                self.seek_state(SeekingOfficerWaitForCharly);
                 self.say(Remark::FoundCharly, SpeechFlags::empty());
                 self.timer(20);
                 self.emoticon(EmoticonType::XMark);
                 return true;
             }
             CallCharlyIsBack => {
-                let s = self.ai().base.current_substate;
+                let s = self.enemy().base.current_substate;
                 if s.is_seek_area()
                     || matches!(
                         s,
@@ -439,19 +351,19 @@ impl OfficerRpc<'_> {
                             | SeekingGroupGetInstructedByOfficer
                     )
                 {
-                    if self.ai().base.my_reconnaissance_report.charly
+                    if self.enemy().base.my_reconnaissance_report.charly
                         == Some(AiEntityHandle::new(target.index()))
                     {
                         self.engine
                             .execute_ai_set_checkpoint_charly(self.owner, Option::None);
 
                         self.face(target);
-                        self.ai_mut().base.clear_emoticon();
+                        self.enemy_mut().base.clear_emoticon();
 
-                        self.ai_mut()
+                        self.enemy_mut()
                             .seek_flags
                             .remove(SeekFlags::REPORT_OFFICER_AFTER);
-                        self.state(SeekingLookingResurrectedCharly);
+                        self.seek_state(SeekingLookingResurrectedCharly);
                         let human = self.engine.expect_entity(target, "returned checkpoint");
                         self.timer(if human.is_dead() || human.is_unconscious() {
                             200
@@ -469,10 +381,10 @@ impl OfficerRpc<'_> {
         false
     }
     fn officer_ready(&self) -> bool {
-        self.ai().base.current_state == AiState::Default
-            || self.ai().base.current_state == AiState::Seeking
+        self.enemy().base.current_state == AiState::Default
+            || self.enemy().base.current_state == AiState::Seeking
                 && matches!(
-                    self.ai().base.current_substate,
+                    self.enemy().base.current_substate,
                     Substate::SeekingOfficerWaitForInstructedGroup
                         | Substate::SeekingOfficerWaitForInstructedSoldier
                 )
@@ -483,18 +395,15 @@ impl OfficerRpc<'_> {
         let event = stimulus.stimulus_type;
         match (state, event) {
             (DefaultLookingForCharly, EventTimer) => {
-                let draw =
-                    crate::sim_rng::u32(self.sim, crate::sim_rng::RngSite::CharlySorrow, 0..5000);
-                if draw < u32::from(self.ai().base.sorrow_level) + 10 {
-                    self.engine.duty_set_state(
-                        self.sim,
-                        self.assets,
-                        self.owner,
-                        AiState::Default,
-                        DefaultLookingSidewardsForCharly,
-                    );
+                let draw = crate::sim_rng::u32(
+                    self.tcx.sim,
+                    crate::sim_rng::RngSite::CharlySorrow,
+                    0..5000,
+                );
+                if draw < u32::from(self.enemy().base.sorrow_level) + 10 {
+                    self.duty_set_state(AiState::Default, DefaultLookingSidewardsForCharly);
                     let direction = if crate::sim_rng::u32(
-                        self.sim,
+                        self.tcx.sim,
                         crate::sim_rng::RngSite::CharlySorrow,
                         0..2,
                     ) != 0
@@ -503,52 +412,34 @@ impl OfficerRpc<'_> {
                     } else {
                         crate::ai::LookDirection::RightLeft
                     };
-                    self.engine.execute_ai_look_sidewards(
-                        self.sim,
-                        self.assets,
-                        self.owner,
-                        direction,
-                    );
+                    self.execute_ai_look_sidewards(direction);
                 }
-                self.ai_mut().base.sorrow_level = self
-                    .ai()
+                self.enemy_mut().base.sorrow_level = self
+                    .enemy()
                     .base
                     .sorrow_level
-                    .wrapping_add(self.ai().base.delta_sorrow_level);
-                if self.ai().base.sorrow_level > 1000 {
-                    self.ai_mut().base.sorrow_level = 0;
-                    self.engine
-                        .execute_ai_search_charly(self.sim, self.assets, self.owner);
+                    .wrapping_add(self.enemy().base.delta_sorrow_level);
+                if self.enemy().base.sorrow_level > 1000 {
+                    self.enemy_mut().base.sorrow_level = 0;
+                    self.execute_ai_search_charly();
                 }
                 self.timer(crate::parameters_ai::AI_CHECKFOR_TIME_INTERVAL as u32);
             }
             (DefaultLookingSidewardsForCharly, EventDone) => {
-                self.engine.duty_set_state(
-                    self.sim,
-                    self.assets,
-                    self.owner,
-                    AiState::Default,
-                    DefaultLookingForCharly,
-                );
+                self.duty_set_state(AiState::Default, DefaultLookingForCharly);
                 self.timer(10);
             }
             (DefaultDetectedCharly, EventTimer) => {
-                if self.ai().base.macro_in_progress {
-                    self.engine.duty_set_state(
-                        self.sim,
-                        self.assets,
-                        self.owner,
-                        AiState::Default,
-                        DefaultInMacro,
-                    );
-                    self.engine.run_ai_macro(self.sim, self.assets, self.owner);
+                if self.enemy().base.macro_in_progress {
+                    self.duty_set_state(AiState::Default, DefaultInMacro);
+                    self.run_ai_macro();
                 } else {
                     self.duty();
                 }
             }
             (DefaultSynchronizing, EventTimer) => {
                 let partner = self
-                    .ai()
+                    .enemy()
                     .base
                     .synchronize_charly
                     .expect("synchronization timer requires partner");
@@ -557,9 +448,7 @@ impl OfficerRpc<'_> {
                     .expect_human_id_for_ai_handle(partner.get(), "synchronization partner");
                 if self
                     .engine
-                    .world
-                    .entities
-                    .expect_ai_controller(partner, format_args!("synchronization partner"))
+                    .ai(partner, "synchronization partner")
                     .current_state
                     != AiState::Default
                     || self
@@ -573,38 +462,31 @@ impl OfficerRpc<'_> {
                 }
             }
             (DefaultSynchronizing, EventSyncCharly) => {
-                if matches!(stimulus.info, StimulusInfo::Index(index) if index == self.ai().base.synchronize_index)
+                if matches!(stimulus.info, StimulusInfo::Index(index) if index == self.enemy().base.synchronize_index)
                 {
                     assert!(
-                        self.ai().base.macro_in_progress,
+                        self.enemy().base.macro_in_progress,
                         "synchronization resumes active macro"
                     );
-                    self.engine.duty_set_state(
-                        self.sim,
-                        self.assets,
-                        self.owner,
-                        AiState::Default,
-                        DefaultInMacro,
-                    );
-                    self.engine.run_ai_macro(self.sim, self.assets, self.owner);
+                    self.duty_set_state(AiState::Default, DefaultInMacro);
+                    self.run_ai_macro();
                 }
             }
             (SeekingDetectedCharly, EventTimer) => {
-                self.ai_mut().base.my_reconnaissance_report.charly_seen = true;
-                if self.ai().get_rank(&self.assets.profile_manager) == ProfileRank::Officer
-                    && !self.ai().alerted_us.is_empty()
+                self.enemy_mut().base.my_reconnaissance_report.charly_seen = true;
+                if self.enemy().get_rank(&self.tcx.assets.profile_manager) == ProfileRank::Officer
+                    && !self.enemy().alerted_us.is_empty()
                 {
-                    let state = self.ai().previous_state.get("previous state");
-                    let substate = self.ai().previous_substate.get("previous substate");
-                    self.engine
-                        .duty_set_state(self.sim, self.assets, self.owner, state, substate);
+                    let state = self.enemy().previous_state.get("previous state");
+                    let substate = self.enemy().previous_substate.get("previous substate");
+                    self.duty_set_state(state, substate);
                     self.timer(10);
                 } else {
                     self.duty();
                 }
             }
             (SeekingSendCharlyToOfficer, EventMyTalk1) => {
-                if let Some(friend) = self.ai().base.friend_in_trouble {
+                if let Some(friend) = self.enemy().base.friend_in_trouble {
                     let friend = self
                         .engine
                         .expect_human_id_for_ai_handle(friend.get(), "checkpoint referral");
@@ -617,27 +499,21 @@ impl OfficerRpc<'_> {
                     );
                     let target = self.target();
                     if self.engine.execute_ai_callback(
-                        self.sim,
-                        self.assets,
+                        self.tcx,
                         friend,
                         &Stimulus::with_human(CallGoToOfficer, target.index()),
                     ) {
                         self.say(Remark::SendsCharlyToOfficer, SpeechFlags::MYTALK_2);
-                        self.engine.duty_point_to(
-                            self.sim,
-                            self.assets,
-                            self.owner,
-                            self.ai().officers_position,
-                        );
+                        self.duty_point_to(self.enemy().officers_position);
                     }
                 } else {
                     self.duty();
                 }
             }
             (SeekingSendCharlyToOfficer, EventMyTalk2) => {
-                self.state(SeekingLookingResurrectedCharly);
+                self.seek_state(SeekingLookingResurrectedCharly);
                 let friend = self
-                    .ai()
+                    .enemy()
                     .base
                     .friend_in_trouble
                     .expect("checkpoint referral requires friend");
@@ -649,39 +525,20 @@ impl OfficerRpc<'_> {
             }
             (SeekingLookingResurrectedCharly, EventTimer) => self.duty(),
             (SeekingCharlySentToOfficer, EventTimer) => {
-                self.state(SeekingCharlyGoToOfficer);
+                self.seek_state(SeekingCharlyGoToOfficer);
                 let position = self.engine.live_ai_position(self.target());
-                self.engine.duty_go_near(
-                    self.sim,
-                    self.assets,
-                    self.owner,
-                    position,
-                    40,
-                    GotoFlags::empty(),
-                );
-                self.engine.unalert_live_charly_seekers(
-                    self.sim,
-                    self.assets,
-                    self.owner,
-                    self.owner,
-                );
+                self.duty_go_near(position, 40, GotoFlags::empty());
+                self.unalert_live_charly_seekers(self.owner);
                 self.timer(10);
             }
             (SeekingCharlyGoToOfficerSeen, EventTimer) => {
                 if self
                     .engine
-                    .world
-                    .entities
-                    .expect_ai_controller(self.target(), format_args!("checkpoint officer"))
+                    .ai(self.target(), "checkpoint officer")
                     .current_substate
                     == SeekingOfficerWaitForCharly
                 {
-                    self.engine.unalert_live_charly_seekers(
-                        self.sim,
-                        self.assets,
-                        self.owner,
-                        self.owner,
-                    );
+                    self.unalert_live_charly_seekers(self.owner);
                     self.timer(20);
                 } else {
                     self.duty();
@@ -689,22 +546,20 @@ impl OfficerRpc<'_> {
             }
             (SeekingCharlyGoToOfficerSeen, EventReachPoint) => {
                 self.engine.execute_ai_callback(
-                    self.sim,
-                    self.assets,
+                    self.tcx,
                     self.target(),
                     &Stimulus::with_human(CallCoordinate, self.owner.index()),
                 );
-                self.state(SeekingCharlyGetLectureByOfficer);
+                self.seek_state(SeekingCharlyGetLectureByOfficer);
             }
             (SeekingCharlyGetLectureByOfficer, CallYourTalk1) => {
                 self.say(Remark::CharlyDefendsHimself, SpeechFlags::MYTALK_1);
-                self.state(SeekingCharlyGetLectureByOfficer2);
+                self.seek_state(SeekingCharlyGetLectureByOfficer2);
             }
             (SeekingCharlyGetLectureByOfficer2, EventMyTalk1)
             | (SeekingOfficerLectureCharly, EventMyTalk1) => {
                 self.engine.execute_ai_callback(
-                    self.sim,
-                    self.assets,
+                    self.tcx,
                     self.target(),
                     &Stimulus::new(CallYourTalk1),
                 );
@@ -722,7 +577,7 @@ impl OfficerRpc<'_> {
                         | SeekingCharlyGoToOfficerSeen
                 ) {
                     self.face(self.target());
-                    self.ai_mut().base.clear_emoticon();
+                    self.enemy_mut().base.clear_emoticon();
 
                     self.timer(20);
                 } else {
@@ -730,11 +585,11 @@ impl OfficerRpc<'_> {
                 }
             }
             (SeekingOfficerWaitForCharly, CallCoordinate) => {
-                if matches!(stimulus.info, StimulusInfo::Human(sender) if Some(sender) == self.ai().base.antagonist)
+                if matches!(stimulus.info, StimulusInfo::Human(sender) if Some(sender) == self.enemy().base.antagonist)
                 {
                     self.face(self.target());
                     self.say(Remark::OfficerRebukesCharly, SpeechFlags::MYTALK_1);
-                    self.state(SeekingOfficerLectureCharly);
+                    self.seek_state(SeekingOfficerLectureCharly);
                 }
             }
             (SeekingOfficerLectureCharly, CallYourTalk1) => {
@@ -742,11 +597,7 @@ impl OfficerRpc<'_> {
             }
             (SeekingOfficerLectureCharly, EventMyTalk2) => {
                 let target = self.target();
-                let ai = self
-                    .engine
-                    .world
-                    .entities
-                    .expect_ai_controller(target, format_args!("checkpoint post"));
+                let ai = self.engine.ai(target, "checkpoint post");
                 let position = if ai.has_patrol_path {
                     let path = ai
                         .patrol_path
@@ -756,7 +607,7 @@ impl OfficerRpc<'_> {
                         .expect("checkpoint path must resolve")
                         .get() as usize;
                     let here = self.engine.live_ai_position(self.owner);
-                    let points = &self.assets.navigation.hiking_paths[path].waypoints;
+                    let points = &self.tcx.assets.navigation.hiking_paths[path].waypoints;
                     let mut best = Option::None;
                     let mut distance = u32::MAX as f32;
                     for (index, point) in points.iter().enumerate() {
@@ -773,7 +624,7 @@ impl OfficerRpc<'_> {
                     Position {
                         x: point.x as f32,
                         y: point.y as f32,
-                        sector: self.assets.navigation.hiking_waypoint_sector(
+                        sector: self.tcx.assets.navigation.hiking_waypoint_sector(
                             path,
                             index,
                             point.sector,
@@ -783,16 +634,14 @@ impl OfficerRpc<'_> {
                 } else {
                     ai.initial_position
                 };
-                self.engine
-                    .duty_point_to(self.sim, self.assets, self.owner, position);
-                self.state(SeekingOfficerLectureCharlyPointing);
+                self.duty_point_to(position);
+                self.seek_state(SeekingOfficerLectureCharlyPointing);
                 self.say(Remark::OfficerEndsConversation, SpeechFlags::MYTALK_3);
                 self.timer(20);
             }
             (SeekingOfficerLectureCharlyPointing, EventMyTalk3) => {
                 self.engine.execute_ai_callback(
-                    self.sim,
-                    self.assets,
+                    self.tcx,
                     self.target(),
                     &Stimulus::new(CallYourTalk2),
                 );
@@ -800,38 +649,29 @@ impl OfficerRpc<'_> {
             }
             (SeekingCharly, EventReachPoint) => {
                 assert!(
-                    !self.ai().search_charly_way.is_empty(),
+                    !self.enemy().search_charly_way.is_empty(),
                     "checkpoint search arrival requires route"
                 );
-                self.ai_mut().search_charly_way.remove(0);
-                if self.ai().search_charly_way.is_empty() {
-                    if self.ai().base.checkpoint_charly.is_none() {
+                self.enemy_mut().search_charly_way.remove(0);
+                if self.enemy().search_charly_way.is_empty() {
+                    if self.enemy().base.checkpoint_charly.is_none() {
                         self.duty();
                     } else {
-                        self.state(SeekingCharlyWatching);
-                        self.engine.execute_ai_look_sidewards(
-                            self.sim,
-                            self.assets,
-                            self.owner,
-                            crate::ai::LookDirection::LeftRight,
-                        );
+                        self.seek_state(SeekingCharlyWatching);
+                        self.execute_ai_look_sidewards(crate::ai::LookDirection::LeftRight);
                     }
                 } else {
-                    let point = self.ai().search_charly_way[0];
+                    let point = self.enemy().search_charly_way[0];
                     let flags = GotoFlags::RUN
-                        | if self.ai().search_charly_way.len() > 1 {
+                        | if self.enemy().search_charly_way.len() > 1 {
                             GotoFlags::DONT_STOP
                         } else {
                             GotoFlags::empty()
                         };
-                    self.engine
-                        .duty_go_to(self.sim, self.assets, self.owner, point, flags);
+                    self.duty_go_to(point, flags);
                 }
             }
-            (SeekingCharlyWatching, EventDone) => {
-                self.engine
-                    .execute_ai_missed_charly_alert(self.sim, self.assets, self.owner)
-            }
+            (SeekingCharlyWatching, EventDone) => self.execute_ai_missed_charly_alert(),
             _ => {}
         }
     }
@@ -842,25 +682,23 @@ impl OfficerRpc<'_> {
         }
         let officer = self.target();
         if self.engine.npc_is_detecting_human(
-            self.assets,
+            self.tcx.assets,
             self.owner,
             officer,
             self.engine.control.frame_counter,
         ) {
             if self.engine.execute_ai_callback(
-                self.sim,
-                self.assets,
+                self.tcx,
                 officer,
                 &Stimulus::with_human(StimulusType::CallMrOfficerIAmBack, self.owner.index()),
             ) {
-                self.state(Substate::SeekingCharlyGoToOfficerSeen);
+                self.seek_state(Substate::SeekingCharlyGoToOfficerSeen);
                 self.timer(10);
             } else {
                 self.duty();
             }
         } else {
-            self.engine
-                .unalert_live_charly_seekers(self.sim, self.assets, self.owner, self.owner);
+            self.unalert_live_charly_seekers(self.owner);
             self.timer(10);
         }
     }

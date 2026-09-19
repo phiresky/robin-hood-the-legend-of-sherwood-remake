@@ -1,15 +1,16 @@
 use super::*;
+use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 impl EngineInner {
     pub(in crate::engine) fn launch_live_ai_turn(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         direction: i16,
         fast: bool,
     ) {
-        self.halt_actor(sim, assets, owner);
+        self.halt_actor(tcx, owner);
         self.launch_turn_sequence_deferred_no_transitions(
             owner,
             if fast {
@@ -152,8 +153,7 @@ impl EngineInner {
     /// Construct and register movement at the caller's current statement.
     pub(in crate::engine) fn launch_ai_move(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         entity_id: EntityId,
         destination: crate::ai::Position,
         goto: crate::ai::GotoFlags,
@@ -474,8 +474,7 @@ impl EngineInner {
                 // position behind later actors.
                 let route_assert_sector = route_identity_differs.then_some(source_sector);
                 return self.launch_gate_movement_sequence(
-                    sim,
-                    assets,
+                    tcx,
                     &mut Vec::new(),
                     crate::engine::movement::GateRouteRequest {
                         entity_id: entity_id,
@@ -569,7 +568,7 @@ impl EngineInner {
                     .map_or(1, |element| element.command_level.saturating_add(1));
                 sequence.append_element(tail);
             }
-            let sequence_id = self.launch_sequence(sim, assets, sequence);
+            let sequence_id = self.launch_sequence(tcx, sequence);
 
             tracing::trace!(
                 entity = ?entity_id,
@@ -582,7 +581,7 @@ impl EngineInner {
             Some(sequence_id)
         })();
         if launched.is_some() && was_computing_path {
-            self.halt_actor(sim, assets, entity_id);
+            self.halt_actor(tcx, entity_id);
             None
         } else {
             launched
@@ -800,8 +799,7 @@ impl EngineInner {
 
     pub(in crate::engine) fn execute_globally_frozen_pre_motion_owner(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         selected: MovementOwnerSelection,
     ) -> OrderType {
@@ -911,8 +909,7 @@ impl EngineInner {
                         );
                     }
                     let launched = self.start_post_seek_sequence(
-                        sim,
-                        assets,
+                        tcx,
                         &mut Vec::new(),
                         owner,
                         Some((selected.seq_id, selected.elem_idx)),
@@ -926,7 +923,10 @@ impl EngineInner {
                 // seeking still renews the order before aging its wait scalar.
                 let (element, next_order_id) = self
                     .orders
-                    .element_with_order_ids_mut(selected.seq_id, selected.elem_idx)
+                    .element_with_order_ids_mut(SequenceElementRef::new(
+                        selected.seq_id,
+                        selected.elem_idx,
+                    ))
                     .expect("globally frozen seek lost its selected element");
                 let order = element
                     .orders
@@ -984,41 +984,6 @@ mod exact_ai_goto_source_tests {
     use crate::position_interface::{DoorHandle, SectorHandle};
     use crate::sector::SectorNumber;
 
-    fn minimal_mission() -> crate::engine::MissionScript {
-        use crate::scb::{ClassEntry, Function};
-        use crate::vm::{Opcode, Quad};
-
-        crate::engine::MissionScript::from_scb(crate::scb::ScbFile {
-            version: crate::scb::SCB_VERSION,
-            classes: vec![ClassEntry {
-                source_file: "queued_goto_door_test.scs".into(),
-                class_name: crate::engine::test_support::asm::STARTUP_CLASS.into(),
-                size_of_member_variables: 0,
-                member_variables: Vec::new(),
-                functions: vec![Function {
-                    name: "Initialize".into(),
-                    address: 0,
-                    num_parameters: 0,
-                    size_of_return_value: 0,
-                    size_of_parameters: 0,
-                    size_of_volatile: 0,
-                    size_of_temporary: 0,
-                }],
-                quads: vec![
-                    Quad {
-                        operation: Opcode::BeginFunction as u8,
-                        operands: [0; 8],
-                    },
-                    Quad {
-                        operation: Opcode::Return as u8,
-                        operands: [0; 8],
-                    },
-                ],
-            }],
-        })
-        .expect("minimal mission")
-    }
-
     #[test]
     fn live_move_preserves_reverse_and_strafe_action_flags() {
         use crate::ai::GotoFlags;
@@ -1044,8 +1009,7 @@ mod exact_ai_goto_source_tests {
             };
             let sequence = engine
                 .launch_ai_move(
-                    &crate::sim_rng::test_context(),
-                    &LevelAssets::new(),
+                    TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
                     owner,
                     destination,
                     flags,
@@ -1081,7 +1045,9 @@ mod exact_ai_goto_source_tests {
     #[test]
     fn door_transit_construction_keeps_raw_branch_and_adapted_route_identities_distinct() {
         let mut engine = EngineInner::new();
-        engine.scripts.mission = Some(minimal_mission());
+        engine.scripts.mission = Some(crate::engine::test_support::asm::empty_mission_script(
+            "queued_goto_door_test.scs",
+        ));
 
         engine.world.fast_grid_mut().size_map(16, 16);
         engine.world.fast_grid_mut().allocate_layers(3);
@@ -1142,7 +1108,7 @@ mod exact_ai_goto_source_tests {
         soldier.element.set_sector(Some(raw_sector));
         soldier.element.set_layer(2);
         let owner = engine.add_test_entity(Entity::Soldier(soldier));
-        let position = engine.get_entity_mut(owner).unwrap().position_iface_mut();
+        let position = engine.ent_mut(owner).position_iface_mut();
         position.set_sector_topology(Some(raw_sector), Some(raw_index));
         position.set_door(
             DoorHandle::new(0).expect("zero is a valid door index"),
@@ -1157,8 +1123,7 @@ mod exact_ai_goto_source_tests {
         };
         let sequence_id = engine
             .launch_ai_move(
-                &crate::sim_rng::test_context(),
-                &LevelAssets::new(),
+                TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
                 owner,
                 destination,
                 crate::ai::GotoFlags::RUN,

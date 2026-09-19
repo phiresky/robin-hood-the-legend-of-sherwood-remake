@@ -88,6 +88,7 @@ impl SimulationRng {
         self.original_replay = None;
     }
 
+    #[cfg(any(test, feature = "original-parity"))]
     pub(crate) fn append_original_replay(&mut self, draws: Vec<u32>) {
         self.original_replay
             .as_ref()
@@ -97,6 +98,7 @@ impl SimulationRng {
             .append(draws);
     }
 
+    #[cfg(any(test, feature = "original-parity"))]
     pub(crate) fn replace_original_replay(&mut self, draws: Vec<u32>) {
         self.original_replay = Some(Arc::new(Mutex::new(
             crate::sim_rng::OriginalRngReplay::new(draws),

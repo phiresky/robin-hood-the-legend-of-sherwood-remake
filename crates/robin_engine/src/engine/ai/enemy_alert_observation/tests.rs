@@ -50,32 +50,24 @@ fn turn_directions(engine: &EngineInner, owner: EntityId) -> Vec<u32> {
 #[test]
 fn hearing_projects_origin_instead_of_using_recorded_noise_elevation() {
     let (mut engine, assets, owner, _) = fixture(AiState::Seeking, Substate::SeekingSeekpoint);
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .element_data_mut()
-        .set_position(WorldPoint3D::new(
+    engine.place(
+        owner,
+        WorldPoint3D::new(
             f32::from_bits(0x4326_9901),
             f32::from_bits(0x43a1_5511),
             f32::from_bits(0x4210_0107),
-        ));
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .element_data_mut()
-        .set_direction_instantly(4);
+        ),
+    );
+    engine.face(owner, 4);
     let position = Position {
         x: f32::from_bits(0x428b_1027),
         y: f32::from_bits(0x43af_c940),
         sector: engine.live_ai_position(owner).sector,
         level: 0,
     };
-    engine.execute_ai_heard_noise(
-        &crate::sim_rng::test_context(),
-        &assets,
-        owner,
-        &noise(NoiseType::ZingZing, position),
-    );
+    engine
+        .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+        .execute_ai_heard_noise(&noise(NoiseType::ZingZing, position));
     assert!(
         turn_directions(&engine, owner).contains(&11),
         "ground projection selects11 while substituting recorded elevation selects10"
@@ -94,16 +86,8 @@ fn hearing_projects_origin_instead_of_using_recorded_noise_elevation() {
 #[test]
 fn zonk_keeps_absent_sector_and_layer_impact() {
     let (mut engine, assets, owner, _) = fixture(AiState::Default, Substate::DefaultOnPost);
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .element_data_mut()
-        .set_position(WorldPoint3D::new(317.8, 1196.001, 480.00104));
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .element_data_mut()
-        .set_direction_instantly(4);
+    engine.place(owner, WorldPoint3D::new(317.8, 1196.001, 480.00104));
+    engine.face(owner, 4);
     let position = Position {
         x: 341.81934,
         y: 716.62885,
@@ -112,7 +96,9 @@ fn zonk_keeps_absent_sector_and_layer_impact() {
     };
     let mut noise = noise(NoiseType::Zonk, position);
     noise.elevation = 480;
-    engine.execute_ai_heard_noise(&crate::sim_rng::test_context(), &assets, owner, &noise);
+    engine
+        .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+        .execute_ai_heard_noise(&noise);
     let ai = engine
         .world
         .entities
@@ -131,12 +117,9 @@ fn distraction_noise_records_impact_before_investigation() {
         y: 90.0,
         ..engine.live_ai_position(owner)
     };
-    engine.execute_ai_heard_noise(
-        &crate::sim_rng::test_context(),
-        &assets,
-        owner,
-        &noise(NoiseType::Distraction, position),
-    );
+    engine
+        .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+        .execute_ai_heard_noise(&noise(NoiseType::Distraction, position));
     let ai = engine
         .world
         .entities
@@ -166,12 +149,9 @@ fn logs_and_drawbridge_draw_cooldown_only_from_default_state() {
                 ..engine.live_ai_position(owner)
             };
             let (_, draws) = crate::sim_rng::with_draw_trace(|| {
-                engine.execute_ai_heard_noise(
-                    &crate::sim_rng::test_context(),
-                    &assets,
-                    owner,
-                    &noise(kind, position),
-                )
+                engine
+                    .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                    .execute_ai_heard_noise(&noise(kind, position))
             });
             assert_eq!(
                 draws
@@ -209,19 +189,13 @@ fn look_there_and_combat_alert_keep_distinct_macro_behavior() {
             .expect_ai_controller_mut(owner, format_args!("alert macro"))
             .macro_in_progress = true;
         if combat {
-            engine.execute_ai_combat_alert_reaction(
-                &crate::sim_rng::test_context(),
-                &assets,
-                owner,
-                position,
-            );
+            engine
+                .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                .execute_ai_combat_alert_reaction(position);
         } else {
-            engine.execute_ai_look_there_reaction(
-                &crate::sim_rng::test_context(),
-                &assets,
-                owner,
-                position,
-            );
+            engine
+                .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                .execute_ai_look_there_reaction(position);
         }
         let ai = engine
             .world
@@ -265,16 +239,13 @@ fn tower_alert_selects_rank_branch_and_preserves_running_macro() {
             profile.rank = rank
         });
         ai.base.macro_in_progress = true;
-        engine.execute_ai_tower_alert_reaction(
-            &crate::sim_rng::test_context(),
-            &assets,
-            owner,
-            &Hint {
+        engine
+            .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+            .execute_ai_tower_alert_reaction(&Hint {
                 seek_point: position,
                 who_tells_me: crate::ai::AiEntityHandle::new(caller.index()),
                 seek_flags: 0,
-            },
-        );
+            });
         let ai = engine
             .world
             .entities
@@ -300,22 +271,11 @@ fn tower_alert_selects_rank_branch_and_preserves_running_macro() {
 #[test]
 fn tower_alert_faces_caller_moved_by_state_callback() {
     use crate::engine::test_support::asm::*;
-    use crate::engine::types::MissionScript;
     use crate::natives::{NativeFn, ScriptHandleCodec};
-    use crate::scb::{ClassEntry, Function, ScbFile};
     let (mut engine, mut assets, owner, caller) =
         fixture(AiState::Default, Substate::DefaultOnPost);
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .script_class = "MoveCaller".into();
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .element_data_mut()
-        .set_direction_instantly(0);
+    engine.actor_mut(owner).script_class = "MoveCaller".into();
+    engine.face(owner, 0);
     assets.scripts.location_count = 1;
     assets.scripts.point_count = 1;
     assets.scripts.location_positions = std::sync::Arc::new(vec![(100.0, 600.0)]);
@@ -324,45 +284,28 @@ fn tower_alert_faces_caller_moved_by_state_callback() {
     assets.scripts.location_sector_handles =
         std::sync::Arc::new(vec![engine.live_ai_position(owner).sector]);
     engine.scripts.mission = Some(
-        MissionScript::from_scb(ScbFile {
-            version: crate::scb::SCB_VERSION,
-            classes: vec![
-                empty_startup_class("tower.scs".into()),
-                ClassEntry {
-                    source_file: "tower.scs".into(),
-                    class_name: "MoveCaller".into(),
-                    size_of_member_variables: 0,
-                    member_variables: vec![],
-                    functions: vec![Function {
-                        name: "FilterAIEvent".into(),
-                        address: 0,
-                        num_parameters: 3,
-                        size_of_return_value: 4,
-                        size_of_parameters: 12,
-                        size_of_volatile: 0,
-                        size_of_temporary: 8,
-                    }],
-                    quads: vec![
-                        q_begin_function(0, 2),
-                        q_aff1_get_param(0xC000, 4),
-                        q_aff0_iconstant(0xC004, AiState::Wondering.state_change_event_code()),
-                        q_ieq(0xC000, 0xC000, 0xC004),
-                        q_if_not_zero_goto(0xC000, 7),
-                        q_aff0_iconstant(0xC000, 1),
-                        q_return_val(0xC000),
-                        q_aff0_iconstant(0xC000, ScriptHandleCodec::actor_handle(caller)),
-                        q_aff0_iconstant(0xC004, ScriptHandleCodec::location_handle_from_index(0)),
-                        q_native_param(0xC000),
-                        q_native_param(0xC004),
-                        q_native_call(NativeFn::SetActorLocation as u32),
-                        q_aff0_iconstant(0xC000, 1),
-                        q_return_val(0xC000),
-                        q_end_function(),
-                    ],
-                },
+        crate::engine::test_support::extra_engine_combat::filter_ai_event_mission(
+            "tower.scs",
+            "MoveCaller",
+            8,
+            vec![
+                q_begin_function(0, 2),
+                q_aff1_get_param(0xC000, 4),
+                q_aff0_iconstant(0xC004, AiState::Wondering.state_change_event_code()),
+                q_ieq(0xC000, 0xC000, 0xC004),
+                q_if_not_zero_goto(0xC000, 7),
+                q_aff0_iconstant(0xC000, 1),
+                q_return_val(0xC000),
+                q_aff0_iconstant(0xC000, ScriptHandleCodec::actor_handle(caller)),
+                q_aff0_iconstant(0xC004, ScriptHandleCodec::location_handle_from_index(0)),
+                q_native_param(0xC000),
+                q_native_param(0xC004),
+                q_native_call(NativeFn::SetActorLocation as u32),
+                q_aff0_iconstant(0xC000, 1),
+                q_return_val(0xC000),
+                q_end_function(),
             ],
-        })
-        .unwrap(),
+        ),
     );
     engine.attach_script_bindings(&assets);
     engine
@@ -376,16 +319,13 @@ fn tower_alert_faces_caller_moved_by_state_callback() {
         y: 500.0,
         ..engine.live_ai_position(owner)
     };
-    engine.execute_ai_tower_alert_reaction(
-        &crate::sim_rng::test_context(),
-        &assets,
-        owner,
-        &Hint {
+    engine
+        .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+        .execute_ai_tower_alert_reaction(&Hint {
             seek_point: position,
             who_tells_me: crate::ai::AiEntityHandle::new(caller.index()),
             seek_flags: 0,
-        },
-    );
+        });
     assert_eq!(
         engine.live_ai_position(caller).map_point(),
         MapPoint::new(100.0, 600.0)

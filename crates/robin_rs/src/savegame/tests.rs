@@ -39,12 +39,7 @@ fn indexed_store(root: &Path, names: &[&str]) -> SaveGameManager {
     manager
 }
 
-fn fresh_engine() -> (Engine, engine_api::LevelAssets) {
-    let mut assets = engine_api::LevelAssets::new();
-    let engine =
-        Engine::new_for_test(800.0, 600.0, Campaign::default(), &mut assets).expect("engine");
-    (engine, assets)
-}
+use robin_engine::test_support::fresh_engine;
 
 fn fresh_save_session(
     player_name: &str,

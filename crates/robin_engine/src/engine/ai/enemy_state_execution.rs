@@ -1,6 +1,6 @@
 use super::*;
 use crate::ai::{AiState, AlertLevel, LogLineType, Substate};
-use crate::sim_rng::SimulationContext;
+use crate::engine::TickCtx;
 
 impl EngineInner {
     pub(super) fn begin_live_enemy_state(
@@ -19,8 +19,7 @@ impl EngineInner {
         if ai.base.current_state == AiState::Menacing && state != AiState::Menacing {
             if let Some(pc) = ai.guarded_pc.take() {
                 let entity = self
-                    .world
-                    .entities
+                    .entities_mut()
                     .expect_entity_mut(EntityId::Pc(pc), format_args!("released guarded PC"));
                 let Entity::Pc(pc) = entity else {
                     unreachable!("typed PC guard")
@@ -57,8 +56,7 @@ impl EngineInner {
 
     pub(super) fn finish_live_enemy_state(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         state: AiState,
         substate: Substate,
@@ -67,10 +65,7 @@ impl EngineInner {
         if self.seek_enemy(owner).base.current_state == AiState::Sleeping
             && state != AiState::Sleeping
         {
-            let npc = self
-                .world
-                .entities
-                .expect_ai_actor_data_mut(owner, format_args!("awakening state owner"));
+            let npc = self.ai_actor_mut(owner, "awakening state owner");
             crate::ai_vision::set_view_status(npc, crate::element::EyeStatus::LookForward);
         }
         if !matches!(
@@ -79,7 +74,7 @@ impl EngineInner {
                 | Substate::AttackingPhalanx
                 | Substate::AttackingRunningToPhalanx
         ) && let Some(archer) = self.seek_enemy(owner).archer_behind_me
-            && self.live_ai_is_shield_bearer(assets, owner)
+            && self.live_ai_is_shield_bearer(tcx.assets, owner)
         {
             let target = self.expect_human_id_for_ai_handle(archer.get(), "released paired archer");
             self.seek_enemy_mut(target).shield_bearer_before_me = None;
@@ -152,9 +147,7 @@ impl EngineInner {
         if self.seek_enemy(owner).base.current_state == AiState::Seeking
             && state != AiState::Seeking
         {
-            self.world
-                .entities
-                .expect_ai_actor_data_mut(owner, format_args!("departing search owner"))
+            self.ai_actor_mut(owner, "departing search owner")
                 .detectable_lists[crate::element::DetectableType::Beggar as usize]
                 .clear();
             self.seek_enemy_mut(owner).beggar_to_examine = None;
@@ -204,8 +197,7 @@ impl EngineInner {
         };
         if let Some((target, fast)) = attentive {
             self.set_soldier_attentive_mode_from(
-                sim,
-                assets,
+                tcx,
                 owner,
                 target,
                 fast,
@@ -218,6 +210,6 @@ impl EngineInner {
             AiState::Attacking => AlertLevel::Red,
             _ => AlertLevel::Yellow,
         };
-        self.execute_ai_set_alert_status(assets, owner, alert, crate::ai::AlertFlags::empty());
+        self.execute_ai_set_alert_status(tcx.assets, owner, alert, crate::ai::AlertFlags::empty());
     }
 }

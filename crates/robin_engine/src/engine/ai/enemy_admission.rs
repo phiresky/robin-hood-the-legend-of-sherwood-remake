@@ -3,7 +3,7 @@ use crate::ai::{
     AiState, AlertFlags, AlertLevel, EmoticonType, LogLineType, Stimulus, StimulusType, Substate,
 };
 use crate::element::{EyeStatus, Posture};
-use crate::sim_rng::SimulationContext;
+use crate::engine::TickCtx;
 
 #[cfg(test)]
 mod tests;
@@ -12,8 +12,7 @@ impl EngineInner {
     pub(super) fn admit_ai_think_live(&mut self, owner: EntityId, stimulus: &Stimulus) -> bool {
         let frozen = self.ai.global.freeze;
         let entity = self
-            .world
-            .entities
+            .entities_mut()
             .expect_entity_mut(owner, format_args!("live Think admission"));
         let unconscious = entity.is_unconscious();
         let dead = entity.is_dead();
@@ -115,15 +114,9 @@ impl EngineInner {
         true
     }
 
-    pub(in crate::engine) fn begin_ai_special_strike(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
+    pub(in crate::engine) fn begin_ai_special_strike(&mut self, tcx: TickCtx<'_>, owner: EntityId) {
         self.duty_set_state(
-            sim,
-            assets,
+            tcx,
             owner,
             AiState::Attacking,
             Substate::AttackingSwordfightSpecialStrike,
@@ -132,8 +125,7 @@ impl EngineInner {
 
     pub(in crate::engine) fn begin_enemy_think(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         stimulus: &Stimulus,
     ) -> bool {
@@ -191,15 +183,12 @@ impl EngineInner {
                 .set_emoticon(EmoticonType::Thunderstorm);
         }
 
-        self.duty_set_state(sim, assets, owner, state, substate);
-        let actor = self
-            .world
-            .entities
-            .expect_ai_actor_data_mut(owner, format_args!("enemy admission eyes"));
+        self.duty_set_state(tcx, owner, state, substate);
+        let actor = self.ai_actor_mut(owner, "enemy admission eyes");
         crate::ai_vision::set_view_status(actor, eyes);
         if stimulus.stimulus_type == StimulusType::EventLoseConsciousness {
             self.execute_ai_set_alert_status(
-                assets,
+                tcx.assets,
                 owner,
                 AlertLevel::Green,
                 AlertFlags::INSTANT_MUSIC_CHANGE,

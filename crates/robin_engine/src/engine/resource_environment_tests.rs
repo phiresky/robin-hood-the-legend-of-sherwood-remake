@@ -2,6 +2,7 @@
 use super::*;
 use crate::coordinates::{SpriteAnchor, SpriteFrameOffset, SpriteSize};
 use crate::element::{ElementData, ElementFx, ElementKind, Entity, FxData};
+use crate::engine::TickCtx;
 use crate::interp::{HostFunctions, NativeCallOutcome, NativeStack, StopReason};
 use crate::scb::{ClassEntry, Function, Quad, ScbFile};
 use crate::script_manager::ScriptProgram;
@@ -138,7 +139,10 @@ fn two_engines_execute_different_rhs_and_bytecode_concurrently() {
                 let mut seen = std::collections::BTreeSet::new();
                 for _ in 0..20 {
                     barrier.wait();
-                    engine.tick_static_entity_hourglass_for(&sim, &rollback_assets, owner);
+                    engine.tick_static_entity_hourglass_for(
+                        TickCtx::new(&sim, &rollback_assets),
+                        owner,
+                    );
                     let sprite = engine.get_entity(owner).unwrap().sprite();
                     let frame = sprite.bank_id_for(sprite.current_row, sprite.current_frame);
                     assert!((first_frame..first_frame + 3).contains(&frame));

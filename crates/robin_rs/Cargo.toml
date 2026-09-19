@@ -1,6 +1,7 @@
 [package]
 name = "robin_rs"
-version.workspace = true
+# The native update version must not inherit the unpublished workspace version.
+version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
 
@@ -31,6 +32,7 @@ lru = { version = "0.18.4", optional = true }
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json = { workspace = true, features = ["raw_value"] }
 serde_urlencoded = "0.7"
+toml.workspace = true
 percent-encoding = "2.3"
 url.workspace = true
 tracing.workspace = true
@@ -90,7 +92,6 @@ webbrowser = "1"
 # platform uses robin_spellforge's one pure-Rust VM.
 robin_lua = { workspace = true, optional = true }
 mlua = { workspace = true, optional = true }
-robin_replay_format = { workspace = true, features = ["native-admission"] }
 # OS data directories are standard for every native build.
 dirs = "7"
 rayon = { version = "1", optional = true }
@@ -244,15 +245,14 @@ getrandom_04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] 
 iroh = { version = "1.1.0", default-features = false, features = ["tls-ring"], optional = true }
 
 [dev-dependencies]
+rstest.workspace = true
 robin_test_support.workspace = true
 syn = { workspace = true, features = ["full", "visit"] }
-qoi = "0.4"
 naga = { version = "30", features = ["wgsl-in", "glsl-out"] }
-robin_engine = { workspace = true, features = ["test-helpers"] }
+robin_engine = { workspace = true, features = ["test-helpers", "test-support"] }
 
 [build-dependencies]
 cc = "1"
-sha2.workspace = true
 
 [features]
 # Bare builds are intentionally dependency-minimal. Opt into the normal native
@@ -333,16 +333,6 @@ test = true
 [[example]]
 name = "batch_run"
 test = true
-
-# Operational codec probes are built on demand. Run their tests explicitly
-# with --example rather than adding research code to the default client suite.
-[[example]]
-name = "sprite_size_bench"
-test = false
-
-[[example]]
-name = "sprite_compression_probe"
-test = false
 
 [[example]]
 name = "verify_rollback"

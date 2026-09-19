@@ -47,7 +47,9 @@ use super::*;
 use crate::combat::{self, ConcussionContext, ConcussionOutcome};
 use crate::combat::{angle_to_sector, is_sector_between, sector_to_angle};
 use crate::element::{ActionState, Entity, EntityId, EyeStatus, Posture};
+use crate::engine::TickCtx;
 use crate::entities::Entities;
+use crate::sequence::SequenceElementRef;
 use crate::weapons::SwordStrike;
 #[cfg(test)]
 use crate::{element::Command, sequence::SequenceElementData};
@@ -138,7 +140,10 @@ impl EngineInner {
                             element
                                 .postponed
                                 .map(|reference| (reference.sequence_id, reference.element_index)),
-                            manager.is_registered_to_go(sequence.id, element_index),
+                            manager.is_registered_to_go(SequenceElementRef::new(
+                                sequence.id,
+                                element_index,
+                            )),
                             element
                                 .orders
                                 .iter()
@@ -696,8 +701,7 @@ impl EngineInner {
     /// Returns the `ConcussionOutcome` from the underlying call.
     pub(crate) fn apply_concussion(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         entity_id: impl Into<EntityId>,
         value: u16,
         force_value: bool,
@@ -705,7 +709,9 @@ impl EngineInner {
         use crate::combat::ConcussionOutcome;
 
         let entity_id = entity_id.into();
-        let Some(mut ctx) = self.concussion_ctx_for(sim, &assets.profile_manager, entity_id) else {
+        let Some(mut ctx) =
+            self.concussion_ctx_for(tcx.sim, &tcx.assets.profile_manager, entity_id)
+        else {
             tracing::warn!(?entity_id, "optional concussion target does not exist");
             return ConcussionOutcome::NoChange;
         };
@@ -720,7 +726,7 @@ impl EngineInner {
         };
         let outcome = combat::set_concussion(human, value, &ctx);
 
-        self.finish_applied_concussion(sim, assets, entity_id, outcome)
+        self.finish_applied_concussion(tcx, entity_id, outcome)
     }
 
     /// Strict scripted concussion path. Native validation guarantees the
@@ -728,8 +734,7 @@ impl EngineInner {
     /// losing either is an engine invariant violation, never a false result.
     pub(crate) fn apply_scripted_concussion(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         entity_id: impl Into<EntityId>,
         value: u16,
         force_value: bool,
@@ -744,9 +749,9 @@ impl EngineInner {
                 .expect("validated scripted concussion target lost HumanData");
             concussion_ctx_full(
                 entity,
-                self.is_sherwood(&assets.profile_manager),
+                self.is_sherwood(&tcx.assets.profile_manager),
                 Some(&self.mission_domain.campaign),
-                sim.config().difficulty,
+                tcx.sim.config().difficulty,
             )
         };
         ctx.force_value = force_value;
@@ -757,17 +762,16 @@ impl EngineInner {
             .expect("validated scripted concussion target lost HumanData during apply");
         let outcome = combat::set_concussion(human, value, &ctx);
 
-        self.finish_applied_concussion(sim, assets, entity_id, outcome)
+        self.finish_applied_concussion(tcx, entity_id, outcome)
     }
 
     fn finish_applied_concussion(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         entity_id: EntityId,
         outcome: crate::combat::ConcussionOutcome,
     ) -> crate::combat::ConcussionOutcome {
-        self.finish_concussion_transition(sim, assets, entity_id, outcome);
+        self.finish_concussion_transition(tcx, entity_id, outcome);
         let pc_is_unconscious = self.get_entity(entity_id).is_some_and(|entity| {
             entity.is_pc()
                 && entity
@@ -784,19 +788,18 @@ impl EngineInner {
     /// Complete the human transition and its NPC callbacks before returning.
     fn finish_concussion_transition(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         entity_id: EntityId,
         outcome: ConcussionOutcome,
     ) {
         let healing_speed = concussion_healing_speed_for_entity(
             self.get_entity(entity_id)
                 .expect("scripted concussion target vanished before finish"),
-            &assets.profile_manager,
+            &tcx.assets.profile_manager,
         );
         match outcome {
             ConcussionOutcome::WentUnconscious => {
-                self.quit_swordfight(sim, assets, entity_id);
+                self.quit_swordfight(tcx, entity_id);
                 self.add_unconscious_star(entity_id);
                 // Healing-timeout init.
                 let h = self
@@ -813,8 +816,7 @@ impl EngineInner {
                 {
                     npc.clear_all_suspects();
                     self.execute_ai_callback(
-                        sim,
-                        assets,
+                        tcx,
                         entity_id,
                         &crate::ai::Stimulus::new(crate::ai::StimulusType::EventLoseConsciousness),
                     );
@@ -835,8 +837,7 @@ impl EngineInner {
                     .is_some();
                 if has_ai {
                     self.execute_ai_callback(
-                        sim,
-                        assets,
+                        tcx,
                         entity_id,
                         &crate::ai::Stimulus::new(crate::ai::StimulusType::EventFitAgain),
                     );
@@ -851,8 +852,7 @@ impl EngineInner {
     /// operation, including PC speech and the death pipeline.
     pub(crate) fn apply_scripted_life_points(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         entity_id: EntityId,
         amount: i32,
     ) {
@@ -926,10 +926,10 @@ impl EngineInner {
         );
         let damage = (before - after).max(0) as u16;
         if is_pc && damage > 0 {
-            self.say_ouch(sim, assets, entity_id, Some(damage));
+            self.say_ouch(tcx, entity_id, Some(damage));
         }
         if died {
-            self.apply_scripted_virtual_kill(sim, assets, entity_id, None);
+            self.apply_scripted_virtual_kill(tcx, entity_id, None);
         }
     }
 
@@ -939,8 +939,7 @@ impl EngineInner {
     /// score belong to `ReceiveDamage`, not to a script setter.
     pub(in crate::engine) fn apply_scripted_virtual_kill(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         entity_id: EntityId,
         killer: Option<EntityId>,
     ) {
@@ -964,7 +963,7 @@ impl EngineInner {
         };
 
         if is_pc {
-            self.apply_pc_kill_cascade(sim, assets, entity_id);
+            self.apply_pc_kill_cascade(tcx, entity_id);
         }
         if is_ai_owner {
             self.delete_detectable_for_all_npc(entity_id, crate::element::DetectableType::Friend);
@@ -973,7 +972,7 @@ impl EngineInner {
                 crate::element::DetectableType::MissedFriend,
             );
             self.execute_ai_set_alert_status(
-                assets,
+                tcx.assets,
                 entity_id,
                 crate::ai::AlertLevel::Green,
                 crate::ai::AlertFlags::INSTANT_MUSIC_CHANGE,
@@ -1008,7 +1007,7 @@ impl EngineInner {
                 .record_soldier_death(camp, killer_is_pc);
         }
 
-        self.quit_swordfight(sim, assets, entity_id);
+        self.quit_swordfight(tcx, entity_id);
         let still_unconscious = self
             .get_entity(entity_id)
             .and_then(|entity| entity.human_data())

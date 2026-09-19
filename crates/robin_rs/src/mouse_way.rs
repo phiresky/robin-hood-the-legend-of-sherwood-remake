@@ -1126,72 +1126,15 @@ mod tests {
         );
     }
 
-    /// Figure-8 → THRUST_C.
-    #[test]
-    fn figure_eight_is_thrust_c() {
-        let way = make_way(&[
-            (200.0, 200.0),
-            (330.0, 330.0),
-            (400.0, 400.0),
-            (400.0, 200.0),
-            (310.0, 310.0),
-            (200.0, 400.0),
-            (200.0, 300.0),
-        ]);
-        assert_eq!(
-            way.evaluate(ref_point(), ref_direction()),
-            MouseWayPattern::ThrustC
-        );
-    }
-
-    /// Figure-8 (rotated start) → THRUST_C.
-    #[test]
-    fn figure_eight_rotated_is_thrust_c() {
-        let way = make_way(&[
-            (200.0, 300.0),
-            (200.0, 400.0),
-            (310.0, 310.0),
-            (400.0, 200.0),
-            (400.0, 400.0),
-            (330.0, 330.0),
-            (200.0, 200.0),
-        ]);
-        assert_eq!(
-            way.evaluate(ref_point(), ref_direction()),
-            MouseWayPattern::ThrustC
-        );
-    }
-
-    /// Figure-8 (different start) → THRUST_C.
-    #[test]
-    fn figure_eight_third_rotation_is_thrust_c() {
-        let way = make_way(&[
-            (400.0, 200.0),
-            (310.0, 310.0),
-            (200.0, 400.0),
-            (200.0, 300.0),
-            (200.0, 200.0),
-            (330.0, 330.0),
-            (400.0, 400.0),
-        ]);
-        assert_eq!(
-            way.evaluate(ref_point(), ref_direction()),
-            MouseWayPattern::ThrustC
-        );
-    }
-
-    /// Figure-8 (fourth rotation) → THRUST_C.
-    #[test]
-    fn figure_eight_fourth_rotation_is_thrust_c() {
-        let way = make_way(&[
-            (400.0, 200.0),
-            (400.0, 400.0),
-            (330.0, 330.0),
-            (200.0, 200.0),
-            (200.0, 300.0),
-            (200.0, 400.0),
-            (310.0, 310.0),
-        ]);
+    /// Figure-8 → THRUST_C, regardless of where on the loop the stroke
+    /// starts or which way round it is drawn.
+    #[rstest::rstest]
+    #[case::canonical([(200.0, 200.0), (330.0, 330.0), (400.0, 400.0), (400.0, 200.0), (310.0, 310.0), (200.0, 400.0), (200.0, 300.0)])]
+    #[case::rotated([(200.0, 300.0), (200.0, 400.0), (310.0, 310.0), (400.0, 200.0), (400.0, 400.0), (330.0, 330.0), (200.0, 200.0)])]
+    #[case::third_rotation([(400.0, 200.0), (310.0, 310.0), (200.0, 400.0), (200.0, 300.0), (200.0, 200.0), (330.0, 330.0), (400.0, 400.0)])]
+    #[case::fourth_rotation([(400.0, 200.0), (400.0, 400.0), (330.0, 330.0), (200.0, 200.0), (200.0, 300.0), (200.0, 400.0), (310.0, 310.0)])]
+    fn figure_eight_is_thrust_c(#[case] points: [(f32, f32); 7]) {
+        let way = make_way(&points);
         assert_eq!(
             way.evaluate(ref_point(), ref_direction()),
             MouseWayPattern::ThrustC

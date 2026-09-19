@@ -21,6 +21,7 @@ use super::*;
 use crate::ai::{AiState, EmoticonType};
 use crate::coordinates::{MapPoint, WorldPoint3D};
 use crate::element::{DetectableType, Entity, EntityId, Posture};
+use crate::engine::TickCtx;
 use crate::titbit::{ElementHandle, HiddenCharacter, INVALID_ID, SpriteRow, TitbitKind};
 
 impl EngineInner {
@@ -187,8 +188,7 @@ impl EngineInner {
     /// `BeingStunnedSword` shares the visual/AI effects but not the handoff.
     pub(super) fn add_weak_stunned_combat(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         entity_id: EntityId,
         transfer_smalltalk_initiative: bool,
     ) {
@@ -255,8 +255,7 @@ impl EngineInner {
             // Close this call before advancing to the next opponent or the
             // actor's action processing.
             self.execute_ai_callback(
-                sim,
-                assets,
+                tcx,
                 opponent_id,
                 &crate::ai::Stimulus::with_human(
                     crate::ai::StimulusType::EventAdversaryWeak,

@@ -4,8 +4,9 @@
 use super::object_use::take_seek_tolerance;
 use crate::coordinates::MapPoint;
 use crate::element::{Command, Entity, EntityId};
+use crate::engine::EngineInner;
+use crate::engine::TickCtx;
 use crate::engine::movement::GoalShape;
-use crate::engine::{EngineInner, LevelAssets};
 use crate::sequence::{
     Field, FieldValue, MoveFlags, Sequence, SequenceElement, SequenceElementData,
 };
@@ -35,15 +36,14 @@ pub(super) fn target_interaction_assert_source_sector(
 impl EngineInner {
     pub(super) fn launch_or_record_quick_action_sequence(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         actor: EntityId,
         sequence: Sequence,
     ) {
         if self.players.qa_recording_for.contains(&actor) {
             self.retain_recorded_quick_action(actor, sequence, None);
         } else {
-            self.launch_sequence(sim, assets, sequence);
+            self.launch_sequence(tcx, sequence);
         }
     }
 
@@ -51,8 +51,7 @@ impl EngineInner {
     /// as the seek continuation without changing its registration order.
     fn launch_or_seek_then(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         actor: EntityId,
         target: EntityId,
         action_style: crate::order::OrderType,
@@ -61,7 +60,7 @@ impl EngineInner {
         command_seq: Sequence,
     ) {
         if dist <= action_distance {
-            self.launch_or_record_quick_action_sequence(sim, assets, actor, command_seq);
+            self.launch_or_record_quick_action_sequence(tcx, actor, command_seq);
             return;
         }
 
@@ -82,7 +81,7 @@ impl EngineInner {
 
         let mut seq = Sequence::new();
         seq.append_element(seek);
-        self.launch_or_record_quick_action_sequence(sim, assets, actor, seq);
+        self.launch_or_record_quick_action_sequence(tcx, actor, seq);
     }
 
     pub(super) fn actor_action_distance(
@@ -147,15 +146,14 @@ impl EngineInner {
     /// too far away or in a different sector.
     pub(super) fn apply_interaction_with_seek(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         actor: EntityId,
         target: EntityId,
         command: Command,
         running: bool,
     ) {
         self.apply_interaction_with_seek_and_recovery(
-            sim, assets, actor, target, command, running, false, false,
+            tcx, actor, target, command, running, false, false,
         );
     }
 
@@ -165,8 +163,7 @@ impl EngineInner {
     /// a fresh live double-click.
     pub(super) fn apply_recorded_interaction_with_seek(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         actor: EntityId,
         target: EntityId,
         command: Command,
@@ -174,8 +171,7 @@ impl EngineInner {
         append_posture_recovery: bool,
     ) {
         self.apply_interaction_with_seek_and_recovery(
-            sim,
-            assets,
+            tcx,
             actor,
             target,
             command,
@@ -212,8 +208,7 @@ impl EngineInner {
     /// posture recovery in the same sequence as the recorded interaction.
     pub(super) fn apply_interaction_with_seek_and_recovery(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         actor: EntityId,
         target: EntityId,
         command: Command,
@@ -235,7 +230,7 @@ impl EngineInner {
             // one final Execute tick before this interaction is instructed.
             let mut seq = Sequence::new();
             seq.append_element(elem);
-            self.launch_or_record_quick_action_sequence(sim, assets, actor, seq);
+            self.launch_or_record_quick_action_sequence(tcx, actor, seq);
             return;
         }
 
@@ -244,7 +239,7 @@ impl EngineInner {
         // `Seek(USE_POINT, tolerance=8) → [turn(L1) →
         // ClimbUpOnShoulders(L2)]`.  Route through a dedicated helper.
         if command == Command::ClimbUpOnShoulders {
-            self.apply_climb_on_shoulders_with_seek(sim, assets, actor, target, running);
+            self.apply_climb_on_shoulders_with_seek(tcx, actor, target, running);
             return;
         }
 
@@ -280,7 +275,7 @@ impl EngineInner {
             && !recorded_quick_action
             && is_addinteraction_with_seek_command
         {
-            self.actor_make_fast(sim, actor);
+            self.actor_make_fast(tcx.sim, actor);
             // Civilian click handling performs this post-call stamp even when
             // seek-interaction construction reduced the double-click to fast movement.
             if command == Command::Pay {
@@ -528,7 +523,7 @@ impl EngineInner {
 
             let mut seq = Sequence::new();
             seq.append_element(seek);
-            self.launch_or_record_quick_action_sequence(sim, assets, actor, seq);
+            self.launch_or_record_quick_action_sequence(tcx, actor, seq);
         } else {
             // Seek-based interaction builds and launches a sequence even
             // when no seek is necessary. Launching the owned element through
@@ -540,7 +535,7 @@ impl EngineInner {
             if append_posture_recovery {
                 self.append_posture_recovery(actor, &mut seq);
             }
-            self.launch_or_record_quick_action_sequence(sim, assets, actor, seq);
+            self.launch_or_record_quick_action_sequence(tcx, actor, seq);
         }
     }
 
@@ -550,8 +545,7 @@ impl EngineInner {
     /// resolved interaction.
     pub(super) fn apply_target_interaction_route(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         actor: EntityId,
         target: EntityId,
         command: Command,
@@ -659,8 +653,7 @@ impl EngineInner {
         let interaction = SequenceElement::new_interaction(2, command, Some(actor), Some(target));
 
         self.launch_gate_movement_sequence(
-            sim,
-            assets,
+            tcx,
             &mut Vec::new(),
             crate::engine::movement::GateRouteRequest {
                 entity_id: actor,
@@ -694,8 +687,7 @@ impl EngineInner {
     /// by the recorded Turn and interaction elements.
     pub(super) fn replay_recorded_target_interaction(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         actor: EntityId,
         target: EntityId,
         command: Command,
@@ -741,18 +733,13 @@ impl EngineInner {
 
         let mut sequence = Sequence::new();
         sequence.append_element(seek);
-        self.launch_or_record_quick_action_sequence(sim, assets, actor, sequence);
+        self.launch_or_record_quick_action_sequence(tcx, actor, sequence);
     }
 
     /// Fire `EVENT_STOP` on a target NPC that a PC is currently
     /// seeking with `SEEK_STOP_NPC`.  No-op when the target isn't an
     /// NPC or isn't in a moving action state.
-    pub(crate) fn send_seek_stop_to_npc(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        target: EntityId,
-    ) {
+    pub(crate) fn send_seek_stop_to_npc(&mut self, tcx: TickCtx<'_>, target: EntityId) {
         {
             let Some(entity) = self.get_entity_mut(target) else {
                 return;
@@ -780,8 +767,7 @@ impl EngineInner {
         // Delaying EVENT_STOP to the end-of-frame self-stimulus drain lets a
         // registered gate successor enter non-interruptible PassDoor first.
         self.execute_ai_callback(
-            sim,
-            assets,
+            tcx,
             target,
             &crate::ai::Stimulus::new(crate::ai::StimulusType::EventStop),
         );
@@ -809,19 +795,17 @@ impl EngineInner {
     /// faces the NPC.
     pub(super) fn apply_scroll_read_with_seek(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         actor: EntityId,
         target: EntityId,
         running: bool,
     ) {
-        self.apply_scroll_read_with_seek_inner(sim, assets, actor, target, running, false);
+        self.apply_scroll_read_with_seek_inner(tcx, actor, target, running, false);
     }
 
     pub(super) fn apply_scroll_read_with_seek_inner(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         actor: EntityId,
         target: EntityId,
         running: bool,
@@ -833,7 +817,7 @@ impl EngineInner {
         // gets fast-movement conversion and we never build the composite.
         let is_recording = self.is_recording_macro();
         if running && !is_recording && !recorded_quick_action {
-            self.actor_make_fast(sim, actor);
+            self.actor_make_fast(tcx.sim, actor);
             return;
         }
 
@@ -926,8 +910,7 @@ impl EngineInner {
         );
 
         self.launch_or_seek_then(
-            sim,
-            assets,
+            tcx,
             actor,
             target,
             action_style,
@@ -946,8 +929,7 @@ impl EngineInner {
     /// tolerance.
     pub(super) fn apply_climb_on_shoulders_with_seek(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         actor: EntityId,
         target: EntityId,
         running: bool,
@@ -1005,8 +987,7 @@ impl EngineInner {
         );
 
         self.launch_or_seek_then(
-            sim,
-            assets,
+            tcx,
             actor,
             target,
             action_style,

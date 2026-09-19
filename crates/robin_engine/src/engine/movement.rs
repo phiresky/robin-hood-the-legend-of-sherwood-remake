@@ -4,8 +4,10 @@ use super::door_pass::door_pass_eager_posture;
 use super::*;
 use crate::coordinates::{MapBBox, MapPoint, MapVec};
 use crate::element::EntityId;
+use crate::engine::TickCtx;
 use crate::order::OrderType;
 use crate::position_interface::vector_to_sector_0_to_15;
+use crate::sequence::SequenceElementRef;
 use crate::sprite::{FrameProgression, MotionMethod, MotionOrderContext, MotionState};
 
 mod combat_motion;
@@ -1120,16 +1122,12 @@ impl PendingPathRequest {
     }
 
     #[cfg(test)]
-    pub(crate) fn test_request(
-        owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
-    ) -> Self {
+    pub(crate) fn test_request(owner: EntityId, elem_ref: SequenceElementRef) -> Self {
         Self {
             restored_from_v48: false,
             owner,
-            seq_id,
-            elem_idx,
+            seq_id: elem_ref.sequence_id,
+            elem_idx: elem_ref.element_index,
             source: MapPoint::new(10.0, 10.0),
             dest: MapPoint::new(20.0, 20.0),
             layer: 0,
@@ -2536,7 +2534,10 @@ impl EngineInner {
                             element
                                 .postponed
                                 .map(|reference| (reference.sequence_id, reference.element_index)),
-                            manager.is_registered_to_go(sequence.id, element_index),
+                            manager.is_registered_to_go(SequenceElementRef::new(
+                                sequence.id,
+                                element_index,
+                            )),
                             element.current_order().map(|order| {
                                 (
                                     order.order_type,
@@ -2593,12 +2594,7 @@ impl EngineInner {
     /// Original gives the map-space queue priority when both flags are set;
     /// the world-space queue remains armed for the next actor frame. The
     /// resulting teleport still traverses line-crossing detection.
-    pub(super) fn apply_delayed_actor_position(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        entity_id: EntityId,
-    ) {
+    pub(super) fn apply_delayed_actor_position(&mut self, tcx: TickCtx<'_>, entity_id: EntityId) {
         let (old_pos, new_pos, layer, posture, is_carried, is_human) = {
             let Some(entity) = self.world.entities.get_mut(entity_id) else {
                 panic!("delayed-position owner {entity_id:?} disappeared before actor update");
@@ -2649,7 +2645,7 @@ impl EngineInner {
             })
             .collect::<Vec<_>>();
         let crossed_elevation = self.check_for_elevation_line_crossing_indices(
-            assets,
+            tcx.assets,
             entity_id,
             old_pos,
             new_pos,
@@ -2658,7 +2654,7 @@ impl EngineInner {
         );
         if crossed_elevation || crossing_count > 1 {
             if is_human {
-                self.update_roll_after_crossing(assets, entity_id);
+                self.update_roll_after_crossing(tcx.assets, entity_id);
             }
             let compute_direction = self
                 .orders
@@ -2674,8 +2670,7 @@ impl EngineInner {
             }
         }
         self.check_for_non_elevation_line_crossing_indices(
-            sim,
-            assets,
+            tcx,
             entity_id,
             old_pos,
             new_pos,
@@ -2731,8 +2726,7 @@ impl EngineInner {
     /// slot; stale state is cleared for every other live-order shape.
     fn tick_rider_charge_owner(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         rider_id: EntityId,
         frozen_all: bool,
     ) -> Option<MotionState> {
@@ -2780,10 +2774,11 @@ impl EngineInner {
             "RiderCharging owner {rider_id:?} is not a rider"
         );
         let weapon_profile_id =
-            super::melee::get_hth_weapon_id_full(rider, &assets.profile_manager).unwrap_or_else(
-                || panic!("rider {rider_id:?} has no hand-to-hand weapon profile id"),
-            );
-        assets
+            super::melee::get_hth_weapon_id_full(rider, &tcx.assets.profile_manager)
+                .unwrap_or_else(|| {
+                    panic!("rider {rider_id:?} has no hand-to-hand weapon profile id")
+                });
+        tcx.assets
             .profile_manager
             .get_hth_weapon(weapon_profile_id)
             .unwrap_or_else(|| {
@@ -2843,7 +2838,7 @@ impl EngineInner {
                     origin.y - 20.0 * forward.1 + 80.0 * sidewards.1,
                 ),
             ];
-            let obstacles = self.world.sight_obstacles(assets);
+            let obstacles = self.world.sight_obstacles(tcx.assets);
             let mut pending_victims = Vec::new();
             for &victim_id in &self.world.actor_registry_ids {
                 let victim = self.expect_entity(victim_id, "rider charge candidate");
@@ -2852,7 +2847,7 @@ impl EngineInner {
                     rider_id,
                     victim,
                     victim_id,
-                    &assets.profile_manager,
+                    &tcx.assets.profile_manager,
                     &self.world.fast_grid,
                     obstacles,
                 ) && victim.element_data().layer() == sampled_layer
@@ -2904,7 +2899,7 @@ impl EngineInner {
                 .expect("rider remained present before charge motion");
             let collision = super::anti_collision::CollisionWorld {
                 neighbours,
-                profiles: &assets.profile_manager,
+                profiles: &tcx.assets.profile_manager,
             };
             let mover = super::anti_collision::CollisionMover::new(rider_id, entity);
             let elem = entity.element_data_mut();
@@ -2920,7 +2915,7 @@ impl EngineInner {
                 (MotionState::InProgress, 0.0)
             } else {
                 elem.sprite.perform_motion(
-                    sim,
+                    tcx.sim,
                     Some(motion_context),
                     OrderType::TransitionCharging,
                     elem.direction() as u16,
@@ -3082,8 +3077,7 @@ impl EngineInner {
                 continue;
             }
             self.queue_sword_damage(
-                sim,
-                assets,
+                tcx,
                 victim_id,
                 rider_id,
                 SwordStrike::Charge,
@@ -3268,13 +3262,11 @@ impl EngineInner {
 
     pub(super) fn launch_sword_movement_termination_provoke(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         entity_id: EntityId,
     ) {
         self.launch_element(
-            sim,
-            assets,
+            tcx,
             crate::sequence::SequenceElement::new(
                 1,
                 crate::element::Command::Provoke,
@@ -3289,8 +3281,7 @@ impl EngineInner {
     /// quit-swordfight command before facing the opponent or processing motion.
     pub(super) fn abort_orphaned_sword_movement(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         selected: MovementOwnerSelection,
     ) -> bool {
@@ -3341,8 +3332,7 @@ impl EngineInner {
         let selected_priority = {
             let resolver = Self::priority_resolver(&self.world.entities);
             self.orders.sequence_manager.resolve_element_stop_priority(
-                selected.seq_id,
-                selected.elem_idx,
+                SequenceElementRef::new(selected.seq_id, selected.elem_idx),
                 &resolver,
             )
         };
@@ -3353,8 +3343,7 @@ impl EngineInner {
                 .element_data()
                 .position_map();
             self.stop_movement_from_root(
-                sim,
-                assets,
+                tcx,
                 &mut Vec::new(),
                 owner,
                 (selected.seq_id, selected.elem_idx),
@@ -3369,8 +3358,7 @@ impl EngineInner {
             // than a batchable cleanup detail.
             {
                 self.stop_owner_current_from_root(
-                    sim,
-                    assets,
+                    tcx,
                     &mut Vec::new(),
                     Some((selected.seq_id, selected.elem_idx)),
                     crate::sequence::SequencePriority::Injury,
@@ -3385,8 +3373,7 @@ impl EngineInner {
         // prebuilt-order instruction at this Execute boundary left the later
         // ABORTED latch authoritative for the whole frame.
         self.launch_element(
-            sim,
-            assets,
+            tcx,
             crate::sequence::SequenceElement::new(
                 1,
                 crate::element::Command::QuitSwordfight,
@@ -3405,8 +3392,7 @@ impl EngineInner {
         );
         if matches!(self.world.entities.get(owner), Some(Entity::Soldier(_))) {
             self.execute_ai_callback(
-                sim,
-                assets,
+                tcx,
                 owner,
                 &crate::ai::Stimulus::new(crate::ai::StimulusType::EventQuitSwordfight),
             );
@@ -3560,8 +3546,7 @@ impl EngineInner {
 
     pub(super) fn tick_entity_movement_owner(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         selected: Option<MovementOwnerSelection>,
     ) -> Option<MotionState> {
@@ -3611,7 +3596,7 @@ impl EngineInner {
         ) {
             return Some(MotionState::InProgress);
         }
-        if self.abort_orphaned_sword_movement(sim, assets, owner, selected) {
+        if self.abort_orphaned_sword_movement(tcx, owner, selected) {
             // Sequence-element launch registers the replacement for the later
             // sequence-manager phase. It must not execute at this actor
             // boundary: the original game exposes swordfight exit as the current
@@ -3646,8 +3631,7 @@ impl EngineInner {
                 entity.element_data_mut().sprite.last_motion_state =
                     Some(crate::sprite::MotionState::InProgress);
             }
-            let frozen_order =
-                self.execute_globally_frozen_pre_motion_owner(sim, assets, owner, selected);
+            let frozen_order = self.execute_globally_frozen_pre_motion_owner(tcx, owner, selected);
             // RunningUpright is exceptional among the ordinary movement
             // execution paths: it sets the fast-moving state unconditionally
             // after performing motion, not only on its first tick. Therefore the
@@ -3681,7 +3665,7 @@ impl EngineInner {
                     .action_state = action_state;
                 refresh_pc_walking_shield_after_execute(
                     entity,
-                    &assets.profile_manager,
+                    &tcx.assets.profile_manager,
                     frozen_order,
                 );
             }
@@ -3689,9 +3673,9 @@ impl EngineInner {
             // work before it: climb Turn() above and both rider-specific
             // Soldier arms remain live. RiderCharging performs its polygon
             // work or RunningUpright samples that frozen frame and may Think.
-            let charge_execution = self.tick_rider_charge_owner(sim, assets, owner, true);
+            let charge_execution = self.tick_rider_charge_owner(tcx, owner, true);
             if charge_execution.is_none() && self.selected_galopp_decision_frame(owner, selected) {
-                self.dispatch_galopp_loop_event(sim, assets, owner);
+                self.dispatch_galopp_loop_event(tcx, owner);
             }
             return Some(MotionState::InProgress);
         }
@@ -3707,7 +3691,7 @@ impl EngineInner {
                 "movement_after_prepass",
             );
         }
-        if let Some(motion) = self.tick_rider_charge_owner(sim, assets, owner, false) {
+        if let Some(motion) = self.tick_rider_charge_owner(tcx, owner, false) {
             return Some(motion);
         }
 
@@ -3720,14 +3704,7 @@ impl EngineInner {
             _ => None,
         };
         if let Some(actor_id) = actor_id.filter(|_| self.world.entities.get(owner).is_some()) {
-            return self.tick_one_movement_actor(
-                sim,
-                assets,
-                owner,
-                selected,
-                actor_id,
-                final_tolerance,
-            );
+            return self.tick_one_movement_actor(tcx, owner, selected, actor_id, final_tolerance);
         }
         None
     }
@@ -4028,16 +4005,14 @@ impl EngineInner {
 
     fn refresh_movement_transition_seek(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
         let Some((flags, target, action)) = self
             .orders
             .sequence_manager
-            .get_element(seq_id, elem_idx)
+            .get_element_at(elem_ref)
             .and_then(|element| match &element.data {
                 crate::sequence::SequenceElementData::Movement {
                     flags,
@@ -4066,13 +4041,12 @@ impl EngineInner {
             .expect("transition seek owner must be an actor");
         actor.action_state = actor.action_state.set_moving(false, false);
         self.apply_seek_refresh(
-            sim,
-            assets,
+            tcx,
             &mut Vec::new(),
             crate::engine::refresh_seek::EntitySeekRequest {
                 owner,
-                sequence_id: seq_id,
-                element_index: elem_idx,
+                sequence_id: elem_ref.sequence_id,
+                element_index: elem_ref.element_index,
                 target,
                 action,
                 flags,
@@ -4290,8 +4264,7 @@ impl EngineInner {
     /// Settle a reached ordinary waypoint and return its motion result.
     fn settle_movement_waypoint(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         ft: FinalTol,
         selected_order: SelectedMovementOrder,
         entity_id: EntityId,
@@ -4381,8 +4354,16 @@ impl EngineInner {
                 ?eid,
                 "tick_move: final seek waypoint is stale; refreshing against live target",
             );
-            refresh_pc_walking_shield_after_execute(entity, &assets.profile_manager, order_action);
-            self.refresh_movement_transition_seek(sim, assets, eid, move_seq_id, move_elem_idx);
+            refresh_pc_walking_shield_after_execute(
+                entity,
+                &tcx.assets.profile_manager,
+                order_action,
+            );
+            self.refresh_movement_transition_seek(
+                tcx,
+                eid,
+                SequenceElementRef::new(move_seq_id, move_elem_idx),
+            );
             return MotionState::InProgress;
         }
 
@@ -4436,10 +4417,14 @@ impl EngineInner {
                 );
                 refresh_pc_walking_shield_after_execute(
                     entity,
-                    &assets.profile_manager,
+                    &tcx.assets.profile_manager,
                     order_action,
                 );
-                self.refresh_movement_transition_seek(sim, assets, eid, move_seq_id, move_elem_idx);
+                self.refresh_movement_transition_seek(
+                    tcx,
+                    eid,
+                    SequenceElementRef::new(move_seq_id, move_elem_idx),
+                );
                 return MotionState::InProgress;
             }
         }
@@ -4467,10 +4452,13 @@ impl EngineInner {
             // and launches the interaction without rewriting the
             // actor state. The interaction's generated transition
             // owns any later Moving→Waiting change.
-            refresh_pc_walking_shield_after_execute(entity, &assets.profile_manager, order_action);
+            refresh_pc_walking_shield_after_execute(
+                entity,
+                &tcx.assets.profile_manager,
+                order_action,
+            );
             return if self.start_post_seek_sequence(
-                sim,
-                assets,
+                tcx,
                 &mut Vec::new(),
                 eid,
                 Some((move_seq_id, move_elem_idx)),
@@ -4487,7 +4475,11 @@ impl EngineInner {
         // instead of consuming the final order.
         if final_entity_seek_arrival == Some(true) {
             actor.wait_time = 0;
-            refresh_pc_walking_shield_after_execute(entity, &assets.profile_manager, order_action);
+            refresh_pc_walking_shield_after_execute(
+                entity,
+                &tcx.assets.profile_manager,
+                order_action,
+            );
             return MotionState::InProgress;
         }
 
@@ -4678,14 +4670,16 @@ impl EngineInner {
     /// complete later through [`EngineInner::process_next_path_request`].
     pub(crate) fn try_dispatch_move_path(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
         dest: MapPoint,
         mut move_action: OrderType,
     ) -> MovePathOutcome {
+        let SequenceElementRef {
+            sequence_id: seq_id,
+            element_index: elem_idx,
+        } = elem_ref;
         // Swap walking/running into the sword variant when the actor
         // is already in a sword action state — but only under two
         // gates:
@@ -4993,7 +4987,7 @@ impl EngineInner {
                 "try_dispatch_move_path: anonymous archer may not move",
             );
             self.hero_speaking(
-                assets,
+                tcx.assets,
                 owner,
                 crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
             );
@@ -5111,8 +5105,7 @@ impl EngineInner {
                     "try_dispatch_move_path: actor cannot be extracted from obstacle (Stop + Wait)",
                 );
                 self.stop_owner(
-                    sim,
-                    assets,
+                    tcx,
                     &mut Vec::new(),
                     owner,
                     crate::sequence::SequencePriority::Normal,
@@ -5126,7 +5119,7 @@ impl EngineInner {
                 wait_elem.priority = crate::sequence::SequencePriority::Wait;
                 let mut seq = crate::sequence::Sequence::new();
                 seq.append_element(wait_elem);
-                self.launch_sequence(sim, assets, seq);
+                self.launch_sequence(tcx, seq);
                 return MovePathOutcome::Failed;
             }
             let center = box_element.center();
@@ -5225,7 +5218,7 @@ impl EngineInner {
             return MovePathOutcome::Pending;
         }
 
-        self.finish_move_path(sim, request, vec![source, dest]);
+        self.finish_move_path(tcx.sim, request, vec![source, dest]);
         MovePathOutcome::Success
     }
 
@@ -5322,8 +5315,9 @@ impl EngineInner {
         //   obstacle clip on that first leg.)
 
         {
-            if let Some((elem, next_order_id)) =
-                self.orders.element_with_order_ids_mut(seq_id, elem_idx)
+            if let Some((elem, next_order_id)) = self
+                .orders
+                .element_with_order_ids_mut(SequenceElementRef::new(seq_id, elem_idx))
             {
                 // Fresh Rust movement elements retain their generated
                 // transition prefix through `num_transition_orders`. A
@@ -5352,7 +5346,7 @@ impl EngineInner {
 
         // Splice startup / end transitions into the order queue
         // based on the actor's posture + action state.
-        self.post_process_path(seq_id, elem_idx);
+        self.post_process_path(SequenceElementRef::new(seq_id, elem_idx));
 
         if is_movement_anim && !is_pass_door {
             let (blood_alcohol, half_diagonal, move_box) = self
@@ -5374,8 +5368,9 @@ impl EngineInner {
                 .unwrap_or_default();
             if blood_alcohol > 0 {
                 let grid = &self.world.fast_grid;
-                if let Some((element, next_order_id)) =
-                    self.orders.element_with_order_ids_mut(seq_id, elem_idx)
+                if let Some((element, next_order_id)) = self
+                    .orders
+                    .element_with_order_ids_mut(SequenceElementRef::new(seq_id, elem_idx))
                 {
                     crate::engine::tick::apply_drunken_order_deviation(
                         sim,

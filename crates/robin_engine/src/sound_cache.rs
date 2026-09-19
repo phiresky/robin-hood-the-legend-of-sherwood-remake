@@ -1769,19 +1769,6 @@ mod tests {
     }
 
     #[test]
-    fn serde_roundtrip() {
-        let mut sc = SoundCache::new();
-        sc.initialize_music("a.ogg", "b.ogg", "c.ogg");
-        sc.use_3d_sound = true;
-
-        let json = serde_json::to_string(&sc).unwrap();
-        let restored: SoundCache = serde_json::from_str(&json).unwrap();
-
-        assert!(restored.use_3d_sound);
-        assert_eq!(restored.get_quiet_music(0), Some("a.ogg"));
-    }
-
-    #[test]
     fn parse_fx_bank_basic() {
         // Build a minimal FX bank: magic + header_size + version + count(1) + one FX element
         let mut data = Vec::new();

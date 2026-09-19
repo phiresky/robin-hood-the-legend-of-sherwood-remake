@@ -1,18 +1,14 @@
 use super::*;
-use crate::coordinates::{MapPoint, WorldPoint3D};
-use crate::engine::test_support::{actors::make_test_ai_soldier, square_sector};
+use crate::coordinates::WorldPoint3D;
+use crate::engine::test_support::actors::make_test_ai_soldier;
 
 fn fixture(positions: &[(f32, f32)]) -> (EngineInner, LevelAssets, Vec<EntityId>) {
     let mut engine = EngineInner::new();
-    engine.world.fast_grid_mut().size_map(256, 256);
-    engine.world.fast_grid_mut().allocate_layers(1);
-    let index = engine.world.fast_grid_mut().add_sector(
-        square_sector(1, 0, MapPoint::new(0.0, 0.0), MapPoint::new(4000.0, 4000.0)),
-        0,
+    let (sector, _) = crate::engine::test_support::extra_engine_combat::square_sector_map(
+        &mut engine,
+        (256, 256),
+        (4000.0, 4000.0),
     );
-    let sector = crate::ai::SectorHandle::new(1)
-        .unwrap()
-        .with_arena_index(crate::fast_find_grid::SectorIndex::new(index).unwrap());
     let mut ids = Vec::new();
     for &(x, y) in positions {
         let mut entity = make_test_ai_soldier(crate::element::Camp::Lacklandists);
@@ -41,12 +37,9 @@ fn drunk_body_observer_records_the_body_before_rejecting_its_priority() {
         .npc_data_mut()
         .expect("body is an NPC")
         .life_points = 0;
-    engine.execute_ai_seen_body(
-        &crate::sim_rng::test_context(),
-        &assets,
-        owner,
-        body.index(),
-    );
+    engine
+        .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+        .execute_ai_seen_body(body.index());
     let ai = engine.seek_enemy(owner);
     assert_eq!(ai.base.current_substate, Substate::DefaultOnPost);
     assert!(
@@ -140,7 +133,9 @@ fn react_as_officer(body_y: f32) -> (EngineInner, EntityId, EntityId) {
     };
     target.human.unconscious = true;
     engine.seek_enemy_mut(ids[2]).base.current_substate = Substate::DefaultOnPost;
-    engine.execute_ai_body_reaction_timer(&crate::sim_rng::test_context(), &assets, owner);
+    engine
+        .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+        .execute_ai_body_reaction_timer();
     (engine, owner, body)
 }
 
@@ -198,12 +193,9 @@ fn self_body_sighting_updates_report_and_queues_another_examination() {
     ai.base.launch_timer(123, 0);
     ai.current_task_priority = crate::ai_enemy::task_priority::BODY;
     ai.new_task_priority = crate::ai_enemy::task_priority::BODY;
-    engine.execute_ai_seen_body(
-        &crate::sim_rng::test_context(),
-        &assets,
-        owner,
-        owner.index(),
-    );
+    engine
+        .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+        .execute_ai_seen_body(owner.index());
     let ai = engine.seek_enemy(owner);
     assert!(
         ai.base

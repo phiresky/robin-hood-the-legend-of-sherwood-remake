@@ -938,8 +938,6 @@ fn classify_service_error(error: LeaderboardServiceError) -> ReceiptWatcherOpera
         | Error::RequestEncoding(_)
         | Error::HttpStatus { .. }
         | Error::Transport(_) => ReceiptWatcherOperationError::Permanent(error.to_string()),
-        #[cfg(test)]
-        Error::MissingContentType => ReceiptWatcherOperationError::Permanent(error.to_string()),
     }
 }
 

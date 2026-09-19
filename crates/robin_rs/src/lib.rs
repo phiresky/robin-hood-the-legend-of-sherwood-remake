@@ -204,7 +204,6 @@ pub use distributed_mod::{
     policy as distributed_mod_policy,
 };
 pub mod draw_manager;
-pub mod focus_manager;
 pub mod font;
 pub mod frontend_diagnostics;
 pub mod frontend_input;
@@ -277,12 +276,9 @@ pub mod native_font;
 pub mod options_model;
 pub mod pc_info_overlay;
 pub mod player_profile_store;
-pub mod portrait_bar;
 pub mod presentation;
 pub mod presentation_timing;
 pub mod process_asset_cache;
-pub mod profiler;
-pub mod recon_report;
 pub mod renderer;
 pub mod replay_archive;
 pub mod replay_format;
@@ -302,7 +298,6 @@ pub mod sound;
 pub mod spellforge_trust;
 pub mod stature_hud;
 pub mod titbit_renderer;
-pub mod toolbox;
 pub mod ui;
 pub mod ui_panel;
 pub mod ui_screens;

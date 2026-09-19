@@ -40,7 +40,8 @@ use crate::entities::Entities;
 use crate::order::{Order, OrderType};
 use crate::position_interface::{ASPECT_RATIO, INVERSE_ASPECT_RATIO};
 use crate::profiles::{Action, ProfileManager};
-use crate::sequence::{SequenceElement, SequenceElementData, SequenceId, SequenceManager};
+use crate::sequence::SequenceElementRef;
+use crate::sequence::{SequenceElement, SequenceElementData, SequenceManager};
 use crate::sprite::MotionState as SpriteMotionState;
 use crate::weapons::ShootMode;
 
@@ -495,8 +496,7 @@ pub fn begin_bow_shot(
     sequence_manager: &mut SequenceManager,
     shooter_id: EntityId,
     target_id: EntityId,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     shoot_once: bool,
     ammo_count: u32,
     // Shoot mode determined by the engine via `can_shoot_with_bow_at`.
@@ -505,6 +505,10 @@ pub fn begin_bow_shot(
     resolved_shoot_mode: Option<ShootMode>,
     next_order_id: &mut u32,
 ) -> BeginShotResult {
+    let SequenceElementRef {
+        sequence_id: seq_id,
+        element_index: elem_idx,
+    } = elem_ref;
     // Validate target: it must exist, be shootable, and not be the shooter.
     // Original-game bow-shot eligibility does not test active state:
     // Original-game element removal deliberately retains removed objects because
@@ -558,7 +562,7 @@ pub fn begin_bow_shot(
     // the live state is still Waiting, but the shoot body must see
     // AimingWithBow and add a raise order for a first long shot.
     let action_state_after_transition = sequence_manager
-        .get_element(seq_id, elem_idx)
+        .get_element_at(elem_ref)
         .map(|elem| elem.action_state_after_transition)
         .unwrap_or_else(|| {
             panic!("bow shot translation lost sequence element {seq_id:?}[{elem_idx}]")
@@ -590,7 +594,7 @@ pub fn begin_bow_shot(
     for t in &transitions {
         let mut order = Order::new(*t, tx, ty, crate::order::alloc_order_id(next_order_id));
         order.compute_direction = false;
-        sequence_manager.push_order_on(seq_id, elem_idx, order);
+        sequence_manager.push_order_at(elem_ref, order);
     }
 
     // Push the shoot animation order.
@@ -599,7 +603,7 @@ pub fn begin_bow_shot(
     order.target_actor = Some(target_id.index());
     order.compute_direction = false;
 
-    sequence_manager.push_order_on(seq_id, elem_idx, order);
+    sequence_manager.push_order_at(elem_ref, order);
 
     // Push reload or unequip order after the shot.
     // If ammo > 1 and not a one-shot command → LOADING_BOW, else UNEQUIP_BOW.
@@ -618,7 +622,7 @@ pub fn begin_bow_shot(
             crate::order::alloc_order_id(next_order_id),
         );
         reload_order.compute_direction = false;
-        sequence_manager.push_order_on(seq_id, elem_idx, reload_order);
+        sequence_manager.push_order_at(elem_ref, reload_order);
 
         // DownShoot needs an extra lowering transition after reload.
         if desired_mode == ShootMode::Down {
@@ -629,7 +633,7 @@ pub fn begin_bow_shot(
                 crate::order::alloc_order_id(next_order_id),
             );
             lower.compute_direction = false;
-            sequence_manager.push_order_on(seq_id, elem_idx, lower);
+            sequence_manager.push_order_at(elem_ref, lower);
         }
     } else {
         // Unequip — last arrow or one-shot command.  Anonymous archers
@@ -646,7 +650,7 @@ pub fn begin_bow_shot(
             crate::order::alloc_order_id(next_order_id),
         );
         unequip_order.compute_direction = false;
-        sequence_manager.push_order_on(seq_id, elem_idx, unequip_order);
+        sequence_manager.push_order_at(elem_ref, unequip_order);
     }
 
     BeginShotResult::Started

@@ -1,11 +1,10 @@
 use super::*;
+use crate::engine::TickCtx;
 
 #[test]
 fn phalanx_arrival_reads_target_position_after_state_callback() {
     use crate::engine::test_support::asm::*;
-    use crate::engine::types::MissionScript;
     use crate::natives::{NativeFn, ScriptHandleCodec};
-    use crate::scb::{ClassEntry, Function, ScbFile};
     let (mut engine, mut assets, ids) = fixture(&[(100.0, 100.0), (120.0, 100.0), (300.0, 300.0)]);
     let (owner, neighbour, target) = (ids[0], ids[1], ids[2]);
     let target_handle = ScriptHandleCodec::actor_handle(target);
@@ -14,9 +13,7 @@ fn phalanx_arrival_reads_target_position_after_state_callback() {
     assets.scripts.location_positions = std::sync::Arc::new(vec![(600.0, 700.0)]);
     assets.scripts.location_layers = std::sync::Arc::new(vec![0]);
     assets.scripts.location_sectors = std::sync::Arc::new(vec![1]);
-    assets.scripts.location_sector_handles = std::sync::Arc::new(vec![
-        engine.get_entity(target).unwrap().element_data().sector(),
-    ]);
+    assets.scripts.location_sector_handles = std::sync::Arc::new(vec![engine.sector_of(target)]);
     engine
         .world
         .entities
@@ -25,45 +22,28 @@ fn phalanx_arrival_reads_target_position_after_state_callback() {
         .unwrap()
         .script_class = "MoveShieldTarget".into();
     engine.scripts.mission = Some(
-        MissionScript::from_scb(ScbFile {
-            version: crate::scb::SCB_VERSION,
-            classes: vec![
-                empty_startup_class("shield.scs".into()),
-                ClassEntry {
-                    source_file: "shield.scs".into(),
-                    class_name: "MoveShieldTarget".into(),
-                    size_of_member_variables: 0,
-                    member_variables: vec![],
-                    functions: vec![Function {
-                        name: "FilterAIEvent".into(),
-                        address: 0,
-                        num_parameters: 3,
-                        size_of_return_value: 4,
-                        size_of_parameters: 12,
-                        size_of_volatile: 0,
-                        size_of_temporary: 8,
-                    }],
-                    quads: vec![
-                        q_begin_function(0, 2),
-                        q_aff1_get_param(0xC000, 4),
-                        q_aff0_iconstant(0xC004, AiState::Attacking.state_change_event_code()),
-                        q_ieq(0xC000, 0xC000, 0xC004),
-                        q_if_not_zero_goto(0xC000, 7),
-                        q_aff0_iconstant(0xC000, 1),
-                        q_return_val(0xC000),
-                        q_aff0_iconstant(0xC000, target_handle),
-                        q_aff0_iconstant(0xC004, ScriptHandleCodec::location_handle_from_index(0)),
-                        q_native_param(0xC000),
-                        q_native_param(0xC004),
-                        q_native_call(NativeFn::SetActorLocation as u32),
-                        q_aff0_iconstant(0xC000, 1),
-                        q_return_val(0xC000),
-                        q_end_function(),
-                    ],
-                },
+        crate::engine::test_support::extra_engine_combat::filter_ai_event_mission(
+            "shield.scs",
+            "MoveShieldTarget",
+            8,
+            vec![
+                q_begin_function(0, 2),
+                q_aff1_get_param(0xC000, 4),
+                q_aff0_iconstant(0xC004, AiState::Attacking.state_change_event_code()),
+                q_ieq(0xC000, 0xC000, 0xC004),
+                q_if_not_zero_goto(0xC000, 7),
+                q_aff0_iconstant(0xC000, 1),
+                q_return_val(0xC000),
+                q_aff0_iconstant(0xC000, target_handle),
+                q_aff0_iconstant(0xC004, ScriptHandleCodec::location_handle_from_index(0)),
+                q_native_param(0xC000),
+                q_native_param(0xC004),
+                q_native_call(NativeFn::SetActorLocation as u32),
+                q_aff0_iconstant(0xC000, 1),
+                q_return_val(0xC000),
+                q_end_function(),
             ],
-        })
-        .unwrap(),
+        ),
     );
     engine.attach_script_bindings(&assets);
     engine
@@ -84,12 +64,11 @@ fn phalanx_arrival_reads_target_position_after_state_callback() {
         .entities
         .expect_ai_controller_mut(neighbour, format_args!("arrival neighbour"))
         .primary_target = Some(AiEntityHandle::new(target.index()));
-    assert!(engine.execute_ai_shield_expected_event(
-        &crate::sim_rng::test_context(),
-        &assets,
-        owner,
-        crate::ai::StimulusType::EventDone
-    ));
+    assert!(
+        engine
+            .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+            .execute_ai_shield_expected_event(crate::ai::StimulusType::EventDone)
+    );
     let raw = engine
         .expect_entity(target, "moved target")
         .element_data()
@@ -215,12 +194,11 @@ fn advancing_shield_uses_live_target_sector_for_indexed_route() {
     ai.base.current_state = AiState::Attacking;
     ai.base.current_substate = Substate::AttackingAdvancingWithShield;
     ai.base.primary_target = Some(AiEntityHandle::new(target_id.index()));
-    assert!(engine.execute_ai_shield_expected_event(
-        &sim,
-        &assets,
-        owner,
-        crate::ai::StimulusType::EventDone
-    ));
+    assert!(
+        engine
+            .ai_ctx(&sim, &assets, owner)
+            .execute_ai_shield_expected_event(crate::ai::StimulusType::EventDone)
+    );
     let ai = engine
         .world
         .entities
@@ -283,15 +261,11 @@ use crate::engine::test_support::{actors::make_test_ai_soldier, square_sector};
 
 fn fixture(positions: &[(f32, f32)]) -> (EngineInner, LevelAssets, Vec<EntityId>) {
     let mut engine = EngineInner::new();
-    engine.world.fast_grid_mut().size_map(256, 256);
-    engine.world.fast_grid_mut().allocate_layers(1);
-    let index = engine.world.fast_grid_mut().add_sector(
-        square_sector(1, 0, MapPoint::new(0.0, 0.0), MapPoint::new(4000.0, 4000.0)),
-        0,
+    let (sector, _) = crate::engine::test_support::extra_engine_combat::square_sector_map(
+        &mut engine,
+        (256, 256),
+        (4000.0, 4000.0),
     );
-    let sector = crate::ai::SectorHandle::new(1)
-        .unwrap()
-        .with_arena_index(crate::fast_find_grid::SectorIndex::new(index).unwrap());
     let mut ids = Vec::new();
     for &(x, y) in positions {
         let mut entity = make_test_ai_soldier(crate::element::Camp::Lacklandists);
@@ -313,7 +287,7 @@ fn fixture(positions: &[(f32, f32)]) -> (EngineInner, LevelAssets, Vec<EntityId>
     let mut assets = LevelAssets::new();
     crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
     for &id in &ids {
-        let entity = engine.get_entity_mut(id).unwrap();
+        let entity = engine.ent_mut(id);
         entity
             .element_data_mut()
             .set_sector_topology(Some(sector), sector.arena_index());
@@ -380,12 +354,11 @@ fn live_shield_replacement_is_assigned_before_bow_rng() {
         if !protected_archer {
             let _ = crate::sim_rng::u32(&expected, crate::sim_rng::RngSite::ShieldAdvance, 0..4);
         }
-        assert!(engine.execute_ai_shield_expected_event(
-            &sim,
-            &assets,
-            owner,
-            StimulusType::EventTimer
-        ));
+        assert!(
+            engine
+                .ai_ctx(&sim, &assets, owner)
+                .execute_ai_shield_expected_event(StimulusType::EventTimer)
+        );
         let ai = engine
             .world
             .entities
@@ -464,8 +437,7 @@ fn live_cover_position_preserves_aspect_then_distance_rounding() {
     engine.ai.standard_view_polygon_radius = 1;
     assert_eq!(
         engine.execute_ai_battle_cover(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             bearer.index()
         ),
@@ -514,8 +486,7 @@ fn live_already_in_cover_decision_does_not_require_a_route() {
     // actor positions, so it must retain cover without attempting movement.
     engine.world.fast_grid_mut().level_mut().layers.clear();
     let (decision, cover) = engine.choose_live_battle_decision(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         crate::ai_enemy::BattleDecisionInputs {
             friends_lower_company: 0,
@@ -588,13 +559,7 @@ fn live_primary_selection_scores_raw_door_position_and_live_multiplicity() {
         .sequence_manager
         .start_sequence_level(sequence);
     engine.select_sequence_element(passing, Some((sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        sequence,
-        0,
-    );
+    engine.t_element_in_progress(&LevelAssets::new(), sequence, 0);
     assert_eq!(engine.live_ai_position(passing).x, 277.0);
     engine
         .world
@@ -696,8 +661,7 @@ fn protection_reads_reciprocal_unlink_after_state_change() {
     ai.shield_bearer_before_me = Some(AiEntityHandle::new(owner.index()));
     assert_eq!(engine.live_archers_needing_protection(&assets, owner), 0);
     engine.duty_set_state(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         AiState::Attacking,
         Substate::AttackingApproachToObserve,
@@ -779,8 +743,7 @@ fn close_phalanx_slot_with_different_sector_needs_no_movement_order() {
     };
     engine.enter_ai_think_frame(owner);
     engine.duty_go_to(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         destination,
         GotoFlags::RUN,
@@ -845,7 +808,11 @@ fn shield_sequence_keeps_stored_world_y_without_map_roundtrip() {
         point.y.to_bits()
     );
     let stored = element.position();
-    engine.launch_ai_raise_shield(&crate::sim_rng::test_context(), &assets, owner, stored);
+    engine.launch_ai_raise_shield(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        owner,
+        stored,
+    );
     let element = engine
         .orders
         .sequence_manager
@@ -912,13 +879,7 @@ fn periodic_phalanx_fixture(
         .sequence_manager
         .start_sequence_level(selected);
     engine.select_sequence_element(owner, Some((selected, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        selected,
-        0,
-    );
+    engine.t_element_in_progress(&LevelAssets::new(), selected, 0);
     engine.install_test_order(owner, crate::order::OrderType::WaitingUpright);
     (engine, assets, owner)
 }
@@ -927,7 +888,10 @@ fn periodic_phalanx_fixture(
 fn periodic_phalanx_move_is_registered_before_idle_stuck_check() {
     let (mut engine, assets, owner) =
         periodic_phalanx_fixture(500.0, crate::element::Command::Wait);
-    engine.tick_periodic_ai_for_npc(&crate::sim_rng::test_context(), owner, &assets);
+    engine.tick_periodic_ai_for_npc(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        owner,
+    );
     let ai = engine
         .world
         .entities
@@ -965,7 +929,10 @@ fn periodic_phalanx_move_keeps_attentive_command_classification() {
         .expect_enemy_ai_mut(owner, format_args!("attentive counter"))
         .base
         .stuck_counter = 0;
-    engine.tick_periodic_ai_for_npc(&crate::sim_rng::test_context(), owner, &assets);
+    engine.tick_periodic_ai_for_npc(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        owner,
+    );
     let ai = engine
         .world
         .entities
@@ -1005,7 +972,10 @@ fn periodic_phalanx_already_on_point_does_not_register_a_move() {
         .entities
         .expect_ai_controller_mut(owner, format_args!("locked arrival"))
         .script_locked = true;
-    engine.tick_periodic_ai_for_npc(&crate::sim_rng::test_context(), owner, &assets);
+    engine.tick_periodic_ai_for_npc(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        owner,
+    );
     let ai = engine
         .world
         .entities

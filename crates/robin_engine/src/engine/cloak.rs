@@ -1,6 +1,7 @@
 //! Authoritative reusable-cloak command admission and runtime controls.
 
 use crate::element::{ActionState, Command, Entity, Posture};
+use crate::engine::TickCtx;
 use crate::entity_id::EntityId;
 use crate::order::OrderType;
 use crate::player_command::{PlayerCommand, PlayerId, PlayerInput};
@@ -113,18 +114,13 @@ impl EngineInner {
     /// This is intentionally checked when the command is applied, not by the
     /// host UI: watched-state and modded animation availability are simulation
     /// facts and must agree on every replay/network peer.
-    pub(crate) fn try_enter_reusable_cloak(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        actor: EntityId,
-    ) -> bool {
-        if !self.can_enter_reusable_cloak(assets, actor) {
+    pub(crate) fn try_enter_reusable_cloak(&mut self, tcx: TickCtx<'_>, actor: EntityId) -> bool {
+        if !self.can_enter_reusable_cloak(tcx.assets, actor) {
             return false;
         }
         let mut sequence = Sequence::new();
         sequence.append_element(SequenceElement::new(1, Command::EnterCloak, Some(actor)));
-        self.launch_sequence(sim, assets, sequence);
+        self.launch_sequence(tcx, sequence);
         true
     }
 
@@ -229,12 +225,7 @@ impl EngineInner {
         true
     }
 
-    pub(crate) fn set_reusable_cloaks_enabled(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
-        enabled: bool,
-    ) {
+    pub(crate) fn set_reusable_cloaks_enabled(&mut self, tcx: TickCtx<'_>, enabled: bool) {
         if self.control.sim_config.reusable_cloaks == enabled {
             return;
         }
@@ -255,7 +246,7 @@ impl EngineInner {
         for actor in cloaked {
             let mut sequence = Sequence::new();
             sequence.append_element(SequenceElement::new(1, Command::LeaveSpy, Some(actor)));
-            self.launch_sequence(sim, assets, sequence);
+            self.launch_sequence(tcx, sequence);
         }
     }
 }
@@ -371,7 +362,10 @@ mod tests {
             .publish_order_posture(Posture::Cloaked);
 
         let assets = engine.test_runtime_assets();
-        engine.set_reusable_cloaks_enabled(&crate::sim_rng::test_context(), &assets, false);
+        engine.set_reusable_cloaks_enabled(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            false,
+        );
 
         assert!(!engine.control.sim_config.reusable_cloaks);
         let sequence = engine

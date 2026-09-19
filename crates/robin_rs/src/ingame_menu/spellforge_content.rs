@@ -226,33 +226,16 @@ struct HostDistributionAttestationState {
 impl HostDistributionAttestationState {
     fn new(application_context: &ApplicationContext, io: &ModalScreenIo<'_, '_>) -> Self {
         let resources = io.resources;
-        let (button_w, button_h) = resources.button_dimensions();
-        let back_label = resources.menu_text.get(MT_BTN_BACK);
-        let labels = [
-            (
-                localized_text(application_context, PortTextKey::SpellforgeHostAndAttest),
-                true,
-            ),
-            (back_label.as_str(), true),
-        ];
-        let bottom = align_bottom_right(&labels, button_w, button_h);
         let mut frame = FrameWnd::interactive();
-        frame.add_widget_absolute(widget_bridge::make_button(
-            ID_ACCEPT,
-            &bottom[0].label,
-            bottom[0].x,
-            bottom[0].y,
-            bottom[0].w,
-            bottom[0].h,
-        ));
-        frame.add_widget_absolute(widget_bridge::make_button(
-            ID_CANCEL,
-            &bottom[1].label,
-            bottom[1].x,
-            bottom[1].y,
-            bottom[1].w,
-            bottom[1].h,
-        ));
+        widget_bridge::add_bottom_right_pair(
+            &mut frame,
+            resources,
+            (
+                ID_ACCEPT,
+                localized_text(application_context, PortTextKey::SpellforgeHostAndAttest),
+            ),
+            (ID_CANCEL, &resources.menu_text.get(MT_BTN_BACK)),
+        );
         let input = ModalInputState::for_screen(io.window, io.renderer);
         Self { frame, input }
     }
@@ -416,33 +399,16 @@ impl SpellforgeConsentState {
         metadata: SpellforgeTrustMetadata,
     ) -> Self {
         let resources = io.resources;
-        let (button_w, button_h) = resources.button_dimensions();
-        let back_label = resources.menu_text.get(MT_BTN_BACK);
-        let labels = [
-            (
-                localized_text(application_context, PortTextKey::SpellforgeTrustExactMod),
-                true,
-            ),
-            (back_label.as_str(), true),
-        ];
-        let bottom = align_bottom_right(&labels, button_w, button_h);
         let mut frame = FrameWnd::interactive();
-        frame.add_widget_absolute(widget_bridge::make_button(
-            ID_ACCEPT,
-            &bottom[0].label,
-            bottom[0].x,
-            bottom[0].y,
-            bottom[0].w,
-            bottom[0].h,
-        ));
-        frame.add_widget_absolute(widget_bridge::make_button(
-            ID_CANCEL,
-            &bottom[1].label,
-            bottom[1].x,
-            bottom[1].y,
-            bottom[1].w,
-            bottom[1].h,
-        ));
+        widget_bridge::add_bottom_right_pair(
+            &mut frame,
+            resources,
+            (
+                ID_ACCEPT,
+                localized_text(application_context, PortTextKey::SpellforgeTrustExactMod),
+            ),
+            (ID_CANCEL, &resources.menu_text.get(MT_BTN_BACK)),
+        );
         let input = ModalInputState::for_screen(io.window, io.renderer);
         let status = String::new();
 

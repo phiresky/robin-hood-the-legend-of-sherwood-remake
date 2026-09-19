@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 
 #[test]
 fn later_npc_hears_the_pc_noise_from_its_completed_creation_slot() {
@@ -14,7 +15,7 @@ fn later_npc_hears_the_pc_noise_from_its_completed_creation_slot() {
     // (0 + 31 hidden creations + slot 2) % 3 == 0.
     engine.control.frame_counter = 0;
     for npc_id in [earlier_npc, later_npc] {
-        let Entity::Soldier(npc) = engine.get_entity_mut(npc_id).expect("listener exists") else {
+        let Entity::Soldier(npc) = engine.ent_mut(npc_id) else {
             panic!("listener changed kind")
         };
         npc.element.active = true;
@@ -27,7 +28,7 @@ fn later_npc_hears_the_pc_noise_from_its_completed_creation_slot() {
             .base
             .me = npc_id.index();
     }
-    let Entity::Pc(pc_entity) = engine.get_entity_mut(pc).expect("noise PC exists") else {
+    let Entity::Pc(pc_entity) = engine.ent_mut(pc) else {
         panic!("noise PC changed kind")
     };
     pc_entity.element.active = true;
@@ -49,7 +50,7 @@ fn later_npc_hears_the_pc_noise_from_its_completed_creation_slot() {
     pc_entity.actor.hear_noise_box =
         crate::coordinates::MapBBox::from_coords(-245.0, -220.0, 355.0, 220.0);
 
-    let Entity::Soldier(later) = engine.get_entity_mut(later_npc).unwrap() else {
+    let Entity::Soldier(later) = engine.ent_mut(later_npc) else {
         unreachable!()
     };
     later.npc.detectable_lists[DetectableType::Enemy as usize].push(Detectable {
@@ -62,13 +63,10 @@ fn later_npc_hears_the_pc_noise_from_its_completed_creation_slot() {
     let assets = engine.test_runtime_assets();
 
     crate::sim_rng::with_seed(0xA013_0016, |sim| {
-        engine.tick_actor_owner_envelopes(sim, &assets)
+        engine.tick_actor_owner_envelopes(TickCtx::new(sim, &assets))
     });
 
-    let actor = engine
-        .get_entity(pc)
-        .and_then(Entity::actor_data)
-        .expect("noise PC remains an actor");
+    let actor = engine.actor(pc);
     assert_eq!(
         actor
             .produced_noise
@@ -76,10 +74,7 @@ fn later_npc_hears_the_pc_noise_from_its_completed_creation_slot() {
             .volume,
         15
     );
-    let later = engine
-        .get_entity(later_npc)
-        .and_then(Entity::npc_data)
-        .expect("later listener remains an NPC");
+    let later = engine.npc(later_npc);
     assert!(
         !later.detectable_lists[DetectableType::Enemy as usize][0].heard_last_frame,
         "later NPC must observe the PC's creation-ordered quiet refresh"
@@ -94,14 +89,14 @@ fn arrow_reaction_with_null_interesting_object_clears_stale_look_there_focus() {
     let mut engine = EngineInner::new();
     let receiver_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     for id in [receiver_id] {
-        let Entity::Soldier(soldier) = engine.get_entity_mut(id).unwrap() else {
+        let Entity::Soldier(soldier) = engine.ent_mut(id) else {
             panic!("arrow-focus test NPC changed kind")
         };
         soldier.element.active = true;
         soldier.npc.life_points = 100;
     }
     {
-        let receiver = engine.get_entity_mut(receiver_id).unwrap();
+        let receiver = engine.ent_mut(receiver_id);
         receiver.npc_data_mut().unwrap().eye_status = EyeStatus::Stare;
         assert_eq!(receiver.enemy_ai().unwrap().base.interesting_object, None);
     }
@@ -109,25 +104,20 @@ fn arrow_reaction_with_null_interesting_object_clears_stale_look_there_focus() {
     let assets = engine.test_runtime_assets();
     crate::sim_rng::with_seed(0xA013_1091, |sim| {
         engine.execute_ai_callback(
-            sim,
-            &assets,
+            TickCtx::new(sim, &assets),
             receiver_id,
             &Stimulus::with_position(StimulusType::EventGetArrow, Position::default()),
         );
     });
 
-    let receiver_ai = engine.get_entity(receiver_id).unwrap().enemy_ai().unwrap();
+    let receiver_ai = engine.enemy(receiver_id);
     assert_eq!(receiver_ai.base.current_state, AiState::Seeking);
     assert_eq!(
         receiver_ai.base.current_substate,
         Substate::SeekingArrowReactiontime
     );
     assert_eq!(
-        engine
-            .get_entity(receiver_id)
-            .and_then(Entity::npc_data)
-            .unwrap()
-            .eye_status,
+        engine.npc(receiver_id).eye_status,
         EyeStatus::LookForward,
         "clearing focus must unfocus the stale look-there point stare"
     );

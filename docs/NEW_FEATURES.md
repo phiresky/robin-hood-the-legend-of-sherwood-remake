@@ -9,7 +9,7 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
-- **Responsive browser replay seeking.** Timeline fast-forward runs in adaptive batches with paint opportunities targeting 25 updates per second. Progress remains visible, and a new timeline target redirects an in-progress seek.
+- **Responsive browser replay seeking.** Timeline fast-forward runs in adaptive batches targeting two progress updates per second during seeks. Normal playback keeps its existing frame rate. Progress remains visible, and a new timeline target redirects an in-progress seek.
 
 - **Regular native presentation samples.** Camera and entity interpolation share
   a monitor-rate sample clock across simulation ticks and intermediate renders.
@@ -28,7 +28,8 @@ A list of which additional features we have added, which ones we might still wan
   Unknown timestamps are not classified as discarded frames; VRR/unknown
   refresh timing does not produce missed-refresh counts. Resize resets tracking.
   Unsupported devices retain CPU presentation diagnostics, which are estimates.
-  Local wgpu-hal hook provenance is in `vendor/wgpu-hal/ROBIN_PATCHES.md`.
+  Local wgpu-hal hook provenance is in `ROBIN_PATCHES.md` of the
+  `phiresky/wgpu-hal` fork pinned in the root `Cargo.toml`.
 
 - **In-game leaderboard registration.** Every submission checks the uploader's
   server profile first: Previous Plays, mission-end buttons, retries, and
@@ -1152,8 +1153,8 @@ is recoverable from Git history.
 - **Sprite compression research probes** (commit b112f8141). The
   `sprite_probe_experiments`, `sprite_probe_rdo` and `sprite_probe_rle_dict`
   examples were retired after their experiments closed; `docs/COMPRESSION.md`
-  records the findings. `sprite_size_bench` and `sprite_compression_probe`
-  remain.
+  records the findings. `sprite_size_bench`, `sprite_compression_probe` and
+  the `scripts/sprite_compress_*.sh` helpers were later removed the same way.
 
 ## Not-Todos
 

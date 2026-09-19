@@ -34,6 +34,14 @@ impl ReconstructionHistory {
         }
     }
 
+    pub(super) fn begin_seek_frame(&mut self, frame: u32, engine: &Engine) {
+        if self.checker.is_some() {
+            self.begin_frame(frame, engine);
+        } else if self.capture_enabled {
+            self.buffer.begin_seek_frame(frame, engine);
+        }
+    }
+
     /// Read-only view of retained reconstruction frames. Mutation stays behind
     /// the lifecycle methods so the checker resets with the buffer.
     pub(in crate::game_session) fn buffer(&self) -> &RewindBuffer {
@@ -125,12 +133,10 @@ robin_util::deny_deserialize!(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use robin_engine::engine::LevelAssets;
 
     #[test]
     fn snapshot_adoption_replaces_history_and_reopens_the_adopted_boundary() {
-        let mut assets = LevelAssets::default();
-        let engine = Engine::new_for_test(640.0, 480.0, Default::default(), &mut assets).unwrap();
+        let (engine, _assets) = robin_engine::test_support::fresh_engine_sized(640.0, 480.0);
         let mut history = ReconstructionHistory::new(RewindBuffer::new(), None, true);
         history.buffer.begin_frame(0, &engine);
         history

@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 
 const SPEECH_TIMING_PROFILE_ID: u32 = 0x1234_0000;
 
@@ -42,8 +43,7 @@ fn build_mytalk_timing_test() -> (EngineInner, EntityId, LevelAssets) {
 
     let (mut engine, soldier_id, assets) = build_speech_timing_actor();
     engine.execute_ai_speech(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         soldier_id,
         crate::ai::AiSpeechAttempt {
             remark: Remark::Arrow,
@@ -54,10 +54,7 @@ fn build_mytalk_timing_test() -> (EngineInner, EntityId, LevelAssets) {
 }
 
 fn mytalk_ai(engine: &EngineInner, soldier_id: EntityId) -> &crate::ai::AiController {
-    engine
-        .get_entity(soldier_id)
-        .and_then(Entity::ai_controller)
-        .expect("timing-test soldier has an AI controller")
+    engine.ai_ctrl(soldier_id)
 }
 
 #[derive(Clone, Copy)]
@@ -139,8 +136,7 @@ fn queue_and_settle_speech(
     flags: crate::ai::SpeechFlags,
 ) {
     engine.execute_ai_speech(
-        &crate::sim_rng::test_context(),
-        assets,
+        TickCtx::new(&crate::sim_rng::test_context(), assets),
         owner,
         crate::ai::AiSpeechAttempt {
             remark,
@@ -151,9 +147,7 @@ fn queue_and_settle_speech(
 
 fn speech_log(engine: &EngineInner, owner: EntityId) -> Vec<(crate::ai::LogLineType, u16)> {
     engine
-        .get_entity(owner)
-        .and_then(Entity::ai_controller)
-        .expect("speech test owner has AI")
+        .ai_ctrl(owner)
         .ai_log
         .iter()
         .map(|line| (line.line_type, line.info))
@@ -276,7 +270,7 @@ fn check_detectable_snapshot_and_drain_matrix() {
                 .unwrap(),
                 _ => unreachable!("three snapshot paths"),
             };
-            let actor = engine.get_entity(owner).unwrap().ai_actor_data().unwrap();
+            let actor = engine.ent(owner).ai_actor_data().unwrap();
             let actual = actor.detectable_lists[Friend as usize]
                 .iter()
                 .map(|entry| entry.element.expect("test detectable has a target"))
@@ -306,22 +300,10 @@ pub(super) fn install_test_building_sector(engine: &mut EngineInner, raw_sector:
         .sector_number_map
         .insert(crate::sector::SectorNumber::new(raw_sector as i16), 0);
     level.sectors.push(crate::fast_find_grid::GridSector {
-        points: Vec::new(),
         bounding_box: MapBBox::new(),
         sector_type: crate::sector::SectorType::BUILDING,
-        layer: 0,
         sector_number: crate::sector::SectorNumber::new(raw_sector as i16),
-        door_index: None,
-        lift_type: None,
-        lift_direction: 0,
-        force_crouched: false,
-        building_index: None,
-        low_exit_point: None,
-        high_exit_point: None,
-        lowest_door_index: None,
-        jump_line_indices: Vec::new(),
-        gate_indices: Vec::new(),
-        underlying_sector: None,
+        ..Default::default()
     });
     engine.world.fast_grid_mut().level = std::sync::Arc::new(level);
 }
@@ -354,10 +336,7 @@ fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInn
     let assets = engine.test_runtime_assets();
 
     for (id, x) in [(charly_id, 0.0), (officer_id, 200.0)] {
-        let Entity::Soldier(soldier) = engine
-            .get_entity_mut(id)
-            .expect("test report soldier exists")
-        else {
+        let Entity::Soldier(soldier) = engine.ent_mut(id) else {
             panic!("test report entity changed kind")
         };
         soldier.element.active = true;
@@ -377,10 +356,7 @@ fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInn
     }
 
     {
-        let charly = engine
-            .get_entity_mut(charly_id)
-            .and_then(Entity::enemy_ai_mut)
-            .expect("test Charly has enemy AI");
+        let charly = engine.enemy_mut(charly_id);
         charly.base.antagonist = Some(crate::ai::AiEntityHandle::new(officer_id.index()));
         {
             let base = &mut charly.base;
@@ -391,10 +367,7 @@ fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInn
         charly.base.timer_is_running = false;
     }
     {
-        let officer = engine
-            .get_entity_mut(officer_id)
-            .and_then(Entity::enemy_ai_mut)
-            .expect("test officer has enemy AI");
+        let officer = engine.enemy_mut(officer_id);
         let officer_substate = match officer_state {
             AiState::Default => Substate::DefaultOnPost,
             AiState::Attacking => Substate::AttackingSwordfight,
@@ -412,10 +385,9 @@ fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInn
         crate::engine::types::Ambiance::Night | crate::engine::types::Ambiance::Fog
     ));
     engine.dispatch_think_with_drain(
-        sim,
+        TickCtx::new(sim, &assets),
         charly_id,
         &Stimulus::new(StimulusType::EventTimer),
-        &assets,
     );
     engine
 }
@@ -450,10 +422,7 @@ fn run_synchronous_civilian_alert(
         .push(crate::profiles::CivilianProfile::default());
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
-    let Entity::Civilian(civilian) = engine
-        .get_entity_mut(civilian_id)
-        .expect("test civilian exists")
-    else {
+    let Entity::Civilian(civilian) = engine.ent_mut(civilian_id) else {
         panic!("test civilian changed kind")
     };
     civilian.element.active = true;
@@ -488,10 +457,7 @@ fn run_synchronous_civilian_alert(
         },
     );
 
-    let Entity::Soldier(soldier) = engine
-        .get_entity_mut(soldier_id)
-        .expect("test soldier exists")
-    else {
+    let Entity::Soldier(soldier) = engine.ent_mut(soldier_id) else {
         panic!("test soldier changed kind")
     };
     soldier.element.active = true;
@@ -516,14 +482,18 @@ fn run_synchronous_civilian_alert(
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     if direct_callback {
-        engine.execute_ai_callback(sim, &assets, civilian_id, &Stimulus::new(trigger));
+        engine.execute_ai_callback(
+            TickCtx::new(sim, &assets),
+            civilian_id,
+            &Stimulus::new(trigger),
+        );
     } else {
         let stimulus = if trigger == StimulusType::EventSeesSoldier {
             Stimulus::with_human(trigger, soldier_id.index())
         } else {
             Stimulus::new(trigger)
         };
-        engine.dispatch_think_with_drain(sim, civilian_id, &stimulus, &assets);
+        engine.dispatch_think_with_drain(TickCtx::new(sim, &assets), civilian_id, &stimulus);
     }
     engine
 }
@@ -553,8 +523,7 @@ fn setup_review2_officer_and_soldier() -> (EngineInner, EntityId, EntityId, Leve
         (officer_id, ProfileRank::Officer, 0.0),
         (soldier_id, ProfileRank::Soldier, 40.0),
     ] {
-        let Entity::Soldier(soldier) = engine.get_entity_mut(id).expect("review2 soldier exists")
-        else {
+        let Entity::Soldier(soldier) = engine.ent_mut(id) else {
             panic!("review2 entity changed kind")
         };
         soldier.element.active = true;
@@ -582,13 +551,11 @@ fn setup_review2_officer_and_soldier() -> (EngineInner, EntityId, EntityId, Leve
 
 fn start_review_command_soldiers(
     engine: &mut EngineInner,
-    sim: &crate::sim_rng::SimulationContext,
-    assets: &LevelAssets,
+    tcx: TickCtx<'_>,
     officer_id: EntityId,
 ) -> bool {
     engine.execute_ai_command_soldiers_to_attack(
-        sim,
-        assets,
+        tcx,
         officer_id,
         crate::ai::Position {
             x: 300.0,

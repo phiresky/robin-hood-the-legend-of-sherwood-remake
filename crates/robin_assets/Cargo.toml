@@ -44,7 +44,7 @@ required-features = ["engine-adapters"]
 
 [dependencies]
 robin_asset_codecs.workspace = true
-robin_content.workspace = true
+robin_engine_types.workspace = true
 robin_util.workspace = true
 robin_data_io.workspace = true
 robin_engine = { workspace = true, optional = true }

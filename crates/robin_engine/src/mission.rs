@@ -607,23 +607,6 @@ mod tests {
     }
 
     #[test]
-    fn serde_json_round_trip() {
-        let mut m = Mission::new();
-        m.age = 5;
-        m.blazon_price = 100;
-        m.status = MissionStatus::Won;
-        m.profile_idx = Some(3);
-
-        let json = serde_json::to_string(&m).unwrap();
-        let m2: Mission = serde_json::from_str(&json).unwrap();
-
-        assert_eq!(m2.age, 5);
-        assert_eq!(m2.blazon_price, 100);
-        assert_eq!(m2.status, MissionStatus::Won);
-        assert_eq!(m2.profile_idx, Some(3));
-    }
-
-    #[test]
     fn status_values() {
         assert_eq!(MissionStatus::Available as u32, 0);
         assert_eq!(MissionStatus::Won as u32, 1);

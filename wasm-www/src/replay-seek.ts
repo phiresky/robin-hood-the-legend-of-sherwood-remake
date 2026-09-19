@@ -1,8 +1,8 @@
 import type { RobinRpc } from './replay.js';
 import { replayCheckpointRevision } from './replay-checkpoints.ts';
 
-const PRESENT_INTERVAL_MS = 40;
-const SIMULATION_BUDGET_MS = 30;
+const PRESENT_INTERVAL_MS = 500;
+const SIMULATION_BUDGET_MS = PRESENT_INTERVAL_MS - 50;
 
 /** Leave a browser paint opportunity between bounded batches of replay work. */
 export async function seekReplay(
@@ -47,7 +47,8 @@ export async function seekReplay(
         options.progress(frame);
         await present(0);
     }
-    let batch = 8;
+    let batch = 128;
+    const measurements: { frames: number; work_ms: number; elapsed_ms: number }[] = [];
     while (frame < target && !options.cancelled()) {
         // A background download may finish while a long seek is underway.
         if (checkpointSeek && checkpointRevision() !== lastRevision) {
@@ -64,10 +65,18 @@ export async function seekReplay(
         // Including them here would shrink batches when presentation is slow.
         const workMs = Math.max(1, typeof result.work_ms === 'number' && Number.isFinite(result.work_ms) && result.work_ms >= 0
             ? result.work_ms : elapsed - Math.min(schedulingMs, elapsed / 2));
+        measurements.push({ frames: next - frame, work_ms: workMs, elapsed_ms: elapsed });
         batch = Math.max(8, Math.min(batch * 2, Math.floor((next - frame) * SIMULATION_BUDGET_MS / workMs)));
         frame = next;
         if (options.cancelled()) return;
         options.progress(frame);
-        if (frame < target) await present(Math.max(0, PRESENT_INTERVAL_MS - elapsed));
+        // Spend the half-second budget advancing playback, not sleeping while
+        // the ordinary game loop repeatedly redraws the same paused state.
+        if (frame < target) await present(0);
     }
+    console.info('[replay seek timing]', JSON.stringify({
+        target, elapsed_ms: now() - requestedStateAt, batches: measurements.length,
+        catchup_work_ms: measurements.reduce((sum, batch) => sum + batch.work_ms, 0),
+        catchup_rpc_ms: measurements.reduce((sum, batch) => sum + batch.elapsed_ms, 0),
+    }));
 }

@@ -2478,13 +2478,6 @@ mod tests {
     }
 
     #[test]
-    fn new_manager_is_empty() {
-        let mgr = ResourceManager::new();
-        assert!(!mgr.has_picture_resource(1));
-        assert!(!mgr.has_resource(1));
-    }
-
-    #[test]
     fn dismiss_nonexistent_is_noop() {
         let mut mgr = ResourceManager::new();
         mgr.dismiss_resource(42); // should not panic

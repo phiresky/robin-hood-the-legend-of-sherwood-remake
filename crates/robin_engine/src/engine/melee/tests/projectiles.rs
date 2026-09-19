@@ -1,4 +1,6 @@
 use super::*;
+use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 #[test]
 fn lying_arrow_victim_speaks_before_posture_termination() {
@@ -19,17 +21,9 @@ fn lying_arrow_victim_speaks_before_posture_termination() {
         },
         None,
     ));
-    engine
-        .get_entity_mut(lying)
-        .unwrap()
-        .set_posture(Posture::Lying);
+    engine.ent_mut(lying).set_posture(Posture::Lying);
     for victim in [lying, upright] {
-        engine
-            .get_entity_mut(victim)
-            .unwrap()
-            .enemy_ai_mut()
-            .unwrap()
-            .hth_weapon_id = 1;
+        engine.enemy_mut(victim).hth_weapon_id = 1;
     }
 
     let mut assets = assets_with_sword_profile(1, 50);
@@ -49,7 +43,12 @@ fn lying_arrow_victim_speaks_before_posture_termination() {
             engine.orders.sequence_manager.start_sequence_level(id);
             id
         };
-        engine.dispatch_receive_damage(&sim, &assets, &mut Vec::new(), victim, sequence, 0);
+        engine.dispatch_receive_damage(
+            TickCtx::new(&sim, &assets),
+            &mut Vec::new(),
+            victim,
+            SequenceElementRef::new(sequence, 0),
+        );
     }
 
     assert_eq!(
@@ -77,15 +76,12 @@ fn rejected_swordfight_reconsideration_does_not_retry_during_lifecycle_tick() {
     let mut assets = assets_with_sword_profile(7, 30);
     crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.control.rng = SimulationRng::with_original_replay(Vec::new());
-    engine
-        .get_entity_mut(target)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .action_state = ActionState::Waiting;
+    engine.set_action_state_of(target, ActionState::Waiting);
 
     engine.with_simulation_context(|engine, sim| {
-        engine.execute_reconsider_swordfight(sim, &assets, attacker, false);
+        engine
+            .ai_ctx(sim, &assets, attacker)
+            .execute_reconsider_swordfight(false);
     });
     let cursor_after_first = engine.control.rng.original_replay_cursor().unwrap();
     assert_eq!(cursor_after_first, 0, "honour rejection precedes proposal");
@@ -115,11 +111,7 @@ fn consecutive_lethal_arrow_damage_preserves_new_amulet_coma() {
         offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
         sound_ids: vec![0],
     };
-    engine
-        .get_entity_mut(victim)
-        .unwrap()
-        .element_data_mut()
-        .sprite = crate::sprite::Sprite::new(
+    engine.elem_mut(victim).sprite = crate::sprite::Sprite::new(
         std::sync::Arc::new(vec![sprite_script]),
         std::sync::Arc::new(vec![0]),
     );
@@ -128,7 +120,7 @@ fn consecutive_lethal_arrow_damage_preserves_new_amulet_coma() {
     engine.mission_domain.campaign.values[crate::campaign::CampaignValue::Amulets] = 1;
 
     {
-        let victim_entity = engine.get_entity_mut(victim).unwrap();
+        let victim_entity = engine.ent_mut(victim);
         victim_entity.pc_data_mut().unwrap().life_points = 10;
         victim_entity
             .position_iface_mut()
@@ -149,13 +141,13 @@ fn consecutive_lethal_arrow_damage_preserves_new_amulet_coma() {
         0,
     );
     engine.resolve_element_priority(&mut damage);
-    engine.launch_element(&sim, &assets, damage);
+    engine.launch_element(TickCtx::new(&sim, &assets), damage);
 
     let mut display = crate::engine::HostDisplayState::default();
-    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+    engine.hourglass_phase_sequences(TickCtx::new(&sim, &assets), &mut display);
 
     {
-        let victim_entity = engine.get_entity(victim).unwrap();
+        let victim_entity = engine.ent(victim);
         assert!(engine.mission_domain.campaign.characters[0].status.in_coma);
         assert_eq!(victim_entity.pc_data().unwrap().life_points, 5);
         assert_eq!(victim_entity.element_data().posture(), Posture::Lying);
@@ -189,10 +181,10 @@ fn consecutive_lethal_arrow_damage_preserves_new_amulet_coma() {
         0,
     );
     engine.resolve_element_priority(&mut second_damage);
-    engine.launch_element(&sim, &assets, second_damage);
-    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+    engine.launch_element(TickCtx::new(&sim, &assets), second_damage);
+    engine.hourglass_phase_sequences(TickCtx::new(&sim, &assets), &mut display);
 
-    let victim_entity = engine.get_entity(victim).unwrap();
+    let victim_entity = engine.ent(victim);
     assert_eq!(victim_entity.pc_data().unwrap().life_points, 5);
     assert!(!victim_entity.is_dead());
     assert!(engine.mission_domain.campaign.characters[0].status.in_coma);
@@ -221,11 +213,7 @@ fn sherwood_lethal_arrow_still_consumes_amulet_without_hurting_pc() {
         offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
         sound_ids: vec![0],
     };
-    engine
-        .get_entity_mut(victim)
-        .unwrap()
-        .element_data_mut()
-        .sprite = crate::sprite::Sprite::new(
+    engine.elem_mut(victim).sprite = crate::sprite::Sprite::new(
         std::sync::Arc::new(vec![sprite_script]),
         std::sync::Arc::new(vec![0]),
     );
@@ -248,7 +236,7 @@ fn sherwood_lethal_arrow_still_consumes_amulet_without_hurting_pc() {
     engine.mission_domain.campaign.values[crate::campaign::CampaignValue::Amulets] = 1;
 
     {
-        let victim = engine.get_entity_mut(victim).unwrap();
+        let victim = engine.ent_mut(victim);
         victim.pc_data_mut().unwrap().life_points = 100;
         victim.human_data_mut().unwrap().concussion_of_the_brain = 0;
         victim.human_data_mut().unwrap().unconscious = false;
@@ -263,12 +251,12 @@ fn sherwood_lethal_arrow_still_consumes_amulet_without_hurting_pc() {
         20,
     );
     engine.resolve_element_priority(&mut damage);
-    engine.launch_element(&sim, &assets, damage);
+    engine.launch_element(TickCtx::new(&sim, &assets), damage);
 
     let mut display = crate::engine::HostDisplayState::default();
-    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+    engine.hourglass_phase_sequences(TickCtx::new(&sim, &assets), &mut display);
 
-    let victim = engine.get_entity(victim).unwrap();
+    let victim = engine.ent(victim);
     assert_eq!(victim.pc_data().unwrap().life_points, 100);
     assert_eq!(victim.human_data().unwrap().concussion_of_the_brain, 0);
     assert!(!victim.human_data().unwrap().unconscious);
@@ -286,19 +274,14 @@ fn same_frame_arrow_after_death_replaces_dying_order_and_then_rolls() {
     let mut engine = make_engine();
     let attacker = engine.add_test_entity(make_soldier(WorldPoint3D::ZERO, None));
     let victim = engine.add_test_entity(make_pc(WorldPoint3D::ZERO, None));
-    engine
-        .get_entity_mut(victim)
-        .unwrap()
-        .pc_data_mut()
-        .unwrap()
-        .life_points = 1;
+    engine.pc_mut(victim).life_points = 1;
 
     let mut obstacle = crate::sight_obstacle::SightObstacle::new_default(0);
     obstacle.top_plane_points = [[0.0, 0.0, 0.0], [1.0, 0.0, 1.0], [0.0, 1.0, 0.0]];
     let mut assets = action_test_assets([crate::profiles::Action::NoAction; 3]);
     assets.environment.static_sight_obstacles = std::sync::Arc::new(vec![obstacle]);
     {
-        let victim = engine.get_entity_mut(victim).unwrap();
+        let victim = engine.ent_mut(victim);
         victim.element_data_mut().set_obstacle_index(
             crate::position_interface::ObstacleHandle::new(0),
             Some(crate::position_interface::PlaneZCoeffs {
@@ -326,11 +309,11 @@ fn same_frame_arrow_after_death_replaces_dying_order_and_then_rolls() {
             0,
         );
         engine.resolve_element_priority(&mut damage);
-        launched.push(engine.launch_element(&sim, &assets, damage));
+        launched.push(engine.launch_element(TickCtx::new(&sim, &assets), damage));
     }
 
     let mut display = crate::engine::HostDisplayState::default();
-    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+    engine.hourglass_phase_sequences(TickCtx::new(&sim, &assets), &mut display);
 
     assert_eq!(
         engine.world.entities.current_element_for_actor(victim),
@@ -354,10 +337,7 @@ fn same_frame_arrow_after_death_replaces_dying_order_and_then_rolls() {
     );
     assert_eq!(
         engine
-            .get_entity(victim)
-            .unwrap()
-            .actor_data()
-            .unwrap()
+            .actor(victim)
             .installed_order
             .as_ref()
             .map(|order| order.resolve(&engine.orders.sequence_manager).order_type),
@@ -386,7 +366,7 @@ fn arrow_damage_to_dead_grounded_actor_sets_dead_and_terminates_without_orders()
             make_soldier(WorldPoint3D::ZERO, None)
         });
         {
-            let victim = engine.get_entity_mut(victim).unwrap();
+            let victim = engine.ent_mut(victim);
             let (_, life_points) = victim
                 .human_and_life_points_mut()
                 .expect("grounded test victim must be human");
@@ -405,10 +385,10 @@ fn arrow_damage_to_dead_grounded_actor_sets_dead_and_terminates_without_orders()
             0,
         );
         engine.resolve_element_priority(&mut damage);
-        let sequence = engine.launch_element(&sim, &assets, damage);
+        let sequence = engine.launch_element(TickCtx::new(&sim, &assets), damage);
 
         let mut display = crate::engine::HostDisplayState::default();
-        engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+        engine.hourglass_phase_sequences(TickCtx::new(&sim, &assets), &mut display);
 
         let element = engine
             .orders
@@ -422,7 +402,7 @@ fn arrow_damage_to_dead_grounded_actor_sets_dead_and_terminates_without_orders()
         );
         assert!(element.orders.is_empty());
         assert_eq!(
-            engine.get_entity(victim).unwrap().element_data().posture(),
+            engine.posture_of(victim),
             Posture::Dead,
             "arrow-damage translation changes dead {initial_posture:?} non-riders to Dead"
         );
@@ -436,14 +416,9 @@ fn arrow_damage_to_pc_on_shoulders_uses_virtual_shoulder_translation() {
     let attacker = engine.add_test_entity(make_soldier(WorldPoint3D::ZERO, None));
     let carrier = engine.add_test_entity(make_pc(WorldPoint3D::ZERO, None));
     let victim = engine.add_test_entity(make_pc(WorldPoint3D::ZERO, None));
-    engine
-        .get_entity_mut(carrier)
-        .unwrap()
-        .pc_data_mut()
-        .unwrap()
-        .carried = Some(victim);
+    engine.pc_mut(carrier).carried = Some(victim);
     {
-        let victim = engine.get_entity_mut(victim).unwrap();
+        let victim = engine.ent_mut(victim);
         victim
             .element_data_mut()
             .publish_order_posture(Posture::OnShoulders);
@@ -460,9 +435,9 @@ fn arrow_damage_to_pc_on_shoulders_uses_virtual_shoulder_translation() {
         0,
     );
     engine.resolve_element_priority(&mut damage);
-    let sequence = engine.launch_element(&sim, &assets, damage);
+    let sequence = engine.launch_element(TickCtx::new(&sim, &assets), damage);
     let mut display = crate::engine::HostDisplayState::default();
-    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+    engine.hourglass_phase_sequences(TickCtx::new(&sim, &assets), &mut display);
 
     let element = engine
         .orders
@@ -476,7 +451,7 @@ fn arrow_damage_to_pc_on_shoulders_uses_virtual_shoulder_translation() {
         "PC arrow-damage translation must dispatch shoulder-damage translation"
     );
     assert_ne!(
-        engine.get_entity(victim).unwrap().element_data().posture(),
+        engine.posture_of(victim),
         Posture::Dead,
         "PC OnShoulders must not enter Human's dead-grounded fallthrough"
     );

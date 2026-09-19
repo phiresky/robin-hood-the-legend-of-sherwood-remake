@@ -118,8 +118,7 @@ mod suite {
         route.append_element(pass);
         route.append_element(route_assert);
         route.append_element(route_move);
-        let route_id =
-            engine.launch_sequence(&crate::sim_rng::test_context(), &LevelAssets::new(), route);
+        let route_id = engine.t_launch_sequence(&LevelAssets::new(), route);
 
         assert!(
             engine
@@ -128,20 +127,8 @@ mod suite {
                 .pop_next_hourglass_action()
                 .is_some()
         );
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            route_id,
-            0,
-        );
-        engine.element_terminated(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            route_id,
-            0,
-        );
+        engine.t_element_in_progress(&assets, route_id, 0);
+        engine.t_element_terminated(&assets, route_id, 0);
         assert!(
             engine
                 .orders
@@ -149,20 +136,8 @@ mod suite {
                 .pop_next_hourglass_action()
                 .is_some()
         );
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            route_id,
-            1,
-        );
-        engine.element_terminated(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            route_id,
-            1,
-        );
+        engine.t_element_in_progress(&assets, route_id, 1);
+        engine.t_element_terminated(&assets, route_id, 1);
 
         let mut postponed =
             SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
@@ -180,11 +155,7 @@ mod suite {
         *layer = 2;
         *sector = crate::position_interface::SectorHandle::new(88);
         *tolerance = 30.0;
-        let postponed_id = engine.launch_element(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            postponed,
-        );
+        let postponed_id = engine.t_launch_element(&LevelAssets::new(), postponed);
 
         assert!(has_deferred_post_door_route_continuation(
             &engine.orders.sequence_manager,
@@ -193,11 +164,9 @@ mod suite {
             1,
         ));
         let outcome = engine.try_dispatch_move_path(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
             owner,
-            postponed_id,
-            0,
+            SequenceElementRef::new(postponed_id, 0),
             destination,
             OrderType::WalkingUpright,
         );
@@ -507,7 +476,7 @@ mod suite {
         orders
             .failed_path_requests
             .push(FailedPathRequest::from_pending(
-                PendingPathRequest::test_request(owner, sequence_id, 0),
+                PendingPathRequest::test_request(owner, SequenceElementRef::new(sequence_id, 0)),
                 10,
             ));
 
@@ -587,11 +556,17 @@ mod suite {
         let later_sequence = launch_waiting(later_owner);
         orders.failed_path_requests.extend([
             FailedPathRequest::from_pending(
-                PendingPathRequest::test_request(first_owner, first_sequence, 0),
+                PendingPathRequest::test_request(
+                    first_owner,
+                    SequenceElementRef::new(first_sequence, 0),
+                ),
                 0,
             ),
             FailedPathRequest::from_pending(
-                PendingPathRequest::test_request(later_owner, later_sequence, 0),
+                PendingPathRequest::test_request(
+                    later_owner,
+                    SequenceElementRef::new(later_sequence, 0),
+                ),
                 0,
             ),
         ]);
@@ -662,7 +637,7 @@ mod suite {
         orders
             .failed_path_requests
             .push(FailedPathRequest::from_pending(
-                PendingPathRequest::test_request(owner, sequence_id, 0),
+                PendingPathRequest::test_request(owner, SequenceElementRef::new(sequence_id, 0)),
                 0,
             ));
 

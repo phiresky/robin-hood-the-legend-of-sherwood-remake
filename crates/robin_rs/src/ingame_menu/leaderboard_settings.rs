@@ -7,11 +7,8 @@
 use crate::leaderboard_preferences::LeaderboardPreferences;
 use crate::widget::FrameWnd;
 
-use super::layout::{
-    TooltipState, align_bottom_right, draw_screen_background, render_text_virt_font,
-};
-use super::resources::{MT_BTN_CANCEL, MT_BTN_OK};
-use super::widget_bridge::{self, ModalInputState, ModalScreenIo, ScreenFrame, ScreenKey};
+use super::layout::{TooltipState, render_text_virt_font};
+use super::widget_bridge::{self, ModalInputState, ModalScreenIo, OkCancelScreen, ScreenFrame};
 
 const ID_SHOW_MISSION_END_BOARDS: u32 = 0;
 const ID_ALWAYS_SUBMIT: u32 = 1;
@@ -46,9 +43,7 @@ pub struct LeaderboardSettingsModalState {
     frame: FrameWnd,
     input: ModalInputState,
     tooltip: TooltipState,
-    accepted: bool,
-    done: bool,
-    pub(crate) exit_requested: bool,
+    pub(crate) close: OkCancelScreen,
 }
 
 impl LeaderboardSettingsModalState {
@@ -75,30 +70,8 @@ impl LeaderboardSettingsModalState {
                 .set_tooltip_text(tooltip);
         }
 
-        let (button_w, button_h) = resources.button_dimensions();
-        let ok_label = resources.menu_text.get(MT_BTN_OK);
-        let cancel_label = resources.menu_text.get(MT_BTN_CANCEL);
-        let bottom = align_bottom_right(
-            &[(&ok_label, true), (&cancel_label, true)],
-            button_w,
-            button_h,
-        );
-        frame.add_widget_absolute(widget_bridge::make_button(
-            ID_OK,
-            &bottom[0].label,
-            bottom[0].x,
-            bottom[0].y,
-            bottom[0].w,
-            bottom[0].h,
-        ));
-        frame.add_widget_absolute(widget_bridge::make_button(
-            ID_CANCEL,
-            &bottom[1].label,
-            bottom[1].x,
-            bottom[1].y,
-            bottom[1].w,
-            bottom[1].h,
-        ));
+        let close = OkCancelScreen::new(ID_OK, ID_CANCEL);
+        close.add_buttons(&mut frame, resources);
 
         let input = ModalInputState::for_screen(io.window, io.renderer);
         let tooltip = TooltipState::new();
@@ -109,9 +82,7 @@ impl LeaderboardSettingsModalState {
             frame,
             input,
             tooltip,
-            accepted: false,
-            done: false,
-            exit_requested: false,
+            close,
         }
     }
 
@@ -119,24 +90,11 @@ impl LeaderboardSettingsModalState {
     /// closes the screen is still drawn and paced: `Some(())` is only reported
     /// on the following tick, before polling.
     pub fn tick(&mut self, io: &mut ModalScreenIo<'_, '_>) -> Option<()> {
-        if self.done {
+        if self.close.done {
             return Some(());
         }
         let screen = ScreenFrame::begin(io, &mut self.input);
-        for key in screen.keys() {
-            match key {
-                ScreenKey::Quit => {
-                    self.exit_requested = true;
-                    self.done = true;
-                }
-                ScreenKey::Cancel => self.done = true,
-                ScreenKey::Confirm => {
-                    self.accepted = true;
-                    self.done = true;
-                }
-                ScreenKey::Next => {}
-            }
-        }
+        self.close.poll_keys(&screen);
         let (_, activated) = ScreenFrame::dispatch(&mut self.input, &mut self.frame);
         if let Some(id) = activated {
             self.activate(id);
@@ -145,21 +103,8 @@ impl LeaderboardSettingsModalState {
         let transform = screen.transform;
         let renderer = &mut *io.renderer;
         let resources = io.resources;
-        screen.begin_draw(renderer);
-        if let Some(background) = resources.menu_bg[0] {
-            draw_screen_background(renderer, &background);
-        }
-        if let Some(font) = resources.title_font_any() {
-            let title = "Leaderboards";
-            render_text_virt_font(
-                renderer,
-                font,
-                transform,
-                title,
-                (490 - font.text_width(title)) / 2,
-                20,
-            );
-        }
+        self.close
+            .draw_chrome(&screen, renderer, resources, "Leaderboards", 490);
         if let Some(font) = resources.label_font_any() {
             render_text_virt_font(
                 renderer,
@@ -190,34 +135,23 @@ impl LeaderboardSettingsModalState {
             self.tooltip
                 .draw(renderer, font, transform, &self.frame, mouse);
         }
-        for id in [ID_OK, ID_CANCEL] {
-            if let Some(widget) = self.frame.widget(id) {
-                widget_bridge::draw_widget_button(renderer, resources, transform, widget, false);
-            }
-        }
+        self.close
+            .draw_buttons(renderer, resources, transform, &self.frame);
         screen.finish(io, &self.input);
 
         None
     }
 
     fn activate(&mut self, id: u32) {
-        match id {
-            ID_SHOW_MISSION_END_BOARDS | ID_ALWAYS_SUBMIT => {
-                toggle(&mut self.working, id);
-                self.dirty = true;
-            }
-            ID_OK => {
-                self.accepted = true;
-                self.done = true;
-            }
-            ID_CANCEL => self.done = true,
-            _ => {}
+        if !self.close.activate(id) && matches!(id, ID_SHOW_MISSION_END_BOARDS | ID_ALWAYS_SUBMIT) {
+            toggle(&mut self.working, id);
+            self.dirty = true;
         }
     }
 
     /// Publish staged changes only after acceptance and an actual difference.
     pub fn commit(self, target: &mut LeaderboardPreferences) -> bool {
-        if self.accepted && self.dirty && self.working != *target {
+        if self.close.accepted && self.dirty && self.working != *target {
             *target = self.working;
             true
         } else {
@@ -257,9 +191,7 @@ mod tests {
             frame: FrameWnd::interactive(),
             input: ModalInputState::new(),
             tooltip: TooltipState::new(),
-            accepted: false,
-            done: false,
-            exit_requested: false,
+            close: OkCancelScreen::new(ID_OK, ID_CANCEL),
         }
     }
 
@@ -278,7 +210,7 @@ mod tests {
                 state.activate(action);
                 assert_eq!(target, original, "editing must not publish staged consent");
             }
-            assert!(state.done);
+            assert!(state.close.done);
             assert_eq!(state.commit(&mut target), changed);
             assert_eq!(target != original, changed);
             assert_eq!(target.always_submit_eligible_runs, changed);

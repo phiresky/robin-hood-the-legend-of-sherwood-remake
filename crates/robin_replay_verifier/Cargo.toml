@@ -12,12 +12,15 @@ name = "robin-replay-verifier"
 path = "src/bin/robin-replay-verifier.rs"
 
 [dependencies]
+bitcode.workspace = true
+bytemuck.workspace = true
+robin_assets.workspace = true
+robin_util.workspace = true
 mimalloc.workspace = true
 clap = { workspace = true, features = ["derive"] }
 nix = { workspace = true, features = ["resource"] }
 robin_engine.workspace = true
 robin_replay_format.workspace = true
-robin_ranked_verification.workspace = true
 robin_run_protocol = { workspace = true, default-features = false }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
@@ -26,7 +29,6 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-bitcode.workspace = true
 tempfile.workspace = true
 
 [lints]

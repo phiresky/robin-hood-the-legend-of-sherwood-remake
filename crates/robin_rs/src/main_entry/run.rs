@@ -596,7 +596,11 @@ impl MainMenuContext<'_> {
         ))
         .await;
         let campaign = outcome.campaign;
-        if outcome.result.map_err(LaunchError::session)? == SessionResult::ExitRequested {
+        let result = acknowledge_menu_launch(outcome.result, |message| {
+            crate::save_recovery::show_launch_error(&self.application_context, self.window, message)
+        })
+        .await?;
+        if self.window.close_requested || result == Some(SessionResult::ExitRequested) {
             return Ok(None);
         }
         Ok(Some(campaign))
@@ -627,7 +631,17 @@ impl MainMenuContext<'_> {
         ))
         .await;
         let campaign = outcome.campaign;
-        outcome.result?;
+        acknowledge_menu_launch(
+            outcome.result.map_err(|error| error.to_string()),
+            |message| {
+                crate::save_recovery::show_launch_error(
+                    &self.application_context,
+                    self.window,
+                    message,
+                )
+            },
+        )
+        .await?;
         Ok(campaign)
     }
 
@@ -845,8 +859,8 @@ impl MainMenuContext<'_> {
     }
 
     /// Installed mod pack: admit its exact assets and select its mission.
-    /// `None` (after logging) when preparation fails and the menu reopens.
-    fn prepare_installed_mod_launch(
+    /// `None` after acknowledging a preparation failure, so the menu reopens.
+    async fn prepare_installed_mod_launch(
         &mut self,
         campaign: &mut Campaign,
         launch: crate::main_menu::custom_missions::CustomMissionLaunch,
@@ -867,7 +881,14 @@ impl MainMenuContext<'_> {
         ) {
             Ok(prepared) => prepared,
             Err(error) => {
-                tracing::error!("CustomMission: exact asset preparation failed: {error}");
+                acknowledge_menu_launch::<(), _>(Err(error), |message| {
+                    crate::save_recovery::show_launch_error(
+                        &self.application_context,
+                        self.window,
+                        message,
+                    )
+                })
+                .await?;
                 return Ok(None);
             }
         };
@@ -923,6 +944,28 @@ impl MainMenuContext<'_> {
     }
 }
 
+/// Keep failed menu launches inside the application, after mission teardown.
+/// The diagnostic survives even if the warning UI itself cannot be created.
+async fn acknowledge_menu_launch<T, F: std::future::Future<Output = Result<(), String>>>(
+    result: Result<T, String>,
+    show_error: impl FnOnce(String) -> F,
+) -> Result<Option<T>, LaunchError> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(error) => {
+            tracing::error!("Mission launch failed: {error}");
+            // TODO(i18n): translate the mission-launch warning guidance.
+            let message = format!(
+                "The mission could not be loaded or continued. Select OK to return to the main menu.\n\n{error}"
+            );
+            show_error(message).await.map_err(|ui_error| {
+                LaunchError::session(format!("{error}; warning dialog failed: {ui_error}"))
+            })?;
+            Ok(None)
+        }
+    }
+}
+
 async fn run_main_menu(
     window: &mut GameWindow,
     mut campaign: Campaign,
@@ -945,6 +988,9 @@ async fn run_main_menu(
     #[cfg(not(target_arch = "wasm32"))]
     let mut pending_direct_browser_invite: Option<&str> = None;
     loop {
+        if menu.window.close_requested {
+            return Ok(0);
+        }
         let open_options_initially = std::mem::take(&mut reopen_main_options);
         let menu_choice = Box::pin(show_main_menu(
             menu.window,
@@ -1085,7 +1131,9 @@ async fn run_main_menu(
             MainMenuChoice::CustomMission(
                 crate::main_menu::custom_missions::CustomMissionChoice::Mod(launch),
             ) => {
-                let Some(request) = menu.prepare_installed_mod_launch(&mut campaign, launch)?
+                let Some(request) = menu
+                    .prepare_installed_mod_launch(&mut campaign, launch)
+                    .await?
                 else {
                     continue;
                 };
@@ -1297,6 +1345,58 @@ async fn wait_for_replay_command(
         }
 
         crate::window::sleep_ms(50).await;
+    }
+}
+
+#[cfg(test)]
+mod menu_launch_tests {
+    #[test]
+    fn failed_menu_launch_is_acknowledged_without_exiting() {
+        let diagnostic =
+            "malformed Data/Characters/Archer.sprites.vq.zst: unsupported authored sprite format";
+        let mut notices = Vec::new();
+        let result = pollster::block_on(super::acknowledge_menu_launch::<(), _>(
+            Err(diagnostic.into()),
+            |message| {
+                notices.push(message);
+                std::future::ready(Ok(()))
+            },
+        ))
+        .unwrap();
+        assert_eq!(result, None);
+        assert_eq!(notices.len(), 1);
+        assert!(notices[0].contains(diagnostic));
+        assert!(notices[0].contains("return to the main menu"));
+    }
+
+    #[test]
+    fn successful_menu_launch_preserves_exit_without_warning() {
+        let mut warnings = 0;
+        let result = pollster::block_on(super::acknowledge_menu_launch(
+            Ok(super::SessionResult::ExitRequested),
+            |_| {
+                warnings += 1;
+                std::future::ready(Ok(()))
+            },
+        ))
+        .unwrap();
+        assert_eq!(result, Some(super::SessionResult::ExitRequested));
+        assert_eq!(warnings, 0);
+    }
+
+    #[test]
+    fn failed_warning_keeps_the_mission_diagnostic() {
+        let error = pollster::block_on(super::acknowledge_menu_launch::<(), _>(
+            Err("unsupported authored sprite format".into()),
+            |_| std::future::ready(Err("missing menu resources".into())),
+        ))
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported authored sprite format")
+        );
+        assert!(error.to_string().contains("missing menu resources"));
     }
 }
 

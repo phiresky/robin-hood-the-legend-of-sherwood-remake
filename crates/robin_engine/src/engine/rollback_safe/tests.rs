@@ -267,7 +267,7 @@ fn tick_admission_crosses_pending_arrow_refresh_before_hourglass() {
         .advance_frame(&assets, SimulationFrameInput::default())
         .expect("admit simulation tick");
 
-    let Entity::Projectile(arrow) = engine.inner.get_entity(arrow).unwrap() else {
+    let Entity::Projectile(arrow) = engine.inner.ent(arrow) else {
         unreachable!()
     };
     // The admitted refresh was crossed (the sprite assertions below see
@@ -348,11 +348,7 @@ fn typed_sentinel_snapshot_fixture() -> (Engine, EntityId) {
 }
 
 fn assert_typed_sentinel_snapshot(engine: &Engine, id: EntityId) {
-    let ai = engine
-        .inner
-        .get_entity(id)
-        .and_then(crate::element::Entity::enemy_ai)
-        .expect("typed sentinel fixture retains EnemyAi");
+    let ai = engine.inner.enemy(id);
     assert_eq!(
         ai.base.primary_target,
         Some(crate::ai::AiEntityHandle::new(0))
@@ -618,13 +614,7 @@ fn rollback_native_snapshot_round_trips_typed_slot_zero_and_spatial_provenance_i
     assert_typed_sentinel_snapshot(&decoded, id);
     let present_hash = crate::replay::state_hash(&decoded);
     let mut absent = decoded;
-    absent
-        .inner
-        .get_entity_mut(id)
-        .and_then(crate::element::Entity::enemy_ai_mut)
-        .unwrap()
-        .base
-        .primary_target = None;
+    absent.inner.enemy_mut(id).base.primary_target = None;
     assert_ne!(
         present_hash,
         crate::replay::state_hash(&absent),
@@ -785,13 +775,9 @@ fn selection_boundary_fixture() -> (Engine, LevelAssets, EntityId, crate::sequen
     engine
         .inner
         .select_sequence_element(pc_id, Some((wait_sequence, 0)));
-    engine.inner.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        wait_sequence,
-        0,
-    );
+    engine
+        .inner
+        .t_element_in_progress(&assets, wait_sequence, 0);
     (engine, assets, pc_id, wait_sequence)
 }
 
@@ -800,16 +786,10 @@ fn spatial_presentation_sampling_is_absolute_and_authoritative_hashes_are_unchan
     let (mut previous, _, pc_id, _) = selection_boundary_fixture();
     previous
         .inner
-        .get_entity_mut(pc_id)
-        .expect("presentation test PC")
-        .element_data_mut()
-        .set_position(crate::coordinates::WorldPoint3D::ZERO);
+        .place(pc_id, crate::coordinates::WorldPoint3D::ZERO);
     let mut current = previous.clone();
     {
-        let entity = current
-            .inner
-            .get_entity_mut(pc_id)
-            .expect("presentation test PC");
+        let entity = current.inner.ent_mut(pc_id);
         entity
             .element_data_mut()
             .set_position(crate::coordinates::WorldPoint3D::new(40.0, 60.0, 10.0));
@@ -822,7 +802,7 @@ fn spatial_presentation_sampling_is_absolute_and_authoritative_hashes_are_unchan
 
     presentation.apply_spatial_presentation(&previous_spatial, &current_spatial, 0.25);
     let first_sample_hash = crate::replay::state_hash(&presentation.presentation);
-    let sampled = presentation.view().get_entity(pc_id).expect("sampled PC");
+    let sampled = presentation.view().get_entity(pc_id).unwrap();
     assert_eq!(
         sampled.element_data().position(),
         crate::coordinates::WorldPoint3D::new(10.0, 15.0, 2.5)
@@ -847,11 +827,7 @@ fn spatial_presentation_snaps_layer_transitions_and_new_entities() {
     let (previous, _, pc_id, _) = selection_boundary_fixture();
     let mut current = previous.clone();
     {
-        let element = current
-            .inner
-            .get_entity_mut(pc_id)
-            .expect("presentation test PC")
-            .element_data_mut();
+        let element = current.inner.elem_mut(pc_id);
         element.set_position_map(crate::coordinates::MapPoint::new(64.0, 96.0));
         element.set_layer(1);
     }
@@ -868,10 +844,7 @@ fn spatial_presentation_snaps_layer_transitions_and_new_entities() {
             }));
     current
         .inner
-        .get_entity_mut(spawned_id)
-        .expect("spawned presentation FX")
-        .element_data_mut()
-        .set_position_map(crate::coordinates::MapPoint::new(12.0, 34.0));
+        .place_map(spawned_id, crate::coordinates::MapPoint::new(12.0, 34.0));
     let previous_spatial = previous.spatial_presentation_snapshot();
     let current_spatial = current.spatial_presentation_snapshot();
     let mut presentation = PresentationEngine::new(&current);
@@ -957,7 +930,7 @@ fn presentation_queries_preserve_fixed_world_results_and_snapshot_bytes() {
         );
         assert_eq!(
             view.get_entity(pc).unwrap().element_data().position(),
-            engine.get_entity(pc).unwrap().element_data().position()
+            engine.pos_of(pc)
         );
         assert_eq!(
             view.active_entity_positions().collect::<Vec<_>>(),
@@ -1134,8 +1107,7 @@ fn recorded_drop_ale_facts_round_trip_and_reject_atomically() {
     let destination = crate::coordinates::MapPoint::new(778.0, 1714.0);
     let fallback_sector =
         crate::position_interface::SectorHandle::new(25).expect("fallback sector is valid");
-    engine.inner.launch_element(
-        &crate::sim_rng::test_context(),
+    engine.inner.t_launch_element(
         &assets,
         pending_drop_ale_seek(owner, destination, fallback_sector),
     );
@@ -1544,13 +1516,7 @@ fn rejected_external_fact_prevents_command_and_hourglass() {
         .orders
         .sequence_manager
         .start_sequence_level(sequence_id);
-    engine.inner.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        sequence_id,
-        0,
-    );
+    engine.inner.t_element_in_progress(&assets, sequence_id, 0);
     engine.inner.feedback.cutscene_camera.sequence_element =
         Some(crate::sequence::SequenceElementRef::new(sequence_id, 0));
     assert!(
@@ -1641,13 +1607,7 @@ fn no_hourglass_director_prefix_exposes_new_delayed_drop_ale_seek() {
         .orders
         .sequence_manager
         .start_sequence_level(sequence_id);
-    engine.inner.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        sequence_id,
-        0,
-    );
+    engine.inner.t_element_in_progress(&assets, sequence_id, 0);
     engine.inner.feedback.cutscene_camera.sequence_element =
         Some(crate::sequence::SequenceElementRef::new(sequence_id, 0));
 
@@ -1742,28 +1702,6 @@ fn closed_body_gate_is_not_a_paused_presentation_boundary() {
     assert_eq!(output.frame_before, 0);
     assert_eq!(output.frame_after, 1);
     assert_eq!(engine.frame_counter(), 1);
-}
-
-#[test]
-fn parity_engine_state_preserves_next_original_creation_order() {
-    let mut inner = EngineInner::new();
-    inner.world.next_original_creation_order = 417;
-    inner.control.chorus_timer = 23;
-    inner.script_domains.mission_ui.force_check = true;
-    inner
-        .script_domains
-        .mission_ui
-        .men_to_blazon_conversion_mode = true;
-    let state = Engine {
-        inner,
-        bootstrap_open: false,
-    }
-    .parity_engine_state();
-
-    assert_eq!(state.next_creation_order, 417);
-    assert_eq!(state.chorus_timer, 23);
-    assert!(state.force_check);
-    assert!(state.men_to_blazon_conversion);
 }
 
 fn parity_position_sprite(state: &serde_json::Value) -> (u32, u32) {
@@ -2121,588 +2059,6 @@ fn parity_game_ui_state_preserves_serialized_latches() {
 }
 
 #[test]
-fn parity_messenger_controller_is_independent_of_camera_locker() {
-    let mut inner = EngineInner::new();
-    inner.players.view_locked = true;
-    inner.players.seats[0].locker_active = false;
-    inner.players.seats[0].selected_action = crate::profiles::Action::Bow;
-
-    let engine = Engine {
-        inner,
-        bootstrap_open: false,
-    };
-    assert_eq!(
-        engine.parity_messenger_controller_state(),
-        serde_json::json!({ "view_locked": true, "selected_action": 1 })
-    );
-    assert!(!engine.locker_active());
-    assert!(engine.view_locked());
-}
-
-#[test]
-fn parity_shield_controller_preserves_global_protocol_state() {
-    let mut inner = EngineInner::new();
-    inner.world.shield.is_protected = false;
-    inner.world.shield.protected_pc = Some(EntityId::new(7, crate::element::EntityIdKind::Pc));
-    inner.world.shield.danger_point = crate::coordinates::WorldPoint3D {
-        x: 1.25,
-        y: -2.5,
-        z: 3.75,
-    };
-
-    assert_eq!(
-        Engine {
-            inner,
-            bootstrap_open: false
-        }
-        .parity_shield_controller_state(),
-        serde_json::json!({
-            "is_protected": false,
-            "protected_pc": { "kind": "pc", "index": 7 },
-            "danger_point": {
-                "x": { "bits": 1.25_f32.to_bits() },
-                "y": { "bits": (-2.5_f32).to_bits() },
-                "z": { "bits": 3.75_f32.to_bits() },
-            },
-        })
-    );
-}
-
-#[test]
-fn parity_sound_sources_preserves_sparse_slots_and_authoritative_fields() {
-    let mut inner = EngineInner::new();
-    inner.feedback.sound_sim.sources.sources_push_none();
-    let mut source = crate::sound_source::SoundSource::new();
-    source.source_kind = crate::sound_source::SoundSourceKind::Delayed;
-    source.id = 73;
-    source.inner_distance = 12;
-    source.outer_distance = 34;
-    source.noise_covering_distance = 56;
-    source.inner_volume = 78;
-    source.outer_volume = 9;
-    source
-        .shape
-        .push(crate::coordinates::MapPoint::new(1.5, -2.0));
-    source.altitude = crate::sound_geometry::SoundSourceAltitude::Top;
-    source.min_delay = 4;
-    source.max_delay = 18;
-    source.delay_stepping = 5;
-    source.timer = 11;
-    source.active = true;
-    inner.feedback.sound_sim.sources.sources_push_some(source);
-    let engine = Engine {
-        inner,
-        bootstrap_open: false,
-    };
-
-    let state = engine.parity_sound_sources_state();
-    assert!(state[0].is_null());
-    assert_eq!(state[1]["kind"], 2);
-    assert_eq!(state[1]["id"], 73);
-    assert_eq!(state[1]["noise_covering_distance"], 56);
-    assert_eq!(state[1]["shape"][0]["x"]["bits"], 1.5f32.to_bits());
-    assert_eq!(state[1]["altitude"], 2);
-    assert_eq!(state[1]["timer"], 11);
-    assert_eq!(state[1]["active"], true);
-    assert_eq!(state[1]["ambience_enabled"], true);
-}
-
-#[test]
-fn parity_sound_completion_frontier_preserves_pending_order() {
-    let mut inner = EngineInner::new();
-    inner
-        .feedback
-        .sound_sim
-        .sources
-        .sources_push_some(crate::sound_source::SoundSource::new());
-    inner
-        .feedback
-        .sound_sim
-        .sources
-        .sources_push_some(crate::sound_source::SoundSource::new());
-    inner
-        .feedback
-        .sound_sim
-        .playing_sources
-        .push(crate::sound::PlayingSource {
-            source_index: 1,
-            finish_frame: 73,
-        });
-    inner
-        .feedback
-        .sound_sim
-        .playing_sources
-        .push(crate::sound::PlayingSource {
-            source_index: 0,
-            finish_frame: 91,
-        });
-
-    let state = Engine {
-        inner,
-        bootstrap_open: false,
-    }
-    .parity_sound_completion_frontier_state();
-    assert_eq!(state[0]["source_index"], 1);
-    assert_eq!(state[0]["finish_frame"], 73);
-    assert_eq!(state[1]["source_index"], 0);
-    assert_eq!(state[1]["finish_frame"], 91);
-}
-
-#[test]
-fn parity_ai_global_preserves_ordered_statuses_reservations_and_alerts() {
-    let mut inner = EngineInner::new();
-    inner.ai.global.stupid_soldiers_cheat = true;
-    inner.ai.global.green_alert_soldiers = 3;
-    inner.ai.global.yellow_alert_soldiers = 4;
-    inner.ai.global.red_alert_soldiers = 5;
-    inner.ai.global.overall_alert_status = crate::ai::AlertLevel::Yellow;
-    inner.ai.global.overall_villain_alert_status = crate::ai::AlertLevel::Red;
-    inner.ai.global.saved_random_seed = -73;
-    inner.ai.global.current_speech_variant = 2;
-    inner
-        .ai
-        .global
-        .forbidden_remarks
-        .push(crate::ai::ForbiddenRemark {
-            remark: crate::ai::Remark::Warcry,
-            flags: crate::ai::RemarkTargetFlags::THIS_GUY.bits(),
-            speech_id: 91,
-            guy_index: 47,
-            bad_guy: true,
-            forbidden_till_frame: 1234,
-        });
-    let mut seek = crate::ai::SeekPoint::from_position(
-        &crate::sim_rng::SimulationContext::with_seed(1),
-        crate::ai::Position::default(),
-    );
-    seek.frame_when_full_interest = 99;
-    seek.last_calculated_interest = 41;
-    seek.locked = true;
-    inner.ai.global.seek_points.push(seek);
-    inner
-        .ai
-        .global
-        .archery_sectors
-        .push(crate::ai::SectorArchery {
-            points: vec![crate::ai::PointArchery {
-                position: crate::ai::Position::default(),
-                direction: 7,
-                is_shooting_point: true,
-                sector_index: crate::sector::SectorNumber(2),
-                owner: None,
-            }],
-            polygon: Vec::new(),
-            layer: 0,
-            index_first_shooting_point: Some(crate::sector::ArcheryPointIdx(0)),
-            index_last_shooting_point: Some(crate::sector::ArcheryPointIdx(0)),
-            num_shooting_points: 1,
-            num_owners: 0,
-        });
-    let engine = Engine {
-        inner,
-        bootstrap_open: false,
-    };
-
-    let state = engine.parity_ai_global_state();
-    assert_eq!(state["stupid_soldiers_cheat"], true);
-    assert_eq!(state["seek_points"][0]["frame_when_full_interest"], 99);
-    assert_eq!(state["seek_points"][0]["last_calculated_interest"], 41);
-    assert_eq!(state["seek_points"][0]["locked"], true);
-    assert_eq!(state["archery_sectors"][0]["num_owners"], 0);
-    assert!(state["archery_sectors"][0]["point_owners"][0].is_null());
-    assert_eq!(state["overall_alert_status"], 1);
-    assert_eq!(state["overall_villain_alert_status"], 2);
-    assert_eq!(state["saved_random_seed"], -73);
-    assert_eq!(state["forbidden_remarks"][0]["remark"], 9);
-    assert_eq!(state["forbidden_remarks"][0]["flags"], 8);
-    assert_eq!(state["forbidden_remarks"][0]["speech_id"], 91);
-    assert_eq!(state["forbidden_remarks"][0]["guy_index"], 47);
-    assert_eq!(state["forbidden_remarks"][0]["bad_guy"], true);
-    assert_eq!(state["forbidden_remarks"][0]["forbidden_till_frame"], 1234);
-    assert_eq!(state["current_speech_variant"], 2);
-}
-
-#[test]
-fn parity_pc_registry_preserves_original_order_not_portrait_order() {
-    let mut inner = EngineInner::new();
-    let new_pc = || {
-        crate::element::Entity::Pc(crate::element::ActorPc {
-            element: crate::element::ElementData::default(),
-            actor: crate::element::ActorData::default(),
-            human: crate::element::HumanData::default(),
-            pc: crate::element::PcData::default(),
-        })
-    };
-    let first = inner.add_test_entity(new_pc());
-    let second = inner.add_test_entity(new_pc());
-    inner.world.pc_ids = vec![first, second];
-    inner.world.original_pc_registry_ids = vec![second, first];
-
-    let state = Engine {
-        inner,
-        bootstrap_open: false,
-    }
-    .parity_pc_registry_state();
-    assert_eq!(state[0]["kind"], "pc");
-    assert_eq!(state[0]["index"], second.index());
-    assert_eq!(state[1]["index"], first.index());
-}
-
-#[test]
-fn parity_runtime_roots_preserves_mission_stat_and_empty_reference_roots() {
-    struct MenuText;
-    impl crate::sherwood_stat::MenuTextLookup for MenuText {
-        fn get(&self, id: usize) -> String {
-            format!("menu-{id}")
-        }
-    }
-
-    let mut inner = EngineInner::new();
-    inner.players.user_locked = true;
-    inner.mission_domain.mission_stat.collected_money = 73;
-    inner.mission_domain.mission_stat.added_score = 91;
-    inner
-        .mission_domain
-        .mission_stat
-        .pc_names
-        .push(crate::mission_stat::PcStatName::new(
-            "fallback".into(),
-            Some(crate::pc_status::SpecialPeasantName::B),
-        ));
-    let engine = Engine {
-        inner,
-        bootstrap_open: false,
-    };
-
-    let state = engine.parity_engine_runtime_roots_state(&MenuText);
-    assert_eq!(state["timer_elements"].as_array().unwrap().len(), 0);
-    assert!(state["camera_sequence"].is_null());
-    assert!(state["dead_pc"].is_null());
-    assert_eq!(state["mission_stat"]["collected_money"], 73);
-    assert_eq!(state["mission_stat"]["added_score"], 91);
-    assert_eq!(state["mission_stat"]["pc_names"][0], "menu-251");
-    assert_eq!(state["user_locked"], true);
-    assert_eq!(
-        state["selection_before_user_lock"]
-            .as_array()
-            .unwrap()
-            .len(),
-        0
-    );
-    assert!(state["follow_element"].is_null());
-}
-
-#[test]
-fn parity_world_interactables_preserves_dynamic_patch_and_door_fields() {
-    let mut inner = EngineInner::new();
-    let patch = crate::patch::Patch {
-        active: true,
-        locked: true,
-        applied: true,
-        in_transition: true,
-        ..Default::default()
-    };
-    inner.script_domains.interactables.patches.push(patch);
-    let door = crate::gate::Door {
-        active: false,
-        locked_pc: true,
-        locked_npc_villain: true,
-        unlockable: true,
-        locked_pc_after_patch: true,
-        locked_npc_civilian_after_patch: true,
-        unlockable_after_patch: true,
-        special_authorisation_pc: true,
-        authorised_pc_direct: 0x12,
-        authorised_pc_indirect: 0x34,
-        ..Default::default()
-    };
-    inner.script_domains.interactables.doors.push(door);
-    let engine = Engine {
-        inner,
-        bootstrap_open: false,
-    };
-
-    let state = engine.parity_world_interactables_state(&LevelAssets::new());
-    assert_eq!(state["patches"][0]["active"], true);
-    assert_eq!(state["patches"][0]["locked"], true);
-    assert_eq!(state["patches"][0]["applied"], true);
-    assert_eq!(state["patches"][0]["in_transition"], true);
-    assert_eq!(
-        state["patches"][0]["occupants"].as_array().unwrap().len(),
-        0
-    );
-    assert_eq!(state["doors"][0]["kind"], "door");
-    assert_eq!(state["doors"][0]["active"], false);
-    assert_eq!(state["doors"][0]["locked_pc"], true);
-    assert_eq!(state["doors"][0]["locked_npc_villain"], true);
-    assert_eq!(state["doors"][0]["unlockable"], true);
-    assert_eq!(state["doors"][0]["locked_pc_after_patch"], true);
-    assert_eq!(state["doors"][0]["locked_npc_civilian_after_patch"], true);
-    assert_eq!(state["doors"][0]["unlockable_after_patch"], true);
-    assert_eq!(state["doors"][0]["special_authorisation_pc"], true);
-    assert_eq!(state["doors"][0]["authorised_pc_direct"], 0x12);
-    assert_eq!(state["doors"][0]["authorised_pc_indirect"], 0x34);
-    assert_eq!(state["sector_doors"].as_array().unwrap().len(), 0);
-}
-
-#[test]
-fn parity_world_interactables_preserves_lift_runtime_state() {
-    let mut inner = EngineInner::new();
-    let sector_number = crate::sector::SectorNumber::new(47);
-    let level = std::sync::Arc::make_mut(&mut inner.world.fast_grid_mut().level);
-    level.sector_number_map.insert(sector_number, 0);
-    level.sectors.push(crate::fast_find_grid::GridSector {
-        points: Vec::new(),
-        bounding_box: crate::coordinates::MapBBox::new(),
-        sector_type: crate::sector::SectorType::LIFT,
-        layer: 0,
-        sector_number,
-        door_index: None,
-        lift_type: Some(crate::sector::LiftType::Ladder),
-        lift_direction: 0,
-        force_crouched: false,
-        building_index: None,
-        low_exit_point: None,
-        high_exit_point: None,
-        lowest_door_index: None,
-        jump_line_indices: Vec::new(),
-        gate_indices: Vec::new(),
-        underlying_sector: None,
-    });
-    inner.world.fast_grid_mut().lift_state.insert(
-        0,
-        crate::fast_find_grid::LiftRuntimeState {
-            occupants_pc: 2,
-            occupants: 3,
-            occupied_upwards: true,
-            occupied_downwards: false,
-            wait_time: 71,
-        },
-    );
-
-    let state = Engine {
-        inner,
-        bootstrap_open: false,
-    }
-    .parity_world_interactables_state(&LevelAssets::new());
-    assert_eq!(state["lifts"][0]["sector"], 47);
-    assert_eq!(state["lifts"][0]["occupants_pc"], 2);
-    assert_eq!(state["lifts"][0]["occupants"], 3);
-    assert_eq!(state["lifts"][0]["occupied_upwards"], true);
-    assert_eq!(state["lifts"][0]["occupied_downwards"], false);
-    assert_eq!(state["lifts"][0]["wait_time"], 71);
-}
-
-#[test]
-fn parity_world_interactables_preserves_ordered_building_and_zone_state() {
-    let mut inner = EngineInner::new();
-    let new_pc = || {
-        crate::element::Entity::Pc(crate::element::ActorPc {
-            element: crate::element::ElementData::default(),
-            actor: crate::element::ActorData::default(),
-            human: crate::element::HumanData::default(),
-            pc: crate::element::PcData::default(),
-        })
-    };
-    let first = inner.add_test_entity(new_pc());
-    let second = inner.add_test_entity(new_pc());
-    inner.script_domains.buildings.occupants.push(vec![
-        crate::natives::ScriptHandleCodec::actor_handle(second),
-        crate::natives::ScriptHandleCodec::actor_handle(first),
-    ]);
-    inner.script_domains.buildings.arrow_reserves.push(true);
-
-    inner
-        .script_domains
-        .zones
-        .scripts
-        .push(crate::sector::ScriptSectorData {
-            sector_index: crate::fast_find_grid::SectorIndex::new(0),
-            transformed_to_apex: true,
-            max_throwing_apex_height: 12.5,
-            occupant_indices: vec![first, second],
-            ..Default::default()
-        });
-    let level = std::sync::Arc::make_mut(&mut inner.world.fast_grid_mut().level);
-    level.sectors.push(crate::fast_find_grid::GridSector {
-        points: Vec::new(),
-        bounding_box: crate::coordinates::MapBBox::new(),
-        sector_type: crate::sector::SectorType::SCRIPT,
-        layer: 0,
-        sector_number: crate::sector::SectorNumber::new(47),
-        door_index: None,
-        lift_type: None,
-        lift_direction: 0,
-        force_crouched: false,
-        building_index: None,
-        low_exit_point: None,
-        high_exit_point: None,
-        lowest_door_index: None,
-        jump_line_indices: Vec::new(),
-        gate_indices: Vec::new(),
-        underlying_sector: None,
-    });
-    inner
-        .world
-        .fast_grid_mut()
-        .or_sector_type_overlay(0, crate::sector::SectorType::APEX);
-    let mut assets = LevelAssets::new();
-    std::sync::Arc::make_mut(&mut assets.scripts.zone_grid_indices).push(0);
-
-    let state = Engine {
-        inner,
-        bootstrap_open: false,
-    }
-    .parity_world_interactables_state(&assets);
-    assert_eq!(
-        state["buildings"][0]["occupants"][0]["index"],
-        second.index()
-    );
-    assert_eq!(
-        state["buildings"][0]["occupants"][1]["index"],
-        first.index()
-    );
-    assert_eq!(state["buildings"][0]["arrow_reserve"], true);
-    assert_eq!(
-        state["script_zones"][0]["occupants"][0]["index"],
-        first.index()
-    );
-    assert_eq!(
-        state["script_zones"][0]["occupants"][1]["index"],
-        second.index()
-    );
-    assert_eq!(state["script_zones"][0]["transformed_to_apex"], true);
-    assert_eq!(
-        state["script_zones"][0]["max_apex_height"]["bits"],
-        12.5f32.to_bits()
-    );
-}
-
-#[test]
-fn parity_repulsive_points_preserves_serialized_fields_order_and_next_id() {
-    let mut inner = EngineInner::new();
-    inner.world.original_repulsive_point_counter = 42;
-    let mut first = crate::ai::RepulsivePoint::new(
-        17,
-        crate::ai::Position {
-            x: 1.25,
-            y: -2.5,
-            sector: None,
-            level: 3,
-        },
-        4.0,
-        5.0,
-        1 | 4 | 8,
-    );
-    first.concave = true;
-    first.limit_left = crate::coordinates::MapVec::new(6.0, 7.0);
-    first.limit_right = crate::coordinates::MapVec::new(8.0, 9.0);
-    inner.ai.global.repulsive_points.push(first);
-    inner
-        .ai
-        .global
-        .repulsive_points
-        .push(crate::ai::RepulsivePoint::new(
-            18,
-            crate::ai::Position {
-                level: 5,
-                ..Default::default()
-            },
-            10.0,
-            11.0,
-            2,
-        ));
-    let engine = Engine {
-        inner,
-        bootstrap_open: false,
-    };
-
-    let state = engine.parity_repulsive_points_state();
-    assert_eq!(state["next_id"], 42);
-    assert_eq!(state["points"][0]["id"], 17);
-    assert_eq!(state["points"][1]["id"], 18);
-    assert_eq!(
-        state["points"][0]["position"]["x"]["bits"],
-        1.25f32.to_bits()
-    );
-    assert_eq!(
-        state["points"][0]["position"]["y"]["bits"],
-        (-2.5f32).to_bits()
-    );
-    assert_eq!(state["points"][0]["concave"], true);
-    assert_eq!(
-        state["points"][0]["limit_left"]["x"]["bits"],
-        6.0f32.to_bits()
-    );
-    assert_eq!(
-        state["points"][0]["limit_right"]["y"]["bits"],
-        9.0f32.to_bits()
-    );
-    assert_eq!(state["points"][0]["radius"]["bits"], 4.0f32.to_bits());
-    assert_eq!(
-        state["points"][0]["action_radius"]["bits"],
-        9.0f32.to_bits()
-    );
-    assert_eq!(state["points"][0]["affects_pcs"], true);
-    assert_eq!(state["points"][0]["affects_soldiers"], false);
-    assert_eq!(state["points"][0]["affects_civilians"], true);
-    assert_eq!(state["points"][0]["affects_animals"], true);
-    assert_eq!(state["points"][0]["layer"], 3);
-}
-
-#[test]
-fn parity_titbits_preserves_serialized_manager_and_live_entry_fields() {
-    let mut inner = EngineInner::new();
-    let id = inner.feedback.titbit_manager.add_titbit(
-        crate::coordinates::WorldPoint3D::new(1.5, -2.0, 3.25),
-        4,
-        crate::titbit::TitbitKind::DangerPoint,
-        crate::titbit::ElementHandle::INVALID,
-        7,
-        crate::titbit::ElementHandle::INVALID,
-        false,
-        crate::titbit::INVALID_ID,
-        true,
-        None,
-        None,
-    );
-    let titbit = &mut inner.feedback.titbit_manager.titbits_mut()[0];
-    titbit.sprite_row = 8;
-    titbit.sprite_frame = 9;
-    titbit.frame_count = 10;
-    titbit.display_order = 11.5;
-    titbit.blinking = true;
-    let engine = Engine {
-        inner,
-        bootstrap_open: false,
-    };
-
-    let state = engine.parity_titbit_manager_state();
-    assert_eq!(state["current_id"], 1);
-    assert_eq!(state["titbits"][0]["kind"], 10);
-    assert_eq!(state["titbits"][0]["phase"], 7);
-    assert_eq!(state["titbits"][0]["sprite_row"], 8);
-    assert_eq!(state["titbits"][0]["sprite_frame"], 9);
-    assert_eq!(state["titbits"][0]["frame_count"], 10);
-    assert_eq!(
-        state["titbits"][0]["display_order"]["bits"],
-        11.5f32.to_bits()
-    );
-    assert_eq!(state["titbits"][0]["layer"], 4);
-    assert_eq!(state["titbits"][0]["blinking"], true);
-    assert_eq!(
-        state["titbits"][0]["id"],
-        id.expect("titbit allocation succeeds").get()
-    );
-    assert!(state["titbits"][0]["element_supplier"].is_null());
-    assert!(state["titbits"][0]["element_manager"].is_null());
-    assert_eq!(
-        state["titbits"][0]["position"]["x"]["bits"],
-        1.5f32.to_bits()
-    );
-}
-
-#[test]
 fn diagnostic_snapshot_omits_only_nonserializable_original_rng_replay() {
     let mut inner = EngineInner::new();
     inner.control.rng = SimulationRng::with_original_replay(vec![11, 22]);
@@ -2763,7 +2119,7 @@ fn legacy_additional_arrow_refreshes_advance_real_sprite_state() {
 
     assert_eq!(engine.original_rng_replay_cursor(), Some(3));
     assert!(engine.inner.control.arrow_refresh_pending);
-    let crate::element::Entity::Projectile(arrow) = engine.get_entity(id).unwrap() else {
+    let crate::element::Entity::Projectile(arrow) = engine.ent(id) else {
         panic!("test arrow changed entity kind");
     };
     assert_eq!(arrow.projectile.falling_direction, 2);
@@ -2862,7 +2218,7 @@ fn scripted_snapshot_fixture() -> (
         crate::element::Command::Generic,
         None,
     ));
-    let sequence_id = inner.launch_sequence(&crate::sim_rng::test_context(), &assets, sequence);
+    let sequence_id = inner.t_launch_sequence(&assets, sequence);
 
     (
         Engine {

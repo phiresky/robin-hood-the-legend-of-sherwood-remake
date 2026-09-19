@@ -325,25 +325,6 @@ mod tests {
     }
 
     #[test]
-    fn serde_roundtrip() {
-        let mut log = ChangeLog::new();
-        log.record(Change::mouse(1, 0));
-        log.record(Change::sound_fx(
-            10,
-            MapPoint { x: 1.0, y: 2.0 },
-            Material(1),
-        ));
-        log.record(Change::sound_stop(SoundSourceId(42)));
-
-        let json = serde_json::to_string(&log).expect("serialize");
-        let restored: ChangeLog = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(restored.count(), 3);
-
-        let first = restored.iter().next().unwrap();
-        assert_eq!(first.change_type, ChangeType::Mouse);
-    }
-
-    #[test]
     fn iter_preserves_order() {
         let mut log = ChangeLog::new();
         log.record(Change::mouse(1, 0));

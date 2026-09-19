@@ -2,94 +2,42 @@
 
 use super::*;
 use crate::ai::{AiEntityHandle, AiLockFlags, AiState, DutyFlags, GotoFlags, Stimulus, Substate};
-use crate::ai_enemy::{EnemyAi, SeekFlags, task_priority};
+use crate::ai_enemy::{SeekFlags, task_priority};
 use crate::element::Human as _;
 use crate::profiles::ProfileRank;
 
-struct DutyExecution<'a> {
-    engine: &'a mut EngineInner,
-    sim: &'a crate::sim_rng::SimulationContext,
-    assets: &'a LevelAssets,
-    owner: EntityId,
-}
-
-impl EngineInner {
-    pub(in crate::engine) fn execute_specialized_ai_duty(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        flags: DutyFlags,
-    ) {
+impl AiOwnerCtx<'_> {
+    pub(in crate::engine) fn execute_specialized_ai_duty(&mut self, flags: DutyFlags) {
         if self
-            .world
-            .entities
-            .expect_entity(owner, format_args!("duty owner"))
+            .engine
+            .entities()
+            .expect_entity(self.owner, format_args!("duty owner"))
             .enemy_ai()
             .is_some()
         {
-            DutyExecution {
-                engine: self,
-                sim,
-                assets,
-                owner,
-            }
-            .enemy_duty(flags);
+            AiOwnerCtx::new(self.engine, self.tcx, self.owner).enemy_duty(flags);
             return;
         }
-        self.world
-            .entities
-            .expect_entity_mut(owner, format_args!("friendly duty owner"))
+        self.engine
+            .entities_mut()
+            .expect_entity_mut(self.owner, format_args!("friendly duty owner"))
             .friendly_ai_mut()
             .expect("duty owner has neither enemy nor friendly AI")
             .fleeing_seen_enemy_counter = 0;
-        if self.is_very_very_busy(owner) {
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("busy duty owner"));
+        if self.engine.is_very_very_busy(self.owner) {
+            let ai = self.engine.ai_mut(self.owner, "busy duty owner");
             ai.non_script_lock(AiLockFlags::BUSY);
             ai.was_busy = true;
-            self.execute_ai_callback(
-                sim,
-                assets,
-                owner,
-                &Stimulus::new(StimulusType::EventReturnToDuty),
-            );
+            self.execute_ai_callback(&Stimulus::new(StimulusType::EventReturnToDuty));
             return;
         }
-        self.execute_common_ai_duty(sim, assets, owner, flags);
+        self.execute_common_ai_duty(flags);
     }
 }
 
-impl DutyExecution<'_> {
-    fn enemy(&self) -> &EnemyAi {
-        self.engine
-            .world
-            .entities
-            .expect_enemy_ai(self.owner, format_args!("duty owner"))
-    }
-
-    fn enemy_mut(&mut self) -> &mut EnemyAi {
-        self.engine
-            .world
-            .entities
-            .expect_enemy_ai_mut(self.owner, format_args!("duty owner"))
-    }
-
-    fn state(&mut self, state: AiState, substate: Substate) {
-        self.engine
-            .duty_set_state(self.sim, self.assets, self.owner, state, substate);
-    }
-
+impl AiOwnerCtx<'_> {
     fn go_near(&mut self, position: crate::ai::Position, distance: i32, flags: GotoFlags) {
-        self.engine
-            .duty_go_near(self.sim, self.assets, self.owner, position, distance, flags);
-    }
-
-    fn timer(&mut self, frames: u32) {
-        let frame = self.engine.control.frame_counter;
-        self.enemy_mut().base.launch_timer(frames, frame);
+        self.duty_go_near(position, distance, flags);
     }
 
     fn object_id(&self, handle: u32) -> EntityId {
@@ -108,8 +56,7 @@ impl DutyExecution<'_> {
     fn camp_soldiers(&self) -> impl Iterator<Item = EntityId> + '_ {
         let camp = self
             .engine
-            .world
-            .entities
+            .entities()
             .expect_entity(self.owner, format_args!("duty camp owner"))
             .camp();
         self.engine
@@ -164,7 +111,7 @@ impl DutyExecution<'_> {
         {
             self.enemy_mut().seek_flags = SeekFlags::empty();
             debug_assert_eq!(
-                self.enemy().get_rank(&self.assets.profile_manager),
+                self.enemy().get_rank(&self.tcx.assets.profile_manager),
                 ProfileRank::Soldier
             );
             if self.alert_officer_after_search() {
@@ -183,8 +130,7 @@ impl DutyExecution<'_> {
         }
         let has_missed_friend = !self
             .engine
-            .world
-            .entities
+            .entities()
             .expect_entity(self.owner, format_args!("duty missed-friend owner"))
             .ai_actor_data()
             .expect("duty owner has no AI actor data")
@@ -205,8 +151,7 @@ impl DutyExecution<'_> {
         if substate.is_take_money() || substate.is_fight_for_money() {
             let owner = self
                 .engine
-                .world
-                .entities
+                .entities()
                 .expect_entity(self.owner, format_args!("duty money owner"));
             let takes_money = self.enemy().base.blood_alcohol as i32
                 > crate::parameters_ai::AI_DEBILITY_ALCOHOL_LIMIT
@@ -215,7 +160,7 @@ impl DutyExecution<'_> {
                         .engine
                         .entity_building_sector(owner.element_data().sector())
                         .is_none()
-                    && self.enemy().profile(&self.assets.profile_manager).money > 0);
+                    && self.enemy().profile(&self.tcx.assets.profile_manager).money > 0);
             if takes_money
                 && !flags.contains(DutyFlags::BECAUSE_COULDNT_REACHPOINT)
                 && self
@@ -252,13 +197,7 @@ impl DutyExecution<'_> {
             if !self.enemy().base.patrol.is_empty() {
                 self.state(AiState::Default, Substate::DefaultPatrolChiefReturnToPatrol);
                 let position = self.enemy().return_to_patrol_point;
-                self.engine.duty_go_to(
-                    self.sim,
-                    self.assets,
-                    self.owner,
-                    position,
-                    GotoFlags::empty(),
-                );
+                self.duty_go_to(position, GotoFlags::empty());
                 self.enemy_mut().return_to_patrol_point.sector = None;
                 return;
             }
@@ -290,18 +229,13 @@ impl DutyExecution<'_> {
         }
 
         self.engine
-            .initialize_patrol_for_npc(self.assets, self.owner);
-        self.engine
-            .execute_common_ai_duty(self.sim, self.assets, self.owner, flags);
+            .initialize_patrol_for_npc(self.tcx.assets, self.owner);
+        self.execute_common_ai_duty(flags);
     }
 
     fn angry_officer_near(&self, position: crate::ai::Position) -> bool {
         self.camp_soldiers().any(|id| {
-            let other = self
-                .engine
-                .world
-                .entities
-                .expect_ai_controller(id, format_args!("money officer"));
+            let other = self.engine.ai(id, "money officer");
             if matches!(
                 other.current_substate,
                 Substate::WonderingOfficerSeeingBrawl
@@ -325,8 +259,7 @@ impl DutyExecution<'_> {
             let handle = self.enemy().other_seen_money[index];
             let active = self
                 .engine
-                .world
-                .entities
+                .entities()
                 .expect_entity(self.object_id(handle), format_args!("remembered coin"))
                 .is_active();
             if active {
@@ -338,8 +271,7 @@ impl DutyExecution<'_> {
         if let Some(object) = self.enemy().base.interesting_object
             && !self
                 .engine
-                .world
-                .entities
+                .entities()
                 .expect_entity(
                     self.object_id(object.get()),
                     format_args!("interesting coin"),
@@ -366,8 +298,7 @@ impl DutyExecution<'_> {
                 .max((position.y - owner_position.y).abs()) as u16;
             if self
                 .engine
-                .world
-                .entities
+                .entities()
                 .expect_entity(id, format_args!("coin layer"))
                 .element_data()
                 .layer()
@@ -391,13 +322,12 @@ impl DutyExecution<'_> {
         for id in self.camp_soldiers() {
             let entity = self
                 .engine
-                .world
-                .entities
+                .entities()
                 .expect_entity(id, format_args!("officer candidate"));
             let ai = entity
                 .enemy_ai()
                 .expect("officer registry soldier has no Enemy AI");
-            match ai.get_rank(&self.assets.profile_manager) {
+            match ai.get_rank(&self.tcx.assets.profile_manager) {
                 ProfileRank::Officer
                     if matches!(entity, Entity::Soldier(soldier) if soldier.is_able_to_fight())
                         && ai.base.current_state == AiState::Default
@@ -405,8 +335,7 @@ impl DutyExecution<'_> {
                 {
                     let owner_element = self
                         .engine
-                        .world
-                        .entities
+                        .entities()
                         .expect_entity(self.owner, format_args!("officer search owner"))
                         .element_data();
                     let element = entity.element_data();
@@ -449,7 +378,7 @@ impl DutyExecution<'_> {
                             | Substate::SeekingRunningToOfficerSeen
                     ) && self
                         .engine
-                        .patrol_member_visible(self.assets, self.owner, id) =>
+                        .patrol_member_visible(self.tcx.assets, self.owner, id) =>
                 {
                     return false;
                 }
@@ -471,18 +400,14 @@ impl DutyExecution<'_> {
 
         let entity = self
             .engine
-            .world
-            .entities
+            .entities()
             .expect_entity(officer, format_args!("selected officer"));
-        let passing_door = selected_actor_is_passing_door(
-            &self.engine.world.entities,
-            &self.engine.orders.sequence_manager,
-            officer,
-        );
+        let passing_door =
+            selected_actor_is_passing_door(&self.engine.entities(), &self.engine.seq(), officer);
         let input = extract_exact_forecast_input(self.engine, entity, passing_door)
             .expect("officer forecast requires an actor");
         let destination = crate::ai::forecast_destination_for_ia(
-            self.sim,
+            self.tcx.sim,
             &input,
             &self.engine.script_domains.interactables.doors,
             &self.engine.world.fast_grid.level.sectors,

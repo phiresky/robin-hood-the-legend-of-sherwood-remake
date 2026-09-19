@@ -23,12 +23,17 @@
 #[path = "rollback_safe/test_helpers.rs"]
 mod test_helpers;
 
+use crate::engine::TickCtx;
 use std::collections::BTreeMap;
 use std::ops::Deref;
 
+// Read-only JSON projections: the Original parity tool compares them and
+// cross-crate save tests (`test-helpers`) use them as state observers.
+#[cfg(any(test, feature = "original-parity", feature = "test-helpers"))]
 #[path = "parity_state.rs"]
 mod parity_state;
 
+#[cfg(any(test, feature = "original-parity"))]
 #[path = "parity_replay_setup.rs"]
 mod parity_replay_setup;
 
@@ -148,31 +153,6 @@ impl SpatialPresentationPose {
             || pc_teleported
             || implausibly_large_step
     }
-}
-
-/// Canonical gameplay-authoritative engine scalars emitted by schema-13
-/// Original parity traces. Presentation camera/surface/backend state is
-/// deliberately absent.
-#[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, bitcode::Encode, bitcode::Decode,
-)]
-pub struct ParityEngineState {
-    pub cheat_used_flags: u32,
-    pub next_creation_order: u32,
-    pub chorus_timer: u16,
-    pub force_check: bool,
-    pub men_to_blazon_conversion: bool,
-    pub lock_engine: bool,
-    pub freeze_all: bool,
-    pub locker: bool,
-    pub speed: f32,
-    pub speed_int: u16,
-    pub mission_won: bool,
-    pub mission_won_first_time: bool,
-    pub quit_won: bool,
-    pub quit_lost: bool,
-    pub quit_interrupted: bool,
-    pub script_globals: Vec<i32>,
 }
 
 /// Parallel runtime array whose length must match the loaded level geometry.
@@ -522,6 +502,7 @@ impl Engine {
 /// only be acquired when the explicit `original-parity` feature is enabled
 /// (or inside engine unit tests). Ordinary client builds cannot construct it.
 #[must_use = "parity replay setup must be used immediately and not retained"]
+#[cfg(any(test, feature = "original-parity"))]
 pub struct ParityReplaySetup<'a> {
     engine: &'a mut Engine,
 }
@@ -648,8 +629,7 @@ impl HostConsoleDispatch<'_> {
         );
         let sim = self.engine.inner.control.simulation_context();
         self.engine.inner.dispatch_console_command(
-            &sim,
-            assets,
+            TickCtx::new(&sim, assets),
             dev,
             selected_view_element,
             command,
@@ -713,6 +693,7 @@ impl Engine {
         self.inner.live_tradable_production_sectors(profiles)
     }
 
+    #[cfg(any(test, feature = "original-parity"))]
     fn has_pending_recorded_drop_ale_route(
         &self,
         actor: EntityId,
@@ -726,10 +707,12 @@ impl Engine {
 
     /// Restore an Original schema-16 session-boundary transient before the
     /// first replay frame. The v48 save payload does not carry this field.
+    #[cfg(any(test, feature = "original-parity"))]
     fn restore_parity_npc_maximal_visibility(&mut self, id: EntityId, value: u16) {
         self.inner.restore_parity_npc_maximal_visibility(id, value);
     }
 
+    #[cfg(any(test, feature = "original-parity"))]
     fn restore_parity_npc_dormant_macro_cursor(
         &mut self,
         id: EntityId,
@@ -819,6 +802,7 @@ impl Engine {
     }
 
     /// Append one original frame's raw RNG values to an active parity replay.
+    #[cfg(any(test, feature = "original-parity"))]
     fn append_original_rng_replay(&mut self, draws: Vec<u32>) {
         self.inner.control.rng.append_original_replay(draws);
     }
@@ -826,6 +810,7 @@ impl Engine {
     /// Supply one frame's captured results for Original's undefined stale
     /// sprite action-point read. This is a parity-tool boundary, analogous to
     /// the captured Original RNG stream; live simulation leaves it empty.
+    #[cfg(any(test, feature = "original-parity"))]
     fn set_original_impossible_action_done_deadlines(
         &mut self,
         deadlines: impl IntoIterator<Item = (u32, u32, i16)>,
@@ -846,6 +831,7 @@ impl Engine {
     /// construction. A reconstruction tool may therefore need one copy of
     /// the seeded stream for fresh Rust construction, then rewind to the
     /// post-load stream boundary recorded by the Original.
+    #[cfg(any(test, feature = "original-parity"))]
     fn replace_original_rng_replay(&mut self, draws: Vec<u32>) {
         self.inner.control.sim_config.item_gameplay =
             crate::gameplay_config::ItemGameplayConfig::classic();
@@ -1030,7 +1016,7 @@ impl Engine {
                 // listens for on fresh Sherwood entry.  The LevelLoad twin
                 // is handled via the post-load fixup path; this arm covers
                 // fresh entry only.
-                inner.dispatch_startup_message(sim, assets, 1001, 0, 0);
+                inner.dispatch_startup_message(TickCtx::new(sim, assets), 1001, 0, 0);
             });
         }
         // Startup scripts and Sherwood setup may intentionally create or kill
@@ -1204,8 +1190,7 @@ impl Engine {
                 );
                 let sim = self.inner.control.simulation_context();
                 let response = self.inner.dispatch_sim_console_command(
-                    &sim,
-                    assets,
+                    TickCtx::new(&sim, assets),
                     &mut selected_view_element,
                     &command,
                 );
@@ -1216,13 +1201,15 @@ impl Engine {
             }
             ExternalAction::SimpleMessage { message } => {
                 let sim = self.inner.control.simulation_context();
-                self.inner.send_simple_message(&sim, assets, message);
+                self.inner
+                    .send_simple_message(TickCtx::new(&sim, assets), message);
                 ExternalActionResult::SimpleMessage
             }
             ExternalAction::EzekielInstakill { target } => {
                 let sim = self.inner.control.simulation_context();
                 ExternalActionResult::EzekielInstakill(
-                    self.inner.try_ezekiel_instakill(&sim, assets, target),
+                    self.inner
+                        .try_ezekiel_instakill(TickCtx::new(&sim, assets), target),
                 )
             }
             ExternalAction::ReplaceCampaign { campaign } => {
@@ -1398,8 +1385,11 @@ impl Engine {
 
         let commands: Vec<PlayerInput> = commands.into_iter().map(Into::into).collect();
         let sim = self.inner.control.simulation_context();
-        self.inner
-            .apply_frame_commands_with_mode(&sim, assets, &commands, command_batch_mode);
+        self.inner.apply_frame_commands_with_mode(
+            TickCtx::new(&sim, assets),
+            &commands,
+            command_batch_mode,
+        );
 
         let mut side_effects = if run_hourglass {
             self.inner
@@ -1419,8 +1409,11 @@ impl Engine {
 
         let post_commands: Vec<PlayerInput> = post_commands.into_iter().map(Into::into).collect();
         let sim = self.inner.control.simulation_context();
-        self.inner
-            .apply_frame_commands_with_mode(&sim, assets, &post_commands, command_batch_mode);
+        self.inner.apply_frame_commands_with_mode(
+            TickCtx::new(&sim, assets),
+            &post_commands,
+            command_batch_mode,
+        );
 
         // Post-boundary commands are admitted after the main hourglass has
         // already drained its effects. Drain their effects explicitly before
@@ -1491,7 +1484,7 @@ impl Engine {
                 .map_err(|reason| FrameAdvanceError::SoundBoundaryRejected { policy, reason })?;
             let sim = inner.control.simulation_context();
             inner
-                .hourglass_phase_sound_boundary(&sim, assets, execution)
+                .hourglass_phase_sound_boundary(TickCtx::new(&sim, assets), execution)
                 .map_err(|reason| FrameAdvanceError::SoundBoundaryRejected { policy, reason })?;
         }
         for (index, route) in recorded_drop_ale_routes.into_iter().enumerate() {
@@ -1533,6 +1526,7 @@ impl Engine {
 
     /// Select whether recorded between-frame director events own completion
     /// timing for camera sequence elements.
+    #[cfg(any(test, feature = "original-parity"))]
     fn set_external_director_completion_replay(&mut self, enabled: bool) {
         self.inner.set_external_director_completion_replay(enabled);
     }
@@ -1600,17 +1594,20 @@ impl Engine {
                 return f(sim, None);
             }
             inner
-                .with_script_session(sim, assets, |script, script_domains, capabilities| {
-                    f(
-                        sim,
-                        Some((
-                            &mut script.state,
-                            script_domains,
-                            &script.bindings,
-                            capabilities,
-                        )),
-                    )
-                })
+                .with_script_session(
+                    TickCtx::new(sim, assets),
+                    |script, script_domains, capabilities| {
+                        f(
+                            sim,
+                            Some((
+                                &mut script.state,
+                                script_domains,
+                                &script.bindings,
+                                capabilities,
+                            )),
+                        )
+                    },
+                )
                 .expect("mission script disappeared while opening the Lua script session")
         })
     }
@@ -1677,8 +1674,12 @@ impl Engine {
         this_actor: Option<i32>,
     ) -> Result<i32, String> {
         let sim = self.inner.control.simulation_context();
-        self.inner
-            .call_external_native_with_this(&sim, assets, native_name, args, this_actor)
+        self.inner.call_external_native_with_this(
+            TickCtx::new(&sim, assets),
+            native_name,
+            args,
+            this_actor,
+        )
     }
 
     // ── Per-frame drains ────
@@ -1924,6 +1925,11 @@ impl EngineInner {
 
     pub fn patches(&self) -> &[crate::patch::Patch] {
         &self.script_domains.interactables.patches
+    }
+
+    /// Mission script global variables, in script slot order.
+    pub fn script_globals(&self) -> &[i32] {
+        &self.scripts.globals
     }
 }
 

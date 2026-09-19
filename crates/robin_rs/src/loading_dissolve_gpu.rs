@@ -67,37 +67,26 @@ pub(crate) fn build_pipeline(
             },
         ],
     }];
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("quad/loading_dissolve"),
-        layout: Some(&layout),
-        vertex: wgpu::VertexState {
-            module: &module,
-            entry_point: Some("vs_main"),
-            buffers: &[Some(vertex_buffers[0].clone())],
-            compilation_options: Default::default(),
+    crate::renderer::build_render_pipeline(
+        device,
+        "quad/loading_dissolve",
+        &layout,
+        &module,
+        "fs_main",
+        &[Some(vertex_buffers[0].clone())],
+        wgpu::ColorTargetState {
+            format: output_format,
+            blend: None,
+            write_mask: wgpu::ColorWrites::ALL,
         },
-        fragment: Some(wgpu::FragmentState {
-            module: &module,
-            entry_point: Some("fs_main"),
-            targets: &[Some(wgpu::ColorTargetState {
-                format: output_format,
-                blend: None,
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-            compilation_options: Default::default(),
-        }),
-        primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: Some(wgpu::DepthStencilState {
+        Some(wgpu::DepthStencilState {
             format: depth_stencil_format,
             depth_write_enabled: Some(false),
             depth_compare: Some(wgpu::CompareFunction::Always),
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
         }),
-        multisample: wgpu::MultisampleState::default(),
-        multiview_mask: None,
-        cache: None,
-    })
+    )
 }
 
 pub(crate) fn upload_textures(

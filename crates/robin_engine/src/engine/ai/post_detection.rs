@@ -1,6 +1,7 @@
 //! Creation-ordered post-detection NPC update tail.
 
 use super::*;
+use crate::engine::TickCtx;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum NpcPostDetectionTailPhase {
@@ -51,7 +52,7 @@ impl EngineInner {
             return;
         }
         let command = self.actor_command(npc_id);
-        let ai = self.world.entities.expect_ai_controller(
+        let ai = self.entities().expect_ai_controller(
             npc_id,
             format_args!("BORED_BOUNDARY owner {owner} during {phase}"),
         );
@@ -77,9 +78,8 @@ impl EngineInner {
     /// Preserve the original game's ordering.
     pub(crate) fn tick_npc_post_detection_tail_for_npc(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         npc_id: EntityId,
-        assets: &LevelAssets,
     ) {
         self.bored_owner_boundary_debug(npc_id, "entry");
         let entity = self.expect_entity(npc_id, "creation-ordered post-detection owner");
@@ -95,7 +95,7 @@ impl EngineInner {
         );
 
         observe_npc_post_detection_tail_phase(npc_id, NpcPostDetectionTailPhase::Ambush);
-        self.tick_refresh_ambush_points_for_npc(sim, npc_id, assets);
+        self.tick_refresh_ambush_points_for_npc(tcx, npc_id);
 
         observe_npc_post_detection_tail_phase(npc_id, NpcPostDetectionTailPhase::Deafness);
         self.tick_npc_refresh_deafness_for_npc(npc_id);
@@ -104,10 +104,10 @@ impl EngineInner {
         self.tick_npc_busy_edge_detect_for_npc(npc_id);
 
         observe_npc_post_detection_tail_phase(npc_id, NpcPostDetectionTailPhase::Ladder);
-        self.tick_npc_stuck_on_ladder_for_npc(sim, npc_id, assets);
+        self.tick_npc_stuck_on_ladder_for_npc(tcx, npc_id);
 
         observe_npc_post_detection_tail_phase(npc_id, NpcPostDetectionTailPhase::RandomSpeech);
-        self.tick_civilian_random_speech_for_npc(sim, npc_id, assets);
+        self.tick_civilian_random_speech_for_npc(tcx, npc_id);
 
         observe_npc_post_detection_tail_phase(npc_id, NpcPostDetectionTailPhase::LockGate);
         if self.tick_npc_lock_gate_for_npc(npc_id) {
@@ -116,21 +116,21 @@ impl EngineInner {
         }
 
         observe_npc_post_detection_tail_phase(npc_id, NpcPostDetectionTailPhase::SixteenthFrame);
-        self.tick_periodic_ai_for_npc(sim, npc_id, assets);
+        self.tick_periodic_ai_for_npc(tcx, npc_id);
         self.bored_owner_boundary_debug(npc_id, "after_periodic");
 
         observe_npc_post_detection_tail_phase(npc_id, NpcPostDetectionTailPhase::NormalTimer);
-        self.tick_ai_normal_timer_for_npc(sim, npc_id, assets);
+        self.tick_ai_normal_timer_for_npc(tcx, npc_id);
         self.bored_owner_boundary_debug(npc_id, "after_normal_timer");
 
         observe_npc_post_detection_tail_phase(npc_id, NpcPostDetectionTailPhase::MacroTimer);
-        self.tick_ai_macro_timer_for_npc(sim, npc_id, assets);
+        self.tick_ai_macro_timer_for_npc(tcx, npc_id);
 
         observe_npc_post_detection_tail_phase(npc_id, NpcPostDetectionTailPhase::Emoticon);
         self.tick_npc_emoticon_expiration_for_npc(npc_id);
 
         observe_npc_post_detection_tail_phase(npc_id, NpcPostDetectionTailPhase::QueuedStimuli);
-        self.tick_ai_queued_stimuli_for_npc(sim, npc_id, assets);
+        self.tick_ai_queued_stimuli_for_npc(tcx, npc_id);
         self.bored_owner_boundary_debug(npc_id, "exit");
     }
 
@@ -144,20 +144,12 @@ impl EngineInner {
     /// `WonderingCivilianEnemyReactiontime` and would otherwise stick
     /// in those substates indefinitely.
     #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
-    pub(crate) fn tick_ai_normal_timer_for_npc(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        npc_id: EntityId,
-        assets: &LevelAssets,
-    ) {
+    pub(crate) fn tick_ai_normal_timer_for_npc(&mut self, tcx: TickCtx<'_>, npc_id: EntityId) {
         let current_frame = self.control.frame_counter;
         // Snapshot the state we need (immut borrow).  `ai_controller`
         // returns the base controller for both soldiers and civilians.
         let timer_fires = {
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller(npc_id, format_args!("normal-timer NPC"));
+            let ai = self.ai(npc_id, "normal-timer NPC");
 
             ai.timer_is_running
                 && (ai.when_does_timer_ring <= current_frame
@@ -166,25 +158,21 @@ impl EngineInner {
         if !timer_fires {
             return;
         }
-        self.world
-            .entities
-            .expect_ai_controller_mut(npc_id, format_args!("normal-timer NPC before Think"))
+        self.ai_mut(npc_id, "normal-timer NPC before Think")
             .timer_is_running = false;
         let timer_stimulus = crate::ai::Stimulus::new(crate::ai::StimulusType::EventTimer);
-        self.execute_ai_callback(sim, assets, npc_id, &timer_stimulus);
+        self.execute_ai_callback(tcx, npc_id, &timer_stimulus);
     }
 
     /// Deliver the actor's combat-injury callback at its current execution slot.
     #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
     pub(in crate::engine) fn dispatch_combat_injury_think_for_actor_hourglass(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         npc_id: EntityId,
-        assets: &LevelAssets,
     ) {
         self.execute_ai_callback(
-            sim,
-            assets,
+            tcx,
             npc_id,
             &crate::ai::Stimulus::new(crate::ai::StimulusType::EventAfterCombatInjury),
         );
@@ -194,9 +182,8 @@ impl EngineInner {
     #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
     pub(in crate::engine) fn dispatch_optical_stimuli(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         npc_id: EntityId,
-        assets: &LevelAssets,
         stimuli: Vec<crate::ai::Stimulus>,
     ) {
         for (queue_index, stimulus) in stimuli.into_iter().enumerate() {
@@ -211,13 +198,13 @@ impl EngineInner {
             if stimulus
                 .info
                 .live_target()
-                .is_some_and(|target| self.world.entities.get_legacy_slot(target.get()).is_none())
+                .is_some_and(|target| self.entities().get_legacy_slot(target.get()).is_none())
             {
                 tracing::warn!(npc = npc_id.index(), info = ?stimulus.info,
                     "dropping detached detection stimulus after its target left the live world");
                 continue;
             }
-            if self.world.entities.get(npc_id).is_none() {
+            if self.entities().get(npc_id).is_none() {
                 break;
             }
             match stimulus.info {
@@ -245,14 +232,8 @@ impl EngineInner {
                 crate::ai::StimulusType::EventSeesShadow
             );
             if trace_shadow_delivery {
-                let npc = self.world.entities.expect_ai_actor_data(
-                    npc_id,
-                    format_args!("shadow-event receiver before Think"),
-                );
-                let ai = self.world.entities.expect_ai_controller(
-                    npc_id,
-                    format_args!("shadow-event receiver before Think"),
-                );
+                let npc = self.ai_actor(npc_id, "shadow-event receiver before Think");
+                let ai = self.ai(npc_id, "shadow-event receiver before Think");
                 tracing::trace!(
                     target: "shadow_delivery",
                     frame = self.control.frame_counter,
@@ -272,16 +253,10 @@ impl EngineInner {
                     "delivering shadow event to AI"
                 );
             }
-            self.dispatch_think_with_drain(sim, npc_id, &stimulus, assets);
+            self.dispatch_think_with_drain(tcx, npc_id, &stimulus);
             if trace_shadow_delivery {
-                let npc = self.world.entities.expect_ai_actor_data(
-                    npc_id,
-                    format_args!("shadow-event receiver after Think"),
-                );
-                let ai = self.world.entities.expect_ai_controller(
-                    npc_id,
-                    format_args!("shadow-event receiver after Think"),
-                );
+                let npc = self.ai_actor(npc_id, "shadow-event receiver after Think");
+                let ai = self.ai(npc_id, "shadow-event receiver after Think");
                 tracing::trace!(
                     target: "shadow_delivery",
                     frame = self.control.frame_counter,
@@ -308,33 +283,21 @@ impl EngineInner {
     /// script-locked. This is the final unlocked phase of
     /// the original-game NPC update, after both timer kinds.
     #[cfg(test)]
-    pub(crate) fn tick_ai_queued_stimuli(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
+    pub(crate) fn tick_ai_queued_stimuli(&mut self, tcx: TickCtx<'_>) {
         if self.actors_frozen() {
             return;
         }
 
-        let npc_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();
+        let npc_ids: Vec<_> = self.entities().ai_owner_ids().collect();
         for npc_id in npc_ids {
-            self.tick_ai_queued_stimuli_for_npc(sim, npc_id, assets);
+            self.tick_ai_queued_stimuli_for_npc(tcx, npc_id);
         }
     }
 
-    pub(crate) fn tick_ai_queued_stimuli_for_npc(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        npc_id: EntityId,
-        assets: &LevelAssets,
-    ) {
+    pub(crate) fn tick_ai_queued_stimuli_for_npc(&mut self, tcx: TickCtx<'_>, npc_id: EntityId) {
         loop {
             let stimulus = {
-                let ai = self
-                    .world
-                    .entities
-                    .expect_ai_controller_mut(npc_id, format_args!("retained-FIFO NPC"));
+                let ai = self.ai_mut(npc_id, "retained-FIFO NPC");
                 // A previous queued Think may acquire a new lock. The
                 // original loop stops immediately and preserves the rest.
                 if !ai.locks_flag_field.is_empty() || ai.script_locked {
@@ -367,7 +330,7 @@ impl EngineInner {
                 }
                 _ => {}
             };
-            self.dispatch_think_with_drain(sim, npc_id, &stimulus, assets);
+            self.dispatch_think_with_drain(tcx, npc_id, &stimulus);
         }
     }
 }
