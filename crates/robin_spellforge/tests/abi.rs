@@ -10,16 +10,16 @@ use wasm_bindgen_test::wasm_bindgen_test;
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 fn executable_abi_digest_is_stable() {
-    // Contract extraction changed runtime import paths, the build-script source
-    // root, and registry dispatch visibility. The source input scope is unchanged.
-    // Raw source authentication deliberately includes these bytes (including
-    // comments and build.rs). The 274 native signatures/IDs/exposure flags,
-    // 51 aliases, vendored interpreter, limits and wire codec are unchanged.
+    // The pinned identity covers the vendored interpreter, this crate's runtime
+    // sources and the engine contract sources, byte for byte. It last moved
+    // when 44 sequence natives changed their yield policy from `Never` to
+    // `Always`: a guest-visible scheduling change, so packages built against
+    // the earlier identity are deliberately not admitted.
     // Keep the conservative identity boundary: do not normalize source or admit
-    // the previous ABI merely because some edits are behavior-preserving.
+    // a previous ABI merely because some edits are behavior-preserving.
     assert_eq!(
         spellforge_vm_abi(),
-        "spellforge-v1-sha256:6714bc3c41e08bcf534c9e553f20a2298cb5629642e7b4b7b9f422b8770e6eaa"
+        "spellforge-v1-sha256:7cda8880939bc25f99b64e97751ff498504d37ab69433cddce773cd8c972819b"
     );
 }
 
