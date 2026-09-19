@@ -1,6 +1,4 @@
 use crate::campaign::CampaignValue;
-#[cfg(test)]
-use crate::engine::TickCtx;
 use crate::entities::Entities;
 use crate::entity_id::BonusId;
 use crate::player_command::PlayerId;
@@ -459,9 +457,10 @@ mod tests {
         let mut input = InputState::default();
 
         engine.apply_commands(
-            TickCtx::new(&sim, &assets),
+            &sim,
             &mut display,
             &mut input,
+            &assets,
             &[PlayerInput::new(
                 PlayerId(1),
                 PlayerCommand::SetSherwoodTrading { enabled: false },
@@ -470,9 +469,10 @@ mod tests {
         assert!(engine.control.sim_config.sherwood_trading);
 
         engine.apply_commands(
-            TickCtx::new(&sim, &assets),
+            &sim,
             &mut display,
             &mut input,
+            &assets,
             &[PlayerInput::host(PlayerCommand::SetSherwoodTrading {
                 enabled: false,
             })],

@@ -1557,7 +1557,7 @@ impl Engine {
     ) {
         let sim = self.inner.control.simulation_context();
         self.inner
-            .apply_commands(TickCtx::new(&sim, assets), display, input, cmds);
+            .apply_commands(&sim, display, input, assets, cmds);
     }
 
     /// Read-only predicate used by the host to choose between its view-cone

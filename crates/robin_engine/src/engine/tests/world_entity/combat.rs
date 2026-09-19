@@ -90,7 +90,7 @@ fn terminal_sword_provoke_observes_promoted_opponent_before_post_seek_speak() {
         Command::SpeakHeroReachDestination,
         Some(owner),
     ));
-    engine.t_launch_sequence_with(TickCtx::new(&sim, &assets), post_seek);
+    engine.t_launch_sequence_with(&sim, &assets, post_seek);
     let owner_registrations = engine
         .orders
         .sequence_manager

@@ -1164,7 +1164,7 @@ fn frozen_all_lift_wait_rechecks_and_promotes_successor_in_authorizing_slot() {
     engine.t_instruct_owner(&assets, owner, seq_id, 0);
     engine.set_actors_frozen(true);
 
-    engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
     assert_eq!(engine.world.fast_grid_mut().lift_state_mut(0).wait_time, 1);
     assert_eq!(
         engine
@@ -1176,7 +1176,7 @@ fn frozen_all_lift_wait_rechecks_and_promotes_successor_in_authorizing_slot() {
         SequenceState::InProgress
     );
 
-    engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
     assert_eq!(engine.world.fast_grid_mut().lift_state_mut(0).wait_time, 0);
     assert_eq!(
         engine
@@ -1189,7 +1189,7 @@ fn frozen_all_lift_wait_rechecks_and_promotes_successor_in_authorizing_slot() {
         "authorization returns false on the frame that decrements the cooldown to zero"
     );
 
-    engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
     assert_eq!(
         engine
             .orders
@@ -1205,7 +1205,7 @@ fn frozen_all_lift_wait_rechecks_and_promotes_successor_in_authorizing_slot() {
     // The fallback idle Wait is no longer installed inside the
     // terminating owner slot: the null-order guard books it at the start
     // of the owner's next actor frame.
-    engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
     assert_eq!(
         engine
             .world

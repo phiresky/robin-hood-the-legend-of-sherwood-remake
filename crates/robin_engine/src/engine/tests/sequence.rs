@@ -47,7 +47,7 @@ fn retained_shot_prelude_captures_replacement_for_aborted_execution() {
     engine.set_action_state_of(owner, crate::element::ActionState::Waiting);
     engine.elem_mut(owner).sprite.last_action = OrderType::AimingWithBow;
 
-    engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
 
     assert!(engine.human(owner).pending_shoots.is_empty());
     let recovery = engine
@@ -564,7 +564,7 @@ fn redundant_swordfight_entry_releases_selected_wait_before_fresh_idle() {
         .sequence_manager
         .start_sequence_level(old_wait);
     engine.select_sequence_element(owner, Some((old_wait, 0)));
-    engine.t_element_in_progress_with(TickCtx::new(&sim, &assets), old_wait, 0);
+    engine.t_element_in_progress_with(&sim, &assets, old_wait, 0);
     engine.publish_selected_order_as_installed(owner);
     {
         let entity = engine.ent_mut(owner);
@@ -603,7 +603,7 @@ fn redundant_swordfight_entry_releases_selected_wait_before_fresh_idle() {
         old_order_id.get()
     );
 
-    engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
 
     let (fresh_sequence, fresh_index) = engine
         .current_sequence_element_for_actor(owner)

@@ -324,9 +324,10 @@ fn recorded_single_group_move_keeps_adjusted_destination_and_replays_exact_seek(
     arm_group_move_recording(&mut engine, &[pc]);
 
     engine.apply_command(
-        TickCtx::new(&sim, &assets),
+        &sim,
         &mut display,
         &mut input,
+        &assets,
         &PlayerCommand::GroupMove {
             actors: vec![pc],
             destination: MapPoint::new(500.0, 500.0),
@@ -373,9 +374,10 @@ fn recorded_single_group_move_keeps_adjusted_destination_and_replays_exact_seek(
     assert_eq!(layer, 0);
 
     engine.apply_command(
-        TickCtx::new(&sim, &assets),
+        &sim,
         &mut display,
         &mut input,
+        &assets,
         &PlayerCommand::StartMacro {
             pc: Some(pc),
             slot: 0,
@@ -431,9 +433,10 @@ fn recorded_multi_pc_group_move_keeps_actor_order_and_individual_slots_without_l
     arm_group_move_recording(&mut engine, &[pc_a, pc_b]);
 
     engine.apply_command(
-        TickCtx::new(&sim, &assets),
+        &sim,
         &mut display,
         &mut input,
+        &assets,
         &PlayerCommand::GroupMove {
             actors: vec![pc_a, pc_b],
             destination: MapPoint::new(500.0, 500.0),
@@ -529,9 +532,10 @@ fn queued_multi_pc_group_move_records_resolved_formation_without_touching_manual
     let sequence_count_before = engine.orders.sequence_manager.sequence_count();
 
     engine.apply_command(
-        TickCtx::new(&sim, &assets),
+        &sim,
         &mut display,
         &mut input,
+        &assets,
         &PlayerCommand::QueueQuickAction {
             action: crate::profiles::Action::NoAction,
             command: crate::player_command::QueuedQuickActionCommand::GroupMove {
@@ -632,9 +636,10 @@ fn queued_multi_pc_group_move_replays_each_recorded_formation_seek() {
     let manual_b = engine.players.macro_store.get(pc_b).unwrap().clone();
 
     engine.apply_command(
-        TickCtx::new(&sim, &assets),
+        &sim,
         &mut display,
         &mut input,
+        &assets,
         &PlayerCommand::QueueQuickAction {
             action: crate::profiles::Action::NoAction,
             command: crate::player_command::QueuedQuickActionCommand::GroupMove {
@@ -708,9 +713,10 @@ fn group_move_recording_suppresses_only_armed_actor_and_launches_live_sibling() 
     arm_group_move_recording(&mut engine, &[recording_pc]);
 
     engine.apply_command(
-        TickCtx::new(&sim, &assets),
+        &sim,
         &mut display,
         &mut input,
+        &assets,
         &PlayerCommand::GroupMove {
             actors: vec![recording_pc, live_pc],
             destination: MapPoint::new(500.0, 500.0),
@@ -817,9 +823,10 @@ fn delete_macro_command_matches_original_single_vs_all() {
     // Single-PC delete: only pc_a slot 0 cleared; no tetris → pc_a slot 1
     // stays in slot 1.
     engine.apply_command(
-        TickCtx::new(sim, &assets),
+        sim,
         &mut display,
         &mut input,
+        &assets,
         &PlayerCommand::DeleteMacro {
             pc: Some(pc_a),
             slot: 0,
@@ -833,9 +840,10 @@ fn delete_macro_command_matches_original_single_vs_all() {
     // All-PC delete on slot 0: pc_b slot 0 cleared, tetris collapses
     // remaining slots so pc_a/pc_b slot 0 now hold what used to be slot 1.
     engine.apply_command(
-        TickCtx::new(sim, &assets),
+        sim,
         &mut display,
         &mut input,
+        &assets,
         &PlayerCommand::DeleteMacro { pc: None, slot: 0 },
     );
     assert!(engine.has_quick_action(pc_a, 0)); // was pc_a slot 1
@@ -874,9 +882,10 @@ fn start_macro_plays_back_move_steps_and_tetris_collapses() {
     // All-PC StartMacro on slot 0: both PCs launch → slot 0 emptied for
     // both, then tetris shifts slot 1 → slot 0.
     engine.apply_command(
-        TickCtx::new(sim, &assets),
+        sim,
         &mut display,
         &mut input,
+        &assets,
         &PlayerCommand::StartMacro { pc: None, slot: 0 },
     );
 
@@ -911,9 +920,10 @@ fn start_macro_empty_slot_is_noop() {
     let assets = crate::engine::LevelAssets::new();
 
     engine.apply_command(
-        TickCtx::new(sim, &assets),
+        sim,
         &mut display,
         &mut input,
+        &assets,
         &PlayerCommand::StartMacro { pc: None, slot: 0 },
     );
 
@@ -949,9 +959,10 @@ fn start_macro_stops_recording_before_cloning_and_launching() {
     engine.players.qa_recording_for = vec![pc];
 
     engine.apply_command(
-        TickCtx::new(&sim, &assets),
+        &sim,
         &mut display,
         &mut input,
+        &assets,
         &PlayerCommand::StartMacro {
             pc: Some(pc),
             slot: 0,
@@ -983,9 +994,10 @@ fn start_macro_mixed_success_fizzle_preserves_failed_slot_and_skips_tetris() {
     seed_macro_slot(&mut engine, empty_at_target_slot, 1, vec![(110.0, 120.0)]);
 
     engine.apply_command(
-        TickCtx::new(&sim, &assets),
+        &sim,
         &mut display,
         &mut input,
+        &assets,
         &PlayerCommand::StartMacro { pc: None, slot: 0 },
     );
 
@@ -1045,9 +1057,10 @@ fn start_macro_all_success_tetrises_even_pc_with_empty_target_slot() {
     seed_macro_slot(&mut engine, empty_at_target_slot, 1, vec![(70.0, 80.0)]);
 
     engine.apply_command(
-        TickCtx::new(&sim, &assets),
+        &sim,
         &mut display,
         &mut input,
+        &assets,
         &PlayerCommand::StartMacro { pc: None, slot: 0 },
     );
 
@@ -1085,9 +1098,10 @@ fn manual_start_macro_does_not_consume_independent_auto_queue() {
     engine.players.auto_queue_active.push(pc);
 
     engine.apply_command(
-        TickCtx::new(&sim, &assets),
+        &sim,
         &mut display,
         &mut input,
+        &assets,
         &PlayerCommand::StartMacro {
             pc: Some(pc),
             slot: 0,

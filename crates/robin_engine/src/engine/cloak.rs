@@ -425,9 +425,10 @@ mod tests {
                 .unwrap()
                 .clone();
             engine.apply_command(
-                TickCtx::new(&crate::sim_rng::test_context(), &assets),
+                &crate::sim_rng::test_context(),
                 &mut Default::default(),
                 &mut Default::default(),
+                &assets,
                 &PlayerCommand::StartMacro {
                     pc: Some(actor),
                     slot: 0,

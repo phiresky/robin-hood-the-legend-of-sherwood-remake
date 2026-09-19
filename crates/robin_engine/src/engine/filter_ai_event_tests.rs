@@ -2583,7 +2583,7 @@ fn later_action_change_replacement_defers_already_visited_actor_animation() {
         ],
     );
 
-    engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
     assert_eq!(
         engine
             .world
@@ -2597,7 +2597,7 @@ fn later_action_change_replacement_defers_already_visited_actor_animation() {
         "a later callback cannot retroactively replace animation at an already visited slot"
     );
 
-    engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
     assert_eq!(
         engine
             .world
@@ -3101,7 +3101,7 @@ fn wait_timer_nonzero_preserves_original_extra_zero_frame() {
     bind_test_actor_animations(&mut engine, actor, &[OrderType::WaitingUprightBored]);
     let timer_sequence = install_test_wait_timer(&mut engine, &assets, actor, 1);
 
-    engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
     assert_eq!(
         engine
             .world
@@ -3134,7 +3134,7 @@ fn wait_timer_nonzero_preserves_original_extra_zero_frame() {
         "a positive counter is decremented after Execute without completing on the frame it reaches zero"
     );
 
-    engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
     assert_eq!(
         engine
             .orders
@@ -4268,7 +4268,7 @@ fn later_waking_up_done_defers_already_visited_actor_recovery_animation() {
     let sim = crate::sim_rng::test_context();
     let (mut engine, assets, _rescuer, target) = waking_up_creation_order_engine(false);
 
-    engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
     let target_entity = engine
         .world
         .entities
@@ -4286,7 +4286,7 @@ fn later_waking_up_done_defers_already_visited_actor_recovery_animation() {
         "later WAKING_UP DONE cannot retroactively animate an already visited target"
     );
 
-    engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
     assert_eq!(
         engine
             .world
@@ -5710,7 +5710,7 @@ fn fused_owner_walk_does_not_forecast_rng_for_unrelated_actors() {
         "the fixture must prove that resolving the unrelated door actor's forecast would draw"
     );
     let (_, fused_trace) =
-        with_draw_trace(|| engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets)));
+        with_draw_trace(|| engine.t_tick_actor_owner_envelopes_with(&sim, &assets));
 
     assert!(engine.get_entity(owner).is_some());
     assert!(

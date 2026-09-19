@@ -2143,9 +2143,10 @@ mod tests {
         let mut display = HostDisplayState::default();
         let mut input = InputState::default();
         engine.apply_commands(
-            TickCtx::new(&sim, &assets),
+            &sim,
             &mut display,
             &mut input,
+            &assets,
             &[crate::player_command::PlayerInput::new(
                 crate::player_command::PlayerId(1),
                 crate::player_command::PlayerCommand::SetFogOfWar { enabled: true },
@@ -2154,9 +2155,10 @@ mod tests {
         assert!(!engine.control.sim_config.fog_of_war);
 
         engine.apply_command(
-            TickCtx::new(&sim, &assets),
+            &sim,
             &mut display,
             &mut input,
+            &assets,
             &crate::player_command::PlayerCommand::SetFogOfWar { enabled: true },
         );
         assert!(engine.control.sim_config.fog_of_war);
@@ -2164,9 +2166,10 @@ mod tests {
         engine.control.sim_config.fog_of_war = false;
         engine.control.rng = SimulationRng::with_original_replay(Vec::new());
         engine.apply_command(
-            TickCtx::new(&sim, &assets),
+            &sim,
             &mut display,
             &mut input,
+            &assets,
             &crate::player_command::PlayerCommand::SetFogOfWar { enabled: true },
         );
         assert!(!engine.control.sim_config.fog_of_war);

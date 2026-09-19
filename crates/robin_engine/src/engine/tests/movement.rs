@@ -2396,7 +2396,7 @@ fn rider_charge_fresh_id_same_action_replacement_reinitializes_candidates_immedi
     let stale = add_charge_victim(&mut engine, rider_charge_point(origin, 0, 80.0, 30.0));
     let replacement = add_charge_victim(&mut engine, MapPoint::new(900.0, 900.0));
 
-    engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
     assert_eq!(engine.human(rider).sword_sweep.victims, vec![stale]);
 
     engine.place_map(stale, MapPoint::new(900.0, 900.0));
@@ -2413,7 +2413,7 @@ fn rider_charge_fresh_id_same_action_replacement_reinitializes_candidates_immedi
         .unwrap()
         .order_id = replacement_order_id;
 
-    engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
 
     assert_eq!(
         engine.human(rider).sword_sweep.victims,
@@ -2479,14 +2479,14 @@ fn rider_charge_initializes_once_resamples_geometry_and_keeps_wrong_layer_pendin
     ));
     let victim_id = engine.add_test_entity(victim);
 
-    engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
     assert_eq!(engine.human(rider).sword_sweep.victims, vec![victim_id]);
 
     // Move both participants after initialization. The second polygon must
     // use the rider's new sample, while eligibility must not be rerun.
     engine.place_map(rider, MapPoint::new(200.0, 100.0));
     engine.elem_mut(victim_id).set_layer(1);
-    engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
     assert_eq!(
         engine.human(rider).sword_sweep.victims,
         vec![victim_id],
@@ -2505,7 +2505,7 @@ fn rider_charge_interruption_clears_state_and_new_charge_reinitializes() {
         crate::order::OrderType::RiderCharging,
         vec![20, 1],
     );
-    engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
     assert!(engine.live_actor_animation(rider) == Some(crate::order::OrderType::RiderCharging));
 
     let interrupted = engine
@@ -2519,7 +2519,7 @@ fn rider_charge_interruption_clears_state_and_new_charge_reinitializes() {
     };
     *flags = crate::sequence::MoveFlags::empty();
     engine.set_actors_frozen(true);
-    engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
     engine.set_actors_frozen(false);
     assert!(engine.live_actor_animation(rider) != Some(crate::order::OrderType::RiderCharging));
 
@@ -2534,7 +2534,7 @@ fn rider_charge_interruption_clears_state_and_new_charge_reinitializes() {
         .unwrap();
     order.order_type = crate::order::OrderType::RiderCharging;
     order.order_id = fresh_id;
-    engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
     assert!(engine.live_actor_animation(rider) == Some(crate::order::OrderType::RiderCharging));
 }
 
@@ -2626,7 +2626,7 @@ fn rider_charge_frozen_all_fresh_id_same_action_reinitializes_candidates() {
     let replacement = add_charge_victim(&mut engine, MapPoint::new(900.0, 900.0));
     engine.set_actors_frozen(true);
 
-    engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
     assert_eq!(
         engine.actor(rider).last_executed_rider_charge_order_id,
         Some(old_order_id)
@@ -2647,7 +2647,7 @@ fn rider_charge_frozen_all_fresh_id_same_action_reinitializes_candidates() {
         .unwrap()
         .order_id = fresh_id;
 
-    engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
 
     let entity = engine.ent(rider);
     assert_eq!(entity.sprite().last_processed_order_id, u32::MAX);
@@ -2678,8 +2678,8 @@ fn rider_charge_frozen_then_unfrozen_initializes_sprite_motion_on_first_live_tic
     );
     engine.set_actors_frozen(true);
 
-    engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
-    engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
     {
         let entity = engine.ent(rider);
         assert_eq!(entity.sprite().last_processed_order_id, u32::MAX);
@@ -2693,7 +2693,7 @@ fn rider_charge_frozen_then_unfrozen_initializes_sprite_motion_on_first_live_tic
     }
 
     engine.set_actors_frozen(false);
-    engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
 
     let entity = engine.ent(rider);
     assert_eq!(entity.sprite().last_processed_order_id, order_id.get());
@@ -4209,13 +4209,13 @@ fn deviated_blocked_post_step_arrival_pops_intermediate_waypoint_without_snappin
     let actor = engine.actor_mut(mover_id);
     actor.action_state = ActionState::Moving;
 
-    engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
     {
         let pi = engine.ent_mut(mover_id).position_iface_mut();
         pi.deviated = true;
         pi.blocked_count = 1;
     }
-    engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
 
     let mover = engine.ent(mover_id);
     assert_eq!(

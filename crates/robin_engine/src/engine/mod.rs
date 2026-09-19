@@ -2776,12 +2776,7 @@ mod campaign_lifecycle_tests {
         for engine in [&mut first, &mut second] {
             let mut display = super::HostDisplayState::default();
             let mut input = super::InputState::default();
-            engine.apply_command(
-                TickCtx::new(sim, &assets),
-                &mut display,
-                &mut input,
-                &decoded,
-            );
+            engine.apply_command(sim, &mut display, &mut input, &assets, &decoded);
         }
 
         assert_eq!(

@@ -130,7 +130,7 @@ fn halt_keeps_selection_order_and_goal_installed_by_termination_callback() {
     ));
     let mut pending = SequenceElement::new(1, Command::Generic, Some(owner));
     pending.priority = SequencePriority::Normal;
-    let pending = engine.t_launch_element_with(TickCtx::new(&sim, &assets), pending);
+    let pending = engine.t_launch_element_with(&sim, &assets, pending);
     let goal = crate::coordinates::MapPoint::new(23.0, 41.0);
     let callback_assets = assets.clone();
     EngineInner::with_condolation_callback(
@@ -263,7 +263,7 @@ fn retained_shot_refreshes_transition_state_when_aiming_resumes() {
     // Retained work may still carry transition operands from an earlier admission.
     shot.posture_after_transition = Posture::Sitting;
     shot.action_state_after_transition = ActionState::Waiting;
-    let sequence = engine.t_launch_element_with(TickCtx::new(&sim, &assets), shot);
+    let sequence = engine.t_launch_element_with(&sim, &assets, shot);
 
     engine.elem_mut(owner).sprite.last_action = OrderType::AimingWithBow;
     engine.process_shoot_list_for(TickCtx::new(&sim, &assets), owner);
@@ -297,9 +297,9 @@ fn held_bow_instruction_unfreezes_before_retaining_the_shot() {
         let mut shot = SequenceElement::new_interaction(1, Command::ShootBow, Some(owner), None);
         shot.priority = priority;
 
-        let sequence = engine.t_launch_element_with(TickCtx::new(&sim, &assets), shot);
+        let sequence = engine.t_launch_element_with(&sim, &assets, shot);
         if priority == SequencePriority::Normal {
-            engine.t_hourglass_phase_sequences_with(TickCtx::new(&sim, &assets));
+            engine.t_hourglass_phase_sequences_with(&sim, &assets);
         }
 
         let entity = engine.ent(owner);
@@ -339,14 +339,14 @@ fn whistle_translation_is_identical_for_immediate_and_registered_instructions() 
         let mut whistle = SequenceElement::new(1, Command::WhistleCmd, Some(owner));
         whistle.priority = priority;
 
-        let sequence = engine.t_launch_element_with(TickCtx::new(&sim, &assets), whistle);
+        let sequence = engine.t_launch_element_with(&sim, &assets, whistle);
         if priority == SequencePriority::Normal {
             assert_eq!(
                 engine.world.entities.current_element_for_actor(owner),
                 None,
                 "registered instructions must wait for the sequence phase"
             );
-            engine.t_hourglass_phase_sequences_with(TickCtx::new(&sim, &assets));
+            engine.t_hourglass_phase_sequences_with(&sim, &assets);
         }
 
         assert_eq!(
@@ -393,9 +393,9 @@ fn completion_during_translation_does_not_latch_instruction_motion() {
         );
         assertion.priority = priority;
 
-        let sequence = engine.t_launch_element_with(TickCtx::new(&sim, &assets), assertion);
+        let sequence = engine.t_launch_element_with(&sim, &assets, assertion);
         if priority == SequencePriority::Normal {
-            engine.t_hourglass_phase_sequences_with(TickCtx::new(&sim, &assets));
+            engine.t_hourglass_phase_sequences_with(&sim, &assets);
         }
 
         assert_eq!(

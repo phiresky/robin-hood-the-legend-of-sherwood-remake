@@ -375,9 +375,10 @@ fn selected_action_stop_drops_mid_grab_before_the_body_actor_slot() {
     let mut display = crate::engine::HostDisplayState::default();
     let mut input = InputState::default();
     engine.apply_command(
-        TickCtx::new(&sim, &assets),
+        &sim,
         &mut display,
         &mut input,
+        &assets,
         &PlayerCommand::SelectResolvedAction {
             pc_id: carrier,
             action: crate::profiles::Action::HelpToClimb,
@@ -398,7 +399,7 @@ fn selected_action_stop_drops_mid_grab_before_the_body_actor_slot() {
     assert_eq!(selected.command, Command::Wait);
     let expected_order_id = selected.current_order().map(|order| order.order_id);
 
-    engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
     let body_entity = engine.ent(body);
     assert_eq!(body_entity.sprite().last_action, OrderType::BeingTied);
     assert_eq!(
@@ -431,7 +432,7 @@ fn inactive_actor_hourglass_installs_and_advances_idle_wait() {
 
     let sim = crate::sim_rng::test_context();
     let mut assets = engine.test_runtime_assets();
-    engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
 
     let entity = engine.ent(owner);
     assert!(!entity.is_active());
@@ -1179,7 +1180,7 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
     let (_, condolation_order) =
         crate::engine::soldier_helpers::capture_strangle_condolation_order(|| {
             for _ in 0..10 {
-                engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
+                engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
                 if !crate::abilities::selected_ability(
                     &engine.world.entities,
                     &engine.orders.sequence_manager,
@@ -1400,7 +1401,7 @@ fn ability_done_applies_once_retains_owner_and_only_terminated_releases() {
 
     let mut done_count = 0;
     for _ in 0..10 {
-        engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
+        engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
         done_count += usize::from(
             engine.ent(owner).sprite().last_motion_state == Some(crate::sprite::MotionState::Done),
         );
@@ -1435,7 +1436,7 @@ fn ability_done_applies_once_retains_owner_and_only_terminated_releases() {
     );
 
     for _ in 0..10 {
-        engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
+        engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
         if !crate::abilities::selected_ability(
             &engine.world.entities,
             &engine.orders.sequence_manager,

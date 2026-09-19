@@ -2723,11 +2723,12 @@ mod sequence_phase_context_tests {
             .execution_frozen = true;
         let owner = engine.add_test_entity(soldier);
         let sequence = engine.t_launch_element_with(
-            TickCtx::new(&sim, &LevelAssets::default()),
+            &sim,
+            &LevelAssets::default(),
             SequenceElement::new(1, Command::LookRight, Some(owner)),
         );
 
-        engine.t_hourglass_phase_sequences_with(TickCtx::new(&sim, &LevelAssets::default()));
+        engine.t_hourglass_phase_sequences_with(&sim, &LevelAssets::default());
 
         let element = engine
             .orders
@@ -2760,7 +2761,8 @@ mod sequence_phase_context_tests {
         let mut engine = EngineInner::new();
         let owner = engine.add_test_entity(unconscious_lying_soldier());
         let sequence = engine.t_launch_element_with(
-            TickCtx::new(&sim, &LevelAssets::default()),
+            &sim,
+            &LevelAssets::default(),
             SequenceElement::new(1, Command::Wait, Some(owner)),
         );
         engine
@@ -2770,7 +2772,7 @@ mod sequence_phase_context_tests {
             .expect("queued wait")
             .state = SequenceState::Postponed;
 
-        engine.t_hourglass_phase_sequences_with(TickCtx::new(&sim, &LevelAssets::default()));
+        engine.t_hourglass_phase_sequences_with(&sim, &LevelAssets::default());
 
         assert!(
             !engine.human_instruct_rejects_command(owner, Command::Wait),
@@ -3096,12 +3098,12 @@ mod sequence_phase_context_tests {
             Some(owner),
         );
         damage.priority = crate::sequence::SequencePriority::Injury;
-        let damage_sequence = engine.t_launch_element_with(TickCtx::new(&sim, &assets), damage);
+        let damage_sequence = engine.t_launch_element_with(&sim, &assets, damage);
 
         let mut enter =
             crate::sequence::SequenceElement::new_generic(1, Command::EnterSwordfight, Some(owner));
         enter.priority = crate::sequence::SequencePriority::PostponeEverythingButInjuries;
-        engine.t_launch_element_with(TickCtx::new(&sim, &assets), enter);
+        engine.t_launch_element_with(&sim, &assets, enter);
         assert!(matches!(
             engine.orders.sequence_manager.pop_next_hourglass_action(),
             Some(crate::sequence::SequenceAction::InstructOwner {

@@ -353,8 +353,8 @@ fn terminal_callbacks_finish_in_call_order_across_owners() {
                 .orders
                 .sequence_manager
                 .start_sequence_level(sequence);
-            engine.t_element_in_progress_with(TickCtx::new(&sim, &assets), sequence, 0);
-            engine.t_element_terminated_with(TickCtx::new(&sim, &assets), sequence, 0);
+            engine.t_element_in_progress_with(&sim, &assets, sequence, 0);
+            engine.t_element_terminated_with(&sim, &assets, sequence, 0);
             assert_eq!(
                 engine
                     .orders

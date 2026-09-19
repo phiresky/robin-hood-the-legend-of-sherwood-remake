@@ -1263,7 +1263,7 @@ fn waiting_sword_smalltalk_is_installed_by_same_frame_manager_after_owner_execut
             "swordfight evaluation must register, not eagerly instruct, its smalltalk strike"
         );
 
-        engine.t_hourglass_phase_sequences_with(TickCtx::new(&sim, &assets));
+        engine.t_hourglass_phase_sequences_with(&sim, &assets);
         (engine, attacker, wait_sequence)
     }
 
@@ -2101,16 +2101,12 @@ fn minimap_command_outputs_are_derived_from_recorded_inputs() {
         left_mouse_down: true,
         continuing_drag: true,
     };
-    first.apply_command(
-        TickCtx::new(&sim, &assets),
-        &mut first_display,
-        &mut first_input,
-        &focus,
-    );
+    first.apply_command(&sim, &mut first_display, &mut first_input, &assets, &focus);
     replay.apply_command(
-        TickCtx::new(&sim, &assets),
+        &sim,
         &mut replay_display,
         &mut replay_input,
+        &assets,
         &focus,
     );
     assert_eq!(
@@ -2121,30 +2117,28 @@ fn minimap_command_outputs_are_derived_from_recorded_inputs() {
 
     let mouse_up = PlayerCommand::MinimapMouseUp { on_minimap: true };
     first.apply_command(
-        TickCtx::new(&sim, &assets),
+        &sim,
         &mut first_display,
         &mut first_input,
+        &assets,
         &mouse_up,
     );
     replay.apply_command(
-        TickCtx::new(&sim, &assets),
+        &sim,
         &mut replay_display,
         &mut replay_input,
+        &assets,
         &mouse_up,
     );
     let center = PlayerCommand::CenterCameraOnPoint {
         point: crate::coordinates::MapPoint::new(1200.0, 900.0),
     };
-    first.apply_command(
-        TickCtx::new(&sim, &assets),
-        &mut first_display,
-        &mut first_input,
-        &center,
-    );
+    first.apply_command(&sim, &mut first_display, &mut first_input, &assets, &center);
     replay.apply_command(
-        TickCtx::new(&sim, &assets),
+        &sim,
         &mut replay_display,
         &mut replay_input,
+        &assets,
         &center,
     );
     assert_eq!(
@@ -2169,9 +2163,10 @@ fn minimap_command_rejects_center_outside_required_level_bounds() {
     let mut input = InputState::default();
 
     engine.apply_command(
-        TickCtx::new(&sim, &assets),
+        &sim,
         &mut display,
         &mut input,
+        &assets,
         &PlayerCommand::CenterCameraOnPoint {
             point: crate::coordinates::MapPoint::new(2048.0, 10.0),
         },
