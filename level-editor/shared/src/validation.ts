@@ -267,10 +267,13 @@ export function parseProtoLevel(value: unknown): ProtoLevel {
     object(mask, "mask");
     tuple(mask.box_top_left, 2, `masks[${i}].box_top_left`);
     tuple(mask.box_size, 2, `masks[${i}].box_size`);
-    for (const key of ["character_polyline", "projectile_polyline"])
+    // Each polyline is null unless the matching mask_type bit is set.
+    for (const key of ["character_polyline", "projectile_polyline"]) {
+      if (mask[key] === null) continue;
       array(mask[key], `masks[${i}].${key}`).forEach((point, j) =>
         tuple(point, 2, `masks[${i}].${key}[${j}]`),
       );
+    }
     array(mask.obstacle_indices, `masks[${i}].obstacle_indices`).forEach(
       (index) =>
         check(

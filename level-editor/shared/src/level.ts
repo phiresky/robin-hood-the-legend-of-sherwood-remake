@@ -32,8 +32,10 @@ export interface SightObstacle {
 export interface Mask {
   layer: number;
   mask_type: number;
-  character_polyline: Point[];
-  projectile_polyline: Point[];
+  /** null unless `mask_type` has the character bit */
+  character_polyline: Point[] | null;
+  /** null unless `mask_type` has the projectile bit */
+  projectile_polyline: Point[] | null;
   box_top_left: Point;
   box_size: Point;
   /** RLE bytes — still opaque in converter output (todo: converter should emit PNG) */
