@@ -1,7 +1,7 @@
 """Reconstruct the northwest yard fence from reviewed exterior timber runs.
 
-Mask 26 confirms the open rail assembly and its otherwise missing eastern
-returns. Its silhouette constrains projection, not hidden timber depth. The
+Masks 26 and 25 confirm the rear assembly and near cross-fence respectively.
+Their silhouettes constrain projection, not hidden timber depth. The
 screen-space footing path below remains an explicit reconstruction hypothesis.
 """
 import math
@@ -27,7 +27,8 @@ POST_FRACTIONS = ((.13, .42, .76, 1), (0, .19, .41, .64, .84, 1),
 def refine():
     candidates = [o for o in bpy.data.collections['Derby Working'].objects
                   if o.type == 'MESH' and not o.hide_render
-                  and o.get('source_node') == NODE and o.get('asset_group') == ASSET]
+                  and o.get('source_node') == NODE and o.get('asset_group') == ASSET
+                  and o.get('projection_component') != 'near-cross-fence']
     if len(candidates) != 1:
         raise ValueError(f'Expected one visible fence mesh, got {len(candidates)}')
     source = candidates[0]
@@ -112,8 +113,86 @@ def refine():
     source['projection_min_cosine'] = .2
     source['todo'] = 'Verify ground contacts, rail alignment and eastern return silhouette against mask 26; hidden timber depth remains inferred.'
     source.name = 'Lower Bailey Northwest Yard Fence / Connected timber rails and posts'
+    near_report = refine_near_return()
     return {'asset': ASSET, 'source_node': NODE, 'posts': len(posts),
+            'near_return': near_report,
             'palings': sum(map(len, palings)),
             'runs': len(path)-1, 'faces': len(mesh.polygons),
             'nonmanifold_edges': bad_edges, 'degenerate_faces': bad_faces,
             'status': 'Geometry generated; source reprojection and visual review required'}
+
+
+def refine_near_return():
+    """Add the five-rail near return separately so its source ownership stays local."""
+    visible = [o for o in bpy.data.collections['Derby Working'].objects
+               if o.type == 'MESH' and not o.hide_render
+               and o.get('source_node') == NODE and o.get('asset_group') == ASSET]
+    rear = next(o for o in visible if o.get('projection_component') != 'near-cross-fence')
+    existing = [o for o in visible if o.get('projection_component') == 'near-cross-fence']
+    if len(existing) > 1:
+        raise ValueError('Duplicate near cross-fence components')
+    points, faces = [], []
+
+    def beam(a, b, width=2.1, height=2.6):
+        tangent = (b-a).normalized()
+        side = tangent.cross(Vector((0, 0, 1)))
+        if side.length < 1e-8:
+            side = Vector((1, 0, 0))
+        side.normalize()
+        up = side.cross(tangent).normalized()
+        offsets = [-side*width/2-up*height/2, side*width/2-up*height/2,
+                   side*width/2+up*height/2, -side*width/2+up*height/2]
+        start = len(points)
+        points.extend(p+offset for p in (a,b) for offset in offsets)
+        faces.extend(tuple(start+i for i in face) for face in
+                     ((3,2,1,0),(4,5,6,7),(0,1,5,4),(1,2,6,5),(2,3,7,6),(3,0,4,7)))
+
+    west = Vector((594, -1807/SIN, 0))
+    east = Vector((661, -1798/SIN, 0))
+    for height_w, height_e in zip((1.,7.,12.,19.5,26.5), (1.,7.7,16.,24.5,31.5)):
+        beam(west+Vector((0,0,height_w)),east+Vector((0,0,height_e)))
+    for x, height in ((594,34.),(620,35.),(661,47.)):
+        foot=west.lerp(east,(x-west.x)/(east.x-west.x))
+        beam(foot,foot+Vector((0,0,height)),width=3.,height=3.)
+    rear_end=Vector((660,-1792/SIN,0))
+    for z in (8.,18.5,29.5):
+        beam(rear_end+Vector((0,0,z)),east+Vector((0,0,z)),height=3.5)
+
+    mesh=bpy.data.meshes.new('Northwest yard / near cross-fence')
+    inverse=rear.matrix_world.inverted()
+    mesh.from_pydata([inverse@p for p in points],[],faces)
+    mesh.update()
+    bm=bmesh.new();bm.from_mesh(mesh)
+    bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces))
+    bad_edges=sum(not edge.is_manifold for edge in bm.edges)
+    bad_faces=sum(face.calc_area()<1e-8 for face in bm.faces)
+    bm.to_mesh(mesh);bm.free()
+    if bad_edges or bad_faces:
+        raise ValueError(f'Near fence invalid: {bad_edges} edges, {bad_faces} faces')
+    for material in rear.data.materials:
+        mesh.materials.append(material)
+    uv=mesh.uv_layers.new(name='Near fence provisional source projection')
+    uv.active_render=True
+    for loop in mesh.loops:
+        p=rear.matrix_world@mesh.vertices[loop.vertex_index].co
+        uv.data[loop.index].uv=(p.x/1920,1-(-p.y*SIN-p.z*COS)/2752)
+    mesh.attributes.new('reprojection_fallback_material','INT','FACE')
+    obj=existing[0] if existing else bpy.data.objects.new('Lower Bailey Northwest Yard Fence / Near cross-fence',mesh)
+    if existing:
+        obj.data=mesh
+    else:
+        bpy.data.collections['Derby Working'].objects.link(obj)
+        obj.parent=rear.parent
+        obj.matrix_world=rear.matrix_world.copy()
+        for key in rear.keys():
+            obj[key]=rear[key]
+    obj['projection_component']='near-cross-fence'
+    obj['refinement_recipe']='derby-round2-northwest-fence-near-return-v2'
+    obj['reviewed_occlusion_masks']='[25]'
+    obj['part_name']='Near yard cross-fence'
+    obj['todo']='Hidden timber depths remain inferred; reviewed source evidence is mask25 minus foreground cottage11.'
+    rear['projection_component']='rear-yard-fence'
+    bpy.context.view_layer.update()
+    return {'component':obj['projection_component'],'faces':len(mesh.polygons),
+            'rails':5,'posts':3,'joint_connectors':3,
+            'nonmanifold_edges':bad_edges,'degenerate_faces':bad_faces}
