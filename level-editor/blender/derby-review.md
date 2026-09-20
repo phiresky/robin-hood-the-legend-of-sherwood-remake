@@ -479,3 +479,25 @@ must receive fresh projection before another texture-generation pass.
 
 Source art cannot establish unseen geometry uniquely. Record remaining defects
 instead of treating a completed worker pass as a perfect model.
+
+### Latest geometry approvals and sunlight review hold (2026-09-20)
+
+The user explicitly approved the Lower Courtyard Well with its new ground pail
+(`e6dc7f6f0`) and the freshly constrained East Bailey West Curtain. They also
+approved the separately grouped Lower West Access Stair and Lower West Wall
+Turret (`fc822ebce` split, preserving `ed9f7782a` geometry). These approvals
+authorize texture filling after the shared lighting review; they do not mean
+new textures have already been generated or published.
+
+The Lower West Wall Walk remains unapproved: the user requests another logical
+split near its middle. The existing approved stair and turret must remain intact.
+
+The Upper West Curtain remains unapproved because its source cast shadows and
+solid preview disagree. Pause new texture API starts while the shadow audit
+distinguishes sun direction, geometric contact, and missing neighboring casters.
+The current default sun was an artistic estimate, and the isolated solid shadow
+BVH omits other scene objects. Existing frozen view packets also retain their
+recorded lighting; changing a global default alone will not correct them.
+Running requests and all raw/protected results remain retained. No shared light
+setting is accepted as calibrated until measured source landmarks and a second
+asset cross-check support it.
