@@ -173,6 +173,9 @@ def refine_fireplace_arch():
     bm.to_mesh(mesh);bm.free()
     if invalid or degenerate:raise ValueError('Invalid fireplace stone arch')
     mesh.materials.append(bpy.data.materials['Great Keep / fireplace unknown'])
+    for original in source.data.uv_layers:
+        layer=mesh.uv_layers.new(name=original.name)
+        for uv in layer.data:uv.uv=(.5,.5)
     obj=bpy.data.objects.new('Great Keep / Hall fireplace curved stone arch',mesh)
     working.objects.link(obj);obj.parent=source.parent;obj.matrix_world=source.matrix_world.copy()
     for key in source.keys():
@@ -182,6 +185,63 @@ def refine_fireplace_arch():
     obj['projection_component']='hall-fireplace-arch'
     return {'object':obj.name,'faces':len(faces),'nonmanifold_edges':invalid,
             'degenerate_faces':degenerate,'spring_height':spring,'crown_height':crown,'top':top}
+
+
+def refine_front_oriel():
+    """Model the source-visible projecting facade window, tile cap and corbels."""
+    working=bpy.data.collections['Derby Working'];tag='great-keep-front-oriel-v1'
+    if any(o.get('round2_keep_recipe')==tag for o in working.objects):
+        return {'status':'already-applied'}
+    source=next(o for o in working.objects if o.type=='MESH' and not o.hide_render and o.get('source_node')=='building-179' and not o.get('round2_keep_recipe'))
+    normal=Vector((-.5519364476,-.8338860869,0));anchor=Vector((814,-2094.144,0))
+    sine,cosine=math.sin(math.radians(35)),math.cos(math.radians(35))
+    def point(x,y,depth):
+        wy=anchor.y+(depth-normal.x*(x-anchor.x))/normal.y
+        return Vector((x,wy,(-y-wy*sine)/cosine))
+    def level(x,y,depth,z):
+        p=point(x,y,depth);p.z=z;return p
+    bottom=sum(point(x,y,20).z for x,y in ((806,842),(829,850)))/2
+    cap_front=sum(point(x,y,22).z for x,y in ((803,807),(829,816)))/2
+    cap_rear=sum(point(x,y,0).z for x,y in ((814,789),(839,797)))/2
+    top=cap_front-3+(cap_rear-cap_front)*2/23
+    opening_bottom=sum(point(x,y,20).z for x,y in ((814,833),(820,835)))/2
+    opening_top=sum(point(x,y,20).z for x,y in ((814,823),(820,825)))/2
+    outer=[level(x,0,20,z) for x,z in ((806,bottom),(829,bottom),(829,top),(806,top))]
+    inner=[level(x,0,20,z) for x,z in ((814,opening_bottom),(820,opening_bottom),(820,opening_top),(814,opening_top))]
+    vertices=outer+inner+[p-normal*21 for p in outer]+[p-normal*21 for p in inner];faces=[]
+    for index in (10,11):vertices[index].z=cap_rear-3
+    for i in range(4):
+        j=(i+1)%4
+        faces.extend(((i,j,j+4,i+4),(i+8,i+12,j+12,j+8),
+                      (i,i+8,j+8,j),(i+4,j+4,j+12,i+12)))
+    def solid(front,rear):
+        base=len(vertices);vertices.extend(front+rear)
+        faces.extend(tuple(base+i for i in f) for f in ((0,1,2,3),(7,6,5,4),(0,4,5,1),(1,5,6,2),(2,6,7,3),(3,7,4,0)))
+    a,b=[level(x,0,22,cap_front) for x in (803,831)]
+    rear_a,rear_b=a-normal*23,b-normal*23;rear_a.z=rear_b.z=cap_rear
+    solid([a-Vector((0,0,3)),b-Vector((0,0,3)),b,a],
+          [rear_a-Vector((0,0,3)),rear_b-Vector((0,0,3)),rear_b,rear_a])
+    for x in (808.5,817.5,826.5):
+        high=[level(xx,0,18,bottom+.5) for xx in (x-1.6,x+1.6)]
+        low=[level(xx,0,14,bottom-13) for xx in (x-1.6,x+1.6)]
+        solid([low[0],low[1],high[1],high[0]],
+              [low[0]-normal*15,low[1]-normal*15,high[1]-normal*19,high[0]-normal*19])
+    mesh=bpy.data.meshes.new('Great Keep / facade oriel mesh');mesh.from_pydata(vertices,[],faces)
+    bm=bmesh.new();bm.from_mesh(mesh);bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces))
+    invalid=sum(not e.is_manifold for e in bm.edges);degenerate=sum(f.calc_area()<1e-8 for f in bm.faces)
+    bm.to_mesh(mesh);bm.free()
+    if invalid or degenerate:raise ValueError('Invalid facade oriel')
+    mesh.materials.append(bpy.data.materials['Great Keep / fireplace unknown'])
+    for original in source.data.uv_layers:
+        layer=mesh.uv_layers.new(name=original.name)
+        for uv in layer.data:uv.uv=(.5,.5)
+    obj=bpy.data.objects.new('Great Keep / Hall projecting window and tile cap',mesh)
+    working.objects.link(obj);obj.parent=source.parent;obj.matrix_world=Matrix.Identity(4)
+    for key in source.keys():
+        if not key.startswith('reprojection_'):obj[key]=source[key]
+    obj['round2_keep_recipe']=tag;obj['round2_keep_component']='hall-front-oriel';obj['projection_component']='hall-front-oriel'
+    return {'object':obj.name,'faces':len(faces),'nonmanifold_edges':invalid,'degenerate_faces':degenerate,
+            'body_bottom':bottom,'body_top':top,'opening_heights':[opening_bottom,opening_top],'projecting_depth':20}
 
 
 def refine_gallery_posts():
