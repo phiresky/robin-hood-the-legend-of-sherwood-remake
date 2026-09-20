@@ -150,3 +150,84 @@ def recess_front_panel():
                 'degenerate_faces':degenerate,'depth_is_inferred':True}
     finally:
         bpy.data.objects.remove(cutter,do_unlink=True);bpy.data.meshes.remove(mesh)
+
+
+def split_chamber_cover():
+    """Separate the chamber cover from the retained parapet and upper merlons.
+
+    Few structural corners follow the authored cover boundary. This partitions
+    existing masonry; it creates no new silhouette or hidden-room architecture.
+    """
+    collection=bpy.data.collections['Derby Working']
+    existing=[o for o in collection.objects if o.get('upper_gate_patch_component')]
+    if any(o.get('upper_gate_patch_component')=='removable-cover' for o in existing):
+        for part in existing:
+            role=part['upper_gate_patch_component']
+            part['projection_component']='upper-chamber-'+role
+            part['reveal_component_role']=role
+            part['reveal_component_patch_id']='patch-003'
+        return {'already_applied':True}
+    obj=next(o for o in collection.objects if o.type=='MESH' and not o.hide_render
+             and o.get('source_node')=='building-257')
+    bm=bmesh.new();bm.from_mesh(obj.data)
+    original_volume=abs(bm.calc_volume(signed=True));bm.free()
+    profile=[(575,1387),(735,1380),(735,1462),(730,1462),(715,1438),
+             (691,1440),(691,1433),(636,1436),(636,1440),(616,1440),
+             (616,1459),(588,1459),(575,1448)]
+    s,c=math.sin(math.radians(35)),math.cos(math.radians(35))
+    points=[]
+    for depth in (-3,18):
+        for x,sy in profile:
+            y=-2791.9+(x-581.0)*(14.4/149.8)
+            points.append((x,y+depth,(-y*s-sy)/c))
+    n=len(profile);faces=[tuple(reversed(range(n))),tuple(range(n,2*n))]
+    faces += [(i,(i+1)%n,(i+1)%n+n,i+n) for i in range(n)]
+    mesh=bpy.data.meshes.new('Chamber removable facade boundary');mesh.from_pydata(points,[],faces)
+    bm=bmesh.new();bm.from_mesh(mesh);bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces))
+    bm.to_mesh(mesh);bm.free()
+    cutter=bpy.data.objects.new(mesh.name,mesh);bpy.context.scene.collection.objects.link(cutter)
+    cover=obj.copy();cover.data=obj.data.copy();collection.objects.link(cover)
+    cover.name='Upper Bailey Gatehouse / Removable upper chamber facade'
+    try:
+        report=[]
+        for part,operation,role in [(obj,'DIFFERENCE','retained-parapet'),(cover,'INTERSECT','removable-cover')]:
+            modifier=part.modifiers.new('Partition authored chamber facade','BOOLEAN')
+            modifier.operation=operation;modifier.solver='EXACT';modifier.object=cutter
+            bpy.context.view_layer.objects.active=part;bpy.ops.object.modifier_apply(modifier=modifier.name)
+            bm=bmesh.new();bm.from_mesh(part.data)
+            bad=sum(not e.is_manifold for e in bm.edges)
+            degenerate=sum(f.calc_area()<1e-7 for f in bm.faces)
+            volume=abs(bm.calc_volume(signed=True));bm.free()
+            if bad or degenerate or volume<1:raise ValueError(('facade partition',role,bad,degenerate,volume))
+            part['upper_gate_patch_component']=role;part['upper_gate_patch_id']='patch-003'
+            part['projection_component']='upper-chamber-'+role
+            part['reveal_component_role']=role;part['reveal_component_patch_id']='patch-003'
+            part['part_name']='Upper chamber removable facade' if role=='removable-cover' else 'Upper chamber retained merlons and parapet'
+            report.append({'role':role,'object':part.name,'volume':volume,'nonmanifold_edges':bad,'degenerate_faces':degenerate})
+        volume_error=abs(sum(row['volume'] for row in report)-original_volume)/original_volume
+        if volume_error>.0001:raise ValueError(('Partition volume mismatch',volume_error))
+        return {'node':'building-257','patch_id':'patch-003','components':report,
+                'original_volume':original_volume,'relative_volume_error':volume_error,
+                'runtime_visibility_configuration_pending':True}
+    finally:
+        bpy.data.objects.remove(cutter,do_unlink=True);bpy.data.meshes.remove(mesh)
+
+
+def remove_overlapping_stair_ramp():
+    """The closed tread volume replaces its coplanar sloping predecessor."""
+    objects=[o for o in bpy.data.collections['Derby Working'].objects
+             if o.type=='MESH' and not o.hide_render and o.get('source_node')=='building-265']
+    stairs=[o for o in objects if o.get('step_count')]
+    ramps=[o for o in objects if not o.get('step_count')]
+    if len(stairs)!=1:raise ValueError('Expected one modeled roof access stair')
+    if not ramps:return {'already_applied':True}
+    if len(ramps)!=1:raise ValueError('Expected one obsolete sloping predecessor')
+    bm=bmesh.new();bm.from_mesh(stairs[0].data)
+    bad=sum(not e.is_manifold for e in bm.edges);degenerate=sum(f.calc_area()<1e-7 for f in bm.faces)
+    bm.free()
+    if bad or degenerate:raise ValueError(('Replacement stair not closed',bad,degenerate))
+    ramp=ramps[0];ramp.hide_render=True;ramp.hide_set(True);ramp['replaced_by']=stairs[0].name
+    ramp['round2_removed_coplanar_predecessor']=True
+    stairs[0]['round2_stair_overlap_resolved']=True
+    return {'node':'building-265','removed_overlap':ramp.name,'retained':stairs[0].name,
+            'step_count':int(stairs[0]['step_count']),'nonmanifold_edges':bad,'degenerate_faces':degenerate}
