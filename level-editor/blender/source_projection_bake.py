@@ -13,7 +13,7 @@ def bake(map_name, source_path, report_path, receiver_nodes=None,
          occluder_nodes=None, projection_label="source", texels_per_unit=1,
          elevation_deg=35.0, preserve_authored=True, source_mask_manifest=None,
          hidden_fill="neutral", synthesis_cache=None, reproject_authored_nodes=None,
-         hidden_sampler=None):
+         hidden_sampler=None, projection_region=None):
     import bpy
     import numpy as np
     from mathutils import Vector
@@ -70,13 +70,18 @@ def bake(map_name, source_path, report_path, receiver_nodes=None,
         from occlusion_constraints import SourceMaskConstraints
         constraints = SourceMaskConstraints(source_mask_manifest, projection_label, source_hash, (sw, sh))
     ray_count = 0
+    region = None
+    if projection_region:
+        from projection_regions import ProjectionRegion
+        region = ProjectionRegion(projection_region, source_hash, (sw,sh), objects, source_mask_manifest)
+        camera_depth = max((o.matrix_world @ v.co).dot(toward) for o in objects for v in o.data.vertices) + 10
 
-    def visible_at(position):
+    def visible_at(position, visibility_tree=None):
         nonlocal ray_count
         ray_count += 1
         point = Vector(position)
         origin = point + toward * (camera_depth - point.dot(toward))
-        hit, normal, index, distance = tree.ray_cast(origin, -toward)
+        hit, normal, index, distance = (visibility_tree or tree).ray_cast(origin, -toward)
         # Compare depth at the continuous projected sample, not polygon identity
         # at a rounded pixel center: finely subdivided coplanar faces share pixels.
         return hit is not None and (hit - point).length <= .01
@@ -90,6 +95,7 @@ def bake(map_name, source_path, report_path, receiver_nodes=None,
               "synthesis_method": "Example-based synthesis of fully observed donor patches, same asset and projection layer" if hidden_fill == "synthesized" else None,
               "source_mask_manifest": str(Path(source_mask_manifest).resolve()) if source_mask_manifest else None,
               "source_mask_state": constraints.state if constraints else None,
+              "projection_region": projection_region,
               "reproject_authored_nodes": sorted(reproject_authored_nodes),
               "limitations": ["Geometry outside the artwork silhouette must still be corrected geometrically.",
                               "Reveal layers require explicit retained occluders matching their source artwork.",
@@ -156,7 +162,7 @@ def bake(map_name, source_path, report_path, receiver_nodes=None,
             raise ValueError(f"Ownership atlas for {obj.name} exceeds 16384 pixels; lower texels_per_unit or split the mesh")
         atlas = np.zeros((height, width, 4), dtype=np.float32)
         atlas[:, :, 3] = 0 if hidden_fill == "synthesized" else 1
-        known = unknown = mask_rejected = 0
+        known = unknown = mask_rejected = fallback_known = 0
         masks = constraints.for_object(obj) if constraints else None
         for fid, origin, axis, vertical, normal, low, size, w, h, left, bottom in islands:
             yy, xx = np.mgrid[-2:h+2, -2:w+2]
@@ -194,12 +200,21 @@ def bake(map_name, source_path, report_path, receiver_nodes=None,
             accepted = np.zeros(len(qx), dtype=bool)
             in_source = (sx >= 0) & (sx < sw) & (sy >= 0) & (sy < sh)
             mask_allowed = constraints.allowed(masks, sx, sy) if masks is not None else np.ones(len(sx), dtype=bool)
+            primary = region.membership(sx,sy,sh) if region else np.ones(len(sx),dtype=bool)
+            if region:
+                fallback_masks = region.constraints.for_object(obj) if region.constraints else None
+                fallback_allowed = region.constraints.allowed(fallback_masks,sx,sy) if region.constraints else np.ones(len(sx),dtype=bool)
+                mask_allowed = np.where(primary,mask_allowed,fallback_allowed)
             if front:
                 mask_rejected += int(np.count_nonzero(in_source & ~mask_allowed & (best >= 0)))
             if front:
                 for i in np.flatnonzero(in_source & mask_allowed):
-                    accepted[i] = visible_at(positions[i])
+                    accepted[i] = visible_at(positions[i], region.tree if region and not primary[i] else None)
             colors[accepted] = pixels[sy[accepted], sx[accepted]]
+            if region:
+                fallback_samples=accepted & ~primary
+                colors[fallback_samples]=region.pixels[sy[fallback_samples],sx[fallback_samples]]
+                fallback_known += int(np.count_nonzero(fallback_samples & (best>=0)))
             if hidden_sampler is not None:
                 protected_colors = colors[accepted].copy()
                 hidden_sampler(obj, normal, positions, accepted, colors)
@@ -270,6 +285,7 @@ def bake(map_name, source_path, report_path, receiver_nodes=None,
                 layer.data[lid].uv = ((left+q.x/size.x*w)/width, (bottom+q.y/size.y*h)/height)
         report["objects"].append({"object": obj.name, "faces": len(islands),
                                   "known_texels": known, "unknown_texels": unknown,
+                                  "exterior_fallback_known_texels": fallback_known,
                                   "mask_rejected_texels": mask_rejected, "source_mask_constrained": masks is not None,
                                   "atlas_size": [width, height], "authored_faces_preserved": preserved})
         obj['reprojection_ownership_label'] = projection_label

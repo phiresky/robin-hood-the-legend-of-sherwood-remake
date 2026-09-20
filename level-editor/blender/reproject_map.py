@@ -354,6 +354,9 @@ def reproject_layers(manifest_path, report_dir=None, sample_spacing=12.0,
     if ownership_nodes is not None and set(ownership_nodes) - available:
         raise ValueError('Unknown ownership bake receiver nodes')
     for label, source, receivers, occluders in passes:
+        from projection_regions import region_record
+        region = (region_record(manifest,manifest_path.parent,label.removeprefix('interior-'),
+                  source,paths['exterior'],set(exterior)|set(receivers)) if label != 'exterior' else None)
         report = reproject_map(map_name, source, report_dir / (label + ".json"),
                                elevation_deg=manifest["elevation_degrees"],
                                sample_spacing=sample_spacing,
@@ -369,6 +372,7 @@ def reproject_layers(manifest_path, report_dir=None, sample_spacing=12.0,
                 projection_label=label, elevation_deg=manifest['elevation_degrees'],
                 texels_per_unit=texels_per_unit, preserve_authored=preserve_authored,
                 hidden_fill=hidden_fill, source_mask_manifest=source_mask_manifest,
+                projection_region=region,
                 reproject_authored_nodes=sorted(reproject_authored_nodes & set(bake_receivers))))
         per_object = {entry["object"]: entry for entry in report["objects"]}
         for obj in sources:

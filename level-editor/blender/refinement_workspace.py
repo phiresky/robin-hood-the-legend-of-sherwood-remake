@@ -116,8 +116,12 @@ def _review_layers(config):
     partitions = [("exterior", "exterior", sorted(exterior), sorted(exterior))]
     partitions.extend(("interior", "interior-" + patch, sorted(nodes), occluders[patch]) for patch, nodes in interior.items())
     exterior_source = _mission_review_source(config) or str((path.parent / manifest['sources']['exterior']).resolve())
+    from projection_regions import region_record
     return [{"source_path": exterior_source if source == 'exterior' else str((path.parent / manifest["sources"][source]).resolve()),
              "receiver_nodes": nodes, "occluder_nodes": blockers,
+             **({'projection_region': region_record(manifest,path.parent,label.removeprefix('interior-'),
+                 (path.parent / manifest['sources']['interior']).resolve(), exterior_source,
+                 exterior | set(nodes))} if source == 'interior' else {}),
              **({"projection_label": label} if config.get('source_mask_manifest') else {})}
             for source, label, nodes, blockers in partitions]
 

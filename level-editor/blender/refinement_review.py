@@ -146,7 +146,12 @@ def render_review(output_dir, *, scene_name, collection_name, asset_id,
                            definition.get('projection_label', 'exterior'),
                            hashlib.sha256(path.read_bytes()).hexdigest(), (sw, sh))
                            if source_mask_manifest else None)
-            layer = (pixels, tree, layer_owners, constraints)
+            region = None
+            if definition.get('projection_region'):
+                from projection_regions import ProjectionRegion
+                region = ProjectionRegion(definition['projection_region'],
+                    hashlib.sha256(path.read_bytes()).hexdigest(),(sw,sh),all_objects,source_mask_manifest)
+            layer = (pixels, tree, layer_owners, constraints, region)
             layers.append(layer)
             receiver_layers.update({node: layer for node in receivers})
             layer_records.append({**definition, "source_path": str(path),
@@ -154,10 +159,10 @@ def render_review(output_dir, *, scene_name, collection_name, asset_id,
         if any(o.get("source_node") not in receiver_layers for o in objects):
             raise ValueError("Every review object needs an explicit projection receiver layer")
         def without_labels(records):
-            return [{k: v for k, v in row.items() if k != 'projection_label'} for row in records]
+            return [{k: v for k, v in row.items() if k not in ('projection_label','projection_region')} for row in records]
         if baseline and without_labels(baseline["projection_layers"]) != without_labels(layer_records):
             raise ValueError("Projection layer sources or membership changed since baseline")
-        if baseline and baseline.get('source_mask_evidence') and baseline['projection_layers'] != layer_records:
+        if baseline and (baseline.get('source_mask_evidence') or any(r.get('projection_region') for r in baseline['projection_layers'])) and baseline['projection_layers'] != layer_records:
             raise ValueError('Source-mask projection labels changed since baseline')
         scene.render.resolution_x, scene.render.resolution_y = width, height
         scene.render.pixel_aspect_x = scene.render.pixel_aspect_y = 1
@@ -219,7 +224,8 @@ def render_review(output_dir, *, scene_name, collection_name, asset_id,
             bottom, top = min(p.y for p in frame), max(p.y for p in frame)
             direction = camera.matrix_world.to_3x3() @ Vector((0, 0, -1))
             values, known = array("f"), array("f")
-            counts = {"source": 0, "unknown": 0, "background": 0, "mask_rejected": 0}
+            counts = {"source": 0, "unknown": 0, "background": 0, "mask_rejected": 0,
+                      "exterior_fallback_source": 0}
             for y in range(height):
                 for x in range(width):
                     origin = camera.matrix_world @ Vector((left + (x + .5) * (right - left) / width,
@@ -228,8 +234,11 @@ def render_review(output_dir, *, scene_name, collection_name, asset_id,
                     verified = False
                     if hit is not None:
                         owner = owners[triangle]
-                        pixels, tree, layer_owners, constraints = receiver_layers[owner.get("source_node")]
+                        pixels, tree, layer_owners, constraints, region = receiver_layers[owner.get("source_node")]
                         sx, sy = hit.x, hit.dot(source_down)
+                        fallback = bool(region and not region.contains(math.floor(sx),math.floor(sy)))
+                        if fallback:
+                            pixels,tree,layer_owners,constraints = region.pixels.reshape(-1),region.tree,region.owners,region.constraints
                         verified = (normal.dot(toward_source) > max(.05, float(owner.get("projection_min_cosine", .05)))
                                     and 0 <= sx < source_width and 0 <= sy < source_height
                                     and tree.ray_cast(hit + toward_source * .02, toward_source)[0] is None)
@@ -244,6 +253,7 @@ def render_review(output_dir, *, scene_name, collection_name, asset_id,
                         offset = ((source_height - 1 - int(sy)) * source_width + int(sx)) * 4
                         values.extend((*pixels[offset:offset + 3], 1))
                         counts["source"] += 1
+                        counts['exterior_fallback_source'] += int(fallback)
                     elif hit is not None:
                         offset = (y * width + x) * 4
                         values.extend((*solids[index][offset:offset + 3], 1))
@@ -275,12 +285,13 @@ def render_review(output_dir, *, scene_name, collection_name, asset_id,
                         {"source_node": obj.get('source_node'),
                          "constrained": bool(receiver_layers[obj.get('source_node')][3] and
                                              receiver_layers[obj.get('source_node')][3].for_object(obj) is not None),
-                         "state": receiver_layers[obj.get('source_node')][3].state if receiver_layers[obj.get('source_node')][3] else None}
+                         "state": receiver_layers[obj.get('source_node')][3].state if receiver_layers[obj.get('source_node')][3] else None,
+                         "regional_source_selection": bool(receiver_layers[obj.get('source_node')][4])}
                         for obj in objects],
                     "lighting": lighting_record,
                     "lighting_basis": "World-space direction inferred from upper-left reference illumination; not recovered metadata" if lighting_record else "Historical camera-relative Workbench studio",
                     "source_blend": bpy.data.filepath, "object_names": sorted(o.name for o in objects),
-                    "known_rule": "Fresh source pixels, facing source, unoccluded in declared layer, sampled texel ray belongs to the same mesh, inside any reviewed receiver mask and outside its reviewed foreground exclusions. Identical rule in all eight views.",
+                    "known_rule": "Fresh source pixels, facing source, unoccluded in declared layer, sampled texel ray belongs to the same mesh, inside any reviewed receiver mask and outside its reviewed foreground exclusions. Regional receivers use revealed pixels only inside positive native patch alpha; outside uses covered artwork and exterior visibility. Identical rule in all eight views.",
                     "limitations": ["Artwork ownership is constrained only where explicit reviewed masks exist. Unassigned oversized models can still project background onto themselves; compare context and solid silhouettes.",
                                     "Visibility is checked per output pixel; nearest source-texel ownership is conservative at boundaries."]}
         (output / "views.json").write_text(json.dumps(manifest, indent=2) + "\n")
