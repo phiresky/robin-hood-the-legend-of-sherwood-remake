@@ -118,17 +118,37 @@ def refine():
         wheel = Geometry()
         center = axle+v*side*(width/2+2)
         wheel.ring(center, u, up, v, 20, 17, 2.5, count=64)
-        for i in range(10):
-            axis = u*math.cos(i*math.tau/10)+up*math.sin(i*math.tau/10)
+        for i in range(12):
+            phase = math.radians(16.75)+i*math.tau/12
+            axis = u*math.cos(phase)+up*math.sin(phase)
             cross = v.cross(axis).normalized()
-            wheel.box(center+axis*9, axis*8, cross*.65, v*.8)
+            wheel.box(center+axis*9, axis*8, cross*1.3, v*.8)
         wheel.box(center, u*2.2, up*2.2, v*2.1)
         report.append(_replace(objects[label+' spoked wheel'], wheel))
 
-    # Preserve measured inherited extents until support has been inspected.
+    # The inherited barrel base intersects the inclined deck. Preserve the
+    # visible shoulder and lid; shorten only the hidden foot and seat it on a
+    # tapered timber block. This concealed support is a structural inference.
     barrel = Geometry()
     center = Vector((992, -3198, 0))
-    profile = ((23, 8), (27, 9.5), (36, 10), (45, 9.5), (49, 8))
+    horizontal = front-back
+    horizontal.z = 0
+    along = (center-back).dot(horizontal)/horizontal.length_squared
+    deck_center = back.lerp(front, along).z-24.2
+    deck_slope = (front.z-back.z)/horizontal.length
+    base_z = deck_center+abs(deck_slope)*8+.05
+    if not 25 < base_z < 27:
+        raise ValueError(('Unexpected barrel seating height', base_z))
+    wedge = []
+    for top in (False, True):
+        for t in (-7, 7):
+            for s in (-7, 7):
+                p = center+u*s+v*t
+                p.z = base_z if top else deck_center+deck_slope*s-.05
+                wedge.append(p)
+    barrel.add(wedge, [(0,2,3,1),(4,5,7,6),(0,1,5,4),
+                       (2,6,7,3),(0,4,6,2),(1,3,7,5)])
+    profile = ((base_z, 8), (27, 9.5), (36, 10), (45, 9.5), (49, 8))
     # Smooth the observed shoulder transitions using bounded cubic interpolation.
     slopes = []
     for i, (z, radius) in enumerate(profile):
@@ -165,4 +185,6 @@ def refine():
     return {'components': report, 'slatted_end': visible_end,
             'frame_back': list(back), 'frame_front': list(front),
             'width': width, 'axle': list(axle),
-            'pending': 'Measure mask alignment, barrel support and wheel contact'}
+            'barrel_base_z': base_z, 'deck_center_z': deck_center,
+            'spokes': {'count': 12, 'phase_degrees': 16.75, 'half_width': 1.3},
+            'pending': 'Validate native mask authority and far-wheel visibility'}
