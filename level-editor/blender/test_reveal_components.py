@@ -8,7 +8,7 @@ from mathutils import Vector
 from refinement_review import render_review,_save
 from source_projection_bake import bake
 from reveal_components import filter_occluders,filter_receivers
-from interior_layers import projection_receivers,validate_projection_reviews
+from interior_layers import projection_receivers,validate_projection_reviews,projection_occluder_additions,projection_occluders
 
 out=Path(tempfile.mkdtemp(prefix='reveal-components-'))
 def image(name,w,h,rgb):
@@ -28,6 +28,9 @@ assert projection_receivers({'map':'Derby'})['patch-003']==['building-252','buil
 manifest={'map':'Derby','sources':{'interior':revealed},'patches':[{'id':'patch-003','graphic':{'alpha':alpha}}],
     'projection_reviews':{'patch-003':{**canonical,'source_sha256':sha(revealed),'alpha_sha256':sha(alpha)}}}
 assert projection_receivers(manifest)['patch-003']==canonical['receiver_nodes']
+assert projection_occluder_additions({'map':'Derby'})=={}
+assert 'building-252' in projection_occluder_additions(manifest)['exterior']
+assert 'building-267' in projection_occluders(manifest,canonical['receiver_nodes']+['building-267'])['patch-003']
 validate_projection_reviews(manifest,out)
 stale={**manifest,'projection_reviews':{'patch-003':{**manifest['projection_reviews']['patch-003'],'alpha_sha256':'stale'}}}
 try:validate_projection_reviews(stale,out)
@@ -116,6 +119,15 @@ revealed_review=render_review(out/'revealed-review',scene_name=bpy.context.scene
     asset_id='fixture',source_path=covered,width=32,height=32,projection_layers=[definition,exterior_definition],source_mask_manifest=mask_manifest)
 assert revealed_review['views'][0]['counts']==review['views'][0]['counts']
 cover.hide_render=False
+# A regional floor remains a physical blocker for an exterior wall even though
+# its source artwork is selected by a different projection pass.
+near_floor=plane('nearer same-asset floor','building-252',0,16,5,'fixture')
+bpy.context.view_layer.update()
+wall_without_floor=bake('CoverFixture',covered,out/'wall-without-floor.json',receiver_nodes=['building-249'],
+    occluder_nodes=['building-249'],projection_label='exterior')
+wall_with_floor=bake('CoverFixture',covered,out/'wall-with-floor.json',receiver_nodes=['building-249'],
+    occluder_nodes=['building-249','building-252'],projection_label='exterior')
+assert wall_without_floor['known_texels']>0 and wall_with_floor['known_texels']==0
 print(json.dumps({'status':'PASS','output':str(out),'old_known':old['known_texels'],
     'new_known':new['known_texels'],'fallback_known':new['objects'][0]['exterior_fallback_known_texels'],
     'review_counts':review['views'][0]['counts']}))

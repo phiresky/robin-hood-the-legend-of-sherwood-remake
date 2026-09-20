@@ -5,6 +5,10 @@
   "source_sha256": "0b0765395061e9faf5058b7d2271f5ae3a3e90a65f258801c20b1a7de565a4ea",
   "alpha_sha256": "8e0c4996d6c20b291afd081582403280e75202770ddc2b6f7ec43c0ae6f9e847",
   "receiver_nodes": ["building-249", "building-252", "building-253", "building-263", "building-265"],
+  "occluder_additions": {
+    "exterior": ["building-249", "building-252", "building-253", "building-263", "building-265"],
+    "interior-patch-003": ["building-267"]
+  },
   "exclude_occluder_components": [
     {"source_node": "building-257", "projection_component": "upper-chamber-removable-cover", "patch_id": "patch-003"},
     {"source_node": "building-263", "projection_component": "upper-chamber-west-removable-cover", "patch_id": "patch-003"}

@@ -63,3 +63,11 @@ fallback with visible and hidden covers, default compatibility, geometry
 invariance, exact source binding, separate receivers sharing one canonical ID,
 masked preview metadata, and the frozen-review guard. Runtime reveal visibility is separate from this
 projection configuration.
+
+The optional `occluder_additions` in the canonical review keeps regional
+receivers249/252/253/263/265 physically present in the exterior BVH. A receiver's
+source layer does not make it transparent to another receiver: the nearer upper
+floor must block a wall from accepting its texels. The retained raised bridge267
+also participates in interior occlusion. Covered fallback includes this full
+covered geometry. Reviews without this field retain their frozen behavior.
+The fixture checks that a nearer same-asset floor blocks an exterior wall.

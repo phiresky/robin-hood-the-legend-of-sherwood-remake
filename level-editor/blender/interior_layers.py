@@ -65,7 +65,8 @@ def projection_occluders(manifest, available_nodes):
     """
     receivers = projection_receivers(manifest)
     available = set(available_nodes)
-    return {patch: sorted((set(nodes) | {
+    additions=projection_occluder_additions(manifest)
+    return {patch: sorted((set(nodes) | set(additions.get('interior-'+patch,[])) | {
         f"building-{n:03d}" for n in DERBY_RETAINED_PROJECTION_OCCLUDERS[patch]
     }) & available) for patch, nodes in receivers.items()}
 
@@ -116,6 +117,10 @@ def projection_reviews(manifest):
                   'interior-patch-003':[{'source_node':'building-263','projection_components':['upper-chamber-west-retained-wall'],'patch_id':patch}]}
         if review.get('receiver_components')!=expected:
             raise ValueError('Unexpected upper gate component receiver partition')
+        additions=review.get('occluder_additions')
+        if additions is not None and additions!={'exterior':['building-249','building-252','building-253','building-263','building-265'],
+                                                 'interior-patch-003':['building-267']}:
+            raise ValueError('Unexpected upper gate physical occluder additions')
     return reviews
 
 
@@ -139,6 +144,14 @@ def projection_receiver_components(manifest):
     for review in projection_reviews(manifest).values():
         for label,selectors in review['receiver_components'].items():
             result.setdefault(label,[]).extend(selectors)
+    return result
+
+
+def projection_occluder_additions(manifest):
+    result={}
+    for review in projection_reviews(manifest).values():
+        for label,nodes in review.get('occluder_additions',{}).items():
+            result.setdefault(label,[]).extend(nodes)
     return result
 
 

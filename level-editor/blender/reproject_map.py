@@ -352,7 +352,9 @@ def reproject_layers(manifest_path, report_dir=None, sample_spacing=12.0,
     recipe_hash = hashlib.sha256(json.dumps(interiors, sort_keys=True).encode()).hexdigest()
     retained = roles.projection_occluders(manifest, available)
     component_exclusions = roles.projection_component_exclusions(manifest)
-    passes = [("exterior", paths["exterior"], exterior, exterior)]
+    additions=roles.projection_occluder_additions(manifest)
+    exterior_occluders=sorted(set(exterior) | (set(additions.get('exterior',[])) & available))
+    passes = [("exterior", paths["exterior"], exterior, exterior_occluders)]
     passes.extend(("interior-" + patch, paths["interior"], sorted(nodes), retained[patch])
                   for patch, nodes in sorted(interiors.items()))
     reports = []
@@ -368,7 +370,7 @@ def reproject_layers(manifest_path, report_dir=None, sample_spacing=12.0,
         receiver_selectors=receiver_components.get(label)
         from projection_regions import region_record
         region = (region_record(manifest,manifest_path.parent,label.removeprefix('interior-'),
-                  source,paths['exterior'],set(exterior)|set(receivers),covered_components=exclusions) if label != 'exterior' else None)
+                  source,paths['exterior'],set(exterior_occluders)|set(receivers),covered_components=exclusions) if label != 'exterior' else None)
         report = reproject_map(map_name, source, report_dir / (label + ".json"),
                                elevation_deg=manifest["elevation_degrees"],
                                sample_spacing=sample_spacing,
