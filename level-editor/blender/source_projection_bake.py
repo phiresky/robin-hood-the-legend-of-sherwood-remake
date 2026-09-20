@@ -175,7 +175,16 @@ def bake(map_name, source_path, report_path, receiver_nodes=None,
                 weights = np.stack((wa, wb, 1-wa-wb), axis=1)
                 margin = weights.min(axis=1)
                 take = margin > best
-                positions[take] = weights[take] @ np.asarray(ps)
+                selected = weights[take].copy()
+                # Atlas gutters extend beyond the polygon, not beyond its real
+                # surface. Extrapolated 3D positions fail depth ownership on
+                # curved adjacent facets and produce gray seams under filtering.
+                # Clamp only outside samples onto the triangle boundary;
+                # interior source samples retain their exact positions.
+                outside = margin[take] < 0
+                selected[outside] = np.maximum(selected[outside], 0)
+                selected[outside] /= selected[outside].sum(axis=1, keepdims=True)
+                positions[take] = selected @ np.asarray(ps)
                 best[take] = margin[take]
             colors = np.ones((len(qx), 4), dtype=np.float32)
             colors[:, :3] = .16 + .16*max(0, normal.dot(light))

@@ -21,6 +21,8 @@ bpy.context.view_layer.update()
 counts = {'known':0, 'unknown':0}
 
 def safe(obj, normal, positions, accepted, colors):
+    assert positions[:,0].min() >= 1-1e-6 and positions[:,0].max() <= 7+1e-6
+    assert positions[:,1].min() >= -10-1e-6 and positions[:,1].max() <= -2+1e-6
     counts['known'] += int(accepted.sum())
     counts['unknown'] += int((~accepted).sum())
     colors[~accepted,:3] = (1,0,1)

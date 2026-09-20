@@ -74,6 +74,14 @@ def apply(manifest_path, image_path, output_dir, *, texels_per_unit=2, map_name=
         raise ValueError('Exact input sheet has not been approved')
     if approval.get('asset_id') != manifest['asset_id']:
         raise ValueError('Approval asset does not match camera manifest')
+    reviewed = Path(manifest['reviewed_packet'])
+    if hashlib.sha256((reviewed/'textured.png').read_bytes()).hexdigest() != input_hash:
+        raise ValueError('Reviewed source sheet changed after approval')
+    if hashlib.sha256((reviewed/'views.json').read_bytes()).hexdigest() != manifest['reviewed_manifest_sha256']:
+        raise ValueError('Reviewed cameras or lighting changed after approval')
+    for layer in manifest['projection_layers']:
+        if hashlib.sha256(Path(layer['source_path']).read_bytes()).hexdigest() != layer['source_sha256']:
+            raise ValueError('Original projection artwork changed after approval')
     image_hash = hashlib.sha256(Path(image_path).read_bytes()).hexdigest()
     generated, mask = _read(image_path), _read(manifest_path.parent/'mask.png')
     height, width = generated.shape[:2]

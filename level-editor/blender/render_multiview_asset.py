@@ -8,7 +8,7 @@ import render_views
 
 def render(manifest_path, output_dir, modes=("textured",), width=384):
     manifest=json.loads(Path(manifest_path).read_text())
-    scene=bpy.data.scenes['Derby Refinement']
+    scene=bpy.data.scenes[manifest.get('scene_name','Derby Refinement')]
     hidden=[(o,o.hide_render) for o in scene.objects if o.type=='MESH']
     previous_size=(scene.render.resolution_x,scene.render.resolution_y)
     cameras=[];views={}
