@@ -480,7 +480,7 @@ must receive fresh projection before another texture-generation pass.
 Source art cannot establish unseen geometry uniquely. Record remaining defects
 instead of treating a completed worker pass as a perfect model.
 
-### Latest geometry approvals and sunlight review hold (2026-09-20)
+### Latest geometry approvals and sunlight review hold (2026-09-21)
 
 The user explicitly approved the Lower Courtyard Well with its new ground pail
 (`e6dc7f6f0`) and the freshly constrained East Bailey West Curtain. They also
