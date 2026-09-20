@@ -5,6 +5,17 @@ Reviewed does not mean finished: record remaining defects and uncertain geometry
 Workers use separate Blender copies; the primary session integrates reviewed
 recipes, reruns layered projection, and publishes the map and standalone assets.
 
+**User approval is required before each GPT Sunburst texture-fill pass.** Show
+the model's current solid and source-only textured views, disclose remaining
+geometry issues, and record explicit approval for that revision. Technical
+acceptance by a worker or coordinator is not user approval. Further geometry
+changes invalidate the approved revision and require another review. Do not
+start a Sunburst request while approval is pending.
+
+Current approval queue: West Cottage and South Gatehouse were shown for review;
+both are awaiting user approval. Keep, East Hall, East Watchtower and Postern
+have substantial geometry follow-ups and are not ready for texture generation.
+
 For each asset check every component against source artwork, reference and two
 oblique views in textured and solid modes; inspect silhouette, roof/wall joins,
 openings, stairs, surface orientation, texture ownership, hidden-face fallback,

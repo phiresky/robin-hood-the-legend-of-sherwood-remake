@@ -291,6 +291,9 @@ Handoff `model.blend`, the recipe, `review.md`, and `modified/` only after valid
 passes and you inspect context, solid and textured sheets. Do not publish the
 whole copied scene: the coordinator imports only this asset into the main map.
 Texture synthesis is a separate step after geometry review.
+Do not run GPT Sunburst texture generation yourself. The coordinator must show
+the current solid and source-only textured views to the user and receive explicit
+approval for this geometry revision before any Sunburst texture-fill request.
 '''
     (workspace / "INSTRUCTIONS.md").write_text(instructions)
     bpy.ops.wm.save_as_mainfile(filepath=str(workspace / "model.blend"))
