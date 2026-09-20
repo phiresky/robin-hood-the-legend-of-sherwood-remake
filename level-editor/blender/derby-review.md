@@ -20,7 +20,7 @@ means the geometry is included in the latest map export, not that all defects
 are resolved. West Cottage's fourth geometry pass and generated texture bake are
 now published; the generated hidden details remain inferred.
 
-Latest map publication: `work/derby-refinement/ownership-level-roof-publish/derby.scene.glb`
+Latest map publication: `work/derby-refinement/synthesized-ownership-publish-v2/derby.scene.glb`
 to `library/scenes/derby-volumes.scene.glb`, with the document fingerprint updated.
 It contains 34 groups, 270 canonical parts, 306 meshes, and 154 modeled steps.
 Browser acceptance passed: 34 named groups, 270 parts, 14 stair assemblies,
@@ -155,9 +155,30 @@ not exclusive floor ownership. Reveal003 switches global217–220 to221–229.
 Bridge masks230–232 describe foreground occlusion, not a complete deck silhouette.
 Use masks alongside geometric visibility, never in place of it.
 
-Editor appearance follow-up is in progress: restore optional synthesized hidden
-surfaces and smooth texture filtering. Source-only worker evidence must retain
-neutral unknown surfaces; inferred fill must not become projection evidence.
+Editor appearance follow-up is published: optional synthesized hidden
+surfaces and smooth texture filtering. The updated map and all 34 standalone
+assets are now published. The editor defaults to smooth textures (linear,
+trilinear mipmaps and anisotropy), with persisted View switches for smoothing and
+synthesized hidden surfaces. Source-only worker evidence retains neutral unknown
+surfaces; inferred fill never becomes projection evidence.
+
+The new texture refresh produced 170 example-based synthesis tiles across five
+projection layers, with 414 thin-donor mirrored fallbacks. Geometry, world
+transforms, names and groups match the previous checkpoint exactly; all six
+protected authored/AI texture hashes are unchanged. There are 4,468,557 observed
+texels and 18,389,748 unobserved texels; 70,364 cottage texels remain neutral
+because no eligible source donor exists on those meshes. Ownership is recorded
+separately from RGB in opaque exported materials. Tests cover source RGB
+preservation, GPU alpha-zero RGB preservation, source-only display, filtering,
+and unchanged geometry. Final published-map browser verification passed:
+301 textures, 300 synthesized materials, 4,815 changed samples when toggled,
+unchanged opacity, and exact image restoration when toggled back. Oblique
+comparisons are `verification/synthesis-oblique-on.png` and
+`verification/synthesis-oblique-off.png`. Visual inspection confirms filled
+back surfaces; sparse donors still produce conspicuous color bands and repeated
+patterns, so this is a configurable preview rather than finished texture art.
+Saved model: `derby-refinement.blend`; previous checkpoint:
+`derby-refinement-before-synthesis.blend`.
 
 Latest reported defects corrected and published:
 - Cottage ridge is level at 121.53 and long eaves at 87. The local front lip drops
