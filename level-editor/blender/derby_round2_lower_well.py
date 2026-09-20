@@ -12,6 +12,52 @@ from mathutils import Matrix, Vector
 TAG = "lower-well-round2-curved-iron-v1"
 
 
+def split_projection_components():
+    """Separate evidence receivers without moving or rebuilding any surface."""
+    from collections import Counter
+    working = bpy.data.collections["Derby Working"]
+    objects = [o for o in working.all_objects if o.type == "MESH"
+               and o.get("source_node") == "building-046" and not o.hide_render]
+    if len(objects) == 3 and {o.get("projection_component") for o in objects} == {"shaft", "frame", "bucket"}:
+        return {"reused": True}
+    if len(objects) != 1 or len(objects[0].data.polygons) != 1196:
+        raise ValueError("Component split requires the reviewed 1196-face well")
+    original = objects[0]
+
+    def surfaces(items):
+        return Counter(tuple(sorted(tuple(o.matrix_world @ o.data.vertices[i].co)
+                                    for i in p.vertices))
+                       for o in items for p in o.data.polygons)
+
+    before = surfaces(objects)
+    roles = [("shaft", 0, 180), ("frame", 180, 1132), ("bucket", 1132, 1196)]
+    copies = [original]
+    for _ in range(2):
+        obj = original.copy()
+        obj.data = original.data.copy()
+        working.objects.link(obj)
+        copies.append(obj)
+    original.data = original.data.copy()
+    validation = {}
+    for obj, (role, start, end) in zip(copies, roles):
+        bm = bmesh.new()
+        bm.from_mesh(obj.data)
+        bm.faces.ensure_lookup_table()
+        bmesh.ops.delete(bm, geom=[f for f in bm.faces if not start <= f.index < end], context="FACES")
+        validation[role] = {"nonmanifold_edges": sum(not e.is_manifold for e in bm.edges),
+                            "degenerate_faces": sum(f.calc_area() < 1e-8 for f in bm.faces)}
+        if any(validation[role].values()):
+            raise ValueError(validation)
+        bm.to_mesh(obj.data)
+        bm.free()
+        obj["projection_component"] = role
+        obj["round2_component_role"] = role
+        obj.name = "Lower Bailey Well / " + role.capitalize()
+    if surfaces(copies) != before:
+        raise ValueError("Projection split changed world-space surfaces")
+    return {"reused": False, "exact_world_surfaces": True, "validation": validation}
+
+
 def refine():
     objects = [o for o in bpy.data.collections["Derby Working"].all_objects
                if o.type == "MESH" and o.get("source_node") == "building-046"
