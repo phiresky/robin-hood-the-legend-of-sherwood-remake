@@ -117,12 +117,14 @@ export class EditorViewport {
     const targetDepth = target.clone().sub(camera.position).dot(forward);
     // Preserve the map's projected envelope, not just the target plane. Nearby
     // walls otherwise grow dramatically as the lens moves closer at wide angles.
-    // Translation must not refit the lens: panning moves the camera parallel to
-    // the floor, without changing its height or zoom. Ignore quaternion noise
-    // introduced by controls recomputing lookAt after a translation.
-    const framingKey = [halfHeight, aspect, this.perspective, ...camera.quaternion.toArray().map(v => v.toFixed(10))].join(",");
+    // Pan and orbit are rigid camera movements. Refit only when lens/view
+    // dimensions change, otherwise rotating toward a wider map silhouette
+    // silently dollies the camera and moves the point under the cursor.
+    // Store the fitted distance at unit zoom: wheel zoom must dolly freely,
+    // rather than refitting the entire map and converging on its front surface.
+    const framingKey = [this.frustum, aspect, this.perspective].join(",");
     if (framingKey === this.framingKey) {
-      distance = this.framingDistance;
+      distance = this.framingDistance / camera.zoom;
     } else if (!this.framingBounds.isEmpty()) {
       const inverse = camera.quaternion.clone().invert();
       const projectedPoints: THREE.Vector3[] = [];
@@ -147,7 +149,7 @@ export class EditorViewport {
       }
     }
     this.framingKey = framingKey;
-    this.framingDistance = distance;
+    this.framingDistance = distance * camera.zoom;
     lens.position.copy(camera.position).addScaledVector(forward, targetDepth - distance);
     lens.quaternion.copy(camera.quaternion);
     lens.fov = this.perspective;
@@ -667,6 +669,7 @@ export class EditorViewport {
 
   private applyState(st: CameraState) {
     if (!this.camera || !this.orbit) return;
+    this.framingKey = "";
     this.flight = null;
     this.camera.position.copy(st.position);
     this.camera.quaternion.copy(st.quaternion);

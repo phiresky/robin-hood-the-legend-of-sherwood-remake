@@ -54,6 +54,9 @@ other directional sprites face the camera continuously. Single-view sprites
 remain fixed in the world.
 Perspective panning translates the camera along the floor at a fixed height,
 without refitting the lens as the map moves across the view.
+Right-drag orbit keeps a fixed distance to the point under the cursor. Wheel zoom
+moves the lens closer without refitting the whole map, so repeated zoom-in steps
+continue to magnify the scene.
 Extreme angles remain an approximation because
 the sprites do not contain unseen elevation views. Legacy sprite color keys are
 decoded into color and authored shadow layers. Shadows project onto the support

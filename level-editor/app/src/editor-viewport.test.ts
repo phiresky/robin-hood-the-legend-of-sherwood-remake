@@ -300,6 +300,77 @@ test("perspective pan translates camera and target along the floor without refit
   viewport.dispose();
 });
 
+test("perspective right-drag orbits an off-center floor pivot without changing distance or its screen position", () => {
+  const { viewport } = fixture();
+  const camera = new THREE.OrthographicCamera(-2000, 2000, 1000, -1000);
+  camera.position.set(1800, 3000, 6000);
+  camera.lookAt(0, 0, 0);
+  camera.updateMatrixWorld();
+  const orbit = new OrbitControls(camera);
+  Object.assign(viewport, { camera, orbit, frustum: 1000, container: { clientWidth: 800, clientHeight: 400 }, framingBounds: new THREE.Box3(new THREE.Vector3(-1800, -200, -500), new THREE.Vector3(1800, 900, 500)) });
+  const access = viewport as unknown as {
+    activeCamera(): THREE.Camera;
+    setupCursorOrbit(el: HTMLCanvasElement): void;
+    objectsRoot: THREE.Group;
+  };
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(20000, 20000), new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
+  access.objectsRoot.add(floor);
+  floor.updateWorldMatrix(true, false);
+  const element = Object.assign(new EventTarget(), {
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 400 }),
+    setPointerCapture() {}, releasePointerCapture() {}, hasPointerCapture: () => false,
+  });
+  access.setupCursorOrbit(element as unknown as HTMLCanvasElement);
+  const pointer = (type: string, x: number, y: number) => element.dispatchEvent(Object.assign(new Event(type), { button: 2, pointerId: 1, clientX: x, clientY: y }));
+  for (const fov of [1, 15, 45, 65]) {
+    viewport.setPerspective(fov);
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(new THREE.Vector2(0.25, -0.1), access.activeCamera());
+    const pivot = ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), new THREE.Vector3())!;
+    assert.ok(pivot);
+    const initialDistance = access.activeCamera().position.distanceTo(pivot);
+    pointer("pointerdown", 500, 220);
+    for (const [x, y] of [[600, 220], [680, 160], [440, 260], [500, 220]]) {
+      pointer("pointermove", x!, y!);
+      const lens = access.activeCamera();
+      assert.ok(Math.abs(lens.position.distanceTo(pivot) - initialDistance) < 1e-7, `orbit distance at ${fov} degrees`);
+      const projected = pivot.clone().project(lens);
+      assert.ok(Math.abs(projected.x - 0.25) < 1e-8);
+      assert.ok(Math.abs(projected.y + 0.1) < 1e-8);
+    }
+    pointer("pointerup", 500, 220);
+    assert.ok(Math.abs(access.activeCamera().position.distanceTo(pivot) - initialDistance) < 1e-7);
+  }
+  viewport.dispose();
+  floor.geometry.dispose(); floor.material.dispose();
+});
+
+test("repeated perspective wheel zoom keeps approaching the ground and enlarging objects", () => {
+  for (const fov of [1, 15, 45, 65]) {
+    const { viewport } = fixture();
+    const camera = new THREE.OrthographicCamera(-2000, 2000, 1000, -1000);
+    camera.position.set(0, 3000, 6000);
+    camera.lookAt(0, 0, 0);
+    camera.updateMatrixWorld();
+    const orbit = new OrbitControls(camera);
+    Object.assign(viewport, { camera, orbit, frustum: 1000, container: { clientWidth: 800, clientHeight: 400 }, framingBounds: new THREE.Box3(new THREE.Vector3(-1800, 0, -1500), new THREE.Vector3(1800, 900, 1500)) });
+    const access = viewport as unknown as { activeCamera(): THREE.Camera };
+    viewport.setPerspective(fov);
+    const initialHeight = access.activeCamera().position.y;
+    const initialSize = new THREE.Vector3(1, 0, 0).project(access.activeCamera()).x;
+    for (let step = 1; step <= 8; step++) {
+      orbit.dollyIn(0.5);
+      const lens = access.activeCamera();
+      assert.ok(Math.abs(lens.position.y - initialHeight / 2 ** step) < 1e-7);
+      const size = new THREE.Vector3(1, 0, 0).project(lens).x;
+      assert.ok(Math.abs(size / initialSize - 2 ** step) < 1e-6, `continued magnification at ${fov} degrees, step ${step}`);
+    }
+    for (let step = 0; step < 8; step++) { orbit.dollyOut(0.5); access.activeCamera(); }
+    assert.ok(Math.abs(access.activeCamera().position.y - initialHeight) < 1e-7);
+    viewport.dispose();
+  }
+});
+
 test("narrow perspective uses tight scene bounds instead of losing depth precision", () => {
   const { viewport } = fixture();
   const camera = new THREE.OrthographicCamera(-2000, 2000, 1000, -1000);
