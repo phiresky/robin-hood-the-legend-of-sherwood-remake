@@ -21,6 +21,8 @@ mod dependency_plan;
 mod discovery;
 #[path = "convert_datadir/image_transform.rs"]
 mod image_transform;
+#[path = "convert_datadir/mask_pngs.rs"]
+mod mask_pngs;
 #[path = "convert_datadir/mission_planning.rs"]
 mod mission_planning;
 #[path = "convert_datadir/packaging.rs"]
@@ -89,6 +91,11 @@ struct Args {
     /// Target format.
     #[arg(short, long, value_enum, default_value_t = OutFormat::Hackable)]
     format: OutFormat,
+
+    /// Export only mask PNG sidecars from an existing hackable input datadir.
+    /// Input and output may be the same; existing level JSON is left untouched.
+    #[arg(long, conflicts_with_all = ["force", "resume", "web_content_manifest"])]
+    mask_pngs_only: bool,
 
     /// Shipping: write the canonical browser Full-content package manifest.
     /// It binds every converted byte to the exact source Data/locale closure.
@@ -346,6 +353,12 @@ fn main() -> Result<()> {
 
     if !args.input.is_dir() {
         bail!("input is not a directory: {}", args.input.display());
+    }
+    if args.mask_pngs_only {
+        if !matches!(args.format, OutFormat::Hackable) {
+            bail!("--mask-pngs-only requires --format hackable");
+        }
+        return mask_pngs::backfill(&args.input, &args.output);
     }
     if args.output.exists() {
         if args.force {
@@ -1224,6 +1237,7 @@ fn convert_rhp(src: &Path, dst: &Path) -> Result<()> {
         LevelFormat::detect(&tag).map_err(|e| anyhow!("format: {e:?}"))?
     };
     let proto = load_proto_level(&mut reader, format).map_err(|e| anyhow!("rhp: {e:?}"))?;
+    mask_pngs::export(dst, &proto.masks)?;
     write_json_pretty(dst, &proto)
 }
 

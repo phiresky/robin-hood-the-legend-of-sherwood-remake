@@ -9,6 +9,12 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Hackable scenery-occlusion PNGs.** Datadir conversion exports every level's
+  authored occlusion bitmaps as lossless grayscale PNGs with map placement,
+  global/per-layer identities and obstacle references. Existing hackable datadirs
+  can add these sidecars using `convert_datadir --mask-pngs-only` without rewriting
+  level JSON or converting other assets; see [modding tools](MODDING_TOOLS.md).
+
 - **3D editor mission previews and perspective.** Load a mission from the connected
   hackable datadir to display its initial characters with all 16 camera-relative
   directions, bonus/scroll sprites, targets, and mobile objects. A perspective slider
