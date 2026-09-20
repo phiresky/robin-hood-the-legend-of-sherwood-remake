@@ -13,10 +13,10 @@ def pixels(path):
     return a.reshape(h,w,4)[::-1]
 folder=OUT/(sys.argv[sys.argv.index('--packet')+1] if '--packet' in sys.argv else 'approval-final');meta=json.loads((folder/'views.json').read_text())
 source=pixels(meta['source_image']);height,width=source.shape[:2]
-inventory=ROOT/'datadirs/fullgame_gog_hackable/Data/Levels/Derby.rhp.d/masks/manifest.json'
+inventory=OUT/'reviewed-inventory.json'
 records=json.loads(inventory.read_text())['masks'];allowed=np.zeros((height,width),dtype=bool)
-for i in [131,140,143]:
-    r=records[i];x,y=r['box_top_left'];w,h=r['box_size'];allowed[y:y+h,x:x+w]|=pixels(inventory.parent/r['png'])[:,:,0]>.5
+for i in [131,140,143,100129]:
+    r=next(r for r in records if r['index']==i);x,y=r['box_top_left'];w,h=r['box_size'];allowed[y:y+h,x:x+w]|=pixels(inventory.parent/r['png'])[:,:,0]>.5
 verts=[];faces=[]
 for o in bpy.data.collections['Derby Working'].objects:
     if o.type!='MESH' or o.hide_render or o.get('source_node') not in NODES:continue
@@ -40,5 +40,5 @@ for r in meta['views']:
         if not(0<=sx<width and 0<=sy<height and allowed[sy,sx]):outside+=1
         if np.max(np.abs(color[y,x,:3]-source[sy,sx,:3]))>.002:mismatch+=1
     rows.append({'view':i,'known':int(known.sum()),'no_hit':absent,'outside_reviewed_native_union':outside,'source_rgb_mismatch':mismatch})
-report={'views':rows,'known':sum(r['known'] for r in rows),'outside_reviewed_native_union':sum(r['outside_reviewed_native_union'] for r in rows),'source_rgb_mismatch':sum(r['source_rgb_mismatch'] for r in rows),'no_hit':sum(r['no_hit'] for r in rows),'method':'Independent mesh BVH, saved camera rays and raw native PNG union131/140/143; no constraint helper calls. Full-scene source visibility enforced in generation.','foreign_limit':'Native union is a tower envelope, not per-pixel semantic classification; overlapping masks of this same tower are not foreign geometry. No claim that all overlapping native masks must be subtracted.'}
+report={'views':rows,'known':sum(r['known'] for r in rows),'outside_reviewed_native_union':sum(r['outside_reviewed_native_union'] for r in rows),'source_rgb_mismatch':sum(r['source_rgb_mismatch'] for r in rows),'no_hit':sum(r['no_hit'] for r in rows),'method':'Independent mesh BVH, saved camera rays and raw PNG union131/140/143 plus reviewed region100129 intersected with native129; no constraint helper calls. Full-scene source visibility enforced in generation.','foreign_limit':'Native union is a tower envelope, not per-pixel semantic classification; overlapping masks of this same tower are not foreign geometry. No claim that all overlapping native masks must be subtracted.'}
 (OUT/'known-pixel-proof.json').write_text(json.dumps(report,indent=2));print(report,flush=True)

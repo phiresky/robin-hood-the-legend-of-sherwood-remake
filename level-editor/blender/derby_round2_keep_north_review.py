@@ -15,11 +15,23 @@ def masks():
     sheet=Image.new('RGB',(1408,1300))
     for i,index in enumerate(ids):
         r=records[index]; mask=Image.new('L',source.size)
-        mask.paste(Image.open(inventory.parent/r['png']),r['box_top_left'])
+        mask.paste(Image.open(inventory.parent/r['png']),tuple(r['box_top_left']))
         tint=Image.composite(Image.blend(source,Image.new('RGB',source.size,'magenta'),.55),source,mask)
         crop=tint.crop((834,27,1186,677)); ImageDraw.Draw(crop).text((2,2),f"Mask {index} layer {r['layer']}/{r['layer_index']}",fill='white')
         sheet.paste(crop,((i%4)*352,(i//4)*650))
     sheet.save(OUT/'native-associations.png')
+    # Reviewed lower-right tower wall only: the larger Keep mask includes other
+    # buildings, so its entire envelope must never be assigned to this component.
+    native=Image.new('L',source.size);r=records[129]
+    native.paste(Image.open(inventory.parent/r['png']),tuple(r['box_top_left']))
+    region=Image.new('L',source.size);polygon=[(1045,490),(1109,490),(1100,655),(1045,655)]
+    ImageDraw.Draw(region).polygon(polygon,fill=255)
+    from PIL import ImageChops
+    derived=ImageChops.multiply(native,region);derived.save(OUT/'lower-wall-reviewed.png')
+    for r in records:
+        if r.get('png'):r['png']=str(inventory.parent/r['png'])
+    records.append({'index':100129,'layer':0,'layer_index':91,'box_top_left':[0,0],'box_size':list(source.size),'png':str(OUT/'lower-wall-reviewed.png'),'derived_from':129,'reviewed_polygon':polygon,'basis':'Manually reviewed lower-right masonry strip inside native129; excludes Hall roof and distant scenery.'})
+    (OUT/'reviewed-inventory.json').write_text(json.dumps({'masks':records},indent=2))
 def review():
     sys.path[:0]=['/usr/lib/python3.14','/usr/lib/python3.14/lib-dynload','/usr/lib/python3.14/site-packages',str(ROOT/'level-editor/blender')]
     import bpy
@@ -31,6 +43,10 @@ def review():
     scene=bpy.data.scenes['Derby Refinement']; bpy.context.window.scene=scene
     objects=list(bpy.data.collections['Derby Working'].objects)
     before={o.name:_geometry(o) for o in bpy.data.objects}
+    if '--refine' in sys.argv:
+        from derby_round3_keep_north import refine
+        (OUT/'refinement.json').write_text(json.dumps(refine(),indent=2))
+        objects=list(bpy.data.collections['Derby Working'].objects)
     owned=[o for o in objects if o.type=='MESH' and o.get('source_node') in NODES]
     (OUT/'geometry-inspection.json').write_text(json.dumps([{'name':o.name,'node':o.get('source_node'),'vertices':len(o.data.vertices),'faces':len(o.data.polygons),'properties':{k:v for k,v in o.items() if isinstance(v,(str,int,float,bool))}} for o in owned],indent=2))
     frame=json.loads((W/'inspection/components/derby-keep-north-tower/views.json').read_text())
@@ -42,8 +58,8 @@ def review():
         elif 'building-249' in layer['receiver_nodes']:layer['projection_label']='interior-patch-003'
         else:layer['projection_label']='exterior' if layer['source_path']==frame['source_image'] else 'interior-other'
     source=Path(frame['source_image'])
-    assignments=[{'reviewed':True,'source_node':n,'mask_indices':[131,140,143], 'evidence_scope':'Reviewed union of north spire, west upper facade and full north tower; full scene visibility still required. Not a semantic per-face segmentation.'} for n in sorted(NODES)]
-    manifest={'version':1,'mask_inventory':str(ROOT/'datadirs/fullgame_gog_hackable/Data/Levels/Derby.rhp.d/masks/manifest.json'),'projections':{'exterior':{'source_sha256':hashlib.sha256(source.read_bytes()).hexdigest(),'state':'H03_Der_MK initial covered. Native131 layer0/93 spire,140 layer10/1 west facade,143 layer0/94 north tower. No patch000/001 interior receivers assigned.','assignments':assignments}}}
+    assignments=[{'reviewed':True,'source_node':n,'mask_indices':[131,140,143,100129], 'evidence_scope':'Reviewed north tower native union plus manually reviewed lower-wall region intersected with native129; full scene visibility required.'} for n in sorted(NODES)]
+    manifest={'version':1,'mask_inventory':str(OUT/'reviewed-inventory.json'),'projections':{'exterior':{'source_sha256':hashlib.sha256(source.read_bytes()).hexdigest(),'state':'H03_Der_MK initial covered. Native131 layer0/93 spire,140 layer10/1 west facade,143 layer0/94 north tower; derived100129 lower-wall polygon intersect native129 layer0/91. No patch000/001 interior receivers assigned.','assignments':assignments}}}
     path=OUT/'source-masks.json';path.write_text(json.dumps(manifest,indent=2))
     result=bake('Derby',str(source),OUT/'bake.json',receiver_nodes=sorted(NODES),projection_label='exterior',preserve_authored=False,source_mask_manifest=path)
     assert json.loads((OUT/'bake.json').read_text())['source_mask_state'] is not None
@@ -57,8 +73,8 @@ def review():
     finally:
         for o,v in groups.items():o['asset_group']=v
     after={o.name:_geometry(o) for o in bpy.data.objects}
-    assert before==after,'Geometry or ownership modified during authority pass'
-    proof={'geometry_unchanged':True,'objects_checked':len(before),'owned_nodes':sorted(NODES),'owned_meshes':len(owned),'source_mask_applied_to_bake_and_preview':True,'evidence':evidence_record(path),'limitations':['Union membership and full scene ray visibility constrain source ownership; union is not semantic per-face segmentation.','Attached tower assembly retains concealed attachment surfaces and lower geometry occluded by adjoining hall.']}
+    assert all(after.get(k)==v for k,v in before.items()),'Existing geometry or ownership changed'
+    proof={'existing_geometry_unchanged':True,'new_objects':sorted(set(after)-set(before)),'objects_checked':len(before),'owned_nodes':sorted(NODES),'owned_meshes':len(owned),'source_mask_applied_to_bake_and_preview':True,'evidence':evidence_record(path),'limitations':['Union membership and full scene ray visibility constrain source ownership; union is not semantic per-face segmentation.','Attached tower assembly retains concealed attachment surfaces and lower geometry occluded by adjoining hall.']}
     (OUT/'validation.json').write_text(json.dumps(proof,indent=2))
     bpy.ops.wm.save_as_mainfile(filepath=str(OUT/'model.blend'))
 if __name__=='__main__':
