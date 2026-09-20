@@ -19,6 +19,13 @@ active work. Recheck with
 host, since sandbox process isolation hides other workers. Worker instructions
 and coordinator scheduling use the same provisional cap.
 
+Supply Cart (`307cf5b0a`, current `modified/`) and Chopping Block
+(`83624eb66`, `inspection/bound-mask97-approval`) are also explicitly approved
+for texture filling. East Bailey Lying Barrel is **not approved**: the user
+finds its shape off and requests a simpler model. Revise proportions and mesh
+complexity, then show new solid/source views before generation; do not integrate
+the rejected candidate in the current publication.
+
 Latest review-candidate approvals: Northwest Wash Tub, Northwest Yard Fence,
 South Approach Stone, East Courtyard North Shelter, East Hall Stone Trough, and
 East Bailey Covered Well are explicitly approved by the user. These refer to
