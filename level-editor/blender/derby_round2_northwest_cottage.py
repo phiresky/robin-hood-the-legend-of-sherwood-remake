@@ -9,6 +9,103 @@ TAG = 'northwest-cottage-round2-rounded-thatch-v1'
 NODES = ('building-065', 'building-066')
 
 
+def refine_ridge_perimeter():
+    """Lower the common ridge two units; retain fixed eaves and shared planes."""
+    report=[]
+    for obj in bpy.data.collections['Derby Working'].all_objects:
+        if obj.type!='MESH' or obj.hide_render or obj.get('source_node') not in NODES:
+            continue
+        if obj.get('northwest_ridge_perimeter'):
+            raise ValueError('Ridge perimeter correction already applied')
+        obj.data=obj.data.copy();changed=0
+        for vertex in obj.data.vertices:
+            if vertex.co.z>70:
+                vertex.co.z-=2.0*min(1,(vertex.co.z-70)/51.1);changed+=1
+        obj.data.update();obj['northwest_ridge_perimeter']=True
+        report.append({'source_node':obj['source_node'],'changed_roof_vertices':changed,
+                       'ridge_reduction':2.0,'eave_height_unchanged':70})
+    if len(report)!=2:raise ValueError('Expected both roof halves')
+    return report
+
+
+def refine_door_shell():
+    """Replace solid half-house wall volumes with joined thin wall assemblies.
+
+    Three regularly spaced, vertical door gaps use shared sill/header heights.
+    They open through the front wall rather than terminating in a fake recess.
+    The existing roof and applied framing remain separate and unchanged.
+    """
+    objects = [o for o in bpy.data.collections['Derby Working'].all_objects
+               if o.type == 'MESH' and not o.hide_render and o.get('source_node') in NODES]
+    if len(objects) != 2:
+        raise ValueError('Expected exactly the two cottage source meshes')
+    northwest = Vector((469.176,-3132.367,0))
+    northeast = Vector((577.957,-3084.875,0))
+    southwest = Vector((515.581,-3238.669,0))
+    southeast = Vector((624.386,-3191.113,0))
+    midwest = Vector((496.417,-3194.767,0))
+    mideast = Vector((605.222,-3147.269,0))
+    center = (northwest+northeast+southwest+southeast)/4
+    report = []
+    for obj in objects:
+        if obj.get('northwest_open_door_shell'):
+            raise ValueError('Open doorway shell already applied')
+        mesh=obj.data.copy();obj.data=mesh
+        bm=bmesh.new();bm.from_mesh(mesh)
+        unseen=set(bm.verts); remove=[]
+        while unseen:
+            seed=unseen.pop();component={seed};pending=[seed]
+            while pending:
+                for edge in pending.pop().link_edges:
+                    for vertex in edge.verts:
+                        if vertex in unseen:
+                            unseen.remove(vertex);component.add(vertex);pending.append(vertex)
+            low=min(v.co.z for v in component);high=max(v.co.z for v in component)
+            span=max(v.co.x for v in component)-min(v.co.x for v in component)
+            if low<.1 and abs(high-66)<.02 and span>90:
+                remove.extend(component)
+        if len(remove)!=8:
+            raise ValueError(f'Expected one inherited eight-vertex solid wall volume: {len(remove)}')
+        bmesh.ops.delete(bm,geom=remove,context='VERTS')
+
+        def panel(a,b,low=0,high=66):
+            tangent=(b-a).normalized();inside=Vector((-tangent.y,tangent.x,0))
+            if inside.dot(center-(a+b)/2)<0:inside=-inside
+            rings=[]
+            for z in (low,high):
+                rings.append([bm.verts.new(Vector((p.x,p.y,z))) for p in
+                              (a,b,b+inside*2.5,a+inside*2.5)])
+            bm.faces.new(rings[0][::-1]);bm.faces.new(rings[1])
+            for i in range(4):
+                bm.faces.new((rings[0][i],rings[0][(i+1)%4],rings[1][(i+1)%4],rings[1][i]))
+
+        if obj['source_node']=='building-065':
+            panel(northwest,northeast)
+            panel(midwest,northwest);panel(northeast,mideast)
+        else:
+            panel(southwest,midwest);panel(mideast,southeast)
+            def at(x):return southwest.lerp(southeast,(x-southwest.x)/(southeast.x-southwest.x))
+            # The door has parallel openings and common structural rails,
+            # not one independently extruded opening per mask pixel.
+            boundaries=[southwest.x,593.85,595.15,599.85,601.15,605.85,607.15,southeast.x]
+            for index,(left,right) in enumerate(zip(boundaries,boundaries[1:])):
+                if index in (1,3,5):
+                    panel(at(left),at(right),0,16)
+                    panel(at(left),at(right),45,66)
+                else:
+                    panel(at(left),at(right))
+        bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces))
+        bad_edges=sum(not e.is_manifold for e in bm.edges)
+        bad_faces=sum(f.calc_area()<1e-7 for f in bm.faces)
+        if bad_edges or bad_faces:raise ValueError(f'Wall shell topology: {bad_edges}, {bad_faces}')
+        bmesh.ops.triangulate(bm,faces=list(bm.faces));bm.to_mesh(mesh);bm.free();mesh.update()
+        obj['northwest_open_door_shell']=True
+        report.append({'source_node':obj['source_node'],'removed_solid_wall_vertices':len(remove),
+                       'nonmanifold_edges':bad_edges,'degenerate_faces':bad_faces,
+                       'door_gap_world_height':[16,45], 'wall_thickness':2.5})
+    return report
+
+
 def _facade_relief(bm):
     """Shallow timbers on a single shared facade plane, from measured source lines.
 
