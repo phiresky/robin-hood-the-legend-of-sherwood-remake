@@ -153,7 +153,8 @@ def _rod(vertices, faces, start, end, radius, sides=10):
 def _machinery():
     obj=next(o for o in bpy.data.collections['Derby Working'].all_objects
              if o.type=='MESH' and not o.hide_render and
-             o.get('asset_group')==ASSET and o.get('source_node')=='building-215')
+             o.get('asset_group')==ASSET and o.get('source_node')=='building-215'
+             and o.get('projection_component')!='hoist')
     tag='watchtower-hoist-native-mask233-v2'
     if obj.get('round2_machinery')==tag:
         return {'status':'existing'}
@@ -217,7 +218,41 @@ def _machinery():
             'nonmanifold_edges':bad,'degenerate_faces':degenerate}
 
 
+def _split_projection_components():
+    """Keep the canonical part while giving machinery its own mask receiver."""
+    working=bpy.data.collections['Derby Working']
+    parts=[o for o in working.all_objects if o.type=='MESH' and not o.hide_render
+           and o.get('asset_group')==ASSET and o.get('source_node')=='building-215']
+    if any(o.get('projection_component')=='hoist' for o in parts):
+        if len(parts)!=2 or {o.get('projection_component') for o in parts}!={'hoist','parapet'}:
+            raise ValueError('Ambiguous watchtower machinery components')
+        return {'status':'existing'}
+    if len(parts)!=1:
+        raise ValueError('Expected one combined parapet/machinery mesh')
+    parapet=parts[0]
+    first=int(parapet.get('round2_machinery_first_polygon',-1))
+    if not 0<first<len(parapet.data.polygons):
+        raise ValueError('Missing machinery polygon boundary; rebuild from baseline')
+    machinery=parapet.copy();machinery.data=parapet.data.copy()
+    machinery.name='East Watchtower / Roof hoist and suspended cage'
+    working.objects.link(machinery)
+    parapet.data=parapet.data.copy()
+    for obj,role in ((parapet,'parapet'),(machinery,'hoist')):
+        bm=bmesh.new();bm.from_mesh(obj.data);bm.faces.ensure_lookup_table()
+        remove=[face for face in bm.faces
+                if (face.index>=first if role=='parapet' else face.index<first)]
+        bmesh.ops.delete(bm,geom=remove,context='FACES')
+        if any(not edge.is_manifold for edge in bm.edges):
+            bm.free();raise ValueError(f'Projection component {role} is not closed')
+        bm.to_mesh(obj.data);bm.free()
+        obj['projection_component']=role
+        obj['round2_component_role']=role
+    return {'status':'split','source_node':'building-215',
+            'components':['parapet','hoist']}
+
+
 def refine():
     shell=_refine_shell()
     machinery=_machinery()
-    return {'shell':shell,'machinery':machinery}
+    components=_split_projection_components()
+    return {'shell':shell,'machinery':machinery,'components':components}
