@@ -5,6 +5,18 @@ Reviewed does not mean finished: record remaining defects and uncertain geometry
 Workers use separate Blender copies; the primary session integrates reviewed
 recipes, reruns layered projection, and publishes the map and standalone assets.
 
+Mask authority correction: earlier mask inspection and selected export constraints
+did not enforce ownership in worker previews. A successful mesh visibility test
+or high silhouette IoU is insufficient to accept source pixels. Every handoff must
+report reviewed mask IDs, source state/hash, inclusion/exclusion constraints,
+rejected samples and any accepted foreground contamination. Carry this evidence
+through source-only previews, generated-texture baking and export; configured
+constraints must not be silently dropped. Masks establish reviewed pixel
+membership, not recoverable 3D depth. Unconstrained assets must be labeled as such.
+Southeast Cottage exposed this gap: its frozen scene accepted 639 native tower
+pixels. The corrected masked preview accepts zero, with identical solid geometry.
+Latest published South Gate geometry is audited separately from that old context.
+
 **User approval is required before each GPT Sunburst texture-fill pass.** Show
 the model's current solid and source-only textured views, disclose remaining
 geometry issues, and record explicit approval for that revision. Technical
