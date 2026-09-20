@@ -43,6 +43,11 @@ its solid/source-textured sheets were shown: "the curtain looks good". Its
 two-image, high-quality, no-mask texture fill is queued in
 `round-2/sunburst-east-bailey-east-curtain-approved/`. This is distinct from the
 already-generated Lower Bailey East Curtain.
+The user approved both lean-tos for two-image texture filling: East Wall Lean-to
+(`54589c289`, `inspection/approval/`) and South Curtain Lean-to (`82ea176b2`,
+`modified/`), with "Approve both". Geometry is frozen. High-quality no-mask
+generation is assigned; retain raw and source-preserved alternatives in
+`sunburst-east-wall-lean-to-approved/` and `sunburst-south-curtain-lean-to-approved/`.
 
 Corrected East Bailey Gatehouse arch `b51aebb25` was explicitly approved after
 renewed closeup review: "Approve texture fill". Its previous crown was about 25
