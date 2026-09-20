@@ -34,6 +34,11 @@ East Cottage geometry (`6bf42a049`) was also explicitly approved for texture
 fill after its `approval-fixed-sun/` solid and source-textured sheets were shown:
 "Approve texture fill". Its two-image, high-quality, no-mask generation is being
 prepared in `round-2/sunburst-east-cottage-approved/`; application is pending.
+East Bailey Gatehouse candidate `d0b5d3d77` failed user review of the gate arch.
+The roof/support pass retained the inherited arch (083); that opening needs a
+dedicated source-image and geometry correction, including jambs and passage
+depth. Do not generate gate textures until the corrected arch is shown and
+approved. East Bailey East Curtain approval remains pending separately.
 
 **Retain both texture alternatives.** Keep `generated-raw.png` and
 `generated-preserved.png`, the exact input and solid lighting reference,
