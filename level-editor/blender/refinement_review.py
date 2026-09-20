@@ -135,13 +135,24 @@ def render_review(output_dir, *, scene_name, collection_name, asset_id,
             receivers, occluders = set(definition["receiver_nodes"]), set(definition["occluder_nodes"])
             if (receivers | occluders) - present:
                 raise ValueError("Projection layer refers to absent source nodes")
-            if receivers & receiver_layers.keys():
-                raise ValueError("Projection layers have overlapping receivers")
+            from reveal_components import filter_receivers
+            selected_receivers=filter_receivers(
+                [o for o in all_objects if o.get('source_node') in receivers],
+                definition.get('receiver_components'),
+                available_objects=bpy.data.collections[collection_name].all_objects)
+            if any(o in receiver_layers for o in selected_receivers):
+                raise ValueError("Projection layers have overlapping receiver components")
             path = Path(definition["source_path"]).resolve()
             pixels, sw, sh = read_image(path)
             if (sw, sh) != (source_width, source_height):
                 raise ValueError("Projection layers must share source image dimensions")
-            tree, layer_owners, _ = _tree([o for o in all_objects if o.get("source_node") in occluders])
+            from reveal_components import filter_occluders
+            selected_occluders=filter_occluders(
+                [o for o in all_objects if o.get('source_node') in occluders],
+                definition.get('exclude_occluder_components'),
+                projection_label=definition.get('projection_label','exterior'),
+                available_objects=bpy.data.collections[collection_name].all_objects)
+            tree, layer_owners, _ = _tree(selected_occluders)
             constraints = (SourceMaskConstraints(source_mask_manifest,
                            definition.get('projection_label', 'exterior'),
                            hashlib.sha256(path.read_bytes()).hexdigest(), (sw, sh))
@@ -150,13 +161,14 @@ def render_review(output_dir, *, scene_name, collection_name, asset_id,
             if definition.get('projection_region'):
                 from projection_regions import ProjectionRegion
                 region = ProjectionRegion(definition['projection_region'],
-                    hashlib.sha256(path.read_bytes()).hexdigest(),(sw,sh),all_objects,source_mask_manifest)
+                    hashlib.sha256(path.read_bytes()).hexdigest(),(sw,sh),all_objects,source_mask_manifest,
+                    available_objects=bpy.data.collections[collection_name].all_objects)
             layer = (pixels, tree, layer_owners, constraints, region)
             layers.append(layer)
-            receiver_layers.update({node: layer for node in receivers})
+            receiver_layers.update({obj: layer for obj in selected_receivers})
             layer_records.append({**definition, "source_path": str(path),
                                   "source_sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
-        if any(o.get("source_node") not in receiver_layers for o in objects):
+        if any(o not in receiver_layers for o in objects):
             raise ValueError("Every review object needs an explicit projection receiver layer")
         def without_labels(records):
             return [{k: v for k, v in row.items() if k not in ('projection_label','projection_region')} for row in records]
@@ -234,7 +246,7 @@ def render_review(output_dir, *, scene_name, collection_name, asset_id,
                     verified = False
                     if hit is not None:
                         owner = owners[triangle]
-                        pixels, tree, layer_owners, constraints, region = receiver_layers[owner.get("source_node")]
+                        pixels, tree, layer_owners, constraints, region = receiver_layers[owner]
                         sx, sy = hit.x, hit.dot(source_down)
                         fallback = bool(region and not region.contains(math.floor(sx),math.floor(sy)))
                         if fallback:
@@ -283,10 +295,10 @@ def render_review(output_dir, *, scene_name, collection_name, asset_id,
                     "source_mask_manifest": str(Path(source_mask_manifest).resolve()) if source_mask_manifest else None,
                     "source_constraint_status": [
                         {"source_node": obj.get('source_node'),
-                         "constrained": bool(receiver_layers[obj.get('source_node')][3] and
-                                             receiver_layers[obj.get('source_node')][3].for_object(obj) is not None),
-                         "state": receiver_layers[obj.get('source_node')][3].state if receiver_layers[obj.get('source_node')][3] else None,
-                         "regional_source_selection": bool(receiver_layers[obj.get('source_node')][4])}
+                         "constrained": bool(receiver_layers[obj][3] and
+                                             receiver_layers[obj][3].for_object(obj) is not None),
+                         "state": receiver_layers[obj][3].state if receiver_layers[obj][3] else None,
+                         "regional_source_selection": bool(receiver_layers[obj][4])}
                         for obj in objects],
                     "lighting": lighting_record,
                     "lighting_basis": "World-space direction inferred from upper-left reference illumination; not recovered metadata" if lighting_record else "Historical camera-relative Workbench studio",

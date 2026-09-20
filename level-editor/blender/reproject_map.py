@@ -19,7 +19,8 @@ def project_uv(point, width, height, elevation_deg=35.0):
 
 def reproject_map(map_name, source_path, report_path, elevation_deg=35.0,
                   sample_spacing=12.0, max_subdivisions=24,
-                  receiver_nodes=None, occluder_nodes=None, projection_label="source"):
+                  receiver_nodes=None, occluder_nodes=None, projection_label="source",
+                  exclude_occluder_components=None, receiver_components=None):
     """Recompute map projection and visibility from the current working meshes.
 
     This intentionally leaves ground on its existing cleaned atlas. A separate
@@ -53,8 +54,13 @@ def reproject_map(map_name, source_path, report_path, elevation_deg=35.0,
             raise ValueError(f"Missing fallback UV/material: {obj.name}")
     receivers = sources if receiver_nodes is None else [
         obj for obj in sources if obj.get("source_node") in set(receiver_nodes)]
+    from reveal_components import filter_receivers
+    receivers=filter_receivers(receivers,receiver_components,available_objects=working.all_objects)
     occluders = sources if occluder_nodes is None else [
         obj for obj in sources if obj.get("source_node") in set(occluder_nodes)]
+    from reveal_components import filter_occluders
+    occluders = filter_occluders(occluders, exclude_occluder_components,
+        projection_label=projection_label, available_objects=working.all_objects)
     if not receivers or not occluders:
         raise ValueError("Projection receiver and occluder sets must be nonempty")
     present = {obj.get("source_node") for obj in sources}
@@ -285,6 +291,7 @@ def reproject_layers(manifest_path, report_dir=None, sample_spacing=12.0,
     spec = importlib.util.spec_from_file_location("projection_interior_roles", roles_path)
     roles = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(roles)
+    roles.validate_projection_reviews(manifest, manifest_path.parent)
     interiors = roles.projection_receivers(manifest)
     map_name = manifest["map"]
     working = bpy.data.collections[map_name + " Working"]
@@ -312,7 +319,9 @@ def reproject_layers(manifest_path, report_dir=None, sample_spacing=12.0,
             if node not in available:
                 raise ValueError(f"Authored interior receiver is absent or hidden: {node}")
             ownership[node] = patch
-    exterior = sorted(available - ownership.keys())
+    receiver_components=roles.projection_receiver_components(manifest)
+    exterior = sorted((available - ownership.keys()) | {
+        selector['source_node'] for selector in receiver_components.get('exterior',[])})
     if not exterior:
         raise ValueError("No exterior receiver nodes")
     paths = {layer: (manifest_path.parent / manifest["sources"][layer]).resolve()
@@ -342,6 +351,7 @@ def reproject_layers(manifest_path, report_dir=None, sample_spacing=12.0,
     manifest_hash = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
     recipe_hash = hashlib.sha256(json.dumps(interiors, sort_keys=True).encode()).hexdigest()
     retained = roles.projection_occluders(manifest, available)
+    component_exclusions = roles.projection_component_exclusions(manifest)
     passes = [("exterior", paths["exterior"], exterior, exterior)]
     passes.extend(("interior-" + patch, paths["interior"], sorted(nodes), retained[patch])
                   for patch, nodes in sorted(interiors.items()))
@@ -354,15 +364,18 @@ def reproject_layers(manifest_path, report_dir=None, sample_spacing=12.0,
     if ownership_nodes is not None and set(ownership_nodes) - available:
         raise ValueError('Unknown ownership bake receiver nodes')
     for label, source, receivers, occluders in passes:
+        exclusions=component_exclusions.get(label.removeprefix('interior-')) if label.startswith('interior-') else None
+        receiver_selectors=receiver_components.get(label)
         from projection_regions import region_record
         region = (region_record(manifest,manifest_path.parent,label.removeprefix('interior-'),
-                  source,paths['exterior'],set(exterior)|set(receivers)) if label != 'exterior' else None)
+                  source,paths['exterior'],set(exterior)|set(receivers),covered_components=exclusions) if label != 'exterior' else None)
         report = reproject_map(map_name, source, report_dir / (label + ".json"),
                                elevation_deg=manifest["elevation_degrees"],
                                sample_spacing=sample_spacing,
                                max_subdivisions=max_subdivisions,
                                receiver_nodes=receivers, occluder_nodes=occluders,
-                               projection_label=label)
+                               projection_label=label, exclude_occluder_components=exclusions,
+                               receiver_components=receiver_selectors)
         reports.append(report)
         bake_receivers = receivers if ownership_nodes is None else sorted(set(receivers) & set(ownership_nodes))
         if bake_receivers:
@@ -373,10 +386,12 @@ def reproject_layers(manifest_path, report_dir=None, sample_spacing=12.0,
                 texels_per_unit=texels_per_unit, preserve_authored=preserve_authored,
                 hidden_fill=hidden_fill, source_mask_manifest=source_mask_manifest,
                 projection_region=region,
+                exclude_occluder_components=exclusions,
+                receiver_components=receiver_selectors,
                 reproject_authored_nodes=sorted(reproject_authored_nodes & set(bake_receivers))))
         per_object = {entry["object"]: entry for entry in report["objects"]}
         for obj in sources:
-            if obj["source_node"] not in receivers:
+            if obj.name not in per_object:
                 continue
             entry = per_object[obj.name]
             obj["reprojection_receiver_layer"] = label

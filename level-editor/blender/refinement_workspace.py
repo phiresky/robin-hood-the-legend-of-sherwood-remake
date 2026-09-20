@@ -105,13 +105,19 @@ def _ownership(config):
 def _review_layers(config):
     if not config.get("projection_manifest"):
         return None
-    from interior_layers import projection_receivers, projection_occluders
+    from interior_layers import (projection_receivers, projection_occluders,
+                                 validate_projection_reviews, projection_component_exclusions,
+                                 projection_receiver_components)
     path = Path(config["projection_manifest"])
     manifest = json.loads(path.read_text())
+    validate_projection_reviews(manifest,path.parent)
+    exclusions=projection_component_exclusions(manifest)
+    receiver_components=projection_receiver_components(manifest)
     interior = projection_receivers(manifest)
     available = {o.get("source_node") for o in _objects(config)
                  if o.type == "MESH" and not o.hide_render}
-    exterior = available - {node for nodes in interior.values() for node in nodes}
+    exterior = (available - {node for nodes in interior.values() for node in nodes}) | {
+        selector['source_node'] for selector in receiver_components.get('exterior',[])}
     occluders = projection_occluders(manifest, available)
     partitions = [("exterior", "exterior", sorted(exterior), sorted(exterior))]
     partitions.extend(("interior", "interior-" + patch, sorted(nodes), occluders[patch]) for patch, nodes in interior.items())
@@ -119,9 +125,12 @@ def _review_layers(config):
     from projection_regions import region_record
     return [{"source_path": exterior_source if source == 'exterior' else str((path.parent / manifest["sources"][source]).resolve()),
              "receiver_nodes": nodes, "occluder_nodes": blockers,
+             **({'receiver_components':receiver_components[label]} if label in receiver_components else {}),
+             **({'exclude_occluder_components':exclusions[label.removeprefix('interior-')],
+                 'projection_label':label} if label.startswith('interior-') and label.removeprefix('interior-') in exclusions else {}),
              **({'projection_region': region_record(manifest,path.parent,label.removeprefix('interior-'),
                  (path.parent / manifest['sources']['interior']).resolve(), exterior_source,
-                 exterior | set(nodes))} if source == 'interior' else {}),
+                 exterior | set(nodes),covered_components=exclusions.get(label.removeprefix('interior-')))} if source == 'interior' else {}),
              **({"projection_label": label} if config.get('source_mask_manifest') else {})}
             for source, label, nodes, blockers in partitions]
 

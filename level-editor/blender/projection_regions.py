@@ -3,7 +3,7 @@ import hashlib
 from pathlib import Path
 
 
-def region_record(manifest, directory, patch_id, source, exterior, fallback_nodes):
+def region_record(manifest, directory, patch_id, source, exterior, fallback_nodes, covered_components=None):
     patch = next(p for p in manifest['patches'] if p['id'] == patch_id)
     alpha = (Path(directory) / patch['graphic']['alpha']).resolve(strict=True)
     def sha(path):
@@ -13,11 +13,12 @@ def region_record(manifest, directory, patch_id, source, exterior, fallback_node
             'state': 'revealed/' + patch_id,
             'fallback': {'source_path': str(exterior), 'source_sha256': sha(exterior),
                          'state': 'covered/' + patch_id, 'projection_label': 'exterior',
-                         'occluder_nodes': sorted(fallback_nodes)}}
+                         'occluder_nodes': sorted(fallback_nodes),
+                         **({'include_components':covered_components} if covered_components else {})}}
 
 
 class ProjectionRegion:
-    def __init__(self, record, source_hash, source_size, objects, mask_manifest=None):
+    def __init__(self, record, source_hash, source_size, objects, mask_manifest=None, available_objects=None):
         import bpy
         import numpy as np
         from mathutils.bvhtree import BVHTree
@@ -48,11 +49,18 @@ class ProjectionRegion:
             self.constraints = SourceMaskConstraints(mask_manifest,fallback['projection_label'],
                 fallback['source_sha256'],source_size)
         selected=set(fallback['occluder_nodes'])
-        if selected - {o.get('source_node') for o in objects}:
+        fallback_objects=list(objects)
+        if fallback.get('include_components'):
+            from reveal_components import filter_occluders
+            catalog=list(available_objects) if available_objects is not None else list(objects)
+            without=filter_occluders(catalog,fallback['include_components'],
+                projection_label='interior-'+record['state'].removeprefix('revealed/'),available_objects=catalog)
+            fallback_objects.extend(o for o in catalog if o not in without and o not in fallback_objects)
+        if selected - {o.get('source_node') for o in fallback_objects}:
             raise ValueError('Absent regional fallback occluders')
         vertices, triangles, self.owners = [], [], []
         depsgraph=bpy.context.evaluated_depsgraph_get()
-        for obj in objects:
+        for obj in fallback_objects:
             if obj.get('source_node') not in selected:
                 continue
             evaluated=obj.evaluated_get(depsgraph)

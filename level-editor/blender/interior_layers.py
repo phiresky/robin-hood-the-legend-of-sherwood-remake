@@ -5,6 +5,7 @@ never hides geometry. Render/cutaway visibility is a separate authored decision.
 The manifest preserves each patch's independent mask and sight state changes.
 """
 import json
+import hashlib
 from pathlib import Path
 
 # Reviewed interior geometry in the Derby catalog. Overlap alone is deliberately
@@ -72,20 +73,73 @@ def projection_occluders(manifest, available_nodes):
 def projection_occluder_audit(manifest):
     """Report limitations separately from operational projection node lists."""
     projection_receivers(manifest)
-    return {patch: {
+    result={patch: {
         **audit,
         "retained_occluders": [f"building-{n:03d}" for n in DERBY_RETAINED_PROJECTION_OCCLUDERS[patch]],
         "partial_cover_nodes": [f"building-{n:03d}" for n in audit["partial_cover_nodes"]],
         "removed_whole_cover_nodes": [],
         "scope": "projection-only; not runtime geometry visibility",
     } for patch, audit in DERBY_OCCLUDER_AUDIT.items()}
+    for patch,review in projection_reviews(manifest).items():
+        result[patch].update(status='reviewed-component-cover',
+            notes=review.get('evidence','Reviewed component cover and regional receivers'),
+            exclude_occluder_components=review['exclude_occluder_components'])
+    return result
 
 
 def projection_receivers(manifest):
     if manifest["map"].casefold() != "derby":
         raise ValueError("Interior receiver roles need an authored map-specific review")
-    return {patch: [f"building-{n:03d}" for n in nodes]
+    result={patch: [f"building-{n:03d}" for n in nodes]
             for patch, nodes in DERBY_INTERIORS.items()}
+    for patch,review in projection_reviews(manifest).items():
+        result[patch]=list(review['receiver_nodes'])
+    return result
+
+
+def projection_reviews(manifest):
+    """Opt-in reviewed partitions; absent reviews preserve existing manifests."""
+    reviews=manifest.get('projection_reviews',{})
+    if not isinstance(reviews,dict):raise ValueError('Projection reviews must be an object')
+    for patch,review in reviews.items():
+        if manifest['map'].casefold()!='derby' or patch!='patch-003':
+            raise ValueError('No reviewed component projection for this map/patch')
+        if review.get('version')!=1 or review.get('reviewed') is not True or review.get('patch_id')!=patch:
+            raise ValueError('Invalid or unreviewed projection override')
+        if review.get('receiver_nodes')!=['building-249','building-252','building-253','building-263','building-265']:
+            raise ValueError('Unexpected upper gate chamber receiver partition')
+        if review.get('exclude_occluder_components')!=[{
+            'source_node':'building-257','projection_component':'upper-chamber-removable-cover','patch_id':patch},
+            {'source_node':'building-263','projection_component':'upper-chamber-west-removable-cover','patch_id':patch}]:
+            raise ValueError('Unexpected upper gate removable cover selector')
+        expected={'exterior':[{'source_node':'building-263','projection_components':['upper-chamber-west-removable-cover'],'patch_id':patch}],
+                  'interior-patch-003':[{'source_node':'building-263','projection_components':['upper-chamber-west-retained-wall'],'patch_id':patch}]}
+        if review.get('receiver_components')!=expected:
+            raise ValueError('Unexpected upper gate component receiver partition')
+    return reviews
+
+
+def validate_projection_reviews(manifest, directory):
+    """Bind changed ownership to the exact revealed artwork and patch alpha."""
+    for patch,review in projection_reviews(manifest).items():
+        record=next(p for p in manifest['patches'] if p['id']==patch)
+        for key,path in [('source_sha256',manifest['sources']['interior']),
+                         ('alpha_sha256',record['graphic']['alpha'])]:
+            actual=hashlib.sha256((Path(directory)/path).read_bytes()).hexdigest()
+            if review.get(key)!=actual:raise ValueError('Reviewed projection source changed: '+key)
+
+
+def projection_component_exclusions(manifest):
+    return {patch:review['exclude_occluder_components']
+            for patch,review in projection_reviews(manifest).items()}
+
+
+def projection_receiver_components(manifest):
+    result={}
+    for review in projection_reviews(manifest).values():
+        for label,selectors in review['receiver_components'].items():
+            result.setdefault(label,[]).extend(selectors)
+    return result
 
 
 def annotate_layers(manifest_path):
@@ -93,6 +147,7 @@ def annotate_layers(manifest_path):
     path = Path(manifest_path).resolve()
     manifest = json.loads(path.read_text())
     receivers = projection_receivers(manifest)
+    component_receivers=projection_receiver_components(manifest)
     working = bpy.data.collections.get(f"{manifest['map']} Working")
     if working is None:
         raise ValueError(f"Missing working collection for {manifest['map']}")
@@ -105,7 +160,13 @@ def annotate_layers(manifest_path):
     annotated = []
     for obj in objects:
         node = obj['source_node']
-        interior = [patch for patch, nodes in receivers.items() if node in nodes]
+        interior=[]
+        for patch,nodes in receivers.items():
+            if node not in nodes:continue
+            selector=next((s for s in component_receivers.get('interior-'+patch,[])
+                           if s['source_node']==node),None)
+            if selector is None or obj.get('projection_component') in selector['projection_components']:
+                interior.append(patch)
         candidates = [p['id'] for p in manifest['patches']
                       if any(c['source_node'] == node for c in p['coverage_candidates'])]
         before = [p['id'] for p in manifest['patches'] if node in p['sight_before']]

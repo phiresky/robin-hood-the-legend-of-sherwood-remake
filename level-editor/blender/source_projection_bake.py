@@ -13,7 +13,8 @@ def bake(map_name, source_path, report_path, receiver_nodes=None,
          occluder_nodes=None, projection_label="source", texels_per_unit=1,
          elevation_deg=35.0, preserve_authored=True, source_mask_manifest=None,
          hidden_fill="neutral", synthesis_cache=None, reproject_authored_nodes=None,
-         hidden_sampler=None, projection_region=None):
+         hidden_sampler=None, projection_region=None, exclude_occluder_components=None,
+         receiver_components=None):
     import bpy
     import numpy as np
     from mathutils import Vector
@@ -35,10 +36,17 @@ def bake(map_name, source_path, report_path, receiver_nodes=None,
         if requested is not None and set(requested) - present:
             raise ValueError("Unknown projection nodes: " + str(set(requested) - present))
     receivers = [o for o in objects if receiver_nodes is None or o.get("source_node") in receiver_nodes]
+    from reveal_components import filter_receivers
+    receivers=filter_receivers(receivers,receiver_components,
+        available_objects=bpy.data.collections[map_name + ' Working'].all_objects)
     reproject_authored_nodes = set(reproject_authored_nodes or ())
     if reproject_authored_nodes - {o.get("source_node") for o in receivers}:
         raise ValueError("Authored texture reset must name receiver nodes")
     occluders = [o for o in objects if occluder_nodes is None or o.get("source_node") in occluder_nodes]
+    from reveal_components import filter_occluders
+    occluders = filter_occluders(occluders, exclude_occluder_components,
+        projection_label=projection_label,
+        available_objects=bpy.data.collections[map_name + ' Working'].all_objects)
     if not receivers or not occluders:
         raise ValueError("Projection requires receivers and occluders")
     if any(m.show_render or m.show_viewport for o in set(receivers + occluders) for m in o.modifiers):
@@ -73,7 +81,8 @@ def bake(map_name, source_path, report_path, receiver_nodes=None,
     region = None
     if projection_region:
         from projection_regions import ProjectionRegion
-        region = ProjectionRegion(projection_region, source_hash, (sw,sh), objects, source_mask_manifest)
+        region = ProjectionRegion(projection_region, source_hash, (sw,sh), objects, source_mask_manifest,
+            available_objects=bpy.data.collections[map_name+' Working'].all_objects)
         camera_depth = max((o.matrix_world @ v.co).dot(toward) for o in objects for v in o.data.vertices) + 10
 
     def visible_at(position, visibility_tree=None):
@@ -96,6 +105,8 @@ def bake(map_name, source_path, report_path, receiver_nodes=None,
               "source_mask_manifest": str(Path(source_mask_manifest).resolve()) if source_mask_manifest else None,
               "source_mask_state": constraints.state if constraints else None,
               "projection_region": projection_region,
+              "exclude_occluder_components": exclude_occluder_components or [],
+              "receiver_components": receiver_components or [],
               "reproject_authored_nodes": sorted(reproject_authored_nodes),
               "limitations": ["Geometry outside the artwork silhouette must still be corrected geometrically.",
                               "Reveal layers require explicit retained occluders matching their source artwork.",

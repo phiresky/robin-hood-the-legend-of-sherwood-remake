@@ -231,3 +231,51 @@ def remove_overlapping_stair_ramp():
     stairs[0]['round2_stair_overlap_resolved']=True
     return {'node':'building-265','removed_overlap':ramp.name,'retained':stairs[0].name,
             'step_count':int(stairs[0]['step_count']),'nonmanifold_edges':bad,'degenerate_faces':degenerate}
+
+
+def split_west_chamber_cover():
+    """Partition the overlapping west facade without reassigning source part263."""
+    collection=bpy.data.collections['Derby Working']
+    if any(o.get('projection_component')=='upper-chamber-west-removable-cover' for o in collection.objects):
+        return {'already_applied':True}
+    obj=next(o for o in collection.objects if o.type=='MESH' and not o.hide_render
+             and o.get('source_node')=='building-263')
+    bm=bmesh.new();bm.from_mesh(obj.data);before=abs(bm.calc_volume(signed=True));bm.free()
+    # Structural corners follow the cover alpha's upper seam and lower returns.
+    # Include whole boundary texels instead of exposing a subpixel strip of the
+    # interior receiver in the covered state. The left return has a real corner.
+    profile=[(565.5,1387.5),(633,1383.5),(633,1441),(620,1441),(617,1455),
+             (616.5,1460.5),(587.5,1459),(579.5,1449),(574.5,1441),
+             (571.5,1436),(567.5,1431),(565.5,1405)]
+    s,c=math.sin(math.radians(35)),math.cos(math.radians(35))
+    points=[]
+    for depth in (-3,18):
+        for x,sy in profile:
+            y=-2792.929+(x-567.3673)*(5.229/59.7661)
+            points.append((x,y+depth,(-y*s-sy)/c))
+    n=len(profile);faces=[tuple(reversed(range(n))),tuple(range(n,2*n))]
+    faces += [(i,(i+1)%n,(i+1)%n+n,i+n) for i in range(n)]
+    mesh=bpy.data.meshes.new('West chamber removable boundary');mesh.from_pydata(points,[],faces)
+    bm=bmesh.new();bm.from_mesh(mesh);bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces));bm.to_mesh(mesh);bm.free()
+    cutter=bpy.data.objects.new(mesh.name,mesh);bpy.context.scene.collection.objects.link(cutter)
+    cover=obj.copy();cover.data=obj.data.copy();collection.objects.link(cover)
+    cover.name='Upper Bailey Gatehouse / Removable west chamber facade'
+    try:
+        report=[]
+        for part,operation,role in [(obj,'DIFFERENCE','retained-wall'),(cover,'INTERSECT','removable-cover')]:
+            modifier=part.modifiers.new('Partition west chamber facade','BOOLEAN')
+            modifier.operation=operation;modifier.solver='EXACT';modifier.object=cutter
+            bpy.context.view_layer.objects.active=part;bpy.ops.object.modifier_apply(modifier=modifier.name)
+            bm=bmesh.new();bm.from_mesh(part.data)
+            bad=sum(not e.is_manifold for e in bm.edges);degenerate=sum(f.calc_area()<1e-7 for f in bm.faces)
+            volume=abs(bm.calc_volume(signed=True));bm.free()
+            if bad or degenerate or volume<1:raise ValueError(('West partition',role,bad,degenerate,volume))
+            part['projection_component']='upper-chamber-west-'+role
+            part['reveal_component_role']=role;part['reveal_component_patch_id']='patch-003'
+            part['part_name']='West chamber removable facade' if role=='removable-cover' else 'West chamber retained wall'
+            report.append({'role':role,'object':part.name,'volume':volume,'nonmanifold_edges':bad,'degenerate_faces':degenerate})
+        error=abs(sum(r['volume'] for r in report)-before)/before
+        if error>.0001:raise ValueError(('West partition volume mismatch',error))
+        return {'node':'building-263','original_volume':before,'relative_volume_error':error,'components':report}
+    finally:
+        bpy.data.objects.remove(cutter,do_unlink=True);bpy.data.meshes.remove(mesh)
