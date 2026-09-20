@@ -68,6 +68,10 @@ async function main(): Promise<void> {
   const lightingPath=lightingIndex<0?null:process.argv[lightingIndex+1];
   if(lightingIndex>=0&&!lightingPath)throw new Error("Supply the pure-gray lighting reference path");
   const lighting=lightingPath?await fs.readFile(path.resolve(lightingPath)):null;
+  const suffixIndex=process.argv.indexOf("--prompt-suffix");
+  const promptSuffix=suffixIndex<0?"":process.argv[suffixIndex+1];
+  if(suffixIndex>=0&&(!promptSuffix||promptSuffix.startsWith("--")))
+    throw new Error("Supply the additional material instructions after --prompt-suffix");
   if(lighting){
     const info=await sharp(lighting).metadata();
     if(info.width!==manifest.layout.width||info.height!==manifest.layout.height)
@@ -98,7 +102,8 @@ Replace every masked untextured surface with the appropriate texture. Return the
   const prompt=omitMask?"Create an image from the provided reference sheet of 8 views of the same asset. The untextured gray shaded areas mark missing textures. Fill in these regions logically and consistently across all views, preserving all existing textured pixels exactly. Keep the same asset design, textures, lighting, perspective, and black background.":prompts[variant];
   const parameters={model,quality:"high",size:"1536x1024",n:"1",output_format:"png",
     prompt:prompt+" Follow the lighting and shading shown on the gray surfaces, preserving the same sun direction across all eight views."+
-      (lighting?" The second image shows the same eight views entirely in gray; use it as the reference for lighting, shadows, and shape, and return only the completed first image.":"")};
+      (lighting?" The second image shows the same eight views entirely in gray; use it as the reference for lighting, shadows, and shape, and return only the completed first image.":"")+
+      (promptSuffix?" "+promptSuffix:"")};
   const hash=crypto.createHash("sha256").update(input).update(lighting??Buffer.alloc(0)).update(omitMask?Buffer.alloc(0):mask).update(JSON.stringify(parameters)).digest("hex");
   const cache=path.join(directory,"api-cache",hash);await fs.mkdir(cache,{recursive:true});
   await fs.writeFile(path.join(cache,"request.json"),JSON.stringify({endpoint:"https://api.openai.com/v1/images/edits",parameters,input_sha256:crypto.createHash("sha256").update(input).digest("hex"),lighting_sha256:lighting?crypto.createHash("sha256").update(lighting).digest("hex"):null,mask_sha256:omitMask?null:crypto.createHash("sha256").update(mask).digest("hex")},null,2));
