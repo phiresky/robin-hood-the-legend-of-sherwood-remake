@@ -1,10 +1,12 @@
-"""Restore the southwest curtain turret's curved roof and complete its shell.
+"""Restore the southwest turret roof and close the curtain's support assemblies.
 
 The reviewed roof silhouette supplies the profile, including its narrow finial.
 The concealed continuation is rotational symmetry, not recovered decoration.
 Existing source parts and object transforms are retained for editor selection.
 """
 import math
+import json
+from pathlib import Path
 
 import bpy
 import bmesh
@@ -93,3 +95,72 @@ def refine():
             'unchanged_parts':[o.get('source_node') for o in objects if o.get('source_node') not in SECTORS],
             'source_evidence':'Reviewed roof silhouette; map box (335,1925,73,359), upper component only',
             'inferred':'Concealed rear shell rotational continuation; no generated surface detail'}
+
+
+def refine_supports(level_path):
+    """Rebuild three cracked panel assemblies from their authored closed plans.
+
+    This does not fill arbitrary boundary loops. The authored footprints define
+    the wall return, stair support and continuous walkway explicitly, including
+    all their concave turns. Existing stair treads and accepted roof are retained.
+    Run source reprojection after this geometry-only operation.
+    """
+    from mathutils.geometry import tessellate_polygon
+
+    level = json.loads(Path(level_path).read_text())
+    sine, cosine = math.sin(math.radians(35)), math.cos(math.radians(35))
+    objects = [o for o in bpy.data.collections['Derby Working'].objects
+               if o.type == 'MESH' and not o.hide_render and o.get('asset_group') == ASSET]
+    reports = []
+    for number in (37, 38, 45):
+        node = f'building-{number:03d}'
+        candidates = [o for o in objects if o.get('source_node') == node
+                      and not o.get('lower_west_stair_refinement')]
+        if len(candidates) != 1:
+            raise ValueError(f'Expected one baseline support for {node}')
+        obj = candidates[0]
+        points = level['sight_obstacles'][number]['points']
+        n = len(points)
+        if n < 3:
+            raise ValueError(f'Incomplete authored footprint for {node}')
+        # Triangulate the plan, then use the same triangles at each vertex's
+        # authored height. Stair height varies; the wall and walk are level.
+        plan = [Vector((p['x'], -p['y']/sine, 0)) for p in points]
+        lookup = {tuple(v): i for i,v in enumerate(plan)}
+        triangles = [[v if isinstance(v, int) else lookup[tuple(v)] for v in tri]
+                     for tri in tessellate_polygon([plan])]
+        if len(triangles) != n-2:
+            raise ValueError(f'Incomplete plan triangulation for {node}')
+        world = [Vector((p['x'], -p['y']/sine, p[height]/cosine))
+                 for height in ('z_bottom', 'z_top') for p in points]
+        faces = [tuple(reversed(t)) for t in triangles]
+        faces += [tuple(i+n for i in t) for t in triangles]
+        faces += [(i,(i+1)%n,(i+1)%n+n,i+n) for i in range(n)]
+        mesh = bpy.data.meshes.new(obj.name+' / continuous authored support')
+        inverse = obj.matrix_world.inverted()
+        mesh.from_pydata([inverse@v for v in world], [], faces)
+        bm=bmesh.new(); bm.from_mesh(mesh)
+        bmesh.ops.recalc_face_normals(bm, faces=list(bm.faces))
+        bad=sum(not e.is_manifold for e in bm.edges)
+        degenerate=sum(f.calc_area()<1e-8 for f in bm.faces)
+        volume=bm.calc_volume(signed=True)
+        if bad or degenerate or volume <= 0:
+            bm.free()
+            raise ValueError(f'Invalid support {node}: {bad}, {degenerate}, {volume}')
+        bm.to_mesh(mesh); bm.free()
+        for mat in obj.data.materials:
+            mesh.materials.append(mat)
+        uv=mesh.uv_layers.new(name=obj.data.uv_layers[0].name)
+        for loop in mesh.loops:
+            p=world[loop.vertex_index]
+            uv.data[loop.index].uv=(p.x/1920,1-(-p.y*sine-p.z*cosine)/2752)
+        mesh.attributes.new('reprojection_fallback_material','INT','FACE')
+        before_vertices=len(obj.data.vertices)
+        obj.data=mesh
+        obj['round2_lower_west_support']='authored-closed-support-v1'
+        reports.append({'source_node':node,'before_vertices':before_vertices,
+                        'vertices':len(mesh.vertices),'faces':len(mesh.polygons),
+                        'authored_plan_points':n,'nonmanifold_edges':bad,
+                        'degenerate_faces':degenerate,'positive_volume':volume})
+    return {'asset_id':ASSET,'changed':reports,'preserved_roof_nodes':list(SECTORS),
+            'evidence':'Closed authored wall/stair/walk footprints; source roof and stair treads retained'}
