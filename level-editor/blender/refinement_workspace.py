@@ -250,6 +250,9 @@ def prepare(workspace_dir, *, asset_id, scene_name, collection_name, source_path
     config["input_files"] = _files(workspace / "input")
     config["reference_files"] = _files(reference)
     _json(workspace / "workspace.json", config)
+    if projection_manifest:
+        from asset_reference_views import prepare as prepare_asset_reference
+        prepare_asset_reference(workspace)
     instructions = f'''# Refinement worker: {asset_id}
 
 Own only this logical asset. Its stable source parts are {", ".join(parts)}.
@@ -291,6 +294,9 @@ Handoff `model.blend`, the recipe, `review.md`, and `modified/` only after valid
 passes and you inspect context, solid and textured sheets. Do not publish the
 whole copied scene: the coordinator imports only this asset into the main map.
 Texture synthesis is a separate step after geometry review.
+Start with asset-reference/ for focused original source crops and reviewed
+asset-specific patches. The full reference/ directory is projection backing data;
+its unrelated images are not assigned worker evidence.
 For assets with interiors or changing outer patches, inspect reference/layers.json,
 reference/covered.png, reference/revealed.png, each relevant patch PNG and alpha,
 and the relevant reference/mission-patches/ state frames before refining. These
