@@ -127,3 +127,71 @@ def refine_fireplace():
             'floor':219.75,'mantel':z_bottom,'hood_top':top[0].z,
             'inferred_depth':28,'source_state':'patch-000 revealed',
             'source_hood_corners':[[946,661],[995,679],[981,736],[932,719]]}
+
+
+def refine_gallery_posts():
+    """Straight structural posts measured in revealed artwork and native masks.
+
+    The native silhouettes are conditional occluders. The first post's lower
+    end is hidden by a foreground railing, so the physical foot continues to
+    the known floor rather than ending at the mask's cropped silhouette.
+    """
+    working=bpy.data.collections['Derby Working']
+    source=next(o for o in working.objects if o.type=='MESH' and not o.hide_render
+                and o.get('source_node')=='building-223')
+    tag='great-keep-hall-gallery-posts-v1'
+    existing=[o for o in working.objects if o.get('round2_keep_recipe')==tag]
+    if existing:
+        if len(existing)!=3:raise ValueError('Partial gallery post recipe')
+        return {'status':'already-applied'}
+    reports=[]
+    tangent=Vector((129.43988,174.92786,0)).normalized()
+    for number,x,mask in ((1,754.0,185),(2,779.0,183),(3,805.0,184)):
+        y=-1945.85571+(x-676.50201)*174.92786/129.43988+2
+        rings=[(219.75,4),(223,4),(229,2.5),(295,2.5),(301,3),(306.212,4.0)]
+        vertices=[];faces=[]
+        for z,radius in rings:
+            for i in range(8):
+                angle=2*math.pi*i/8
+                vertices.append(Vector((x+radius*math.cos(angle),y+radius*math.sin(angle),z)))
+        for j in range(len(rings)-1):
+            for i in range(8):
+                faces.append((j*8+i,j*8+(i+1)%8,(j+1)*8+(i+1)%8,(j+1)*8+i))
+        faces.extend([tuple(reversed(range(8))),tuple(range((len(rings)-1)*8,len(rings)*8))])
+        if mask==183:
+            # The diagonal capital is visible in this particular native mask.
+            a=Vector((x,y,294));b=Vector((x,y,306.212))+tangent*9
+            direction=(b-a).normalized()
+            side=Vector((-tangent.y,tangent.x,0))*1.3
+            cross=direction.cross(side).normalized()*1.3
+            base=len(vertices)
+            vertices.extend(p+u*side+v*cross for p in (a,b) for u,v in ((-1,-1),(1,-1),(1,1),(-1,1)))
+            faces.extend(tuple(base+i for i in f) for f in
+                         ((3,2,1,0),(4,5,6,7),(0,1,5,4),(1,2,6,5),(2,3,7,6),(3,0,4,7)))
+        mesh=bpy.data.meshes.new(f'Great Keep / gallery post {number:02}')
+        mesh.from_pydata(vertices,[],faces)
+        bm=bmesh.new();bm.from_mesh(mesh)
+        bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces))
+        invalid=sum(not e.is_manifold for e in bm.edges)
+        degenerate=sum(f.calc_area()<1e-8 for f in bm.faces)
+        bm.to_mesh(mesh);bm.free()
+        if invalid or degenerate:raise ValueError('Invalid gallery post')
+        neutral=bpy.data.materials.get('Great Keep / fireplace unknown')
+        if neutral is None:
+            neutral=bpy.data.materials.new('Great Keep / fireplace unknown')
+            neutral.diffuse_color=(.25,.25,.25,1)
+        mesh.materials.append(neutral)
+        for original in source.data.uv_layers:
+            uv=mesh.uv_layers.new(name=original.name)
+            for loop in uv.data:loop.uv=(.5,.5)
+        obj=bpy.data.objects.new(f'Great Keep / Hall gallery support post {number:02}',mesh)
+        working.objects.link(obj);obj.parent=source.parent;obj.matrix_world=Matrix.Identity(4)
+        for key in source.keys():
+            if not key.startswith('reprojection_'):obj[key]=source[key]
+        obj['round2_keep_recipe']=tag
+        obj['round2_keep_component']=f'hall-gallery-post-{number:02}'
+        obj['reviewed_native_mask']=mask
+        reports.append({'object':obj.name,'source_node':'building-223','mask_index':mask,
+                        'mask_layer':2,'floor':219.75,'gallery_underside':306.212,
+                        'faces':len(faces),'nonmanifold_edges':invalid,'degenerate_faces':degenerate})
+    return {'posts':reports,'source_state':'patch-000 revealed'}
