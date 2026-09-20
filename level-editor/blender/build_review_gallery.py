@@ -8,15 +8,26 @@ from pathlib import Path
 import shutil
 
 
-def build(index_path, output):
+def build(index_path, output, *, pending_only=False):
     index_path = Path(index_path).resolve(strict=True)
     output = Path(output).resolve()
     output.mkdir(parents=True, exist_ok=True)
     data = json.loads(index_path.read_text())
     items = data["items"]
+    if pending_only:
+        items = [item for item in items if not str(item.get("user_approval", "")).lower().startswith("approved")]
     ids = [item["id"] for item in items]
     if len(set(ids)) != len(ids):
         raise ValueError("Duplicate review identifiers")
+    previous = output / "evidence.json"
+    if previous.exists():
+        digest = hashlib.sha256(previous.read_bytes()).hexdigest()[:16]
+        archive = output / "history" / digest
+        if not archive.exists():
+            archive.mkdir(parents=True)
+            for name in ("index.html", "evidence.json"):
+                shutil.copyfile(output / name, archive / name)
+            shutil.copytree(output / "images", archive / "images")
     records, cards = [], []
     for number, item in enumerate(items, 1):
         figures, evidence = [], {}
@@ -63,6 +74,9 @@ body:not([data-mode=both]) .sheets{grid-template-columns:1fr}
 </style><body data-mode="both"><header><h1>Derby model review</h1>
 <p>Geometry candidates, not generated textures. Gray means no accepted original texture.
 Click any sheet for its full resolution. Review status does not imply user approval.</p>
+'''+(f'<p><strong>Approved models are hidden. {len(items)} remaining; '
+      f'{sum(item["status"] == "ready-for-user" for item in items)} ready for your decision.</strong> '
+      'Items marked validation-pending or fix-needed are still being worked on.</p>' if pending_only else '')+'''
 <label>Show <select id="mode"><option value="both">Both sheets</option><option value="solid">Solid geometry</option>
 <option value="textured">Original textures + gray</option></select></label><nav>'''+nav+'''</nav></header><main>'''+"".join(cards)+'''</main>
 <script>document.querySelector('#mode').addEventListener('change',e=>document.body.dataset.mode=e.target.value);</script></body></html>'''
@@ -75,5 +89,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("index")
     parser.add_argument("output")
+    parser.add_argument("--pending-only", action="store_true", help="Hide explicitly approved candidates")
     args = parser.parse_args()
-    build(args.index, args.output)
+    build(args.index, args.output, pending_only=args.pending_only)

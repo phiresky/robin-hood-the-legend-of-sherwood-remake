@@ -64,6 +64,15 @@ ownership, Upper West Curtain source coverage, and Upper East Curtain mask
 binding require further checks. In particular, zero accepted foreign pixels is
 not sufficient when an incorrect constraint rejects legitimate source artwork.
 
+The user prefers the review gallery for subsequent reviews. Keep its current
+view limited to unapproved candidates, clearly distinguishing ready-for-user,
+validation-pending and fix-needed. Rebuild with
+`build_review_gallery.py <index.json> <gallery-dir> --pending-only` whenever
+readiness or approval changes. Prior galleries and exact image hashes are
+archived automatically; never destroy approval evidence. Include solid/source
+sheets and original context, with full-resolution PNG links. Notify the user
+when new decisions are ready rather than asking them to re-review approved work.
+
 Mask authority correction: earlier mask inspection and selected export constraints
 did not enforce ownership in worker previews. A successful mesh visibility test
 or high silhouette IoU is insufficient to accept source pixels. Every handoff must
