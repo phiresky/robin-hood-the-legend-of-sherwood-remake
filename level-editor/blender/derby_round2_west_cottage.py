@@ -8,9 +8,9 @@ import bpy
 import bmesh
 from mathutils import Vector
 from mathutils.bvhtree import BVHTree
-from derby_asset_lower_west_cottage import _roof_shell, _solid, _world
+from derby_asset_lower_west_cottage import _roof_shell, _world
 
-TAG = 'round2-straight-rear-gable'
+TAG = 'round2-common-battered-facades'
 SIN, COS = math.sin(math.radians(35)), math.cos(math.radians(35))
 RIDGE, EAVE = 121.53, 70.0
 
@@ -83,51 +83,51 @@ def refine():
         reports.append(replace(roof,mesh))
         tree = BVHTree.FromPolygons([roof.matrix_world@v.co for v in mesh.vertices],
                                    [tuple(p.vertices) for p in mesh.polygons],epsilon=.001)
-        # The straight foundation is inset from the eaves, while the back gable
-        # and short front hip meet the actual underside rather than stretching.
-        outline = [lip, vertices[8], vertices[16*9+8], vertices[16*9], vertices[0]]
-        center = sum(outline,Vector())/len(outline)
-        # A straight rear gable sits just inside its ordinary roof overhang.
-        rear_outer = vertices[16*9+8].lerp(center,.18)
-        rear_center = vertices[0].lerp(vertices[16*9],.95)
-        front_inset = .30 if node.endswith('055') else .18
-        corners = [lip,vertices[8].lerp(center,front_inset),rear_outer,
-                   rear_center,vertices[0]]
-        top = []
-        roof_points = [roof.matrix_world@v.co for v in mesh.vertices]
-        for a,b in zip(corners,corners[1:]+corners[:1]):
-            cuts = {step/24 for step in range(24)}
-            direction = b-a
-            for edge in mesh.edges:
-                c,d = (roof_points[i] for i in edge.vertices)
-                other = d-c
-                determinant = direction.x*other.y-direction.y*other.x
-                if abs(determinant)<1e-7:
-                    continue
-                offset = c-a
-                t = (offset.x*other.y-offset.y*other.x)/determinant
-                u = (offset.x*direction.y-offset.y*direction.x)/determinant
-                if 1e-5<t<1-1e-5 and 0<=u<=1:
-                    cuts.add(round(t,6))
-            # Include the projected triangle boundaries, so each wall segment
-            # follows one planar roof face rather than bridging across folds.
-            previous = -1
-            for t in sorted(cuts):
-                if t-previous<1e-4:
-                    continue
-                previous = t
-                p = a.lerp(b,t)
-                # Shared centerline vertices remain coincident between halves.
-                probe = p.lerp(center,.0001)
-                hit = tree.ray_cast(Vector((probe.x,probe.y,1000)),Vector((0,0,-1)))[0]
-                if hit is None:
-                    raise ValueError('Wall escaped thatch shell')
-                # Seat the wall inside the four-unit roof thickness. A shallow
-                # overlap closes interpolation differences along triangulation
-                # boundaries instead of leaving a fragile tangent contact.
-                p.z = hit.z-1.0
+        # One shared footprint and common inward-battered end planes.
+        length = (rear_ridge-front_ridge).length
+        front_s, back_s = -2.0, length-5.0
+        middle_s = (front_s+back_s)/2
+        half_length = (back_s-front_s)/2
+        width = 37.5 if node.endswith('055') else -37.5
+        footprint = [(front_s,0),(front_s,width),(back_s,width),(back_s,0)]
+        top, bottom = [], []
+        for a,b in zip(footprint,footprint[1:]+footprint[:1]):
+            for step in range(64):
+                u = step/64
+                s = a[0]*(1-u)+b[0]*u
+                t = a[1]*(1-u)+b[1]*u
+                base = front_ridge+axis*s+lateral*t
+                base.z = 0
+                bottom.append(base)
+                height = EAVE
+                for iteration in range(32):
+                    inward = -(s-middle_s)/half_length*.05*height
+                    p = base+axis*inward
+                    probe = p+lateral*(.002 if width>0 else -.002)
+                    hit = tree.ray_cast(Vector((probe.x,probe.y,1000)),Vector((0,0,-1)))[0]
+                    if hit is None:
+                        raise ValueError('Battered wall escaped roof')
+                    target = hit.z-1
+                    if abs(target-height)<.0001:
+                        break
+                    height = target
+                p.z = target
                 top.append(p)
-        reports.append(replace(wall,_solid('Straight cottage wall shell',top)))
+        n = len(top)
+        center_top = sum(top,Vector())/n
+        center_top.z = min(p.z for p in top)-2
+        center_bottom = sum(bottom,Vector())/n
+        all_vertices = top+bottom+[center_top,center_bottom]
+        faces=[]
+        for i in range(n):
+            j=(i+1)%n
+            faces.extend([(i,j,2*n),(j+n,i+n,2*n+1),(i,i+n,j+n,j)])
+        body=bpy.data.meshes.new('Cottage common battered facade shell')
+        body.from_pydata(all_vertices,[],faces);body.update()
+        reports.append(replace(wall,body))
+        wall['facade_batter']=.05
+        wall['front_facade_axis_position']=front_s
+        wall['rear_facade_axis_position']=back_s
     annex = next(o for o in objects if o.get('source_node') == 'building-054'
                  and o.get('cottage_component_role') == 'extension roof')
     baseline = next(o for o in bpy.data.objects if o.type == 'MESH'
