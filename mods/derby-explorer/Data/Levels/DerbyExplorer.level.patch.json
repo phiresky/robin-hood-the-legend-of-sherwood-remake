@@ -1,0 +1,180 @@
+[
+  {
+    "op": "replace",
+    "path": "/mission/beam_mes",
+    "value": [
+      {
+        "position": {
+          "x": 993.0,
+          "y": 1512.0
+        },
+        "direction": 15,
+        "action": 3,
+        "projection_area": 92,
+        "sector": 25,
+        "layer": 2,
+        "material": 0,
+        "action_required": {
+          "climb": false,
+          "jump": false,
+          "lockpick": false,
+          "archery": false,
+          "carry": false,
+          "tie": false,
+          "stun": false,
+          "lever": false,
+          "eat": false,
+          "search": false
+        },
+        "index": 0,
+        "script": null,
+        "required_pc": 4
+      }
+    ]
+  },
+  {
+    "op": "replace",
+    "path": "/mission/soldiers",
+    "value": []
+  },
+  {
+    "op": "replace",
+    "path": "/mission/civilians",
+    "value": []
+  },
+  {
+    "op": "replace",
+    "path": "/mission/pcs_to_rescue",
+    "value": []
+  },
+  {
+    "op": "replace",
+    "path": "/mission/bonuses",
+    "value": []
+  },
+  {
+    "op": "replace",
+    "path": "/mission/scrolls",
+    "value": []
+  },
+  {
+    "op": "replace",
+    "path": "/mission/targets",
+    "value": []
+  },
+  {
+    "op": "replace",
+    "path": "/mission/hiking_paths",
+    "value": []
+  },
+  {
+    "op": "replace",
+    "path": "/mission/mobile_elements",
+    "value": []
+  },
+  {
+    "op": "replace",
+    "path": "/mission/script_objects/points",
+    "value": []
+  },
+  {
+    "op": "replace",
+    "path": "/mission/tactic_data/reinforcement_points",
+    "value": []
+  },
+  {
+    "op": "replace",
+    "path": "/mission/tactic_data/ambush_points",
+    "value": []
+  },
+  {
+    "op": "replace",
+    "path": "/mission/tactic_data/seek_points",
+    "value": []
+  },
+  {
+    "op": "replace",
+    "path": "/mission/tactic_data/archery_sectors",
+    "value": []
+  },
+  {
+    "op": "replace",
+    "path": "/mission/building_tenants/0/tenant_element_indices",
+    "value": []
+  },
+  {
+    "op": "replace",
+    "path": "/mission/building_tenants/1/tenant_element_indices",
+    "value": []
+  },
+  {
+    "op": "replace",
+    "path": "/mission/building_tenants/2/tenant_element_indices",
+    "value": []
+  },
+  {
+    "op": "replace",
+    "path": "/mission/building_tenants/3/tenant_element_indices",
+    "value": []
+  },
+  {
+    "op": "replace",
+    "path": "/mission/building_tenants/4/tenant_element_indices",
+    "value": []
+  },
+  {
+    "op": "replace",
+    "path": "/mission/building_tenants/5/tenant_element_indices",
+    "value": []
+  },
+  {
+    "op": "replace",
+    "path": "/mission/building_tenants/6/tenant_element_indices",
+    "value": []
+  },
+  {
+    "op": "replace",
+    "path": "/mission/building_tenants/7/tenant_element_indices",
+    "value": []
+  },
+  {
+    "op": "replace",
+    "path": "/mission/building_tenants/8/tenant_element_indices",
+    "value": []
+  },
+  {
+    "op": "replace",
+    "path": "/mission/building_tenants/9/tenant_element_indices",
+    "value": []
+  },
+  {
+    "op": "replace",
+    "path": "/mission/building_tenants/10/tenant_element_indices",
+    "value": []
+  },
+  {
+    "op": "replace",
+    "path": "/mission/building_tenants/11/tenant_element_indices",
+    "value": []
+  },
+  {
+    "op": "replace",
+    "path": "/mission/building_tenants/12/tenant_element_indices",
+    "value": []
+  },
+  {
+    "op": "replace",
+    "path": "/mission/building_tenants/13/tenant_element_indices",
+    "value": []
+  },
+  {
+    "op": "replace",
+    "path": "/mission/script_objects/lines",
+    "value": []
+  },
+  {
+    "op": "replace",
+    "path": "/mission/script_objects/sectors",
+    "value": []
+  }
+]

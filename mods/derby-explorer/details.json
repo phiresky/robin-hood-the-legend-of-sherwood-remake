@@ -1,0 +1,20 @@
+{
+  "slug": "derby-explorer",
+  "title": "Derby Explorer",
+  "page_url": "",
+  "author": "Local custom mission",
+  "map": "Derby",
+  "uploaded": "Sep 20, 2026",
+  "tags": [
+    "Exploration"
+  ],
+  "description": "Explore daytime Derby with Robin alone. No enemies, civilians, reinforcements, objectives, or time limit. Starts inside the main courtyard with both drawbridges opened.",
+  "versions": [
+    {
+      "date_uploaded": "Sep 20, 2026",
+      "version_notes": "Robin only",
+      "download_url": "",
+      "local_file": "derby-explorer.zip"
+    }
+  ]
+}
