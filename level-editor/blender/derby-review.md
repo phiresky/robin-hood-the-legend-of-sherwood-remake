@@ -77,6 +77,13 @@ collision data separate from refined rendering geometry.
 
 ## Current integration state — 2026-09-20
 
+User requested splitting Great Keep into 2–4 logical components. The four-way
+proposal in `round-2/keep-component-proposal.json` assigns every existing part
+exactly once: West Tower (including its revealed room), Main Hall (including its
+interior), North Tower, and Central Turret/Gallery. Connecting geometry needs
+spatial review before catalog/editor migration. Existing frozen worker catalogs
+remain intact during this preparation; the split is not published yet.
+
 Interior evidence audit: all 34 worker folders include original covered/revealed
 composites, individual exterior patch PNGs and alpha masks, `layers.json`, and
 mission-state images. Keep review projection layers explicitly use `revealed.png`
