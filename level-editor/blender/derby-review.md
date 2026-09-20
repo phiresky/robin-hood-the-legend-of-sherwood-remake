@@ -13,6 +13,15 @@ collision data separate from refined rendering geometry.
 
 ## Current integration state — 2026-09-20
 
+**Second full-scene refinement pass is active.** The immutable starting snapshot
+is `work/derby-refinement/round-2/source.blend`. A fresh grouping review confirmed
+34 logical assets and 270 canonical parts; each asset will receive its own worker
+in scheduled waves. West Cottage and Great Keep are the first active workers;
+terrain/background is reviewed separately. New work is isolated until its source,
+solid, textured and scope checks pass. The new mask PNGs are evidence for this
+round; previous refinements may be removed or rebuilt. Initial publications
+listed below are baselines, not proof of acceptance or completion of this round.
+
 All 30 original logical assets have received an individual worker pass. **All initial
 passes are now merged and published, with 34 standalone assets after regrouping. The
 assets are not finished.** “Published”
@@ -32,8 +41,9 @@ world transforms are preserved. Focused ownership-migration tests and pipeline
 typecheck passed.
 
 Working integration checkpoint: `derby-refinement.blend`. The latest scene-wide
-ownership bake is recorded in `ownership-global/reprojection/layers-report.json`:
-five layers, 4,468,557 known texels and 18,382,931 neutral unknown texels. It retains
+ownership bake is recorded in `synthesized-ownership-publish-v2/reprojection/layers-report.json`:
+five layers, 4,468,557 known texels and 18,389,748 unknown texels, now filled where
+eligible source donors exist. It retains
 explicit authored/generated materials and the cleaned ground. Cottage V4 then
 received its own fresh projection and generated texture bake after its geometry edit.
 Well ground-ghost cleanup is now applied (1,935 pixels), and 21 mesh names synced.
@@ -67,14 +77,14 @@ geometry remain unfinished. Individual chain links are simplified.
 
 | Asset | Integration | Latest work / remaining review |
 | --- | --- | --- |
-| South Gatehouse | Published **with texture seams; active rework** | User clarified source solid geometry looks correct. Exact roof triangle comparison exonerated export topology. Generated roof texture used unsupported UV channel 4; exporter now compacts material-used channels and the editor-only hole artifact is fixed. Round-roof rebuild paused. Generated/fallback seams remain; `south_gatehouse_asset` improving projection coverage in an isolated worker. |
+| South Gatehouse | Published with texture seams; second pass queued | User clarified source solid geometry looks correct. Exact roof triangle comparison exonerated export topology. Generated roof texture used unsupported UV channel 4; exporter now compacts material-used channels and the editor-only hole artifact is fixed. Generated/fallback seams remain; fresh review must distinguish texture defects from geometric defects. |
 | Southwest Postern Tower | Published | Timber ladders, scaffold, and 8 crenels; `postern-worker-v2`. |
 | Lower Bailey East Curtain | Stair-side fix published | 25 crenels and closed supports. Stair building-012 side faces now use coherent curtain masonry, with tread UVs and geometry unchanged; `stair-cheek-fix/visible-after/side-textured.png`. |
 | Lower Bailey West Curtain | Published | 25 crenels, rounded turret, curved roof sectors, 18 stairs; oblique joins remain reviewable. |
 | Lower Bailey Well (formerly courtyard prop) | Published | Hollow shaft, iron lifting frame, rope, pulley, bucket; `lower-well-worker-v2`. Printed ground ghost cleanup integrated. |
 | Southern Approach Stone | Published | Closed angular outcrop, replacing tent-like wedges; `approach-stone-worker/worker-v2`. |
 | Lower Bailey East Cottage | Published | Hipped roof, closed walls, barrel; `lower-east-cottage`. |
-| Lower Bailey West Cottage | V4 level roof and generated texture published | Level main ridge/long eaves, local rounded front lip, source-fitted hip and rear silhouette; eight closed components. Fresh source projection and Sunburst high no-mask bake: `west-cottage-texture-baked-v4/eight-views.png`. Thin neutral base strips remain on some hidden views. Concealed windows/timber patterns are synthesized, not recovered facts. |
+| Lower Bailey West Cottage | V4 published but shape rejected; second pass active | V4 corrected a tilted ridge but did not resolve the user's silhouette/shape concerns. Rebuild against masks9/10 and original context, replacing inherited geometry where needed. Prior texture evidence: `west-cottage-texture-baked-v4/eight-views.png`; generated hidden detail is not geometry evidence. |
 | Lower Bailey Southwest Cottage | Published | Thatched eave and damaged-roof recess; `southwest-cottage/reviewed`. |
 | Lower Bailey Southeast Cottage | Published | Closed end wedge, porch recess, thick roof; `southeast-cottage-pass3`. |
 | Lower Bailey Northwest Cottage | Published | Hipped roofs, barrel, fence, wash tub; `northwest-cottage-final-v5`. |
@@ -220,9 +230,9 @@ are inferred. Further texture refinement should address these without distorting
    remain a separate potential cleanup, not a demonstrated cause of this defect.
 2. Improve generated rear texture placement and verify the original-camera render
    remains unchanged. Do not infer texture correctness from the generated sheet.
-3. West Cottage's fourth geometry pass, fresh projection, shaded input generation
-   and no-mask texture generation are complete. Review remaining fine-detail and
-   hidden-surface consistency defects in the baked eight-view render.
+3. West Cottage V4 remains a rejected shape baseline despite completed projection
+   and generated texture work. Its second full-review worker must resolve the
+   source silhouette and roof/body structure before another texture generation.
 4. After subsequent changes, export/publish map and standalone assets together and
    repeat editor loading, selection, UV and reveal checks as appropriate. Initial
    combined publication and checks are complete.
