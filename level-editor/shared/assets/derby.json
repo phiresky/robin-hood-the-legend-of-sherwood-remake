@@ -166,59 +166,71 @@
     },
     {
       "id": "derby-lower-west-curtain",
-      "name": "Lower Bailey West Curtain",
+      "name": "Lower Bailey West Curtain Wall Walk",
       "parts": [
         {
           "obstacle": 23,
-          "name": "Curtain wall and battlements / segment 01"
+          "name": "West battlement wall"
         },
         {
           "obstacle": 25,
-          "name": "Curtain wall and battlements / segment 02"
-        },
-        {
-          "obstacle": 36,
-          "name": "Curtain wall and battlements / segment 03"
-        },
-        {
-          "obstacle": 37,
-          "name": "Curtain wall and battlements / segment 04"
+          "name": "North battlement wall"
         },
         {
           "obstacle": 42,
-          "name": "Curtain wall and battlements / segment 05"
-        },
-        {
-          "obstacle": 38,
-          "name": "Wall stair"
+          "name": "South battlement wall"
         },
         {
           "obstacle": 45,
-          "name": "Wall walk and support"
+          "name": "Continuous wall walk and masonry support"
+        }
+      ]
+    },
+    {
+      "id": "derby-lower-west-access-stair",
+      "name": "Lower Bailey West Curtain Access Stair",
+      "parts": [
+        {
+          "obstacle": 36,
+          "name": "Landing battlements"
         },
         {
+          "obstacle": 37,
+          "name": "Landing parapet return"
+        },
+        {
+          "obstacle": 38,
+          "name": "Access stair treads and masonry support"
+        }
+      ]
+    },
+    {
+      "id": "derby-lower-west-wall-turret",
+      "name": "Lower Bailey Southwest Wall Turret",
+      "parts": [
+        {
           "obstacle": 27,
-          "name": "Southwest wall turret"
+          "name": "Round masonry shaft"
         },
         {
           "obstacle": 28,
-          "name": "Turret conical roof / segment 01"
+          "name": "Curved roof and finial / sector 01"
         },
         {
           "obstacle": 29,
-          "name": "Turret conical roof / segment 02"
+          "name": "Curved roof and finial / sector 02"
         },
         {
           "obstacle": 30,
-          "name": "Turret conical roof / segment 03"
+          "name": "Curved roof and finial / sector 03"
         },
         {
           "obstacle": 31,
-          "name": "Turret conical roof / segment 04"
+          "name": "Curved roof and finial / sector 04"
         },
         {
           "obstacle": 32,
-          "name": "Turret conical roof / segment 05"
+          "name": "Curved roof and finial / sector 05"
         }
       ]
     },
@@ -753,8 +765,8 @@
       ]
     },
     {
-      "id": "derby-great-keep",
-      "name": "Great Keep",
+      "id": "derby-keep-west-tower",
+      "name": "Great Keep / West Tower",
       "parts": [
         {
           "obstacle": 130,
@@ -813,17 +825,23 @@
           "name": "West tower base and entrance / segment 01"
         },
         {
+          "obstacle": 145,
+          "name": "West tower connecting buttress"
+        },
+        {
           "obstacle": 239,
           "name": "West tower base and entrance / segment 02"
         },
         {
           "obstacle": 240,
           "name": "West tower base and entrance / segment 03"
-        },
-        {
-          "obstacle": 145,
-          "name": "West tower connecting buttress"
-        },
+        }
+      ]
+    },
+    {
+      "id": "derby-keep-main-hall",
+      "name": "Great Keep / Main Hall",
+      "parts": [
         {
           "obstacle": 143,
           "name": "Hall west entrance arch"
@@ -841,12 +859,28 @@
           "name": "Hall west gable and buttresses / segment 01"
         },
         {
+          "obstacle": 149,
+          "name": "Hall west roof slope"
+        },
+        {
           "obstacle": 150,
           "name": "Hall west gable and buttresses / segment 02"
         },
         {
           "obstacle": 151,
           "name": "Hall west gable and buttresses / segment 03"
+        },
+        {
+          "obstacle": 167,
+          "name": "Hall entrance surrounds / segment 01"
+        },
+        {
+          "obstacle": 168,
+          "name": "Hall entrance surrounds / segment 02"
+        },
+        {
+          "obstacle": 169,
+          "name": "Hall entrance surrounds / segment 03"
         },
         {
           "obstacle": 176,
@@ -861,6 +895,10 @@
           "name": "Hall west gable and buttresses / segment 06"
         },
         {
+          "obstacle": 179,
+          "name": "Hall east wall"
+        },
+        {
           "obstacle": 180,
           "name": "Hall west gable and buttresses / segment 07"
         },
@@ -869,9 +907,117 @@
           "name": "Hall west gable and buttresses / segment 08"
         },
         {
-          "obstacle": 149,
-          "name": "Hall west roof slope"
+          "obstacle": 223,
+          "name": "Interior floors and galleries / segment 01"
         },
+        {
+          "obstacle": 224,
+          "name": "Interior floors and galleries / segment 02"
+        },
+        {
+          "obstacle": 225,
+          "name": "Interior stairs / segment 01"
+        },
+        {
+          "obstacle": 226,
+          "name": "Interior stairs / segment 02"
+        },
+        {
+          "obstacle": 227,
+          "name": "Interior floors and galleries / segment 03"
+        },
+        {
+          "obstacle": 228,
+          "name": "Interior floors and galleries / segment 04"
+        },
+        {
+          "obstacle": 229,
+          "name": "Interior floors and galleries / segment 05"
+        },
+        {
+          "obstacle": 230,
+          "name": "Interior floors and galleries / segment 06"
+        },
+        {
+          "obstacle": 231,
+          "name": "Interior stairs / segment 03"
+        },
+        {
+          "obstacle": 232,
+          "name": "Banquet table"
+        },
+        {
+          "obstacle": 233,
+          "name": "Banquet stool / seat 01"
+        },
+        {
+          "obstacle": 234,
+          "name": "Banquet stool / seat 02"
+        },
+        {
+          "obstacle": 235,
+          "name": "Banquet stool / seat 03"
+        },
+        {
+          "obstacle": 236,
+          "name": "Banquet stool / seat 04"
+        },
+        {
+          "obstacle": 237,
+          "name": "Banquet stool / seat 05"
+        },
+        {
+          "obstacle": 238,
+          "name": "Banquet stool / seat 06"
+        }
+      ]
+    },
+    {
+      "id": "derby-keep-north-tower",
+      "name": "Great Keep / North Tower",
+      "parts": [
+        {
+          "obstacle": 163,
+          "name": "North tower roof terrace"
+        },
+        {
+          "obstacle": 164,
+          "name": "North tower upper masonry / segment 01"
+        },
+        {
+          "obstacle": 165,
+          "name": "North tower upper masonry / segment 02"
+        },
+        {
+          "obstacle": 166,
+          "name": "North tower upper masonry / segment 03"
+        },
+        {
+          "obstacle": 171,
+          "name": "North tower conical roof / segment 01"
+        },
+        {
+          "obstacle": 172,
+          "name": "North tower conical roof / segment 02"
+        },
+        {
+          "obstacle": 173,
+          "name": "North tower conical roof / segment 03"
+        },
+        {
+          "obstacle": 174,
+          "name": "North tower side turrets / segment 01"
+        },
+        {
+          "obstacle": 175,
+          "name": "North tower side turrets / segment 02"
+        }
+      ]
+    },
+    {
+      "id": "derby-keep-central-gallery",
+      "name": "Great Keep / Central Turret and Gallery",
+      "parts": [
         {
           "obstacle": 152,
           "name": "Central turret and roof walk / segment 01"
@@ -905,14 +1051,6 @@
           "name": "Central turret and roof walk / segment 08"
         },
         {
-          "obstacle": 170,
-          "name": "Central turret and roof walk / segment 09"
-        },
-        {
-          "obstacle": 181,
-          "name": "Central turret and roof walk / segment 10"
-        },
-        {
           "obstacle": 160,
           "name": "West tower connecting gallery / segment 01"
         },
@@ -925,120 +1063,12 @@
           "name": "West tower connecting gallery / segment 03"
         },
         {
-          "obstacle": 163,
-          "name": "North tower roof terrace"
+          "obstacle": 170,
+          "name": "Central turret and roof walk / segment 09"
         },
         {
-          "obstacle": 164,
-          "name": "North tower upper masonry / segment 01"
-        },
-        {
-          "obstacle": 165,
-          "name": "North tower upper masonry / segment 02"
-        },
-        {
-          "obstacle": 166,
-          "name": "North tower upper masonry / segment 03"
-        },
-        {
-          "obstacle": 167,
-          "name": "Hall entrance surrounds / segment 01"
-        },
-        {
-          "obstacle": 168,
-          "name": "Hall entrance surrounds / segment 02"
-        },
-        {
-          "obstacle": 169,
-          "name": "Hall entrance surrounds / segment 03"
-        },
-        {
-          "obstacle": 171,
-          "name": "North tower conical roof / segment 01"
-        },
-        {
-          "obstacle": 172,
-          "name": "North tower conical roof / segment 02"
-        },
-        {
-          "obstacle": 173,
-          "name": "North tower conical roof / segment 03"
-        },
-        {
-          "obstacle": 174,
-          "name": "North tower side turrets / segment 01"
-        },
-        {
-          "obstacle": 175,
-          "name": "North tower side turrets / segment 02"
-        },
-        {
-          "obstacle": 179,
-          "name": "Hall east wall"
-        },
-        {
-          "obstacle": 223,
-          "name": "Interior floors and galleries / segment 01"
-        },
-        {
-          "obstacle": 224,
-          "name": "Interior floors and galleries / segment 02"
-        },
-        {
-          "obstacle": 227,
-          "name": "Interior floors and galleries / segment 03"
-        },
-        {
-          "obstacle": 228,
-          "name": "Interior floors and galleries / segment 04"
-        },
-        {
-          "obstacle": 229,
-          "name": "Interior floors and galleries / segment 05"
-        },
-        {
-          "obstacle": 230,
-          "name": "Interior floors and galleries / segment 06"
-        },
-        {
-          "obstacle": 225,
-          "name": "Interior stairs / segment 01"
-        },
-        {
-          "obstacle": 226,
-          "name": "Interior stairs / segment 02"
-        },
-        {
-          "obstacle": 231,
-          "name": "Interior stairs / segment 03"
-        },
-        {
-          "obstacle": 232,
-          "name": "Banquet table"
-        },
-        {
-          "obstacle": 233,
-          "name": "Banquet stool / seat 01"
-        },
-        {
-          "obstacle": 234,
-          "name": "Banquet stool / seat 02"
-        },
-        {
-          "obstacle": 235,
-          "name": "Banquet stool / seat 03"
-        },
-        {
-          "obstacle": 236,
-          "name": "Banquet stool / seat 04"
-        },
-        {
-          "obstacle": 237,
-          "name": "Banquet stool / seat 05"
-        },
-        {
-          "obstacle": 238,
-          "name": "Banquet stool / seat 06"
+          "obstacle": 181,
+          "name": "Central turret and roof walk / segment 10"
         }
       ]
     },

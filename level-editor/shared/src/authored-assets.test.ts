@@ -24,7 +24,7 @@ test("Derby assigns every exported obstacle to exactly one named logical asset",
   const members = derby.groups.flatMap(group => group.parts.map(part => part.obstacle));
   assert.equal(members.length, 270);
   assert.equal(new Set(members).size, 270);
-  assert.equal(groups.length, 30);
+  assert.equal(groups.length, 39);
   assert.equal(new Set(groups.map(group => group.id)).size, groups.length);
   assert.ok(groups.every(group => group.name && !group.name.startsWith("group-")));
   for (const [i, part] of parts.entries()) {
@@ -35,7 +35,15 @@ test("Derby assigns every exported obstacle to exactly one named logical asset",
   }
   const owner = (id: number) => parts.find(part => part.source.obstacle === id)!.group;
   assert.equal(owner(49), owner(50)); // Both sides of the east cottage.
-  assert.equal(owner(130), owner(173)); // Keep walls, towers, and roofs.
+  assert.equal(owner(130), owner(239)); // West tower retains its revealed landing.
+  assert.equal(owner(143), owner(227)); // Keep hall retains its fireplace interior.
+  assert.equal(owner(163), owner(173)); // North tower retains its roof.
+  assert.equal(owner(152), owner(161)); // Central turret retains its gallery.
+  assert.equal(new Set([130, 143, 163, 152].map(owner)).size, 4);
+  assert.equal(owner(27), owner(32)); // Wall turret retains every roof sector.
+  assert.equal(owner(36), owner(38)); // Access stairs stay with their landing.
+  assert.equal(owner(23), owner(45)); // Wall runs retain the continuous walk.
+  assert.equal(new Set([27, 36, 23].map(owner)).size, 3);
   assert.equal(owner(183), owner(210)); // East hall and its roof turret.
   assert.equal(owner(7), owner(12)); // Curtain wall and access stair.
   assert.notEqual(owner(183), owner(214)); // Hall and freestanding watchtower.
@@ -62,6 +70,6 @@ test("untouched saved groups upgrade once, but saved transforms and custom owner
   assert.equal(upgradeGeneratedAssetGroups(edited), false);
   assert.deepEqual(edited, snapshot);
   assert.equal(upgradeGeneratedAssetGroups(document), true);
-  assert.equal(document.groups.length, 30);
+  assert.equal(document.groups.length, 39);
   assert.equal(upgradeGeneratedAssetGroups(document), false);
 });

@@ -14,8 +14,8 @@ def projection_metadata(source):
     """Carry surface ownership and projection provenance through glTF export."""
     values = {}
     for key in source.keys():
-        if key.startswith(("reprojection_", "reveal_", "sight_patch_", "mission_patch_", "drawbridge_")) or key in (
-                "projection_layer", "step_count", "crenellation_notches", "arch_segments",
+        if key.startswith(("reprojection_", "reveal_", "sight_patch_", "mission_patch_", "drawbridge_", "source_ownership_")) or key in (
+                "projection_layer", "projection_component", "projection_min_cosine", "step_count", "crenellation_notches", "arch_segments",
                 "gate_refinement", "cottage_refinement", "architecture_refinement", "embrasure_count", "refinement_recipe",
                 "derby_furniture_floor_clip", "support_floor_source_node", "support_floor_scene_z",
                 "projection_subdivision_spacing"):
