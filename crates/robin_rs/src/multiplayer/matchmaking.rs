@@ -34,6 +34,8 @@ const SOFT_STATE_TTL: std::time::Duration = std::time::Duration::from_secs(8);
 /// One advertised game, as seen in the browser list.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameListing {
+    #[serde(default)]
+    pub coop: robin_engine::coop::CoopRules,
     /// The host's game endpoint id — doubles as the game id and as
     /// what joiners pass to `--connect`.
     pub id: String,
@@ -66,6 +68,8 @@ impl GameListing {
 /// The launch handoff for a game the local player is part of.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JoinedGame {
+    #[serde(default)]
+    pub coop: robin_engine::coop::CoopRules,
     pub game_id: String,
     pub mission_id: u32,
     pub mission_name: String,
@@ -121,6 +125,7 @@ pub enum MatchmakingEvent {
 
 #[cfg(not(target_arch = "wasm32"))]
 enum Command {
+    Rules(robin_engine::coop::CoopRules),
     Create {
         mission_id: u32,
         mission_name: String,
@@ -182,6 +187,11 @@ impl MatchmakingSession {
         self.send(Command::Leave)
     }
 
+    pub fn set_rules(&self, rules: robin_engine::coop::CoopRules) -> Result<(), String> {
+        rules.validate()?;
+        self.send(Command::Rules(rules))
+    }
+
     pub fn start_game(&self) -> Result<(), String> {
         self.send(Command::Start)
     }
@@ -237,6 +247,10 @@ impl MatchmakingSession {
     }
 
     pub fn leave_game(&self) -> Result<(), String> {
+        match *self {}
+    }
+
+    pub fn set_rules(&self, _rules: robin_engine::coop::CoopRules) -> Result<(), String> {
         match *self {}
     }
 
@@ -525,6 +539,9 @@ mod native {
         fn handle_topic_msg(&mut self, msg: TopicMsg) {
             match msg {
                 TopicMsg::Announce { game } => {
+                    if game.coop.validate().is_err() || game.players > 5 {
+                        return;
+                    }
                     self.listings
                         .insert(game.id.clone(), (game.clone(), Instant::now()));
                     self.listings_dirty = true;
@@ -548,6 +565,7 @@ mod native {
                     if let Role::Hosting { game, joiners, .. } = &mut self.role
                         && game.id == game_id
                         && nickname != self.nickname
+                        && (joiners.contains_key(&nickname) || joiners.len() < 4)
                     {
                         joiners.insert(nickname, Instant::now());
                     }
@@ -572,6 +590,17 @@ mod native {
         /// Returns `false` when the worker should shut down.
         async fn handle_command(&mut self, command: Command) -> bool {
             match command {
+                Command::Rules(rules) => {
+                    if let Role::Hosting { game, .. } = &mut self.role {
+                        if game.state == "waiting" {
+                            game.coop = rules;
+                            let game = game.clone();
+                            self.broadcast(&TopicMsg::Announce { game: game.clone() })
+                                .await;
+                            let _ = self.events.send(MatchmakingEvent::GameUpdated(game));
+                        }
+                    }
+                }
                 Command::Create {
                     mission_id,
                     mission_name,
@@ -585,13 +614,14 @@ mod native {
                         }
                     };
                     let game = GameListing {
+                        coop: Default::default(),
                         id,
                         mission_id,
                         mission_name,
                         host_content,
                         host: self.nickname.clone(),
                         players: 1,
-                        max_players: 4,
+                        max_players: 5,
                         state: "waiting".to_string(),
                         start_at_epoch_ms: None,
                     };
@@ -786,6 +816,10 @@ mod native {
 
     fn joined_from_listing(listing: &GameListing, expected_players: u32) -> JoinedGame {
         JoinedGame {
+            coop: robin_engine::coop::CoopRules {
+                players: expected_players as u8,
+                ..listing.coop
+            },
             game_id: listing.id.clone(),
             mission_id: listing.mission_id,
             mission_name: listing.mission_name.clone(),
@@ -844,13 +878,14 @@ mod tests {
     #[test]
     fn topic_messages_roundtrip_json() {
         let listing = GameListing {
+            coop: Default::default(),
             id: "abc".into(),
             mission_id: 3,
             mission_name: "Dem_Lei_MP".into(),
             host_content: None,
             host: "robin".into(),
             players: 2,
-            max_players: 4,
+            max_players: 5,
             state: "waiting".into(),
             start_at_epoch_ms: None,
         };

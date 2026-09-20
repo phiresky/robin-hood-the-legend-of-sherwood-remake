@@ -166,6 +166,9 @@ pub struct GamepadDeviceInput {
 }
 
 impl GamepadDeviceInput {
+    pub fn is_connected(&self) -> bool {
+        self.active.is_some()
+    }
     /// Physical device state outlives missions; gesture and QA history do not.
     /// Seed both edge samples from held input so a menu-held button cannot
     /// become a synthetic press when the next mission starts.
@@ -714,7 +717,12 @@ impl GamePadState {
         local_seat: PlayerId,
     ) -> Vec<engine_player_command::PlayerCommand> {
         let mut cmds = Vec::new();
-        let pc_ids = engine.pc_ids();
+        let pc_ids: Vec<_> = engine
+            .pc_ids()
+            .iter()
+            .copied()
+            .filter(|&id| engine.coop_can_select(local_seat.0 as usize, id))
+            .collect();
         if pc_ids.is_empty() {
             return cmds;
         }
@@ -735,7 +743,12 @@ impl GamePadState {
                 Some(i) => i - 1,
             };
             cmds.push(PlayerCommand::SelectByPortrait {
-                portrait_index: to_select as u32,
+                portrait_index: engine
+                    .pc_ids()
+                    .iter()
+                    .position(|id| *id == pc_ids[to_select])
+                    .expect("cycled character belongs to roster")
+                    as u32,
                 append: false,
             });
             // Follow-lock fires for both PREV branches (with and
@@ -753,7 +766,12 @@ impl GamePadState {
                 Some(i) => i + 1,
             };
             cmds.push(PlayerCommand::SelectByPortrait {
-                portrait_index: to_select as u32,
+                portrait_index: engine
+                    .pc_ids()
+                    .iter()
+                    .position(|id| *id == pc_ids[to_select])
+                    .expect("cycled character belongs to roster")
+                    as u32,
                 append: false,
             });
             if !alt_down {
@@ -934,16 +952,16 @@ pub enum QaEvent {
 /// tracked separately by the caller and fed into [`GamePadState::apply_dpad_state`].
 pub fn standard_button_to_gamepad_button(standard_button: u8) -> Option<GamePadButton> {
     Some(match standard_button {
-        0 => GamePadButton::ActionB,              // South → B (ActionB=0)
-        1 => GamePadButton::ActionA,              // East  → A (ActionA=1)
-        2 => GamePadButton::ActionC,              // West  → X (ActionC=2)
-        3 => GamePadButton::CancelParade,         // North → Y
-        9 => GamePadButton::SelectPrevCharacter,  // LeftShoulder (LB)
+        0 => GamePadButton::ActionA,      // South (A / Cross) → first ability
+        1 => GamePadButton::ActionB,      // East (B / Circle) → second ability
+        2 => GamePadButton::ActionC,      // West  → X (ActionC=2)
+        3 => GamePadButton::CancelParade, // North → Y
+        9 => GamePadButton::SelectPrevCharacter, // LeftShoulder (LB)
         10 => GamePadButton::SelectNextCharacter, // RightShoulder (RB)
-        4 => GamePadButton::AltChoice,            // Back → modifier
-        6 => GamePadButton::QaManage,             // Start → QA
-        7 => GamePadButton::CrouchChinese,        // LeftStick press
-        8 => GamePadButton::SimulatedLeftMouse,   // RightStick press
+        4 => GamePadButton::AltChoice,    // Back → modifier
+        6 => GamePadButton::QaManage,     // Start → QA
+        7 => GamePadButton::CrouchChinese, // LeftStick press
+        8 => GamePadButton::SimulatedLeftMouse, // RightStick press
         _ => return None,
     })
 }
@@ -1171,3 +1189,101 @@ fn vector_to_sector_0_to_15(x: f32, y: f32) -> u16 {
 
 #[cfg(test)]
 mod tests;
+
+/// Feed keyboard movement through the same terrain and cadence checks as a stick.
+pub(crate) fn keyboard_movement_state(
+    keys: &std::collections::BTreeSet<winit::keyboard::KeyCode>,
+) -> GamePadState {
+    use winit::keyboard::KeyCode;
+    let axis = |positive, negative| {
+        i32::from(keys.contains(&positive)) - i32::from(keys.contains(&negative))
+    };
+    let x = axis(KeyCode::KeyD, KeyCode::KeyA);
+    let y = axis(KeyCode::KeyS, KeyCode::KeyW);
+    let magnitude = if keys.contains(&KeyCode::ShiftLeft) || keys.contains(&KeyCode::ShiftRight) {
+        32767.0
+    } else {
+        16000.0
+    };
+    let length = ((x * x + y * y) as f32).sqrt().max(1.0);
+    let mut pad = GamePadState::default();
+    pad.update(JoystickState {
+        x: (x as f32 * magnitude / length) as i32,
+        y: (y as f32 * magnitude / length) as i32,
+        ..Default::default()
+    });
+    pad
+}
+
+/// Local lobby membership is independent of network transport identities.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalPlayers {
+    pub enabled: bool,
+    pub keyboard: bool,
+    pub devices: Vec<(u32, GamepadDeviceInput)>,
+}
+impl Default for LocalPlayers {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            keyboard: true,
+            devices: Vec::new(),
+        }
+    }
+}
+impl LocalPlayers {
+    pub fn count(&self) -> usize {
+        usize::from(self.keyboard) + self.devices.len()
+    }
+    pub fn join_event(&mut self, event: &crate::gfx_types::GameEvent) {
+        if let crate::gfx_types::GameEvent::GamepadRemoved { which } = *event {
+            self.devices.retain(|(id, _)| *id != which);
+        }
+        if let crate::gfx_types::GameEvent::GamepadButton {
+            which,
+            button: 0,
+            pressed: true,
+        } = *event
+        {
+            if self.count() < robin_engine::coop::MAX_PLAYERS
+                && !self.devices.iter().any(|(id, _)| *id == which)
+            {
+                let mut device = GamepadDeviceInput::default();
+                device.fold(event);
+                self.devices.push((which, device));
+            }
+        }
+    }
+    pub fn fold(&mut self, event: &crate::gfx_types::GameEvent) {
+        use crate::gfx_types::GameEvent;
+        let which = match *event {
+            GameEvent::GamepadButton { which, .. }
+            | GameEvent::GamepadAxis { which, .. }
+            | GameEvent::GamepadAdded { which }
+            | GameEvent::GamepadRemoved { which } => which,
+            _ => return,
+        };
+        if let Some((_, device)) = self.devices.iter_mut().find(|(id, _)| *id == which) {
+            device.fold(event);
+        } else if self.enabled
+            && matches!(
+                event,
+                GameEvent::GamepadButton {
+                    button: 0,
+                    pressed: true,
+                    ..
+                }
+            )
+        {
+            if let Some((id, device)) = self
+                .devices
+                .iter_mut()
+                .find(|(_, device)| !device.is_connected())
+            {
+                *id = which;
+                device.fold(event);
+                device.begin_mission();
+            }
+        }
+    }
+}

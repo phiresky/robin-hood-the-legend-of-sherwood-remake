@@ -138,6 +138,7 @@ impl Renderer {
             let tex_idx = self.queue_cached_bg(surface.textures().opaque_bg.clone());
             self.frame.queued.push(QueuedDraw {
                 dst,
+                uv_corners: None,
                 corners: None,
                 uv,
                 tint: [1.0, 1.0, 1.0, opacity],
@@ -163,6 +164,7 @@ impl Renderer {
             let tex_idx = self.queue_cached_bg(shadow_bg);
             self.frame.queued.push(QueuedDraw {
                 dst,
+                uv_corners: None,
                 corners: None,
                 uv,
                 tint: [
@@ -180,6 +182,7 @@ impl Renderer {
         let tex_idx = self.queue_cached_bg(color_bg);
         self.frame.queued.push(QueuedDraw {
             dst,
+            uv_corners: None,
             corners: None,
             uv,
             tint: [1.0, 1.0, 1.0, opacity.clamp(0.0, 1.0)],
@@ -209,6 +212,7 @@ impl Renderer {
                     w: (rx - lx).max(1),
                     h: 1,
                 },
+                uv_corners: None,
                 corners: None,
                 uv: [0.0, 0.0, 1.0, 1.0],
                 tint,
@@ -229,6 +233,7 @@ impl Renderer {
                     w: 1,
                     h: (by - ty).max(1),
                 },
+                uv_corners: None,
                 corners: None,
                 uv: [0.0, 0.0, 1.0, 1.0],
                 tint,
@@ -263,6 +268,7 @@ impl Renderer {
                 w: 1,
                 h: 1,
             },
+            uv_corners: None,
             corners: Some(corners),
             uv: [0.0, 0.0, 1.0, 1.0],
             tint,
@@ -276,6 +282,7 @@ impl Renderer {
     pub fn render_gpu_rect(&mut self, x: i32, y: i32, w: i32, h: i32, [r, g, b, a]: [u8; 4]) {
         self.frame.queued.push(QueuedDraw {
             dst: Rect { x, y, w, h },
+            uv_corners: None,
             corners: None,
             uv: [0.0, 0.0, 1.0, 1.0],
             tint: Color::rgba(r, g, b, a).to_f32_srgb(),
@@ -300,6 +307,7 @@ impl Renderer {
                 w: 1,
                 h: 1,
             },
+            uv_corners: None,
             corners: Some([pts[0], pts[1], pts[2], pts[2]]),
             uv: [0.0, 0.0, 1.0, 1.0],
             tint: Color::rgba(r, g, b, a).to_f32_srgb(),
@@ -338,6 +346,7 @@ impl Renderer {
                 w: self.frame.width as i32,
                 h: self.frame.height as i32,
             },
+            uv_corners: None,
             corners: None,
             uv: [0.0, 0.0, 1.0, 1.0],
             tint: [hue, scale, 0.0, 0.0],
@@ -361,6 +370,7 @@ impl Renderer {
         let a = alpha_256.min(256) as f32 / 256.0;
         self.frame.queued.push(QueuedDraw {
             dst: dst_rect,
+            uv_corners: None,
             corners: None,
             uv,
             tint: [r, g, b, a],
@@ -381,6 +391,7 @@ impl Renderer {
         }
         self.frame.queued.push(QueuedDraw {
             dst: dst_rect,
+            uv_corners: None,
             corners: None,
             uv: [
                 alpha_left as f32 / 255.0,
@@ -429,6 +440,7 @@ impl Renderer {
                     w: q.dst_w as i32,
                     h: q.dst_h as i32,
                 },
+                uv_corners: None,
                 corners: None,
                 uv: [q.u0, q.v0, q.u1, q.v1],
                 tint: [1.0, 1.0, 1.0, 1.0],
@@ -486,6 +498,7 @@ impl Renderer {
                 w: w as i32,
                 h: h as i32,
             },
+            uv_corners: None,
             corners: None,
             uv: [0.0, 0.0, 1.0, 1.0],
             tint: [1.0, 1.0, 1.0, 1.0],
@@ -518,6 +531,7 @@ impl Renderer {
         let tex_idx = self.queue_frame_texture(view);
         self.frame.queued.push(QueuedDraw {
             dst,
+            uv_corners: None,
             corners: None,
             uv,
             tint,
@@ -547,5 +561,115 @@ impl Renderer {
             height,
             label,
         )
+    }
+}
+
+impl Renderer {
+    /// Temporarily use the reusable capture target for one local camera.
+    pub(crate) fn begin_split_view(&mut self) {
+        assert!(!self.split_capture_active, "nested split view");
+        let mut capture = self.capture_frame.take().unwrap_or_else(|| {
+            Box::new(FrameState::offscreen(
+                &self.gpu,
+                &self.resources,
+                &self.screen_layout,
+                self.frame.width,
+                self.frame.height,
+            ))
+        });
+        capture.resize(
+            &self.gpu,
+            &self.resources,
+            self.frame.width,
+            self.frame.height,
+        );
+        capture.clear_recording();
+        capture.clear_frozen_scene();
+        std::mem::swap(&mut self.frame, &mut *capture);
+        self.capture_frame = Some(capture);
+        self.split_capture_active = true;
+    }
+
+    /// Submit this camera and restore the live frame, retaining reusable textures.
+    pub(crate) fn finish_split_view(&mut self, index: usize, polygon: &[[f32; 2]]) {
+        assert!(self.split_capture_active, "split view was not opened");
+        let size = wgpu::Extent3d {
+            width: self.frame.width as u32,
+            height: self.frame.height as u32,
+            depth_or_array_layers: 1,
+        };
+        if self
+            .split_textures
+            .get(index)
+            .is_none_or(|texture| texture.size() != size)
+        {
+            let texture = self.gpu.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("local player view"),
+                size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: self.frame.render_target_texture.format(),
+                usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            if index == self.split_textures.len() {
+                self.split_textures.push(texture);
+            } else {
+                self.split_textures[index] = texture;
+            }
+        }
+        self.frame.push_implicit_base_quad();
+        self.frame.upload_queue_geometry(&self.gpu);
+        let mut encoder = self
+            .gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("local player camera"),
+            });
+        self.frame
+            .encode_pass1_to_rt(&mut encoder, &self.pipelines, &self.resources);
+        encoder.copy_texture_to_texture(
+            self.frame.render_target_texture.as_image_copy(),
+            self.split_textures[index].as_image_copy(),
+            size,
+        );
+        self.gpu.queue.submit(Some(encoder.finish()));
+        let mut live = self
+            .capture_frame
+            .take()
+            .expect("split capture holds live frame");
+        std::mem::swap(&mut self.frame, &mut *live);
+        self.capture_frame = Some(live);
+        self.split_capture_active = false;
+        self.frame.enter_gpu_phase();
+        let view = self.split_textures[index].create_view(&wgpu::TextureViewDescriptor::default());
+        let texture = self.queue_frame_texture(&view);
+        for triangle in 1..polygon.len().saturating_sub(1) {
+            let points = [
+                polygon[0],
+                polygon[triangle],
+                polygon[triangle + 1],
+                polygon[triangle + 1],
+            ];
+            self.frame.queued.push(QueuedDraw {
+                dst: Rect {
+                    x: 0,
+                    y: 0,
+                    w: 1,
+                    h: 1,
+                },
+                corners: Some(points.map(|p| (p[0], p[1]))),
+                uv_corners: Some(
+                    points.map(|p| [p[0] / size.width as f32, p[1] / size.height as f32]),
+                ),
+                uv: [0., 0., 1., 1.],
+                tint: [1.; 4],
+                operation: DrawOperation::Quad {
+                    texture: QuadTexture::Frame(texture),
+                    blend: BlendMode::Blend,
+                },
+            });
+        }
     }
 }

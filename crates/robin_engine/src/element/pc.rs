@@ -130,6 +130,9 @@ const fn default_hero_mission_role() -> MissionRole {
     bitcode::Decode,
 )]
 pub struct PcData {
+    /// First actor in this mission identity group; present only on added copies.
+    #[serde(default)]
+    pub coop_origin: Option<EntityId>,
     /// Life points stored directly.
     pub life_points: i16,
     pub immortal: bool,
@@ -281,6 +284,7 @@ pub struct PcData {
 impl Default for PcData {
     fn default() -> Self {
         Self {
+            coop_origin: None,
             life_points: crate::pc_status::LIFEPOINTS_PC,
             immortal: false,
             robin: false,

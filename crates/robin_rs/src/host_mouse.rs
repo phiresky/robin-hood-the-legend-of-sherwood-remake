@@ -914,7 +914,13 @@ pub fn update_mouse(
         .input
         .begin_cursor_feedback(MOUSE_OPACITY_DEFAULT);
 
-    publish_mouse_spatial_hit(engine, host, mouse_map, modifiers);
+    publish_mouse_spatial_hit_for_seat(
+        engine,
+        host,
+        mouse_map,
+        modifiers,
+        host.transport.local_seat(),
+    );
 
     if let Some(cursor) = view_cursor(
         engine,
@@ -932,11 +938,12 @@ pub fn update_mouse(
 
 /// Resolve and publish this frame's spatial hit (sector, layer, patch,
 /// hovered door, move eligibility) for cursor and click consumers.
-fn publish_mouse_spatial_hit(
+pub(crate) fn publish_mouse_spatial_hit_for_seat(
     engine: &Engine,
     host: &mut Host,
     mouse_map_pt: MapPoint,
     modifiers: ClickModifiers,
+    local_seat: robin_engine::player_command::PlayerId,
 ) {
     let shift_held = modifiers.planning;
 
@@ -950,7 +957,7 @@ fn publish_mouse_spatial_hit(
     // The reference is used by `get_sector` to tie-break overlapping
     // jump sectors (nearest-mid wins).
     let reference = engine
-        .hero_selection(host.transport.local_seat())
+        .hero_selection(local_seat)
         .first()
         .and_then(|&id| engine.get_entity(id))
         .map(|e| {

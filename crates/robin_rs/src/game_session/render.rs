@@ -261,6 +261,45 @@ pub(super) fn prepare_fixed_tick_hud(
         // once-per-tick presentation work.
         engine.display_ai_log_for_selected(host.frontend.selected_view_element());
     }
+    if host.frontend.local_player_count > 1 {
+        let players: Vec<_> = engine
+            .active_peer_selections()
+            .filter_map(|(seat, selected, _)| {
+                selected
+                    .first()
+                    .copied()
+                    .and_then(|id| engine.get_entity(id))
+                    .map(|entity| {
+                        let point = entity.element_data().position_map();
+                        (seat.0, [point.x, point.y])
+                    })
+                    .or_else(|| {
+                        host.frontend
+                            .split_screen
+                            .views
+                            .iter()
+                            .find(|view| view.members.contains(&seat.0))
+                            .map(|view| (seat.0, view.center))
+                    })
+            })
+            .collect();
+        let view = &host.frontend.viewport;
+        host.frontend.split_screen.update(
+            &players,
+            view.screen_size.x,
+            view.screen_size.y,
+            view.zoom_factor,
+        );
+        if let Some(view) = host
+            .frontend
+            .split_screen
+            .views
+            .iter()
+            .find(|view| view.members.contains(&host.local_seat.0))
+        {
+            host.frontend.viewport = view.viewport(&host.frontend.viewport);
+        }
+    }
     ui.console_overlay
         .consume_pending_output(host.frontend.diagnostics_mut().take_console_output());
     ui.console_overlay.tick_animation();
@@ -1325,7 +1364,62 @@ fn render_frame_with_hud(
         .zoom_presentation(zoom_frame_id)
         .unwrap_or_else(|err| panic!("render_frame requires prepared zoom presentation: {err}"));
 
-    render_world_pass(engine, host, assets, dev, &presentation, ctx);
+    let layout = &host.frontend.split_screen;
+    if host.frontend.local_player_count > 1
+        && !layout.views.is_empty()
+        && host.viewport().screen_size == host.frontend.viewport.screen_size
+    {
+        for (index, view) in layout.views.iter().enumerate() {
+            let viewport = view.viewport(host.viewport());
+            let mut player_host = host.with_viewport(&viewport);
+            player_host.local_seat = robin_engine::player_command::PlayerId(view.members[0]);
+            let player_presentation = FramePresentationInputs::prepare(&player_host, engine);
+            ctx.renderer.begin_split_view();
+            render_world_pass(engine, &player_host, assets, dev, &player_presentation, ctx);
+            if viewport.level_size.x > 0.0 && viewport.level_size.y > 0.0 {
+                let width = viewport.screen_size.x as i32;
+                let height = viewport.screen_size.y as i32;
+                let left = (-viewport.view_position.x * viewport.zoom_factor)
+                    .clamp(0.0, width as f32) as i32;
+                let top = (-viewport.view_position.y * viewport.zoom_factor)
+                    .clamp(0.0, height as f32) as i32;
+                let right = ((viewport.level_size.x - viewport.view_position.x)
+                    * viewport.zoom_factor)
+                    .clamp(0.0, width as f32) as i32;
+                let bottom = ((viewport.level_size.y - viewport.view_position.y)
+                    * viewport.zoom_factor)
+                    .clamp(0.0, height as f32) as i32;
+                for (x, y, w, h) in [
+                    (0, 0, left, height),
+                    (right, 0, width - right, height),
+                    (0, 0, width, top),
+                    (0, bottom, width, height - bottom),
+                ] {
+                    if w > 0 && h > 0 {
+                        ctx.renderer.render_gpu_rect(x, y, w, h, [0, 0, 0, 255]);
+                    }
+                }
+            }
+            ctx.renderer.finish_split_view(index, &view.polygon);
+        }
+        if layout.views.len() > 1 {
+            for view in &layout.views {
+                for edge in 0..view.polygon.len() {
+                    let a = view.polygon[edge];
+                    let b = view.polygon[(edge + 1) % view.polygon.len()];
+                    ctx.renderer.render_gpu_line(
+                        a[0] as i32,
+                        a[1] as i32,
+                        b[0] as i32,
+                        b[1] as i32,
+                        [210, 220, 235],
+                    );
+                }
+            }
+        }
+    } else {
+        render_world_pass(engine, host, assets, dev, &presentation, ctx);
+    }
     // Scene captures stop after world-space effects, before gameplay feedback and HUD.
     if draw_hud {
         render_overlay_pass(
@@ -1773,9 +1867,69 @@ fn render_overlay_pass(
     // Pump host-side deferred console output into the overlay's history
     // so those lines surface in the scrollback even though they
     // originate outside the dispatcher.
-    if console_overlay.is_visible() {
-        let console_font = menu_resources.and_then(|r| r.label_font_any());
-        console_overlay.render(renderer, console_font);
+    let console_font = menu_resources.and_then(|r| r.label_font_any());
+    console_overlay.render(renderer, console_font);
+    if let Some(font) = console_font {
+        let players: Vec<_> = engine.active_peer_selections().collect();
+        if players.len() > 1 {
+            let now = crate::window::process_uptime_ms();
+            for (index, (seat, _, name)) in players.iter().enumerate() {
+                let latency = if host.frontend.local_disconnected.contains(&seat.0) {
+                    "controller disconnected".to_owned()
+                } else if host.frontend.local_player_count > 0 || *seat == host.local_seat {
+                    "local".to_owned()
+                } else {
+                    host.frontend
+                        .peer_rtt
+                        .get(&seat.0)
+                        .filter(|(_, sampled)| now.wrapping_sub(*sampled) < 6000)
+                        .map(|(ms, _)| format!("{ms} ms RTT"))
+                        .unwrap_or_else(|| "measuring…".into())
+                };
+                let label = format!(
+                    "{} — {latency}",
+                    if name.is_empty() {
+                        format!("Player {}", seat.0 + 1)
+                    } else {
+                        name.to_string()
+                    }
+                );
+                let x = (renderer.screen_width() as i32 - font.text_width(&label) - 12).max(0);
+                crate::ingame_menu::layout::render_text_screen_font(
+                    renderer,
+                    font,
+                    &label,
+                    x,
+                    12 + index as i32 * (font.height() as i32 + 3),
+                );
+            }
+        }
+    }
+
+    if host.frontend.local_player_count > 0 {
+        const COLORS: [[u8; 3]; 5] = [
+            [100, 210, 255],
+            [255, 180, 80],
+            [130, 240, 130],
+            [240, 130, 235],
+            [255, 235, 100],
+        ];
+        for (&seat, &point) in &host.frontend.local_cursors {
+            let x = point[0] as i32;
+            let y = point[1] as i32;
+            let color = COLORS[usize::from(seat) % COLORS.len()];
+            renderer.render_gpu_line(x - 7, y, x + 7, y, color);
+            renderer.render_gpu_line(x, y - 7, x, y + 7, color);
+            if let Some(font) = console_font {
+                crate::ingame_menu::layout::render_text_screen_font(
+                    renderer,
+                    font,
+                    &format!("P{}", seat + 1),
+                    x + 9,
+                    y + 3,
+                );
+            }
+        }
     }
 
     // Mouse cursor selection + `PerformOrientation` dispatch is hoisted

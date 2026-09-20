@@ -23,7 +23,7 @@ pub mod content_identity;
 
 /// Most players one multiplayer session admits, host included. Browser join
 /// tickets and the native host both bound `expected_players` by it.
-pub const MAX_MULTIPLAYER_PLAYERS: u32 = 4;
+pub const MAX_MULTIPLAYER_PLAYERS: u32 = 5;
 
 // The one feature gate of the transport: `enabled.rs` mounts the iroh
 // server/client (native) or relay client (browser); `disabled.rs` provides the

@@ -49,6 +49,13 @@ struct ServerSeat {
 }
 
 impl PeerSessions {
+    pub(super) fn nickname(&self, seat: PlayerId) -> &str {
+        &self
+            .seats
+            .get(&seat.0)
+            .expect("authenticated seat must exist")
+            .nickname
+    }
     pub(super) fn authorize_session(
         &self,
         seat: PlayerId,

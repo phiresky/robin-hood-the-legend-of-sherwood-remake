@@ -157,6 +157,58 @@ impl EngineInner {
         }
     }
 
+    fn coop_command_authorized(&self, seat: usize, command: &PlayerCommand) -> bool {
+        use PlayerCommand::*;
+        if self.control.sim_config.coop.control == crate::coop::CharacterControl::Shared {
+            return true;
+        }
+        let allowed = |id| self.coop_can_select(seat, id);
+        if matches!(command, StartMacro { .. } | DeleteMacro { .. })
+            && !self.players.qa_recording_for.iter().copied().all(allowed)
+        {
+            return false;
+        }
+        match command {
+            GroupMove { actors, .. } => actors.iter().copied().all(allowed),
+            LaunchInteraction { actor, .. }
+            | LaunchGroundTarget { actor, .. }
+            | LaunchSelfAbility { actor, .. }
+            | LaunchScrollRead { actor, .. }
+            | EnterSwordfight { actor, .. }
+            | SwordStrikeCmd { actor, .. }
+            | SetPrincipalOpponent { actor, .. }
+            | SelectPlannedShieldProtected { actor, .. }
+            | DropAleAt { actor, .. }
+            | ShieldSelectProtected { actor, .. }
+            | RaiseShieldWithDanger { actor, .. } => allowed(*actor),
+            StopPc { pc_id }
+            | SelectAction { pc_id, .. }
+            | SelectResolvedAction { pc_id, .. }
+            | SelectPlannedAction { pc_id, .. }
+            | CancelAction { pc_id }
+            | ClearShootList { pc_id }
+            | DropAmmo { pc_id, .. }
+            | ResetComa { pc_id }
+            | SendReinforcement { pc_id }
+            | MakePcFast { pc_id }
+            | MakePcSlow { pc_id }
+            | MakePcUpright { pc_id }
+            | MakePcCrouched { pc_id }
+            | MakeQueuedActionFast { pc_id } => allowed(*pc_id),
+            StartMacro { pc: Some(id), .. } | DeleteMacro { pc: Some(id), .. } => allowed(*id),
+            StartRecordingMacro { pc, .. } => {
+                pc.is_none_or(allowed) && self.players.qa_recording_for.iter().copied().all(allowed)
+            }
+            StopRecordingMacro | ChangeQaMemory { .. } => {
+                self.players.qa_recording_for.iter().copied().all(allowed)
+            }
+            QueueQuickAction { command, .. } => {
+                self.coop_command_authorized(seat, &command.to_player_command())
+            }
+            _ => true,
+        }
+    }
+
     fn validate_recorded_interaction_identities(
         &self,
         actor: EntityId,
@@ -185,6 +237,10 @@ impl EngineInner {
     ) {
         use PlayerCommand::*;
 
+        if !self.coop_command_authorized(seat, cmd) {
+            tracing::warn!(seat, ?cmd, "co-op ownership rejected command");
+            return;
+        }
         self.cancel_quick_action_feats_for_manual_order(cmd);
         if !self.command_passes_preflight(seat, cmd) {
             return;
@@ -655,10 +711,40 @@ impl EngineInner {
                 self.stop_recording_macro();
             }
             StartMacro { pc, slot } => {
-                self.apply_start_macro(tcx, display, *pc, *slot);
+                if pc.is_none()
+                    && self.control.sim_config.coop.control != crate::coop::CharacterControl::Shared
+                {
+                    let allowed: Vec<_> = self
+                        .world
+                        .pc_ids
+                        .iter()
+                        .copied()
+                        .filter(|&id| self.coop_can_select(seat, id))
+                        .collect();
+                    for id in allowed {
+                        self.apply_start_macro(tcx, display, Some(id), *slot);
+                    }
+                } else {
+                    self.apply_start_macro(tcx, display, *pc, *slot);
+                }
             }
             DeleteMacro { pc, slot } => {
-                self.apply_delete_macro(display, *pc, *slot);
+                if pc.is_none()
+                    && self.control.sim_config.coop.control != crate::coop::CharacterControl::Shared
+                {
+                    let allowed: Vec<_> = self
+                        .world
+                        .pc_ids
+                        .iter()
+                        .copied()
+                        .filter(|&id| self.coop_can_select(seat, id))
+                        .collect();
+                    for id in allowed {
+                        self.apply_delete_macro(display, Some(id), *slot);
+                    }
+                } else {
+                    self.apply_delete_macro(display, *pc, *slot);
+                }
             }
             StartRecordingMacro { pc, slot } => {
                 self.apply_start_recording_macro(seat, *pc, *slot);
@@ -1400,3 +1486,28 @@ impl EngineInner {
 #[cfg(test)]
 #[path = "commands/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod coop_ownership_tests {
+    use super::*;
+    use crate::coop::CharacterControl;
+    use crate::engine::test_support::actors::make_test_pc;
+    #[test]
+    fn actor_payload_and_queued_payload_cannot_bypass_assignment() {
+        let mut engine = EngineInner::new();
+        let first = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
+        let other = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
+        engine.control.sim_config.coop.control = CharacterControl::Assigned;
+        engine.players.seats[0].assigned_character = Some(first);
+        assert!(engine.coop_command_authorized(0, &PlayerCommand::StopPc { pc_id: first }));
+        assert!(!engine.coop_command_authorized(0, &PlayerCommand::StopPc { pc_id: other }));
+        let queued = PlayerCommand::QueueQuickAction {
+            action: crate::profiles::Action::Whistle,
+            command: crate::player_command::QueuedQuickActionCommand::LaunchSelfAbility {
+                actor: other,
+                command: crate::element::Command::Point,
+            },
+        };
+        assert!(!engine.coop_command_authorized(0, &queued));
+    }
+}

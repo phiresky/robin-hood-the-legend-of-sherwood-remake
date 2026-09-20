@@ -987,7 +987,7 @@ fn settle_terminal_debriefing(
 
     // The deterministic terminal command has now appended the raw attempt.
     // Promote that exact post-command campaign, never the pre-terminal clone.
-    let campaign = context.manager.engine.campaign().clone();
+    let campaign = context.manager.engine.export_coop_campaign();
     crate::main_entry::RustCallbacks::promote_terminal_profile(
         context.host.application_context(),
         &campaign,

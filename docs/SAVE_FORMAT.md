@@ -6,6 +6,10 @@ Bumped on every incompatible change to the serialized fields.
 The counter starts from 1.
 
 ## History
+- **v95** (2026-09-20, cooperative parties): simulation rules, per-seat assigned
+  hero, and duplicate origin identities persist in mission saves. Network
+  protocol 63 and snapshot schema 5 carry this state; replay schema 55 records
+  the cooperative rules used to construct the initial party.
 - **v1**: initial Rust format. `ElementData.sprite` was skipped; the
   embedded `PositionInterface` + sprite animation state did not persist.
 - **v2** (2026-04-20, PI-into-Sprite refactor): `ElementData.sprite` is

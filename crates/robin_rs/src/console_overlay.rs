@@ -172,6 +172,7 @@ pub struct ConsoleOverlay {
     cursor: usize,
     /// Output history (most recent at the back).
     output: VecDeque<OutputLine>,
+    recent: VecDeque<(u32, String)>,
     /// Submitted command lines, for ↑/↓ recall.  Most recent at the back.
     cmd_history: Vec<String>,
     /// Current history index and draft; absent while editing a fresh line.
@@ -461,6 +462,30 @@ impl ConsoleOverlay {
         if trimmed.is_empty() {
             return;
         }
+        let Some(command_text) = trimmed.strip_prefix('/') else {
+            if let Err(error) =
+                robin_engine::multiplayer::validate_safe_display_text("chat message", trimmed, 512)
+            {
+                self.push_output(OutputLine::Error(error));
+                return;
+            }
+            self.remember_command(line.clone());
+            if let Some(net) = host.transport.net() {
+                if let Err(error) =
+                    net.outgoing
+                        .send(robin_engine::multiplayer::NetOutbound::Chat {
+                            text: trimmed.to_owned(),
+                        })
+                {
+                    self.push_output(OutputLine::Error(format!("Message not sent: {error}")));
+                }
+            } else {
+                self.push_output(OutputLine::Response(format!("You: {trimmed}")));
+            }
+            self.pending_close = true;
+            return;
+        };
+        let trimmed = command_text.trim_start();
         // Push to UI history and dispatch.
         self.push_output(OutputLine::Echo(line.clone()));
 
@@ -473,7 +498,7 @@ impl ConsoleOverlay {
             let message = {
                 let description = trimmed["BUGREPORT".len()..].trim();
                 if description.is_empty() {
-                    "Usage: BUGREPORT description of the problem".to_owned()
+                    "Usage: /BUGREPORT description of the problem".to_owned()
                 } else {
                     match crate::bug_report::capture(
                         robin_run_protocol::diagnostics::DiagnosticKindV1::Bug,
@@ -636,6 +661,17 @@ impl ConsoleOverlay {
     }
 
     fn push_output(&mut self, line: OutputLine) {
+        let text = match &line {
+            OutputLine::Echo(s) => format!("> {s}"),
+            OutputLine::Response(s) => s.clone(),
+            OutputLine::Error(s) => format!("! {s}"),
+        };
+        self.recent
+            .push_back((crate::window::process_uptime_ms(), text));
+        while self.recent.len() > 5 {
+            self.recent.pop_front();
+        }
+
         if self.output.len() >= MAX_OUTPUT_LINES {
             self.output.pop_front();
         }
@@ -689,6 +725,9 @@ impl ConsoleOverlay {
     }
 
     fn tab_complete(&mut self, dev: &DevState) {
+        if !self.input.trim_start().starts_with('/') {
+            return;
+        }
         // Complete only the first token; the user supplies any remaining
         // command words and arguments. Retain the original prefix while
         // cycling, but never carry a cycle across keyword-table changes.
@@ -697,7 +736,11 @@ impl ConsoleOverlay {
             .take()
             .filter(|cycle| cycle.use_final == dev.console.use_final);
         let (prefix_upper, previous_index, trailing) = {
-            let trimmed = self.input.trim_start();
+            let trimmed = self
+                .input
+                .trim_start()
+                .strip_prefix('/')
+                .expect("command prefix checked");
             let first_token_end = trimmed
                 .find(|c: char| c.is_whitespace())
                 .unwrap_or(trimmed.len());
@@ -745,6 +788,7 @@ impl ConsoleOverlay {
         };
         let mut completed =
             String::with_capacity(pick.len() + trailing.len() + usize::from(add_space));
+        completed.push('/');
         completed.push_str(pick);
         if add_space {
             completed.push(' ');
@@ -819,6 +863,31 @@ impl ConsoleOverlay {
     /// `flush_base_layer` by the time this renders, so no extra setup.
     pub fn render(&self, renderer: &mut Renderer, font: Option<&Font>) {
         if !self.visible {
+            let Some(font) = font else {
+                return;
+            };
+            let now = crate::window::process_uptime_ms();
+            let mut y = 12;
+            for (timestamp, text) in &self.recent {
+                if now.wrapping_sub(*timestamp) >= 7000 {
+                    continue;
+                }
+                let width = (renderer.screen_width() as i32 * 2 / 3 - 28).max(32);
+                let wrapped =
+                    crate::ingame_menu::layout::wrap_text_for_box_font(font, text, width, 4);
+                for line in wrapped.lines {
+                    let height = font.height() as i32 + 4;
+                    renderer.render_gpu_rect(
+                        8,
+                        y,
+                        font.text_width(&line.text) + 12,
+                        height,
+                        [0, 0, 0, 170],
+                    );
+                    render_text_screen_font(renderer, font, &line.text, 14, y + 2);
+                    y += height;
+                }
+            }
             return;
         }
         let sw = renderer.screen_width() as i32;
@@ -888,7 +957,7 @@ impl ConsoleOverlay {
         }
 
         // ── Input line ──
-        let prompt = "> ";
+        let prompt = "Chat (/command): ";
         let prompt_w = font.text_width(prompt);
         render_text_screen_font(renderer, font, prompt, pad_x, input_y);
         render_text_screen_font(renderer, font, &self.input, pad_x + prompt_w, input_y);
@@ -909,6 +978,34 @@ impl ConsoleOverlay {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plain_text_never_executes_commands_and_closes_chat() {
+        let (mut engine, assets) = robin_engine::test_support::fresh_engine_sized(640.0, 480.0);
+        let mut host = Host::scratch(640.0, 480.0);
+        let mut overlay = ConsoleOverlay::new();
+        let mut dev = DevState::default();
+        let mut actions = Vec::new();
+        overlay.toggle();
+        overlay.input = "WIN".into();
+        overlay.submit(&mut host, &mut engine, &assets, &mut dev, &mut actions);
+        assert!(actions.is_empty());
+        assert!(!engine.mission().quit_won);
+        assert!(
+            matches!(overlay.output.back(), Some(OutputLine::Response(text)) if text == "You: WIN")
+        );
+        assert!(overlay.take_pending_close());
+        overlay.toggle();
+        overlay.input = "/HELP".into();
+        overlay.submit(&mut host, &mut engine, &assets, &mut dev, &mut actions);
+        assert!(overlay.is_visible());
+        assert!(
+            overlay
+                .output
+                .iter()
+                .any(|line| matches!(line, OutputLine::Echo(text) if text == "/HELP"))
+        );
+    }
 
     #[test]
     fn presentation_drains_only_the_explicit_console_queue_once() {
@@ -952,6 +1049,7 @@ mod tests {
     fn closing_paths_reset_edits_without_discarding_history_or_command_effects() {
         for path in 0..3 {
             let mut c = ConsoleOverlay {
+                recent: VecDeque::new(),
                 visible: true,
                 input: "unfinished".into(),
                 cursor: 3,
@@ -1001,21 +1099,21 @@ mod tests {
         let dev = DevState::default();
         let mut c = ConsoleOverlay::new();
         c.toggle();
-        c.input = "fre".to_string();
+        c.input = "/fre".to_string();
         c.cursor = c.input.chars().count();
         c.tab_complete(&dev);
         // FREEZE is the only `FRE…` keyword.
-        assert_eq!(c.input, "FREEZE ");
+        assert_eq!(c.input, "/FREEZE ");
     }
 
     #[test]
     fn completion_preserves_argument_spacing_and_unmatched_input() {
         let dev = DevState::default();
         for (input, expected, changed) in [
-            ("fre", "FREEZE ", true),
-            ("  fre\t  café 界  ", "FREEZE café 界  ", true),
-            ("  h\t  café 界  ", "HADES café 界  ", true),
-            ("h\t  ", "HADES", true),
+            ("/fre", "/FREEZE ", true),
+            ("  /fre\t  café 界  ", "/FREEZE café 界  ", true),
+            ("  /h\t  café 界  ", "/HADES café 界  ", true),
+            ("/h\t  ", "/HADES", true),
             ("", "", false),
             ("  \t", "  \t", false),
             ("  unknown\t café ", "  unknown\t café ", false),
@@ -1036,15 +1134,15 @@ mod tests {
         let dev = DevState::default();
         let mut c = ConsoleOverlay::new();
         c.toggle();
-        c.input = "h".to_string();
-        c.cursor = 1;
+        c.input = "/h".to_string();
+        c.cursor = 2;
         for expected in [
-            "HADES",
-            "HELP",
-            "HIGHLANDER",
-            "HIGHLANDER2",
-            "HONOLULU",
-            "HADES",
+            "/HADES",
+            "/HELP",
+            "/HIGHLANDER",
+            "/HIGHLANDER2",
+            "/HONOLULU",
+            "/HADES",
         ] {
             c.tab_complete(&dev);
             assert_eq!(c.input, expected);
@@ -1059,8 +1157,8 @@ mod tests {
     fn tab_cycle_preserves_arguments_and_resets_for_history_or_mode_changes() {
         let mut dev = DevState::default();
         let mut c = ConsoleOverlay::new();
-        c.input = "  h   café 界".to_string();
-        for expected in ["HADES café 界", "HELP café 界", "HIGHLANDER café 界"] {
+        c.input = "  /h   café 界".to_string();
+        for expected in ["/HADES café 界", "/HELP café 界", "/HIGHLANDER café 界"] {
             c.tab_complete(&dev);
             assert_eq!(c.input, expected);
             assert_eq!(c.cursor, expected.chars().count());
@@ -1069,18 +1167,18 @@ mod tests {
         // Switching to shipping keywords must not keep cycling dev commands.
         dev.console.use_final = true;
         c.tab_complete(&dev);
-        assert_eq!(c.input, "HIGHLANDER café 界");
+        assert_eq!(c.input, "/HIGHLANDER café 界");
         assert!(c.completion.is_none());
 
         dev.console.use_final = false;
-        c.input = "h".to_string();
+        c.input = "/h".to_string();
         c.tab_complete(&dev);
         assert!(c.completion.is_some());
-        c.cmd_history.push("fre".to_string());
+        c.cmd_history.push("/fre".to_string());
         c.history_prev();
         assert!(c.completion.is_none());
         c.tab_complete(&dev);
-        assert_eq!(c.input, "FREEZE ");
+        assert_eq!(c.input, "/FREEZE ");
     }
 
     #[test]
@@ -1091,10 +1189,10 @@ mod tests {
         c.toggle();
         // `CA` is a unique prefix only in the final set (CASH).  In the
         // dev set it would match CALL / CAMPAIGN too.
-        c.input = "ca".to_string();
-        c.cursor = 2;
+        c.input = "/ca".to_string();
+        c.cursor = 3;
         c.tab_complete(&dev);
-        assert_eq!(c.input, "CASH ");
+        assert_eq!(c.input, "/CASH ");
     }
 
     #[test]

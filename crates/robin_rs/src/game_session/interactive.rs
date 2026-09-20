@@ -668,7 +668,13 @@ impl InteractiveRendererAssembly {
             mission_idx,
             location,
         } = mission;
+        window.local_players.enabled &= args.multiplayer.expected_players.is_some()
+            && !args.multiplayer.server
+            && args.multiplayer.connect.is_none();
         window.gamepad_input.begin_mission();
+        for (_, device) in &mut window.local_players.devices {
+            device.begin_mission();
+        }
         let sprites = load_mission_sprites(
             engine,
             host,

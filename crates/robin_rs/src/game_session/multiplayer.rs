@@ -7,6 +7,7 @@ use crate::host::Host;
 use crate::rewind::RewindBuffer;
 use robin_engine::engine::{Engine, LevelAssets};
 use robin_engine::engine_manager as engine_manager_api;
+use robin_engine::player_command::PlayerCommand;
 use robin_engine::player_command::PlayerInput;
 use robin_engine::sim_timeline::{RestorePolicy, replay_authoritative_frame_profiled};
 use robin_engine::spellforge::SpellforgeRuntime;
@@ -406,6 +407,29 @@ impl NetDrain<'_> {
         use crate::multiplayer::NetEvent;
 
         match event {
+            NetEvent::Latency { from, nonce, reply } => {
+                if reply {
+                    if self.host.frontend.pending_pings.get(&from.0) == Some(&nonce) {
+                        let now = crate::window::process_uptime_ms();
+                        self.host
+                            .frontend
+                            .peer_rtt
+                            .insert(from.0, (now.wrapping_sub(nonce), now));
+                        self.host.frontend.pending_pings.remove(&from.0);
+                    }
+                } else if let Some(net) = self.host.transport.net() {
+                    if let Err(error) =
+                        net.outgoing
+                            .send(robin_engine::multiplayer::NetOutbound::Latency {
+                                to: from,
+                                nonce,
+                                reply: true,
+                            })
+                    {
+                        tracing::warn!(%error, "latency reply failed");
+                    }
+                }
+            }
             NetEvent::Input {
                 server_frame,
                 origin_frame,
@@ -424,6 +448,26 @@ impl NetDrain<'_> {
                         "multiplayer: discarded input from abandoned host prediction during snapshot resynchronization"
                     );
                     return Ok(());
+                }
+                match &input.command {
+                    PlayerCommand::ConnectSeat { nickname, .. } => self
+                        .host
+                        .frontend
+                        .diagnostics_mut()
+                        .queue_console_output(format!("{nickname} connected")),
+                    PlayerCommand::DisconnectSeat { player_id } => {
+                        let name = self
+                            .manager
+                            .engine
+                            .seat(*player_id)
+                            .map(|s| s.nickname.clone())
+                            .unwrap_or_else(|| format!("Player {}", player_id.0 + 1));
+                        self.host
+                            .frontend
+                            .diagnostics_mut()
+                            .queue_console_output(format!("{name} disconnected"));
+                    }
+                    _ => {}
                 }
                 let effective_frame = self.effective_frame;
                 if target_frame >= effective_frame {
@@ -447,8 +491,12 @@ impl NetDrain<'_> {
                 tracing::info!(?seat, "multiplayer: local seat assigned (late)");
                 self.host.transport.confirm_local_seat(seat);
             }
-            NetEvent::Note(s) => tracing::info!(note = %s, "multiplayer: note"),
+            NetEvent::Note(s) => self.host.frontend.diagnostics_mut().queue_console_output(s),
             NetEvent::Disconnected => {
+                self.host
+                    .frontend
+                    .diagnostics_mut()
+                    .queue_console_output("Disconnected; reconnecting…".into());
                 tracing::warn!(
                     "multiplayer: peer disconnected — transport will auto-reconnect; \
                      simulation is held until an authoritative snapshot arrives"
@@ -467,6 +515,10 @@ impl NetDrain<'_> {
                 self.rewrote_sim_state = true;
             }
             NetEvent::Reconnected => {
+                self.host
+                    .frontend
+                    .diagnostics_mut()
+                    .queue_console_output("Reconnected; synchronizing game…".into());
                 tracing::info!("multiplayer: transport reconnected; awaiting host snapshot");
             }
             NetEvent::MissionConfig {
@@ -1457,7 +1509,7 @@ mod tests {
 
         let too_many = launch_from_cli(crate::main_entry::CliArgs {
             server: true,
-            mp_expected_players: Some(5),
+            mp_expected_players: Some(6),
             ..Default::default()
         });
         assert!(validate_multiplayer_launch_args(&too_many).is_err());

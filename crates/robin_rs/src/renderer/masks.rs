@@ -99,6 +99,7 @@ impl Renderer {
         let tex_idx = self.queue_cached_bg(bind_group);
         self.frame.queued.push(QueuedDraw {
             dst: Rect { x, y, w, h },
+            uv_corners: None,
             corners: None,
             uv,
             tint: [1.0; 4],
@@ -277,6 +278,7 @@ impl Renderer {
             };
             stencil_draws.push(QueuedDraw {
                 dst,
+                uv_corners: None,
                 corners: None,
                 uv,
                 tint: self.resources.mask_alpha_cache[&mask_index]
@@ -290,6 +292,7 @@ impl Renderer {
         {
             stencil_draws.push(QueuedDraw {
                 dst,
+                uv_corners: None,
                 corners: None,
                 uv,
                 // Green selects 16-bit high/low reconstruction in the
@@ -308,6 +311,7 @@ impl Renderer {
             .splice(checkpoint..checkpoint, stencil_draws);
         self.frame.queued.push(QueuedDraw {
             dst: clip_rect,
+            uv_corners: None,
             corners: None,
             uv: [0.0, 0.0, 1.0, 1.0],
             tint: [0.5, 0.0, 1.0, 1.0],
@@ -337,6 +341,7 @@ impl Renderer {
         };
         self.frame.queued.push(QueuedDraw {
             dst: dst_rect,
+            uv_corners: None,
             corners: None,
             uv,
             tint: [1.0, 1.0, 1.0, 1.0],
@@ -387,6 +392,7 @@ impl Renderer {
                 (x1.ceil() - x0.floor()) as u32,
                 (y1.ceil() - y0.floor()) as u32,
             ),
+            uv_corners: None,
             corners: Some([(x0, y0), (x1, y0), (x0, y1), (x1, y1)]),
             uv: [
                 atlas_x as f32 - origin.x,
@@ -422,6 +428,7 @@ impl Renderer {
         };
         self.frame.queued.push(QueuedDraw {
             dst: dst_rect,
+            uv_corners: None,
             corners: None,
             uv,
             tint: [1.0, 1.0, 1.0, alpha as f32 / 255.0],
@@ -450,6 +457,7 @@ impl Renderer {
         };
         self.frame.queued.push(QueuedDraw {
             dst: dst_rect,
+            uv_corners: None,
             corners: None,
             uv,
             tint: [
@@ -581,6 +589,7 @@ impl Renderer {
         let tex_idx = self.queue_frame_texture(&view);
         self.frame.queued.push(QueuedDraw {
             dst: Rect::new(left, top, out_w as u32, out_h as u32),
+            uv_corners: None,
             corners: None,
             uv: [0.0, 0.0, 1.0, 1.0],
             tint: [1.0, 1.0, 1.0, 1.0],

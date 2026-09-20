@@ -51,6 +51,7 @@ mod posture_transitions;
 mod presentation_view;
 mod projectile_runtime;
 pub use presentation_view::PresentationView;
+mod coop;
 mod purse;
 mod queries;
 mod refresh_seek;
@@ -1309,6 +1310,13 @@ impl EngineInner {
     }
 
     fn initialize_entity_for_publication(&mut self, id: EntityId, entity: &mut Entity) {
+        let coop_health_percent = self.coop_enemy_health_percent();
+        if coop_health_percent > 100
+            && entity.is_soldier()
+            && self.is_hostile_to_player_camp(entity.camp())
+        {
+            Self::scale_coop_enemy_health(entity, coop_health_percent);
+        }
         if entity.is_soldier()
             && let Some(ai) = entity.ai_controller()
         {

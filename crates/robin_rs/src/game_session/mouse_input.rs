@@ -124,6 +124,30 @@ pub(super) fn handle_mouse_input(
         {
             continue;
         }
+        if ctx.host.frontend.local_player_count > 1 {
+            let point = match *event {
+                GameEvent::MouseDown(x, y, ..) | GameEvent::MouseUp(x, y, ..) => {
+                    Some([x as f32, y as f32])
+                }
+                GameEvent::MouseMove { x, y, .. } => Some([x as f32, y as f32]),
+                _ => None,
+            };
+            if let Some(point) = point {
+                if point[1] < ctx.screen_height as f32 - robin_engine::engine::PANNEL_HEIGHT
+                    && ctx
+                        .host
+                        .frontend
+                        .split_screen
+                        .views
+                        .iter()
+                        .find(|view| view.members.contains(&ctx.host.transport.local_seat().0))
+                        .is_some_and(|view| !view.contains(point))
+                {
+                    cancel_left_pointer(ctx.host, ctx.frame_cmds);
+                    continue;
+                }
+            }
+        }
         match *event {
             // ViewportPan is applied unconditionally in
             // `run_mission`'s always-on view-input pass so middle-

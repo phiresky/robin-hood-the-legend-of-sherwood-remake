@@ -34,6 +34,8 @@ const fn enabled_by_default() -> bool {
     bitcode::Decode,
 )]
 pub struct SimConfig {
+    #[serde(default)]
+    pub coop: crate::coop::CoopRules,
     pub difficulty: DifficultyLevel,
     /// Fix the original game's Hard-difficulty reaction-time copy-paste bug.
     // A missing field identifies deterministic state written before this
@@ -119,6 +121,7 @@ const fn default_enabled() -> bool {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum RankedSimulationConfigField {
+    Coop,
     Difficulty,
     FixHardReactionTimes,
     EnableUnbinding,
@@ -152,6 +155,7 @@ pub enum RankedSimulationConfigField {
 impl RankedSimulationConfigField {
     pub const fn config_field(self) -> &'static str {
         match self {
+            Self::Coop => "sim_config.coop",
             Self::Difficulty => "sim_config.difficulty",
             Self::FixHardReactionTimes => "sim_config.fix_hard_reaction_times",
             Self::EnableUnbinding => "sim_config.enable_unbinding",
@@ -243,6 +247,11 @@ impl RankedSimulationPolicy {
         identity
             .validate()
             .map_err(RankedSimulationPolicyError::InvalidIdentity)?;
+        if config.coop.players > 1 {
+            return Err(RankedSimulationPolicyError::ConfigMismatch {
+                field: RankedSimulationConfigField::Coop,
+            });
+        }
         if identity.preset != RankedSimulationPresetV1::Custom {
             let policy = Self::from_identity(identity)?;
             policy.validate_config(config)?;
@@ -347,7 +356,7 @@ macro_rules! profile_gameplay_projection {
             pub fn copy_gameplay_to_profile(&self, gameplay: &mut crate::gameplay_config::GameplayConfig) {
                 let Self {
                     $($field,)+
-                    difficulty: _, amount_of_speaking: _,
+                    coop: _, difficulty: _, amount_of_speaking: _,
                     script_enabled: _, highlander: _, highlander2: _, golden_eye: _,
                     ignore_default_loose: _,
                     synchronous_pathfinding: _,
@@ -389,6 +398,7 @@ impl SimConfig {
             "ranked policy V1 supports only Easy/Medium/Hard"
         );
         Self {
+            coop: Default::default(),
             difficulty,
             fix_hard_reaction_times: true,
             enable_unbinding: true,
@@ -438,6 +448,7 @@ impl SimConfig {
 
     pub fn first_ranked_difference(self, expected: Self) -> Option<RankedSimulationConfigField> {
         let Self {
+            coop,
             difficulty,
             fix_hard_reaction_times,
             enable_unbinding,
@@ -463,6 +474,7 @@ impl SimConfig {
             enable_dynamic_ambience,
         } = self;
         let Self {
+            coop: expected_coop,
             difficulty: expected_difficulty,
             fix_hard_reaction_times: expected_fix_hard_reaction_times,
             enable_unbinding: expected_enable_unbinding,
@@ -489,6 +501,7 @@ impl SimConfig {
         } = expected;
 
         [
+            (coop != expected_coop).then_some(RankedSimulationConfigField::Coop),
             (difficulty != expected_difficulty).then_some(RankedSimulationConfigField::Difficulty),
             (fix_hard_reaction_times != expected_fix_hard_reaction_times)
                 .then_some(RankedSimulationConfigField::FixHardReactionTimes),
@@ -541,6 +554,7 @@ impl SimConfig {
             .validate()
             .expect("cannot construct simulation config with invalid difficulty rules");
         Self {
+            coop: Default::default(),
             difficulty,
             fix_hard_reaction_times: true,
             enable_unbinding: true,
@@ -880,5 +894,23 @@ mod tests {
             mutate(&mut observed);
             assert_eq!(observed.first_ranked_difference(standard), Some(field));
         }
+    }
+    #[test]
+    fn coop_cannot_enter_custom_solo_ranked_policy() {
+        use super::{RankedSimulationPolicy, RankedSimulationPolicyError};
+        use robin_run_types::{
+            RankedSimulationDifficultyV1, RankedSimulationPolicyV1, RankedSimulationPresetV1,
+        };
+        let mut identity = RankedSimulationPolicyV1::standard(RankedSimulationDifficultyV1::Medium);
+        identity.preset = RankedSimulationPresetV1::Custom;
+        let mut config = SimConfig::standard_ranked(DifficultyLevel::Medium);
+        assert!(RankedSimulationPolicy::from_config(identity, config).is_ok());
+        config.coop.players = 2;
+        assert!(matches!(
+            RankedSimulationPolicy::from_config(identity, config),
+            Err(RankedSimulationPolicyError::ConfigMismatch {
+                field: RankedSimulationConfigField::Coop
+            })
+        ));
     }
 }

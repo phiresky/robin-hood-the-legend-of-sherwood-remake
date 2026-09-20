@@ -461,11 +461,11 @@ fn manage_qa_timer_expiration_with_selected_pc() {
 fn standard_button_to_gamepad_button_mapping() {
     assert_eq!(
         standard_button_to_gamepad_button(0),
-        Some(GamePadButton::ActionB)
+        Some(GamePadButton::ActionA)
     );
     assert_eq!(
         standard_button_to_gamepad_button(1),
-        Some(GamePadButton::ActionA)
+        Some(GamePadButton::ActionB)
     );
     assert_eq!(
         standard_button_to_gamepad_button(3),
@@ -531,4 +531,71 @@ fn process_gamepad_input_promotes_pending_to_current() {
     let engine = empty_engine();
     let _ = pad.process_gamepad_input(0, &engine, PlayerId::HOST, &mut threaded);
     assert_eq!(pad.current.x, 15000);
+}
+
+#[test]
+fn keyboard_movement_normalizes_diagonals_and_requires_shift_to_run() {
+    use winit::keyboard::KeyCode;
+    let walk = keyboard_movement_state(&[KeyCode::KeyW, KeyCode::KeyD].into_iter().collect());
+    let (x, y, running) = walk.movement_offset().unwrap();
+    assert!(!running);
+    assert!((x.hypot(y) - 25.).abs() < 0.01);
+    let run = keyboard_movement_state(&[KeyCode::KeyW, KeyCode::ShiftLeft].into_iter().collect());
+    let (x, y, running) = run.movement_offset().unwrap();
+    assert!(running);
+    assert!((x.hypot(y) - 75.).abs() < 0.01);
+    let cancelled = keyboard_movement_state(&[KeyCode::KeyA, KeyCode::KeyD].into_iter().collect());
+    assert!(cancelled.movement_offset().is_none());
+}
+
+#[test]
+fn local_join_uses_a_once_per_device_and_respects_five_player_limit() {
+    use crate::gfx_types::GameEvent;
+    let mut players = LocalPlayers::default();
+    for which in 0..8 {
+        let event = GameEvent::GamepadButton {
+            which,
+            button: 0,
+            pressed: true,
+        };
+        players.join_event(&event);
+        players.join_event(&event);
+    }
+    assert_eq!(players.count(), 5);
+    assert_eq!(players.devices.len(), 4);
+    players.keyboard = false;
+    players.join_event(&GameEvent::GamepadButton {
+        which: 7,
+        button: 0,
+        pressed: true,
+    });
+    assert_eq!(players.devices.len(), 5);
+}
+
+#[test]
+fn local_join_capacity_and_reconnect_preserve_seat() {
+    use crate::gfx_types::GameEvent;
+    let mut players = LocalPlayers::default();
+    players.keyboard = false;
+    for which in 0..7 {
+        let event = GameEvent::GamepadButton {
+            which,
+            button: 0,
+            pressed: true,
+        };
+        players.join_event(&event);
+        players.join_event(&event);
+    }
+    assert_eq!(players.count(), 5);
+    players.enabled = true;
+    players.fold(&GameEvent::GamepadRemoved { which: 2 });
+    assert!(!players.devices[2].1.is_connected());
+    players.fold(&GameEvent::GamepadButton {
+        which: 42,
+        button: 0,
+        pressed: true,
+    });
+    assert_eq!(players.devices[2].0, 42);
+    assert!(players.devices[2].1.is_connected());
+    assert_eq!(players.count(), 5);
 }

@@ -10,6 +10,11 @@ impl EngineInner {
         let was_connected = self.players.seats[idx].connected;
         self.players.seats[idx].connected = true;
         self.players.seats[idx].nickname = nickname.to_owned();
+        let selection = self.players.seats[idx].selection.clone();
+        self.players.seats[idx].selection = selection
+            .into_iter()
+            .filter(|&id| self.coop_can_select(idx, id))
+            .collect();
         if was_connected {
             tracing::info!(
                 player_id = ?target,

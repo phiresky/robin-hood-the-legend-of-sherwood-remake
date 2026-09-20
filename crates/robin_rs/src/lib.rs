@@ -232,6 +232,7 @@ pub mod profile_domain;
 pub mod session_achievement;
 pub mod shader_preset;
 pub mod shipping_mission;
+pub mod split_screen;
 pub mod touch_plan_hud;
 /// Host-side runtime state used by the game loop and developer tooling.
 ///

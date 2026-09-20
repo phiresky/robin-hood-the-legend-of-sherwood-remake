@@ -450,3 +450,9 @@ past_singular = "{value} year ago"
 past_plural = "{value} years ago"
 future_singular = "in {value} year"
 future_plural = "in {value} years"
+
+[gameplay.KeyboardDirectControl]
+en_label = "WASD direct movement"
+en_tooltip = "Move selected characters with WASD; hold Shift to run. Disables other WASD shortcuts. Works in solo and co-op play."
+de_label = "Direkte WASD-Steuerung"
+de_tooltip = "Ausgewählte Charaktere mit WASD bewegen; Umschalt zum Rennen halten. Ersetzt andere WASD-Tastenkürzel. Auch im Einzelspiel verfügbar."

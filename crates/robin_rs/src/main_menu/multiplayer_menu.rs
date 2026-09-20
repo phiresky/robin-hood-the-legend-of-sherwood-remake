@@ -37,6 +37,12 @@ const ID_JOIN: u32 = 0;
 const ID_CREATE: u32 = 1;
 const ID_START: u32 = 2;
 const ID_BACK: u32 = 3;
+const ID_LOCAL: u32 = 4;
+const ID_RULE: u32 = 5;
+const ID_SCALE: u32 = 6;
+const ID_KEYBOARD: u32 = 7;
+const ID_COPY_BASE: u32 = 10;
+const ID_ASSIGNMENTS: u32 = 8;
 
 const SCREEN: &str = "Multiplayer menu";
 
@@ -57,12 +63,19 @@ pub(crate) enum MultiplayerRole {
     /// Host on this install's persistent iroh identity (the id the
     /// matchmaking service advertised as the game's `connect_addr`).
     Host,
+    Local,
     /// Join the host at the given iroh endpoint id.
-    Client { connect_addr: String },
+    Client {
+        connect_addr: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct MultiplayerLaunch {
+    #[serde(default)]
+    pub coop: robin_engine::coop::CoopRules,
+    #[serde(skip)]
+    pub local_custom: Option<CustomMissionLaunch>,
     pub mission_id: u32,
     pub mission_name: String,
     pub role: MultiplayerRole,
@@ -87,6 +100,7 @@ struct MissionChoice {
     mission_name: String,
     label: String,
     custom: Option<CustomMissionLaunch>,
+    roster_slots: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -176,6 +190,9 @@ enum MultiplayerMenuTick {
 // Field order preserves the old locals' reverse-drop order: in particular,
 // retire matchmaking before releasing its prepared content owner.
 struct MultiplayerMenuState {
+    coop: robin_engine::coop::CoopRules,
+    local: bool,
+    edit_assignments: bool,
     frame: FrameWnd,
     input_state: ModalInputState,
     scroll_view: ScrollView,
@@ -248,7 +265,32 @@ impl MultiplayerMenuState {
             ));
         }
 
+        for (id, y) in [
+            (ID_LOCAL, 20),
+            (ID_RULE, 50),
+            (ID_SCALE, 80),
+            (ID_KEYBOARD, 110),
+            (ID_ASSIGNMENTS, 140),
+        ] {
+            frame.add_widget_absolute(widget_bridge::make_button_enabled(
+                id, "", true, btn_x, y, btn_w, btn_h,
+            ));
+        }
+        for slot in 0..5 {
+            frame.add_widget_absolute(widget_bridge::make_button_enabled(
+                ID_COPY_BASE + slot,
+                "",
+                true,
+                btn_x,
+                175 + slot as i32 * 24,
+                btn_w,
+                22,
+            ));
+        }
         Self {
+            coop: Default::default(),
+            local: false,
+            edit_assignments: false,
             missions,
             prepared_host_content,
             matchmaking_client,
@@ -330,11 +372,13 @@ impl MultiplayerMenuState {
                 self.status = self.matchmaking_label.clone();
             }
             matchmaking::MatchmakingEvent::Created(created) => {
+                self.publish_rules();
                 self.status = "Game created. Press Start when ready.".to_string();
                 self.mode = MenuMode::Hosted { game: created };
                 self.selected = 0;
             }
             matchmaking::MatchmakingEvent::Joined(joined) => {
+                self.coop = joined.coop;
                 if joined.connect_addr.is_empty() {
                     self.status = "Matchmaking did not return a host address".to_string();
                 } else if joined.start_at_epoch_ms.is_some() {
@@ -390,6 +434,8 @@ impl MultiplayerMenuState {
                         }
                     }
                     return Some(MultiplayerMenuTick::Finished(Some(MultiplayerLaunch {
+                        local_custom: None,
+                        coop: self.coop,
                         mission_id: started.mission_id,
                         mission_name: application_context
                             .localized_mission_name(started.mission_id, &started.mission_name),
@@ -408,11 +454,21 @@ impl MultiplayerMenuState {
                 }
             }
             matchmaking::MatchmakingEvent::GameUpdated(updated) => {
+                if let MenuMode::Joined { game, .. } = &mut self.mode {
+                    if game.game_id == updated.id {
+                        self.coop = updated.coop;
+                        game.coop = updated.coop;
+                    }
+                }
                 let updated = upsert_game(&mut self.games, updated);
                 match &mut self.mode {
                     MenuMode::Hosted { game, .. } if game.id == updated.id => {
                         let previous_players = game.players;
                         *game = updated.clone();
+                        if previous_players != game.players {
+                            self.coop.assignments = [0, 1, 2, 3, 4];
+                        }
+                        self.coop.players = game.players as u8;
                         if game.players != previous_players {
                             self.status = format!(
                                 "{} player{} in game",
@@ -478,6 +534,32 @@ impl MultiplayerMenuState {
         None
     }
 
+    fn publish_rules(&mut self) {
+        if !self.local
+            && let Some(session) = &self.matchmaking_client
+        {
+            if let Err(error) = session.set_rules(self.coop) {
+                self.status = error;
+            }
+        }
+    }
+
+    fn roster_slots(&self) -> usize {
+        let mission = match &self.mode {
+            MenuMode::Missions => self.missions.get(self.selected),
+            MenuMode::Hosted { game } => self.missions.iter().find(|m| {
+                m.mission_id == game.mission_id
+                    && (m.mission_id != u32::MAX || m.mission_name == game.mission_name)
+            }),
+            MenuMode::Joined { game, .. } => self
+                .missions
+                .iter()
+                .find(|m| m.mission_id == game.mission_id),
+            _ => None,
+        };
+        mission.map_or(1, |m| m.roster_slots)
+    }
+
     fn update_buttons(&mut self) {
         let matchmaking_connected = self.matchmaking_client.is_some();
         let can_join = matches!(self.mode, MenuMode::Games)
@@ -497,6 +579,51 @@ impl MultiplayerMenuState {
         );
         self.frame.update_widget(ID_START, Some("Start"), can_start);
         self.frame.update_widget(ID_BACK, Some("Back"), true);
+        self.frame
+            .update_widget(ID_LOCAL, Some("Local co-op"), true);
+        let editable =
+            self.local || matches!(self.mode, MenuMode::Missions | MenuMode::Hosted { .. });
+        self.frame
+            .update_widget(ID_RULE, Some(&format!("{:?}", self.coop.control)), editable);
+        self.frame.update_widget(
+            ID_SCALE,
+            Some(&format!(
+                "HP +{}% / copy",
+                self.coop.enemy_health_per_duplicate
+            )),
+            editable,
+        );
+        self.frame
+            .update_widget(ID_KEYBOARD, Some("Keyboard player"), self.local);
+        self.frame.update_widget(
+            ID_ASSIGNMENTS,
+            Some(if self.edit_assignments {
+                "Assignments"
+            } else {
+                "Duplicate choices"
+            }),
+            editable,
+        );
+        for slot in 0..5 {
+            let label = if self.edit_assignments {
+                format!("P{}: hero {}", slot + 1, self.coop.assignments[slot] + 1)
+            } else {
+                format!(
+                    "Slot {}: hero {}",
+                    slot + 1,
+                    self.coop.duplicate_choices[slot] + 1
+                )
+            };
+            self.frame.update_widget(
+                ID_COPY_BASE + slot as u32,
+                Some(&label),
+                editable && slot < self.coop.players as usize,
+            );
+        }
+        if self.local {
+            self.frame
+                .update_widget(ID_CREATE, Some("Start local game"), true);
+        }
     }
 
     /// Poll and route this frame's input. Scroll-view hit testing reads the
@@ -511,6 +638,25 @@ impl MultiplayerMenuState {
         self.selected = self.selected.min(rows_len.saturating_sub(1));
         let mut activated: Option<u32> = None;
         let screen = ScreenFrame::poll(io);
+        if self.local {
+            for event in &screen.events {
+                io.window.local_players.join_event(event);
+            }
+            let count = io.window.local_players.count().max(1) as u8;
+            if self.coop.players != count {
+                self.coop.assignments = [0, 1, 2, 3, 4];
+            }
+            self.coop.players = count;
+            self.status = format!(
+                "{} players (keyboard {}). Press A to join; choose mission and rules.",
+                io.window.local_players.count(),
+                if io.window.local_players.keyboard {
+                    "on"
+                } else {
+                    "off"
+                }
+            );
+        }
         let transform = screen.transform;
         for event in &screen.events {
             self.input_state.update_from_event(event, transform);
@@ -617,6 +763,68 @@ impl MultiplayerMenuState {
         io: &mut ModalScreenIo<'_, '_>,
     ) -> Option<MultiplayerMenuTick> {
         match id {
+            ID_LOCAL => {
+                self.local = true;
+                self.mode = MenuMode::Missions;
+                self.selected = 0;
+                io.window.local_players = Default::default();
+                self.status =
+                    "Local co-op: press A on each controller to join. Choose a mission and rules."
+                        .into();
+                return None;
+            }
+            ID_RULE => {
+                use robin_engine::coop::CharacterControl::*;
+                self.coop.control = match self.coop.control {
+                    Shared => Exclusive,
+                    Exclusive => Assigned,
+                    Assigned => Shared,
+                };
+                self.publish_rules();
+                return None;
+            }
+            ID_SCALE => {
+                self.coop.enemy_health_per_duplicate =
+                    (self.coop.enemy_health_per_duplicate + 25) % 125;
+                self.publish_rules();
+                return None;
+            }
+            ID_KEYBOARD => {
+                if self.local
+                    && (!io.window.local_players.keyboard && io.window.local_players.count() < 5
+                        || io.window.local_players.keyboard)
+                {
+                    io.window.local_players.keyboard = !io.window.local_players.keyboard;
+                }
+                return None;
+            }
+            ID_ASSIGNMENTS => {
+                self.edit_assignments = !self.edit_assignments;
+                return None;
+            }
+            id if (ID_COPY_BASE..ID_COPY_BASE + 5).contains(&id) => {
+                let slot = (id - ID_COPY_BASE) as usize;
+                if self.edit_assignments {
+                    let count = self.coop.players.max(self.roster_slots() as u8);
+                    if slot >= count as usize {
+                        return None;
+                    }
+                    let next = (self.coop.assignments[slot] + 1) % count;
+                    let other = self
+                        .coop
+                        .assignments
+                        .iter()
+                        .position(|&assigned| assigned == next)
+                        .expect("assignment permutation");
+                    self.coop.assignments.swap(slot, other);
+                } else {
+                    let count = self.roster_slots() as u8;
+                    let choice = &mut self.coop.duplicate_choices[slot];
+                    *choice = (*choice + 1) % count;
+                }
+                self.publish_rules();
+                return None;
+            }
             ID_BACK => match self.mode {
                 MenuMode::Games => return Some(MultiplayerMenuTick::Finished(None)),
                 _ => {
@@ -626,6 +834,8 @@ impl MultiplayerMenuState {
                     {
                         tracing::warn!("matchmaking leave failed: {err}");
                     }
+                    self.local = false;
+                    io.window.local_players.enabled = false;
                     self.mode = MenuMode::Games;
                     self.selected = 0;
                     self.scroll_view.reset();
@@ -687,6 +897,26 @@ impl MultiplayerMenuState {
         io: &mut ModalScreenIo<'_, '_>,
     ) -> Option<MultiplayerMenuTick> {
         match id {
+            ID_CREATE if self.local && matches!(self.mode, MenuMode::Missions) => {
+                if io.window.local_players.count() == 0 {
+                    self.status = "Press A to join, or enable a keyboard player.".into();
+                    return None;
+                }
+                if let Some(mission) = self.missions.get(self.selected) {
+                    io.window.local_players.enabled = true;
+                    return Some(MultiplayerMenuTick::Finished(Some(MultiplayerLaunch {
+                        coop: self.coop,
+                        mission_id: mission.mission_id,
+                        mission_name: mission.mission_name.clone(),
+                        role: MultiplayerRole::Local,
+                        expected_players: self.coop.players as u32,
+                        start_at_epoch_ms: None,
+                        local_custom: mission.custom.clone(),
+                        distributed_mod: None,
+                        distributed_installed_locator: None,
+                    })));
+                }
+            }
             ID_CREATE if matches!(self.mode, MenuMode::Missions) => {
                 if let Some(mission) = self.missions.get(self.selected).cloned() {
                     if let Some(_custom) = mission.custom.as_ref() {
@@ -800,6 +1030,7 @@ impl MultiplayerMenuState {
             }
             ID_START => {
                 if matches!(self.mode, MenuMode::Hosted { .. }) {
+                    self.publish_rules();
                     match self
                         .matchmaking_client
                         .as_ref()
@@ -873,6 +1104,8 @@ async fn prepare_joined_launch(
         ),
     };
     Ok(MultiplayerLaunch {
+        local_custom: None,
+        coop: joined.coop,
         mission_id: joined.mission_id,
         mission_name: application_context
             .localized_mission_name(joined.mission_id, &joined.mission_name),
@@ -910,6 +1143,7 @@ fn signed_direct_listing(address: &str) -> Option<GameListing> {
         };
     let payload = ticket.payload();
     Some(GameListing {
+        coop: Default::default(),
         id: address.to_owned(),
         mission_id: payload.mission_profile_id.unwrap_or(u32::MAX),
         mission_name: payload.mission_id.clone(),
@@ -1061,6 +1295,8 @@ async fn prepare_direct_browser_launch(
             })?
     };
     Ok(MultiplayerLaunch {
+        local_custom: None,
+        coop: Default::default(),
         mission_id,
         mission_name,
         role: MultiplayerRole::Client {
@@ -1397,6 +1633,7 @@ fn mission_choices(
             };
             let label = application_context.localized_mission_name(profile.id, &fallback);
             MissionChoice {
+                roster_slots: usize::from(profile.number_of_beam_mes).clamp(1, 5),
                 mission_id: profile.id,
                 #[cfg(target_arch = "wasm32")]
                 authoritative_basename: profile.mission_filename.clone(),
@@ -1464,6 +1701,7 @@ fn mission_choices(
                 requires_spellforge: entry.requires_spellforge,
             };
             choices.push(MissionChoice {
+                roster_slots: 5,
                 mission_id: u32::MAX,
                 #[cfg(target_arch = "wasm32")]
                 authoritative_basename: entry.rhm_basename.clone(),
@@ -1596,6 +1834,7 @@ mod tests {
     fn game_upserts_move_records_and_preserve_listing_order() {
         use super::*;
         let listing = |id: &str, players| GameListing {
+            coop: Default::default(),
             id: id.into(),
             mission_id: 1,
             mission_name: "Mission".into(),
@@ -1636,6 +1875,7 @@ mod tests {
     fn disconnected_discovery_removes_stale_host_and_join_controls() {
         use super::*;
         let listing = |state: &str| GameListing {
+            coop: Default::default(),
             id: "host".into(),
             mission_id: 1,
             mission_name: "Mission".into(),
@@ -1686,6 +1926,7 @@ mod tests {
 
     fn selected() -> JoinedGame {
         JoinedGame {
+            coop: Default::default(),
             game_id: "host-key".into(),
             mission_id: u32::MAX,
             mission_name: "Mission".into(),

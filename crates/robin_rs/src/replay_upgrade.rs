@@ -9,6 +9,7 @@ use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 
 mod campaign_v48;
+mod campaign_v54;
 
 const MAX_SOURCE_BYTES: u64 = 64 * 1024 * 1024;
 
@@ -153,14 +154,19 @@ fn upgrade_header(header: &mut serde_json::Value) -> Result<u32> {
         .context("replay header has no valid schema")?;
     ensure!(
         version == REPLAY_SCHEMA_VERSION
-            || ((43..=54).contains(&version) && (43..=54).contains(&REPLAY_SCHEMA_VERSION)),
+            || ((43..=55).contains(&version) && (43..=55).contains(&REPLAY_SCHEMA_VERSION)),
         "replay schema {version} needs an input migration before upgrading to {REPLAY_SCHEMA_VERSION}"
     );
-    if version < 49 {
+    if version < 55 {
         if let Some(campaign) = header.get_mut("campaign") {
             let bytes: Vec<u8> = serde_json::from_value(campaign.clone())
                 .context("read embedded replay campaign bytes")?;
-            *campaign = serde_json::to_value(campaign_v48::migrate(&bytes)?)?;
+            let migrated = if version < 49 {
+                campaign_v48::migrate(&bytes)?
+            } else {
+                campaign_v54::migrate(&bytes)?
+            };
+            *campaign = serde_json::to_value(migrated)?;
         }
     }
     if let Some(config) = header.get_mut("sim_config").and_then(|v| v.as_object_mut()) {
@@ -475,7 +481,7 @@ mod tests {
         for version in [42, REPLAY_SCHEMA_VERSION + 1] {
             assert!(upgrade_header(&mut serde_json::json!({"version":version})).is_err());
         }
-        for version in 43..=54 {
+        for version in 43..=55 {
             let mut header = serde_json::json!({
                 "version": version,
                 "sim_config": {"bypass_fog_sprites_crash": true, "fog_of_war": true}

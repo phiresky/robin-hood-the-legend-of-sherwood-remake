@@ -24,24 +24,27 @@ fn expand_queue_geometry(draws: &[QueuedDraw], verts: &mut Vec<QuadVertex>) {
             [(x0, y0), (x1, y0), (x0, y1), (x1, y1)]
         });
         let [u0, v0, u1, v1] = draw.uv;
+        let uv = draw
+            .uv_corners
+            .unwrap_or([[u0, v0], [u1, v0], [u0, v1], [u1, v1]]);
         let tl = QuadVertex {
             pos: [corners[0].0, corners[0].1],
-            uv: [u0, v0],
+            uv: uv[0],
             tint: draw.tint,
         };
         let tr = QuadVertex {
             pos: [corners[1].0, corners[1].1],
-            uv: [u1, v0],
+            uv: uv[1],
             tint: draw.tint,
         };
         let bl = QuadVertex {
             pos: [corners[2].0, corners[2].1],
-            uv: [u0, v1],
+            uv: uv[2],
             tint: draw.tint,
         };
         let br = QuadVertex {
             pos: [corners[3].0, corners[3].1],
-            uv: [u1, v1],
+            uv: uv[3],
             tint: draw.tint,
         };
         verts.extend_from_slice(&[tl, tr, bl, bl, tr, br]);
@@ -934,6 +937,7 @@ impl FrameState {
                         w: self.width as i32,
                         h: self.height as i32,
                     },
+                    uv_corners: None,
                     corners: None,
                     uv: [0.0, 0.0, 1.0, 1.0],
                     tint: [1.0, 1.0, 1.0, 1.0],
@@ -1559,6 +1563,7 @@ mod presentation_tests {
     fn quad(operation: DrawOperation) -> QueuedDraw {
         QueuedDraw {
             dst: Rect::new(2, 3, 4, 5),
+            uv_corners: None,
             corners: None,
             uv: [0.0, 0.0, 1.0, 1.0],
             tint: [1.0; 4],

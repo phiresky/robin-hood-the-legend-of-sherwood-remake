@@ -255,7 +255,11 @@ fn dispatch_pre_tick_pointer_commands(
     rewind_active: bool,
     paused: bool,
 ) {
-    if runtime.replay().playback().is_some() || rewind_active || paused {
+    if runtime.replay().playback().is_some()
+        || rewind_active
+        || paused
+        || (host.frontend.local_player_count > 0 && !host.frontend.local_keyboard_player)
+    {
         return;
     }
     let Some(mouse_map) = host

@@ -20,7 +20,7 @@ enum Delivery {
 impl Delivery {
     fn for_message(message: &NetMsg) -> Self {
         match message {
-            NetMsg::StateHash { .. } | NetMsg::Note(_) => Self::Diagnostic,
+            NetMsg::StateHash { .. } | NetMsg::Note(_) | NetMsg::Chat { .. } => Self::Diagnostic,
             NetMsg::InitialSnapshot { .. }
             | NetMsg::BeginSim { .. }
             | NetMsg::BroadcastInput { .. } => Self::ReconnectRecoverable,
@@ -94,6 +94,20 @@ pub(super) async fn run_server_outgoing_pump(
         let _authority = context.session_dispatch.lock();
         validate_server_gameplay_outbound(&msg)?;
         match msg {
+            NetOutbound::Latency { to, nonce, reply } => {
+                route_latency(&context, PlayerId::HOST, to, nonce, reply)?
+            }
+            NetOutbound::Chat { text } => {
+                if let Err(error) = robin_engine::multiplayer::validate_safe_display_text(
+                    "chat message",
+                    &text,
+                    512,
+                ) {
+                    tracing::warn!(%error, "invalid local chat message rejected");
+                    continue;
+                }
+                broadcast_chat(&context, context.host_nickname.clone(), text)?
+            }
             NetOutbound::Input {
                 origin_frame,
                 command,
@@ -278,7 +292,9 @@ pub(super) fn validate_server_gameplay_outbound(
     outgoing: &NetOutbound,
 ) -> Result<(), MultiplayerError> {
     match outgoing {
-        NetOutbound::Input { .. }
+        NetOutbound::Latency { .. }
+        | NetOutbound::Chat { .. }
+        | NetOutbound::Input { .. }
         | NetOutbound::StateHash { .. }
         | NetOutbound::InitialSnapshot { .. }
         | NetOutbound::ReadyToSim { .. }
@@ -480,4 +496,57 @@ mod tests {
         // a live-session irreversible control. It must not stop the host.
         queue_cached_begin(&sender, 42, 74);
     }
+}
+
+/// Publish text using only the authenticated connection's display name.
+pub(super) fn broadcast_chat(
+    context: &ServerContext,
+    nickname: String,
+    text: String,
+) -> Result<(), MultiplayerError> {
+    let message = NetMsg::Chat {
+        nickname: nickname.clone(),
+        text: text.clone(),
+    };
+    // Local host publications need the same bounds as decoded remote frames.
+    robin_engine::multiplayer::decode_msg(&robin_engine::multiplayer::encode_msg(&message))
+        .map_err(|error| MultiplayerError::RemoteProtocol(error.into()))?;
+    context
+        .incoming_tx
+        .send(NetEvent::Note(format!("{nickname}: {text}")))
+        .map_err(|_| MultiplayerError::ChannelClosed("chat receiver closed".into()))?;
+    broadcast_diagnostic(context, message);
+    Ok(())
+}
+
+pub(super) fn route_latency(
+    context: &ServerContext,
+    from: PlayerId,
+    to: PlayerId,
+    nonce: u32,
+    reply: bool,
+) -> Result<(), MultiplayerError> {
+    if to == PlayerId::HOST {
+        context
+            .incoming_tx
+            .send(NetEvent::Latency { from, nonce, reply })
+            .map_err(|_| MultiplayerError::ChannelClosed("latency receiver closed".into()))?;
+    } else {
+        let sender = context
+            .peers
+            .lock()
+            .sessions
+            .senders()
+            .find(|(seat, _)| **seat == to.0)
+            .map(|(_, sender)| sender.clone());
+        if let Some(sender) = sender {
+            let _ = sender.send(NetMsg::Latency {
+                from,
+                to,
+                nonce,
+                reply,
+            });
+        }
+    }
+    Ok(())
 }

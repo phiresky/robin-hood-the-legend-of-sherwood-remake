@@ -174,6 +174,8 @@ impl MissionContent {
 /// Multiplayer route of one launch: CLI-seeded, replaced by the lobby.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MultiplayerRoute {
+    #[serde(default)]
+    pub coop: robin_engine::coop::CoopRules,
     /// Canonical host-signed browser invitation (`--join`).
     pub join: Option<String>,
     /// Host this launch (`--server`).
@@ -195,6 +197,7 @@ pub struct MultiplayerRoute {
 impl MultiplayerRoute {
     fn from_cli(cli: &CliArgs) -> Self {
         Self {
+            coop: Default::default(),
             join: cli.join.clone(),
             server: cli.server,
             connect: cli.connect.clone(),

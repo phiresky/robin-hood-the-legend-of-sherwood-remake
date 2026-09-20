@@ -229,6 +229,14 @@ impl HostTitbitPreview {
 /// ```
 #[derive(Default)]
 pub struct HostFrontend {
+    pub local_player_count: usize,
+    pub local_keyboard_player: bool,
+    pub local_disconnected: std::collections::BTreeSet<u8>,
+    pub local_cursors: std::collections::BTreeMap<u8, [f32; 2]>,
+    pub split_screen: crate::split_screen::SplitScreen,
+    pub peer_rtt: std::collections::BTreeMap<u8, (u32, u32)>,
+    pub pending_pings: std::collections::BTreeMap<u8, u32>,
+    pub last_ping_ms: u32,
     /// Mission assets survive snapshot replacement, but retire with the mission.
     pub resources: FrontendResources,
     /// Host-local render state, advanced by named tick/render phases.

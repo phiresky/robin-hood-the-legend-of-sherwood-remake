@@ -460,6 +460,7 @@ pub struct GameWindow {
     #[cfg(feature = "gamepad")]
     pub gamepads: Option<gilrs::Gilrs>,
     pub gamepad_input: crate::gamepad::GamepadDeviceInput,
+    pub local_players: crate::gamepad::LocalPlayers,
     pub close_requested: bool,
     cursor_x: i32,
     cursor_y: i32,
@@ -602,6 +603,7 @@ impl GameWindow {
         self.drain_gamepad_events(&mut events);
         for event in &events {
             self.gamepad_input.fold(event);
+            self.local_players.fold(event);
         }
         events
     }

@@ -3007,14 +3007,27 @@ impl EngineInner {
         let amulets = Some(&self.mission_domain.campaign)
             .map(|c| c.values[crate::campaign::CampaignValue::Amulets])
             .unwrap_or(0);
-        let char_idx = Some(&self.mission_domain.campaign)
-            .and_then(|c| c.get_character_by_profile(profile_idx));
+        let origin = self
+            .get_entity(victim_id)
+            .and_then(Entity::pc_data)
+            .and_then(|pc| pc.coop_origin)
+            .unwrap_or(victim_id);
+        let char_idx = self
+            .get_entity(origin)
+            .and_then(Entity::pc_data)
+            .and_then(|pc| pc.campaign_description_index)
+            .map(|index| index as usize)
+            .or_else(|| {
+                self.mission_domain
+                    .campaign
+                    .get_character_by_profile(profile_idx)
+            });
 
         // `!is_vip || amulets == 0` forwards the kill message and
         // gang removal.  The dead-PC slot only latches when the
         // victim is a player-party VIP — net effect: `dead_pc = victim` iff
         // `mission_role == PlayerParty && is_vip && amulets == 0`.
-        if !is_vip || amulets == 0 {
+        if (!is_vip || amulets == 0) && !self.coop_copy_survives(victim_id) {
             if let (Some(idx), Some(c)) = (char_idx, Some(&mut self.mission_domain.campaign)) {
                 if mission_role == crate::human_control::MissionRole::PlayerParty
                     && c.gang_indices.contains(&idx)

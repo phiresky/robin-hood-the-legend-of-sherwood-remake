@@ -268,6 +268,38 @@ impl NativeContext<'_, '_> {
             .map(|(_, entity)| entity)
     }
 
+    /// Mission conditions follow a surviving cooperative copy after a hero dies.
+    /// Mutating natives retain the exact actor identity supplied by the script.
+    fn mission_condition_entity(&self, handle: i32) -> Option<&Entity> {
+        let entity = self.get_entity(handle)?;
+        let Some(pc) = entity.pc_data().filter(|pc| pc.life_points <= 0) else {
+            return Some(entity);
+        };
+        let origin = pc.coop_origin.map(Self::actor_handle).unwrap_or(handle);
+        self.occupied_entities()
+            .filter(|(id, candidate)| {
+                candidate.pc_data().is_some_and(|copy| {
+                    copy.life_points > 0
+                        && copy
+                            .coop_origin
+                            .map(Self::actor_handle)
+                            .unwrap_or(Self::actor_handle(*id))
+                            == origin
+                })
+            })
+            .min_by_key(|(id, candidate)| {
+                (
+                    candidate
+                        .human_data()
+                        .is_some_and(|human| human.unconscious)
+                        || candidate.element_data().posture() == Posture::Tied,
+                    id.index(),
+                )
+            })
+            .map(|(_, candidate)| candidate)
+            .or(Some(entity))
+    }
+
     /// Look up an entity mutably by actor handle in the canonical Engine store.
     fn get_entity_mut(&mut self, handle: i32) -> Option<&mut Entity> {
         let idx = Self::actor_handle_index(handle)?;
@@ -1467,7 +1499,11 @@ impl NativeContext<'_, '_> {
     fn get_persistent_property(&self, actor: i32, prop: i32) -> i32 {
         use crate::profiles::Action;
 
-        let entity = match self.get_entity(actor) {
+        let entity = match if prop == 2 {
+            self.mission_condition_entity(actor)
+        } else {
+            self.get_entity(actor)
+        } {
             Some(e) => e,
             None => {
                 script_error!(NativeFn::GetPersistentProperty, "invalid actor {actor}");
