@@ -62,6 +62,18 @@ original-view tile follows the same visibility rules: it is not force-filled wit
 source artwork. Background painted onto a roof still indicates a bad silhouette;
 compare against the raw context crop and solid render before texture synthesis.
 
+Authored scenery-occlusion PNGs provide additional source-camera silhouette
+evidence. The hackable converter writes them under
+`Data/Levels/<map>.rhp.d/masks/`, with placement and per-layer identities in
+`manifest.json`. Review component membership and patch state before using a mask:
+an actor occluder is not necessarily an entire logical asset, and a union can
+contain overlapping foreground scenery. These masks constrain a 2D outline;
+they do not determine roof heights or hidden geometry. Use the original context
+crop alongside them. `occlusion_constraints.py` documents the explicit, reviewed
+association schema accepted by the source projection baker, including source
+hash and projection-layer guards. Merely exporting mask PNGs does not activate
+constraints for a worker or replace its geometry review.
+
 For maps with reveal patches, pass the audited projection manifest. The worker
 copies covered and revealed artwork and the manifest into reference/, retaining
 separate interior/exterior receivers. Interior receiver assignment is currently
