@@ -19,7 +19,15 @@ active work. Recheck with
 host, since sandbox process isolation hides other workers. Worker instructions
 and coordinator scheduling use the same provisional cap.
 
-Latest user review: Southwest Postern `ca3fcb885` (`inspection/approval-v3`) and
+Latest user approval: "both approved" applies to East Watchtower `ec675d3ef`
+(`inspection/masked-approval-v1`) and the South Gate east-roof correction
+`88747d706` (`derby-south-gatehouse-candidate-mask63-v2/inspection/final`).
+Generate with two images, high quality, no API mask; preserve exact input,
+lighting, ownership evidence, raw and source-preserved outputs. Gate approval
+covers revised roof parts 013–016; reproject and bake against their new geometry
+rather than reuse old generated roof UVs. Other approved gate parts stay intact.
+
+Earlier user review: Southwest Postern `ca3fcb885` (`inspection/approval-v3`) and
 Northwest Cottage `c2fd98fc2` (`modified/`) are approved for the two-image,
 high-quality Sunburst pass without an API mask. Retain raw and source-preserved
 outputs and exact input/provenance records. Cottage ridge projection stretching
