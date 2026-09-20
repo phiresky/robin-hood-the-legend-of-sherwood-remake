@@ -146,6 +146,15 @@ unchanged. The reusable projection constraint loader accepts this inventory, but
 requires reviewed object/mask associations and matching source-image hashes.
 No automatic Derby associations have been enabled yet.
 
+Initial association review: `mask-association-review/review.md` and `review.json`.
+Cottage mask10 guides the main assembly55/56, mask9 the annex54; masks7/8 need
+porch-submesh review. Masks22–24 reveal a detached cottage yard fence still missing
+from the modeled catalog. At Upper Bailey Gatehouse, revealed mask227 matches
+stair265, but floor-associated masks220/223 are composite facade/terrace masks,
+not exclusive floor ownership. Reveal003 switches global217–220 to221–229.
+Bridge masks230–232 describe foreground occlusion, not a complete deck silhouette.
+Use masks alongside geometric visibility, never in place of it.
+
 Editor appearance follow-up is in progress: restore optional synthesized hidden
 surfaces and smooth texture filtering. Source-only worker evidence must retain
 neutral unknown surfaces; inferred fill must not become projection evidence.
