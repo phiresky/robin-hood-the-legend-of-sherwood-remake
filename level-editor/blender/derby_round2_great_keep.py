@@ -244,6 +244,123 @@ def refine_front_oriel():
             'body_bottom':bottom,'body_top':top,'opening_heights':[opening_bottom,opening_top],'projecting_depth':20}
 
 
+def refine_facade_bays():
+    """Recess three blind bays into the existing facade without moving its feet.
+
+    Keep the original exterior plane and entrance. Clip only front-facing wall
+    polygons to the measured pointed contours, move their retained masonry
+    twenty units inward, and connect the resulting reveals. This works on the
+    authored open wall shells without inventing caps for unrelated interiors.
+    """
+    working=bpy.data.collections['Derby Working'];tag='great-keep-pointed-bays-v2'
+    existing=[o for o in working.objects if o.get('round2_keep_recipe')==tag]
+    if existing:
+        if {o.get('source_node') for o in existing}!={f'building-{i:03}' for i in (148,168,169,178,179,180,182)} or len(existing)!=7:
+            raise ValueError('Partial Hall blind bay refinement')
+        return {'status':'already-applied'}
+    normal=Vector((-.5519364476,-.8338860869,0));anchor=Vector((814,-2094.144,0))
+    depth=20;contours=[]
+    for left,apex,right in ((633,659,693),(713,737,773),(791,815,851)):
+        points=[Vector((left,-1)),Vector((left,319.7))]
+        for a,b,c in ((Vector((left,319.7)),Vector((left,362.7)),Vector((apex,382.7))),
+                      (Vector((apex,382.7)),Vector((right,362.7)),Vector((right,319.7)))):
+            for i in range(1,9):
+                t=i/8;points.append((1-t)**2*a+2*t*(1-t)*b+t*t*c)
+        points.append(Vector((right,-1)));contours.append(points)
+    def signed(p,a,b):
+        front_x=p.x-normal.x*normal.dot(p-anchor)
+        return (b.x-a.x)*(p.z-a.y)-(b.y-a.y)*(front_x-a.x)
+    def clip_plane(poly,evaluate,inside):
+        result=[]
+        for previous,current in zip(poly[-1:]+poly[:-1],poly):
+            dp,dc=evaluate(previous),evaluate(current)
+            keep_p=dp<=1e-7 if inside else dp>=-1e-7
+            keep_c=dc<=1e-7 if inside else dc>=-1e-7
+            if keep_p!=keep_c:
+                result.append(previous.lerp(current,dp/(dp-dc)))
+            if keep_c:result.append(current.copy())
+        clean=[]
+        for p in result:
+            if not clean or (p-clean[-1]).length>1e-6:clean.append(p)
+        if len(clean)>1 and (clean[0]-clean[-1]).length<1e-6:clean.pop()
+        if len(clean)<3:return []
+        area=sum((clean[i]-clean[0]).cross(clean[i+1]-clean[0]).length for i in range(1,len(clean)-1))
+        return clean if area>1e-6 else []
+    def subtract(poly,contour):
+        remaining=poly;outside=[]
+        planes=[lambda p,a=a,b=b:signed(p,a,b) for a,b in zip(contour,contour[1:]+contour[:1])]
+        planes.extend((lambda p:normal.dot(p-anchor)-2,lambda p:-normal.dot(p-anchor)-depth))
+        for plane in planes:
+            if not remaining:break
+            piece=clip_plane(remaining,plane,False)
+            if piece:outside.append(piece)
+            remaining=clip_plane(remaining,plane,True)
+        return outside,remaining
+    def make_mesh(name,polys,inverse,template):
+        verts=[];faces=[]
+        for poly in polys:
+            base=len(verts);verts.extend(inverse@p for p in poly);faces.append(tuple(range(base,len(verts))))
+        mesh=bpy.data.meshes.new(name);mesh.from_pydata(verts,[],faces)
+        bm=bmesh.new();bm.from_mesh(mesh);bmesh.ops.remove_doubles(bm,verts=list(bm.verts),dist=1e-5)
+        bad=sum(f.calc_area()<1e-8 for f in bm.faces)
+        bm.to_mesh(mesh);bm.free()
+        if bad:raise ValueError('Degenerate blind bay face')
+        for mat in template.materials:mesh.materials.append(mat)
+        for old in template.uv_layers:
+            layer=mesh.uv_layers.new(name=old.name)
+            for uv in layer.data:uv.uv=(.5,.5)
+        return mesh
+    targets={f'building-{i:03}' for i in (148,150,151,168,169,177,178,179,180,182)}
+    sources=[o for o in working.objects if o.type=='MESH' and not o.hide_render and o.get('source_node') in targets and not o.get('round2_keep_recipe')]
+    reports=[]
+    for source in sources:
+        outside=[];backing=[];changed=0;original=source.data
+        for face in original.polygons:
+            poly=[source.matrix_world@original.vertices[i].co for i in face.vertices]
+            n=source.matrix_world.inverted().transposed().to_3x3()@face.normal
+            distances=[normal.dot(p-anchor) for p in poly]
+            is_front=n.normalized().dot(normal)>.995 and max(abs(d) for d in distances)<2
+            if min(distances)>2 or max(distances)<-depth:
+                outside.append(poly);continue
+            pending=[poly]
+            for contour in contours:
+                rest=[]
+                for fragment in pending:
+                    pieces,inner=subtract(fragment,contour)
+                    if not inner:
+                        rest.append(fragment);continue
+                    changed+=1;rest.extend(pieces)
+                    if is_front:
+                        def inset(p):return p-normal*(normal.dot(p-anchor)+depth)
+                        backing.append([inset(p) for p in inner])
+                        for a,b in zip(inner,inner[1:]+inner[:1]):
+                            if any(abs(signed(a,u,v))<1e-4 and abs(signed(b,u,v))<1e-4
+                                   for u,v in zip(contour,contour[1:]+contour[:1])):
+                                backing.append([a,b,inset(b),inset(a)])
+                pending=rest
+            outside.extend(pending)
+        if not changed:continue
+        source.data=make_mesh(original.name+' / recessed openings',outside,source.matrix_world.inverted(),original)
+        if not backing:
+            reports.append({'source_node':source['source_node'],'removed_obsolete_internal_faces':changed,
+                            'original_faces':len(original.polygons),'remaining_faces':len(source.data.polygons)})
+            continue
+        mesh=make_mesh(original.name+' / blind bay masonry',backing,Matrix.Identity(4),original)
+        obj=bpy.data.objects.new(source.name+' / blind bay backing and reveals',mesh)
+        working.objects.link(obj);obj.parent=source.parent;obj.matrix_world=Matrix.Identity(4)
+        for key in source.keys():
+            if not key.startswith('reprojection_'):obj[key]=source[key]
+        obj['round2_keep_recipe']=tag
+        obj['round2_keep_component']='hall-blind-bay-'+source['source_node']
+        obj['projection_component']=obj['round2_keep_component']
+        reports.append({'source_node':source['source_node'],'original_faces':len(original.polygons),
+                        'remaining_faces':len(source.data.polygons),'backing_and_reveal_faces':len(mesh.polygons),
+                        'clipped_fragments':changed,'depth':depth,'new_object':obj.name})
+    if not reports:raise ValueError('No facade polygons intersect measured blind bays')
+    return {'status':'applied','construction':'front plane and feet fixed; blind backing recessed inward',
+            'spring':319.7,'crown':382.7,'changes':reports}
+
+
 def refine_gallery_posts():
     """Straight structural posts measured in revealed artwork and native masks.
 
