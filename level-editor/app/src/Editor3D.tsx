@@ -55,6 +55,7 @@ export default function Editor3D(props: EditorProps) {
   const [missionName, setMissionName] = createSignal("");
   const [missionInfo, setMissionInfo] = createSignal("");
   const [perspective, setPerspective] = createSignal(0);
+  const [rotationSnap, setRotationSnap] = createSignal(false);
   const [showEntities, setShowEntities] = createSignal(true);
   let openAttempt = 0;
   let loadedIndex: DatadirIndex | null = null;
@@ -271,6 +272,7 @@ export default function Editor3D(props: EditorProps) {
     },
   );
   createEffect(() => perspective(), (value) => viewport.setPerspective(value));
+  createEffect(() => rotationSnap(), (value) => viewport.setRotationSnap(value));
   createEffect(() => showEntities(), (value) => viewport.setEntitiesVisible(value));
 
   createEffect(
@@ -541,6 +543,7 @@ export default function Editor3D(props: EditorProps) {
                 onInput={(e) => setPerspective(Number(e.currentTarget.value))} />
             </label>
             <p class="hint">Increase perspective for depth and distance scaling. Orbit to view characters from different sides and heights.</p>
+            <label class="check"><input type="checkbox" checked={rotationSnap()} onChange={(e) => setRotationSnap(e.currentTarget.checked)} /> Lock rotation to 16 angles</label>
             <label class="check"><input type="checkbox" checked={showEntities()} onChange={(e) => setShowEntities(e.currentTarget.checked)} /> Mission entities</label>
             <Show when={missionName()}><p class="mission-summary">{missionName()} — {missionInfo()}</p>
               <p class="hint">Initial placements; mission scripts are not run. Green markers show spawn points. Magenta markers indicate missing sprite assets. Standing characters, prone bodies, pickups, and scenery use different depth profiles.</p>

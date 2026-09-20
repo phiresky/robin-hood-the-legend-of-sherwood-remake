@@ -57,6 +57,9 @@ without refitting the lens as the map moves across the view.
 Right-drag orbit keeps a fixed distance to the point under the cursor. Wheel zoom
 moves the lens closer without refitting the whole map, so repeated zoom-in steps
 continue to magnify the scene.
+**Lock rotation to 16 angles** snaps horizontal camera rotation to 22.5° steps
+aligned with the sprite views. It snaps immediately when enabled and keeps tilt
+continuous in both orthographic and perspective modes. The option is off by default.
 Extreme angles remain an approximation because
 the sprites do not contain unseen elevation views. Legacy sprite color keys are
 decoded into color and authored shadow layers. Shadows project onto the support

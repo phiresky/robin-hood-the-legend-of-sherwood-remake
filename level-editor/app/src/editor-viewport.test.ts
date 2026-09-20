@@ -300,7 +300,7 @@ test("perspective pan translates camera and target along the floor without refit
   viewport.dispose();
 });
 
-test("perspective right-drag orbits an off-center floor pivot without changing distance or its screen position", () => {
+test("free and 16-angle orbit preserve the cursor pivot and camera distance", () => {
   const { viewport } = fixture();
   const camera = new THREE.OrthographicCamera(-2000, 2000, 1000, -1000);
   camera.position.set(1800, 3000, 6000);
@@ -322,17 +322,33 @@ test("perspective right-drag orbits an off-center floor pivot without changing d
   });
   access.setupCursorOrbit(element as unknown as HTMLCanvasElement);
   const pointer = (type: string, x: number, y: number) => element.dispatchEvent(Object.assign(new Event(type), { button: 2, pointerId: 1, clientX: x, clientY: y }));
-  for (const fov of [1, 15, 45, 65]) {
+  for (const snap of [true, false]) for (const fov of [0, 1, 15, 45, 65]) {
     viewport.setPerspective(fov);
+    viewport.setRotationSnap(snap);
+    const initialRotation = access.activeCamera().quaternion.clone();
+    if (snap) {
+      const back = new THREE.Vector3(0, 0, 1).applyQuaternion(initialRotation);
+      const sector = Math.atan2(back.x, back.z) / (Math.PI / 8);
+      assert.ok(Math.abs(sector - Math.round(sector)) < 1e-8, "enabling snaps immediately");
+    }
     const ray = new THREE.Raycaster();
     ray.setFromCamera(new THREE.Vector2(0.25, -0.1), access.activeCamera());
     const pivot = ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), new THREE.Vector3())!;
     assert.ok(pivot);
     const initialDistance = access.activeCamera().position.distanceTo(pivot);
     pointer("pointerdown", 500, 220);
-    for (const [x, y] of [[600, 220], [680, 160], [440, 260], [500, 220]]) {
+    for (const [x, y] of [[510, 220], [520, 220], [526, 220], [600, 220], [680, 160], [440, 260], [500, 220]]) {
       pointer("pointermove", x!, y!);
       const lens = access.activeCamera();
+      if (snap) {
+        const back = new THREE.Vector3(0, 0, 1).applyQuaternion(lens.quaternion);
+        const sector = Math.atan2(back.x, back.z) / (Math.PI / 8);
+        assert.ok(Math.abs(sector - Math.round(sector)) < 1e-8);
+        if (x === 510 || x === 520) assert.ok(lens.quaternion.angleTo(initialRotation) < 1e-7, "hold angle until crossing sector boundary");
+        if (x === 526) assert.ok(Math.abs(lens.quaternion.angleTo(initialRotation) - Math.PI / 8) < 1e-7, "jump exactly one sprite angle");
+      } else if (x === 510) {
+        assert.ok(lens.quaternion.angleTo(initialRotation) > 0.01, "disabling restores continuous rotation");
+      }
       assert.ok(Math.abs(lens.position.distanceTo(pivot) - initialDistance) < 1e-7, `orbit distance at ${fov} degrees`);
       const projected = pivot.clone().project(lens);
       assert.ok(Math.abs(projected.x - 0.25) < 1e-8);

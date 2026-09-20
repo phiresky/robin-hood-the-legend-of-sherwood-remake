@@ -51,6 +51,7 @@ export class EditorViewport {
   private camera: THREE.OrthographicCamera | null = null;
   private frustum = 1500;
   private perspective = 0;
+  private rotationSnap = false;
   private readonly projectionBounds = new THREE.Sphere(new THREE.Vector3(), 10000);
   private readonly framingBounds = new THREE.Box3();
   private framingPoints: THREE.Vector3[] = [];
@@ -61,6 +62,10 @@ export class EditorViewport {
 
   setPerspective(value: number) {
     this.perspective = THREE.MathUtils.clamp(value, 0, 65);
+    if (this.camera) this.activeCamera();
+  }
+  setRotationSnap(enabled: boolean) {
+    this.rotationSnap = enabled;
     if (this.camera) this.activeCamera();
   }
   replaceEntities(entities: MissionEntities | null) {
@@ -101,6 +106,17 @@ export class EditorViewport {
   private activeCamera(): THREE.OrthographicCamera | THREE.PerspectiveCamera {
     const camera = this.camera!;
     if (!camera) throw new Error("Viewport camera is not mounted");
+    if (this.rotationSnap) {
+      const back = new THREE.Vector3(0, 0, 1).applyQuaternion(camera.quaternion);
+      const azimuth = Math.atan2(back.x, back.z);
+      const step = Math.PI / 8;
+      const delta = Math.round(azimuth / step) * step - azimuth;
+      if (Math.abs(delta) > 1e-10) {
+        const rotation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), delta);
+        camera.position.sub(this.orbit!.target).applyQuaternion(rotation).add(this.orbit!.target);
+        camera.quaternion.premultiply(rotation);
+      }
+    }
     this.orbit!.screenSpacePanning = this.perspective === 0;
     if (this.perspective === 0) {
       if (this.gizmo) this.gizmo.camera = camera;
@@ -454,6 +470,7 @@ export class EditorViewport {
       target: THREE.Vector3;
       right: THREE.Vector3;
       polar: number;
+      azimuth: number;
     } | null = null;
     let moving: {
       view: View;
@@ -538,6 +555,7 @@ export class EditorViewport {
             this.camera.quaternion,
           ),
           polar: Math.acos(THREE.MathUtils.clamp(offset.normalize().y, -1, 1)),
+          azimuth: Math.atan2(offset.x, offset.z),
         };
         this.orbit.enabled = false;
         this.dragging = true;
@@ -564,7 +582,11 @@ export class EditorViewport {
         }
         if (!active || !this.camera || !this.orbit) return;
         const rect = el.getBoundingClientRect();
-        const yaw = (-(e.clientX - active.startX) / rect.width) * Math.PI * 2;
+        let yaw = (-(e.clientX - active.startX) / rect.width) * Math.PI * 2;
+        if (this.rotationSnap) {
+          const step = Math.PI / 8;
+          yaw = Math.round((active.azimuth + yaw) / step) * step - active.azimuth;
+        }
         let pitch = (-(e.clientY - active.startY) / rect.height) * Math.PI;
         // keep the camera between straight down and just above the horizon
         pitch =
