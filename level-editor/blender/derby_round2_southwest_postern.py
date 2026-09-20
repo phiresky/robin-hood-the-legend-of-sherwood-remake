@@ -13,7 +13,7 @@ ASSET = 'derby-southwest-postern'
 TAG = 'postern-authored-scaffold-round2-v1'
 
 
-def refine():
+def _refine_scaffold():
     collection = bpy.data.collections['Derby Working']
     owned = [o for o in collection.objects if o.type == 'MESH'
              and o.get('asset_group') == ASSET and not o.hide_render]
@@ -104,3 +104,89 @@ def refine():
     ladder['round2_postern']=TAG
     bpy.context.view_layer.update()
     return report
+
+
+def _refine_shells():
+    """Replace disconnected polygon strips with shared, closed shell topology.
+
+    Anchors follow the existing visible top outline, not a proximity weld. The
+    upper wood landing's exposed far corner is shortened to its authored edge.
+    """
+    tag = 'postern-coherent-shells-round2-v2'
+    # World-space top perimeters audited before modification. Each perimeter
+    # bounds one solid part; the main tower's ten-point path retains its hollow
+    # center rather than capping the whole courtyard opening.
+    outlines = {
+        'building-009': (0.001, [
+            (727.667,-4212.167,183.118),(594.442,-4182.421,183.118),
+            (576.372,-4205.551,183.118),(578.803,-4219.701,183.118),
+            (590.571,-4224.260,183.118),(704.784,-4257.688,183.118),
+            (713.120,-4222.021,183.118)]),
+        'building-026': (177.014, [
+            (562.799,-4167.164,183.118),(539.914,-4183.560,183.118),
+            (526.008,-4193.860,183.118),(559.115,-4196.068,183.118),
+            (575.694,-4207.538,183.118),(576.522,-4206.420,183.118),
+            (576.372,-4205.551,183.118),(591.555,-4186.117,183.118),
+            (594.378,-4182.304,183.118)]),
+        'building-033': (124.521, [
+            (514.000,-4274.556,128.251),(494.312,-4221.163,128.251),
+            (474.056,-4235.917,128.251),(498.507,-4298.772,128.251),
+            (535.746,-4312.313,128.251),(565.227,-4315.092,128.251),
+            (615.069,-4293.920,128.251),(591.406,-4273.512,128.251),
+            (559.237,-4288.847,128.251)]),
+        'building-034': (179.456, [
+            (612.263,-4230.888,183.118),(591.737,-4274.016,183.118),
+            (610.948,-4290.074,183.118),(636.0,0,183.118)]),
+        'building-043': (0.001, [
+            (519.270,-4265.814,182.639),(511.933,-4223.601,205.486),
+            (496.655,-4228.250,197.777),(513.993,-4274.234,175.905),
+            (559.308,-4288.621,181.942),(591.776,-4273.488,201.464),
+            (612.181,-4230.963,233.454),(601.931,-4227.472,232.230),
+            (590.939,-4261.946,208.088),(556.182,-4282.980,184.302)]),
+    }
+    sine, cosine = math.sin(math.radians(35)), math.cos(math.radians(35))
+    # Native mask 71 retains x=636 at y=2280. Unlike cropping to the mask, only
+    # this visibly exposed corner moves; the occluded wall-side join survives.
+    outlines['building-034'][1][-1] = (636.0, -(2280+183.118*cosine)/sine, 183.118)
+    collection = bpy.data.collections['Derby Working']
+    result=[]
+    for node,(bottom,top) in outlines.items():
+        matches=[o for o in collection.objects if o.type=='MESH'
+                 and o.get('asset_group')==ASSET and o.get('source_node')==node
+                 and not o.hide_render and not o.get('round2_component_role')]
+        if len(matches)!=1:
+            raise ValueError(f'Expected one active shell for {node}: {len(matches)}')
+        obj=matches[0]
+        if obj.get('round2_shell')==tag:
+            result.append({'node':node,'reused':True});continue
+        n=len(top)
+        vertices=[Vector((x,y,bottom)) for x,y,z in top]+[Vector(p) for p in top]
+        faces=[tuple(reversed(range(n))),tuple(range(n,n*2))]
+        faces.extend((i,(i+1)%n,(i+1)%n+n,i+n) for i in range(n))
+        mesh=bpy.data.meshes.new(node+' coherent postern shell')
+        inverse=obj.matrix_world.inverted()
+        mesh.from_pydata([inverse@p for p in vertices],[],faces);mesh.update()
+        bm=bmesh.new();bm.from_mesh(mesh)
+        # The variable-height parapet cap is explicitly triangulated so no
+        # renderer must guess a nonplanar ngon surface differently.
+        bmesh.ops.triangulate(bm,faces=[f for f in bm.faces if len(f.verts)>4])
+        bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces))
+        bad={'nonmanifold_edges':sum(not e.is_manifold for e in bm.edges),
+             'degenerate_faces':sum(f.calc_area()<1e-8 for f in bm.faces)}
+        if any(bad.values()):
+            bm.free();raise ValueError({'node':node,**bad})
+        bm.to_mesh(mesh);bm.free();mesh.update()
+        uv=mesh.uv_layers.new(name='UVMap')
+        for loop in mesh.loops:
+            p=obj.matrix_world@mesh.vertices[loop.vertex_index].co
+            uv.data[loop.index].uv=(p.x/1920,1+(p.y*sine+p.z*cosine)/2752)
+        if obj.data.materials:mesh.materials.append(obj.data.materials[0])
+        obj.data=mesh
+        obj['round2_shell']=tag
+        result.append({'node':node,'reused':False,'verts':len(vertices),**bad})
+    bpy.context.view_layer.update()
+    return result
+
+
+def refine():
+    return {'scaffold':_refine_scaffold(),'shells':_refine_shells()}
