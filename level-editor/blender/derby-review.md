@@ -5,10 +5,10 @@ Reviewed does not mean finished: record remaining defects and uncertain geometry
 Workers use separate Blender copies; the primary session integrates reviewed
 recipes, reruns layered projection, and publishes the map and standalone assets.
 
-Blender concurrency is provisionally six coordinated jobs, increased from three
+Blender concurrency is provisionally nine coordinated jobs, increased from three
 after host measurements on 2026-09-20: 16 logical CPUs, 30.65 GiB RAM, roughly
 20 GiB available, and sampled workers using 1–2 GiB and about one CPU core each.
-This is capacity headroom evidence, not a six-job throughput benchmark. New jobs
+This is capacity headroom evidence, not a nine-job throughput benchmark. New jobs
 use `--threads 2`; ready work starts without mandatory load delays. High host I/O
 pressure did not establish device saturation: a subsequent five-second NVMe
 sample showed 12.3% busy time, 14.9 MiB/s combined throughput and 3.68 ms average
@@ -18,6 +18,16 @@ active work. Recheck with
 `python3 level-editor/blender/measure_blender_resources.py --seconds 10` on the
 host, since sandbox process isolation hides other workers. Worker instructions
 and coordinator scheduling use the same provisional cap.
+
+Latest user review: Southwest Postern `ca3fcb885` (`inspection/approval-v3`) and
+Northwest Cottage `c2fd98fc2` (`modified/`) are approved for the two-image,
+high-quality Sunburst pass without an API mask. Retain raw and source-preserved
+outputs and exact input/provenance records. Cottage ridge projection stretching
+and remaining silhouette discrepancies were disclosed in this review.
+Lower West Curtain `ed9f7782a` must first be split into smaller logical assets
+for editing and texture generation, as requested by the user; its generation
+is on hold. The split must preserve transforms, complete part ownership and
+mask constraints, and be reflected in reusable map/individual-asset exports.
 
 Mask authority correction: earlier mask inspection and selected export constraints
 did not enforce ownership in worker previews. A successful mesh visibility test
