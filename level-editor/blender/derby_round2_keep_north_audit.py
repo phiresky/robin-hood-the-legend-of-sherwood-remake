@@ -20,16 +20,20 @@ for i in [131,140,143]:
 verts=[];faces=[]
 for o in bpy.data.collections['Derby Working'].objects:
     if o.type!='MESH' or o.hide_render or o.get('source_node') not in NODES:continue
-    offset=len(verts);verts.extend(o.matrix_world@v.co for v in o.data.vertices)
-    faces.extend(tuple(offset+i for i in f.vertices) for f in o.data.polygons)
-tree=BVHTree.FromPolygons(verts,faces);down=Vector((0,-math.sin(math.radians(35)),-math.cos(math.radians(35))))
+    mesh=o.evaluated_get(bpy.context.evaluated_depsgraph_get()).to_mesh();mesh.calc_loop_triangles()
+    offset=len(verts);verts.extend(o.matrix_world@v.co for v in mesh.vertices)
+    faces.extend(tuple(offset+i for i in f.vertices) for f in mesh.loop_triangles)
+tree=BVHTree.FromPolygons(verts,faces,all_triangles=True);down=Vector((0,-math.sin(math.radians(35)),-math.cos(math.radians(35))))
 w,h=meta['tile_size'];rows=[]
 for r in meta['views']:
     i=r['index'];known=pixels(folder/f'views/view-{i}-known.png')[:,:,0]>.5;color=pixels(folder/f'views/view-{i}-textured.png')
     matrix=Matrix(r['camera_matrix_world']);direction=matrix.to_3x3()@Vector((0,0,-1));scale=r['ortho_scale']/h
+    scene=bpy.data.scenes['Derby Refinement'];scene.render.resolution_x=w;scene.render.resolution_y=h
+    camera=bpy.data.cameras.new('North audit camera');camera.type='ORTHO';camera.ortho_scale=r['ortho_scale']
+    frame=camera.view_frame(scene=scene);left,right=min(p.x for p in frame),max(p.x for p in frame);bottom,top=min(p.y for p in frame),max(p.y for p in frame)
     absent=outside=mismatch=0
     for y,x in np.argwhere(known):
-        origin=matrix@Vector(((float(x)+.5-w/2)*scale,(h/2-float(y)-.5)*scale,0))
+        origin=matrix@Vector((left+(float(x)+.5)*(right-left)/w,bottom+(h-1-float(y)+.5)*(top-bottom)/h,0))
         hit,_,_,_=tree.ray_cast(origin,direction)
         if hit is None:absent+=1;continue
         sx=math.floor(hit.x);sy=math.floor(hit.dot(down))
