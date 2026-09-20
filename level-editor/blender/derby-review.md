@@ -117,8 +117,8 @@ terrain/background, rock relief, Great Keep, Upper Bailey Gatehouse, South
 Gatehouse, East Hall turret, East Watchtower, Southwest Postern, Lower East
 Curtain, Lower West Curtain, and the two detached cottage barrels. The source
 and geometry checks are recorded in `round-2/integration.json` and the staged
-publication evidence. **New West Cottage geometry is excluded from this
-publication**; its geometry is now user-approved and texture work remains pending. Keep facade
+publication evidence. **Publication 3 also includes the approved West Cottage
+facade/roof correction and source-protected texture fill.** Keep facade
 relief, Hall wall/interior alignment and Watchtower hoist/cage remain follow-up work.
 New work is isolated until its source,
 solid, textured and scope checks pass. The new mask PNGs are evidence for this
@@ -136,11 +136,10 @@ All 30 original logical assets have received an individual worker pass. **All in
 passes are now merged and published, with 34 standalone assets after regrouping. The
 assets are not finished.** “Published”
 means the geometry is included in the latest map export, not that all defects
-are resolved. The published West Cottage still uses its earlier geometry and
-generated bake; the newly approved facade correction is awaiting its new texture
-pass and publication. Generated hidden details remain inferred.
+are resolved. West Cottage now includes the approved `d01d438af` geometry and its
+new generated bake. Generated hidden details remain inferred.
 
-Latest map publication: `work/derby-refinement/round-2/publication-2/derby.scene.glb`
+Latest map publication: `work/derby-refinement/round-2/publication-3/derby.scene.glb`
 to `library/scenes/derby-volumes.scene.glb`, with the document fingerprint updated.
 It contains 34 groups, 270 canonical parts, 308 meshes, and 155 modeled steps.
 Browser acceptance passed: 34 named groups, 270 parts, 14 stair assemblies,
@@ -158,20 +157,28 @@ verified in the actual browser-loaded GLB. Only source-hidden texels were filled
 tone reconciliation reduce roof seams without changing protected artwork or
 geometry. A subsequent exterior reprojection preserves all 7,161 gate faces.
 Evidence: `round-2/gate-approved-two-image-texture-bake/` and
-`round-2/publication-2/{stage,publication,browser-result}.json`.
+`round-2/publication-3/{stage,publication,browser-result}.json`.
+
+Publication 3 imports only the approved West Cottage geometry and its eight
+texture materials, plus six source-protected Lower East Curtain texture materials.
+The browser verifies their selected generated hashes (`0d79dab5c4c06363…` and
+`fbe664a15896bd44…`). All 733 outside mesh material/UV signatures and all 17
+Gate atlas pixel buffers remain unchanged. The two barrel texture candidates
+remain unpublished because their source/AI transitions need further work.
 
 Working integration checkpoint: `derby-refinement.blend`. The latest scene-wide
 ownership bake is recorded in `round-2/publication-2/reprojection/layers-report.json`:
 five layers, 4,526,903 known texels and 18,853,940 unknown texels before the approved
 gate texture handoff. Eligible hidden areas receive optional source-based synthesis.
 The imported gate atlas remains independent of that display toggle. The checkpoint
-backup is `derby-refinement-before-round2-publication2.blend`; the prior map/document
-backup is `library/scenes/backups/1d2787bc9215faf4/`. New Cottage geometry and its
-separate texture approval are intentionally outside this publication.
+backup is `derby-refinement-before-round2-publication3.blend`; the prior map/document
+backup is `library/scenes/backups/77a204cd9e19a1f6/`. Publication 3 retains the
+existing scene-wide projections, then imports the separately verified Cottage
+and Curtain source-protected atlases with exact geometry guards.
 
 Updated full-Derby 1920×2752 renders:
-`round-2/publication-2/full-map/reference-solid.png` and
-`round-2/publication-2/full-map/reference-textured.png`. These retain visible
+`round-2/publication-3/full-map/reference-solid.png` and
+`round-2/publication-3/full-map/reference-textured.png`. These retain visible
 unfinished Keep/Hall details and other recorded limitations; publication is not
 final asset acceptance.
 
