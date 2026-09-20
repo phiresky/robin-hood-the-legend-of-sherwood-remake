@@ -132,6 +132,58 @@ def refine_fireplace():
             'source_hood_corners':[[946,661],[995,679],[981,736],[932,719]]}
 
 
+def refine_fireplace_arch():
+    """Restore the shallow curved hearth opening beneath the measured hood.
+
+    The existing jambs determine the span and rear depth. The source shows a
+    depressed arch rising about nineteen units from its spring to the crown.
+    This adds the stone spandrels; the opening and firelit inner wall stay open.
+    """
+    working=bpy.data.collections['Derby Working']
+    tag='great-keep-hall-fireplace-arch-v1'
+    if any(o.get('round2_keep_recipe')==tag for o in working.objects):
+        return {'status':'already-applied'}
+    source=next(o for o in working.objects if o.get('projection_component')=='hall-fireplace')
+    if source.get('round2_keep_recipe')!='great-keep-hall-fireplace-v1' or len(source.data.vertices)!=32:
+        raise ValueError('Fireplace arch requires the reviewed four-solid fireplace topology')
+    normal=Vector((-.544638991,-.83867067,0))
+    left=source.data.vertices[17].co.copy()
+    right=source.data.vertices[24].co.copy()
+    # Vertex17 is the left jamb's inner lower corner;24 is the right one's.
+    top=source.data.vertices[18].co.z
+    spring=253.0;crown=272.0;segments=12;vertices=[];faces=[]
+    for rear in (False,True):
+        for i in range(segments+1):
+            t=i/segments
+            point=left.lerp(right,t)-(normal*28 if rear else Vector((0,0,0)))
+            lower=point.copy();lower.z=spring+(crown-spring)*math.sqrt(max(0,1-(2*t-1)**2))
+            upper=point.copy();upper.z=top
+            vertices.extend((lower,upper))
+    stride=2*(segments+1)
+    for i in range(segments):
+        a=2*i;b=a+2
+        faces.extend(((a,b,b+1,a+1),(a+stride+1,b+stride+1,b+stride,a+stride),
+                      (a,a+stride,b+stride,b),(a+1,b+1,b+stride+1,a+stride+1)))
+    faces.extend(((0,1,stride+1,stride),(stride-2,2*stride-2,2*stride-1,stride-1)))
+    mesh=bpy.data.meshes.new('Great Keep / fireplace curved stone arch mesh')
+    mesh.from_pydata(vertices,[],faces)
+    bm=bmesh.new();bm.from_mesh(mesh);bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces))
+    invalid=sum(not e.is_manifold for e in bm.edges)
+    degenerate=sum(f.calc_area()<1e-8 for f in bm.faces)
+    bm.to_mesh(mesh);bm.free()
+    if invalid or degenerate:raise ValueError('Invalid fireplace stone arch')
+    mesh.materials.append(bpy.data.materials['Great Keep / fireplace unknown'])
+    obj=bpy.data.objects.new('Great Keep / Hall fireplace curved stone arch',mesh)
+    working.objects.link(obj);obj.parent=source.parent;obj.matrix_world=source.matrix_world.copy()
+    for key in source.keys():
+        if not key.startswith('reprojection_'):obj[key]=source[key]
+    obj['round2_keep_recipe']=tag
+    obj['round2_keep_component']='hall-fireplace-arch'
+    obj['projection_component']='hall-fireplace-arch'
+    return {'object':obj.name,'faces':len(faces),'nonmanifold_edges':invalid,
+            'degenerate_faces':degenerate,'spring_height':spring,'crown_height':crown,'top':top}
+
+
 def refine_gallery_posts():
     """Straight structural posts measured in revealed artwork and native masks.
 
