@@ -79,7 +79,7 @@ impl NativeContext<'_, '_> {
                 // -1 on invalid / non-human actor, warns and
                 // returns -1 for unmapped variants.
                 let actor = stack.pop_i32();
-                let Some(entity) = self.get_entity(actor) else {
+                let Some(entity) = self.mission_condition_entity(actor) else {
                     script_error!(native, "invalid actor {actor}");
                     return -1;
                 };
@@ -199,7 +199,7 @@ impl NativeContext<'_, '_> {
                 // subsequent SetActorLocation round-trips
                 // preserve the sector.
                 let actor = stack.pop_i32();
-                match self.get_entity(actor) {
+                match self.mission_condition_entity(actor) {
                     Some(entity) => {
                         let pos = entity.element_data().position_map();
                         let sector = entity.element_data().sector();

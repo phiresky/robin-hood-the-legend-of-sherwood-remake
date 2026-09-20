@@ -194,29 +194,25 @@ impl NativeContext<'_, '_> {
                 // native flips true the moment HP reaches 0,
                 // before the death animation rewrites posture.
                 let actor = stack.pop_i32();
-                self.get_entity(actor)
-                    .map_or(0, |e| i32::from(e.human_data().is_some() && e.is_dead()))
+                self.mission_condition_entity(actor).map_or(0, |entity| {
+                    i32::from(entity.human_data().is_some() && entity.is_dead())
+                })
             }
             IsActorKO => {
                 let actor = stack.pop_i32();
-                self.get_entity(actor).map_or(0, |e| {
+                self.mission_condition_entity(actor).map_or(0, |e| {
                     i32::from(e.human_data().is_some_and(|h| h.unconscious))
                 })
             }
             IsActorTied => {
                 let actor = stack.pop_i32();
-                self.get_entity(actor).map_or(0, |e| {
+                self.mission_condition_entity(actor).map_or(0, |e| {
                     i32::from(e.element_data().posture() == Posture::Tied)
                 })
             }
             IsActorHS => {
-                // Requires an existing human, then checks whether the actor
-                // is dead, tied, or unconscious.
-                // (The previous arm read `in_honolulu`, an
-                // off-map flag, which broke any mission script
-                // gating on incapacitation.)
                 let actor = stack.pop_i32();
-                let Some(e) = self.get_entity(actor) else {
+                let Some(e) = self.mission_condition_entity(actor) else {
                     script_error!(native, "with invalid actor handle {actor}");
                     return 0;
                 };
@@ -224,11 +220,11 @@ impl NativeContext<'_, '_> {
                     script_error!(native, "with non-actor handle {actor}");
                     return 0;
                 }
-                let posture = e.element_data().posture();
-                let dead = e.is_dead();
-                let tied = posture == Posture::Tied;
-                let unconscious = e.human_data().is_some_and(|h| h.unconscious);
-                i32::from(dead || tied || unconscious)
+                i32::from(
+                    e.is_dead()
+                        || e.element_data().posture() == Posture::Tied
+                        || e.human_data().is_some_and(|h| h.unconscious),
+                )
             }
 
             // --- actor stop / activation ---

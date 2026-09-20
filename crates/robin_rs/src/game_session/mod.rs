@@ -805,6 +805,32 @@ async fn run_mission_body(
         mut rng_seed,
         mut sim_config,
     } = start;
+    if args.replay_data.is_none() && args.multiplayer.expected_players.is_some() {
+        sim_config.coop = args.multiplayer.coop;
+        let players = args
+            .multiplayer
+            .expected_players
+            .expect("checked player count");
+        if !(1..=5).contains(&players) {
+            return MissionOutcome::new(
+                campaign,
+                rng_seed,
+                sim_config,
+                Err(MissionError::application(
+                    "Co-op supports one to five players",
+                )),
+            );
+        }
+        sim_config.coop.players = players as u8;
+        if let Err(error) = sim_config.coop.validate() {
+            return MissionOutcome::new(
+                campaign,
+                rng_seed,
+                sim_config,
+                Err(MissionError::application(error)),
+            );
+        }
+    }
     if let Some(error) = unprepared_replay_launch_error(&args) {
         return MissionOutcome::new(campaign, rng_seed, sim_config, Err(error));
     }

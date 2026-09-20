@@ -44,6 +44,28 @@ fn begin_interactive_frame(
     // fresh cursor.
     let net_drain =
         drain_mission_network(runtime, host, manager, assets, true, current_epoch_ms())?;
+    let now = crate::window::process_uptime_ms();
+    if now.wrapping_sub(host.frontend.last_ping_ms) >= 2000 {
+        host.frontend.last_ping_ms = now;
+        if let Some(net) = host.transport.net() {
+            for (seat, _) in manager.engine.active_seats() {
+                if seat != host.transport.local_seat() {
+                    match net
+                        .outgoing
+                        .send(robin_engine::multiplayer::NetOutbound::Latency {
+                            to: seat,
+                            nonce: now,
+                            reply: false,
+                        }) {
+                        Ok(()) => {
+                            host.frontend.pending_pings.insert(seat.0, now);
+                        }
+                        Err(error) => tracing::warn!(%error, "latency probe failed"),
+                    }
+                }
+            }
+        }
+    }
     let mp_clock_pause = net_drain.pause_simulation;
     let net_inputs = net_drain.inputs;
 

@@ -17,6 +17,13 @@ pub enum ClientProtocolError {
 
 pub(super) fn prepare(outgoing: NetOutbound) -> Result<NetMsg, ClientProtocolError> {
     Ok(match outgoing {
+        NetOutbound::Latency { to, nonce, reply } => NetMsg::Latency {
+            from: robin_engine::player_command::PlayerId::HOST,
+            to,
+            nonce,
+            reply,
+        },
+        NetOutbound::Chat { text } => NetMsg::ChatSend { text },
         NetOutbound::Input {
             origin_frame,
             command,

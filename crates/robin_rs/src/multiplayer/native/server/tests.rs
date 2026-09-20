@@ -950,3 +950,108 @@ fn real_iroh_seat_connects_and_ready_begins_gameplay() {
     client.shutdown();
     server.shutdown();
 }
+
+#[test]
+fn five_player_coop_routes_chat_and_peer_latency() {
+    let (server_in_tx, server_in_rx) = channel();
+    let (_server_out_tx, server_out_rx) = channel();
+    let mut config = robin_engine::engine::SimConfig::default();
+    config.coop.players = 5;
+    let mut server = start_server_with_key(
+        iroh::SecretKey::generate(),
+        ServerConfig {
+            host_nickname: "host".into(),
+            mission_id: "Dem_Lei_MP".into(),
+            mission_seed: 7,
+            sim_config: config,
+            speech_timing_locale: None,
+            expected_players: 5,
+            browser_join_enabled: false,
+        },
+        ServerChannels {
+            incoming_tx: server_in_tx,
+            outgoing_rx: server_out_rx,
+            frame_cursor: Arc::new(AtomicU32::new(0)),
+            initial_snapshot: Arc::new(StdMutex::new(None)),
+        },
+        None,
+    )
+    .expect("start five player host");
+    let mut clients = Vec::new();
+    for seat in 1..5 {
+        let (incoming, rx) = channel();
+        let (tx, outgoing) = channel();
+        let client = connect_client_with_key(
+            iroh::SecretKey::generate(),
+            server.connect_string(),
+            format!("player{seat}"),
+            incoming,
+            outgoing,
+        )
+        .unwrap();
+        recv_matching(
+            &rx,
+            Duration::from_secs(15),
+            |event| matches!(event,NetEvent::AssignedLocalSeat(id) if id.0==seat),
+        );
+        clients.push((client, tx, rx));
+    }
+    clients[3]
+        .1
+        .send(NetOutbound::Chat {
+            text: "hello team".into(),
+        })
+        .unwrap();
+    recv_matching(
+        &server_in_rx,
+        Duration::from_secs(15),
+        |event| matches!(event,NetEvent::Note(text) if text=="player4: hello team"),
+    );
+    for (_, _, rx) in &clients {
+        recv_matching(
+            rx,
+            Duration::from_secs(15),
+            |event| matches!(event,NetEvent::Note(text) if text=="player4: hello team"),
+        );
+    }
+    clients[0]
+        .1
+        .send(NetOutbound::Latency {
+            to: PlayerId(4),
+            nonce: 1234,
+            reply: false,
+        })
+        .unwrap();
+    recv_matching(&clients[3].2, Duration::from_secs(15), |event| {
+        matches!(
+            event,
+            NetEvent::Latency {
+                from: PlayerId(1),
+                nonce: 1234,
+                reply: false
+            }
+        )
+    });
+    clients[3]
+        .1
+        .send(NetOutbound::Latency {
+            to: PlayerId(1),
+            nonce: 1234,
+            reply: true,
+        })
+        .unwrap();
+    recv_matching(&clients[0].2, Duration::from_secs(15), |event| {
+        matches!(
+            event,
+            NetEvent::Latency {
+                from: PlayerId(4),
+                nonce: 1234,
+                reply: true
+            }
+        )
+    });
+    for (client, _, _) in &mut clients {
+        client.shutdown();
+    }
+    server.shutdown();
+}

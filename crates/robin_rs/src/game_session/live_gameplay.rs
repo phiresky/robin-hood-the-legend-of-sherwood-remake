@@ -346,10 +346,13 @@ pub(super) async fn drive_live_gameplay_input(
         pause_closed_this_frame,
     } = input_batch;
 
+    let keyboard_player =
+        !context.window.local_players.enabled || context.window.local_players.keyboard;
     let planned_action = context
         .engine
         .planned_action_for_seat(context.host.transport.local_seat());
-    if context.assets.attachments.spellforge_runtime.is_some()
+    if keyboard_player
+        && context.assets.attachments.spellforge_runtime.is_some()
         && !context.ui.console_overlay.is_visible()
         && context.ui.pause_menu.is_none()
     {
@@ -403,7 +406,9 @@ pub(super) async fn drive_live_gameplay_input(
             GameAction::DisplayMenu => {
                 toggle_pause_menu(&mut context, pause_closed_this_frame);
             }
-            _ if context.ui.pause_menu.is_some() || *pause_closed_this_frame => {}
+            _ if !keyboard_player
+                || context.ui.pause_menu.is_some()
+                || *pause_closed_this_frame => {}
             _ => dispatch_gameplay_action(&mut context, action, modifiers),
         }
     }
@@ -426,21 +431,23 @@ pub(super) async fn drive_live_gameplay_input(
         HandlerAction::Proceed => {}
     }
 
-    handle_mouse_input(
-        MouseCtx {
-            engine: context.engine,
-            host: &mut *context.host,
-            assets: context.assets,
-            screen_width: context.presentation.renderer.screen_width(),
-            screen_height: context.presentation.renderer.screen_height(),
-            portrait_cache: &context.presentation.sprites.portrait_cache,
-            frame_cmds: &mut *context.commands,
-            modifiers,
-        },
-        events,
-        context.ui.pause_menu.as_ref(),
-        *pause_closed_this_frame,
-    );
+    if keyboard_player && !context.ui.console_overlay.is_visible() {
+        handle_mouse_input(
+            MouseCtx {
+                engine: context.engine,
+                host: &mut *context.host,
+                assets: context.assets,
+                screen_width: context.presentation.renderer.screen_width(),
+                screen_height: context.presentation.renderer.screen_height(),
+                portrait_cache: &context.presentation.sprites.portrait_cache,
+                frame_cmds: &mut *context.commands,
+                modifiers,
+            },
+            events,
+            context.ui.pause_menu.as_ref(),
+            *pause_closed_this_frame,
+        );
+    }
     HandlerAction::Proceed
 }
 

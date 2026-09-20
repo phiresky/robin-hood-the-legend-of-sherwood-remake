@@ -2089,6 +2089,7 @@ impl EngineInner {
         self.cache_door_ai_metadata();
         self.sort_pc_ids_by_priority(assets);
         self.select_highest_priority_pc(TickCtx::new(sim, assets), 0);
+        self.initialize_coop_party();
         tracing::debug!(
             elapsed_ms = startup_started.elapsed().as_secs_f64() * 1000.0,
             "engine level: final identities and attachments"

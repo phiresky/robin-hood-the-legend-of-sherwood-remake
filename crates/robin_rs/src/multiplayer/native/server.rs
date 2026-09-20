@@ -1344,6 +1344,13 @@ pub(super) fn apply_authenticated_peer_message(
     let closed = |message: &'static str| MultiplayerError::ChannelClosed(message.into());
     validate_server_gameplay_wire_msg(&message)?;
     match message {
+        NetMsg::Latency {
+            to, nonce, reply, ..
+        } => super::server_dispatch::route_latency(context, seat, to, nonce, reply)?,
+        NetMsg::ChatSend { text } => {
+            let nickname = context.peers.lock().sessions.nickname(seat).to_owned();
+            super::server_dispatch::broadcast_chat(context, nickname, text)?;
+        }
         NetMsg::Input {
             origin_frame,
             command,
@@ -1416,7 +1423,9 @@ pub(super) fn apply_authenticated_peer_message(
 
 pub(super) fn validate_server_gameplay_wire_msg(message: &NetMsg) -> Result<(), MultiplayerError> {
     match message {
-        NetMsg::Input { .. }
+        NetMsg::Latency { .. }
+        | NetMsg::ChatSend { .. }
+        | NetMsg::Input { .. }
         | NetMsg::Note(_)
         | NetMsg::ModalProposal { .. }
         | NetMsg::ReadyToSim { .. }

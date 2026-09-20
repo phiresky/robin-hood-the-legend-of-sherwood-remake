@@ -9,7 +9,7 @@ use robin_engine::player_profile::DifficultyLevel;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
-struct LegacySimConfig {
+pub(super) struct LegacySimConfig {
     difficulty: DifficultyLevel,
     fix_hard_reaction_times: bool,
     enable_unbinding: bool,
@@ -37,7 +37,7 @@ struct LegacySimConfig {
 }
 
 #[derive(Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
-struct LegacyCampaign<S> {
+pub(super) struct LegacyCampaign<S, C = LegacySimConfig> {
     values: CampaignValues,
     deeds: robin_engine::achievement::CampaignDeeds,
     ares: i8,
@@ -64,7 +64,7 @@ struct LegacyCampaign<S> {
     production_sectors: Vec<robin_engine::sector_production::SectorProduction>,
     pre_mission_snapshot: S,
     pre_mission_rng_seed: Option<u64>,
-    pre_mission_sim_config: Option<LegacySimConfig>,
+    pre_mission_sim_config: Option<C>,
     pre_mission_was_preselected: bool,
 }
 

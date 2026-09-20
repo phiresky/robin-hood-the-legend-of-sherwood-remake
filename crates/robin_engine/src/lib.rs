@@ -28,6 +28,7 @@ pub mod cloak;
 pub mod combat;
 pub mod console;
 pub mod content_patch;
+pub mod coop;
 pub use robin_engine_types::coordinates;
 pub mod diplomacy;
 pub mod element;

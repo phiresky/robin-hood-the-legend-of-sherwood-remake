@@ -4726,3 +4726,73 @@ fn remove_all_subordinates_rejects_invalid_or_non_npc_chief_without_yielding() {
         );
     }
 }
+
+#[test]
+fn coop_mission_conditions_follow_survivor_without_retargeting_mutations() {
+    let mut host = NativeTestHost::new();
+    let mut original = native_test_pc(vec![], vec![]);
+    original.pc_data_mut().unwrap().life_points = 0;
+    original.human_data_mut().unwrap().unconscious = true;
+    original
+        .element_data_mut()
+        .set_position_map(crate::coordinates::MapPoint::new(0., 0.));
+    let original_id = EntityId::Pc(crate::element::PcId(0));
+    host.entities.push(Some(original));
+    let mut survivor = native_test_pc(vec![], vec![]);
+    survivor.pc_data_mut().unwrap().life_points = 73;
+    survivor.pc_data_mut().unwrap().coop_origin = Some(original_id);
+    survivor
+        .element_data_mut()
+        .set_position_map(crate::coordinates::MapPoint::new(120., 90.));
+    host.entities.push(Some(survivor));
+    let actor = ScriptHandleCodec::actor_handle_from_index(0);
+    for native in [
+        NativeFn::IsActorDead,
+        NativeFn::IsActorKO,
+        NativeFn::IsActorTied,
+        NativeFn::IsActorHS,
+    ] {
+        let mut stack = NativeStack::default();
+        stack.push_i32(actor);
+        assert_eq!(call_host_native(&mut host, native, &mut stack), 0);
+    }
+    let mut stack = NativeStack::default();
+    stack.push_i32(actor);
+    let location = call_host_native(&mut host, NativeFn::GetActorLocation, &mut stack);
+    let index =
+        ScriptHandleCodec::location_index(location).unwrap() - host.bindings.script_location_count;
+    let computed = host.state.computed_locations[index].as_ref().unwrap();
+    assert_eq!(computed.position, (120., 90.));
+    let mut stack = NativeStack::default();
+    stack.push_i32(actor);
+    stack.push_i32(7);
+    call_host_native(&mut host, NativeFn::SetActorDirection, &mut stack);
+    assert_eq!(
+        host.entities
+            .get(original_id)
+            .unwrap()
+            .element_data()
+            .direction(),
+        7
+    );
+    assert_eq!(
+        host.entities
+            .get(EntityId::Pc(crate::element::PcId(1)))
+            .unwrap()
+            .element_data()
+            .direction(),
+        0
+    );
+    host.entities
+        .get_mut(EntityId::Pc(crate::element::PcId(1)))
+        .unwrap()
+        .pc_data_mut()
+        .unwrap()
+        .life_points = 0;
+    let mut stack = NativeStack::default();
+    stack.push_i32(actor);
+    assert_eq!(
+        call_host_native(&mut host, NativeFn::IsActorDead, &mut stack),
+        1
+    );
+}

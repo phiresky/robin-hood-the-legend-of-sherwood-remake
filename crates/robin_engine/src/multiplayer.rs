@@ -90,7 +90,8 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// Protocol 60 carries canonical order ownership, sequence links, and host effects.
 /// Protocol 61 carries unified host output and canonical human opponent records.
 /// Protocol 62 removes inferred corpse-posture and special-strike tracking state.
-pub const NET_PROTOCOL_VERSION: u32 = 62;
+/// Protocol 63 adds authenticated co-op chat.
+pub const NET_PROTOCOL_VERSION: u32 = 63;
 
 /// Maximum bytes in one resumable full-mod transfer chunk. The outer native
 /// transport frame has a larger bound for engine snapshots, so content must
@@ -559,6 +560,16 @@ pub enum NetMsg {
     /// Server → clients: every connected peer retained the same bytes; all
     /// participants may now leave the mission and re-handshake.
     CommitSnapshotTransition { id: SnapshotTransitionId },
+    Latency {
+        from: PlayerId,
+        to: PlayerId,
+        nonce: u32,
+        reply: bool,
+    },
+    /// Plain player text, never interpreted as a simulation command.
+    ChatSend { text: String },
+    /// Sender identity is supplied by the authenticated server.
+    Chat { nickname: String, text: String },
 }
 
 /// Typed payload of [`NetEvent::Fatal`].
@@ -599,6 +610,11 @@ impl std::error::Error for NetFatal {
 /// One incoming wire event ready for the game loop.
 #[derive(Clone, Debug)]
 pub enum NetEvent {
+    Latency {
+        from: PlayerId,
+        nonce: u32,
+        reply: bool,
+    },
     /// A peer's input arrived, ready to apply at `target_frame`.
     Input {
         server_frame: u32,
@@ -663,6 +679,14 @@ pub enum NetEvent {
 /// What the game loop pushes into the outgoing channel.
 #[derive(Clone, Debug)]
 pub enum NetOutbound {
+    Latency {
+        to: PlayerId,
+        nonce: u32,
+        reply: bool,
+    },
+    Chat {
+        text: String,
+    },
     Input {
         origin_frame: u32,
         command: PlayerCommand,
@@ -1224,6 +1248,7 @@ pub fn decode_msg(bytes: &[u8]) -> Result<NetMsg, String> {
                 .map_err(|error| format!("host sent invalid mission id: {error}"))?;
             validate_display_name(host_nickname)
                 .map_err(|error| format!("invalid host display name: {error}"))?;
+            sim_config.coop.validate()?;
             sim_config
                 .validate()
                 .map_err(|error| format!("host sent invalid simulation configuration: {error}"))?;
@@ -1234,6 +1259,15 @@ pub fn decode_msg(bytes: &[u8]) -> Result<NetMsg, String> {
                 reason,
                 MAX_REJECT_REASON_BYTES,
             )?;
+        }
+        NetMsg::ChatSend { text } | NetMsg::Chat { text, .. } => {
+            validate_safe_display_text("chat message", text, 512)?;
+            if text.trim().is_empty() {
+                return Err("empty chat message".into());
+            }
+            if let NetMsg::Chat { nickname, .. } = &message {
+                validate_display_name(nickname).map_err(|e| e.to_string())?;
+            }
         }
         NetMsg::Note(note) => {
             validate_safe_display_text("multiplayer note", note, MAX_NOTE_BYTES)?;

@@ -31,6 +31,8 @@ use serde::{Deserialize, Serialize};
     bitcode::Decode,
 )]
 pub struct SeatState {
+    #[serde(default)]
+    pub assigned_character: Option<EntityId>,
     /// Whether the seat currently has a player attached.  Cleared by
     /// [`crate::player_command::PlayerCommand::DisconnectSeat`] but
     /// the rest of `SeatState` (selection, hotgroups) is preserved

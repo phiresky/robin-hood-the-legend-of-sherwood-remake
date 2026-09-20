@@ -686,7 +686,47 @@ impl MainMenuContext<'_> {
         launch: crate::main_menu::multiplayer_menu::MultiplayerLaunch,
     ) -> Result<MissionRequest, LaunchError> {
         let request = self.launch_request();
-        let content = if let Some(encoded) = launch.distributed_mod.as_ref() {
+        let content = if let Some(custom) = launch.local_custom.as_ref() {
+            let prepared = crate::mission_asset_launch::prepare_installed_custom_mission(
+                custom,
+                self.application_context
+                    .preparation_files()
+                    .map_err(LaunchError::application)?
+                    .clone(),
+            )
+            .map_err(LaunchError::content)?;
+            let profiles_mut = std::sync::Arc::make_mut(&mut self.profiles);
+            campaign.reset(
+                profiles_mut,
+                self.application_context.sim_config().difficulty,
+            );
+            let idx = campaign
+                .force_next_mission_by_name(
+                    profiles_mut,
+                    &custom.rhm_basename,
+                    &custom.map_filename,
+                    true,
+                )
+                .ok_or_else(|| LaunchError::campaign("Could not select local custom mission"))?;
+            campaign.current_mission_idx = Some(idx);
+            if let Some((_, _, pcs, _)) = detect_demo_mode_with_context(&self.application_context) {
+                campaign.create_gang_from_pcs(
+                    pcs,
+                    profiles_mut,
+                    self.application_context.sim_config().difficulty,
+                );
+                campaign.add_all_to_mission_team();
+            }
+            Some(MissionContent {
+                pending_lua_mission: Some(crate::main_entry::PendingLuaMission {
+                    rhm_basename: custom.rhm_basename.clone(),
+                    requires_spellforge: custom.requires_spellforge,
+                    spellforge_package: prepared.spellforge_package,
+                }),
+                resolved_mission_assets: Some(prepared.resolved),
+                ..Default::default()
+            })
+        } else if let Some(encoded) = launch.distributed_mod.as_ref() {
             let validated = crate::distributed_mod::DistributedModPackage::decode(encoded)
                 .map_err(|error| {
                     LaunchError::content(format!(
@@ -788,6 +828,7 @@ impl MainMenuContext<'_> {
             None
         };
         let (server, connect) = match launch.role {
+            MultiplayerRole::Local => (false, None),
             MultiplayerRole::Host => {
                 tracing::info!(
                     mission = %launch.mission_name,
@@ -805,6 +846,7 @@ impl MainMenuContext<'_> {
             }
         };
         let multiplayer = MultiplayerRoute {
+            coop: launch.coop,
             // A shell-provided join artifact has now been consumed by the
             // authenticated interactive preflight. The exact connection
             // address and prepared package are its sole mission bootstrap

@@ -193,6 +193,7 @@ fn verify_map_patch_camera_alignment(gpu: GpuContext, oversized_atlas: bool) {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
+    verify_coop_compositing(gpu.clone());
     verify_map_patch_camera_alignment(gpu.clone(), false);
     verify_map_patch_camera_alignment(gpu.clone(), true);
     verify_mouse_trail_pixels(gpu.clone());
@@ -755,4 +756,32 @@ fn verify_mask_atlas_pixels(gpu: GpuContext) {
     renderer.clear_mask_alpha_cache();
     renderer.upload_mask_alphas(std::iter::empty()).unwrap();
     assert!(renderer.resources.mask_alpha_cache.is_empty());
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+fn verify_coop_compositing(gpu: GpuContext) {
+    let mut renderer =
+        Renderer::with_optional_surface(gpu, None, None, 8, 8, TextureScaleMode::Nearest);
+    for _ in 0..3 {
+        renderer.begin_gpu_frame_clear();
+        renderer.begin_split_view();
+        renderer.render_gpu_rect(0, 0, 8, 8, [255, 0, 0, 255]);
+        renderer.finish_split_view(0, &[[0., 0.], [8., 0.], [0., 8.]]);
+        renderer.begin_split_view();
+        renderer.render_gpu_rect(0, 0, 8, 8, [0, 0, 255, 255]);
+        renderer.finish_split_view(1, &[[8., 0.], [8., 8.], [0., 8.]]);
+        let (w, h, pixels) = renderer.try_capture_frame_rgba().unwrap();
+        assert_eq!((w, h), (8, 8));
+        for y in 0..8 {
+            for x in 0..8 {
+                let offset = (y * 8 + x) * 4;
+                if x + y < 7 {
+                    assert_eq!(&pixels[offset..offset + 4], &[255, 0, 0, 255]);
+                }
+                if x + y > 7 {
+                    assert_eq!(&pixels[offset..offset + 4], &[0, 0, 255, 255]);
+                }
+            }
+        }
+    }
 }

@@ -241,15 +241,51 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
         && ui.pause_menu.is_none()
         && !ui.console_overlay.is_visible()
         && runtime.replay().playback().is_none()
-        && !rewind_active;
-    handle_gamepad_events(
-        host,
-        manager,
-        &mut input.threaded,
-        &mut frame.stage_commands(),
-        &mut window.gamepad_input,
-        gamepad_gameplay_allowed,
-    );
+        && !rewind_active
+        && !events.iter().any(|event| {
+            matches!(
+                event,
+                GameEvent::KeyDown {
+                    keycode: crate::gfx_types::Keycode::Return | crate::gfx_types::Keycode::KpEnter,
+                    ..
+                }
+            )
+        });
+    if window.local_players.enabled && host.transport.net().is_none() {
+        super::input_handlers::handle_local_gamepads(
+            host,
+            &manager.engine,
+            &mut input.threaded,
+            assets,
+            &mut frame.stage_commands(),
+            &mut window.local_players,
+            gamepad_gameplay_allowed,
+        );
+    } else {
+        host.frontend.local_player_count = 0;
+        handle_gamepad_events(
+            host,
+            manager,
+            &mut input.threaded,
+            &mut frame.stage_commands(),
+            &mut window.gamepad_input,
+            gamepad_gameplay_allowed,
+        );
+    }
+    if gamepad_gameplay_allowed
+        && (!window.local_players.enabled || window.local_players.keyboard)
+        && !manager.engine.user_locked()
+        && host
+            .frontend
+            .preferences()
+            .gameplay_config()
+            .keyboard_direct_control
+    {
+        let pad = crate::gamepad::keyboard_movement_state(&input.threaded.keyboard_state().keys);
+        for command in pad.manage_move_axis(&manager.engine, host.transport.local_seat()) {
+            dispatch_local_command(&host.transport, &mut frame.stage_commands(), &command);
+        }
+    }
     events.extend(input.threaded.drain_synthetic_events());
 
     if input.threaded.is_ended() {
@@ -430,9 +466,20 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
         *manual_pause = paused;
     }
 
+    let mut shortcut_keys = input.threaded.keyboard_state().keys.clone();
+    if host
+        .frontend
+        .preferences()
+        .gameplay_config()
+        .keyboard_direct_control
+    {
+        for key in [KeyCode::KeyW, KeyCode::KeyA, KeyCode::KeyS, KeyCode::KeyD] {
+            shortcut_keys.remove(&key);
+        }
+    }
     let mut keyboard_actions = input
         .translator
-        .translate_keyboard(&input.threaded.keyboard_state().keys, TranslationFlags::ALL);
+        .translate_keyboard(&shortcut_keys, TranslationFlags::ALL);
     if events
         .iter()
         .any(|event| matches!(event, GameEvent::MenuToggleRequested))

@@ -83,10 +83,28 @@ pub fn resolve_left_click_with_planning(
     map_pt: MapPoint,
     modifiers: ClickModifiers,
 ) -> Vec<PlayerCommand> {
+    resolve_left_click_for_seat(
+        host,
+        engine,
+        assets,
+        map_pt,
+        modifiers,
+        host.transport.local_seat(),
+    )
+}
+
+pub(crate) fn resolve_left_click_for_seat(
+    host: &mut Host,
+    engine: &Engine,
+    assets: &LevelAssets,
+    map_pt: MapPoint,
+    modifiers: ClickModifiers,
+    local_seat: PlayerId,
+) -> Vec<PlayerCommand> {
     let ctx = ClickCtx {
         map_pt,
         modifiers,
-        local_seat: host.transport.local_seat(),
+        local_seat,
     };
     let num_selected = ctx.selected(engine).len();
 

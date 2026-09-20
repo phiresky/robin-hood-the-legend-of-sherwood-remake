@@ -277,6 +277,7 @@ struct QueuedDraw {
     /// quad with `BR == BL`). When `None`, vertices are derived
     /// from `dst`.
     corners: Option<[(f32, f32); 4]>,
+    uv_corners: Option<[[f32; 2]; 4]>,
     /// `(u0, v0, u1, v1)` in 0..1 source-texture coords. Solid-color
     /// draws use the full white texture so the values are `(0,0,1,1)`.
     /// Map draws repeat the map-to-texture texel offset at both endpoints.
@@ -386,6 +387,8 @@ pub struct Renderer {
     // Keep the optional second frame out of frontend construction futures.
     // Its allocation is reused for both the held live frame and cached target.
     capture_frame: Option<Box<FrameState>>,
+    split_textures: Vec<wgpu::Texture>,
+    split_capture_active: bool,
     screen_layout: wgpu::BindGroupLayout,
     /// Update-owned zoom HUD data. Kept separate from GPU ownership because
     /// throwaway screenshot and thumbnail passes must not advance it.
@@ -697,6 +700,8 @@ impl Renderer {
             pipelines,
             frame,
             capture_frame: None,
+            split_textures: Vec::new(),
+            split_capture_active: false,
             screen_layout: bgl_screen,
             zoom_presentation: ZoomPresentationState::default(),
             fog_mask: None,
@@ -964,6 +969,7 @@ impl Renderer {
         self.frame.queued.push(QueuedDraw {
             dst: Rect::new(0, 0, width, height),
             corners: None,
+            uv_corners: None,
             uv: [0.0; 4],
             tint: [view.x, view.y, zoom, 0.0],
             operation: DrawOperation::Map(texture),
@@ -985,6 +991,7 @@ impl Renderer {
         self.frame.queued.push(QueuedDraw {
             dst,
             corners: None,
+            uv_corners: None,
             uv,
             tint: [1.0, 1.0, 1.0, 1.0],
             operation: DrawOperation::Quad {
@@ -1481,6 +1488,7 @@ mod tests {
         QueuedDraw {
             dst: Rect::new(0, 0, 1, 1),
             corners: None,
+            uv_corners: None,
             uv: [0.0, 0.0, 1.0, 1.0],
             tint: [1.0; 4],
             operation: DrawOperation::Quad {

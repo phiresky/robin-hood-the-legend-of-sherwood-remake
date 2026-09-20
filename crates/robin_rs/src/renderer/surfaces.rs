@@ -408,6 +408,7 @@ impl Renderer {
         self.frame.frame_texture_bgs.push(bind_group);
         self.frame.queued.push(QueuedDraw {
             dst,
+            uv_corners: None,
             corners: None,
             uv: [0.0, 0.0, 1.0, 1.0],
             // The shader compares `height > threshold`; threshold can be 256
@@ -537,6 +538,7 @@ impl Renderer {
         let tex_idx = self.queue_cached_bg(image.bind_group.clone());
         self.frame.queued.push(QueuedDraw {
             dst,
+            uv_corners: None,
             corners: None,
             uv,
             tint,

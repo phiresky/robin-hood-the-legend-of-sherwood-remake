@@ -1044,7 +1044,15 @@ impl EngineInner {
 
     /// Consume a finished engine and return its one campaign allocation.
     pub(crate) fn into_campaign(self) -> crate::campaign::Campaign {
-        self.mission_domain.campaign
+        if self.world.pc_ids.iter().any(|&id| {
+            self.get_entity(id)
+                .and_then(crate::element::Entity::pc_data)
+                .is_some_and(|pc| pc.coop_origin.is_some())
+        }) {
+            self.export_coop_campaign()
+        } else {
+            self.mission_domain.campaign
+        }
     }
 
     /// Reset transient runtime state that isn't — or shouldn't be —

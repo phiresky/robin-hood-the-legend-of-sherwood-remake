@@ -4043,3 +4043,45 @@ fn swordfight_distance_keeps_original_strict_maximum_and_step_back_guards() {
         Adjustment::None,
     );
 }
+
+#[test]
+fn coop_required_hero_death_latches_only_after_last_copy() {
+    let mut engine = make_engine();
+    engine.add_test_entity(make_pc(wp(0.0, 100.0), None));
+    engine.control.sim_config.coop.players = 2;
+    engine.initialize_coop_party();
+    let ids = engine.world.pc_ids.clone();
+    let sim = crate::sim_rng::test_context();
+    let mut profiles = crate::profiles::ProfileManager::new();
+    profiles.characters.push(crate::profiles::CharacterProfile {
+        vip: true,
+        ..Default::default()
+    });
+    let assets = crate::engine::LevelAssets {
+        profile_manager: std::sync::Arc::new(profiles),
+        ..crate::engine::LevelAssets::new()
+    };
+    engine.mission_domain.campaign.gang_indices = vec![0];
+    engine
+        .world
+        .entities
+        .get_mut(ids[0])
+        .unwrap()
+        .pc_data_mut()
+        .unwrap()
+        .life_points = 0;
+    engine.apply_pc_kill_cascade(crate::engine::TickCtx::new(&sim, &assets), ids[0]);
+    assert!(engine.mission_domain.dead_pc.is_none());
+    assert_eq!(engine.mission_domain.campaign.gang_indices, vec![0]);
+    engine
+        .world
+        .entities
+        .get_mut(ids[1])
+        .unwrap()
+        .pc_data_mut()
+        .unwrap()
+        .life_points = 0;
+    engine.apply_pc_kill_cascade(crate::engine::TickCtx::new(&sim, &assets), ids[1]);
+    assert_eq!(engine.mission_domain.dead_pc, Some(ids[1]));
+    assert!(engine.mission_domain.campaign.gang_indices.is_empty());
+}

@@ -203,7 +203,9 @@ impl EngineInner {
             }
 
             // Check if a dead PC was flagged for mission failure
-            if let Some(dead_id) = self.mission_domain.dead_pc.take() {
+            if let Some(dead_id) = self.mission_domain.dead_pc.take()
+                && !self.coop_copy_survives(dead_id)
+            {
                 if let Some(entity) = self.get_entity(dead_id) {
                     let pos = entity.element_data().position_map();
                     self.center_on_point(0, pos);

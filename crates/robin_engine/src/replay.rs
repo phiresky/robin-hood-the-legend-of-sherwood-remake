@@ -158,7 +158,8 @@ pub struct ReplayHeader {
 /// Version 52 stores canonical order ownership, sequence links, and host effects.
 /// Version 53 stores unified host output and canonical human opponent records.
 /// Version 54 removes inferred corpse-posture and special-strike tracking state.
-pub const REPLAY_SCHEMA_VERSION: u32 = 54;
+/// Version 55 stores co-op rules, assignments, and hero-copy identities.
+pub const REPLAY_SCHEMA_VERSION: u32 = 55;
 
 /// Identity of the next lockstep/history transaction to be admitted.
 ///

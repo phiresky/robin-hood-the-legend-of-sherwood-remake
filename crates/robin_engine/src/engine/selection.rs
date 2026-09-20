@@ -165,7 +165,7 @@ impl EngineInner {
         speak: bool,
         synthesize_action_fanout: bool,
     ) {
-        if !self.is_pc_selectable(tcx.assets, id) {
+        if !self.is_pc_selectable(tcx.assets, id) || !self.coop_can_select(seat, id) {
             return;
         }
         if !multi_select {
@@ -247,7 +247,7 @@ impl EngineInner {
             if let Some(Entity::Pc(pc)) = self.get_entity_mut(id) {
                 pc.pc.portrait.open = false;
             }
-        } else if self.is_pc_selectable(tcx.assets, id) {
+        } else if self.is_pc_selectable(tcx.assets, id) && self.coop_can_select(seat, id) {
             self.players.seats[seat].selection.push(id);
             if let Some(Entity::Pc(pc)) = self.get_entity_mut(id) {
                 pc.pc.portrait.open = !pc.pc.portrait.burned;
@@ -270,7 +270,7 @@ impl EngineInner {
         self.players.seats[seat].selected_action = Action::NoAction;
         self.players.seats[seat].planned_shield_target = None;
         for &pc_id in &self.world.pc_ids {
-            if !self.is_pc_selectable(tcx.assets, pc_id) {
+            if !self.is_pc_selectable(tcx.assets, pc_id) || !self.coop_can_select(seat, pc_id) {
                 continue;
             }
             let is_robin = matches!(
@@ -1237,7 +1237,7 @@ impl EngineInner {
         let pc_count = self.world.pc_ids.len();
         for index in 0..pc_count {
             let pc_id = self.world.pc_ids[index];
-            if !self.is_pc_selectable(tcx.assets, pc_id) {
+            if !self.is_pc_selectable(tcx.assets, pc_id) || !self.coop_can_select(seat, pc_id) {
                 continue;
             }
             if let Some(entity) = self.get_entity(pc_id) {
@@ -1433,7 +1433,7 @@ impl EngineInner {
             self.players.seats[seat].selection.clear();
             for index in 0..self.players.seats[seat].quick_select_groups[slot].len() {
                 let pc_id = self.players.seats[seat].quick_select_groups[slot][index];
-                if self.is_pc_selectable(assets, pc_id) {
+                if self.is_pc_selectable(assets, pc_id) && self.coop_can_select(seat, pc_id) {
                     self.players.seats[seat].selection.push(pc_id);
                 }
             }

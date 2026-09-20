@@ -175,6 +175,7 @@ pub(super) fn handle_console_overlay_events(
     frame: &mut super::runtime::MissionFrame,
 ) {
     let ConsoleOverlayInput { events, kb_actions } = input;
+    let was_visible = console_overlay.is_visible();
     // ── In-game console overlay event handling ──
     // When visible, the console captures keyboard events so they
     // don't leak into the game (typing "FREEZE" mustn't trigger
@@ -240,7 +241,17 @@ pub(super) fn handle_console_overlay_events(
         .iter()
         .any(|a| matches!(a, GameAction::DisplayConsole));
     let mut console_should_be_visible = console_visible_now;
-    if display_console_pressed && !auto_closed {
+    let open_chat = !was_visible
+        && events.iter().any(|event| {
+            matches!(
+                event,
+                GameEvent::KeyDown {
+                    keycode: crate::gfx_types::Keycode::Return | crate::gfx_types::Keycode::KpEnter,
+                    ..
+                }
+            )
+        });
+    if (display_console_pressed || open_chat) && !auto_closed {
         // The toggle key reached us via the action stream — flip.
         // The action fires on key-release (`key_released`), so when
         // the console is already visible the KeyDown is swallowed by
@@ -249,7 +260,7 @@ pub(super) fn handle_console_overlay_events(
         // overlay closed.
         console_should_be_visible = console_overlay.toggle();
     }
-    if console_should_be_visible != console_visible_now || auto_closed {
+    if console_should_be_visible != was_visible || auto_closed {
         if console_should_be_visible {
             crate::window::start_text_input();
         } else {
@@ -305,5 +316,158 @@ mod gamepad_admission_tests {
         assert_eq!(host.frontend.viewport.zoom_factor, zoom);
         assert!(commands.commands.is_empty());
         assert!(input.drain_synthetic_events().is_empty());
+    }
+}
+
+pub(super) fn handle_local_gamepads(
+    host: &mut Host,
+    engine: &Engine,
+    _input: &mut ThreadedInput,
+    assets: &engine_api::LevelAssets,
+    commands: &mut FrameCommands,
+    players: &mut crate::gamepad::LocalPlayers,
+    allowed: bool,
+) {
+    use robin_engine::player_command::{PlayerId, PlayerInput};
+    host.frontend.local_player_count = players.count();
+    host.frontend.local_keyboard_player = players.keyboard;
+    for (index, (_, device)) in players.devices.iter_mut().enumerate() {
+        let seat = PlayerId((index + usize::from(players.keyboard)) as u8);
+        if !device.is_connected() {
+            if host.frontend.local_disconnected.insert(seat.0) {
+                host.frontend
+                    .diagnostics_mut()
+                    .queue_console_output(format!(
+                        "Player {} controller disconnected; press A to reconnect",
+                        seat.0 + 1
+                    ));
+                host.frontend.local_cursors.remove(&seat.0);
+            }
+            if engine.seat(seat).is_some_and(|state| state.connected) {
+                commands
+                    .commands
+                    .push(PlayerInput::host(PlayerCommand::DisconnectSeat {
+                        player_id: seat,
+                    }));
+            }
+            continue;
+        }
+        if host.frontend.local_disconnected.remove(&seat.0) {
+            host.frontend
+                .diagnostics_mut()
+                .queue_console_output(format!("Player {} controller reconnected", seat.0 + 1));
+        }
+        if !device.admit_gameplay(allowed && !engine.user_locked()) {
+            continue;
+        }
+        if engine.seat(seat).is_none_or(|state| !state.connected) && seat != PlayerId::HOST {
+            host.frontend
+                .diagnostics_mut()
+                .queue_console_output(format!("Player {} connected", seat.0 + 1));
+            commands
+                .commands
+                .push(PlayerInput::host(PlayerCommand::ConnectSeat {
+                    player_id: seat,
+                    nickname: format!("Player {}", seat.0 + 1),
+                }));
+        }
+        let view = host
+            .frontend
+            .split_screen
+            .views
+            .iter()
+            .find(|view| view.members.contains(&seat.0))
+            .cloned();
+        let viewport = view
+            .as_ref()
+            .map(|view| view.viewport(&host.frontend.viewport))
+            .unwrap_or_else(|| host.frontend.viewport.clone());
+        let center = view
+            .as_ref()
+            .map(|view| view.site)
+            .unwrap_or([viewport.screen_size.x * 0.5, viewport.screen_size.y * 0.5]);
+        let cursor = host
+            .frontend
+            .local_cursors
+            .get(&seat.0)
+            .copied()
+            .unwrap_or(center);
+        let mut input = ThreadedInput::new();
+        input.reach_position(engine_coordinates::ScreenPoint::new(cursor[0], cursor[1]));
+        input.drain_synthetic_events();
+        let output = device.process(crate::window::process_uptime_ms(), engine, seat, &mut input);
+        let point = input.position();
+        let point = view
+            .as_ref()
+            .map(|view| view.clamp_cursor([point.x, point.y]))
+            .unwrap_or([
+                point.x.clamp(0., viewport.screen_size.x - 1.),
+                point.y.clamp(0., viewport.screen_size.y - 1.),
+            ]);
+        host.frontend.local_cursors.insert(seat.0, point);
+        if let Some(mouse_map) =
+            viewport.screen_to_map(engine_coordinates::ScreenPoint::new(point[0], point[1]))
+        {
+            commands.commands.push(PlayerInput::new(
+                seat,
+                PlayerCommand::PerformOrientation { mouse_map },
+            ));
+        }
+        if input
+            .drain_synthetic_events()
+            .iter()
+            .any(|event| matches!(event, GameEvent::MouseUp(_, _, 1)))
+        {
+            if let Some(map) =
+                viewport.screen_to_map(engine_coordinates::ScreenPoint::new(point[0], point[1]))
+            {
+                let primary_input = std::mem::take(&mut host.frontend.input);
+                crate::host_mouse::publish_mouse_spatial_hit_for_seat(
+                    engine,
+                    host,
+                    map,
+                    Default::default(),
+                    seat,
+                );
+                let clicks = crate::game_input::resolve_left_click_for_seat(
+                    host,
+                    engine,
+                    assets,
+                    map,
+                    Default::default(),
+                    seat,
+                );
+                host.frontend.input = primary_input;
+                commands.commands.extend(
+                    clicks
+                        .into_iter()
+                        .map(|command| PlayerInput::new(seat, command)),
+                );
+            }
+        }
+        commands.commands.extend(
+            output
+                .cmds
+                .into_iter()
+                .map(|command| PlayerInput::new(seat, command)),
+        );
+        if let Some(event) = output.qa {
+            let leader = engine.hero_selection(seat).first().copied();
+            let command = match event {
+                QaEvent::ToggleRecording if engine.is_recording_macro() => {
+                    PlayerCommand::StopRecordingMacro
+                }
+                QaEvent::ToggleRecording => PlayerCommand::StartRecordingMacro {
+                    pc: leader,
+                    slot: 0,
+                },
+                QaEvent::LaunchMacroForSelected => PlayerCommand::StartMacro {
+                    pc: leader,
+                    slot: 0,
+                },
+                QaEvent::LaunchAllMacros => PlayerCommand::StartMacro { pc: None, slot: 0 },
+            };
+            commands.commands.push(PlayerInput::new(seat, command));
+        }
     }
 }

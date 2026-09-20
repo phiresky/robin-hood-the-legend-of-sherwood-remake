@@ -265,6 +265,7 @@ pub(super) async fn build_game_window_async(
         #[cfg(feature = "gamepad")]
         gamepads,
         gamepad_input: Default::default(),
+        local_players: Default::default(),
         close_requested: false,
         cursor_x: 0,
         cursor_y: 0,

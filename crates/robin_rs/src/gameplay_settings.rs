@@ -75,4 +75,5 @@ settings! {
     FogOfWar,
     EnableSpellforgeMissions,
     ReversibleBackgroundPatches,
+    KeyboardDirectControl,
 }

@@ -122,7 +122,10 @@ pub(crate) const fn net_frame_class(message: &NetMsg) -> NetFrameClass {
         }
         NetMsg::ContentChunk { .. } => NetFrameClass::Content,
         NetMsg::Input { .. } | NetMsg::BroadcastInput { .. } => NetFrameClass::Input,
-        NetMsg::Hello { .. }
+        NetMsg::Latency { .. }
+        | NetMsg::ChatSend { .. }
+        | NetMsg::Chat { .. }
+        | NetMsg::Hello { .. }
         | NetMsg::Welcome { .. }
         | NetMsg::Reject { .. }
         | NetMsg::ContentOffer { .. }

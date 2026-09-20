@@ -209,6 +209,9 @@ impl CampaignPresentationMode {
     bitcode::Decode,
 )]
 pub struct GameplayConfig {
+    /// Move the selected party with WASD instead of those keys invoking shortcuts.
+    #[serde(default)]
+    pub keyboard_direct_control: bool,
     /// Allow custom missions whose explicit package contract requires the
     /// Spellforge Lua runtime. Disabling this never falls back to SCB for a
     /// replacement package because that would launch a different mission.
@@ -390,6 +393,7 @@ impl Default for GameplayConfig {
             detailed_save_metadata: true,
             sherwood_trading: true,
             touch_camera_gestures: true,
+            keyboard_direct_control: false,
             show_production_forecast: true,
             reusable_cloaks: true,
             reversible_background_patches: false,
@@ -435,6 +439,7 @@ impl GameplayConfig {
             detailed_save_metadata: true,
             sherwood_trading: false,
             touch_camera_gestures: true,
+            keyboard_direct_control: false,
             show_production_forecast: true,
             reusable_cloaks: false,
             reversible_background_patches: false,

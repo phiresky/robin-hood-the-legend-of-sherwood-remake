@@ -562,6 +562,9 @@ pub(crate) fn apply_setting(config: &mut GameplayConfig, setting: GameplaySettin
         Setting::ShowAchievementDebrief => {
             config.show_achievement_debrief = !config.show_achievement_debrief
         }
+        Setting::KeyboardDirectControl => {
+            config.keyboard_direct_control = !config.keyboard_direct_control
+        }
         Setting::TouchCameraGestures => {
             config.touch_camera_gestures = !config.touch_camera_gestures
         }
@@ -673,6 +676,7 @@ impl GameplaySetting {
             Setting::ShowNewAchievementTrackers => config.show_new_achievement_trackers,
             Setting::ShowAchievementBadges => config.show_achievement_badges,
             Setting::ShowAchievementDebrief => config.show_achievement_debrief,
+            Setting::KeyboardDirectControl => config.keyboard_direct_control,
             Setting::TouchCameraGestures => config.touch_camera_gestures,
             Setting::SherwoodTrading => config.sherwood_trading,
             Setting::AutosaveEnabled => config.autosave_enabled,
@@ -793,7 +797,7 @@ mod tests {
         assert_eq!(standalone_visible_option_range(0), 0..12);
         assert_eq!(standalone_visible_option_range(1), 12..24);
         assert_eq!(standalone_visible_option_range(2), 24..36);
-        assert_eq!(standalone_visible_option_range(3), 36..46);
+        assert_eq!(standalone_visible_option_range(3), 36..47);
 
         let covered: Vec<_> = (0..standalone_page_count())
             .flat_map(standalone_visible_option_range)
@@ -985,6 +989,7 @@ mod tests {
                 "Fog of War",
                 "Allow Spellforge Missions (Next Launch)",
                 "Reversible Background Patches (Next Launch)",
+                "WASD direct movement",
             ]
         );
         let text = LocalizedGameplayText::for_locale("en-US");

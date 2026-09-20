@@ -13,7 +13,7 @@ use robin_engine::player_command::PlayerId;
 fn clean_host_stream_close_reconnects() {
     use crate::multiplayer::InboundFramePolicy;
     use crate::multiplayer::framing::{read_frame, write_frame};
-    use crate::multiplayer::identity::{GAME_ALPN, bind_endpoint};
+    use crate::multiplayer::identity::GAME_ALPN;
     use std::time::{Duration, Instant};
 
     let (connect_tx, connect_rx) = std::sync::mpsc::channel::<String>();
@@ -26,14 +26,27 @@ fn clean_host_stream_close_reconnects() {
             .build()
             .expect("fake host runtime");
         runtime.block_on(async move {
-            let endpoint = bind_endpoint(iroh::SecretKey::generate(), GAME_ALPN)
+            // This exercises stream reconnection, not public relay discovery.
+            // Publish the bound loopback socket so reconnect does not depend on
+            // an address snapshot acquired during asynchronous NAT discovery.
+            let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
+                .secret_key(iroh::SecretKey::generate())
+                .alpns(vec![GAME_ALPN.to_vec()])
+                .clear_ip_transports()
+                .bind_addr("127.0.0.1:0")
+                .expect("loopback bind address")
+                .bind()
                 .await
                 .expect("bind fake host endpoint");
-            tokio::time::timeout(Duration::from_secs(15), endpoint.online())
-                .await
-                .expect("fake host endpoint online");
+            let address = iroh::EndpointAddr::new(endpoint.id()).with_ip_addr(
+                endpoint
+                    .bound_sockets()
+                    .into_iter()
+                    .find(|socket| socket.is_ipv4())
+                    .expect("bound IPv4 socket"),
+            );
             connect_tx
-                .send(serde_json::to_string(&endpoint.addr()).unwrap())
+                .send(serde_json::to_string(&address).unwrap())
                 .expect("publish fake host address");
             let welcome = || NetMsg::Welcome {
                 your_seat: PlayerId(1),

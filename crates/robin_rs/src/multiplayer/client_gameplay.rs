@@ -34,6 +34,9 @@ pub(super) fn deliver_lifecycle(
 /// Other messages retain their ownership for the session lifecycle handler.
 pub(super) fn decode(message: NetMsg) -> Result<NetEvent, NetMsg> {
     Ok(match message {
+        NetMsg::Latency {
+            from, nonce, reply, ..
+        } => NetEvent::Latency { from, nonce, reply },
         NetMsg::BroadcastInput {
             server_frame,
             origin_frame,
@@ -45,6 +48,7 @@ pub(super) fn decode(message: NetMsg) -> Result<NetEvent, NetMsg> {
             target_frame,
             input,
         },
+        NetMsg::Chat { nickname, text } => NetEvent::Note(format!("{nickname}: {text}")),
         NetMsg::Note(note) => NetEvent::Note(note),
         NetMsg::StateHash(report) => NetEvent::PeerStateHash(report),
         NetMsg::InitialSnapshot {

@@ -9,6 +9,31 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Co-op for up to five players.** The Multiplayer lobby supports online games
+  and local controller sessions. Press A on each controller to join; the keyboard
+  player can be toggled in the lobby. Choose a mission, Shared/Exclusive/Assigned
+  character control, initial assignments, and which mission hero to copy into
+  missing player slots. Shared control allows everyone to select any hero;
+  Exclusive prevents simultaneous ownership; Assigned reserves each chosen hero.
+  Extra copies increase hostile soldiers' health by a configurable percentage
+  (including reinforcements). A required hero is lost only when every copy dies.
+  Copies have independent inventory and coma state and do not become permanent
+  campaign recruits.
+- **Dynamic local cameras.** Nearby players share a view. Distant groups get
+  separate cameras with rotating boundaries that disappear as players regroup.
+  Up to five controller cursors remain in their own views. Reconnecting a
+  controller with A reclaims a disconnected local slot. Local and online
+  players use the same deterministic seat/command model; mixed sessions are
+  not exposed by the lobby.
+- **Chat and connection status.** Enter opens chat; developer commands require
+  a leading slash (for example `/HELP`). Recent messages and connection notices
+  remain visible for seven seconds with chat closed. The player list shows
+  measured round-trip latency along the session route to each online player.
+- **Optional WASD direct movement.** Gameplay settings offer keyboard direct
+  control in both solo and co-op: WASD walks, Shift runs. Point-and-click remains
+  available. Controllers retain left-stick movement, right-stick aiming/combat
+  gestures, shoulder-button hero cycling, and face-button actions.
+
 - **Responsive browser replay seeking.** Timeline fast-forward runs in adaptive batches targeting two progress updates per second during seeks. Normal playback keeps its existing frame rate. Progress remains visible, and a new timeline target redirects an in-progress seek.
 
 - **Regular native presentation samples.** Camera and entity interpolation share
