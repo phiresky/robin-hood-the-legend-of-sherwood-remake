@@ -32,7 +32,8 @@ A list of which additional features we have added, which ones we might still wan
 - **Optional WASD direct movement.** Gameplay settings offer keyboard direct
   control in both solo and co-op: WASD walks, Shift runs. Point-and-click remains
   available. Controllers retain left-stick movement, right-stick aiming/combat
-  gestures, shoulder-button hero cycling, and face-button actions.
+  gestures, shoulder-button hero cycling, and face-button actions. A/B/X
+  (Cross/Circle/Square) select the first/second/third ability respectively.
 
 - **Responsive browser replay seeking.** Timeline fast-forward runs in adaptive batches targeting two progress updates per second during seeks. Normal playback keeps its existing frame rate. Progress remains visible, and a new timeline target redirects an in-progress seek.
 

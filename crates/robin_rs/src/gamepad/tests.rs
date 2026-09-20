@@ -461,11 +461,11 @@ fn manage_qa_timer_expiration_with_selected_pc() {
 fn standard_button_to_gamepad_button_mapping() {
     assert_eq!(
         standard_button_to_gamepad_button(0),
-        Some(GamePadButton::ActionB)
+        Some(GamePadButton::ActionA)
     );
     assert_eq!(
         standard_button_to_gamepad_button(1),
-        Some(GamePadButton::ActionA)
+        Some(GamePadButton::ActionB)
     );
     assert_eq!(
         standard_button_to_gamepad_button(3),

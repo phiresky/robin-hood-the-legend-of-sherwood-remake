@@ -952,16 +952,16 @@ pub enum QaEvent {
 /// tracked separately by the caller and fed into [`GamePadState::apply_dpad_state`].
 pub fn standard_button_to_gamepad_button(standard_button: u8) -> Option<GamePadButton> {
     Some(match standard_button {
-        0 => GamePadButton::ActionB,              // South → B (ActionB=0)
-        1 => GamePadButton::ActionA,              // East  → A (ActionA=1)
-        2 => GamePadButton::ActionC,              // West  → X (ActionC=2)
-        3 => GamePadButton::CancelParade,         // North → Y
-        9 => GamePadButton::SelectPrevCharacter,  // LeftShoulder (LB)
+        0 => GamePadButton::ActionA,      // South (A / Cross) → first ability
+        1 => GamePadButton::ActionB,      // East (B / Circle) → second ability
+        2 => GamePadButton::ActionC,      // West  → X (ActionC=2)
+        3 => GamePadButton::CancelParade, // North → Y
+        9 => GamePadButton::SelectPrevCharacter, // LeftShoulder (LB)
         10 => GamePadButton::SelectNextCharacter, // RightShoulder (RB)
-        4 => GamePadButton::AltChoice,            // Back → modifier
-        6 => GamePadButton::QaManage,             // Start → QA
-        7 => GamePadButton::CrouchChinese,        // LeftStick press
-        8 => GamePadButton::SimulatedLeftMouse,   // RightStick press
+        4 => GamePadButton::AltChoice,    // Back → modifier
+        6 => GamePadButton::QaManage,     // Start → QA
+        7 => GamePadButton::CrouchChinese, // LeftStick press
+        8 => GamePadButton::SimulatedLeftMouse, // RightStick press
         _ => return None,
     })
 }
