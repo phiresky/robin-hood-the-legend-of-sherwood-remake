@@ -12,14 +12,20 @@ acceptance by a worker or coordinator is not user approval. Further geometry
 changes invalidate the approved revision and require another review. Do not
 start a Sunburst request while approval is pending.
 
-Current approval queue: West Cottage was **rejected by the user** because the rear
-roof rises into an unsupported pointed/flared termination. Its round-two shape
-acceptance is withdrawn; correct it and show new solid views before generation.
+Current approval queue: West Cottage's pointed/flared rear roof was rejected.
+A straight-gable correction improved it, but the user requested coherent slanted
+front/rear facades. The latest candidate removes the V-shaped rear wall and uses
+shared end planes with 2.86-degree inward batter; `facade-review/` was shown and
+is awaiting geometry approval. No cottage Sunburst request is approved.
 The user approved South Gatehouse's corrected fixed-world-sun input explicitly.
 Its Sunburst pass completed with `gpt-image-2.5-sunburst`, quality `high`, no API
 mask, and the prompt sentence requiring the supplied shading. Exact approved
 input SHA: `1954359756442205b43e6e10566955ffaec8c9d84f96a9817610fbc1a5e119c6`.
 Artifacts: `round-2/sunburst-gate-approved/`; raw and protected outputs were shown.
+The user then requested a second test with the pure-gray sheet as a separate
+lighting reference, and explicitly selected its result for the model:
+`generation-short-no-mask-with-lighting/generated-raw.png`. Use that selected
+two-image result, not the initially approved single-image result.
 The raw result changes existing artwork; the protected composite preserves it
 exactly and fills 330,969 unknown pixels. Projection back onto the approved model
 and seam review remain in progress; nothing from this pass is published yet.
