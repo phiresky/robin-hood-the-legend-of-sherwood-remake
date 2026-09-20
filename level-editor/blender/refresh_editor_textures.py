@@ -24,7 +24,8 @@ def geometry_signature(map_name):
 
 
 def stage(map_name, manifest_path, output_dir, level_path, *, hidden_fill="synthesized",
-          texels_per_unit=1, source_mask_manifest=None, reproject_authored_nodes=None):
+          texels_per_unit=1, source_mask_manifest=None, reproject_authored_nodes=None,
+          texture_handoffs=()):
     import bpy
     import export_editor
     import reproject_map
@@ -35,12 +36,17 @@ def stage(map_name, manifest_path, output_dir, level_path, *, hidden_fill="synth
         manifest_path, output / "reprojection", hidden_fill=hidden_fill,
         texels_per_unit=texels_per_unit, source_mask_manifest=source_mask_manifest,
         reproject_authored_nodes=reproject_authored_nodes)
+    from integrate_refinement import import_asset_textures
+    texture_imports = [import_asset_textures(handoff['blend_path'],
+                                           asset_id=handoff['asset_id'],
+                                           collection_name=map_name + ' Working')
+                       for handoff in texture_handoffs]
     after = geometry_signature(map_name)
     if before != after:
         raise RuntimeError("Texture refresh changed geometry, naming, or grouping")
     bpy.ops.wm.save_as_mainfile(filepath=str(output / "worker.blend"))
     report = {"geometry_before": before, "geometry_after": after,
-              "hidden_fill": hidden_fill,
+              "hidden_fill": hidden_fill, "texture_imports": texture_imports,
               "known_texels": sum(item["known_texels"] for item in projection["ownership_bakes"]),
               "unknown_texels": sum(item["unknown_texels"] for item in projection["ownership_bakes"]),
               "missing_donor_objects": [item["object"] for layer in projection["ownership_bakes"]
