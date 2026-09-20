@@ -33,6 +33,7 @@ def stage(repository_root, output_dir, layers_manifest, include_watchtower=False
             sys.path[:] = previous_path
 
     projection = load("reproject_map")
+    load("group_assets")["reconcile_asset_groups"](root / "level-editor/shared/assets/derby.json")
     projection["restore_projection"]("Derby")
     changes = {
         "keep": load("derby_architecture")["refine"](),
@@ -59,10 +60,13 @@ def stage(repository_root, output_dir, layers_manifest, include_watchtower=False
         "derby_asset_east_watchtower", "derby_asset_south_approach_stone",
         "derby_asset_east_wall_landing", "derby_asset_east_courtyard_south_shelter",
         "derby_asset_east_courtyard_north_shelter", "derby_asset_lower_east_supplies",
+        "derby_stair_sides",
         "derby_terrain",
     ):
         changes[recipe] = load(recipe)["refine"]()
-    changes["names"] = load("group_assets")["sync_asset_names"](root / "level-editor/shared/assets/derby.json")
+    if json.loads(manifest.read_text()).get("mission_patches"):
+        changes["courtyard_drawbridge"] = load("derby_drawbridge")["refine"](manifest)
+    changes["names"] = load("group_assets")["reconcile_asset_groups"](root / "level-editor/shared/assets/derby.json")
     changes["ground_cleanup"] = load("derby_ground_cleanup")["cleanup"](output / "ground-cleanup")
     report = projection["reproject_layers"](manifest, output / "reprojection")
     changes["barrel_materials"] = load("derby_asset_east_bailey_crate")["finalize_materials"]()

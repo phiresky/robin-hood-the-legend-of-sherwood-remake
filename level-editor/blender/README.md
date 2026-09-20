@@ -4,6 +4,13 @@ All Blender operations run through Blender MCP. These scripts accept explicit
 paths and preserve the editor's source obstacle IDs. Generated `.blend`, GLB,
 render and library files stay in the ignored `work/` and `library/` directories.
 
+For current progress and known defects, see [derby-review.md](derby-review.md).
+Use the [refinement worker workflow](refinement-workflow.md) for new passes:
+review scene grouping first, then prepare one isolated workspace per asset with
+source context and matching eight-view `input/` and `modified/` review packets.
+The textured packets show original projected pixels and shaded unknown surfaces;
+generated textures are excluded from the evidence used to refine geometry.
+
 ## Derby checkpoint
 
 `work/derby-refinement/derby-refinement.blend` contains a hidden imported baseline,

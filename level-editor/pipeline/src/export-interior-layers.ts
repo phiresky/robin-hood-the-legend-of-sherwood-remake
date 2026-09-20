@@ -4,6 +4,7 @@ import path from "node:path";
 import sharp, { type OverlayOptions } from "sharp";
 import { findMapPng, loadProtoLevel } from "./asset-writer.ts";
 import { fxTopLeft, loadFxSprite, loadKeyedFxPng } from "./fx.ts";
+import { exportMissionPatchLayers } from "./mission-patch-layers.ts";
 
 const [map, outputArg] = process.argv.slice(2);
 if (!map || !outputArg) throw new Error("usage: node src/export-interior-layers.ts <Map> <fresh-output-dir>");
@@ -56,11 +57,14 @@ for (let i = 0; i < level.patches.length; i++) {
   });
 }
 await sharp(rawPath).composite(overlays).png().toFile(path.join(output, "covered.png"));
+const missionPatches = await exportMissionPatchLayers(map, output, level.patches.length);
 await fs.writeFile(path.join(output, "layers.json"), JSON.stringify({
   version: 1, map, size: [width, height], elevation_degrees: 35,
   sources: { exterior: "covered.png", interior: "revealed.png" },
   projection: "pixel_x = scene_x; pixel_y = -scene_y*sin(elevation) - scene_z*cos(elevation)",
   coverage_candidates_are: "Projected obstacle bounding-box intersections with opaque cover pixels; review candidates before assigning receiver or occluder roles.",
   patches,
+  mission_patches: missionPatches,
+  mission_patch_note: "Mission patches have independent initial, transition and applied states; select a mission and state before compositing or projecting them. They are not building interior covers.",
 }, null, 2) + "\n");
-console.log(JSON.stringify({ output, patches: patches.length, graphics: overlays.length }));
+console.log(JSON.stringify({ output, patches: patches.length, graphics: overlays.length, mission_patches: missionPatches.length }));

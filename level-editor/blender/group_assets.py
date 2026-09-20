@@ -6,18 +6,125 @@ import bpy
 from mathutils import Vector
 
 
+def _renamed_part(obj, group, part):
+    """Replace the catalog prefix while retaining authored component labels."""
+    old_prefix = obj.get("asset_name", "") + " / " + obj.get("part_name", "")
+    new_prefix = group["name"] + " / " + part["name"]
+    if obj.name.startswith(old_prefix):
+        suffix = obj.name[len(old_prefix):]
+    elif obj.name.startswith(new_prefix):
+        suffix = obj.name[len(new_prefix):]
+    else:
+        old_group = obj.get("asset_name", "") + " / "
+        detail = obj.name[len(old_group):] if obj.name.startswith(old_group) else obj.name
+        suffix = " / " + detail
+    return new_prefix + suffix
+
+
+def reconcile_asset_groups(catalog_path):
+    """Apply revised ownership by stable source_node without moving geometry.
+
+    Includes hidden retained originals and every refined mesh component sharing
+    a canonical part. Creates new logical groups and removes only obsolete,
+    empty asset-group objects. No blend save or publication is implicit.
+    """
+    catalog = json.loads(Path(catalog_path).read_text())
+    working = bpy.data.collections[catalog["map"] + " Working"]
+    scene = bpy.data.scenes[catalog["map"] + " Refinement"]
+    previous_scene = bpy.context.window.scene
+    groups, expected = {}, {}
+    for group in catalog["groups"]:
+        if not group["id"] or not group["name"] or group["id"] in groups or not group["parts"]:
+            raise ValueError("Catalog groups must be named, unique and nonempty")
+        groups[group["id"]] = group
+        for part in group["parts"]:
+            key = f'building-{part["obstacle"]:03}'
+            if key in expected or not part["name"]:
+                raise ValueError(f"Duplicate or unnamed asset part: {key}")
+            expected[key] = (group, part)
+    objects = list(working.all_objects)
+    meshes = [obj for obj in objects if obj.type == "MESH" and obj.get("source_node") != "ground"]
+    actual = {obj.get("source_node") for obj in meshes}
+    if actual != set(expected):
+        raise ValueError(f"Catalog coverage mismatch: {sorted(actual ^ set(expected), key=str)}")
+    roots = [obj for obj in objects if obj.type == "EMPTY" and obj.get("source_obstacle") == "map"]
+    if len(roots) != 1:
+        raise ValueError("Expected one map asset root")
+    root = roots[0]
+    parents = {}
+    for obj in objects:
+        if obj.type == "EMPTY" and obj.get("asset_group"):
+            identifier = obj["asset_group"]
+            if identifier in parents:
+                raise ValueError(f"Duplicate asset group object: {identifier}")
+            parents[identifier] = obj
+    obsolete = [obj for identifier, obj in parents.items() if identifier not in groups]
+    for obj in obsolete:
+        if any(child not in meshes for child in obj.children):
+            raise ValueError(f"Obsolete group contains unclassified children: {obj.name}")
+    matrices = {obj: obj.matrix_world.copy() for obj in meshes}
+    visibility = {obj: (obj.hide_render, obj.hide_viewport) for obj in meshes}
+    created, removed, moves, renamed = [], [], [], 0
+    try:
+        bpy.context.window.scene = scene
+        for identifier, group in groups.items():
+            if identifier not in parents:
+                parent = bpy.data.objects.new(group["name"], None)
+                working.objects.link(parent)
+                parent.parent = root
+                parent.empty_display_type = "PLAIN_AXES"
+                parent.empty_display_size = 15
+                parents[identifier] = parent
+                created.append(identifier)
+            parent = parents[identifier]
+            parent.name = group["name"]
+            parent["asset_group"], parent["asset_name"] = identifier, group["name"]
+        bpy.context.view_layer.update()
+        for obj in meshes:
+            group, part = expected[obj["source_node"]]
+            target = parents[group["id"]]
+            if obj.parent != target or obj.get("asset_group") != group["id"]:
+                moves.append({"source_node": obj["source_node"], "object": obj.name,
+                              "from": obj.get("asset_group"), "to": group["id"],
+                              "hidden": obj.hide_render})
+            name = _renamed_part(obj, group, part)
+            renamed += obj.name != name
+            if obj.parent != target:
+                obj.parent = target
+                obj.matrix_world = matrices[obj]
+            obj.name = name
+            obj["asset_group"], obj["asset_name"], obj["part_name"] = group["id"], group["name"], part["name"]
+        bpy.context.view_layer.update()
+        drift = max((abs(obj.matrix_world[r][c] - matrix[r][c])
+                     for obj, matrix in matrices.items() for r in range(4) for c in range(4)), default=0)
+        if drift > 1e-5:
+            raise RuntimeError(f"Reparenting moved geometry: {drift}")
+        if any((obj.hide_render, obj.hide_viewport) != visibility[obj] for obj in meshes):
+            raise RuntimeError("Reparenting altered component visibility")
+        for obj in obsolete:
+            if obj.children:
+                raise RuntimeError(f"Obsolete group retains children: {obj.name}")
+            removed.append(obj["asset_group"])
+            bpy.data.objects.remove(obj, do_unlink=True)
+        return {"map": catalog["map"], "assets": len(groups), "canonical_parts": len(expected),
+                "working_meshes": len(meshes), "created_groups": created, "removed_groups": removed,
+                "renamed_meshes": renamed, "moved_components": moves, "max_transform_drift": drift}
+    finally:
+        bpy.context.window.scene = previous_scene
+
+
 def sync_asset_names(catalog_path):
     """Refresh catalog labels on an existing hierarchy without moving any parts."""
     catalog = json.loads(Path(catalog_path).read_text())
     working = bpy.data.collections[catalog["map"] + " Working"]
     expected = {f'building-{part["obstacle"]:03}': (group, part)
                 for group in catalog["groups"] for part in group["parts"]}
-    meshes = [o for o in working.objects if o.type == "MESH" and o.get("source_node") != "ground"]
+    meshes = [o for o in working.all_objects if o.type == "MESH" and o.get("source_node") != "ground"]
     if {o.get("source_node") for o in meshes} != set(expected):
         raise ValueError("Catalog does not match existing source parts")
     for obj in meshes:
         group, _ = expected[obj["source_node"]]
-        if obj.get("asset_group") != group["id"] or obj.parent.get("asset_group") != group["id"]:
+        if obj.get("asset_group") != group["id"] or obj.parent is None or obj.parent.get("asset_group") != group["id"]:
             raise ValueError(f"Ownership differs from catalog: {obj.name}")
     changed = 0
     for obj in meshes:
@@ -25,8 +132,7 @@ def sync_asset_names(catalog_path):
         old_prefix = obj["asset_name"] + " / " + obj["part_name"]
         new_prefix = group["name"] + " / " + part["name"]
         if old_prefix != new_prefix:
-            suffix = obj.name[len(old_prefix):] if obj.name.startswith(old_prefix) else ""
-            obj.name = new_prefix + suffix
+            obj.name = _renamed_part(obj, group, part)
             obj["asset_name"], obj["part_name"] = group["name"], part["name"]
             changed += 1
         obj.parent.name = group["name"]

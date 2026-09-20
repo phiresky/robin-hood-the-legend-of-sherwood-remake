@@ -1,5 +1,6 @@
 """Export refined geometry using stable editor part IDs and named asset parents."""
 import base64
+import hashlib
 import json
 import math
 import struct
@@ -13,7 +14,7 @@ def projection_metadata(source):
     """Carry surface ownership and projection provenance through glTF export."""
     values = {}
     for key in source.keys():
-        if key.startswith(("reprojection_", "reveal_", "sight_patch_")) or key in (
+        if key.startswith(("reprojection_", "reveal_", "sight_patch_", "mission_patch_", "drawbridge_")) or key in (
                 "projection_layer", "step_count", "crenellation_notches", "arch_segments",
                 "gate_refinement", "cottage_refinement", "architecture_refinement", "embrasure_count", "refinement_recipe",
                 "derby_furniture_floor_clip", "support_floor_source_node", "support_floor_scene_z",
@@ -50,7 +51,37 @@ def reveal_metadata(working, sources, include_all=False):
                         "sight_before": patch["sight_before"], "sight_after": patch["sight_after"],
                         "graphic": portable_graphic,
                         "associated_source_nodes": sorted(nodes.intersection(associations))})
+    mission_patches, graphics = [], {}
+    for patch in manifest.get("mission_patches", []):
+        associations = set(patch["sight_before"] + patch["sight_after"])
+        associations.update(patch.get("associated_source_nodes", []))
+        associations.update(source['source_node'] for source in sources
+                            if patch['id'] in json.loads(source.get('mission_patch_ids', '[]')))
+        if not include_all and not nodes.intersection(associations):
+            continue
+        record = json.loads(json.dumps(patch))
+        # Full-map composites are review inputs; the portable asset carries
+        # original state frames and baked mesh textures instead.
+        record.pop('projection_sources', None)
+        # Deduplicate animation frames across missions while retaining timing,
+        # offsets and each mission's distinct trigger/state records.
+        def portable(value):
+            if isinstance(value, dict):
+                if "image" in value:
+                    data = (Path(path).parent / value.pop("image")).read_bytes()
+                    key = hashlib.sha256(data).hexdigest()
+                    graphics.setdefault(key, "data:image/png;base64," + base64.b64encode(data).decode("ascii"))
+                    value["image_resource"] = key
+                for child in value.values():
+                    portable(child)
+            elif isinstance(value, list):
+                for child in value:
+                    portable(child)
+        portable(record)
+        record["associated_source_nodes"] = sorted(nodes.intersection(associations))
+        mission_patches.append(record)
     return {"version": 1, "source_map": manifest["map"], "patches": patches,
+            "mission_patches": mission_patches, "mission_graphics": graphics,
             "scope": "complete map patch records" if include_all else "associated patches only; unrelated and unassigned source patches omitted",
             "coordinates": "Patch state remains in source game coordinates; standalone source_origin_game records the placement offset.",
             "visibility": "Sight obstacle state does not imply removal of rendered geometry; overlap is candidate association only."}

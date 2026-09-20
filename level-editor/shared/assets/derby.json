@@ -3,6 +3,26 @@
   "map": "Derby",
   "groups": [
     {
+      "id": "derby-lower-east-cottage-barrel",
+      "name": "Lower Bailey East Cottage Barrel",
+      "parts": [{ "obstacle": 51, "name": "Upright yard barrel" }]
+    },
+    {
+      "id": "derby-lower-northwest-cottage-barrel",
+      "name": "Lower Bailey Northwest Cottage Barrel",
+      "parts": [{ "obstacle": 62, "name": "Upright yard barrel" }]
+    },
+    {
+      "id": "derby-lower-northwest-yard-fence",
+      "name": "Lower Bailey Northwest Yard Fence",
+      "parts": [{ "obstacle": 63, "name": "Timber yard fence" }]
+    },
+    {
+      "id": "derby-lower-northwest-wash-tub",
+      "name": "Lower Bailey Northwest Wash Tub",
+      "parts": [{ "obstacle": 64, "name": "Wooden wash tub" }]
+    },
+    {
       "id": "derby-south-gatehouse",
       "name": "South Gatehouse",
       "parts": [
@@ -239,10 +259,6 @@
           "name": "East roof and supporting wall"
         },
         {
-          "obstacle": 51,
-          "name": "Barrel beside front wall"
-        },
-        {
           "obstacle": 52,
           "name": "Lean-to"
         }
@@ -310,18 +326,6 @@
       "id": "derby-lower-northwest-cottage",
       "name": "Lower Bailey Northwest Cottage",
       "parts": [
-        {
-          "obstacle": 62,
-          "name": "Yard barrel"
-        },
-        {
-          "obstacle": 63,
-          "name": "Yard fence"
-        },
-        {
-          "obstacle": 64,
-          "name": "Wash tub"
-        },
         {
           "obstacle": 65,
           "name": "North thatch roof and wall"
@@ -458,16 +462,8 @@
     },
     {
       "id": "derby-east-hall-stair",
-      "name": "East Hall Exterior Stair",
+      "name": "East Hall Stone Trough",
       "parts": [
-        {
-          "obstacle": 82,
-          "name": "Upper landing"
-        },
-        {
-          "obstacle": 81,
-          "name": "Stair flight"
-        },
         {
           "obstacle": 106,
           "name": "Stone trough"
@@ -716,7 +712,7 @@
         },
         {
           "obstacle": 267,
-          "name": "Gate passage closure"
+          "name": "Hinged courtyard drawbridge"
         }
       ]
     },
@@ -1050,6 +1046,14 @@
       "id": "derby-east-hall",
       "name": "East Hall",
       "parts": [
+        {
+          "obstacle": 81,
+          "name": "Exterior entrance stair"
+        },
+        {
+          "obstacle": 82,
+          "name": "Exterior stair upper landing"
+        },
         {
           "obstacle": 183,
           "name": "Southwest outer wall"

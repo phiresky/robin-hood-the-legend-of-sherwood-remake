@@ -146,7 +146,7 @@ def refine_trough():
     for i in range(4):
         j = (i+1) % 4
         faces.extend(((i,j,j+4,i+4), (i+4,j+4,j+8,i+8), (i+8,j+8,j+12,i+12)))
-    mesh = bpy.data.meshes.new('East Hall Exterior Stair / Stone trough basin')
+    mesh = bpy.data.meshes.new(obj['asset_name'] + ' / Stone trough basin')
     mesh.from_pydata(vertices, [], faces)
     bm = bmesh.new()
     bm.from_mesh(mesh)
@@ -175,7 +175,7 @@ def refine_trough():
     obj.data = mesh
     obj.matrix_world = Matrix.Identity(4)
     obj['part_name'] = 'Stone trough'
-    obj.name = 'East Hall Exterior Stair / Stone trough'
+    obj.name = obj['asset_name'] + ' / Stone trough'
     obj['trough_revision'] = 1
     if source.users == 0:
         bpy.data.meshes.remove(source)

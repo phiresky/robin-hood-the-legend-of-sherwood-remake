@@ -133,7 +133,7 @@ def _refine_roof_and_stairs():
     bpy.context.view_layer.update()
     working = bpy.data.collections['Derby Working']
     applied = {o.get('source_node') for o in working.objects
-               if o.get('great_keep_recipe') == RECIPE}
+               if o.get('great_keep_recipe') == RECIPE and o.get('asset_group') == ASSET}
     expected = {'building-171', 'building-172', 'building-173',
                 'building-226', 'building-231'}
     if applied:
@@ -228,7 +228,93 @@ def refine_battlements():
 def refine():
     """Each additive recipe is independently idempotent across checkpoints."""
     return {'asset': ASSET, 'roof_and_stairs': _refine_roof_and_stairs(),
-            'battlements': refine_battlements()}
+            'battlements': refine_battlements(), 'round_turret': refine_round_turret(),
+            'hanging_turret': refine_hanging_turret()}
+
+
+def refine_round_turret():
+    """Replace the four-sided roof reconstruction with the painted round spire.
+
+    Eaves, peak and drum heights are measured in the reference projection.
+    Keep three canonical selection parts, but use matching angular boundaries.
+    """
+    working = bpy.data.collections['Derby Working']
+    tag = 'great-keep-round-turret-v2'
+    applied={o.get('source_node') for o in working.objects
+             if o.get('great_keep_second_pass') == tag and not o.hide_render}
+    if applied:
+        if applied != {'building-171','building-172','building-173'}:
+            raise ValueError(f'Incomplete round turret: {sorted(applied)}')
+        return {'status': 'already-refined'}
+    changes = []
+    for segment, number in enumerate((171, 172, 173)):
+        source = next(o for o in working.objects if o.get('source_node') == f'building-{number:03}'
+                      and not o.hide_render)
+        vertices, faces = [], []
+        def point(angle, radius, z):
+            return (1003.1 + math.cos(angle)*radius, -1541.4 + math.sin(angle)*radius, z)
+        start = segment * 2*math.pi/3
+        # A solid thin roof sector with a curved profile, constant source eave.
+        slices, rings = 24, 20
+        for inside in (False, True):
+            for j in range(rings+1):
+                t = j/rings
+                radius = .35 + 37.65*(1-t)**1.6
+                for i in range(slices+1):
+                    vertices.append(point(start+i*2*math.pi/72, radius, 907.7+109*t-(2 if inside else 0)))
+        layer = (slices+1)*(rings+1)
+        for j in range(rings):
+            for i in range(slices):
+                a = j*(slices+1)+i
+                faces.extend([(a,a+1,a+slices+2,a+slices+1),
+                              (a+layer+slices+1,a+layer+slices+2,a+layer+1,a+layer)])
+        for j in (0,rings):
+            for i in range(slices):
+                a=j*(slices+1)+i
+                faces.append((a,a+layer,a+layer+1,a+1))
+        for i in (0,slices):
+            for j in range(rings):
+                a=j*(slices+1)+i
+                faces.append((a,a+slices+1,a+slices+1+layer,a+layer))
+        # Round masonry drum; an arched doorway is open in the front sector.
+        for i in range(slices):
+            angles=[start+k*2*math.pi/72 for k in (i,i+1)]
+            bottoms=[]
+            for angle in angles:
+                offset=math.atan2(math.sin(angle+math.pi/2),math.cos(angle+math.pi/2))
+                x=33*math.sin(offset)
+                bottoms.append(875+math.sqrt(max(0,12**2-x*x)) if abs(offset)<math.asin(12/33) else 835)
+            base=len(vertices)
+            for radius in (33,30):
+                for a,z in ((angles[0],bottoms[0]),(angles[1],bottoms[1]),(angles[1],907.7),(angles[0],907.7)):
+                    vertices.append(point(a,radius,z))
+            faces.extend(tuple(base+k for k in f) for f in ((0,1,2,3),(7,6,5,4),(0,4,5,1),(1,5,6,2),(2,6,7,3),(3,7,4,0)))
+        mesh=bpy.data.meshes.new(source.name+' / curved round shell')
+        mesh.from_pydata(vertices,[],faces)
+        bm=bmesh.new();bm.from_mesh(mesh)
+        bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces))
+        invalid=sum(not e.is_manifold for e in bm.edges)
+        degenerate=sum(f.calc_area()<1e-8 for f in bm.faces)
+        bm.to_mesh(mesh);bm.free()
+        if invalid or degenerate:
+            raise ValueError('Invalid turret shell topology')
+        neutral=bpy.data.materials.get('Great Keep / unobserved turret')
+        if neutral is None:
+            neutral=bpy.data.materials.new('Great Keep / unobserved turret')
+            neutral.diffuse_color=(.22,.22,.22,1)
+        mesh.materials.append(neutral)
+        for old in source.data.uv_layers:
+            layer_uv=mesh.uv_layers.new(name=old.name)
+            for uv in layer_uv.data: uv.uv=(.5,.5)
+        obj=bpy.data.objects.new(source.name+' / round turret',mesh)
+        working.objects.link(obj);obj.parent=source.parent;obj.matrix_world=Matrix.Identity(4)
+        for key in source.keys():
+            if not key.startswith('reprojection_'): obj[key]=source[key]
+        obj['great_keep_second_pass']=tag
+        obj['projection_min_cosine']=.2
+        source.hide_render=True;source.hide_set(True)
+        changes.append({'source_node':obj['source_node'],'faces':len(faces),'nonmanifold_edges':invalid,'degenerate_faces':degenerate})
+    return {'changes':changes,'radial_segments':72,'profile_rings':20,'roof_thickness':2}
 
 
 def audit():
@@ -260,3 +346,64 @@ def audit():
         parts.append({'source_node': node, 'name': part['name'], 'components': components})
     return {'asset': ASSET, 'catalog_part_count': len(parts), 'parts': parts,
             'interpretation': 'Source shell boundary edges are reported, not blindly filled; interior/exterior apertures require artwork review.'}
+
+
+def refine_hanging_turret():
+    """End the east bartizan at its corbel instead of projecting it to ground."""
+    working=bpy.data.collections['Derby Working']
+    source=next(o for o in working.objects if o.get('source_node')=='building-175' and not o.hide_render)
+    tag='great-keep-hanging-bartizan-v1'
+    if source.get('great_keep_bartizan')==tag:return {'status':'already-refined'}
+    old=source.data
+    vertices,faces,uvs,materials=[],[],[],[]
+    names=[u.name for u in old.uv_layers]
+    def add(poly,material):
+        if len(poly)<3:return
+        base=len(vertices);vertices.extend(source.matrix_world.inverted()@p for p,u in poly)
+        faces.append(tuple(range(base,base+len(poly))));uvs.append([u for p,u in poly]);materials.append(material)
+    # Preserve the measured parapet, including its existing crenels and floor.
+    for face in old.polygons:
+        poly=[(source.matrix_world@old.vertices[old.loops[i].vertex_index].co,[old.uv_layers[n].data[i].uv.copy() for n in names]) for i in face.loop_indices]
+        clipped=[]
+        for p,q in zip(poly,poly[1:]+poly[:1]):
+            ip,iq=p[0].z>=835,q[0].z>=835
+            if ip:clipped.append(p)
+            if ip!=iq:
+                t=(835-p[0].z)/(q[0].z-p[0].z)
+                clipped.append((p[0].lerp(q[0],t),[a.lerp(b,t) for a,b in zip(p[1],q[1])]))
+        add(clipped,face.material_index)
+    # Profile measurements include the two projecting string courses and the
+    # corbel's receding stone courses. The lower tip joins the tower wall.
+    profile=[(835,1),(772,1),(768,1.06),(763,1.06),(759,1),
+             (706,1),(701,1.07),(696,1.07),(692,.98),
+             (684,.87),(676,.72),(668,.55),(660,.38),(651,.18)]
+    rings=[];segments=64
+    unknown_material=len(old.materials)
+    for z,radius in profile:
+        center=1128-18*(1-radius)
+        rings.append([(Vector((center+30.4*radius*math.cos(i*2*math.pi/segments),
+                                -1631+37*radius*math.sin(i*2*math.pi/segments),z)),
+                       [Vector((.5,.5)) for n in names]) for i in range(segments)])
+    for upper,lower in zip(rings,rings[1:]):
+        for i in range(segments):
+            j=(i+1)%segments
+            add([upper[i],lower[i],lower[j],upper[j]],unknown_material)
+    add(list(reversed(rings[-1])),unknown_material)
+    add(rings[0],unknown_material)
+    mesh=bpy.data.meshes.new(source.name+' / hanging bartizan')
+    mesh.from_pydata(vertices,[],faces)
+    for mat in old.materials:mesh.materials.append(mat)
+    neutral=bpy.data.materials.get('Great Keep / unobserved turret')
+    if neutral is None:
+        neutral=bpy.data.materials.new('Great Keep / unobserved turret')
+        neutral.diffuse_color=(.22,.22,.22,1)
+    mesh.materials.append(neutral)
+    for channel,name in enumerate(names):
+        layer=mesh.uv_layers.new(name=name)
+        for face,values in zip(mesh.polygons,uvs):
+            for li,value in zip(face.loop_indices,values):layer.data[li].uv=value[channel]
+    for face,material in zip(mesh.polygons,materials):face.material_index=material
+    source.data=mesh;source['great_keep_bartizan']=tag
+    source['projection_min_cosine']=.2
+    return {'source_node':'building-175','previous_bottom':0,'new_bottom':651,
+            'radial_segments':segments,'profile_rings':len(profile),'faces':len(faces)}
