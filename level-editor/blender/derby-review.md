@@ -19,6 +19,12 @@ active work. Recheck with
 host, since sandbox process isolation hides other workers. Worker instructions
 and coordinator scheduling use the same provisional cap.
 
+The user approved the revised Lying Barrel `c146f01b9` after viewing its gallery
+entry: 194 faces instead of 576, broader head and shorter body, with fresh
+mask-checked projection. Its texture fill and next integration are authorized;
+the rejection below applies only to the previous candidate. Archive its gallery
+evidence and remove it from the current pending view.
+
 Supply Cart (`307cf5b0a`, current `modified/`) and Chopping Block
 (`83624eb66`, `inspection/bound-mask97-approval`) are also explicitly approved
 for texture filling. East Bailey Lying Barrel is **not approved**: the user
