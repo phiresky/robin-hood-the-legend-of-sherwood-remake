@@ -89,9 +89,11 @@ export class MissionEntities {
       if (!frame) throw new Error("Missing validated entity direction");
       actor.mesh.geometry = frame.geometry;
       actor.mesh.material.map = frame.texture;
-      // Every shape is reconstructed from its frame's fixed source-view angle.
-      // Keep that projection stationary between directional frame transitions.
-      actor.mesh.rotation.y = actor.frames.has(-1) ? 0 : (direction - actor.direction) * Math.PI / 8;
+      // Prone bodies keep their ground orientation between frame transitions.
+      // Other directional sprites face the viewer for a smoother orbit.
+      actor.mesh.rotation.y = actor.frames.has(-1) ? 0
+        : frame.geometry.userData.spriteShape === "prone-character"
+          ? (direction - actor.direction) * Math.PI / 8 : azimuth;
       // Authored shadows remain fixed in world space as the camera orbits.
       if (actor.shadow) actor.shadow.rotation.y = -actor.mesh.rotation.y;
     }
@@ -330,7 +332,7 @@ export class MissionEntities {
       const left = number(frame.offset_x, "frame offset x") - number(profile.center_x, "sprite center x");
       const top = number(profile.center_y, "sprite center y") - number(frame.offset_y, "frame offset y");
       const elevation = camera.elevation_deg * Math.PI / 180;
-      const shape = spriteShape(kind, number(row.action_id, "sprite action"));
+      const shape = spriteShape(kind, number(row.action_id, "sprite action"), filename);
       const geometry = new THREE.PlaneGeometry(width, heightPx, Math.min(width, 32), Math.min(heightPx, 64));
       const attr = geometry.getAttribute("position");
       for (let i = 0; i < attr.count; i++) {

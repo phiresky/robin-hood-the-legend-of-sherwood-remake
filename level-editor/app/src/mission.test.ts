@@ -74,10 +74,11 @@ test("missing support fails the mission instead of putting its marker at ground 
   }, level, camera), /Missing entity support #77/);
 });
 
-test("every sprite profile stays at its source-view angle between directional frame changes", () => {
-  for (const shape of ["upright-character", "prone-character", "low-object", "upright-scenery"] as const) {
+test("only prone characters anchor directional projections; other profiles follow the camera", () => {
+  for (const shape of ["upright-character", "prone-character", "cylinder-object", "low-object", "upright-scenery"] as const) {
     const preview = new MissionEntities();
     const geometry = new THREE.BufferGeometry();
+    geometry.userData.spriteShape = shape;
     const material = new THREE.MeshBasicMaterial();
     const mesh = new THREE.Mesh(geometry, material);
     const shadow = new THREE.Mesh();
@@ -96,12 +97,14 @@ test("every sprite profile stays at its source-view angle between directional fr
       return point.clone().applyMatrix4(mesh.matrixWorld);
     };
     const start = view(0);
-    assert.ok(view(10).distanceTo(start) < 1e-10, `${shape}: camera must not drag the projection`);
+    const movement = view(10).distanceTo(start);
+    assert.ok(shape === "prone-character" ? movement < 1e-10 : movement > 0.1, `${shape}: projection policy within a sector`);
     assert.equal(material.map, frames.get(15)!.texture);
     const next = view(12);
     assert.equal(material.map, frames.get(0)!.texture);
     assert.ok(next.distanceTo(start) > 0.1);
-    assert.ok(view(30).distanceTo(next) < 1e-10, `${shape}: the next frame also has a fixed projection`);
+    const nextMovement = view(30).distanceTo(next);
+    assert.ok(shape === "prone-character" ? nextMovement < 1e-10 : nextMovement > 0.1, `${shape}: projection policy after a frame transition`);
     assert.ok(Math.abs(shadow.getWorldQuaternion(new THREE.Quaternion()).y) < 1e-10);
     const single = frames.get(0)!;
     Object.assign(preview, { actors: [{ mesh, shadow, frames: new Map([[-1, single]]), direction: 15 }] });

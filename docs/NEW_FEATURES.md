@@ -14,7 +14,9 @@ A list of which additional features we have added, which ones we might still wan
   directions, bonus/scroll sprites, targets, and mobile objects. A perspective slider
   adds distance scaling while preserving projected map extent, with tight clip
   planes and reversed depth where supported. Separate upright, prone, pickup, and
-  scenery profiles use fixed source-view angles and adjust with camera height.
+  scenery profiles adjust with camera height. Prone bodies use fixed source-view
+  angles; other directional sprites face the camera. Coats of arms use cylinders.
+  Perspective panning follows the floor without changing camera height or zoom.
   Authored sprite shadows project onto support planes with ambiance-specific
   darkening. Explicit target heights are respected. Hackable conversion includes
   shared pickup/relic sprite banks. Previews do not execute scripts or alter missions.

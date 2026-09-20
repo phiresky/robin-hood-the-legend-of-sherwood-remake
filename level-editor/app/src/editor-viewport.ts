@@ -101,6 +101,7 @@ export class EditorViewport {
   private activeCamera(): THREE.OrthographicCamera | THREE.PerspectiveCamera {
     const camera = this.camera!;
     if (!camera) throw new Error("Viewport camera is not mounted");
+    this.orbit!.screenSpacePanning = this.perspective === 0;
     if (this.perspective === 0) {
       if (this.gizmo) this.gizmo.camera = camera;
       this.updateDepthRange(camera);
@@ -116,7 +117,10 @@ export class EditorViewport {
     const targetDepth = target.clone().sub(camera.position).dot(forward);
     // Preserve the map's projected envelope, not just the target plane. Nearby
     // walls otherwise grow dramatically as the lens moves closer at wide angles.
-    const framingKey = [halfHeight, aspect, this.perspective, ...camera.position.toArray(), ...camera.quaternion.toArray(), ...target.toArray()].join(",");
+    // Translation must not refit the lens: panning moves the camera parallel to
+    // the floor, without changing its height or zoom. Ignore quaternion noise
+    // introduced by controls recomputing lookAt after a translation.
+    const framingKey = [halfHeight, aspect, this.perspective, ...camera.quaternion.toArray().map(v => v.toFixed(10))].join(",");
     if (framingKey === this.framingKey) {
       distance = this.framingDistance;
     } else if (!this.framingBounds.isEmpty()) {

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import {
   gameToScene,
   parseLevel3D,
@@ -264,6 +265,38 @@ test("perspective keeps a deep map's apparent size across lens angles and zoom l
       assert.ok(Math.abs(actual - expected) < 1e-8, `framing at ${fov} degrees, zoom ${zoom}`);
     }
   }
+  viewport.dispose();
+});
+
+test("perspective pan translates camera and target along the floor without refitting the lens", () => {
+  const { viewport } = fixture();
+  const camera = new THREE.OrthographicCamera(-2000, 2000, 1000, -1000);
+  camera.position.set(1800, 3000, 6000);
+  camera.lookAt(0, 0, 0);
+  camera.updateMatrixWorld();
+  const orbit = new OrbitControls(camera);
+  Object.assign(orbit, { domElement: { clientWidth: 800, clientHeight: 400 } });
+  Object.assign(viewport, { camera, orbit, frustum: 1000, container: { clientWidth: 800, clientHeight: 400 }, framingBounds: new THREE.Box3(new THREE.Vector3(-800, -900, -1500), new THREE.Vector3(800, 900, 1500)) });
+  const access = viewport as unknown as { activeCamera(): THREE.Camera };
+  for (const fov of [1, 15, 45, 65]) {
+    viewport.setPerspective(fov);
+    const lens = access.activeCamera();
+    const initial = lens.position.clone();
+    const target = orbit.target.clone();
+    const controlHeight = camera.position.y;
+    for (const [dx, dy] of [[50, 80], [-120, 40], [20, -170]]) {
+      orbit.pan(dx!, dy!);
+      const translated = access.activeCamera().position.clone();
+      assert.ok(Math.abs(translated.y - initial.y) < 1e-8);
+      assert.ok(Math.abs(camera.position.y - controlHeight) < 1e-8);
+      assert.ok(Math.abs(orbit.target.y - target.y) < 1e-8);
+      assert.ok(translated.sub(initial).distanceTo(orbit.target.clone().sub(target)) < 1e-8);
+    }
+    assert.ok(orbit.target.distanceTo(target) > 1);
+  }
+  viewport.setPerspective(0);
+  assert.equal(orbit.screenSpacePanning, true);
+  Object.assign(orbit, { domElement: null });
   viewport.dispose();
 });
 

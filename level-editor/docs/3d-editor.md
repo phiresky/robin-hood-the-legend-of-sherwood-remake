@@ -48,9 +48,12 @@ surface depth precision across zoom levels and narrow fields of view. Upright ch
 pixels project onto an approximate cylinder shell and top cap; dead, unconscious,
 and tied poses use shallow ground volumes. Pickups use low object depth, while
 scenery uses upright surfaces. These profiles preserve the source-camera image
-while changing shape with elevation. Each directional frame uses its fixed 22.5°
-projection angle on every profile, so orbiting does not rotate the geometry between
-frame changes. Single-view sprites remain fixed in the world.
+while changing shape with elevation. Coats of arms use a cylinder rather than a
+shallow pickup volume. Only prone characters use fixed 22.5° projection angles;
+other directional sprites face the camera continuously. Single-view sprites
+remain fixed in the world.
+Perspective panning translates the camera along the floor at a fixed height,
+without refitting the lens as the map moves across the view.
 Extreme angles remain an approximation because
 the sprites do not contain unseen elevation views. Legacy sprite color keys are
 decoded into color and authored shadow layers. Shadows project onto the support

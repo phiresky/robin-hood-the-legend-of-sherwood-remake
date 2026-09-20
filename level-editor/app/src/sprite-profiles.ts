@@ -2,10 +2,11 @@ import type { Vec3 } from "@rle/shared";
 import { cylinderPixel } from "./entity-projection.ts";
 
 export type SpriteKind = "character" | "pickup" | "scenery";
-export type SpriteShape = "upright-character" | "prone-character" | "low-object" | "upright-scenery";
+export type SpriteShape = "upright-character" | "prone-character" | "cylinder-object" | "low-object" | "upright-scenery";
 const PRONE_ACTIONS = new Set([45, 47, 48, 106, 108, 109, 113, 115, 116, 219]);
 
-export function spriteShape(kind: SpriteKind, action: number): SpriteShape {
+export function spriteShape(kind: SpriteKind, action: number, filename = ""): SpriteShape {
+  if (kind === "pickup" && filename.toLowerCase() === "bonus_shield") return "cylinder-object";
   if (kind === "pickup") return "low-object";
   if (kind === "scenery") return "upright-scenery";
   return PRONE_ACTIONS.has(action) ? "prone-character" : "upright-character";
@@ -13,10 +14,10 @@ export function spriteShape(kind: SpriteKind, action: number): SpriteShape {
 
 export interface SpriteBounds { left: number; top: number; width: number; height: number }
 /** Each profile preserves source pixels at the map camera. Prone bodies and
- * pickups occupy shallow ground volumes; scenery never acquires a human cap. */
+ * ordinary pickups occupy shallow ground volumes; coats of arms use a cylinder. */
 export function projectSpritePixel(shape: SpriteShape, x: number, up: number, bounds: SpriteBounds, elevation: number): Vec3 {
   const sin = Math.sin(elevation), cos = Math.cos(elevation);
-  if (shape === "upright-character") {
+  if (shape === "upright-character" || shape === "cylinder-object") {
     return cylinderPixel(x, up, Math.max(3, bounds.width * 0.25), Math.max(1, bounds.top / cos), elevation);
   }
   if (shape === "upright-scenery") return [x, up / cos, 0];
