@@ -20,6 +20,12 @@ shared end planes with 2.86-degree inward batter. After seeing both eight-view
 "ok good enough for now". Prepare the unchanged geometry with fixed-world-sun
 lighting and a separate solid reference for the next Sunburst texture-fill pass;
 generation and publication are still pending.
+The user also approved all three shown candidates for texture filling:
+Lower East Curtain and stairs (`01badfdfa`, `approval/`), East Cottage barrel
+(`dd4075b59`, `approval/`), and Northwest Cottage barrel (`2a38c34ee`,
+`modified/`): "approve all three". Their fixed-world-sun textured and solid
+sheets are the approved references. High-quality, no-API-mask, two-image
+Sunburst passes are underway; generated textures are not yet published.
 The user approved South Gatehouse's corrected fixed-world-sun input explicitly.
 Its Sunburst pass completed with `gpt-image-2.5-sunburst`, quality `high`, no API
 mask, and the prompt sentence requiring the supplied shading. Exact approved
@@ -31,7 +37,9 @@ lighting reference, and explicitly selected its result for the model:
 two-image result, not the initially approved single-image result.
 The raw result changes existing artwork; the protected composite preserves it
 exactly and fills 330,969 unknown pixels. Projection back onto the approved model
-and seam review remain in progress; nothing from this pass is published yet.
+and seam review passed. The selected two-image result is now published in the
+map and standalone gate asset; all 17 generated materials were verified in the
+editor, with 295,069 source samples protected exactly during the model bake.
 Keep, East Hall, East Watchtower and Postern
 have substantial geometry follow-ups and are not ready for texture generation.
 
@@ -52,7 +60,7 @@ Gatehouse, East Hall turret, East Watchtower, Southwest Postern, Lower East
 Curtain, Lower West Curtain, and the two detached cottage barrels. The source
 and geometry checks are recorded in `round-2/integration.json` and the staged
 publication evidence. **New West Cottage geometry is excluded from this
-publication**; its separate approval and texture work remain pending. Keep facade
+publication**; its geometry is now user-approved and texture work remains pending. Keep facade
 relief, Hall wall/interior alignment and Watchtower hoist/cage remain follow-up work.
 New work is isolated until its source,
 solid, textured and scope checks pass. The new mask PNGs are evidence for this
@@ -70,8 +78,9 @@ All 30 original logical assets have received an individual worker pass. **All in
 passes are now merged and published, with 34 standalone assets after regrouping. The
 assets are not finished.** “Published”
 means the geometry is included in the latest map export, not that all defects
-are resolved. West Cottage's fourth geometry pass and generated texture bake are
-now published; the generated hidden details remain inferred.
+are resolved. The published West Cottage still uses its earlier geometry and
+generated bake; the newly approved facade correction is awaiting its new texture
+pass and publication. Generated hidden details remain inferred.
 
 Latest map publication: `work/derby-refinement/round-2/publication-2/derby.scene.glb`
 to `library/scenes/derby-volumes.scene.glb`, with the document fingerprint updated.
@@ -134,7 +143,7 @@ geometry remain unfinished. Individual chain links are simplified.
 
 | Asset | Integration | Latest work / remaining review |
 | --- | --- | --- |
-| South Gatehouse | Second-pass geometry accepted, not published | Rebuilt curved roofs, eave collars and round drums. West silhouette IoU 88.85% to 96.29%; east 86.36% to 94.90%. Narrow roof-sector shading seams remain to inspect. Fresh projection must replace old generated UVs on changed meshes. Prior editor hole was fixed by compacting material-used UV channels. |
+| South Gatehouse | User-approved geometry and selected two-image textures published | Rebuilt curved roofs, eave collars and round drums. West silhouette IoU 88.85% to 96.29%; east 86.36% to 94.90%. Fresh source projection and generated hidden-surface bake passed geometry/source-preservation checks; all 17 selected materials verified in the editor. Prior editor hole was fixed by compacting material-used UV channels. |
 | Southwest Postern Tower | Published baseline; second pass active | Old eight-crenel claim was incorrect; fresh inspection found two physical notches. Source-fitted scaffold reconstruction is in progress. |
 | Lower Bailey East Curtain | Stair-side fix published | 25 crenels and closed supports. Stair building-012 side faces now use coherent curtain masonry, with tread UVs and geometry unchanged; `stair-cheek-fix/visible-after/side-textured.png`. |
 | Lower Bailey West Curtain | Published | 25 crenels, rounded turret, curved roof sectors, 18 stairs; oblique joins remain reviewable. |
