@@ -12,7 +12,7 @@ from pathlib import Path
 def bake(map_name, source_path, report_path, receiver_nodes=None,
          occluder_nodes=None, projection_label="source", texels_per_unit=1,
          elevation_deg=35.0, preserve_authored=True, source_mask_manifest=None,
-         hidden_fill="neutral", synthesis_cache=None):
+         hidden_fill="neutral", synthesis_cache=None, reproject_authored_nodes=None):
     import bpy
     import numpy as np
     from mathutils import Vector
@@ -32,6 +32,9 @@ def bake(map_name, source_path, report_path, receiver_nodes=None,
         if requested is not None and set(requested) - present:
             raise ValueError("Unknown projection nodes: " + str(set(requested) - present))
     receivers = [o for o in objects if receiver_nodes is None or o.get("source_node") in receiver_nodes]
+    reproject_authored_nodes = set(reproject_authored_nodes or ())
+    if reproject_authored_nodes - {o.get("source_node") for o in receivers}:
+        raise ValueError("Authored texture reset must name receiver nodes")
     occluders = [o for o in objects if occluder_nodes is None or o.get("source_node") in occluder_nodes]
     if not receivers or not occluders:
         raise ValueError("Projection requires receivers and occluders")
@@ -84,6 +87,7 @@ def bake(map_name, source_path, report_path, receiver_nodes=None,
               "synthesis_method": "Example-based synthesis of fully observed donor patches, same asset and projection layer" if hidden_fill == "synthesized" else None,
               "source_mask_manifest": str(Path(source_mask_manifest).resolve()) if source_mask_manifest else None,
               "source_mask_state": constraints.state if constraints else None,
+              "reproject_authored_nodes": sorted(reproject_authored_nodes),
               "limitations": ["Geometry outside the artwork silhouette must still be corrected geometrically.",
                               "Reveal layers require explicit retained occluders matching their source artwork.",
                               "Ground cleanup and explicit projection_preserve materials are retained."]}
@@ -106,7 +110,7 @@ def bake(map_name, source_path, report_path, receiver_nodes=None,
         degenerate = 0
         for face in mesh.polygons:
             mat = mesh.materials[face.material_index] if mesh.materials else None
-            if preserve_authored and mat and mat.get("projection_preserve") and not mat.get("source_ownership_bake"):
+            if preserve_authored and obj.get("source_node") not in reproject_authored_nodes and mat and mat.get("projection_preserve") and not mat.get("source_ownership_bake"):
                 preserved += 1
                 continue
             points = [world[i] for i in face.vertices]

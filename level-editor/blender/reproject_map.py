@@ -264,7 +264,8 @@ def restore_projection(map_name):
 def reproject_layers(manifest_path, report_dir=None, sample_spacing=12.0,
                      max_subdivisions=24, ownership_nodes=None, texels_per_unit=1,
                      preserve_authored=True, exterior_source=None,
-                     hidden_fill="neutral", source_mask_manifest=None):
+                     hidden_fill="neutral", source_mask_manifest=None,
+                     reproject_authored_nodes=None):
     """Refresh audited exterior/interior layers without changing geometry visibility.
 
     Receiver ownership comes from the map-specific reviewed recipe, never from
@@ -291,6 +292,11 @@ def reproject_layers(manifest_path, report_dir=None, sample_spacing=12.0,
     if any(not obj.get("source_node") for obj in sources):
         raise ValueError("Every visible working mesh must retain a stable source_node")
     available = {obj["source_node"] for obj in sources}
+    reproject_authored_nodes = set(reproject_authored_nodes or ())
+    if reproject_authored_nodes - available:
+        raise ValueError("Unknown authored texture reset nodes")
+    if ownership_nodes is not None and reproject_authored_nodes - set(ownership_nodes):
+        raise ValueError("Authored texture reset nodes must be ownership-baked")
     patches = {patch["id"] for patch in manifest["patches"]}
     if len(patches) != len(manifest["patches"]):
         raise ValueError("Duplicate patch identifiers")
@@ -362,7 +368,8 @@ def reproject_layers(manifest_path, report_dir=None, sample_spacing=12.0,
                 receiver_nodes=bake_receivers, occluder_nodes=occluders,
                 projection_label=label, elevation_deg=manifest['elevation_degrees'],
                 texels_per_unit=texels_per_unit, preserve_authored=preserve_authored,
-                hidden_fill=hidden_fill, source_mask_manifest=source_mask_manifest))
+                hidden_fill=hidden_fill, source_mask_manifest=source_mask_manifest,
+                reproject_authored_nodes=sorted(reproject_authored_nodes & set(bake_receivers))))
         per_object = {entry["object"]: entry for entry in report["objects"]}
         for obj in sources:
             if obj["source_node"] not in receivers:
@@ -383,6 +390,7 @@ def reproject_layers(manifest_path, report_dir=None, sample_spacing=12.0,
               "occluder_audit": roles.projection_occluder_audit(manifest),
               "ownership_bakes": ownership_reports,
               "ownership_scope": 'all non-ground receivers' if ownership_nodes is None else list(ownership_nodes),
+              "reproject_authored_nodes": sorted(reproject_authored_nodes),
               "projected_faces": sum(item["projected_faces"] for item in reports),
               "fallback_faces": sum(item["fallback_faces"] for item in reports),
               "ambiguous_receivers": sorted({obj["source_node"] for obj in sources
@@ -391,7 +399,7 @@ def reproject_layers(manifest_path, report_dir=None, sample_spacing=12.0,
                   "Ambiguous overlap candidates receive covered artwork, not an inferred interior state.",
                   "Interior visibility includes audited retained shells; partially cut-away facade geometry still requires further review.",
                   "Ground remains on its existing cleaned atlas; no ground synthesis performed.",
-                  "Ownership-baked hidden texels are neutral; explicitly preserved authored materials are not replaced.",
+                  "Hidden texels use the requested fill; authored materials survive unless their nodes explicitly require fresh projection.",
                   "Face assignment counts describe the preliminary projection; ownership bake reports describe final texel visibility."]}
     (report_dir / "layers-report.json").write_text(json.dumps(report, indent=2) + "\n")
     return report

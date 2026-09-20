@@ -162,11 +162,9 @@ def render_review(output_dir, *, scene_name, collection_name, asset_id,
                 yaw = math.radians(index * 45)
                 camera.location = target + Vector((math.sin(yaw) * cosine, -math.cos(yaw) * cosine, sine)) * 10000
                 camera.rotation_euler = (target - camera.location).to_track_quat("-Z", "Y").to_euler()
-                fit_camera(camera, objects, width / height)
-        if not baseline:
-            shared_scale = max(camera.data.ortho_scale for camera in cameras)
-            for camera in cameras:
-                camera.data.ortho_scale = shared_scale
+                # Fit actual evaluated vertices separately at each angle. Box
+                # corners and a worst-angle shared scale waste much of the tile.
+                fit_camera(camera, objects, width / height, points=points, padding=1.04)
         bpy.context.view_layer.update()
         crop = baseline["context_crop"] if baseline else {
             "left": max(0, math.floor(min(p.x for p in points)) - context_padding),
@@ -235,6 +233,7 @@ def render_review(output_dir, *, scene_name, collection_name, asset_id,
         manifest = {"version": 1, "asset_id": asset_id, "scene_name": scene_name,
                     "collection_name": collection_name, "tile_size": [width, height],
                     "layout": {"columns": 4, "rows": 2}, "elevation_degrees": elevation_degrees,
+                    "framing": baseline.get("framing", "legacy shared scale") if baseline else "Per-view evaluated geometry, 4 percent padding; frozen for modified comparison",
                     "context_crop": crop, "source_image": str(source_path), "source_sha256": source_hash,
                     "projection_layers": layer_records, "views": records,
                     "source_blend": bpy.data.filepath, "object_names": sorted(o.name for o in objects),

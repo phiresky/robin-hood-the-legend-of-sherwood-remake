@@ -270,6 +270,13 @@ source view provides no reliable texture. Generated textures are never evidence.
 Check actual silhouette against the context: terrain painted onto a roof means
 geometry needs correction. Do not compensate for shape errors with generated art.
 
+Feel free to generate zoomed-in detail views, additional camera angles, lower or
+higher elevations, and section views whenever they help you understand or refine
+the model. Do not limit your inspection to the eight standard views. Save these
+extra renders in `inspection/` with descriptive names; include matching before
+and after views when useful. The standard input/modified sheets remain the fixed
+comparison, and extra views supplement them.
+
 After each meaningful geometry pass run the modified command below. It reapplies
 source projection and renders `modified/` with exactly the input camera framing
 and file layout. Do not change the frozen framing to hide geometry differences.

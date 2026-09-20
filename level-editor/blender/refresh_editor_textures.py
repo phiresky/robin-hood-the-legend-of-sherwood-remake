@@ -24,7 +24,7 @@ def geometry_signature(map_name):
 
 
 def stage(map_name, manifest_path, output_dir, level_path, *, hidden_fill="synthesized",
-          texels_per_unit=1, source_mask_manifest=None):
+          texels_per_unit=1, source_mask_manifest=None, reproject_authored_nodes=None):
     import bpy
     import export_editor
     import reproject_map
@@ -33,7 +33,8 @@ def stage(map_name, manifest_path, output_dir, level_path, *, hidden_fill="synth
     before = geometry_signature(map_name)
     projection = reproject_map.reproject_layers(
         manifest_path, output / "reprojection", hidden_fill=hidden_fill,
-        texels_per_unit=texels_per_unit, source_mask_manifest=source_mask_manifest)
+        texels_per_unit=texels_per_unit, source_mask_manifest=source_mask_manifest,
+        reproject_authored_nodes=reproject_authored_nodes)
     after = geometry_signature(map_name)
     if before != after:
         raise RuntimeError("Texture refresh changed geometry, naming, or grouping")

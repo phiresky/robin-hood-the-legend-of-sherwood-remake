@@ -7,17 +7,17 @@ import bpy
 from mathutils import Vector
 
 
-def fit_camera(camera, objects, aspect):
+def fit_camera(camera, objects, aspect, *, points=None, padding=1.08):
     """Fit complete world-space bounds to an orthographic inspection camera."""
     rotation = camera.rotation_euler.to_matrix()
     right, up = rotation.col[0], rotation.col[1]
-    points = [obj.matrix_world @ Vector(corner) for obj in objects if obj.type == "MESH" for corner in obj.bound_box]
-    if not points or aspect <= 0:
+    points = list(points) if points is not None else [obj.matrix_world @ Vector(corner) for obj in objects if obj.type == "MESH" for corner in obj.bound_box]
+    if not points or aspect <= 0 or padding < 1:
         raise ValueError("Camera fitting requires mesh bounds and a positive aspect ratio")
     xs, ys = [point.dot(right) for point in points], [point.dot(up) for point in points]
     camera.location += right * ((min(xs) + max(xs)) / 2 - camera.location.dot(right))
     camera.location += up * ((min(ys) + max(ys)) / 2 - camera.location.dot(up))
-    height = max(max(ys) - min(ys), (max(xs) - min(xs)) / aspect) * 1.08
+    height = max(max(ys) - min(ys), (max(xs) - min(xs)) / aspect) * padding
     camera.data.ortho_scale = height * max(1, aspect)
     backward = rotation.col[2]
     depths = [point.dot(backward) for point in points]
