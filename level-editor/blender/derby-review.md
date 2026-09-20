@@ -54,6 +54,16 @@ for editing and texture generation, as requested by the user; its generation
 is on hold. The split must preserve transforms, complete part ownership and
 mask constraints, and be reflected in reusable map/individual-asset exports.
 
+All fourteen remaining candidates have now had their eight-view solid and source
+texture sheets visually reviewed by both root and coordinator. The review index
+is `round-2/review-candidates-14.json`; the portable gallery and exact copied-image
+hashes are in `round-2/review-gallery-14/`. Eight have subsequent user approval
+listed above. Lying Barrel requires the requested simplification. Lower Well
+bucket support, timber-sheet framing, East Bailey West Curtain foreground
+ownership, Upper West Curtain source coverage, and Upper East Curtain mask
+binding require further checks. In particular, zero accepted foreign pixels is
+not sufficient when an incorrect constraint rejects legitimate source artwork.
+
 Mask authority correction: earlier mask inspection and selected export constraints
 did not enforce ownership in worker previews. A successful mesh visibility test
 or high silhouette IoU is insufficient to accept source pixels. Every handoff must
