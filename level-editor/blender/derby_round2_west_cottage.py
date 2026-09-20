@@ -10,16 +10,9 @@ from mathutils import Vector
 from mathutils.bvhtree import BVHTree
 from derby_asset_lower_west_cottage import _roof_shell, _solid, _world
 
-TAG = 'round2-level-eaves-mask-fit'
+TAG = 'round2-straight-rear-gable'
 SIN, COS = math.sin(math.radians(35)), math.cos(math.radians(35))
 RIDGE, EAVE = 121.53, 70.0
-# Main roof outline read against the authored main-cottage occlusion bitmap.
-REAR = {
-    'building-055': [(623,1845),(629,1855),(635,1861),(641,1865),
-                     (647,1869),(653,1873),(659,1877),(665,1881),(670,1886)],
-    'building-056': [(623,1845),(617.5,1854),(612,1859),(606.5,1863),
-                     (601,1866),(595.5,1869),(590,1872),(584.5,1875),(579,1880)],
-}
 
 
 def point(x, y, z):
@@ -63,14 +56,23 @@ def refine():
                     and o.get('cottage_component_role') == 'walls')
         apex = Vector((607,1919))
         corner = Vector((652,1968)) if node.endswith('055') else Vector((563,1961))
+        front_ridge = point(apex.x,apex.y,RIDGE)
+        rear_ridge = point(623,1845,RIDGE)
+        axis = (rear_ridge-front_ridge).normalized()
+        lateral = Vector((axis.y,-axis.x,0))
+        half_width = 45 if node.endswith('055') else -44
         vertices = []
         for row in range(17):
             for col in range(9):
                 t = col/8
-                z = RIDGE*(1-t)+EAVE*t + 1.4*math.sin(math.pi*t)
+                z = RIDGE*(1-t)+EAVE*t+.8*math.sin(math.pi*t)
                 pixel = apex.lerp(corner,t)
                 front = point(pixel.x,pixel.y,z)
-                rear = point(*REAR[node][col],z)
+                # One ordinary rear gable plane. Never independently solve the
+                # depth of each rear silhouette pixel: that creates horns and
+                # a concave rear edge despite a numerically level ridge.
+                rear = rear_ridge+lateral*(half_width*t)
+                rear.z = z
                 vertices.append(front.lerp(rear,row/16))
         faces = [(r*9+c,r*9+c+1,(r+1)*9+c+1,(r+1)*9+c)
                  for r in range(16) for c in range(8)]
@@ -85,11 +87,9 @@ def refine():
         # and short front hip meet the actual underside rather than stretching.
         outline = [lip, vertices[8], vertices[16*9+8], vertices[16*9], vertices[0]]
         center = sum(outline,Vector())/len(outline)
-        # Set the straight rear wall behind the scalloped thatch overhang. A
-        # chord drawn directly across its outer edge escapes the curved shell.
+        # A straight rear gable sits just inside its ordinary roof overhang.
         rear_outer = vertices[16*9+8].lerp(center,.18)
-        rear_outer += (vertices[8]-vertices[16*9+8])*.08
-        rear_center = vertices[0].lerp(vertices[16*9],.80)
+        rear_center = vertices[0].lerp(vertices[16*9],.95)
         front_inset = .30 if node.endswith('055') else .18
         corners = [lip,vertices[8].lerp(center,front_inset),rear_outer,
                    rear_center,vertices[0]]
