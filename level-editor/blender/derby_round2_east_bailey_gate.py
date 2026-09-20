@@ -6,6 +6,7 @@ from mathutils import Vector
 
 ASSET = 'derby-east-bailey-gate'
 TAG = 'east-bailey-gate-round2-v1'
+ARCH_TAG = 'east-bailey-gate-round2-curved-arch-v2'
 
 
 def _hull(points):
@@ -116,6 +117,91 @@ def _section_shell(obj, center, corners, sections):
     _replace(obj, vertices, faces)
 
 
+def _difference(obj, cutter):
+    mod=obj.modifiers.new('Shared gate passage boundary','BOOLEAN')
+    mod.operation='DIFFERENCE';mod.solver='EXACT';mod.object=cutter
+    bpy.context.view_layer.objects.active=obj
+    bpy.ops.object.modifier_apply(modifier=mod.name)
+    bm=bmesh.new();bm.from_mesh(obj.data)
+    bmesh.ops.remove_doubles(bm,verts=list(bm.verts),dist=.001)
+    bmesh.ops.dissolve_degenerate(bm,edges=list(bm.edges),dist=.0001)
+    bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces))
+    loose=[e for e in bm.edges if not e.link_faces]
+    if loose:
+        bmesh.ops.delete(bm,geom=loose,context='EDGES')
+    bad=sum(not e.is_manifold for e in bm.edges)
+    if bad or not bm.faces:
+        raise ValueError(('Invalid passage boundary',obj.name,bad,len(bm.faces)))
+    bm.to_mesh(obj.data);bm.free()
+
+
+def refine_arch():
+    owned=[o for o in bpy.data.collections['Derby Working'].all_objects
+           if o.type=='MESH' and o.get('asset_group')==ASSET and not o.hide_render]
+    parts={n:next(o for o in owned if o.get('source_node')==f'building-{n:03}')
+           for n in (83,84,85,95,96)}
+    if any(o.get(ARCH_TAG) for o in parts.values()):
+        if not all(o.get(ARCH_TAG) for o in parts.values()):
+            raise ValueError('Incomplete shared gate passage reconstruction')
+        return {'status':'existing'}
+    # The artwork's curved shoulders meet vertical jambs. Angular samples of
+    # an ellipse preserve this tangent; a sine sampled across X does not.
+    left_x,right_x=1017.99206543,1072.70605469
+    outer_left=1013.033
+    outer_right=right_x+12
+    wall_a=Vector((1012.75305176,-2997.17041016))
+    wall_b=Vector((1126.29931641,-3060.30371094))
+    slope=(wall_b.y-wall_a.y)/(wall_b.x-wall_a.x)
+    direction=Vector((1,slope,0)).normalized()
+    inward=Vector((-direction.y,direction.x,0))
+    def front(x,z):
+        return Vector((x,wall_a.y+(x-wall_a.x)*slope,z))
+    profile=[]
+    for i in range(65):
+        theta=math.pi*(1-i/64)
+        x=(left_x+right_x)/2+(right_x-left_x)/2*math.cos(theta)
+        profile.append(front(x,66+43*math.sin(theta)))
+    def extruded(outline,shift,depth):
+        n=len(outline)
+        points=[p+inward*shift for p in outline]+[p+inward*(shift+depth) for p in outline]
+        faces=[tuple(reversed(range(n))),tuple(range(n,2*n))]
+        faces.extend((i,(i+1)%n,(i+1)%n+n,i+n) for i in range(n))
+        return points,faces
+    # A continuous arch-and-jamb frame also covers the earlier oblique cutter's
+    # protruding ends. Limiting this replacement to the curved lintel leaves
+    # narrow old-aperture slits beside the new spring points.
+    lintel=[front(outer_left,0),front(left_x,0)]+profile+[
+            front(right_x,0),front(outer_right,0),
+            front(outer_right,195.25),front(outer_left,195.25)]
+    _replace(parts[83],*extruded(lintel,0,35.64))
+    # Replacing the arch must not mark it as one of the earlier five roof/
+    # support replacements; the two stages have separate completion guards.
+    del parts[83][TAG]
+    cutter=bpy.data.objects.new('Temporary complete curved gate aperture',parts[83].data.copy())
+    bpy.context.scene.collection.objects.link(cutter)
+    try:
+        aperture=profile+[front(right_x,-10),front(left_x,-10)]
+        _replace(cutter,*extruded(aperture,-30,120))
+        for n in (84,85,95,96):
+            _difference(parts[n],cutter)
+        _replace(cutter,*extruded([front(outer_left,-10),front(outer_right,-10),
+                                  front(outer_right,300),front(outer_left,300)],-30,120))
+        for n in (84,85):
+            # The frame owns complete jamb columns; a planar partition avoids
+            # leaving thin coincident remnants behind its curved intrados.
+            _difference(parts[n],cutter)
+        for n in (95,96):
+            # One owner per facade: the new lintel fills the old oversized cut,
+            # and this subtraction removes coincident wall/lintel surfaces.
+            _difference(parts[n],parts[83])
+    finally:
+        bpy.data.objects.remove(cutter,do_unlink=True)
+    for obj in parts.values():
+        obj[ARCH_TAG]=True
+    return {'status':'rebuilt','parts':[83,84,85,95,96],
+            'spring_height':66,'rise':43,'segments':64,'depth':35.64}
+
+
 def refine():
     owned=[o for o in bpy.data.collections['Derby Working'].all_objects
            if o.type=='MESH' and o.get('asset_group')==ASSET and not o.hide_render]
@@ -124,7 +210,7 @@ def refine():
         if len(existing)!=5 or {o.get('source_node') for o in existing}!={
                 'building-079','building-080','building-084','building-085'}:
             raise ValueError('Incomplete East Bailey gate second pass')
-        return {'status':'existing','asset':ASSET}
+        return {'status':'existing','asset':ASSET,'arch':refine_arch()}
     def part(n,round_turret=False):
         found=[o for o in owned if o.get('source_node')==f'building-{n:03}'
                and ('Round corner' in o.name)==round_turret]
@@ -174,4 +260,4 @@ def refine():
     bpy.context.view_layer.update()
     return {'asset':ASSET,'status':'changed','parts':[79,80,84,85],
             'support_plane':'Continuous full-height pier footprint under parapet',
-            'roof_sections':len(sections),'changed_meshes':5}
+            'roof_sections':len(sections),'changed_meshes':5,'arch':refine_arch()}
