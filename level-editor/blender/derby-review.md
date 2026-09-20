@@ -38,7 +38,11 @@ East Bailey Gatehouse candidate `d0b5d3d77` failed user review of the gate arch.
 The roof/support pass retained the inherited arch (083); that opening needs a
 dedicated source-image and geometry correction, including jambs and passage
 depth. Do not generate gate textures until the corrected arch is shown and
-approved. East Bailey East Curtain approval remains pending separately.
+approved. East Bailey East Curtain (`a70eeef9e`) was approved separately after
+its solid/source-textured sheets were shown: "the curtain looks good". Its
+two-image, high-quality, no-mask texture fill is queued in
+`round-2/sunburst-east-bailey-east-curtain-approved/`. This is distinct from the
+already-generated Lower Bailey East Curtain.
 
 **Retain both texture alternatives.** Keep `generated-raw.png` and
 `generated-preserved.png`, the exact input and solid lighting reference,
