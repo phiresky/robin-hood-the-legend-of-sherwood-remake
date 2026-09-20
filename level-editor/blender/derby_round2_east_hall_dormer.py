@@ -4,14 +4,15 @@ from mathutils import Vector
 from derby_round2_east_hall import _replace
 
 
-def _half_mesh(left, right, eave, window, depth=1.0):
+def _half_mesh(left, right, eave, window, depth=1.0,
+               center=(1378.92, -2257.32, 0), bottom=318.76):
     """Closed half-prism with a gridded end face and an inset window panel.
 
     Matching front/back grids preserve manifold edges where the rectangular
     recess crosses the shared ridge plane. The long rear dormer is retained.
     """
-    ridge, bottom, length = 444.82, 318.76, 171.95
-    center = Vector((1378.92, -2257.32, 0))
+    ridge, length = 444.82, 171.95
+    center = Vector(center)
     across = Vector((.6560574, -.7547109, 0)).normalized()
     backward = Vector((.7547109, .6560574, 0)).normalized()
     outer = left if left < 0 else right
@@ -101,6 +102,32 @@ def refine_south_dormer_window():
         if obj.get('east_hall_dormer_window')==tag:
             changes.append({'source_node':obj['source_node'],'status':'already-refined'});continue
         vertices,faces=_half_mesh(left,right,eave,window)
+        result=_replace(obj,vertices,faces)
+        obj['east_hall_dormer_window']=tag
+        obj['east_hall_dormer_window_depth_inferred']=1.0
+        result.update({'window_local_bounds':window,'window_depth':1.0,'depth_inferred':True,'rear_end_retained':True})
+        changes.append(result)
+    return changes
+
+
+def refine_north_dormer_window():
+    """Use independently measured north-gable pixels, not a mirrored opening.
+
+    The north opening lies around source x1278..1284,y883..893. Its placement
+    differs from the south gable; one-unit depth is the same conservative
+    shallow-relief assumption, checked against the underlying main roof.
+    """
+    changes=[]
+    window=(-2.,7.,413.5,420.5)
+    for node,left,right,eave,bottom in ((203,0.,19.35,408.96,318.76),
+                                      (205,-19.35,0.,417.5,319.44)):
+        found=[o for o in bpy.data.collections['Derby Working'].all_objects
+               if o.type=='MESH' and not o.hide_render and o.get('source_node')==f'building-{node:03d}']
+        if len(found)!=1:raise ValueError(f'Expected one visible north dormer half{node}')
+        obj=found[0];tag='north-dormer-observed-window-v1'
+        if obj.get('east_hall_dormer_window')==tag:
+            changes.append({'source_node':obj['source_node'],'status':'already-refined'});continue
+        vertices,faces=_half_mesh(left,right,eave,window,center=(1279.04,-2141.41,0),bottom=bottom)
         result=_replace(obj,vertices,faces)
         obj['east_hall_dormer_window']=tag
         obj['east_hall_dormer_window_depth_inferred']=1.0
