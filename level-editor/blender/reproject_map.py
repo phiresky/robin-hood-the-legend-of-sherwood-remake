@@ -263,7 +263,8 @@ def restore_projection(map_name):
 
 def reproject_layers(manifest_path, report_dir=None, sample_spacing=12.0,
                      max_subdivisions=24, ownership_nodes=None, texels_per_unit=1,
-                     preserve_authored=True, exterior_source=None):
+                     preserve_authored=True, exterior_source=None,
+                     hidden_fill="neutral", source_mask_manifest=None):
     """Refresh audited exterior/interior layers without changing geometry visibility.
 
     Receiver ownership comes from the map-specific reviewed recipe, never from
@@ -360,7 +361,8 @@ def reproject_layers(manifest_path, report_dir=None, sample_spacing=12.0,
                 map_name, source, report_dir / (label + '-ownership.json'),
                 receiver_nodes=bake_receivers, occluder_nodes=occluders,
                 projection_label=label, elevation_deg=manifest['elevation_degrees'],
-                texels_per_unit=texels_per_unit, preserve_authored=preserve_authored))
+                texels_per_unit=texels_per_unit, preserve_authored=preserve_authored,
+                hidden_fill=hidden_fill, source_mask_manifest=source_mask_manifest))
         per_object = {entry["object"]: entry for entry in report["objects"]}
         for obj in sources:
             if obj["source_node"] not in receivers:

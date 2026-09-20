@@ -112,6 +112,39 @@ Blender process when they exceed the MCP command timeout. Geometry remains
 unchanged. Existing source-only bake materials are refreshed on rerun; other
 explicit `projection_preserve` materials retain their authored content.
 
+For the normal editor export, `hidden_fill="synthesized"` fills unknown texels
+from observed donor patches belonging to the same logical asset and reveal
+layer. Similar surface inclinations are preferred, then the same mesh. The
+installed `~/.cargo/bin/texture-synthesis` generator expands fully observed
+patches into cached 128×128 tiling textures with deterministic single-threaded
+seeds; jobs run with bounded parallelism. Donors smaller than 16 pixels use an
+explicitly reported mirrored fallback because the generator cannot handle those
+inputs reliably. Missing donors remain neutral and are listed in the report.
+Generated results are an appearance approximation, never source evidence.
+
+The default `hidden_fill="neutral"` remains unchanged for refinement workers.
+In synthesized exports, RGBA alpha records ownership (one observed, zero
+inferred), while the material remains opaque and uses `KHR_materials_unlit`.
+`source_ownership_fill` material extras allow the editor to hide inferred RGB
+without rebuilding the map. Linear texture interpolation is used. Accepted
+authored/AI materials are still protected by `projection_preserve`.
+
+`refresh_editor_textures.stage(map_name, manifest_path, fresh_output_dir,
+level_path)` stages a saved blend, the full scene, all named assets, and reports.
+It asserts that geometry, transforms, stable names and grouping are unchanged.
+`synthesize_owned_atlases.synthesize(map_name, output_dir)` can regenerate
+inferred RGB in existing ownership atlases without rerunning visibility rays;
+it asserts exact preservation of every observed texel.
+
+Both layer orchestration and `source_projection_bake.bake` accept an optional
+`source_mask_manifest`. Reviewed assignments in that manifest may reference
+converter-generated `*.rhp.d/masks/manifest.json` PNG inventories. Unassigned
+objects remain unconstrained; assignments are never inferred from overlapping
+bounding boxes. Each active projection label requires the exact source image
+hash, an explicit state description, and `reviewed: true` on every assignment.
+Source-node assignments override asset-group assignments. These masks constrain
+texture evidence, not geometry; see `occlusion_constraints.py` for the schema.
+
 Derby's upper gatehouse interior includes the surrounding upper masonry and
 battlements in its occluders. Excluding them previously assigned the same painted
 crenellations to both the battlements and the roof behind them. Other room covers

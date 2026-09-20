@@ -11,7 +11,8 @@ from pathlib import Path
 
 def bake(map_name, source_path, report_path, receiver_nodes=None,
          occluder_nodes=None, projection_label="source", texels_per_unit=1,
-         elevation_deg=35.0, preserve_authored=True):
+         elevation_deg=35.0, preserve_authored=True, source_mask_manifest=None,
+         hidden_fill="neutral", synthesis_cache=None):
     import bpy
     import numpy as np
     from mathutils import Vector
@@ -19,6 +20,11 @@ def bake(map_name, source_path, report_path, receiver_nodes=None,
 
     if texels_per_unit <= 0:
         raise ValueError("Texture density must be positive")
+    if hidden_fill not in ("neutral", "synthesized"):
+        raise ValueError("hidden_fill must be neutral or synthesized")
+    from source_texture_fill import donor_patch, fill_island, choose_donor, synthesize_tiles, prune_donors
+    donors_by_asset = {}
+    pending_fill = []
     objects = [o for o in bpy.data.collections[map_name + " Working"].all_objects
                if o.type == "MESH" and not o.hide_render]
     present = {o.get("source_node") for o in objects}
@@ -53,6 +59,10 @@ def bake(map_name, source_path, report_path, receiver_nodes=None,
     source.pixels.foreach_get(pixels)
     pixels = pixels.reshape(sh, sw, 4)
     bpy.data.images.remove(source)
+    constraints = None
+    if source_mask_manifest is not None:
+        from occlusion_constraints import SourceMaskConstraints
+        constraints = SourceMaskConstraints(source_mask_manifest, projection_label, source_hash, (sw, sh))
     ray_count = 0
 
     def visible_at(position):
@@ -70,12 +80,17 @@ def bake(map_name, source_path, report_path, receiver_nodes=None,
               "projection_label": projection_label, "receiver_nodes": receiver_nodes,
               "occluder_nodes": occluder_nodes, "objects": [], "geometry_changed": False,
               "ownership": "First hit depth at continuous projected texel center; tolerance 0.01 world units",
-              "unknown": "Neutral shaded color; no previous projected texture retained",
+              "unknown": hidden_fill,
+              "synthesis_method": "Example-based synthesis of fully observed donor patches, same asset and projection layer" if hidden_fill == "synthesized" else None,
+              "source_mask_manifest": str(Path(source_mask_manifest).resolve()) if source_mask_manifest else None,
+              "source_mask_state": constraints.state if constraints else None,
               "limitations": ["Geometry outside the artwork silhouette must still be corrected geometrically.",
                               "Reveal layers require explicit retained occluders matching their source artwork.",
                               "Ground cleanup and explicit projection_preserve materials are retained."]}
     light = Vector((-.35, -.45, .82)).normalized()
-    for obj in receivers:
+    for object_index, obj in enumerate(receivers):
+        if object_index % 25 == 0:
+            print(f"Ownership {projection_label}: object {object_index+1}/{len(receivers)}", flush=True)
         if obj.get("source_node") == "ground" or obj.get("source_obstacle") == "ground":
             continue
         if obj.data.users > 1:
@@ -131,8 +146,9 @@ def bake(map_name, source_path, report_path, receiver_nodes=None,
         if height > 16384:
             raise ValueError(f"Ownership atlas for {obj.name} exceeds 16384 pixels; lower texels_per_unit or split the mesh")
         atlas = np.zeros((height, width, 4), dtype=np.float32)
-        atlas[:, :, 3] = 1
-        known = unknown = 0
+        atlas[:, :, 3] = 0 if hidden_fill == "synthesized" else 1
+        known = unknown = mask_rejected = 0
+        masks = constraints.for_object(obj) if constraints else None
         for fid, origin, axis, vertical, normal, low, size, w, h, left, bottom in islands:
             yy, xx = np.mgrid[-2:h+2, -2:w+2]
             qx = low.x + (xx.ravel()+.5)*size.x/w
@@ -158,20 +174,33 @@ def bake(map_name, source_path, report_path, receiver_nodes=None,
             sy = np.floor(sh + positions[:, 1]*math.sin(angle) + positions[:, 2]*math.cos(angle)).astype(int)
             front = normal.dot(toward) > float(obj.get("projection_min_cosine", .0001))
             accepted = np.zeros(len(qx), dtype=bool)
+            in_source = (sx >= 0) & (sx < sw) & (sy >= 0) & (sy < sh)
+            mask_allowed = constraints.allowed(masks, sx, sy) if masks is not None else np.ones(len(sx), dtype=bool)
             if front:
-                for i in np.flatnonzero((sx >= 0) & (sx < sw) & (sy >= 0) & (sy < sh)):
+                mask_rejected += int(np.count_nonzero(in_source & ~mask_allowed & (best >= 0)))
+            if front:
+                for i in np.flatnonzero(in_source & mask_allowed):
                     accepted[i] = visible_at(positions[i])
             colors[accepted] = pixels[sy[accepted], sx[accepted]]
+            if hidden_fill == "synthesized":
+                colors[:, 3] = accepted.astype(np.float32)
             inside = best >= 0
             known += int(np.count_nonzero(accepted & inside))
             unknown += int(np.count_nonzero(~accepted & inside))
             atlas[bottom-2:bottom+h+2, left-2:left+w+2] = colors.reshape(h+4, w+4, 4)
+            if hidden_fill == "synthesized":
+                tile = colors.reshape(h+4, w+4, 4)
+                donor = donor_patch(tile, (accepted & inside).reshape(h+4, w+4))
+                if donor is not None:
+                    asset = obj.get("asset_group") or obj.name
+                    donors_by_asset.setdefault(asset, []).append((donor, abs(normal.z), obj.name))
         name = obj.name + " / owned " + projection_label
         existing = next(((i, m) for i, m in enumerate(mesh.materials)
                          if m and m.get("source_ownership_label") == projection_label), None)
         old_image = next((n.image for n in existing[1].node_tree.nodes
                           if n.type == "TEX_IMAGE" and n.image), None) if existing else None
         image = old_image or bpy.data.images.new(name, width=width, height=height, alpha=True)
+        image.alpha_mode = "CHANNEL_PACKED" if hidden_fill == "synthesized" else "STRAIGHT"
         if tuple(image.size) != (width, height):
             image.scale(width, height)
         image.pixels.foreach_set(atlas.ravel())
@@ -181,6 +210,8 @@ def bake(map_name, source_path, report_path, receiver_nodes=None,
         mat.use_nodes = True
         mat["source_ownership_bake"] = True
         mat["source_ownership_label"] = projection_label
+        mat["source_ownership_fill"] = hidden_fill
+        mat["source_ownership_alpha"] = "one=observed,zero=inferred;material remains opaque"
         mat["projection_preserve"] = True
         mat["reprojection_source_sha256"] = source_hash
         nodes, links = mat.node_tree.nodes, mat.node_tree.links
@@ -189,12 +220,12 @@ def bake(map_name, source_path, report_path, receiver_nodes=None,
         uv.uv_map = uv_name
         texture = nodes.new("ShaderNodeTexImage")
         texture.image = image
-        texture.interpolation = "Closest"
-        emission = nodes.new("ShaderNodeEmission")
+        texture.interpolation = "Linear"
         output = nodes.new("ShaderNodeOutputMaterial")
         links.new(uv.outputs["UV"], texture.inputs["Vector"])
-        links.new(texture.outputs["Color"], emission.inputs["Color"])
-        links.new(emission.outputs[0], output.inputs["Surface"])
+        # A direct color surface is Blender's implicit emission and exports as
+        # KHR_materials_unlit, with RGBA in baseColorTexture and opaque coverage.
+        links.new(texture.outputs["Color"], output.inputs["Surface"])
         slot = existing[0] if existing else len(mesh.materials)
         if not existing:
             mesh.materials.append(mat)
@@ -211,15 +242,45 @@ def bake(map_name, source_path, report_path, receiver_nodes=None,
                 layer.data[lid].uv = ((left+q.x/size.x*w)/width, (bottom+q.y/size.y*h)/height)
         report["objects"].append({"object": obj.name, "faces": len(islands),
                                   "known_texels": known, "unknown_texels": unknown,
+                                  "mask_rejected_texels": mask_rejected, "source_mask_constrained": masks is not None,
                                   "atlas_size": [width, height], "authored_faces_preserved": preserved})
         obj['reprojection_ownership_label'] = projection_label
         obj['reprojection_ownership_source_sha256'] = source_hash
         obj['reprojection_known_texels'] = known
         obj['reprojection_unknown_texels'] = unknown
         report["objects"][-1]["degenerate_faces_unchanged"] = degenerate
+        if hidden_fill == "synthesized":
+            pending_fill.append((obj, image, islands, report["objects"][-1]))
+    tiles = {}
+    if pending_fill:
+        print(f"Ownership {projection_label}: synthesizing hidden fill for {len(pending_fill)} meshes", flush=True)
+        donors_by_asset = {key: prune_donors(value) for key, value in donors_by_asset.items()}
+        selected = []
+        for obj, image, islands, entry in pending_fill:
+            donors = donors_by_asset.get(obj.get("asset_group") or obj.name, [])
+            selected.extend(choose_donor(donors, abs(island[4].z), obj.name) for island in islands)
+        tiles, report["synthesis"] = synthesize_tiles(selected, synthesis_cache or Path(report_path).parent / "synthesis-cache")
+    for obj, image, islands, entry in pending_fill:
+        width, height = image.size
+        atlas = np.empty(width*height*4, dtype=np.float32)
+        image.pixels.foreach_get(atlas)
+        atlas = atlas.reshape(height, width, 4)
+        donors = donors_by_asset.get(obj.get("asset_group") or obj.name, [])
+        filled = 0
+        for fid, origin, axis, vertical, normal, low, size, w, h, left, bottom in islands:
+            tile = atlas[bottom-2:bottom+h+2, left-2:left+w+2]
+            filled += fill_island(tile, donors, abs(normal.z), obj.name,
+                                  (int(origin.dot(axis)*texels_per_unit), int(origin.dot(vertical)*texels_per_unit)), tiles)
+        image.pixels.foreach_set(atlas.ravel())
+        image.update()
+        image.pack()
+        entry["synthesized_texels_including_padding"] = filled
+        entry["donor_patches"] = len(donors)
+        entry["missing_donor"] = not donors
     report["visibility_rays"] = ray_count
     report["known_texels"] = sum(o.get("known_texels", 0) for o in report["objects"])
     report["unknown_texels"] = sum(o.get("unknown_texels", 0) for o in report["objects"])
+    report["mask_rejected_texels"] = sum(o.get("mask_rejected_texels", 0) for o in report["objects"])
     Path(report_path).parent.mkdir(parents=True, exist_ok=True)
     Path(report_path).write_text(json.dumps(report, indent=2)+"\n")
     return report
