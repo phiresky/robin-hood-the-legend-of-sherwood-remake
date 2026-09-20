@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "map": "Derby",
+  "replaces_asset_id": "derby-lower-west-curtain",
+  "geometry_revision": "ed9f7782a",
+  "geometry_changes_allowed": false,
+  "groups": [
+    {
+      "id": "derby-lower-west-curtain",
+      "name": "Lower Bailey West Curtain Wall Walk",
+      "parts": [
+        {"obstacle": 23, "name": "West battlement wall"},
+        {"obstacle": 25, "name": "North battlement wall"},
+        {"obstacle": 42, "name": "South battlement wall"},
+        {"obstacle": 45, "name": "Continuous wall walk and masonry support"}
+      ]
+    },
+    {
+      "id": "derby-lower-west-access-stair",
+      "name": "Lower Bailey West Curtain Access Stair",
+      "parts": [
+        {"obstacle": 36, "name": "Landing battlements"},
+        {"obstacle": 37, "name": "Landing parapet return"},
+        {"obstacle": 38, "name": "Access stair treads and masonry support"}
+      ]
+    },
+    {
+      "id": "derby-lower-west-wall-turret",
+      "name": "Lower Bailey Southwest Wall Turret",
+      "parts": [
+        {"obstacle": 27, "name": "Round masonry shaft"},
+        {"obstacle": 28, "name": "Curved roof and finial / sector 01"},
+        {"obstacle": 29, "name": "Curved roof and finial / sector 02"},
+        {"obstacle": 30, "name": "Curved roof and finial / sector 03"},
+        {"obstacle": 31, "name": "Curved roof and finial / sector 04"},
+        {"obstacle": 32, "name": "Curved roof and finial / sector 05"}
+      ]
+    }
+  ],
+  "rationale": "Three independently selectable architectural assemblies. The turret includes its entire shaft and five roof sectors; the stair includes treads, support and landing parapets. The remaining battlement runs share one canonical continuous walk/support (045), so they stay one coherent wall-walk asset rather than duplicating or cutting that stable part. Canonical source coverage remains exactly 13 unique nodes."
+}
