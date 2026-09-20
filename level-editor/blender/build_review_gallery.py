@@ -34,6 +34,11 @@ def build(index_path, output, *, pending_only=False):
         sheets = [("solid", "Solid geometry"), ("textured", "Original textures + shaded unknown surfaces")]
         if item.get("context"):
             sheets.append(("context", "Original artwork with surrounding context"))
+        for key, label in (("revealed_solid", "Revealed interior geometry"),
+                           ("revealed_textured", "Revealed interior original textures + shaded unknown surfaces"),
+                           ("revealed_context", "Original revealed artwork with surrounding context")):
+            if item.get(key):
+                sheets.append((key, label))
         for key, label in sheets:
             source = Path(item[key])
             if not source.is_absolute():
@@ -67,8 +72,8 @@ nav{display:flex;gap:8px;flex-wrap:wrap;margin:18px 0}a{color:#afd3ff}nav a{padd
 article{padding:20px 0 40px;border-top:1px solid #455064;scroll-margin-top:15px}.status{color:#ffd898;font-weight:600}
 .sheets{display:grid;grid-template-columns:1fr 1fr;gap:16px}figure{margin:0}figcaption{padding:8px 0;color:#c2cddd}
 img{display:block;width:100%;background:black}select{font:inherit;padding:6px;border-radius:5px}
-figure[data-kind=context] img{width:auto;max-width:100%;max-height:400px}figure[data-kind=context]{grid-column:1/-1}
-body[data-mode=solid] figure[data-kind=textured],body[data-mode=textured] figure[data-kind=solid]{display:none}
+figure[data-kind$=context] img{width:auto;max-width:100%;max-height:400px}figure[data-kind$=context]{grid-column:1/-1}
+body[data-mode=solid] figure[data-kind$=textured],body[data-mode=textured] figure[data-kind$=solid]{display:none}
 body:not([data-mode=both]) .sheets{grid-template-columns:1fr}
 @media(max-width:1000px){.sheets{grid-template-columns:1fr}}
 </style><body data-mode="both"><header><h1>Derby model review</h1>
