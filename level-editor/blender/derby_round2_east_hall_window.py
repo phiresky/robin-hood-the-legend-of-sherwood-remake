@@ -3,17 +3,17 @@ import bpy,bmesh
 from mathutils import Vector
 
 
-def refine_closed_pointed_window():
+def _refine_pointed_window(node, center, normal, bottom, tag):
     found=[o for o in bpy.data.collections['Derby Working'].all_objects
-           if o.type=='MESH' and not o.hide_render and o.get('source_node')=='building-183']
+           if o.type=='MESH' and not o.hide_render and o.get('source_node')==f'building-{node:03d}']
     if len(found)!=1:raise ValueError('Expected one principal Hall facade')
-    obj=found[0];tag='hall-closed-pointed-window-v1'
+    obj=found[0]
     if obj.get('east_hall_pointed_window')==tag:return {'status':'already-refined'}
-    normal=Vector((.6560574,-.7547109,0)).normalized()
-    across=Vector((.7547109,.6560574,0)).normalized()
-    center=Vector((1478,-2334.39+(.6560574/.7547109)*(1478-1480),0))
+    normal=Vector(normal).normalized()
+    across=Vector((-normal.y,normal.x,0))
+    center=Vector(center)
     depth=2.0
-    contour=[(-24.,150.),(24.,150.),(24.,247.)]
+    contour=[(-24.,bottom),(24.,bottom),(24.,247.)]
     for a,b,c in [((24.,247.),(19.,275.),(0.,313.)),((0.,313.),(-19.,275.),(-24.,247.))]:
         for i in range(1,13):
             t=i/12;contour.append(((1-t)**2*a[0]+2*(1-t)*t*b[0]+t*t*c[0],
@@ -98,6 +98,17 @@ def refine_closed_pointed_window():
     if invalid or opened>old_open:raise ValueError(f'Window topology regressed: degenerate{invalid},open{old_open}->{opened}')
     bm.to_mesh(mesh);bm.free();obj.data=mesh
     obj['east_hall_pointed_window']=tag;obj['east_hall_window_depth_inferred']=depth
-    return {'source_node':'building-183','closed_glass_panel':True,'depth_inferred':depth,
+    return {'source_node':f'building-{node:03d}','closed_glass_panel':True,'depth_inferred':depth,
             'modified_front_faces':selected,'open_edges_before':old_open,'open_edges_after':opened,'degenerate':invalid,
             'window_local_contour':contour,'adjacent_open_casement_preserved':True}
+
+
+def refine_closed_pointed_window():
+    return _refine_pointed_window(183,(1478,-2334.39+(.6560574/.7547109)*(1478-1480),0),
+                                  (.6560574,-.7547109,0),150.,'hall-closed-pointed-window-v1')
+
+
+def refine_casement_transom():
+    """Only the fixed glazed arch above the open leaf is recessed."""
+    return _refine_pointed_window(189,(1540,-2282.144,0),(.6505046,-.7595022,0),
+                                  244.,'hall-fixed-casement-transom-v1')
