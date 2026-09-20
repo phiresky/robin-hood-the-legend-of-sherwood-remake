@@ -17,6 +17,27 @@ REFERENCE_SIZE = (1920, 2752)
 DEPTH_PROFILE = ((0.0, -900.0), (180.0, -600.0), (420.0, -220.0),
                  (680.0, 0.0))
 
+
+def _depth_at(y):
+    """Monotone cubic profile without artificial horizontal terraces.
+
+    Interior derivatives are shared across adjoining intervals. The final zero
+    derivative meets the castle plateau; positive secants prevent depth folds.
+    """
+    widths = [b[0]-a[0] for a, b in zip(DEPTH_PROFILE, DEPTH_PROFILE[1:])]
+    slopes = [(b[1]-a[1])/width for a, b, width in zip(DEPTH_PROFILE, DEPTH_PROFILE[1:], widths)]
+    derivatives = [slopes[0]]
+    for i in range(1, len(DEPTH_PROFILE)-1):
+        w1, w2 = 2*widths[i]+widths[i-1], widths[i]+2*widths[i-1]
+        derivatives.append((w1+w2)/(w1/slopes[i-1]+w2/slopes[i]))
+    derivatives.append(0.0)
+    for i, ((y0, z0), (y1, z1)) in enumerate(zip(DEPTH_PROFILE, DEPTH_PROFILE[1:])):
+        if y <= y1:
+            t = (y-y0)/(y1-y0)
+            return ((2*t**3-3*t**2+1)*z0 + (t**3-2*t**2+t)*(y1-y0)*derivatives[i]
+                    + (-2*t**3+3*t**2)*z1 + (t**3-t**2)*(y1-y0)*derivatives[i+1])
+    return DEPTH_PROFILE[-1][1]
+
 # Broad field/woodland ridges traced from the source. They deliberately omit
 # texture-scale trees, houses and cloud banks; those need separate geometry.
 RIDGES = (
@@ -45,10 +66,7 @@ def height_at(screen_x, screen_y):
         return 0.0
     if y <= DEPTH_PROFILE[0][0]:
         return DEPTH_PROFILE[0][1]
-    for (y0, z0), (y1, z1) in zip(DEPTH_PROFILE, DEPTH_PROFILE[1:]):
-        if y <= y1:
-            depth = z0 + (z1 - z0) * _smoothstep((y - y0) / (y1 - y0))
-            break
+    depth = _depth_at(y)
     # Fade relief at both boundaries so derivatives meet the adjacent surface.
     envelope = _smoothstep(y / 120.0) * _smoothstep((680.0 - y) / 180.0)
     relief = sum(height * math.exp(-2.0 * (((x - cx) / rx) ** 2
