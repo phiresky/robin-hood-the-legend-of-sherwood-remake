@@ -5,6 +5,14 @@ Run `reproject_map.py` through Blender MCP after the last geometry edit, before
 and materials in memory; saving the checkpoint and publishing exports remain
 explicit steps.
 
+Use `reproject_layers` for final reviewed output. It now finishes each layer with
+`source_projection_bake.bake`: every atlas texel checks the first surface hit at
+its continuous source-camera coordinate. Hidden texels become neutral shaded
+gray; they never retain an older projected atlas. Explicitly preserved authored
+or generated materials and the cleaned ground are retained. The low-level
+`reproject_map` call below is a preliminary face-assignment pass, not sufficient
+on its own to guarantee source-pixel ownership.
+
 ```python
 path = ROOT / "level-editor/blender/reproject_map.py"
 scope = {"__file__": str(path), "__name__": "reproject_map"}
@@ -30,12 +38,13 @@ passes use `revealed.png` and omit cover geometry from their occluder lists.
 Before changing an existing layer partition, call
 `restore_projection("Derby")` once to restore all saved atlas face assignments,
 then run the disjoint exterior and interior passes. Interior visibility can use
-an audited interior-only BVH: this removes exterior shells only from the source
-visibility calculation, never physically deletes them. Derby's covers include
+an audited state-specific BVH: retained exterior battlements and walls must still
+occlude interior receivers. This changes source visibility only, never physically
+deletes geometry. Derby's covers include
 front-wall cutaways, so dropping roofs alone does not reveal every interior.
 Stable IDs are `source_node` values such as `building-212`. Do not equate
 collision obstacles or image overlap with verified interior ownership. Retain
-fallback materials on unaudited interior surfaces.
+explicit uncertainty on unaudited interior surfaces.
 
 Bake active mesh modifiers first. Meshes must already have valid fallback atlas
 materials and UVs. Each map must use a `<Map> Working` collection with Z-up world
@@ -47,8 +56,9 @@ the selected working occluder meshes. Source-facing polygons receive the packed 
 image only when all visibility samples are unoccluded and their vertices lie
 inside the source image. Larger triangles receive more samples, up to the
 configurable subdivision cap. Back-facing, partly hidden and out-of-image faces
-retain their previous materials and UVs. This avoids indiscriminately painting
-foreground buildings onto hidden walls. A face material attribute retains the
+retain their previous materials and UVs in this preliminary pass. Those old
+materials can themselves contain duplicated projection, which is why the final
+ownership bake is required. A face material attribute retains the
 fallback assignment so the function can run again after subsequent edits.
 
 The report records source-image and geometry hashes, projected and fallback face
@@ -80,7 +90,8 @@ result = scope["reproject_layers"](
 This preflights distinct covered/revealed image paths and matching dimensions,
 valid patch IDs, disjoint receiver ownership, present/visible source IDs and
 fallback materials. It restores prior passes, annotates audited roles, then
-runs one exterior pass and one interior-only pass per patch. It rejects maps
+runs an exterior pass and a pass per interior patch, each with independently
+reviewed receiver and occluder sets from `projection_occluders`. It rejects maps
 without an authored receiver review. Pixel-overlap candidates are never promoted
 to interiors; ambiguous candidates receive covered artwork and keep explicit
 ambiguous metadata. No objects are hidden or removed.
@@ -91,6 +102,21 @@ their assigned projection layer, source path, hashes and projected/fallback face
 counts. Original sight activation metadata remains independent of rendering.
 Matching source images are reused across interior materials and reruns to avoid
 packing redundant copies in exports. Ground stays on its existing atlas.
+
+`ownership_bakes` records the final known/unknown texels, atlas dimensions and
+visibility checks; preliminary projected/fallback face counts are not proof of
+final texture ownership. Optional `ownership_nodes` scopes a worker's expensive
+bake to its assigned parts; final publication defaults to all non-ground
+receivers. Full-map bakes can take several minutes and should use a background
+Blender process when they exceed the MCP command timeout. Geometry remains
+unchanged. Existing source-only bake materials are refreshed on rerun; other
+explicit `projection_preserve` materials retain their authored content.
+
+Derby's upper gatehouse interior includes the surrounding upper masonry and
+battlements in its occluders. Excluding them previously assigned the same painted
+crenellations to both the battlements and the roof behind them. Other room covers
+contain partially removed facades and retain explicit audit limitations; a whole
+object is not automatically removed just because it intersects a cover sprite.
 
 `reprojection_selftest.py` exercises front-facing projection, occlusion,
 back-facing fallback, original UV preservation and repeat-run geometry/slot

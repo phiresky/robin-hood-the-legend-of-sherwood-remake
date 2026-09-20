@@ -1,4 +1,4 @@
-"""Version-two west cottage: coherent thick thatch, eaves and porch timbers.
+"""West cottage: source-fitted thick thatch, eaves and porch timbers.
 
 Migrates the closed collision-prism pass, keeping all earlier meshes hidden.
 Run layered reprojection afterwards. Grazing sidewalls stay unknown for texture
@@ -8,10 +8,33 @@ import math
 import bpy
 import bmesh
 from mathutils import Matrix, Vector
+from mathutils.bvhtree import BVHTree
 
-TAG='west-cottage-thatch-eaves-v2'
+TAG='west-cottage-thatch-eaves-v4-level-ridge'
 KEY='west_cottage_shell'
 SIN,COS=math.sin(math.radians(35)),math.cos(math.radians(35))
+RIDGE_HEIGHT,EAVE_HEIGHT=121.53,87.0
+
+# Rear thatch outline measured in the covered artwork's pixel coordinates.
+# The collision-derived rear edge includes a strip of the terrain behind it.
+REAR_OUTLINE={
+    55:((621,1847),(626,1854),(632,1860),(638,1864),(644,1868),
+        (650,1872),(656,1876),(662,1880),(666,1885)),
+    56:((621,1847),(616,1856),(611,1861),(606,1865),(601,1868),
+        (596,1871),(591,1873),(586,1875),(582,1877)),
+}
+
+
+def _rear_shift(point,target):
+    screen=_screen(point)
+    return Vector((target[0]-screen.x,-(target[1]-screen.y)/SIN,0))
+
+
+def _level_preserving_projection(point,height):
+    point=point.copy()
+    point.y-=(height-point.z)*COS/SIN
+    point.z=height
+    return point
 
 
 def _screen(p):
@@ -147,7 +170,7 @@ def refine():
     existing=[o for o in working.objects if o.get(KEY)==TAG and not o.hide_render]
     if existing:
         if {o.get('source_node') for o in existing}!={f'building-{n:03}' for n in (53,54,55,56)}:
-            raise ValueError('Incomplete version-two west cottage refinement')
+            raise ValueError('Incomplete west cottage refinement')
         return {'status':'existing','objects':[o.name for o in existing]}
     previous=[o for o in working.objects if o.type=='MESH' and o.get('asset_group')=='derby-lower-west-cottage' and not o.hide_render]
     sources={}
@@ -168,46 +191,60 @@ def refine():
         eave_front=outer_front-direction*3+out*3.5;eave_back=outer_back+direction*2+out*3.5
         points=[];rows,columns=25,9
         for row in range(rows):
-            # Observed front eave droops below the collision-derived lip. The
-            # ridge rises gently toward the rear; regular surface bands avoid
-            # forcing this curved thatch into a kinked four-corner polygon.
+            # Image-space height combines world depth and elevation. Keep the
+            # main ridge/eaves level, solving depth from their source outlines.
+            # The lower front triangle is a hip, not a sloping main ridge.
             for col in range(columns):
                 t=col/(columns-1)
-                ridge_slope=(121.53-94.5)/.86
-                ridge_zero=94.5-ridge_slope*.14
                 bulge=1.4*math.sin(math.pi*t)
-                # Solve the hip/slope intersection analytically for each
-                # cross-roof band. Both surfaces share this exact boundary.
-                join=((1-t)*ridge_zero+t*70+bulge-70)/((94.5-70)/.14-((1-t)*ridge_slope+t*17))
-                s=join+(1-join)*row/(rows-1)
-                center=front.lerp(back,s);edge=eave_front.lerp(eave_back,s)
-                p=center.lerp(edge,t)
-                p.z=(ridge_zero+ridge_slope*s)*(1-t)+(70+17*s)*t+bulge
-                points.append(p)
+                height=RIDGE_HEIGHT*(1-t)+EAVE_HEIGHT*t+bulge
+                apex=Vector((607,1919,1))
+                corner=Vector((651.9553,1969.057,1)) if n==55 else Vector((564.1861,1962.3821,1))
+                projected=apex.lerp(corner,t)
+                p=Vector((projected.x,-(projected.y+height*COS)/SIN,height))
+                rear=back.lerp(eave_back,t)
+                rear.z=121.53*(1-t)+87*t+bulge
+                p=_level_preserving_projection(p,height)
+                rear+=_rear_shift(rear,REAR_OUTLINE[n][col])
+                rear=_level_preserving_projection(rear,height)
+                u=row/(rows-1)
+                p=p.lerp(rear,u)
+                # Only the rounded front thatch lip droops. The longitudinal
+                # ridge and the remaining 70% of each eave stay horizontal.
+                blend=min(1,u/.3)
+                droop=17*t*(1-blend*blend*(3-2*blend))
+                points.append(_level_preserving_projection(p,p.z-droop))
         top_faces=[]
         for row in range(rows-1):
             for col in range(columns-1):
                 a=row*columns+col;top_faces.append((a,a+1,a+1+columns,a+columns))
-        lip=front.copy();lip.z=70;points.append(lip)
+        lip=front.copy();lip.z=70
+        points.append(lip)
         top_faces.append(tuple([len(points)-1]+list(reversed(range(columns)))))
         mesh=_roof_shell(f'West cottage {n} thick thatch',points,top_faces,4)
         obj=_add(source,mesh,'Lower Bailey West Cottage'+(' / East thatch roof' if n==55 else ' / West thatch roof'),'thatch roof')
         reports.append(_finish(obj,source,matrix,world))
-        top=[front+direction*3,back-direction*2,outer_back.copy(),outer_front.copy()]
-        for p,z in zip(top,(66,83,83,66)):p.z=z
+        roof_tree=BVHTree.FromPolygons([v.co for v in obj.data.vertices],
+                                     [tuple(p.vertices) for p in obj.data.polygons])
+        last_row=(rows-1)*columns
+        rear_center=points[last_row].lerp(points[0],.16)
+        rear_outer=points[last_row+columns-1].lerp(points[columns-1],.16).lerp(rear_center,.06)
+        outline=[lip.lerp(points[0],.4),points[0].copy(),rear_center,rear_outer,outer_front.copy()]
+        centroid=sum(outline,Vector())/len(outline)
+        top=[]
+        for edge,a in enumerate(outline):
+            b=outline[(edge+1)%len(outline)]
+            for step in range(12):
+                q=a.lerp(b,step/12).lerp(centroid,.001)
+                hit=roof_tree.ray_cast(Vector((q.x,q.y,1000)),Vector((0,0,-1)))[0]
+                if hit is None:raise ValueError(f'Cottage wall escaped roof: {n}, {edge}, {step}')
+                q.z=hit.z-3.8;top.append(q)
+        # Keep wall foundations straight; only their upper edge follows the
+        # actual roof underside, closing the hip and rear gable without gaps.
         wall_mesh=_solid(f'West cottage {n} wall shell',top)
-        # Keep the wall ceiling below the roof everywhere. A separate closed
-        # rear gable avoids the old nonplanar ceiling poking through the hip.
-        a,b=top[1].copy(),top[2].copy();c=a.copy();c.z=117.5
-        gable=[a,b,c]+[p-direction*2 for p in (a,b,c)]
-        offset=len(wall_mesh.vertices)
-        vertices=[v.co.copy() for v in wall_mesh.vertices]+gable
-        faces=[tuple(p.vertices) for p in wall_mesh.polygons]
-        faces += [tuple(offset+i for i in f) for f in ((0,1,2),(5,4,3),(0,3,4,1),(1,4,5,2),(2,5,3,0))]
-        wall_mesh.clear_geometry();wall_mesh.from_pydata(vertices,[],faces)
         obj=_add(source,wall_mesh,
                  'Lower Bailey West Cottage'+(' / East walls' if n==55 else ' / West walls'),'walls')
-        reports.append(_finish(obj,source,matrix,world,True))
+        reports.append(_finish(obj,source,matrix,world))
     source=sources[54];matrix,world=worlds[54]
     top=[world[i].copy() for i in (16,17,18,19)]
     for p in top:p.z-=4
@@ -221,8 +258,9 @@ def refine():
              'Lower Bailey West Cottage / Extension thatch eaves','extension roof')
     reports.append(_finish(obj,source,matrix,world))
     source=sources[53];matrix,world=worlds[53]
-    porch=next((o for o in previous if o.get('source_node')=='building-053' and o.get('cottage_refinement')),None)
-    if porch is None:raise ValueError('Apply the audited porch arch refinement before cottage version two')
+    porch=next((o for o in previous if o.get('source_node')=='building-053' and
+                (o.get('cottage_refinement') or o.get('cottage_component_role')=='porch body')),None)
+    if porch is None:raise ValueError('Apply the audited porch arch refinement before the cottage shell')
     mesh=porch.data.copy();mesh.transform(porch.matrix_world)
     obj=_add(source,mesh,'Lower Bailey West Cottage / Porch with recessed doorway','porch body')
     reports.append(_finish(obj,source,matrix,world))
@@ -244,6 +282,10 @@ def refine():
         obj.hide_render=True;obj.hide_set(True);obj['superseded_cottage_refinement']=TAG
     bpy.context.view_layer.update()
     return {'status':'refined','version':TAG,'parts':reports,'projection_min_cosine':.25,
-            'roof_thickness':4,'eave_overhang':3.5,
+            'roof_thickness':4,'side_wall_inset_fraction':.06,'rear_wall_inset_fraction':.16,
+            'rear_roof_source_outline':REAR_OUTLINE,
+            'main_ridge_height':RIDGE_HEIGHT,'main_eave_height':EAVE_HEIGHT,
+            'front_lip_length_fraction':.3,'front_lip_height':70,
+            'hip_apex_source_pixel':[607,1919],
             'limitations':['Concealed walls need multiview completion; unseen openings are not invented.',
                            'Porch rails have geometry; the underlying roof closes unobserved interior.']}

@@ -262,7 +262,8 @@ def restore_projection(map_name):
 
 
 def reproject_layers(manifest_path, report_dir=None, sample_spacing=12.0,
-                     max_subdivisions=24):
+                     max_subdivisions=24, ownership_nodes=None, texels_per_unit=1,
+                     preserve_authored=True, exterior_source=None):
     """Refresh audited exterior/interior layers without changing geometry visibility.
 
     Receiver ownership comes from the map-specific reviewed recipe, never from
@@ -309,6 +310,8 @@ def reproject_layers(manifest_path, report_dir=None, sample_spacing=12.0,
         raise ValueError("No exterior receiver nodes")
     paths = {layer: (manifest_path.parent / manifest["sources"][layer]).resolve()
              for layer in ("exterior", "interior")}
+    if exterior_source:
+        paths['exterior'] = Path(exterior_source).resolve()
     if paths["exterior"] == paths["interior"]:
         raise ValueError("Covered and revealed source paths must be distinct")
     for path in paths.values():
@@ -331,18 +334,33 @@ def reproject_layers(manifest_path, report_dir=None, sample_spacing=12.0,
     annotation = roles.annotate_layers(manifest_path)
     manifest_hash = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
     recipe_hash = hashlib.sha256(json.dumps(interiors, sort_keys=True).encode()).hexdigest()
-    passes = [("exterior", paths["exterior"], exterior)]
-    passes.extend(("interior-" + patch, paths["interior"], sorted(nodes))
+    retained = roles.projection_occluders(manifest, available)
+    passes = [("exterior", paths["exterior"], exterior, exterior)]
+    passes.extend(("interior-" + patch, paths["interior"], sorted(nodes), retained[patch])
                   for patch, nodes in sorted(interiors.items()))
     reports = []
-    for label, source, receivers in passes:
+    ownership_reports = []
+    import importlib.util
+    bake_spec = importlib.util.spec_from_file_location('source_projection_bake', Path(__file__).with_name('source_projection_bake.py'))
+    baking = importlib.util.module_from_spec(bake_spec)
+    bake_spec.loader.exec_module(baking)
+    if ownership_nodes is not None and set(ownership_nodes) - available:
+        raise ValueError('Unknown ownership bake receiver nodes')
+    for label, source, receivers, occluders in passes:
         report = reproject_map(map_name, source, report_dir / (label + ".json"),
                                elevation_deg=manifest["elevation_degrees"],
                                sample_spacing=sample_spacing,
                                max_subdivisions=max_subdivisions,
-                               receiver_nodes=receivers, occluder_nodes=receivers,
+                               receiver_nodes=receivers, occluder_nodes=occluders,
                                projection_label=label)
         reports.append(report)
+        bake_receivers = receivers if ownership_nodes is None else sorted(set(receivers) & set(ownership_nodes))
+        if bake_receivers:
+            ownership_reports.append(baking.bake(
+                map_name, source, report_dir / (label + '-ownership.json'),
+                receiver_nodes=bake_receivers, occluder_nodes=occluders,
+                projection_label=label, elevation_deg=manifest['elevation_degrees'],
+                texels_per_unit=texels_per_unit, preserve_authored=preserve_authored))
         per_object = {entry["object"]: entry for entry in report["objects"]}
         for obj in sources:
             if obj["source_node"] not in receivers:
@@ -359,14 +377,19 @@ def reproject_layers(manifest_path, report_dir=None, sample_spacing=12.0,
               "manifest_sha256": manifest_hash, "receiver_recipe_sha256": recipe_hash,
               "restored": restored, "interior_receivers": interiors,
               "exterior_receivers": exterior, "passes": reports,
+              "interior_occluders": retained,
+              "occluder_audit": roles.projection_occluder_audit(manifest),
+              "ownership_bakes": ownership_reports,
+              "ownership_scope": 'all non-ground receivers' if ownership_nodes is None else list(ownership_nodes),
               "projected_faces": sum(item["projected_faces"] for item in reports),
               "fallback_faces": sum(item["fallback_faces"] for item in reports),
               "ambiguous_receivers": sorted({obj["source_node"] for obj in sources
                                               if obj.get("reveal_role") == "ambiguous"}),
               "limitations": [
                   "Ambiguous overlap candidates receive covered artwork, not an inferred interior state.",
-                  "Interior-only BVHs omit exterior shells for source visibility; scene visibility is unchanged.",
+                  "Interior visibility includes audited retained shells; partially cut-away facade geometry still requires further review.",
                   "Ground remains on its existing cleaned atlas; no ground synthesis performed.",
-                  "Hidden and partly occluded faces retain fallback atlas materials."]}
+                  "Ownership-baked hidden texels are neutral; explicitly preserved authored materials are not replaced.",
+                  "Face assignment counts describe the preliminary projection; ownership bake reports describe final texel visibility."]}
     (report_dir / "layers-report.json").write_text(json.dumps(report, indent=2) + "\n")
     return report

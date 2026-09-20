@@ -105,19 +105,20 @@ def _ownership(config):
 def _review_layers(config):
     if not config.get("projection_manifest"):
         return None
-    from interior_layers import projection_receivers
+    from interior_layers import projection_receivers, projection_occluders
     path = Path(config["projection_manifest"])
     manifest = json.loads(path.read_text())
     interior = projection_receivers(manifest)
     available = {o.get("source_node") for o in _objects(config)
                  if o.type == "MESH" and not o.hide_render}
     exterior = available - {node for nodes in interior.values() for node in nodes}
-    partitions = [("exterior", sorted(exterior))]
-    partitions.extend(("interior", sorted(nodes)) for nodes in interior.values())
+    occluders = projection_occluders(manifest, available)
+    partitions = [("exterior", sorted(exterior), sorted(exterior))]
+    partitions.extend(("interior", sorted(nodes), occluders[patch]) for patch, nodes in interior.items())
     exterior_source = _mission_review_source(config) or str((path.parent / manifest['sources']['exterior']).resolve())
     return [{"source_path": exterior_source if source == 'exterior' else str((path.parent / manifest["sources"][source]).resolve()),
-             "receiver_nodes": nodes, "occluder_nodes": nodes}
-            for source, nodes in partitions]
+             "receiver_nodes": nodes, "occluder_nodes": blockers}
+            for source, nodes, blockers in partitions]
 
 
 def _mission_review_source(config):
@@ -157,10 +158,19 @@ def _reproject(config, report_dir):
         report_dir = Path(report_dir)
         report_dir.mkdir(parents=True, exist_ok=True)
         _json(report_dir / "layers.json", manifest)
-        return reproject_layers(report_dir / "layers.json", report_dir)
-    return reproject_map(config["map_name"], config["source_path"],
-                         Path(report_dir) / "source.json",
-                         elevation_deg=config["elevation_degrees"])
+        return reproject_layers(report_dir / "layers.json", report_dir,
+                                ownership_nodes=config['part_ids'], preserve_authored=False,
+                                exterior_source=_mission_review_source(config))
+    report = reproject_map(config["map_name"], config["source_path"],
+                           Path(report_dir) / "source.json",
+                           elevation_deg=config["elevation_degrees"])
+    from source_projection_bake import bake
+    report['ownership'] = bake(config['map_name'], config['source_path'],
+                               Path(report_dir) / 'ownership.json',
+                               receiver_nodes=config['part_ids'],
+                               elevation_deg=config['elevation_degrees'],
+                               preserve_authored=False)
+    return report
 
 
 def _render(config, output, baseline=None):

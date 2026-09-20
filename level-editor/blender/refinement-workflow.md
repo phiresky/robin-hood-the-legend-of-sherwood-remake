@@ -53,6 +53,9 @@ not an operating-system sandbox; materials elsewhere are refreshed by the shared
 projection pass and are not considered worker geometry changes.
 
 The textured review never samples synthesized materials or an old baked atlas.
+The editable asset's materials are also rebaked from original artwork during
+preparation and modified generation, with hidden texels neutral gray. Generated
+appearance in the source snapshot is not retained on the assigned worker asset.
 It projects explicit original artwork onto current geometry with scene occlusion
 and surface-angle checks. Unknown surfaces show neutral shaded geometry. The
 original-view tile follows the same visibility rules: it is not force-filled with

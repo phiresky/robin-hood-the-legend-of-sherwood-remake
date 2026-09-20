@@ -14,13 +14,13 @@ collision data separate from refined rendering geometry.
 ## Current integration state — 2026-09-20
 
 All 30 original logical assets have received an individual worker pass. **All initial
-passes are now merged and published, including the 30 standalone assets. The
+passes are now merged and published, with 34 standalone assets after regrouping. The
 assets are not finished.** “Published”
 means the geometry is included in the latest map export, not that all defects
-are resolved. West Cottage's second geometry pass and generated texture bake are
+are resolved. West Cottage's fourth geometry pass and generated texture bake are
 now published; the generated hidden details remain inferred.
 
-Latest map publication: `work/derby-refinement/review-tooling-publish/derby.scene.glb`
+Latest map publication: `work/derby-refinement/ownership-level-roof-publish/derby.scene.glb`
 to `library/scenes/derby-volumes.scene.glb`, with the document fingerprint updated.
 It contains 34 groups, 270 canonical parts, 306 meshes, and 154 modeled steps.
 Browser acceptance passed: 34 named groups, 270 parts, 14 stair assemblies,
@@ -31,19 +31,21 @@ The document migrated six still-authored part memberships; custom grouping and
 world transforms are preserved. Focused ownership-migration tests and pipeline
 typecheck passed.
 
-Working integration checkpoint: `derby-refinement.blend`, with evidence in
-`all-assets-integration/changes.json` and `all-assets-integration/reprojection/`.
-The combined projection refreshed 40,864 faces and retained 127,202 fallback faces.
+Working integration checkpoint: `derby-refinement.blend`. The latest scene-wide
+ownership bake is recorded in `ownership-global/reprojection/layers-report.json`:
+five layers, 4,468,557 known texels and 18,382,931 neutral unknown texels. It retains
+explicit authored/generated materials and the cleaned ground. Cottage V4 then
+received its own fresh projection and generated texture bake after its geometry edit.
 Well ground-ghost cleanup is now applied (1,935 pixels), and 21 mesh names synced.
-West Cottage's second pass fixes nonplanar roof creases, eave thickness and
-grazing-wall projection stretches. The initial `lower-west-cottage-sunburst`
-input is superseded by `lower-west-cottage-shaded-v2`.
+West Cottage V4 fixes the erroneous rising ridge and long eaves; only its local
+rounded front lip droops. Earlier generation inputs are superseded by
+`west-cottage-shaded-v4/input.png`.
 
 Paths below are relative to `level-editor/work/derby-refinement/`.
 Reusable geometry recipes are in `level-editor/blender/derby_asset_*.py`.
 
 New integration published: reviewed ownership now has 34 groups (Hall
-stairs joined to Hall; detached yard props split out). West Cottage V3, the
+stairs joined to Hall; detached yard props split out). West Cottage V4, the
 Lower East Curtain stair-side masonry fix, rounded Keep turret and corrected
 Keep hanging turret are merged into the working blend and editor export. The hanging turret had
 incorrectly reached ground level, capturing a roughly 534-pixel background strip;
@@ -72,7 +74,7 @@ geometry remain unfinished. Individual chain links are simplified.
 | Lower Bailey Well (formerly courtyard prop) | Published | Hollow shaft, iron lifting frame, rope, pulley, bucket; `lower-well-worker-v2`. Printed ground ghost cleanup integrated. |
 | Southern Approach Stone | Published | Closed angular outcrop, replacing tent-like wedges; `approach-stone-worker/worker-v2`. |
 | Lower Bailey East Cottage | Published | Hipped roof, closed walls, barrel; `lower-east-cottage`. |
-| Lower Bailey West Cottage | V3 geometry and generated texture published | Continuous hip boundary, thick thatch, porch rails and source-fitted rear silhouette; eight closed components. Removed terrain strip along rear roof edge. Fresh source projection, no-mask Sunburst high generation and atlas bake: `west-cottage-texture-baked-v3/eight-views.png`. Concealed windows/timber patterns are synthesized, not recovered facts. |
+| Lower Bailey West Cottage | V4 level roof and generated texture published | Level main ridge/long eaves, local rounded front lip, source-fitted hip and rear silhouette; eight closed components. Fresh source projection and Sunburst high no-mask bake: `west-cottage-texture-baked-v4/eight-views.png`. Thin neutral base strips remain on some hidden views. Concealed windows/timber patterns are synthesized, not recovered facts. |
 | Lower Bailey Southwest Cottage | Published | Thatched eave and damaged-roof recess; `southwest-cottage/reviewed`. |
 | Lower Bailey Southeast Cottage | Published | Closed end wedge, porch recess, thick roof; `southeast-cottage-pass3`. |
 | Lower Bailey Northwest Cottage | Published | Hipped roofs, barrel, fence, wash tub; `northwest-cottage-final-v5`. |
@@ -125,23 +127,39 @@ geometry remain unfinished. Individual chain links are simplified.
 
 ## Next required work
 
+Latest reported defects corrected and published:
+- Cottage ridge is level at 121.53 and long eaves at 87. The local front lip drops
+  to 70; its hip apex matches source pixel (607,1919). Eight components are closed
+  and nondegenerate. Texture bake retained geometry exactly.
+- Gatehouse double-assigned crenellations were caused by interior projection
+  omitting retained exterior battlements from its occluders. Corrected layer rules
+  plus per-texel first-hit depth checks fix that assignment. Independently checked:
+  all 104 previously blocked roof samples now unknown, zero leaked textures;
+  276 of 280 visible samples remain textured, four are boundary texels.
+- Old projected fallback textures were an additional general problem. Final
+  ownership bakes replace hidden texels with neutral shading instead of retaining
+  those atlases. Other partially cut-away facades retain explicit audit limitations
+  in `interior_layers.py`; their face-level visibility still needs further review.
+
 Reusable tooling is implemented: a complete scene grouping review precedes per-asset agent
 workspaces. Each workspace receives a model, instructions, original context crop,
 and eight-view solid/source-only textured sheets. `modified/` repeats the layout
 with fixed cameras and fresh projection; synthesized textures are excluded from
-reference evidence. Unchanged input/modified images passed byte-identity checks.
+reference evidence. The worker model itself now uses source-only materials too.
 The grouping audit moved Hall stairs into the Hall and detached yard props into
-independent groups. Tested workspace: `agent-workspaces-v3/derby-lower-west-cottage`.
-Its `input/` and `modified/` have identical layouts and all 27 PNGs match pixel for
-pixel for unchanged geometry. Ownership tests reject outside geometry, visibility
+independent groups. Tested workspace: `agent-workspaces-v4/derby-lower-west-cottage`.
+Its `input/` and `modified/` have identical layouts, cameras, context and known-source
+masks. Six solid-render pixels differ by at most 4/255; geometry is unchanged.
+All 2,840 active faces use source-only materials. Ownership tests reject outside geometry, visibility
 and source-ID changes. `agent-workspaces-v3/dispatch.json` plans 34 static workers;
 only the cottage workspace has been prepared, not all 34 new refinement passes.
 Mission-aware review sources were separately verified in `drawbridge-workspace-review`.
 
-West Cottage V3 is reviewed and published: rear roof profile now follows
-source silhouette anchors, removing an 8–12 pixel background strip. Fresh projection,
-high-quality no-mask generation and atlas bake are complete in
-`west-cottage-texture-baked-v3/worker.blend`; see `eight-views.png` there.
+West Cottage V4 is reviewed and published with fresh source projection,
+high-quality no-mask generation and atlas bake in
+`west-cottage-texture-baked-v4/worker.blend`; see `eight-views.png` there.
+Thin neutral base strips remain in some generated side/rear views; hidden details
+are inferred. Further texture refinement should address these without distorting geometry.
 
 1. Keep the reviewed gatehouse shape while resolving texture artifacts. Export UV
    compaction fixed the editor-only hole; source and exported roof triangles match.
@@ -149,14 +167,14 @@ high-quality no-mask generation and atlas bake are complete in
    remain a separate potential cleanup, not a demonstrated cause of this defect.
 2. Improve generated rear texture placement and verify the original-camera render
    remains unchanged. Do not infer texture correctness from the generated sheet.
-3. West Cottage's third geometry pass, fresh projection, shaded input generation
+3. West Cottage's fourth geometry pass, fresh projection, shaded input generation
    and no-mask texture generation are complete. Review remaining fine-detail and
    hidden-surface consistency defects in the baked eight-view render.
 4. After subsequent changes, export/publish map and standalone assets together and
    repeat editor loading, selection, UV and reveal checks as appropriate. Initial
    combined publication and checks are complete.
 5. Full-map comparisons for the combined geometry are in
-   `review-tooling-publish/full-map/reference-{solid,textured}.png`; refreshed after
+   `ownership-level-roof-publish/full-map/reference-{solid,textured}.png`; refreshed after
    the latest cottage, Keep and bridge changes. Keep this table current.
 
 Source art cannot establish unseen geometry uniquely. Record remaining defects
