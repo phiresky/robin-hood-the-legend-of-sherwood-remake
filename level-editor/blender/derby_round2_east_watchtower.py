@@ -8,7 +8,7 @@ ASSET = 'derby-east-watchtower'
 TAG = 'east-watchtower-round2-curved-shell-v3'
 
 
-def _replace(obj, verts, faces):
+def _replace(obj, verts, faces, weld=True):
     mesh = bpy.data.meshes.new(obj.name + ' / round two')
     inverse = obj.matrix_world.inverted()
     mesh.from_pydata([inverse @ Vector(v) for v in verts], [], faces)
@@ -16,7 +16,8 @@ def _replace(obj, verts, faces):
         mesh.materials.append(material)
     mesh.uv_layers.new(name='Round2 placeholder')
     bm = bmesh.new(); bm.from_mesh(mesh)
-    bmesh.ops.remove_doubles(bm, verts=list(bm.verts), dist=.0001)
+    if weld:
+        bmesh.ops.remove_doubles(bm, verts=list(bm.verts), dist=.0001)
     bmesh.ops.recalc_face_normals(bm, faces=list(bm.faces))
     bm.to_mesh(mesh); bm.free()
     obj.data = mesh
@@ -54,7 +55,7 @@ def _lathe(profiles, segments=96, start=0, end=2*math.pi):
     return verts,faces
 
 
-def refine():
+def _refine_shell():
     owned=[o for o in bpy.data.collections['Derby Working'].all_objects
            if o.type=='MESH' and not o.hide_render and o.get('asset_group')==ASSET]
     by={o.get('source_node'):o for o in owned}
@@ -128,3 +129,95 @@ def refine():
             raise ValueError(report[-1])
     bpy.context.view_layer.update()
     return {'status':'refined','recipe':TAG,'objects':report}
+
+
+def _rod(vertices, faces, start, end, radius, sides=10):
+    """Closed rod, including both caps; endpoints are map-world coordinates."""
+    a,b=Vector(start),Vector(end)
+    axis=(b-a).normalized()
+    side=axis.cross(Vector((0,0,1)))
+    if side.length < .01:
+        side=axis.cross(Vector((1,0,0)))
+    side.normalize();other=axis.cross(side).normalized()
+    offset=len(vertices)
+    for point in (a,b):
+        vertices.extend(tuple(point+radius*(math.cos(i*2*math.pi/sides)*side+
+                                            math.sin(i*2*math.pi/sides)*other))
+                        for i in range(sides))
+    faces.extend(tuple(offset+j for j in face) for face in
+                 [tuple(reversed(range(sides))),tuple(sides+i for i in range(sides))])
+    faces.extend((offset+i,offset+(i+1)%sides,
+                  offset+sides+(i+1)%sides,offset+sides+i) for i in range(sides))
+
+
+def _machinery():
+    obj=next(o for o in bpy.data.collections['Derby Working'].all_objects
+             if o.type=='MESH' and not o.hide_render and
+             o.get('asset_group')==ASSET and o.get('source_node')=='building-215')
+    tag='watchtower-hoist-native-mask233-v2'
+    if obj.get('round2_machinery')==tag:
+        return {'status':'existing'}
+    if obj.get('round2_machinery'):
+        raise ValueError('Apply a changed machinery recipe to the immutable baseline, not an older machinery build')
+    vertices=[tuple(obj.matrix_world@v.co) for v in obj.data.vertices]
+    faces=[tuple(p.vertices) for p in obj.data.polygons]
+    before=len(faces)
+    # Two timber uprights and a framed projecting boom. Source mask233 is
+    # distinct from the tower mask and belongs to the roof-walk layer.
+    for x,y in ((1752,-2467),(1764,-2457)):
+        _rod(vertices,faces,(x,y,579.87),(x,y,700),3.5,4)
+    root=(1758,-2462,686);tip=(1659,-2548.4,692.2)
+    _rod(vertices,faces,root,tip,3.8,4)
+    _rod(vertices,faces,(1758,-2462,674),(1659,-2548.4,680.2),3.1,4)
+    for t in (0,.25,.7,1):
+        x=root[0]+t*(tip[0]-root[0]);y=root[1]+t*(tip[1]-root[1])
+        _rod(vertices,faces,(x,y,673+t*6.2),(x,y,688+t*6.2),1.9,4)
+    # Visible diagonal support and foot braces terminate on the roof walk.
+    _rod(vertices,faces,(1758,-2462,602),(1711,-2503,677),3.2,4)
+    _rod(vertices,faces,(1752,-2467,605),(1729,-2478,580),2.8,4)
+    _rod(vertices,faces,(1764,-2457,605),(1780,-2449,580),2.8,4)
+    # The source shows an exposed star-shaped windlass handle at the frame foot.
+    hub=Vector((1746,-2490,600))
+    _rod(vertices,faces,hub,(1758,-2462,600),2.1,10)
+    for spoke in range(6):
+        angle=2*math.pi*spoke/6+.2
+        end=hub+Vector((11*math.cos(angle),0,11*math.sin(angle)))
+        _rod(vertices,faces,hub,end,1.25,6)
+    # Basket ribs use a rounded, tapered profile; ten ribs and three hoops
+    # preserve genuine empty space instead of an opaque sprite-shaped cage.
+    cx,cy=1672,-2537
+    profiles=((667,.8),(660,6),(647,14),(632,19.3),
+              (621,19.1),(607,15.5),(595,10),(589,5),(586,2))
+    _rod(vertices,faces,(cx,cy,691.4),(cx,cy,667),.65,8)
+    for rib in range(10):
+        angle=2*math.pi*rib/10
+        points=[(cx+max(0,(610-z)/24)*1.2+r*math.cos(angle),
+                 cy+r*math.sin(angle),z) for z,r in profiles]
+        for a,b in zip(points,points[1:]):
+            _rod(vertices,faces,a,b,.48,6)
+    for z,r in ((647,14),(626,19.2),(604,14)):
+        points=[(cx+r*math.cos(i*2*math.pi/48),cy+r*math.sin(i*2*math.pi/48),z)
+                for i in range(48)]
+        for i,a in enumerate(points):
+            _rod(vertices,faces,a,points[(i+1)%48],.55,6)
+    _replace(obj,vertices,faces,weld=False)
+    for polygon in obj.data.polygons:
+        polygon.use_smooth=False
+    obj['round2_machinery']=tag
+    obj['round2_machinery_first_polygon']=before
+    obj['reviewed_occlusion_mask_indices']='162,233'
+    bm=bmesh.new();bm.from_mesh(obj.data)
+    bad=sum(not edge.is_manifold for edge in bm.edges)
+    degenerate=sum(face.calc_area()<1e-8 for face in bm.faces)
+    bm.free()
+    if bad or degenerate:
+        raise ValueError(f'Invalid machinery: {bad} nonmanifold edges, {degenerate} degenerate faces')
+    return {'status':'refined','added_faces':len(faces)-before,
+            'native_mask':233,'owner':'building-215',
+            'nonmanifold_edges':bad,'degenerate_faces':degenerate}
+
+
+def refine():
+    shell=_refine_shell()
+    machinery=_machinery()
+    return {'shell':shell,'machinery':machinery}
