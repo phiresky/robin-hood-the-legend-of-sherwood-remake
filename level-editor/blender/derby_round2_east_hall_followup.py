@@ -141,3 +141,65 @@ def refine_bay_roof():
     result['state_evidence'] = ['covered','revealed:patch-002']
     result['doorway_depth'] = 'Painted doorway retained; opening depth not yet reconstructed.'
     return result
+
+
+def refine_door_recess():
+    """Keep the observed wood door closed and recess it behind its stone arch.
+
+    Source rays expose two incorrect overlapping proxies: the old lintel crosses
+    the lower panel, while the new upper-bay block extends in front of the whole
+    door. Retain the measured212/192 facade plane; bound270 above the recess and
+    replace269 with the closed panel and projecting stone surround.
+    """
+    objects={}
+    for node in ('building-269','building-270'):
+        found=[o for o in bpy.data.collections['Derby Working'].all_objects
+               if o.type=='MESH' and o.get('source_node')==node and not o.hide_render]
+        if len(found)!=1:raise ValueError(f'Expected one {node}')
+        objects[node]=found[0]
+    door,bay=objects['building-269'],objects['building-270']
+    tag='east-hall-closed-arched-door-v1'
+    if door.get('east_hall_door')==tag:return {'status':'already-refined'}
+    if bay.get('east_hall_bay_roof')!='east-hall-tile-bay-roof-v2':
+        raise ValueError('Apply the measured entrance bay recipe before its recess')
+    if len(bay.data.vertices)!=8:raise ValueError('Reaudit changed entrance bay topology')
+    bay.data=bay.data.copy();inverse=bay.matrix_world.inverted()
+    for vertex in bay.data.vertices:
+        point=bay.matrix_world@vertex.co
+        if point.z<235:point.z=235;vertex.co=inverse@point
+    bay.data.update()
+    normal=Vector((-.7547109,-.6560574,0)).normalized()
+    tangent=Vector((-.6560574,.7547109,0)).normalized()
+    # Reverse tangent so increasing local u follows increasing source x.
+    tangent.negate()
+    center=Vector((1244,-2188.274658-(-.7547109)*(1244-1250)/(-.6560574),0))
+    def outline(radius,rise,bottom):
+        return [(-radius,bottom),(radius,bottom)]+[
+            (radius*math.cos(i*math.pi/24),171+rise*math.sin(i*math.pi/24))
+            for i in range(25)]
+    outer=outline(20,22.5,130.3);inner=outline(15.25,17.5,134.3)
+    vertices,faces=[],[]
+    def point(u,z,depth):return tuple(center+tangent*u+Vector((0,0,z))+normal*depth)
+    for depth in (.3,4.3):
+        for contour in (outer,inner):vertices.extend(point(u,z,depth) for u,z in contour)
+    count=len(outer)
+    for i in range(count):
+        j=(i+1)%count
+        faces.extend([(i,j,count+j,count+i),
+                      (2*count+i,3*count+i,3*count+j,2*count+j),
+                      (i,2*count+i,2*count+j,j),
+                      (count+i,count+j,3*count+j,3*count+i)])
+    start=len(vertices)
+    for depth in (.15,.7):vertices.extend(point(u,z,depth) for u,z in inner)
+    faces.extend([tuple(start+i for i in range(count)),
+                  tuple(start+count+i for i in reversed(range(count)))])
+    for i in range(count):
+        j=(i+1)%count;faces.append((start+i,start+j,start+count+j,start+count+i))
+    result=_replace(door,vertices,faces)
+    door['east_hall_door']=tag
+    door['part_name']='Closed entrance door and arched stone surround'
+    bay['east_hall_door_clearance']=235
+    result.update({'closed_panel':True,'surround_depth':4,'panel_recess':3.6,
+                   'facade_nodes_preserved':['building-212','building-192'],
+                   'upper_bay_bottom':235})
+    return result
