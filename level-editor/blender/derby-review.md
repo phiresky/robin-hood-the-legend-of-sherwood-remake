@@ -15,8 +15,11 @@ start a Sunburst request while approval is pending.
 Current approval queue: West Cottage's pointed/flared rear roof was rejected.
 A straight-gable correction improved it, but the user requested coherent slanted
 front/rear facades. The latest candidate removes the V-shaped rear wall and uses
-shared end planes with 2.86-degree inward batter; `facade-review/` was shown and
-is awaiting geometry approval. No cottage Sunburst request is approved.
+shared end planes with 2.86-degree inward batter. After seeing both eight-view
+`facade-review/` sheets, the user approved this geometry (`d01d438af`):
+"ok good enough for now". Prepare the unchanged geometry with fixed-world-sun
+lighting and a separate solid reference for the next Sunburst texture-fill pass;
+generation and publication are still pending.
 The user approved South Gatehouse's corrected fixed-world-sun input explicitly.
 Its Sunburst pass completed with `gpt-image-2.5-sunburst`, quality `high`, no API
 mask, and the prompt sentence requiring the supplied shading. Exact approved
