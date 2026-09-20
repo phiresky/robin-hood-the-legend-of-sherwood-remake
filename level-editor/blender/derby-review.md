@@ -15,10 +15,15 @@ start a Sunburst request while approval is pending.
 Current approval queue: West Cottage was **rejected by the user** because the rear
 roof rises into an unsupported pointed/flared termination. Its round-two shape
 acceptance is withdrawn; correct it and show new solid views before generation.
-The user considers South Gatehouse geometry good, but requires corrected gray
-preview lighting and another visual approval before AI. Replace camera-relative
-studio shading with consistent world-space sunlight matched to the source art.
-The Sunburst prompt must explicitly follow that supplied shading. Keep, East Hall, East Watchtower and Postern
+The user approved South Gatehouse's corrected fixed-world-sun input explicitly.
+Its Sunburst pass completed with `gpt-image-2.5-sunburst`, quality `high`, no API
+mask, and the prompt sentence requiring the supplied shading. Exact approved
+input SHA: `1954359756442205b43e6e10566955ffaec8c9d84f96a9817610fbc1a5e119c6`.
+Artifacts: `round-2/sunburst-gate-approved/`; raw and protected outputs were shown.
+The raw result changes existing artwork; the protected composite preserves it
+exactly and fills 330,969 unknown pixels. Projection back onto the approved model
+and seam review remain in progress; nothing from this pass is published yet.
+Keep, East Hall, East Watchtower and Postern
 have substantial geometry follow-ups and are not ready for texture generation.
 
 For each asset check every component against source artwork, reference and two
