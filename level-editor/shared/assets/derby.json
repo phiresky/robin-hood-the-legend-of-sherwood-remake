@@ -204,11 +204,11 @@
     },
     {
       "id": "derby-lower-courtyard-prop",
-      "name": "Lower Bailey Courtyard Prop",
+      "name": "Lower Bailey Well",
       "parts": [
         {
           "obstacle": 46,
-          "name": "Courtyard pedestal"
+          "name": "Stone well and lifting frame"
         }
       ]
     },
@@ -240,7 +240,7 @@
         },
         {
           "obstacle": 51,
-          "name": "Doorstep"
+          "name": "Barrel beside front wall"
         },
         {
           "obstacle": 52,
@@ -312,75 +312,75 @@
       "parts": [
         {
           "obstacle": 62,
-          "name": "Threshold and lean-to / segment 01"
+          "name": "Yard barrel"
         },
         {
           "obstacle": 63,
-          "name": "Threshold and lean-to / segment 02"
+          "name": "Yard fence"
         },
         {
           "obstacle": 64,
-          "name": "Side footing"
+          "name": "Wash tub"
         },
         {
           "obstacle": 65,
-          "name": "North roof and supporting wall"
+          "name": "North thatch roof and wall"
         },
         {
           "obstacle": 66,
-          "name": "South roof and supporting wall"
+          "name": "South thatch roof and wall"
         }
       ]
     },
     {
       "id": "derby-east-courtyard-south-shelter",
-      "name": "East Bailey South Wall Shelter",
+      "name": "East Bailey South Curtain Lean-to",
       "parts": [
         {
           "obstacle": 67,
-          "name": "Shelter body"
+          "name": "Masonry chimney"
         },
         {
           "obstacle": 68,
-          "name": "Shelter roof"
+          "name": "Lean-to roof and walls"
         }
       ]
     },
     {
       "id": "derby-east-wall-landing",
-      "name": "East Bailey Wall Landing",
+      "name": "East Wall Lean-to Shelter",
       "parts": [
         {
           "obstacle": 69,
-          "name": "Landing and support"
+          "name": "Lean-to shelter"
         }
       ]
     },
     {
       "id": "derby-east-courtyard-north-shelter",
-      "name": "East Bailey North Wall Shelter",
+      "name": "East Bailey North Curtain Timber Shed",
       "parts": [
         {
           "obstacle": 70,
-          "name": "Shelter body"
+          "name": "Masonry chimney"
         },
         {
           "obstacle": 71,
-          "name": "Porch"
+          "name": "Side annex roof and walls"
         },
         {
           "obstacle": 72,
-          "name": "Roof"
+          "name": "Timber shed roof and doorway"
         }
       ]
     },
     {
       "id": "derby-lower-east-supplies",
-      "name": "Lower Bailey Stair Supplies",
+      "name": "Lower Bailey Supply Cart",
       "parts": [
         {
           "obstacle": 75,
-          "name": "Supply stack"
+          "name": "Supply cart with barrel"
         }
       ]
     },
@@ -470,7 +470,7 @@
         },
         {
           "obstacle": 106,
-          "name": "Stair footing"
+          "name": "Stone trough"
         }
       ]
     },
@@ -556,35 +556,35 @@
       "parts": [
         {
           "obstacle": 109,
-          "name": "East canopy slope"
+          "name": "East tiles and timber supports"
         },
         {
           "obstacle": 110,
-          "name": "West canopy slope"
+          "name": "West tiles and timber supports"
         },
         {
           "obstacle": 111,
-          "name": "Well basin"
+          "name": "Open stone shaft and water bucket"
         }
       ]
     },
     {
       "id": "derby-east-bailey-crate",
-      "name": "East Bailey Supply Crate",
+      "name": "East Bailey Barrel",
       "parts": [
         {
           "obstacle": 112,
-          "name": "Crate"
+          "name": "Lying barrel"
         }
       ]
     },
     {
       "id": "derby-east-bailey-yard-prop",
-      "name": "East Bailey Yard Prop",
+      "name": "East Bailey Chopping Block",
       "parts": [
         {
           "obstacle": 113,
-          "name": "Yard prop"
+          "name": "Chopping block and axe"
         }
       ]
     },
@@ -716,7 +716,7 @@
         },
         {
           "obstacle": 267,
-          "name": "Threshold"
+          "name": "Gate passage closure"
         }
       ]
     },
@@ -734,11 +734,11 @@
         },
         {
           "obstacle": 126,
-          "name": "Bridge parapet"
+          "name": "Front bridge parapet and arch facing"
         },
         {
           "obstacle": 129,
-          "name": "East bridge landing"
+          "name": "Rear bridge parapet"
         }
       ]
     },

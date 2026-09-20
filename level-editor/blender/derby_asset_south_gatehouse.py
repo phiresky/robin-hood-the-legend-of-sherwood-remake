@@ -284,3 +284,4 @@ def refine_profile():
                        "samples":PROFILE_SAMPLES[tower],"nonmanifold_edges":0,"degenerate_faces":0})
     bpy.context.view_layer.update()
     return {"reused":False,"towers":report}
+

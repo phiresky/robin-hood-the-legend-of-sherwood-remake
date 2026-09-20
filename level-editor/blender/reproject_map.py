@@ -179,11 +179,19 @@ def reproject_map(map_name, source_path, report_path, elevation_deg=35.0,
             fid = triangle.polygon_index
             if not eligible[fid]:
                 continue
+            baseline_material = mesh.materials[fallback.data[fid].value]
+            if baseline_material and baseline_material.get("projection_preserve"):
+                eligible[fid] = False
+                reasons[fid] = "authored_material"
+                continue
             points = [world[i] for i in triangle.vertices]
             normal = (points[1] - points[0]).cross(points[2] - points[0])
-            if normal.length < 1e-8 or normal.normalized().dot(toward_camera) <= 1e-4:
+            minimum_cosine = float(obj.get("projection_min_cosine", 1e-4))
+            if not 0 <= minimum_cosine < 1:
+                raise ValueError(f"Invalid projection angle threshold: {obj.name}")
+            if normal.length < 1e-8 or normal.normalized().dot(toward_camera) <= minimum_cosine:
                 eligible[fid] = False
-                reasons[fid] = "backfacing"
+                reasons[fid] = "grazing_or_backfacing" if minimum_cosine > 1e-4 else "backfacing"
                 continue
             uvs = [coordinates[i] for i in triangle.vertices]
             if any(u < 0 or u > 1 or v < 0 or v > 1 for u, v in uvs):
