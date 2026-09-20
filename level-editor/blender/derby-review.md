@@ -44,6 +44,16 @@ two-image, high-quality, no-mask texture fill is queued in
 `round-2/sunburst-east-bailey-east-curtain-approved/`. This is distinct from the
 already-generated Lower Bailey East Curtain.
 
+Corrected East Bailey Gatehouse arch `b51aebb25` has been shown for renewed user
+approval. Its previous crown was about 25 source pixels too high; the new arch
+uses rounded shoulders and continuous jamb depth. Approval is pending.
+West Cottage and Lower East Curtain source-protected texture bakes passed root
+visual review and are queued for publication-3. The two cottage barrel bakes are
+held: despite topology/source-preservation checks passing, coarse original source
+pixels stretch conspicuously beside generated surfaces in alternate views. Raw
+outputs remain retained as an alternative; no choice to replace known pixels has
+been made. Do not publish those barrel texture candidates as finished results.
+
 **Retain both texture alternatives.** Keep `generated-raw.png` and
 `generated-preserved.png`, the exact input and solid lighting reference,
 camera/ownership manifests, approval record, prompt/settings and cached API
