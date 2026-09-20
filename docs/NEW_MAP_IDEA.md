@@ -155,6 +155,14 @@ that background.
 Gameplay needs to be considered: There should be multiple ways into the castle and routes in general, soldiers should be able to be placed and to patrol some routes, etc. The more the designer of the map knows about how the game works, the better. If you have never played the game, here is a gameplay video: https://www.youtube.com/watch?v=ijkwe15y3e4
 Note that in-game, you do not see the whole castle at once, you scroll around the map.
 
+## Real-world castle inspiration
+
+[Beaumaris Castle](https://en.wikipedia.org/wiki/Beaumaris_Castle) in Wales is
+a useful reference for the new castle's layout: concentric inner and outer
+defences, a moat, large gatehouses, and a dock for supplies arriving by sea.
+These could inspire layered patrol routes, gatehouse chokepoints, and an
+alternative approach from the water, adapted to the proposed river setting.
+
 ## AI attempt: Greywatch Castle
 
 I (a developer, but not an artist) attempted to create a new map with the help
