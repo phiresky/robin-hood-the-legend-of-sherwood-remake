@@ -12,13 +12,94 @@ from mathutils import Matrix, Vector
 TAG = "lower-well-round2-curved-iron-v1"
 
 
+def add_ground_pail():
+    """Add the separately visible shallow yard vessel, without inferred handles."""
+    from mathutils.bvhtree import BVHTree
+    working = bpy.data.collections["Derby Working"]
+    owned = [o for o in working.all_objects if o.type == "MESH"
+             and o.get("source_node") == "building-046" and not o.hide_render]
+    if any(o.get("projection_component") == "ground-pail" for o in owned):
+        return {"reused": True}
+    template = next(o for o in owned if o.get("projection_component") == "bucket")
+    def unchanged_geometry():
+        return {o.name: ([tuple(o.matrix_world @ v.co) for v in o.data.vertices],
+                         [tuple(f.vertices) for f in o.data.polygons]) for o in owned}
+    prior_geometry = unchanged_geometry()
+    terrain = next(o for o in working.all_objects if o.type == "MESH"
+                   and not o.hide_render and o.name.startswith("Derby Terrain /"))
+    terrain_points = [terrain.matrix_world @ v.co for v in terrain.data.vertices]
+    tree = BVHTree.FromPolygons(terrain_points, [list(f.vertices) for f in terrain.data.polygons])
+    sine, cosine = math.sin(math.radians(35)), math.cos(math.radians(35))
+    x, y = 829.0, -1761 / sine
+    hit, _, _, _ = tree.ray_cast(Vector((x, y, 200)), Vector((0,0,-1)), 2000)
+    if hit is None:
+        raise ValueError("Ground pail has no terrain support")
+    z = hit.z + .02
+    y = (-1761-z*cosine)/sine
+    vertices, faces = [], []
+    # Modest flared open vessel: source resolves a shallow dark hollow and rim.
+    profile = [(3.4,0),(5,4.5),(4.15,4.5),(2.7,.65),(0,.65),(0,0)]
+    segments = 32
+    # Disk centers use a single vertex so there are no degenerate axis quads.
+    rings=[]
+    for radius, height in profile:
+        ring=[]
+        for j in range(segments if radius else 1):
+            angle=j*math.tau/segments
+            ring.append(len(vertices))
+            vertices.append((x+radius*math.cos(angle),y+radius*math.sin(angle),z+height))
+        rings.append(ring)
+    for a,b in zip(rings,rings[1:]+rings[:1]):
+        if len(a)==len(b)==1:
+            continue
+        for j in range(segments):
+            n=(j+1)%segments
+            faces.append((a[0],b[n],b[j]) if len(a)==1 else
+                         (a[j],a[n],b[0]) if len(b)==1 else (a[j],a[n],b[n],b[j]))
+    # Separate top and underside center fans close the solid floor volume.
+    mesh=bpy.data.meshes.new("Lower well / shallow ground pail")
+    mesh.from_pydata(vertices,[],faces)
+    bm=bmesh.new();bm.from_mesh(mesh)
+    bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces))
+    validation={"nonmanifold_edges":sum(not e.is_manifold for e in bm.edges),
+                "degenerate_faces":sum(f.calc_area()<1e-8 for f in bm.faces)}
+    bm.to_mesh(mesh);bm.free()
+    if any(validation.values()):raise ValueError(validation)
+    mesh.materials.append(template.data.materials[0])
+    uv=mesh.uv_layers.new(name="UVMap")
+    for loop in mesh.loops:
+        p=mesh.vertices[loop.vertex_index].co
+        uv.data[loop.index].uv=(p.x/1920,1+(p.y*sine+p.z*cosine)/2752)
+    obj=bpy.data.objects.new("Lower Bailey Well / Shallow ground pail",mesh)
+    working.objects.link(obj)
+    for key in template.keys():
+        if not key.startswith("reprojection_"):
+            obj[key]=template[key]
+    obj.parent=template.parent;obj.matrix_world=Matrix.Identity(4)
+    obj["projection_component"]="ground-pail"
+    obj["round2_component_role"]="ground-pail"
+    contacts=[]
+    for j in range(segments):
+        p=Vector(vertices[j]);ground,_,_,_=tree.ray_cast(p+Vector((0,0,1)),Vector((0,0,-1)),10)
+        contacts.append(p.z-ground.z if ground is not None else None)
+    if any(gap is None or abs(gap)>.1 for gap in contacts):raise ValueError(contacts)
+    if prior_geometry != unchanged_geometry():
+        raise ValueError("Ground pail addition changed existing well components")
+    return {"reused":False,"validation":validation,"ground_contact_gaps":contacts,
+            "existing_components_unchanged":True,
+            "source_center":[829,1761],"height":4.5,"rim_radius":5,
+            "native_mask66_covers_pail":False}
+
+
 def split_projection_components():
     """Separate evidence receivers without moving or rebuilding any surface."""
     from collections import Counter
     working = bpy.data.collections["Derby Working"]
     objects = [o for o in working.all_objects if o.type == "MESH"
                and o.get("source_node") == "building-046" and not o.hide_render]
-    if len(objects) == 3 and {o.get("projection_component") for o in objects} == {"shaft", "frame", "bucket"}:
+    roles = {o.get("projection_component") for o in objects}
+    if len(objects) == len(roles) and roles in ({"shaft", "frame", "bucket"},
+                                              {"shaft", "frame", "bucket", "ground-pail"}):
         return {"reused": True}
     if len(objects) != 1 or len(objects[0].data.polygons) != 1196:
         raise ValueError("Component split requires the reviewed 1196-face well")
@@ -62,6 +143,8 @@ def refine():
     objects = [o for o in bpy.data.collections["Derby Working"].all_objects
                if o.type == "MESH" and o.get("source_node") == "building-046"
                and not o.hide_render]
+    if objects and all(o.get("round2_lower_well") == TAG for o in objects):
+        return {"reused": True}
     if len(objects) != 1:
         raise ValueError(f"Expected one visible well, found {len(objects)}")
     obj = objects[0]
