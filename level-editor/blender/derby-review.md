@@ -77,6 +77,14 @@ collision data separate from refined rendering geometry.
 
 ## Current integration state — 2026-09-20
 
+Interior evidence audit: all 34 worker folders include original covered/revealed
+composites, individual exterior patch PNGs and alpha masks, `layers.json`, and
+mission-state images. Keep review projection layers explicitly use `revealed.png`
+for interior receivers. Availability does not establish that every state has
+been reviewed. Worker instructions now require named patch/state inspection and
+covered/revealed context plus solid/source-textured closeups before declaring an
+interior building reviewed; exterior eight-view sheets alone are insufficient.
+
 **Second full-scene refinement pass is active.** The immutable starting snapshot
 is `work/derby-refinement/round-2/source.blend`. A fresh grouping review confirmed
 34 logical assets and 270 canonical parts; each asset will receive its own worker

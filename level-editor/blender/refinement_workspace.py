@@ -291,6 +291,16 @@ Handoff `model.blend`, the recipe, `review.md`, and `modified/` only after valid
 passes and you inspect context, solid and textured sheets. Do not publish the
 whole copied scene: the coordinator imports only this asset into the main map.
 Texture synthesis is a separate step after geometry review.
+For assets with interiors or changing outer patches, inspect reference/layers.json,
+reference/covered.png, reference/revealed.png, each relevant patch PNG and alpha,
+and the relevant reference/mission-patches/ state frames before refining. These
+are original reference views, not synthesized textures. Record which states and
+patch IDs were inspected in review.md. Render source-context crops and matching
+solid/source-textured closeups for the exterior-covered and interior-revealed
+states; hide only the covering geometry identified by that state. Keep interior
+receivers, exterior receivers and their occluders separate during reprojection.
+Do not mark an interior building reviewed from exterior eight-view sheets alone.
+Save extra evidence in inspection/ without changing immutable input/reference.
 Do not run GPT Sunburst texture generation yourself. The coordinator must show
 the current solid and source-only textured views to the user and receive explicit
 approval for this geometry revision before any Sunburst texture-fill request.
