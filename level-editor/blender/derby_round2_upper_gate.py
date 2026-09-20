@@ -1,4 +1,4 @@
-"""Round the two flanking tower shells through their surveyed footprint anchors."""
+"""Round gatehouse tower shells and model the covered facade's shallow arch."""
 import math
 import bpy
 import bmesh
@@ -19,6 +19,13 @@ PATHS = {
          (916.3171,-2613.81),(903.20,-2585.34),(876.4,-2575.66)],
         [(850.96,-2646.13),(874.63,-2645.30),(900.98,-2635.18),
          (908.33,-2614.22),(897.90,-2594.52),(872.68,-2585.98)]),
+    258: (
+        [(724.4075,-2777.7991),(746.0742,-2803.9509),
+         (773.5742,-2806.1301),(787.8973,-2780.4097),
+         (782.6371,-2741.6609),(755.8322,-2730.3423)],
+        [(738.1575,-2776.3464),(747.3242,-2793.0542),
+         (770.3581,-2791.5706),(781.0742,-2777.0728),
+         (775.6575,-2747.2888),(756.4909,-2742.9302)]),
 }
 
 
@@ -90,3 +97,56 @@ def refine():
                        'degenerate_faces':degenerate,'retained_height':[bottom,top],
                        'outer_samples':len(outside),'inner_samples':len(inside)})
     return {'asset':ASSET,'recipe':TAG,'objects':report}
+
+
+def recess_front_panel():
+    """Carve the shaded upper arch as a shallow recess in its removable panel.
+
+    The panel is a reveal cover, not an open lower passage. Keep masonry behind
+    the recess so it does not expose the room in the covered state.
+    """
+    obj=next(o for o in bpy.data.collections['Derby Working'].objects
+             if o.type=='MESH' and not o.hide_render
+             and o.get('source_node')=='building-257')
+    if obj.get('round2_upper_arch_recess'):
+        return {'already_applied':True}
+    # Interior edge traced from the covered facade; deliberately shallow depth
+    # reconstructs the visible shadow without assuming an unseen opening.
+    trace=[(622,1452),(622,1416),(626,1406),(634,1398),(643,1392),
+           (654,1388),(665,1388),(677,1390),(688,1395),(697,1402),
+           (703,1411),(703,1452)]
+    s,c=math.sin(math.radians(35)),math.cos(math.radians(35))
+    vertices=[]
+    for depth in (-2,4):
+        for x,screen_y in trace:
+            y=-2791.9+(x-581.0)*(14.4/149.8)
+            vertices.append((x,y+depth,(-y*s-screen_y)/c))
+    n=len(trace)
+    faces=[tuple(reversed(range(n))),tuple(range(n,2*n))]
+    faces += [(i,(i+1)%n,(i+1)%n+n,i+n) for i in range(n)]
+    mesh=bpy.data.meshes.new('Upper panel shallow arch cutter')
+    mesh.from_pydata(vertices,[],faces)
+    bm=bmesh.new();bm.from_mesh(mesh)
+    bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces));bm.to_mesh(mesh);bm.free()
+    cutter=bpy.data.objects.new(mesh.name,mesh)
+    bpy.context.scene.collection.objects.link(cutter)
+    try:
+        bm=bmesh.new();bm.from_mesh(obj.data)
+        before_volume=abs(bm.calc_volume(signed=True));bm.free()
+        modifier=obj.modifiers.new('Shallow covered arch recess','BOOLEAN')
+        modifier.operation='DIFFERENCE';modifier.solver='EXACT';modifier.object=cutter
+        bpy.context.view_layer.objects.active=obj
+        bpy.ops.object.modifier_apply(modifier=modifier.name)
+        bm=bmesh.new();bm.from_mesh(obj.data)
+        bad=sum(not e.is_manifold for e in bm.edges)
+        degenerate=sum(f.calc_area()<1e-7 for f in bm.faces)
+        after_volume=abs(bm.calc_volume(signed=True))
+        bm.free()
+        if bad or degenerate:raise ValueError(('arch recess topology',bad,degenerate))
+        if not 0 < before_volume-after_volume < before_volume*.3:
+            raise ValueError(('arch recess did not remove bounded volume',before_volume,after_volume))
+        obj['round2_upper_arch_recess']=True
+        return {'node':'building-257','depth':4,'nonmanifold_edges':bad,
+                'degenerate_faces':degenerate,'depth_is_inferred':True}
+    finally:
+        bpy.data.objects.remove(cutter,do_unlink=True);bpy.data.meshes.remove(mesh)
