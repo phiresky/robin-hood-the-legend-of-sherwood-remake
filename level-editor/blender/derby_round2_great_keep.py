@@ -52,7 +52,9 @@ def refine_fireplace():
     """
     working = bpy.data.collections['Derby Working']
     tag = 'great-keep-hall-fireplace-v1'
-    if any(o.get('round2_keep_recipe') == tag for o in working.objects):
+    existing=[o for o in working.objects if o.get('round2_keep_recipe') == tag]
+    if existing:
+        for obj in existing:obj['projection_component']='hall-fireplace'
         return {'status': 'already-applied'}
     source = next(o for o in working.objects if o.type == 'MESH'
                   and not o.hide_render and o.get('source_node') == 'building-227')
@@ -122,6 +124,7 @@ def refine_fireplace():
         if not key.startswith('reprojection_'): obj[key]=source[key]
     obj['round2_keep_recipe']=tag
     obj['round2_keep_component']='hall-fireplace'
+    obj['projection_component']='hall-fireplace'
     return {'source_node':'building-227','new_mesh':obj.name,'faces':len(faces),
             'nonmanifold_edges':bad_edges,'degenerate_faces':bad_faces,
             'floor':219.75,'mantel':z_bottom,'hood_top':top[0].z,
@@ -210,6 +213,7 @@ def refine_east_buttresses():
     previous=[o for o in working.objects if o.get('round2_keep_recipe')==tag]
     if previous:
         if len(previous)!=2:raise ValueError('Partial east buttress recipe')
+        for obj in previous:obj['projection_component']=obj['round2_keep_component']
         return {'status':'already-applied'}
     source=next(o for o in working.objects if o.type=='MESH' and not o.hide_render
                 and o.get('source_node')=='building-179')
@@ -252,6 +256,7 @@ def refine_east_buttresses():
             if not key.startswith('reprojection_'):obj[key]=source[key]
         obj['round2_keep_recipe']=tag
         obj['round2_keep_component']=f'hall-east-buttress-{number:02}'
+        obj['projection_component']=obj['round2_keep_component']
         reports.append({'object':obj.name,'source_node':'building-179','faces':len(faces),
                         'nonmanifold_edges':invalid,'degenerate_faces':degenerate,
                         'projecting_depth':16,'cap_back_height':430,'cap_front_height':400,
