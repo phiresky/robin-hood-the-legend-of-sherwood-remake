@@ -53,6 +53,10 @@ while changing shape with elevation. Coats of arms use a cylinder rather than a
 shallow pickup volume. Only prone characters use fixed 22.5° projection angles;
 other directional sprites face the camera continuously. Single-view sprites
 remain fixed in the world.
+**Lock sprite orientations** switches other directional sprites between facing
+the camera and fixed 22.5° projection angles, independently of camera rotation
+locking. It is on by default and applies immediately; prone characters remain
+locked in either mode.
 Perspective panning translates the camera along the floor at a fixed height,
 without refitting the lens as the map moves across the view.
 Right-drag orbit keeps a fixed distance to the point under the cursor. Wheel zoom

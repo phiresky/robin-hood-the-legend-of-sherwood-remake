@@ -25,6 +25,7 @@ A list of which additional features we have added, which ones we might still wan
   Perspective panning follows the floor without changing camera height or zoom.
   Orbit preserves pivot distance; wheel zoom dollies freely without a map-fit limit.
   An optional rotation lock snaps camera headings to the 16 sprite-view angles.
+  A separate sprite-orientation toggle selects camera-facing or fixed projections.
   Authored sprite shadows project onto support planes with ambiance-specific
   darkening. Explicit target heights are respected. Hackable conversion includes
   shared pickup/relic sprite banks. Previews do not execute scripts or alter missions.

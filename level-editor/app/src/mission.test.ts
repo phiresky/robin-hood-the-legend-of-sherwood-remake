@@ -74,7 +74,7 @@ test("missing support fails the mission instead of putting its marker at ground 
   }, level, camera), /Missing entity support #77/);
 });
 
-test("only prone characters anchor directional projections; other profiles follow the camera", () => {
+test("sprite orientation toggle switches projections live while prone characters stay anchored", () => {
   for (const shape of ["upright-character", "prone-character", "cylinder-object", "low-object", "upright-scenery"] as const) {
     const preview = new MissionEntities();
     const geometry = new THREE.BufferGeometry();
@@ -87,12 +87,13 @@ test("only prone characters anchor directional projections; other profiles follo
     Object.assign(preview, { actors: [{ mesh, shadow, frames, direction: 15 }] });
     const point = new THREE.Vector3(...projectSpritePixel(shape, 4, 12, { left: -12, top: 40, width: 24, height: 40 }, 35 * Math.PI / 180));
     const camera = new THREE.PerspectiveCamera();
+    let locked = false;
     const view = (degrees: number) => {
       const radians = degrees * Math.PI / 180;
       camera.position.set(Math.sin(radians) * 1000, 500, Math.cos(radians) * 1000);
       camera.lookAt(mesh.position);
       camera.updateMatrixWorld();
-      preview.update(camera);
+      preview.update(camera, locked);
       mesh.updateMatrixWorld(true);
       return point.clone().applyMatrix4(mesh.matrixWorld);
     };
@@ -106,6 +107,13 @@ test("only prone characters anchor directional projections; other profiles follo
     const nextMovement = view(30).distanceTo(next);
     assert.ok(shape === "prone-character" ? nextMovement < 1e-10 : nextMovement > 0.1, `${shape}: projection policy after a frame transition`);
     assert.ok(Math.abs(shadow.getWorldQuaternion(new THREE.Quaternion()).y) < 1e-10);
+    locked = true;
+    assert.ok(view(0).distanceTo(view(10)) < 1e-10, `${shape}: checkbox locks the existing sprite without reloading`);
+    assert.ok(view(12).distanceTo(view(30)) < 1e-10, `${shape}: locked angles follow the selected frame`);
+    assert.ok(Math.abs(shadow.getWorldQuaternion(new THREE.Quaternion()).y) < 1e-10);
+    locked = false;
+    const restoredMovement = view(0).distanceTo(view(10));
+    assert.ok(shape === "prone-character" ? restoredMovement < 1e-10 : restoredMovement > 0.1, `${shape}: toggling off restores the default policy`);
     const single = frames.get(0)!;
     Object.assign(preview, { actors: [{ mesh, shadow, frames: new Map([[-1, single]]), direction: 15 }] });
     assert.ok(view(0).distanceTo(view(130)) < 1e-10, `${shape}: single-view sprites remain fixed`);

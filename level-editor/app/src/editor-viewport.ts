@@ -65,6 +65,7 @@ export class EditorViewport {
   private frustum = 1500;
   private perspective = 0;
   private rotationSnap = false;
+  private spriteOrientationLock = true;
   private readonly projectionBounds = new THREE.Sphere(new THREE.Vector3(), 10000);
   private readonly framingBounds = new THREE.Box3();
   private framingPoints: THREE.Vector3[] = [];
@@ -80,6 +81,9 @@ export class EditorViewport {
   setRotationSnap(enabled: boolean) {
     this.rotationSnap = enabled;
     if (this.camera) this.activeCamera();
+  }
+  setSpriteOrientationLock(enabled: boolean) {
+    this.spriteOrientationLock = enabled;
   }
   replaceEntities(entities: MissionEntities | null) {
     this.entities?.dispose();
@@ -414,7 +418,7 @@ export class EditorViewport {
       if (this.flight) this.stepFlight();
       else this.orbit?.update();
       const camera = this.activeCamera();
-      this.entities?.update(camera);
+      this.entities?.update(camera, this.spriteOrientationLock);
       this.renderer.render(this.scene, camera);
     });
   }

@@ -78,7 +78,7 @@ export class MissionEntities {
   private materials = new Set<THREE.Material>();
   private disposed = false;
   get count() { return this.root.children.length; }
-  update(camera: THREE.Camera) {
+  update(camera: THREE.Camera, lockOrientations = false) {
     const forward = camera.getWorldDirection(new THREE.Vector3()).negate();
     const perspective = (camera as THREE.PerspectiveCamera).isPerspectiveCamera;
     for (const actor of this.actors) {
@@ -90,9 +90,9 @@ export class MissionEntities {
       actor.mesh.geometry = frame.geometry;
       actor.mesh.material.map = frame.texture;
       // Prone bodies keep their ground orientation between frame transitions.
-      // Other directional sprites face the viewer for a smoother orbit.
+      // Other directional sprites face the viewer unless explicitly locked.
       actor.mesh.rotation.y = actor.frames.has(-1) ? 0
-        : frame.geometry.userData.spriteShape === "prone-character"
+        : lockOrientations || frame.geometry.userData.spriteShape === "prone-character"
           ? (direction - actor.direction) * Math.PI / 8 : azimuth;
       // Authored shadows remain fixed in world space as the camera orbits.
       if (actor.shadow) actor.shadow.rotation.y = -actor.mesh.rotation.y;
