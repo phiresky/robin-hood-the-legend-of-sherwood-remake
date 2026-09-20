@@ -46,14 +46,14 @@ collision data separate from refined rendering geometry.
 **Second full-scene refinement pass is active.** The immutable starting snapshot
 is `work/derby-refinement/round-2/source.blend`. A fresh grouping review confirmed
 34 logical assets and 270 canonical parts; each asset will receive its own worker
-in scheduled waves. Six asset candidates have passed root review: Great Keep,
-Upper Bailey Gatehouse, South Gatehouse, East Hall turret and East Watchtower.
-West Cottage subsequently failed user review; its roof must be rebuilt again.
-Terrain/background also has an accepted candidate.
-These candidates are combined in `round-2/integration-geometry.blend`, with all
-eight recipe scope checks passing (30 building parts plus ground changed).
-They are **not yet published or merged into the main working blend**. Keep facade relief,
-Hall wall/interior alignment and Watchtower hoist/cage remain follow-up work.
+in scheduled waves. Twelve reviewed recipes are now integrated and published:
+terrain/background, rock relief, Great Keep, Upper Bailey Gatehouse, South
+Gatehouse, East Hall turret, East Watchtower, Southwest Postern, Lower East
+Curtain, Lower West Curtain, and the two detached cottage barrels. The source
+and geometry checks are recorded in `round-2/integration.json` and the staged
+publication evidence. **New West Cottage geometry is excluded from this
+publication**; its separate approval and texture work remain pending. Keep facade
+relief, Hall wall/interior alignment and Watchtower hoist/cage remain follow-up work.
 New work is isolated until its source,
 solid, textured and scope checks pass. The new mask PNGs are evidence for this
 round; previous refinements may be removed or rebuilt. Initial publications
@@ -73,29 +73,40 @@ means the geometry is included in the latest map export, not that all defects
 are resolved. West Cottage's fourth geometry pass and generated texture bake are
 now published; the generated hidden details remain inferred.
 
-Latest map publication: `work/derby-refinement/synthesized-ownership-publish-v2/derby.scene.glb`
+Latest map publication: `work/derby-refinement/round-2/publication-2/derby.scene.glb`
 to `library/scenes/derby-volumes.scene.glb`, with the document fingerprint updated.
-It contains 34 groups, 270 canonical parts, 306 meshes, and 154 modeled steps.
+It contains 34 groups, 270 canonical parts, 308 meshes, and 155 modeled steps.
 Browser acceptance passed: 34 named groups, 270 parts, 14 stair assemblies,
-154 steps, 145 reported crenel notches, 30 interior meshes and seven reveal patches.
+155 steps, 145 reported crenel notches, 30 interior meshes and seven reveal patches.
 Real ray picking selected Great Keep as a group first, then its part 146.
-All 34 standalone descriptors/models were published from the same scene.
-The document migrated six still-authored part memberships; custom grouping and
-world transforms are preserved. Focused ownership-migration tests and pipeline
-typecheck passed.
+All 34 standalone descriptors/models were published from the same scene and
+verified byte-identical to staging. No group or part migration was needed in this
+publication. Custom grouping and world transforms are preserved.
+
+The user's selected **two-image South Gatehouse Sunburst result is published**.
+All 17 gate materials carry generated SHA
+`be9bdd585ad7cc53d76733d8bdba4f2bbdb526ea2a45ddc569f93cbba16d6eea`,
+verified in the actual browser-loaded GLB. Only source-hidden texels were filled;
+295,069 source samples were protected exactly. Camera overlap and source-boundary
+tone reconciliation reduce roof seams without changing protected artwork or
+geometry. A subsequent exterior reprojection preserves all 7,161 gate faces.
+Evidence: `round-2/gate-approved-two-image-texture-bake/` and
+`round-2/publication-2/{stage,publication,browser-result}.json`.
 
 Working integration checkpoint: `derby-refinement.blend`. The latest scene-wide
-ownership bake is recorded in `synthesized-ownership-publish-v2/reprojection/layers-report.json`:
-five layers, 4,468,557 known texels and 18,389,748 unknown texels, now filled where
-eligible source donors exist. It retains
-explicit authored/generated materials and the cleaned ground. Cottage V4 then
-received its own fresh projection and generated texture bake after its geometry edit.
-Well ground-ghost cleanup is now applied (1,935 pixels), and 21 mesh names synced.
-West Cottage V4 remains the published but rejected shape baseline. The round-two
-replacement has a level ridge and eaves, mask-fitted walls and a continuous rear
-roof/wall join (3,273 exterior seam samples without daylight). Its union silhouette
-IoU is 94.60%; thin fringe residual and a simplified porch remain. Review evidence:
-`round-2/assets/derby-lower-west-cottage/modified/`.
+ownership bake is recorded in `round-2/publication-2/reprojection/layers-report.json`:
+five layers, 4,526,903 known texels and 18,853,940 unknown texels before the approved
+gate texture handoff. Eligible hidden areas receive optional source-based synthesis.
+The imported gate atlas remains independent of that display toggle. The checkpoint
+backup is `derby-refinement-before-round2-publication2.blend`; the prior map/document
+backup is `library/scenes/backups/1d2787bc9215faf4/`. New Cottage geometry and its
+separate texture approval are intentionally outside this publication.
+
+Updated full-Derby 1920×2752 renders:
+`round-2/publication-2/full-map/reference-solid.png` and
+`round-2/publication-2/full-map/reference-textured.png`. These retain visible
+unfinished Keep/Hall details and other recorded limitations; publication is not
+final asset acceptance.
 
 Paths below are relative to `level-editor/work/derby-refinement/`.
 Reusable geometry recipes are in `level-editor/blender/derby_asset_*.py`.
