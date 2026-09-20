@@ -56,6 +56,13 @@ async function main(): Promise<void> {
   }
   if (!process.argv.includes("--generate")) throw new Error("Choose --prepare or --generate");
   const input=await fs.readFile(path.join(directory,"input.png"));
+  const approval=JSON.parse(await fs.readFile(path.join(directory,"approval.json"),"utf8")) as {
+    status?:string; approved_by?:string; input_sha256?:string; geometry_revision?:string;
+  };
+  const inputHash=crypto.createHash("sha256").update(input).digest("hex");
+  if(approval.status!=="approved"||approval.approved_by!=="user"||
+     approval.input_sha256!==inputHash||!approval.geometry_revision)
+    throw new Error("Sunburst requires explicit user approval for this exact preview and geometry revision");
   const mask=await fs.readFile(path.join(directory,"mask.png"));
   const variantIndex=process.argv.indexOf("--prompt-variant");
   const variant=variantIndex<0?"detailed":process.argv[variantIndex+1];
@@ -80,7 +87,8 @@ Replace every masked untextured surface with the appropriate texture. Return the
   const outputDirectory=path.join(directory,`generation-${variant}${omitMask?"-no-mask":""}`);
   await fs.mkdir(outputDirectory,{recursive:true});
   const prompt=omitMask?"Create an image from the provided reference sheet of 8 views of the same building. The untextured gray shaded areas mark missing textures. Fill in these regions logically and consistently across all views, preserving all existing textured pixels exactly. Keep the same building design, textures, lighting, perspective, and black background.":prompts[variant];
-  const parameters={model,quality:"high",size:"1536x1024",n:"1",output_format:"png",prompt};
+  const parameters={model,quality:"high",size:"1536x1024",n:"1",output_format:"png",
+    prompt:prompt+" Follow the lighting and shading shown on the gray surfaces, preserving the same sun direction across all eight views."};
   const hash=crypto.createHash("sha256").update(input).update(omitMask?Buffer.alloc(0):mask).update(JSON.stringify(parameters)).digest("hex");
   const cache=path.join(directory,"api-cache",hash);await fs.mkdir(cache,{recursive:true});
   await fs.writeFile(path.join(cache,"request.json"),JSON.stringify({endpoint:"https://api.openai.com/v1/images/edits",parameters,input_sha256:crypto.createHash("sha256").update(input).digest("hex"),mask_sha256:omitMask?null:crypto.createHash("sha256").update(mask).digest("hex")},null,2));
