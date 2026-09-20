@@ -10,7 +10,9 @@ Manifest schema (paths relative to this manifest):
       "state": "covered",
       "assignments": [
         {"reviewed": true, "asset_group": "map-cottage", "mask_indices": [10, 11]},
-        {"reviewed": true, "source_node": "building-053", "mask_indices": [10]}
+        {"reviewed": true, "source_node": "building-053", "mask_indices": [10]},
+        {"reviewed": true, "source_node": "building-215",
+         "projection_component": "hoist", "mask_indices": [233]}
       ]
     }
   }
@@ -19,8 +21,11 @@ Manifest schema (paths relative to this manifest):
 Each assignment unions its masks, then subtracts optional exclude_mask_indices.
 Exclusions require exclusions_reviewed=true and a nonempty exclusion_reason:
 overlapping silhouettes alone do not establish foreground ownership.
-A source_node assignment overrides its asset
-group assignment. Labels absent from projections, and objects without an explicit
+A source_node plus projection_component assignment overrides the source_node
+assignment, which overrides its asset group assignment. Components require an
+explicit source_node; their names never match across unrelated canonical parts.
+Objects expose the same projection_component custom property. Labels absent
+from projections, and objects without an explicit
 assignment, remain unconstrained. A present label requires an exact source hash,
 nonempty state description and reviewed=true on EVERY assignment. State names
 document the reviewed artwork; a label/hash pair is the machine checked guard.
@@ -73,6 +78,7 @@ class SourceMaskConstraints:
         self.path = Path(manifest_path).resolve()
         self.assignment_by_node = {}
         self.assignment_by_group = {}
+        self.assignment_by_component = {}
         self.source_size = source_size
         manifest = json.loads(self.path.read_text())
         if manifest.get("version") != 1:
@@ -103,6 +109,11 @@ class SourceMaskConstraints:
             kinds = [key for key in ("source_node", "asset_group") if key in assignment]
             if len(kinds) != 1 or not isinstance(assignment[kinds[0]], str) or not assignment[kinds[0]]:
                 raise ValueError("Source-mask assignment requires exactly one explicit target")
+            if 'projection_component' in assignment:
+                component = assignment['projection_component']
+                if (kinds[0] != 'source_node' or not isinstance(component, str)
+                        or not component.strip()):
+                    raise ValueError('Projection component requires a source_node and nonempty component name')
             indices = assignment.get("mask_indices")
             if not isinstance(indices, list) or not indices:
                 raise ValueError("Source-mask assignment requires mask indices")
@@ -135,13 +146,18 @@ class SourceMaskConstraints:
                 masks.append(cache[index])
             target = assignment[kinds[0]]
             mapping = self.assignment_by_node if kinds[0] == "source_node" else self.assignment_by_group
+            if 'projection_component' in assignment:
+                target = (target, assignment['projection_component'])
+                mapping = self.assignment_by_component
             if target in mapping:
                 raise ValueError(f"Duplicate source-mask assignment {target}")
             mapping[target] = (masks[:len(indices)], masks[len(indices):])
 
     def for_object(self, obj):
-        return self.assignment_by_node.get(obj.get("source_node"),
-                                           self.assignment_by_group.get(obj.get("asset_group")))
+        return self.assignment_by_component.get(
+            (obj.get('source_node'), obj.get('projection_component')),
+            self.assignment_by_node.get(obj.get("source_node"),
+                                        self.assignment_by_group.get(obj.get("asset_group"))))
 
     def allowed(self, masks, sx, sy):
         """Return union membership for bottom-origin source pixel coordinates."""
