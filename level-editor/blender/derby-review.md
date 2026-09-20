@@ -12,8 +12,10 @@ acceptance by a worker or coordinator is not user approval. Further geometry
 changes invalidate the approved revision and require another review. Do not
 start a Sunburst request while approval is pending.
 
-Current approval queue: West Cottage and South Gatehouse were shown for review;
-both are awaiting user approval. Keep, East Hall, East Watchtower and Postern
+Current approval queue: West Cottage was **rejected by the user** because the rear
+roof rises into an unsupported pointed/flared termination. Its round-two shape
+acceptance is withdrawn; correct it and show new solid views before generation.
+South Gatehouse is awaiting user approval. Keep, East Hall, East Watchtower and Postern
 have substantial geometry follow-ups and are not ready for texture generation.
 
 For each asset check every component against source artwork, reference and two
@@ -28,8 +30,9 @@ collision data separate from refined rendering geometry.
 is `work/derby-refinement/round-2/source.blend`. A fresh grouping review confirmed
 34 logical assets and 270 canonical parts; each asset will receive its own worker
 in scheduled waves. Six asset candidates have passed root review: Great Keep,
-Upper Bailey Gatehouse, South Gatehouse, East Hall turret, East Watchtower and
-the revised West Cottage. Terrain/background also has an accepted candidate.
+Upper Bailey Gatehouse, South Gatehouse, East Hall turret and East Watchtower.
+West Cottage subsequently failed user review; its roof must be rebuilt again.
+Terrain/background also has an accepted candidate.
 These candidates are combined in `round-2/integration-geometry.blend`, with all
 eight recipe scope checks passing (30 building parts plus ground changed).
 They are **not yet published or merged into the main working blend**. Keep facade relief,
@@ -110,7 +113,7 @@ geometry remain unfinished. Individual chain links are simplified.
 | Lower Bailey Well (formerly courtyard prop) | Published | Hollow shaft, iron lifting frame, rope, pulley, bucket; `lower-well-worker-v2`. Printed ground ghost cleanup integrated. |
 | Southern Approach Stone | Published | Closed angular outcrop, replacing tent-like wedges; `approach-stone-worker/worker-v2`. |
 | Lower Bailey East Cottage | Published | Hipped roof, closed walls, barrel; `lower-east-cottage`. |
-| Lower Bailey West Cottage | Second-pass geometry accepted, not published | Main roof/walls rebuilt against masks 9/10; level ridge/eaves and rounded annex roof. Initial candidate had rear daylight gaps and was rejected; revised candidate closes them. IoU 94.60%; simplified porch and thin fringe remain. Generated hidden detail is not geometry evidence. |
+| Lower Bailey West Cottage | Second-pass geometry rejected by user | Rear roof has an unsupported pointed/flared termination. Closing the roof/wall gaps and IoU 94.60% did not establish plausible shape. Withdraw acceptance and rebuild the rear roof profile before new user review. No Sunburst pass approved. |
 | Lower Bailey Southwest Cottage | Published | Thatched eave and damaged-roof recess; `southwest-cottage/reviewed`. |
 | Lower Bailey Southeast Cottage | Published | Closed end wedge, porch recess, thick roof; `southeast-cottage-pass3`. |
 | Lower Bailey Northwest Cottage | Published | Hipped roofs, barrel, fence, wash tub; `northwest-cottage-final-v5`. |
