@@ -702,3 +702,13 @@ input.num {
   display: block;
   margin: 4px 0;
 }
+
+.mission-picker { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.mission-picker select { max-width: 210px; background: #252c30; color: #e2e7e8; border: 1px solid #465156; border-radius: 5px; padding: 6px 8px; }
+.view-settings { padding: 14px; border-bottom: 1px solid #3a4144; background: linear-gradient(135deg, #293332, #22272b); }
+.view-settings h2 { margin: 0 0 12px; font-size: 13px; }
+.perspective-control { display: block; font-size: 12px; }
+.perspective-control span { display: flex; justify-content: space-between; }
+.perspective-control output { color: #8de0c0; font-variant-numeric: tabular-nums; }
+.perspective-control input { width: 100%; margin: 12px 0 4px; accent-color: #8de0c0; }
+.mission-summary { font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }

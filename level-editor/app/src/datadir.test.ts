@@ -38,6 +38,8 @@ test("connection indexes map names without reading unused missions or ambiance d
   assert.deepEqual([...index.maps], ["York", "leicester"]);
   assert.equal(index.maps.size, 2);
   assert.equal(index.levelsDir, levels);
+  assert.deepEqual(index.missions, ["broken"]);
+  assert.equal(index.root, root);
 });
 
 test("level opening preserves requested filename and still validates required data", async () => {

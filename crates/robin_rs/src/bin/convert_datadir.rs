@@ -610,6 +610,19 @@ impl Converter {
         for c in &cpf.civilians {
             chars.insert(c.filename.clone());
         }
+        // Pickups and accessories are runtime object masters, so CPF actor
+        // references alone do not reach them. Keep their editable sprite banks.
+        let mut object_profiles = std::collections::BTreeMap::new();
+        add_all_saved_world_object_rhs_profiles(&mut object_profiles);
+        for path in object_profiles.keys() {
+            if self.exists(path) {
+                let name = path
+                    .strip_prefix("Characters/")
+                    .and_then(|name| name.strip_suffix(".rhs"))
+                    .expect("object master path must name a character sprite bank");
+                chars.insert(name.to_owned());
+            }
+        }
         // Missions: proto-level (.rhp), mission (.rhm), script (.scb).
         let mut level_refs = LevelRefs::default();
         for mp in &cpf.missions {

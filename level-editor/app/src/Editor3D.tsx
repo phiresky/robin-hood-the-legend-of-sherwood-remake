@@ -34,6 +34,7 @@ import { prepareMapCandidate } from "./map-candidate";
 import { EditorViewport } from "./editor-viewport";
 import { disposeObjectResources } from "./resources";
 import { listFiles, subdir, writeText } from "./fs";
+import { MissionEntities, readMission } from "./mission";
 import type { DatadirIndex } from "./datadir";
 
 export type { Selection } from "./document-commands";
@@ -51,6 +52,13 @@ export interface EditorProps {
 }
 
 export default function Editor3D(props: EditorProps) {
+  const [missionName, setMissionName] = createSignal("");
+  const [missionInfo, setMissionInfo] = createSignal("");
+  const [perspective, setPerspective] = createSignal(0);
+  const [showEntities, setShowEntities] = createSignal(true);
+  let openAttempt = 0;
+  let loadedIndex: DatadirIndex | null = null;
+  let loadedLibrary: LibraryRef | null = null;
   const [maps, setMaps] = createSignal<string[]>([]);
   const [revision, setRevision] = createSignal<SessionSnapshot<Level3D> | null>(
     null,
@@ -101,6 +109,7 @@ export default function Editor3D(props: EditorProps) {
     () => props.library(),
     (lib) => {
       session.beginLoad();
+      openAttempt++;
       setMaps([]);
       if (!lib) return;
       void (async () => {
@@ -162,16 +171,46 @@ export default function Editor3D(props: EditorProps) {
     else if (p) updatePart(p.id, { transform: t });
   }
 
-  async function openMap(name: string) {
+  async function openMap(name: string, requestedMission?: string) {
     const lib = props.library();
     const idx = props.index();
     if (!lib) return;
+    const attempt = ++openAttempt;
     const generation = session.beginLoad();
+    const current = () => !disposed && attempt === openAttempt && props.index() === idx && props.library() === lib;
     let preparedAsset: THREE.Object3D | null = null;
-    props.onStatus(`loading ${name}…`);
+    let preparedEntities: MissionEntities | null = null;
+    props.onStatus(`loading ${requestedMission ?? name}…`);
     try {
+      const mission = requestedMission && idx ? await readMission(idx, requestedMission) : null;
+      if (mission) {
+        const matching = maps().find((m) => m.toLowerCase() === mission.map.toLowerCase());
+        if (!matching) throw new Error(`No reconstruction for ${mission.map} in this library`);
+        name = matching;
+      }
+      if (disposed || attempt !== openAttempt) return;
+      const currentDocument = doc();
+      const currentLevel = level();
+      if (name === mapName() && currentDocument && currentLevel && loadedIndex === idx && loadedLibrary === lib) {
+        if (mission && idx) preparedEntities = await MissionEntities.load(idx, mission, currentLevel, currentDocument.camera, current);
+        if (disposed || attempt !== openAttempt || props.index() !== idx || props.library() !== lib) {
+          preparedEntities?.dispose();
+          return;
+        }
+        viewport.replaceEntities(preparedEntities);
+        viewport.setEntitiesVisible(showEntities());
+        setMissionName(mission?.name ?? "");
+        setMissionInfo(preparedEntities ? `${preparedEntities.count} entities. ${preparedEntities.warnings.join("; ")}` : "");
+        preparedEntities = null;
+        props.onStatus(null);
+        return;
+      }
       const candidate = await prepareMapCandidate(name, lib.handle, idx);
       preparedAsset = candidate.asset;
+      if (mission && idx) {
+        if (!candidate.level) throw new Error("Mission requires level data");
+        preparedEntities = await MissionEntities.load(idx, mission, candidate.level, candidate.document.camera, current);
+      }
       const {
         document: d,
         directory: dir,
@@ -183,9 +222,12 @@ export default function Editor3D(props: EditorProps) {
       if (
         disposed ||
         !session.isCurrent(generation) ||
+        attempt !== openAttempt ||
         props.library() !== lib ||
         props.index() !== idx
       ) {
+        preparedEntities?.dispose();
+        preparedEntities = null;
         disposeObjectResources([preparedAsset]);
         preparedAsset = null;
         return;
@@ -193,7 +235,14 @@ export default function Editor3D(props: EditorProps) {
       // All asynchronous reads and validation precede publication.
       viewport.replaceMap(preparedAsset, nextGround, nextSources);
       preparedAsset = null;
+      viewport.replaceEntities(preparedEntities);
+      viewport.setEntitiesVisible(showEntities());
+      setMissionName(mission?.name ?? "");
+      setMissionInfo(preparedEntities ? `${preparedEntities.count} entities. ${preparedEntities.warnings.join("; ")}` : "");
+      preparedEntities = null;
       session.publish(generation, name, d, dir, candidate.saved);
+      loadedIndex = idx;
+      loadedLibrary = lib;
       setLevel(lvl);
       setSuspects(nextSuspects);
       viewport.syncViews(d);
@@ -202,6 +251,7 @@ export default function Editor3D(props: EditorProps) {
       setInfo(`${d.groups.length} buildings, ${d.objects.length} parts`);
       props.onStatus(null);
     } catch (e) {
+      preparedEntities?.dispose();
       if (preparedAsset) disposeObjectResources([preparedAsset]);
       if (session.isCurrent(generation) && !disposed) {
         props.onStatus(null);
@@ -209,6 +259,19 @@ export default function Editor3D(props: EditorProps) {
       }
     }
   }
+
+  createEffect(
+    () => props.index(),
+    () => {
+      openAttempt++;
+      session.beginLoad();
+      viewport.replaceEntities(null);
+      setMissionName("");
+      setMissionInfo("");
+    },
+  );
+  createEffect(() => perspective(), (value) => viewport.setPerspective(value));
+  createEffect(() => showEntities(), (value) => viewport.setEntitiesVisible(value));
 
   createEffect(
     () => ({ obstacles: showObstacles(), elevation: showElevation() }),
@@ -274,7 +337,7 @@ export default function Editor3D(props: EditorProps) {
   }
 
   function onKey(e: KeyboardEvent) {
-    if ((e.target as HTMLElement).tagName === "INPUT") return;
+    if (["INPUT", "SELECT", "TEXTAREA"].includes((e.target as HTMLElement).tagName)) return;
     if (e.key === "z" && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
       e.preventDefault();
       undo();
@@ -392,6 +455,13 @@ export default function Editor3D(props: EditorProps) {
   return (
     <div class="editor">
       <div class="editor-bar">
+        <label class="mission-picker">Mission
+          <select aria-label="Mission" value={missionName()} disabled={!props.index() || !props.library() || maps().length === 0}
+            onChange={(e) => { const value = e.currentTarget.value; e.currentTarget.value = missionName(); if (value) void openMap("", value); else if (mapName()) void openMap(mapName()!); }}>
+            <option value="">Map only</option>
+            <For each={props.index()?.missions ?? []}>{(name) => <option value={name}>{name}</option>}</For>
+          </select>
+        </label>
         <For each={maps()}>
           {(m) => (
             <button
@@ -463,6 +533,19 @@ export default function Editor3D(props: EditorProps) {
       <div class="editor-body">
         <div class="editor-canvas" ref={(element) => viewport.setup(element)} />
         <aside class="editor-panel">
+          <section class="view-settings">
+            <h2>View</h2>
+            <label class="perspective-control">
+              <span>Perspective <output>{perspective() === 0 ? "Orthographic" : `${perspective()}°`}</output></span>
+              <input aria-label="Perspective" type="range" min="0" max="65" step="1" value={perspective()}
+                onInput={(e) => setPerspective(Number(e.currentTarget.value))} />
+            </label>
+            <p class="hint">Increase perspective for depth and distance scaling. Orbit to view characters from different sides and heights.</p>
+            <label class="check"><input type="checkbox" checked={showEntities()} onChange={(e) => setShowEntities(e.currentTarget.checked)} /> Mission entities</label>
+            <Show when={missionName()}><p class="mission-summary">{missionName()} — {missionInfo()}</p>
+              <p class="hint">Initial placements; mission scripts are not run. Green markers show spawn points. Magenta markers indicate missing sprite assets. Standing characters, prone bodies, pickups, and scenery use different depth profiles.</p>
+            </Show>
+          </section>
           <Show
             when={selectedTransform()}
             fallback={

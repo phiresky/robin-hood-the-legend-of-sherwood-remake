@@ -217,3 +217,109 @@ test("gizmo binding commits through the document owner and picking resolves the 
   viewport.dispose();
   assert.equal(attached, null);
 });
+
+test("perspective preserves target-plane framing, scales by distance, and returns to orthographic", () => {
+  const { viewport } = fixture();
+  const camera = new THREE.OrthographicCamera(-200, 200, 100, -100, -100000, 100000);
+  camera.position.set(0, 0, 1000);
+  camera.lookAt(0, 0, 0);
+  camera.updateMatrixWorld();
+  Object.assign(viewport, { camera, frustum: 100, container: { clientWidth: 800, clientHeight: 400 }, orbit: { target: new THREE.Vector3() } });
+  const access = viewport as unknown as { activeCamera(): THREE.Camera };
+  const before = new THREE.Vector3(40, 20, 0).project(camera);
+  viewport.setPerspective(45);
+  const perspective = access.activeCamera();
+  const after = new THREE.Vector3(40, 20, 0).project(perspective);
+  assert.ok(Math.abs(before.x - after.x) < 1e-8);
+  assert.ok(Math.abs(before.y - after.y) < 1e-8);
+  const near = new THREE.Vector3(40, 0, 50).project(perspective);
+  const far = new THREE.Vector3(40, 0, -50).project(perspective);
+  assert.ok(near.x > far.x);
+  const ray = new THREE.Raycaster();
+  ray.setFromCamera(new THREE.Vector2(after.x, after.y), perspective);
+  const hit = ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 0, 1), 0), new THREE.Vector3());
+  assert.ok(hit!.distanceTo(new THREE.Vector3(40, 20, 0)) < 1e-6);
+  viewport.setPerspective(0);
+  assert.equal(access.activeCamera(), camera);
+  assert.equal(camera.zoom, 1);
+  viewport.dispose();
+});
+
+test("perspective keeps a deep map's apparent size across lens angles and zoom levels", () => {
+  const { viewport } = fixture();
+  const camera = new THREE.OrthographicCamera(-2000, 2000, 1000, -1000);
+  camera.position.set(0, 0, 10000);
+  camera.lookAt(0, 0, 0);
+  camera.updateMatrixWorld();
+  const bounds = new THREE.Box3(new THREE.Vector3(-800, -900, -1500), new THREE.Vector3(800, 900, 1500));
+  Object.assign(viewport, { camera, frustum: 1000, container: { clientWidth: 800, clientHeight: 400 }, orbit: { target: new THREE.Vector3() }, framingBounds: bounds });
+  const access = viewport as unknown as { activeCamera(): THREE.PerspectiveCamera };
+  for (const zoom of [0.5, 1, 4]) {
+    camera.zoom = zoom;
+    camera.updateProjectionMatrix();
+    const expected = new THREE.Vector3(800, 900, 1500).project(camera).y;
+    for (const fov of [1, 15, 30, 45, 65]) {
+      viewport.setPerspective(fov);
+      const actual = new THREE.Vector3(800, 900, 1500).project(access.activeCamera()).y;
+      assert.ok(Math.abs(actual - expected) < 1e-8, `framing at ${fov} degrees, zoom ${zoom}`);
+    }
+  }
+  viewport.dispose();
+});
+
+test("narrow perspective uses tight scene bounds instead of losing depth precision", () => {
+  const { viewport } = fixture();
+  const camera = new THREE.OrthographicCamera(-2000, 2000, 1000, -1000);
+  camera.position.set(0, 0, 10000); camera.lookAt(0, 0, 0); camera.updateMatrixWorld();
+  Object.assign(viewport, { camera, frustum: 1000, container: { clientWidth: 800, clientHeight: 400 }, orbit: { target: new THREE.Vector3() }, projectionBounds: new THREE.Sphere(new THREE.Vector3(), 3000) });
+  const access = viewport as unknown as { activeCamera(): THREE.PerspectiveCamera };
+  for (const fov of [1, 2, 5, 10, 20, 30]) {
+    viewport.setPerspective(fov);
+    const lens = access.activeCamera();
+    for (const z of [-3000, 3000]) assert.ok(Math.abs(new THREE.Vector3(0, 0, z).project(lens).z) < 1);
+    const a = new THREE.Vector3(0, 0, 0).project(lens).z;
+    const b = new THREE.Vector3(0, 0, 0.1).project(lens).z;
+    assert.ok(Math.abs(a - b) * (2 ** 24) / 2 > 10, `0.1-unit surfaces need distinct depth values at ${fov} degrees`);
+  }
+  viewport.dispose();
+});
+
+test("lens framing follows real geometry rather than empty bounding-box corners", () => {
+  const { viewport } = fixture();
+  const camera = new THREE.OrthographicCamera(-2000, 2000, 1000, -1000);
+  camera.position.set(0, 0, 10000);
+  camera.lookAt(0, 0, 0);
+  camera.updateMatrixWorld();
+  const points = [new THREE.Vector3(-600, -900, 1400), new THREE.Vector3(800, 1000, -1500), new THREE.Vector3(600, -600, 1000)];
+  Object.assign(viewport, { camera, frustum: 1000, container: { clientWidth: 800, clientHeight: 400 }, orbit: { target: new THREE.Vector3() }, framingBounds: new THREE.Box3().setFromPoints(points), framingPoints: points });
+  const extent = (lens: THREE.Camera) => Math.max(...points.map(p => { const projected = p.clone().project(lens); return Math.max(Math.abs(projected.x), Math.abs(projected.y)); }));
+  const expected = extent(camera);
+  const access = viewport as unknown as { activeCamera(): THREE.Camera };
+  for (const fov of [0, 1, 5, 15, 30, 45, 65, 15, 0]) {
+    viewport.setPerspective(fov);
+    assert.ok(Math.abs(extent(access.activeCamera()) - expected) < 1e-8, `apparent extent at ${fov} degrees`);
+  }
+  viewport.dispose();
+});
+
+test("both cameras retain separation of nearby surfaces while zooming out", () => {
+  const { viewport } = fixture();
+  const camera = new THREE.OrthographicCamera(-2000, 2000, 1000, -1000, -100000, 100000);
+  camera.position.set(0, 0, 10000);
+  camera.lookAt(0, 0, 0);
+  camera.updateMatrixWorld();
+  Object.assign(viewport, { camera, frustum: 1000, container: { clientWidth: 800, clientHeight: 400 }, orbit: { target: new THREE.Vector3() }, framingBounds: new THREE.Box3(new THREE.Vector3(-800, -900, -1500), new THREE.Vector3(800, 900, 1500)) });
+  const access = viewport as unknown as { activeCamera(): THREE.PerspectiveCamera | THREE.OrthographicCamera };
+  for (const zoom of [0.1, 0.25, 0.5, 1, 4]) {
+    camera.zoom = zoom;
+    for (const fov of [0, 1, 15, 30, 65]) {
+      viewport.setPerspective(fov);
+      const lens = access.activeCamera();
+      assert.ok(lens.far - lens.near <= 3256.001);
+      const a = new THREE.Vector3(0, 0, 1500).project(lens).z;
+      const b = new THREE.Vector3(0, 0, 1500.01).project(lens).z;
+      assert.ok(Math.abs(a - b) * (2 ** 24) / 2 > 10, `0.01-unit separation at zoom ${zoom}, lens ${fov}`);
+    }
+  }
+  viewport.dispose();
+});

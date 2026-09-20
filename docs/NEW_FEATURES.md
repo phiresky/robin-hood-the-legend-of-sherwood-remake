@@ -9,6 +9,16 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **3D editor mission previews and perspective.** Load a mission from the connected
+  hackable datadir to display its initial characters with all 16 camera-relative
+  directions, bonus/scroll sprites, targets, and mobile objects. A perspective slider
+  adds distance scaling while preserving projected map extent, with tight clip
+  planes and reversed depth where supported. Separate upright, prone, pickup, and
+  scenery profiles use fixed source-view angles and adjust with camera height.
+  Authored sprite shadows project onto support planes with ambiance-specific
+  darkening. Explicit target heights are respected. Hackable conversion includes
+  shared pickup/relic sprite banks. Previews do not execute scripts or alter missions.
+
 - **Named level-editor assets and Blender refinement exports.** Derby's generated
   parts belong to named building and wall groups, with second-click part selection.
   Reusable Blender scripts preserve source IDs while exporting refined maps and

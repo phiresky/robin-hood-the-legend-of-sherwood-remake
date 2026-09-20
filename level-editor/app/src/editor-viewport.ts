@@ -15,6 +15,7 @@ import {
   type ProtoLevel,
   type Vec3,
 } from "@rle/shared";
+import type { MissionEntities } from "./mission.ts";
 import type { Selection } from "./document-commands.ts";
 import { disposeObjectResources } from "./resources.ts";
 
@@ -49,6 +50,111 @@ export class EditorViewport {
   private container: HTMLDivElement | null = null;
   private camera: THREE.OrthographicCamera | null = null;
   private frustum = 1500;
+  private perspective = 0;
+  private readonly projectionBounds = new THREE.Sphere(new THREE.Vector3(), 10000);
+  private readonly framingBounds = new THREE.Box3();
+  private framingPoints: THREE.Vector3[] = [];
+  private framingKey = "";
+  private framingDistance = 0;
+  private readonly perspectiveCamera = new THREE.PerspectiveCamera(45, 1, 0.1, 200000);
+  private entities: MissionEntities | null = null;
+
+  setPerspective(value: number) {
+    this.perspective = THREE.MathUtils.clamp(value, 0, 65);
+    if (this.camera) this.activeCamera();
+  }
+  replaceEntities(entities: MissionEntities | null) {
+    this.entities?.dispose();
+    this.entities = entities;
+    if (entities) this.scene.add(entities.root);
+  }
+  setEntitiesVisible(visible: boolean) {
+    if (this.entities) this.entities.root.visible = visible;
+  }
+  private updateDepthRange(camera: THREE.OrthographicCamera | THREE.PerspectiveCamera) {
+    const forward = camera.getWorldDirection(new THREE.Vector3());
+    let nearest = Infinity;
+    let farthest = -Infinity;
+    if (!this.framingBounds.isEmpty()) {
+      for (const x of [this.framingBounds.min.x, this.framingBounds.max.x])
+        for (const y of [this.framingBounds.min.y, this.framingBounds.max.y])
+          for (const z of [this.framingBounds.min.z, this.framingBounds.max.z]) {
+            const depth = new THREE.Vector3(x, y, z).sub(camera.position).dot(forward);
+            nearest = Math.min(nearest, depth);
+            farthest = Math.max(farthest, depth);
+          }
+      // Include sprites standing above the map and small editing overlays.
+      nearest -= 128;
+      farthest += 128;
+    } else {
+      const center = this.projectionBounds.center.clone().sub(camera.position).dot(forward);
+      const radius = Math.max(10, this.projectionBounds.radius * 1.1);
+      nearest = center - radius;
+      farthest = center + radius;
+    }
+    camera.near = camera instanceof THREE.PerspectiveCamera ? Math.max(0.1, nearest) : nearest;
+    camera.far = Math.max(camera.near + 1, farthest);
+    camera.updateProjectionMatrix();
+  }
+  /** Keep the map's projected extent while introducing foreshortening with a
+   * virtual lens. Controls retain their map-unit pan and zoom. */
+  private activeCamera(): THREE.OrthographicCamera | THREE.PerspectiveCamera {
+    const camera = this.camera!;
+    if (!camera) throw new Error("Viewport camera is not mounted");
+    if (this.perspective === 0) {
+      if (this.gizmo) this.gizmo.camera = camera;
+      this.updateDepthRange(camera);
+      camera.updateMatrixWorld();
+      return camera;
+    }
+    const lens = this.perspectiveCamera;
+    const target = this.orbit!.target;
+    const forward = camera.getWorldDirection(new THREE.Vector3());
+    const halfHeight = this.frustum / camera.zoom;
+    const aspect = this.container!.clientWidth / Math.max(1, this.container!.clientHeight);
+    let distance = halfHeight / Math.tan(THREE.MathUtils.degToRad(this.perspective / 2));
+    const targetDepth = target.clone().sub(camera.position).dot(forward);
+    // Preserve the map's projected envelope, not just the target plane. Nearby
+    // walls otherwise grow dramatically as the lens moves closer at wide angles.
+    const framingKey = [halfHeight, aspect, this.perspective, ...camera.position.toArray(), ...camera.quaternion.toArray(), ...target.toArray()].join(",");
+    if (framingKey === this.framingKey) {
+      distance = this.framingDistance;
+    } else if (!this.framingBounds.isEmpty()) {
+      const inverse = camera.quaternion.clone().invert();
+      const projectedPoints: THREE.Vector3[] = [];
+      let extent = 0;
+      const points = this.framingPoints.length ? this.framingPoints : [
+        ...[this.framingBounds.min.x, this.framingBounds.max.x].flatMap(x =>
+          [this.framingBounds.min.y, this.framingBounds.max.y].flatMap(y =>
+            [this.framingBounds.min.z, this.framingBounds.max.z].map(z => new THREE.Vector3(x, y, z)))),
+      ];
+      for (const source of points) {
+        const point = source.clone().sub(camera.position).applyQuaternion(inverse);
+        projectedPoints.push(point);
+        extent = Math.max(extent, Math.abs(point.x) / (halfHeight * aspect), Math.abs(point.y) / halfHeight);
+      }
+      if (extent > 0) {
+        const baseDistance = distance;
+        distance = 0;
+        for (const point of projectedPoints) {
+          const scale = Math.max(Math.abs(point.x) / (halfHeight * aspect), Math.abs(point.y) / halfHeight) / extent;
+          distance = Math.max(distance, baseDistance * scale + point.z + targetDepth);
+        }
+      }
+    }
+    this.framingKey = framingKey;
+    this.framingDistance = distance;
+    lens.position.copy(camera.position).addScaledVector(forward, targetDepth - distance);
+    lens.quaternion.copy(camera.quaternion);
+    lens.fov = this.perspective;
+    lens.aspect = aspect;
+    // A distant, narrow-angle lens needs a distant near plane too: retaining
+    // a 0.1 near plane loses depth precision between adjacent map surfaces.
+    this.updateDepthRange(lens);
+    lens.updateMatrixWorld();
+    if (this.gizmo) this.gizmo.camera = lens;
+    return lens;
+  }
   private orbit: OrbitControls | null = null;
   private gizmo: TransformControls | null = null;
   private readonly scene = new THREE.Scene();
@@ -144,6 +250,7 @@ export class EditorViewport {
   }
   private retireMap() {
     this.cancelPointerGesture?.();
+    this.replaceEntities(null);
     this.flight = null;
     this.select(null);
     disposeObjectResources([
@@ -159,6 +266,9 @@ export class EditorViewport {
     this.partViews.clear();
     this.groupViews.clear();
     this.sourceNodes.clear();
+    this.framingPoints = [];
+    this.framingBounds.makeEmpty();
+    this.framingKey = "";
   }
   dispose() {
     if (this.disposed) return;
@@ -185,7 +295,7 @@ export class EditorViewport {
     if (this.disposed || this.renderer)
       throw new Error("Viewport can only mount once");
     this.container = el;
-    this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, reversedDepthBuffer: true });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     el.appendChild(this.renderer.domElement);
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -100000, 100000);
@@ -252,7 +362,9 @@ export class EditorViewport {
       if (!this.renderer || !this.camera) return;
       if (this.flight) this.stepFlight();
       else this.orbit?.update();
-      this.renderer.render(this.scene, this.camera);
+      const camera = this.activeCamera();
+      this.entities?.update(camera);
+      this.renderer.render(this.scene, camera);
     });
   }
 
@@ -364,7 +476,7 @@ export class EditorViewport {
         ((e.clientX - rect.left) / rect.width) * 2 - 1,
         -((e.clientY - rect.top) / rect.height) * 2 + 1,
       );
-      this.raycaster.setFromCamera(ndc, this.camera!);
+      this.raycaster.setFromCamera(ndc, this.activeCamera());
     };
     el.addEventListener(
       "pointerdown",
@@ -644,6 +756,23 @@ export class EditorViewport {
     if (s && !(s.kind === "group" ? aliveGroups : aliveParts).has(s.id))
       this.select(null);
     else this.refreshSelectionBox();
+    const bounds = this.contentBox();
+    this.framingBounds.copy(bounds);
+    this.framingPoints = [];
+    this.framingKey = "";
+    // Perspective extrema lie at triangle vertices. Empty bounding-box corners
+    // must not influence lens compensation as the viewing angle changes.
+    for (const root of [this.objectsRoot, ...(this.groundNode ? [this.groundNode] : [])]) {
+      root.updateWorldMatrix(true, true);
+      root.traverseVisible(node => {
+        if (!(node instanceof THREE.Mesh)) return;
+        const positions = node.geometry.getAttribute("position");
+        if (!positions) return;
+        for (let i = 0; i < positions.count; i++)
+          this.framingPoints.push(new THREE.Vector3().fromBufferAttribute(positions, i).applyMatrix4(node.matrixWorld));
+      });
+    }
+    if (!bounds.isEmpty()) bounds.getBoundingSphere(this.projectionBounds);
     if (this.bindings.showObstacles()) this.buildOverlays();
   }
 
@@ -687,7 +816,7 @@ export class EditorViewport {
       ((e.clientX - rect.left) / rect.width) * 2 - 1,
       -((e.clientY - rect.top) / rect.height) * 2 + 1,
     );
-    this.raycaster.setFromCamera(ndc, this.camera);
+    this.raycaster.setFromCamera(ndc, this.activeCamera());
     const hits = this.raycaster.intersectObject(this.objectsRoot, true);
     for (const h of hits) {
       const part = this.partOfHit(h);

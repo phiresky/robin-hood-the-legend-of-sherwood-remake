@@ -6,6 +6,8 @@ import { listFiles, readJson, subdir } from "./fs.ts";
 export interface DatadirIndex {
   /** Original-case map basenames; level data is validated only when opened. */
   maps: Set<string>;
+  missions?: string[];
+  root?: FileSystemDirectoryHandle;
   levelsDir: FileSystemDirectoryHandle;
 }
 
@@ -21,7 +23,9 @@ export async function scanDatadir(
     .filter((f) => f.endsWith(".rhp.json"))
     .map((f) => f.slice(0, -".rhp.json".length));
 
-  return { maps: new Set(mapNames), levelsDir };
+  return { maps: new Set(mapNames), levelsDir, root, missions: files
+    .filter((f) => f.endsWith(".rhm.json"))
+    .map((f) => f.slice(0, -".rhm.json".length)).sort() };
 }
 
 export async function loadProtoLevel(

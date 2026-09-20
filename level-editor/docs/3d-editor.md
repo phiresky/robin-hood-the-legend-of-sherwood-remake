@@ -27,6 +27,40 @@ Open the hackable datadir (read) and the library folder (read/write; it
 holds `scenes/`). Pick a map in the bar. If no `<map>.level3d.json` exists
 the document is built from the reconstruction and the level.
 
+Choose a mission from the **Mission** menu to open its map and preview its initial
+placements. The map must have a reconstruction in the connected library. Soldiers,
+civilians, and rescue characters use their configured sprite profile and initial
+pose, with all 16 directions selected relative to the camera. Missing initial poses
+use idle with a visible notice. Targets, pickups, scrolls, and mobile objects load
+their own sprites; bonus quantities select the corresponding item variant.
+Animation assets resolve the mission ambiance, then Day, then the animation root.
+Spawn points appear as green markers. Missing sprite banks are reported explicitly
+with magenta placement markers. Older hackable exports may omit bonus/relic banks;
+the converter now includes those runtime object masters. Scripts, campaign party spawning, animation
+playback, and mission editing/saving are not simulated by this preview.
+
+Character placement recovers height from the support obstacle's top plane;
+nonnegative target Z values override that calculation. The **Perspective** slider
+runs from orthographic (0) to a 65° field of view, compensating for map depth to
+preserve overall framing while scaling the scene by distance. Both cameras use
+tight scene depth ranges, with reversed depth on supported GPUs, to preserve
+surface depth precision across zoom levels and narrow fields of view. Upright character
+pixels project onto an approximate cylinder shell and top cap; dead, unconscious,
+and tied poses use shallow ground volumes. Pickups use low object depth, while
+scenery uses upright surfaces. These profiles preserve the source-camera image
+while changing shape with elevation. Each directional frame uses its fixed 22.5°
+projection angle on every profile, so orbiting does not rotate the geometry between
+frame changes. Single-view sprites remain fixed in the world.
+Extreme angles remain an approximation because
+the sprites do not contain unseen elevation views. Legacy sprite color keys are
+decoded into color and authored shadow layers. Shadows project onto the support
+plane, keep their world orientation during orbit, and use the game's 40% darkening
+(10% in fog) instead of generic contact circles.
+
+Switching missions on the same map preserves unsaved building edits and the camera.
+**Map only** clears the mission overlay; **Mission entities** toggles its visibility.
+Failed or superseded loads retain the current scene and release candidate resources.
+
 ## Controls
 
 | action | how |
@@ -69,4 +103,4 @@ face boundaries and grazing faces.
 
 Not yet (see `3d-editor-plan.md`): masks are carried through unchanged (a
 moved building keeps its old masks), patch states / interiors, Night and
-Fog, other ambiances, in-browser bake, footprint editing, mission entities.
+Fog, other ambiances, in-browser bake, footprint editing, mission entity editing.
