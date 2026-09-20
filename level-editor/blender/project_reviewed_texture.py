@@ -79,6 +79,17 @@ def apply(manifest_path, image_path, output_dir, *, texels_per_unit=2, map_name=
         raise ValueError('Reviewed source sheet changed after approval')
     if hashlib.sha256((reviewed/'views.json').read_bytes()).hexdigest() != manifest['reviewed_manifest_sha256']:
         raise ValueError('Reviewed cameras or lighting changed after approval')
+    reviewed_manifest = json.loads((reviewed/'views.json').read_text())
+    for key in ('source_mask_manifest', 'source_mask_evidence', 'projection_layers'):
+        if reviewed_manifest.get(key) != manifest.get(key):
+            raise ValueError('Approved source ownership contract dropped or changed: ' + key)
+    mask_manifest = manifest.get('source_mask_manifest')
+    if manifest.get('source_mask_evidence'):
+        from occlusion_constraints import evidence_record
+        if not mask_manifest or evidence_record(mask_manifest) != manifest['source_mask_evidence']:
+            raise ValueError('Reviewed source-mask evidence changed or was dropped')
+    elif mask_manifest:
+        raise ValueError('Source masks require frozen evidence hashes')
     for layer in manifest['projection_layers']:
         if hashlib.sha256(Path(layer['source_path']).read_bytes()).hexdigest() != layer['source_sha256']:
             raise ValueError('Original projection artwork changed after approval')
@@ -87,6 +98,20 @@ def apply(manifest_path, image_path, output_dir, *, texels_per_unit=2, map_name=
     height, width = generated.shape[:2]
     if generated.shape != mask.shape or [width,height] != [manifest['layout']['width'],manifest['layout']['height']]:
         raise ValueError('Generated image, mask and approved camera dimensions differ')
+    for view in manifest['views']:
+        known_path = reviewed/'views'/f"view-{view['index']}-known.png"
+        if view.get('ownership_sha256'):
+            if hashlib.sha256(known_path.read_bytes()).hexdigest() != view['ownership_sha256']:
+                raise ValueError('Reviewed ownership pixels changed after approval')
+        elif mask_manifest:
+            raise ValueError('Masked review requires immutable ownership buffer hashes')
+        known = _read(known_path)[:,:,0] > .5
+        solid = _read(reviewed/'views'/f"view-{view['index']}-solid.png")[:,:,3] > 0
+        crop = view['crop']
+        rows = slice(height-crop['top']-crop['height'],height-crop['top'])
+        cols = slice(crop['left'],crop['left']+crop['width'])
+        if not np.array_equal(mask[rows,cols,3]<.5, solid & ~known):
+            raise ValueError('Generated fill mask differs from reviewed source ownership')
     generated = _reconcile(generated, manifest)
     output = Path(output_dir).resolve()
     output.mkdir(parents=True, exist_ok=False)
@@ -169,22 +194,28 @@ def apply(manifest_path, image_path, output_dir, *, texels_per_unit=2, map_name=
             continue
         reports.append(bake(map_name,layer['source_path'], output/f'layer-{index}.json',
                             receiver_nodes=receivers, occluder_nodes=layer['occluder_nodes'],
-                            projection_label=f'approved-generated-{index}',
+                            projection_label=layer['projection_label'] if mask_manifest else f'approved-generated-{index}',
                             texels_per_unit=texels_per_unit, preserve_authored=False,
-                            hidden_sampler=sample))
+                            hidden_sampler=sample, source_mask_manifest=mask_manifest))
     assigned = {node for report in reports for node in report['receiver_nodes']}
     if assigned != nodes:
         raise ValueError('Not all approved asset nodes received a source projection layer')
     for obj in objects:
         for face in obj.data.polygons:
             mat = obj.data.materials[face.material_index]
-            if not mat or not str(mat.get('source_ownership_label','')).startswith('approved-generated-'):
+            if not mat or not mat.get('source_ownership_bake'):
                 continue
             mat['generated_source_sha256'] = image_hash
             mat['generated_camera_manifest'] = str(manifest_path)
             mat['generated_approved_input_sha256'] = input_hash
+            if mask_manifest:
+                mat['generated_source_mask_manifest'] = mask_manifest
+                mat['generated_source_mask_evidence_sha256'] = hashlib.sha256(json.dumps(manifest['source_mask_evidence'],sort_keys=True).encode()).hexdigest()
     report = {'asset_id':manifest['asset_id'], 'input_sha256':input_hash,'generated_sha256':image_hash,
               'generated_image':str(Path(image_path).resolve()),
+              'source_mask_manifest':mask_manifest,
+              'source_mask_evidence':manifest.get('source_mask_evidence'),
+              'source_constraint_status':reviewed_manifest.get('source_constraint_status'),
               'geometry_changed':False,'source_preservation':'Every protected source atlas texel checked byte-identical before and after hidden sampling',
               'selection':'Highest facing visible views; near ties blend across a 0.12 cosine band with explicit approved unknown mask',
               'seam_reconciliation':'Unknown colors only: low frequency RGB gain from explicit observed regions, fades over 24 image pixels; source atlas texels remain exact',

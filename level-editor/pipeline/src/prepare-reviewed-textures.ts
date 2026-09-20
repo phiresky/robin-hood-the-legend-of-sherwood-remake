@@ -11,9 +11,15 @@ const review = path.resolve(reviewArg), output = path.resolve(outputArg);
 const originalManifest = await fs.readFile(path.join(review, "views.json"));
 const manifest = JSON.parse(originalManifest.toString()) as {
   asset_id: string; tile_size: [number, number]; source_image: string;
+  source_mask_manifest?: string | null; source_mask_evidence?: Record<string,string> | null;
   views: Array<Record<string, unknown> & { index: number }>;
 };
 const [width, height] = manifest.tile_size;
+if (Boolean(manifest.source_mask_manifest) !== Boolean(manifest.source_mask_evidence))
+  throw new Error("Source mask assignments and immutable evidence must travel together");
+for (const [file, expected] of Object.entries(manifest.source_mask_evidence ?? {}))
+  if (crypto.createHash("sha256").update(await fs.readFile(file)).digest("hex") !== expected)
+    throw new Error(`Reviewed source-mask evidence changed: ${file}`);
 if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0 ||
     manifest.views.length !== 8 || manifest.views.some((view, index) => view.index !== index))
   throw new Error("Expected eight ordered review views with valid tile dimensions");
@@ -25,6 +31,10 @@ if (size.width !== width * 4 || size.height !== height * 2)
 // explicit ownership and silhouette buffers, never a gray-pixel classifier.
 const tiles = await Promise.all(manifest.views.map(async view => {
   const prefix = `views/view-${view.index}`;
+  const ownershipBytes = await fs.readFile(path.join(review, `${prefix}-known.png`));
+  if ((manifest.source_mask_manifest && !view.ownership_sha256) ||
+      (view.ownership_sha256 && crypto.createHash("sha256").update(ownershipBytes).digest("hex") !== view.ownership_sha256))
+    throw new Error(`View ${view.index} source ownership changed or lacks an immutable hash`);
   const [solid, known] = await Promise.all(["solid", "known"].map(async kind => {
     const result = await sharp(path.join(review, `${prefix}-${kind}.png`)).ensureAlpha()
       .raw().toBuffer({ resolveWithObject: true });

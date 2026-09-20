@@ -119,6 +119,7 @@ def render_review(output_dir, *, scene_name, collection_name, asset_id,
         source_down = Vector((0, -sine, -cosine))
         present = {obj.get("source_node") for obj in all_objects}
         definitions = projection_layers or [{"source_path": str(source_path),
+                                           **({'projection_label':'exterior'} if source_mask_manifest else {}),
                                            "receiver_nodes": sorted(present, key=str),
                                            "occluder_nodes": sorted(present, key=str)}]
         layers, receiver_layers, layer_records = [], {}, []
@@ -258,7 +259,8 @@ def render_review(output_dir, *, scene_name, collection_name, asset_id,
                             "camera_matrix_world": [list(row) for row in camera.matrix_world],
                             "camera_location": list(camera.location),
                             "camera_rotation_euler": list(camera.rotation_euler),
-                            "ortho_scale": camera.data.ortho_scale, "counts": counts})
+                            "ortho_scale": camera.data.ortho_scale, "counts": counts,
+                            "ownership_sha256": hashlib.sha256((views_dir / f'view-{index}-known.png').read_bytes()).hexdigest()})
         _tile(solids, width, height, output / "solid.png")
         _tile(textured, width, height, output / "textured.png")
         manifest = {"version": 1, "asset_id": asset_id, "scene_name": scene_name,
@@ -268,6 +270,13 @@ def render_review(output_dir, *, scene_name, collection_name, asset_id,
                     "context_crop": crop, "source_image": str(source_path), "source_sha256": source_hash,
                     "projection_layers": layer_records, "views": records,
                     "source_mask_evidence": mask_record,
+                    "source_mask_manifest": str(Path(source_mask_manifest).resolve()) if source_mask_manifest else None,
+                    "source_constraint_status": [
+                        {"source_node": obj.get('source_node'),
+                         "constrained": bool(receiver_layers[obj.get('source_node')][3] and
+                                             receiver_layers[obj.get('source_node')][3].for_object(obj) is not None),
+                         "state": receiver_layers[obj.get('source_node')][3].state if receiver_layers[obj.get('source_node')][3] else None}
+                        for obj in objects],
                     "lighting": lighting_record,
                     "lighting_basis": "World-space direction inferred from upper-left reference illumination; not recovered metadata" if lighting_record else "Historical camera-relative Workbench studio",
                     "source_blend": bpy.data.filepath, "object_names": sorted(o.name for o in objects),

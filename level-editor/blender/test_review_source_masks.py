@@ -88,3 +88,49 @@ else:
     raise AssertionError('Wrong source state accepted')
 print(json.dumps({'status':'PASS','output':str(out),'review':review['views'][0]['counts'],
                   'bake_rejected':masked['mask_rejected_texels']}))
+
+# Exercise the same immutable review -> generated fill contract without an API.
+import shutil
+from project_reviewed_texture import apply, _read
+from refinement_review import _save, _tile
+packet = out/'generated'
+packet.mkdir()
+shutil.copy2(out/'review/textured.png', packet/'input.png')
+generated = np.ones((64,128,4),dtype=np.float32)
+generated[:,:,:3] = [0,0,1]
+_save(packet/'generated.png',128,64,generated.ravel())
+tile_masks=[]
+for view in review['views']:
+    i=view['index']
+    known=_read(out/f'review/views/view-{i}-known.png')[:,:,0]>.5
+    solid=_read(out/f'review/views/view-{i}-solid.png')[:,:,3]>0
+    tile=np.ones((32,32,4),dtype=np.float32)
+    tile[:,:,3][solid & ~known]=0
+    tile_masks.append(tile.ravel())
+    view['crop']={'left':i%4*32,'top':i//4*32,'width':32,'height':32}
+_tile(tile_masks,32,32,packet/'mask.png')
+input_hash=hashlib.sha256((packet/'input.png').read_bytes()).hexdigest()
+review.update(reviewed_packet=str(out/'review'),
+              reviewed_manifest_sha256=hashlib.sha256((out/'review/views.json').read_bytes()).hexdigest(),
+              layout={'width':128,'height':64})
+(packet/'views.json').write_text(json.dumps(review))
+(packet/'approval.json').write_text(json.dumps({'status':'approved','asset_id':'fixture','input_sha256':input_hash}))
+report=apply(packet/'views.json',packet/'generated.png',out/'generated-bake',map_name='MaskFixture')
+assert report['counts']['generated_texels_including_padding']>100
+assert report['layers'][0]['mask_rejected_texels']>100
+mat=mesh.materials[mesh.polygons[0].material_index]
+atlas=next(n.image for n in mat.node_tree.nodes if n.type=='TEX_IMAGE')
+rgb=np.asarray(atlas.pixels[:]).reshape(-1,4)[:,:3]
+assert not ((rgb[:,1]>.9)&(rgb[:,0]<.01)).any(), 'Foreground RGB retained by generated bake'
+assert ((rgb[:,0]>.9)&(rgb[:,1]<.01)).any(), 'Protected source missing'
+assert ((rgb[:,2]>.1)&(rgb[:,0]<.01)).any(), 'Generated unknown fill missing'
+assert mat.get('generated_source_mask_evidence_sha256')
+review.pop('source_mask_manifest')
+(packet/'views.json').write_text(json.dumps(review))
+try:
+    apply(packet/'views.json',packet/'generated.png',out/'must-not-exist',map_name='MaskFixture')
+except ValueError:
+    assert not (out/'must-not-exist').exists()
+else:
+    raise AssertionError('Dropped ownership contract accepted')
+print('PASS: generated bake rejects foreground, protects source and refuses dropped mask contract')
