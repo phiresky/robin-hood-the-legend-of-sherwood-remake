@@ -19,7 +19,17 @@ active work. Recheck with
 host, since sandbox process isolation hides other workers. Worker instructions
 and coordinator scheduling use the same provisional cap.
 
-Latest user approval: "both approved" applies to East Watchtower `ec675d3ef`
+Latest review-candidate approvals: Northwest Wash Tub, Northwest Yard Fence,
+South Approach Stone, East Courtyard North Shelter, East Hall Stone Trough, and
+East Bailey Covered Well are explicitly approved by the user. These refer to
+the current solid/source sheets in `round-2/review-candidates-14.json` and the
+copied `round-2/review-gallery-14/evidence.json` records. Their two-image,
+high-quality, no-API-mask texture fills are authorized once outstanding source
+ownership/framing validation passes. Approval does not waive those checks.
+Preserve raw and source-protected outputs. Other review candidates remain
+unapproved; technical integration of validated geometry is separately authorized.
+
+Earlier user approval: "both approved" applies to East Watchtower `ec675d3ef`
 (`inspection/masked-approval-v1`) and the South Gate east-roof correction
 `88747d706` (`derby-south-gatehouse-candidate-mask63-v2/inspection/final`).
 Generate with two images, high quality, no API mask; preserve exact input,
