@@ -13,13 +13,15 @@ def refine():
                if o.type == 'MESH' and not o.hide_render and o.get('asset_group') == ASSET]
     if len(objects) != 4:
         raise ValueError('Expected two canopies, shaft and separate bucket')
-    if all(o.get('round2_recipe') == TAG for o in objects):
-        return {'status': 'already-refined'}
     canopies = {o['source_node']: o for o in objects if o['source_node'] != 'building-111'}
     shaft = max((o for o in objects if o['source_node'] == 'building-111'),
                 key=lambda o: max((o.matrix_world @ v.co).x for v in o.data.vertices)
                 - min((o.matrix_world @ v.co).x for v in o.data.vertices))
     bucket = next(o for o in objects if o['source_node'] == 'building-111' and o != shaft)
+    shaft['projection_component'] = 'shaft'
+    bucket['projection_component'] = 'bucket'
+    if all(o.get('round2_recipe') == TAG for o in objects):
+        return {'status': 'already-refined', 'projection_components': ['shaft', 'bucket']}
     # Match the shared ridge endpoints; the two inherited slabs differed by .2
     # vertically and several hundredths horizontally, exposing a thin crack.
     east, west = canopies['building-109'], canopies['building-110']
