@@ -137,6 +137,19 @@ body/roof, with additional porch/detail masks nearby. Extracted evidence:
 cottage from this evidence before another texture generation; replace earlier
 geometry wherever necessary. The reusable worker instructions now say this explicitly.
 
+The hackable datadir converter now exports these masks automatically. Production
+Derby evidence is at `datadirs/fullgame_gog_hackable/Data/Levels/Derby.rhp.d/masks/`
+(repository-relative): 236 lossless PNGs plus `manifest.json`, including the main
+cottage silhouette `000010.png`. Backfill completed for all nine maps (3,027
+masks); all Derby PNG pixels match the independent extraction and level JSON is
+unchanged. The reusable projection constraint loader accepts this inventory, but
+requires reviewed object/mask associations and matching source-image hashes.
+No automatic Derby associations have been enabled yet.
+
+Editor appearance follow-up is in progress: restore optional synthesized hidden
+surfaces and smooth texture filtering. Source-only worker evidence must retain
+neutral unknown surfaces; inferred fill must not become projection evidence.
+
 Latest reported defects corrected and published:
 - Cottage ridge is level at 121.53 and long eaves at 87. The local front lip drops
   to 70; its hip apex matches source pixel (607,1919). Eight components are closed
