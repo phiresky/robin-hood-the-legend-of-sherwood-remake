@@ -55,7 +55,7 @@ def apply_recipe(recipe_path, *, asset_id, scene_name, collection_name,
             'changed_parts': sorted(changed_parts), 'canonical_parts_preserved': True}
 
 
-def import_asset_textures(blend_path, *, asset_id, collection_name):
+def import_asset_textures(blend_path, *, asset_id, collection_name, source_nodes=None):
     """Import UV/material data only when the saved asset has identical geometry.
 
     Names and transforms must match the current visible asset. The complete
@@ -64,7 +64,8 @@ def import_asset_textures(blend_path, *, asset_id, collection_name):
     import bpy
 
     targets = {o.name: o for o in bpy.data.collections[collection_name].all_objects
-               if o.type == 'MESH' and not o.hide_render and o.get('asset_group') == asset_id}
+               if o.type == 'MESH' and not o.hide_render and o.get('asset_group') == asset_id
+               and (source_nodes is None or o.get('source_node') in source_nodes)}
     if not targets:
         raise ValueError(f'No visible target meshes for {asset_id}')
 
