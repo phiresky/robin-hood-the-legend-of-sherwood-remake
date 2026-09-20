@@ -11,8 +11,14 @@ from mathutils.bvhtree import BVHTree
 import setup_map
 
 
-def _solid_views(scene, cameras, objects, output):
+def _solid_views(scene, cameras, objects, output, *, lighting=None):
     """Render untextured structure using the exact sampling cameras."""
+    from review_sunlight import render_solids
+    return render_solids(scene, cameras, objects, output, lighting=lighting)
+
+
+def _legacy_studio_views(scene, cameras, objects, output):
+    """Retained only to reproduce historical packets; not used for new sheets."""
     shading = scene.display.shading
     shading_values = {
         "light": "STUDIO", "color_type": "SINGLE", "single_color": (0.55, 0.55, 0.55),
@@ -71,7 +77,7 @@ def _tree(objects):
     return BVHTree.FromPolygons(vertices, triangles, all_triangles=True), owners
 
 
-def prepare(output_dir, asset_id="derby-south-gatehouse", width=384, height=512):
+def prepare(output_dir, asset_id="derby-south-gatehouse", width=384, height=512, *, lighting=None):
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=False)
     scene = bpy.data.scenes["Derby Refinement"]; bpy.context.window.scene = scene
@@ -101,12 +107,12 @@ def prepare(output_dir, asset_id="derby-south-gatehouse", width=384, height=512)
         yaw = math.radians(index * 45)
         camera.location = target + Vector((math.sin(yaw)*cosine,-math.cos(yaw)*cosine,sine))*1600
         camera.rotation_euler = (target-camera.location).to_track_quat("-Z","Y").to_euler()
-        setup_map.fit_camera(camera, objects, width/height)
+        setup_map.fit_camera(camera, objects, width/height, points=points, padding=1.04)
         cameras.append(camera)
-    shared_scale = max(camera.data.ortho_scale for camera in cameras)
-    for camera in cameras: camera.data.ortho_scale = shared_scale
     bpy.context.view_layer.update()
-    solid_views = _solid_views(scene, cameras, objects, output)
+    from review_sunlight import configuration
+    lighting = configuration(lighting)
+    solid_views = _solid_views(scene, cameras, objects, output, lighting=lighting)
     records = []
     audits = []
     for index, camera in enumerate(cameras):
@@ -166,7 +172,7 @@ def prepare(output_dir, asset_id="derby-south-gatehouse", width=384, height=512)
             bpy.data.images.remove(image)
         records.append({"index":index,"azimuth_degrees":index*45,"elevation_degrees":35,
                         "camera_matrix_world":[list(row) for row in camera.matrix_world],
-                        "ortho_scale":shared_scale,"counts":counts,
+                        "ortho_scale":camera.data.ortho_scale,"counts":counts,
                         "input":f"view-{index}-input.png","mask":f"view-{index}-mask.png",
                         "crop":{"left":index%4*width,"top":index//4*height,"width":width,"height":height}})
     manifest = {"version":1,"asset_id":asset_id,"layout":{"columns":4,"rows":2,"width":4*width,"height":2*height},
@@ -175,7 +181,10 @@ def prepare(output_dir, asset_id="derby-south-gatehouse", width=384, height=512)
                 "source_projection":"x=X, y=-Y*sin(35)-Z*cos(35)",
                 "known_rule":"View 0: original artwork clipped to projected asset silhouette, fully protected; may include scene occluders. Other views: fresh source bytes, matching reprojection SHA, per-object grazing cutoff, unoccluded world ray, sampled source texel belongs to same object.",
                 "source_pixel_audit":audits,
-                "unknown_appearance":"Neutral untextured Blender Workbench shading with shadows and cavity; exact same cameras.",
+                "unknown_appearance":"Neutral world-space diffuse sunlight with geometry cast shadows; exact same cameras.",
+                "lighting": lighting,
+                "lighting_basis":"World-space direction inferred from upper-left reference illumination; not recovered metadata",
+                "framing":"Per-view evaluated geometry, 4 percent padding",
                 "mask_rule":"Transparent=unknown shaded geometry; opaque=original source texel or background.",
                 "views":records}
     (output/"views.json").write_text(json.dumps(manifest,indent=2))

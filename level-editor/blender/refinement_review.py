@@ -59,7 +59,8 @@ def _tile(buffers, width, height, path):
 
 def render_review(output_dir, *, scene_name, collection_name, asset_id,
                   source_path, frame_manifest=None, width=384, height=512,
-                  elevation_degrees=35.0, context_padding=24, projection_layers=None):
+                  elevation_degrees=35.0, context_padding=24, projection_layers=None,
+                  lighting=None):
     """Render context.png, solid.png, textured.png, views.json and individual views.
 
     Coordinates use the map's orthographic projection: source x=X,
@@ -182,7 +183,16 @@ def render_review(output_dir, *, scene_name, collection_name, asset_id,
             start = (y * source_width + crop["left"]) * 4
             context.extend(original[start:start + cw * 4])
         _save(output / "context.png", cw, ch, context)
-        solids = _solid_views(scene, cameras, objects, views_dir)
+        # A frozen input keeps its lighting as well as its camera framing.
+        from review_sunlight import configuration
+        lighting = configuration(lighting or (baseline or {}).get("lighting"))
+        if baseline and not baseline.get("lighting"):
+            from experiment_multiview_texture import _legacy_studio_views
+            solids = _legacy_studio_views(scene, cameras, objects, views_dir)
+            lighting_record = None
+        else:
+            solids = _solid_views(scene, cameras, objects, views_dir, lighting=lighting)
+            lighting_record = lighting
         textured, records = [], []
         for index, camera in enumerate(cameras):
             frame = camera.data.view_frame(scene=scene)
@@ -236,6 +246,8 @@ def render_review(output_dir, *, scene_name, collection_name, asset_id,
                     "framing": baseline.get("framing", "legacy shared scale") if baseline else "Per-view evaluated geometry, 4 percent padding; frozen for modified comparison",
                     "context_crop": crop, "source_image": str(source_path), "source_sha256": source_hash,
                     "projection_layers": layer_records, "views": records,
+                    "lighting": lighting_record,
+                    "lighting_basis": "World-space direction inferred from upper-left reference illumination; not recovered metadata" if lighting_record else "Historical camera-relative Workbench studio",
                     "source_blend": bpy.data.filepath, "object_names": sorted(o.name for o in objects),
                     "known_rule": "Fresh source pixels, facing source, unoccluded in declared layer, sampled texel ray belongs to the same mesh. Identical rule in all eight views.",
                     "limitations": ["Artwork/background segmentation is not inferred. An oversized model can still project background onto itself; compare context and solid silhouettes.",
