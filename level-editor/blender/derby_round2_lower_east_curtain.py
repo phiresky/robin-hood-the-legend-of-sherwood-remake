@@ -6,7 +6,7 @@ import bmesh
 from mathutils import Vector
 
 ASSET = 'derby-lower-east-curtain'
-TAG = 'lower-east-stair-landing-and-tread-phase-v3'
+TAG = 'lower-east-stair-landing-and-tread-phase-v4'
 
 
 def refine():
@@ -41,10 +41,13 @@ def refine():
     base = min(lower_left.z, lower_right.z)
     rise = (top - base) / count
     profile = [(0.0, base)]
-    for i in range(count):
+    # The landing wall supplies the final riser. Extending this stair to its
+    # height at the same run coordinate would retrace the closed cheek profile
+    # and create two opposite faces over the top riser (a zero-volume flap).
+    # Stop at the final tread, leaving the existing landing face exposed.
+    for i in range(count - 1):
         profile.append((i / (count - 1), base + (i + 1) * rise))
-        if i < count - 1:
-            profile.append(((i + 1) / (count - 1), base + (i + 1) * rise))
+        profile.append(((i + 1) / (count - 1), base + (i + 1) * rise))
     profile.append((1.0, base))
     vertices = []
     inverse = stair.matrix_world.inverted()
@@ -56,7 +59,7 @@ def refine():
     n = len(profile)
     faces = [tuple(range(n)), tuple(range(n, 2 * n))]
     faces.extend((i, (i + 1) % n, (i + 1) % n + n, i + n) for i in range(n))
-    mesh = bpy.data.meshes.new('Lower east stair / twenty treads and twenty-one risers')
+    mesh = bpy.data.meshes.new('Lower east stair / twenty treads joining landing riser')
     mesh.from_pydata(vertices, [], faces)
     bm = bmesh.new()
     bm.from_mesh(mesh)
@@ -77,6 +80,7 @@ def refine():
     stair['round2_refinement'] = TAG
     stair['step_count'] = count
     stair['tread_count'] = count - 1
+    stair['landing_riser_source_node'] = 'building-044'
     stair['todo'] = 'Hidden cheek detail remains unconstrained; do not treat synthesized masonry as geometry evidence.'
     bpy.context.view_layer.update()
     validation = []
@@ -92,5 +96,7 @@ def refine():
         raise ValueError(validation)
     return {'asset': ASSET, 'changed_nodes': ['building-012'],
             'unchanged_nodes': ['building-007', 'building-010', 'building-024', 'building-041', 'building-044'],
-            'risers': count, 'treads': count - 1, 'landing_gap': 0.0,
+            'risers': count, 'treads': count - 1,
+            'landing_riser_source_node': 'building-044',
+            'landing_riser_height': rise,
             'validation': validation}
