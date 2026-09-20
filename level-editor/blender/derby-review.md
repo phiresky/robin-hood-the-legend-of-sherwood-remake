@@ -9,9 +9,12 @@ Blender concurrency is provisionally six coordinated jobs, increased from three
 after host measurements on 2026-09-20: 16 logical CPUs, 30.65 GiB RAM, roughly
 20 GiB available, and sampled workers using 1–2 GiB and about one CPU core each.
 This is capacity headroom evidence, not a six-job throughput benchmark. New jobs
-use `--threads 2`; scene loads and heavy saves are staggered because host I/O
-pressure is high. Pause new launches below 6 GiB available memory or sustained
-swap/pressure slowdowns; do not kill active work. Recheck with
+use `--threads 2`; ready work starts without mandatory load delays. High host I/O
+pressure did not establish device saturation: a subsequent five-second NVMe
+sample showed 12.3% busy time, 14.9 MiB/s combined throughput and 3.68 ms average
+read/write completion latency. Pause new launches below 6 GiB available memory
+or measured swapping/device latency causing sustained slowdowns; do not kill
+active work. Recheck with
 `python3 level-editor/blender/measure_blender_resources.py --seconds 10` on the
 host, since sandbox process isolation hides other workers. Worker instructions
 and coordinator scheduling use the same provisional cap.
