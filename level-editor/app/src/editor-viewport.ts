@@ -18,6 +18,7 @@ import {
 import type { MissionEntities } from "./mission.ts";
 import type { Selection } from "./document-commands.ts";
 import { disposeObjectResources } from "./resources.ts";
+import { TextureDisplay } from "./texture-display.ts";
 
 interface View {
   wrapper: THREE.Group;
@@ -45,6 +46,18 @@ export interface ViewportBindings {
  * selection are borrowed from the session/UI, never copied into another model.
  * Editable clones share source resources; only source roots own their disposal. */
 export class EditorViewport {
+  private readonly textureDisplay = new TextureDisplay();
+  setTextureDisplay(smooth: boolean, synthesized: boolean) {
+    this.textureDisplay.smooth = smooth;
+    this.textureDisplay.synthesized.value = synthesized;
+    this.refreshTextureDisplay();
+  }
+  private refreshTextureDisplay() {
+    const anisotropy = this.renderer?.capabilities.getMaxAnisotropy() ?? 1;
+    for (const root of [this.sourceAsset, this.ground, this.objectsRoot]) {
+      if (root) this.textureDisplay.apply(root, anisotropy);
+    }
+  }
   readonly listeners = new AbortController();
   private renderer: THREE.WebGLRenderer | null = null;
   private container: HTMLDivElement | null = null;
@@ -265,6 +278,7 @@ export class EditorViewport {
     this.ground = ground;
     if (ground) this.mapRoot.add(ground);
     for (const [key, value] of sources) this.sourceNodes.set(key, value);
+    this.refreshTextureDisplay();
   }
 
   private ownControl<T extends { dispose(): void }>(control: T): T {
@@ -333,6 +347,7 @@ export class EditorViewport {
     this.container = el;
     this.renderer = new THREE.WebGLRenderer({ antialias: true, reversedDepthBuffer: true });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.refreshTextureDisplay();
     el.appendChild(this.renderer.domElement);
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -100000, 100000);
     this.camera.position.set(0, 2000, 3000);
@@ -904,6 +919,7 @@ export class EditorViewport {
           this.tinted.set(m, m.material);
           const tint = (original: THREE.Material) => {
             const mat = original.clone() as THREE.MeshBasicMaterial;
+            this.textureDisplay.material(mat);
             if (mat.color) mat.color.set(0xffd27a);
             return mat;
           };
