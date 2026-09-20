@@ -51,6 +51,31 @@ def stage(plan_path):
     if canonical_before!=canonical_after or len(canonical_after)!=270:
         raise ValueError('Publication changed canonical part coverage')
     grouping=reconcile_asset_groups(plan['catalog'])
+    ground_handoff=None
+    if plan.get('ground_texture_handoff'):
+        item=plan['ground_texture_handoff']
+        proof=json.loads(Path(item['proof']).read_text())
+        if proof.get('status')!='PASS' or not all(proof.get(key) for key in (
+                'outside_mask_pixels_identical','alpha_identical','all_object_geometry_identical',
+                'terrain_uv_identical','outside_material_assignments_identical')):
+            raise ValueError('Ground cleanup has incomplete scope evidence')
+        if proof['original_atlas_sha256']!=item['baseline_atlas_sha256']:
+            raise ValueError('Ground cleanup evidence names a different baseline')
+        if item['requires_asset_id'] not in {entry['asset_id'] for entry in plan['imports']}:
+            raise ValueError('Ground cleanup requires its replacement geometry')
+        grounds=[o for o in collection.all_objects if o.type=='MESH' and not o.hide_render and o.get('source_node')=='ground']
+        if len(grounds)!=1:
+            raise ValueError('Expected exactly one ground receiver')
+        ground=grounds[0]
+        image=next(n.image for n in ground.data.materials[0].node_tree.nodes if n.type=='TEX_IMAGE' and n.image)
+        if hashlib.sha256(image.packed_file.data).hexdigest()!=item['baseline_atlas_sha256']:
+            raise ValueError('Ground cleanup baseline changed')
+        ground_handoff=import_asset_textures(item['blend_path'],asset_id=ground.get('asset_group'),
+            collection_name=collection.name,source_nodes=['ground'])
+        image=next(n.image for n in ground.data.materials[0].node_tree.nodes if n.type=='TEX_IMAGE' and n.image)
+        if hashlib.sha256(image.packed_file.data).hexdigest()!=proof['output_atlas_sha256']:
+            raise ValueError('Ground cleanup handoff differs from reviewed atlas')
+        ground['ground_cleanup_report']=item['proof']
     generated={}
     for obj in collection.all_objects:
         if obj.type!='MESH' or obj.hide_render:
@@ -60,7 +85,7 @@ def stage(plan_path):
             if mat and mat.get('generated_source_sha256'):
                 generated.setdefault(mat['generated_source_sha256'],set()).add(mat.name)
     bpy.ops.wm.save_as_mainfile(filepath=str(output/'worker.blend'))
-    report={'plan':str(plan_path),'imports':imports,'grouping':grouping,
+    report={'plan':str(plan_path),'imports':imports,'grouping':grouping,'ground_texture_handoff':ground_handoff,
             'canonical_parts':len(canonical_after),
             'generated_materials':{sha:sorted(names) for sha,names in generated.items()},
             'map':export_editor(plan['map_name'],output/'derby.scene.glb'),
