@@ -19,7 +19,9 @@ is `work/derby-refinement/round-2/source.blend`. A fresh grouping review confirm
 in scheduled waves. Six asset candidates have passed root review: Great Keep,
 Upper Bailey Gatehouse, South Gatehouse, East Hall turret, East Watchtower and
 the revised West Cottage. Terrain/background also has an accepted candidate.
-These candidates are **not yet integrated or published**. Keep facade relief,
+These candidates are combined in `round-2/integration-geometry.blend`, with all
+eight recipe scope checks passing (30 building parts plus ground changed).
+They are **not yet published or merged into the main working blend**. Keep facade relief,
 Hall wall/interior alignment and Watchtower hoist/cage remain follow-up work.
 New work is isolated until its source,
 solid, textured and scope checks pass. The new mask PNGs are evidence for this
