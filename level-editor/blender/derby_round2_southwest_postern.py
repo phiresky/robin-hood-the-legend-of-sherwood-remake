@@ -112,7 +112,7 @@ def _refine_shells():
     Anchors follow the existing visible top outline, not a proximity weld. The
     upper wood landing's exposed far corner is shortened to its authored edge.
     """
-    tag = 'postern-coherent-shells-round2-v2'
+    tag = 'postern-coherent-shells-round2-v3'
     # World-space top perimeters audited before modification. Each perimeter
     # bounds one solid part; the main tower's ten-point path retains its hollow
     # center rather than capping the whole courtyard opening.
@@ -140,9 +140,11 @@ def _refine_shells():
         'building-043': (0.001, [
             (519.270,-4265.814,182.639),(511.933,-4223.601,205.486),
             (496.655,-4228.250,197.777),(513.993,-4274.234,175.905),
-            (559.308,-4288.621,181.942),(591.776,-4273.488,201.464),
+            (536.650,-4281.428,155.0),(559.308,-4288.621,165.0),
+            (591.776,-4273.488,201.464),
             (612.181,-4230.963,233.454),(601.931,-4227.472,232.230),
-            (590.939,-4261.946,208.088),(556.182,-4282.980,184.302)]),
+            (590.939,-4261.946,208.088),(556.182,-4282.980,165.0),
+            (537.726,-4274.397,155.0)]),
     }
     sine, cosine = math.sin(math.radians(35)), math.cos(math.radians(35))
     # Native mask 71 retains x=636 at y=2280. Unlike cropping to the mask, only
@@ -188,5 +190,69 @@ def _refine_shells():
     return result
 
 
+def _refine_ladders():
+    """Use straight parallel rails and the nine/six source rung bands."""
+    tag='postern-nine-six-rung-ladders-v5'
+    sine,cosine=math.sin(math.radians(35)),math.cos(math.radians(35))
+    # Each ladder is planar: one shared slope vector and one across vector.
+    # Slight paint irregularity is not used to bend individual rails or rungs.
+    specifications=[
+        ('building-039',(567.5,2374),(17.0,-3.5),(13.5,103),122.0,0.0,
+         [12.5,24,35,46.5,57.5,68,78.5,88.5,96],1.7),
+        ('building-040',(595.0,2298),(9.5,5.5),(-11,52.5),183.118,128.183,
+         [11,18,24.5,31.5,39,46],1.5),
+    ]
+    result=[]
+    for node,start,across,delta,high,low,rungs,width in specifications:
+        objects=[o for o in bpy.data.collections['Derby Working'].objects
+                 if o.type=='MESH' and not o.hide_render and o.get('asset_group')==ASSET
+                 and o.get('source_node')==node]
+        if len(objects)!=1:raise ValueError(node)
+        obj=objects[0]
+        if obj.get('round2_ladder')==tag:
+            result.append({'node':node,'reused':True});continue
+        def point(t,side):
+            x=start[0]+delta[0]*t+across[0]*side
+            y=start[1]+delta[1]*t+across[1]*side
+            z=high+(low-high)*t
+            return Vector((x,-(y+z*cosine)/sine,z))
+        normal=(point(1,0)-point(0,0)).cross(point(0,1)-point(0,0)).normalized()
+        vertices=[];faces=[]
+        def beam(a,b,w):
+            direction=(b-a).normalized()
+            side=direction.cross(normal).normalized()*w/2
+            depth=normal*w/2
+            offset=len(vertices)
+            vertices.extend(p+s*side+t*depth for p in (a,b)
+                            for s,t in ((-1,-1),(1,-1),(1,1),(-1,1)))
+            faces.extend(tuple(offset+i for i in f) for f in
+                         ((0,3,2,1),(4,5,6,7),(0,1,5,4),(1,2,6,5),(2,3,7,6),(3,0,4,7)))
+        # The lower rail heads meet the underside of the landing at z124.44;
+        # the 0.081-unit center gap is smaller than their timber half-width.
+        # Moving the whole planar ladder in depth preserves its screen fit.
+        head=-.02 if node=='building-039' else 0
+        for side in [0,1]:beam(point(head,side),point(1,side),width)
+        for height in rungs:
+            t=height/delta[1]
+            beam(point(t,0),point(t,1),1.35)
+        mesh=bpy.data.meshes.new(node+' source-spaced straight timber ladder')
+        inverse=obj.matrix_world.inverted()
+        mesh.from_pydata([inverse@p for p in vertices],[],faces);mesh.update()
+        bm=bmesh.new();bm.from_mesh(mesh)
+        bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces))
+        bad={'nonmanifold_edges':sum(not e.is_manifold for e in bm.edges),
+             'degenerate_faces':sum(f.calc_area()<1e-8 for f in bm.faces)}
+        bm.to_mesh(mesh);bm.free()
+        if any(bad.values()):raise ValueError(bad)
+        uv=mesh.uv_layers.new(name='UVMap')
+        for loop in mesh.loops:
+            p=obj.matrix_world@mesh.vertices[loop.vertex_index].co
+            uv.data[loop.index].uv=(p.x/1920,1+(p.y*sine+p.z*cosine)/2752)
+        if obj.data.materials:mesh.materials.append(obj.data.materials[0])
+        obj.data=mesh;obj['round2_ladder']=tag;obj['rung_count']=len(rungs)
+        result.append({'node':node,'rungs':len(rungs),**bad})
+    return result
+
+
 def refine():
-    return {'scaffold':_refine_scaffold(),'shells':_refine_shells()}
+    return {'scaffold':_refine_scaffold(),'shells':_refine_shells(),'ladders':_refine_ladders()}
