@@ -48,6 +48,14 @@ The user approved both lean-tos for two-image texture filling: East Wall Lean-to
 `modified/`), with "Approve both". Geometry is frozen. High-quality no-mask
 generation is assigned; retain raw and source-preserved alternatives in
 `sunburst-east-wall-lean-to-approved/` and `sunburst-south-curtain-lean-to-approved/`.
+Southwest Cottage (`21273f62d`) and Keep–Hall Bridge (`2d3cc7425`) were approved
+for texture filling after their solid/source-textured eight-view review.
+Southeast Cottage (`ea9db23ca`) was rejected because foreground tower artwork
+is projected onto cottage surfaces. No AI pass is authorized for that candidate.
+Review native cottage mask 0 against foreground tower mask 63, state and depth
+ordering; apply matching source-acceptance constraints to both baking and worker
+review images. Correct ownership rather than distorting geometry or generating
+over contaminated evidence. Show corrected source-only views before approval.
 
 Corrected East Bailey Gatehouse arch `b51aebb25` was explicitly approved after
 renewed closeup review: "Approve texture fill". Its previous crown was about 25
