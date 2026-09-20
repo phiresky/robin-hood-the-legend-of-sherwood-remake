@@ -19,6 +19,13 @@ active work. Recheck with
 host, since sandbox process isolation hides other workers. Worker instructions
 and coordinator scheduling use the same provisional cap.
 
+Upper East Curtain is approved for texture filling using the fresh
+`inspection/native-authority/approval` sheets and model SHA256
+`0930469ac325bdd358b9218488108d19764d720d9de92d0017188c831adda84b`.
+The Timber Stack with its modeled bucket is also approved using the reframed,
+mask-checked gallery sheets; the bucket remains under the stack's current
+canonical part ownership. Remove both from pending review and preserve evidence.
+
 The user approved the revised Lying Barrel `c146f01b9` after viewing its gallery
 entry: 194 faces instead of 576, broader head and shorter body, with fresh
 mask-checked projection. Its texture fill and next integration are authorized;
