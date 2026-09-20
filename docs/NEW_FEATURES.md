@@ -12,7 +12,7 @@ A list of which additional features we have added, which ones we might still wan
 - **3D editor mission previews and perspective.** Load a mission from the connected
   hackable datadir to display its initial characters with all 16 camera-relative
   directions, bonus/scroll sprites, targets, and mobile objects. A perspective slider
-  adds distance scaling while preserving projected map extent, with tight clip
+  adds distance scaling while smoothly preserving average projected map scale, with tight clip
   planes and reversed depth where supported. Separate upright, prone, pickup, and
   scenery profiles adjust with camera height. Prone bodies use fixed source-view
   angles; other directional sprites face the camera. Coats of arms use cylinders.

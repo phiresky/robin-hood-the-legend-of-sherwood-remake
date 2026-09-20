@@ -41,8 +41,9 @@ playback, and mission editing/saving are not simulated by this preview.
 
 Character placement recovers height from the support obstacle's top plane;
 nonnegative target Z values override that calculation. The **Perspective** slider
-runs from orthographic (0) to a 65° field of view, compensating for map depth to
-preserve overall framing while scaling the scene by distance. Both cameras use
+runs from orthographic (0) to a 65° field of view, smoothly preserving the map's
+average projected scale while introducing distance scaling. The fit uses the
+whole scene rather than switching between outermost vertices. Both cameras use
 tight scene depth ranges, with reversed depth on supported GPUs, to preserve
 surface depth precision across zoom levels and narrow fields of view. Upright character
 pixels project onto an approximate cylinder shell and top cap; dead, unconscious,

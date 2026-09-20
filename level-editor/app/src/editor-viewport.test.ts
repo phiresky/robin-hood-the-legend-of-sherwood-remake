@@ -258,10 +258,14 @@ test("perspective keeps a deep map's apparent size across lens angles and zoom l
   for (const zoom of [0.5, 1, 4]) {
     camera.zoom = zoom;
     camera.updateProjectionMatrix();
-    const expected = new THREE.Vector3(800, 900, 1500).project(camera).y;
+    const size = (lens: THREE.Camera) => Math.sqrt([-1500, 1500].reduce((sum, z) => {
+      const p = new THREE.Vector3(800, 900, z).project(lens);
+      return sum + p.x ** 2 + p.y ** 2;
+    }, 0) / 2);
+    const expected = size(camera);
     for (const fov of [1, 15, 30, 45, 65]) {
       viewport.setPerspective(fov);
-      const actual = new THREE.Vector3(800, 900, 1500).project(access.activeCamera()).y;
+      const actual = size(access.activeCamera());
       assert.ok(Math.abs(actual - expected) < 1e-8, `framing at ${fov} degrees, zoom ${zoom}`);
     }
   }
@@ -404,21 +408,34 @@ test("narrow perspective uses tight scene bounds instead of losing depth precisi
   viewport.dispose();
 });
 
-test("lens framing follows real geometry rather than empty bounding-box corners", () => {
+test("slider preserves average scale smoothly through the old silhouette switch near 15 degrees", () => {
   const { viewport } = fixture();
   const camera = new THREE.OrthographicCamera(-2000, 2000, 1000, -1000);
   camera.position.set(0, 0, 10000);
   camera.lookAt(0, 0, 0);
   camera.updateMatrixWorld();
-  const points = [new THREE.Vector3(-600, -900, 1400), new THREE.Vector3(800, 1000, -1500), new THREE.Vector3(600, -600, 1000)];
+  const points = [new THREE.Vector3(-600, -900, 350), new THREE.Vector3(800, 1000, -410), new THREE.Vector3(600, -600, 100)];
   Object.assign(viewport, { camera, frustum: 1000, container: { clientWidth: 800, clientHeight: 400 }, orbit: { target: new THREE.Vector3() }, framingBounds: new THREE.Box3().setFromPoints(points), framingPoints: points });
-  const extent = (lens: THREE.Camera) => Math.max(...points.map(p => { const projected = p.clone().project(lens); return Math.max(Math.abs(projected.x), Math.abs(projected.y)); }));
+  const extent = (lens: THREE.Camera) => Math.sqrt(points.reduce((sum, p) => {
+    const projected = p.clone().project(lens);
+    return sum + projected.x ** 2 + projected.y ** 2;
+  }, 0) / points.length);
   const expected = extent(camera);
   const access = viewport as unknown as { activeCamera(): THREE.Camera };
-  for (const fov of [0, 1, 5, 15, 30, 45, 65, 15, 0]) {
+  for (const fov of [0, 0.01, ...Array.from({ length: 65 }, (_, i) => i + 1), 15, 0]) {
     viewport.setPerspective(fov);
     assert.ok(Math.abs(extent(access.activeCamera()) - expected) < 1e-8, `apparent extent at ${fov} degrees`);
   }
+  const transition = 2 * Math.atan(1000 / 7600) * 180 / Math.PI;
+  const scale = (fov: number) => {
+    viewport.setPerspective(fov);
+    return new THREE.Vector3(0, 100, 0).project(access.activeCamera()).y;
+  };
+  const epsilon = 0.001;
+  const middle = scale(transition);
+  const before = (middle - scale(transition - epsilon)) / epsilon;
+  const after = (scale(transition + epsilon) - middle) / epsilon;
+  assert.ok(Math.abs(before - after) < 1e-6, "no sudden change in zoom response when silhouette vertices exchange dominance");
   viewport.dispose();
 });
 

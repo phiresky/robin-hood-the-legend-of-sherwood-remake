@@ -101,7 +101,7 @@ export class EditorViewport {
     camera.far = Math.max(camera.near + 1, farthest);
     camera.updateProjectionMatrix();
   }
-  /** Keep the map's projected extent while introducing foreshortening with a
+  /** Keep the map's average projected scale while introducing foreshortening with a
    * virtual lens. Controls retain their map-unit pan and zoom. */
   private activeCamera(): THREE.OrthographicCamera | THREE.PerspectiveCamera {
     const camera = this.camera!;
@@ -131,7 +131,7 @@ export class EditorViewport {
     const aspect = this.container!.clientWidth / Math.max(1, this.container!.clientHeight);
     let distance = halfHeight / Math.tan(THREE.MathUtils.degToRad(this.perspective / 2));
     const targetDepth = target.clone().sub(camera.position).dot(forward);
-    // Preserve the map's projected envelope, not just the target plane. Nearby
+    // Preserve the map's average projected scale, not just the target plane. Nearby
     // walls otherwise grow dramatically as the lens moves closer at wide angles.
     // Pan and orbit are rigid camera movements. Refit only when lens/view
     // dimensions change, otherwise rotating toward a wider map silhouette
@@ -143,8 +143,9 @@ export class EditorViewport {
       distance = this.framingDistance / camera.zoom;
     } else if (!this.framingBounds.isEmpty()) {
       const inverse = camera.quaternion.clone().invert();
-      const projectedPoints: THREE.Vector3[] = [];
-      let extent = 0;
+      const samples: { weight: number; depth: number }[] = [];
+      let totalWeight = 0;
+      let nearestDepth = -Infinity;
       const points = this.framingPoints.length ? this.framingPoints : [
         ...[this.framingBounds.min.x, this.framingBounds.max.x].flatMap(x =>
           [this.framingBounds.min.y, this.framingBounds.max.y].flatMap(y =>
@@ -152,16 +153,29 @@ export class EditorViewport {
       ];
       for (const source of points) {
         const point = source.clone().sub(camera.position).applyQuaternion(inverse);
-        projectedPoints.push(point);
-        extent = Math.max(extent, Math.abs(point.x) / (halfHeight * aspect), Math.abs(point.y) / halfHeight);
+        const weight = (point.x / aspect) ** 2 + point.y ** 2;
+        if (weight === 0) continue;
+        const depth = point.z + targetDepth;
+        samples.push({ weight, depth });
+        totalWeight += weight;
+        nearestDepth = Math.max(nearestDepth, depth);
       }
-      if (extent > 0) {
+      if (totalWeight > 0) {
         const baseDistance = distance;
-        distance = 0;
-        for (const point of projectedPoints) {
-          const scale = Math.max(Math.abs(point.x) / (halfHeight * aspect), Math.abs(point.y) / halfHeight) / extent;
-          distance = Math.max(distance, baseDistance * scale + point.z + targetDepth);
+        // Match RMS screen radius. The hard maximum over vertices causes a
+        // visible kink whenever a different silhouette point controls the fit.
+        // This monotonic equation instead varies smoothly with the lens angle.
+        let low = nearestDepth;
+        let high = nearestDepth + baseDistance;
+        for (let iteration = 0; iteration < 40; iteration++) {
+          const candidate = (low + high) / 2;
+          let weight = 0;
+          for (const sample of samples)
+            weight += sample.weight * (baseDistance / (candidate - sample.depth)) ** 2;
+          if (weight > totalWeight) low = candidate;
+          else high = candidate;
         }
+        distance = (low + high) / 2;
       }
     }
     this.framingKey = framingKey;
