@@ -64,6 +64,15 @@ async function main(): Promise<void> {
      approval.input_sha256!==inputHash||!approval.geometry_revision)
     throw new Error("Sunburst requires explicit user approval for this exact preview and geometry revision");
   const mask=await fs.readFile(path.join(directory,"mask.png"));
+  const lightingIndex=process.argv.indexOf("--lighting-reference");
+  const lightingPath=lightingIndex<0?null:process.argv[lightingIndex+1];
+  if(lightingIndex>=0&&!lightingPath)throw new Error("Supply the pure-gray lighting reference path");
+  const lighting=lightingPath?await fs.readFile(path.resolve(lightingPath)):null;
+  if(lighting){
+    const info=await sharp(lighting).metadata();
+    if(info.width!==manifest.layout.width||info.height!==manifest.layout.height)
+      throw new Error("Lighting reference dimensions differ from the approved input sheet");
+  }
   const variantIndex=process.argv.indexOf("--prompt-variant");
   const variant=variantIndex<0?"detailed":process.argv[variantIndex+1];
   if(variant!=="short"&&variant!=="detailed"&&variant!=="restore")throw new Error("Choose --prompt-variant short, detailed, or restore");
@@ -84,21 +93,24 @@ Replace every masked untextured surface with the appropriate texture. Return the
   };
   const omitMask=process.argv.includes("--no-mask");
   if(omitMask&&variant!=="short")throw new Error("The no-mask control currently requires --prompt-variant short");
-  const outputDirectory=path.join(directory,`generation-${variant}${omitMask?"-no-mask":""}`);
+  const outputDirectory=path.join(directory,`generation-${variant}${omitMask?"-no-mask":""}${lighting?"-with-lighting":""}`);
   await fs.mkdir(outputDirectory,{recursive:true});
   const prompt=omitMask?"Create an image from the provided reference sheet of 8 views of the same building. The untextured gray shaded areas mark missing textures. Fill in these regions logically and consistently across all views, preserving all existing textured pixels exactly. Keep the same building design, textures, lighting, perspective, and black background.":prompts[variant];
   const parameters={model,quality:"high",size:"1536x1024",n:"1",output_format:"png",
-    prompt:prompt+" Follow the lighting and shading shown on the gray surfaces, preserving the same sun direction across all eight views."};
-  const hash=crypto.createHash("sha256").update(input).update(omitMask?Buffer.alloc(0):mask).update(JSON.stringify(parameters)).digest("hex");
+    prompt:prompt+" Follow the lighting and shading shown on the gray surfaces, preserving the same sun direction across all eight views."+
+      (lighting?" The second image shows the same eight views entirely in gray; use it as the reference for lighting, shadows, and shape, and return only the completed first image.":"")};
+  const hash=crypto.createHash("sha256").update(input).update(lighting??Buffer.alloc(0)).update(omitMask?Buffer.alloc(0):mask).update(JSON.stringify(parameters)).digest("hex");
   const cache=path.join(directory,"api-cache",hash);await fs.mkdir(cache,{recursive:true});
-  await fs.writeFile(path.join(cache,"request.json"),JSON.stringify({endpoint:"https://api.openai.com/v1/images/edits",parameters,input_sha256:crypto.createHash("sha256").update(input).digest("hex"),mask_sha256:omitMask?null:crypto.createHash("sha256").update(mask).digest("hex")},null,2));
+  await fs.writeFile(path.join(cache,"request.json"),JSON.stringify({endpoint:"https://api.openai.com/v1/images/edits",parameters,input_sha256:crypto.createHash("sha256").update(input).digest("hex"),lighting_sha256:lighting?crypto.createHash("sha256").update(lighting).digest("hex"):null,mask_sha256:omitMask?null:crypto.createHash("sha256").update(mask).digest("hex")},null,2));
   await fs.writeFile(path.join(cache,"input.png"),input);await fs.writeFile(path.join(cache,"mask.png"),mask);
+  if(lighting)await fs.writeFile(path.join(cache,"lighting.png"),lighting);
   let response:{status:number;body:unknown};
   try { response=JSON.parse(await fs.readFile(path.join(cache,"response.json"),"utf8")); }
   catch(error) {
     if((error as NodeJS.ErrnoException).code!=="ENOENT")throw error;
     const form=new FormData();for(const [key,value]of Object.entries(parameters))form.append(key,value);
-    form.append("image",new Blob([new Uint8Array(input)],{type:"image/png"}),"input.png");
+    form.append(lighting?"image[]":"image",new Blob([new Uint8Array(input)],{type:"image/png"}),"input.png");
+    if(lighting)form.append("image[]",new Blob([new Uint8Array(lighting)],{type:"image/png"}),"lighting.png");
     if(!omitMask)form.append("mask",new Blob([new Uint8Array(mask)],{type:"image/png"}),"mask.png");
     const raw=await fetch("https://api.openai.com/v1/images/edits",{method:"POST",headers:{Authorization:`Bearer ${requireEnv("OPENAI_API_KEY")}`},body:form});
     const text=await raw.text();let body:unknown;try{body=JSON.parse(text);}catch{body={text};}
@@ -130,7 +142,7 @@ Replace every masked untextured surface with the appropriate texture. Return the
     }
   }
   await sharp(result,{raw:{width:manifest.layout.width,height:manifest.layout.height,channels:4}}).png().toFile(path.join(outputDirectory,"generated-preserved.png"));
-  const report={model,quality:parameters.quality,variant,maskSent:!omitMask,prompt:parameters.prompt,status:response.status,filled,changedProtected,rawChangedProtected,
+  const report={model,quality:parameters.quality,variant,maskSent:!omitMask,lightingReferenceSent:!!lighting,prompt:parameters.prompt,status:response.status,filled,changedProtected,rawChangedProtected,
     protectedTexturePixels,rawChangedTexturePixels,rawChangedBackgroundPixels,
     rawProtectedTextureMeanAbsoluteError:protectedTexturePixels?rawTextureAbsoluteError/(3*protectedTexturePixels):0,cache,outputDirectory};
   await fs.writeFile(path.join(outputDirectory,"generation.json"),JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));
