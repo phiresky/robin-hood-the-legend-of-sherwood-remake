@@ -127,6 +127,16 @@ geometry remain unfinished. Individual chain links are simplified.
 
 ## Next required work
 
+The user still rejects the cottage's shape. Treat V4 as a rejected geometric
+hypothesis for the next pass, not an outline to preserve. Character occlusion
+bitmaps provide stronger original-camera silhouette evidence than obstacle
+volumes. Derby has 236 masks; masks 9 and 10 cover the cottage annex and main
+body/roof, with additional porch/detail masks nearby. Extracted evidence:
+`cottage-occlusion-masks/`. These are conditional occluder silhouettes, not
+3D depth maps or automatically one complete semantic object per mask. Refit the
+cottage from this evidence before another texture generation; replace earlier
+geometry wherever necessary. The reusable worker instructions now say this explicitly.
+
 Latest reported defects corrected and published:
 - Cottage ridge is level at 121.53 and long eaves at 87. The local front lip drops
   to 70; its hip apex matches source pixel (607,1919). Eight components are closed

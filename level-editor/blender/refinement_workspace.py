@@ -253,6 +253,10 @@ def prepare(workspace_dir, *, asset_id, scene_name, collection_name, source_path
     instructions = f'''# Refinement worker: {asset_id}
 
 Own only this logical asset. Its stable source parts are {", ".join(parts)}.
+Earlier refinements are hypotheses, not constraints. Remove or rebuild any owned
+geometry that conflicts with original artwork or authored occlusion silhouettes.
+Do not preserve a bad roof profile merely because a previous worker created it.
+Preserve stable part identities, not inherited shapes; the baseline is your backup.
 Edit `model.blend` in your own Blender process. All scene context remains in the
 file for accurate occlusion; it is not selectable and is outside your scope.
 Do not delete, transform, rename or edit other assets. Preserve source_node and
