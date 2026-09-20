@@ -18,14 +18,27 @@ front/rear facades. The latest candidate removes the V-shaped rear wall and uses
 shared end planes with 2.86-degree inward batter. After seeing both eight-view
 `facade-review/` sheets, the user approved this geometry (`d01d438af`):
 "ok good enough for now". Prepare the unchanged geometry with fixed-world-sun
-lighting and a separate solid reference for the next Sunburst texture-fill pass;
-generation and publication are still pending.
+lighting and a separate solid reference. Its two-image Sunburst generation is
+complete in `round-2/sunburst-cottage-approved/`; application is pending.
 The user also approved all three shown candidates for texture filling:
 Lower East Curtain and stairs (`01badfdfa`, `approval/`), East Cottage barrel
 (`dd4075b59`, `approval/`), and Northwest Cottage barrel (`2a38c34ee`,
 `modified/`): "approve all three". Their fixed-world-sun textured and solid
 sheets are the approved references. High-quality, no-API-mask, two-image
-Sunburst passes are underway; generated textures are not yet published.
+Sunburst passes completed successfully; generated textures are not yet published.
+Their results are under `round-2/sunburst-<asset-id>-approved/` in
+`generation-short-no-mask-with-lighting/`. All three preserved composites retain
+the protected source pixels exactly. The user reviewed the Northwest barrel raw
+output positively; its future use versus source-preserved pixels remains open.
+
+**Retain both texture alternatives.** Keep `generated-raw.png` and
+`generated-preserved.png`, the exact input and solid lighting reference,
+camera/ownership manifests, approval record, prompt/settings and cached API
+response. Do not overwrite or delete either result when baking, publishing or
+running another experiment; put new generations in a new directory. The user
+explicitly wants to decide later whether to use raw generated pixels instead of
+preserved source pixels. The raw Northwest barrel output SHA-256 is
+`be6e594f7c16bbf116e06353397732ed9b725494d2b9272f9b984faf736c43db`.
 The user approved South Gatehouse's corrected fixed-world-sun input explicitly.
 Its Sunburst pass completed with `gpt-image-2.5-sunburst`, quality `high`, no API
 mask, and the prompt sentence requiring the supplied shading. Exact approved
@@ -150,7 +163,7 @@ geometry remain unfinished. Individual chain links are simplified.
 | Lower Bailey Well (formerly courtyard prop) | Published | Hollow shaft, iron lifting frame, rope, pulley, bucket; `lower-well-worker-v2`. Printed ground ghost cleanup integrated. |
 | Southern Approach Stone | Published | Closed angular outcrop, replacing tent-like wedges; `approach-stone-worker/worker-v2`. |
 | Lower Bailey East Cottage | Published | Hipped roof, closed walls, barrel; `lower-east-cottage`. |
-| Lower Bailey West Cottage | Second-pass geometry rejected by user | Rear roof has an unsupported pointed/flared termination. Closing the roof/wall gaps and IoU 94.60% did not establish plausible shape. Withdraw acceptance and rebuild the rear roof profile before new user review. No Sunburst pass approved. |
+| Lower Bailey West Cottage | Corrected geometry user-approved; new texture generation complete | Straight rear gable and coherent inward-leaning facade planes replace the rejected flared roof. User approved d01d438af after eight-view review. High-quality two-image Sunburst result retained alongside source-preserved alternative; new geometry/texture application pending. |
 | Lower Bailey Southwest Cottage | Published | Thatched eave and damaged-roof recess; `southwest-cottage/reviewed`. |
 | Lower Bailey Southeast Cottage | Published | Closed end wedge, porch recess, thick roof; `southeast-cottage-pass3`. |
 | Lower Bailey Northwest Cottage | Published | Hipped roofs, barrel, fence, wash tub; `northwest-cottage-final-v5`. |
