@@ -248,6 +248,25 @@ fn host_session(
         campaign.discard_host_continuation()?;
     }
     let publish_browser_links = resolve_browser_join_publication(args)?;
+    // Browser content compatibility must not prevent native peers from hosting.
+    // Resolve it before server startup so unsupported content also skips the
+    // browser-only relay readiness requirement.
+    let browser_content_identity = if publish_browser_links {
+        let files = args
+            .config
+            .global_options
+            .preparation_files()
+            .map_err(SessionSetupFailure::Preparation)?;
+        let identity = browser_invitation_content_identity(files);
+        if identity.is_none() {
+            host.frontend.diagnostics_mut().queue_console_output(
+                "Browser invitations unavailable for the active content; continuing with native multiplayer only. See the log for details.".to_owned(),
+            );
+        }
+        identity
+    } else {
+        None
+    };
     let speech_timing_locale = host
         .application_context()
         .canonical_speech_timing_locale()
@@ -278,7 +297,7 @@ fn host_session(
             sim_config: authoritative_sim_config,
             speech_timing_locale: speech_timing_locale.clone(),
             expected_players: args.multiplayer.expected_players.unwrap_or(1),
-            browser_join_enabled: publish_browser_links,
+            browser_join_enabled: browser_content_identity.is_some(),
         },
         server_channels,
         content,
@@ -288,7 +307,7 @@ fn host_session(
             channels
                 .install_session_id(handle.session_id())
                 .map_err(SessionSetupFailure::SessionIdentity)?;
-            if publish_browser_links {
+            if let Some(content_identity_sha256) = browser_content_identity {
                 let content_edition = if crate::main_entry::detect_demo_mode_with_context(
                     &args.config.global_options,
                 )
@@ -298,19 +317,6 @@ fn host_session(
                 } else {
                     crate::multiplayer::join_ticket::BrowserContentEdition::Full
                 };
-                let preparation_files = args
-                    .config
-                    .global_options
-                    .preparation_files()
-                    .map_err(SessionSetupFailure::Preparation)?;
-                let content_identity_sha256 =
-                    crate::multiplayer::content_identity::active_content_identity(
-                        preparation_files,
-                    )
-                    .map_err(|source| SessionSetupFailure::Transport {
-                        context: "cannot publish an exact browser content invitation",
-                        source,
-                    })?;
                 let ticket = handle
                     .browser_join_ticket(
                         content_edition,
@@ -397,4 +403,56 @@ fn resolve_browser_join_publication(
         args.config.cli.mp_browser_join_links,
         saved,
     ))
+}
+
+/// An unavailable browser identity disables invitations, not native hosting.
+#[cfg(not(target_arch = "wasm32"))]
+fn browser_invitation_content_identity(
+    files: &robin_engine::sbfile::SbFileSystem,
+) -> Option<String> {
+    match crate::multiplayer::content_identity::active_content_identity(files) {
+        Ok(identity) => Some(identity),
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                "multiplayer: cannot publish an exact browser content invitation; continuing with native multiplayer only"
+            );
+            None
+        }
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    #[test]
+    fn compatible_content_preserves_exact_browser_identity() {
+        let root = tempfile::tempdir().unwrap();
+        let data = root.path().join("Data");
+        std::fs::create_dir(&data).unwrap();
+        std::fs::write(data.join("robinhood.bks"), b"base content").unwrap();
+        let files = robin_engine::sbfile::SbFileSystem::new(std::sync::Arc::new(
+            robin_util::asset_fs::AssetVfs::new(),
+        ));
+        files
+            .set_primary_path(root.path().to_str().unwrap())
+            .unwrap();
+        let expected =
+            crate::multiplayer::content_identity::source_content_identity(&data).unwrap();
+        assert_eq!(
+            super::browser_invitation_content_identity(&files),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn unsupported_overlay_disables_browser_invitations_without_aborting_native_hosting() {
+        let overlay = tempfile::tempdir().unwrap();
+        let files = robin_engine::sbfile::SbFileSystem::new(std::sync::Arc::new(
+            robin_util::asset_fs::AssetVfs::new(),
+        ));
+        files
+            .add_overlay_path(overlay.path().to_str().unwrap())
+            .unwrap();
+        assert!(super::browser_invitation_content_identity(&files).is_none());
+    }
 }
