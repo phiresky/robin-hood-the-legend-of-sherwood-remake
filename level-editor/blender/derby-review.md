@@ -192,8 +192,8 @@ User requested splitting Great Keep into 2–4 logical components. The four-way
 proposal in `round-2/keep-component-proposal.json` assigns every existing part
 exactly once: West Tower (including its revealed room), Main Hall (including its
 interior), North Tower, and Central Turret/Gallery. Connecting geometry needs
-spatial review before catalog/editor migration. Existing frozen worker catalogs
-remain intact during this preparation; the split is not published yet.
+further refinement, but the four attached component groups are now published.
+Existing frozen worker catalogs remain intact; the live catalog has 39 groups.
 
 Interior evidence audit: all 34 worker folders include original covered/revealed
 composites, individual exterior patch PNGs and alpha masks, `layers.json`, and
@@ -227,54 +227,55 @@ corrected the old eight-crenel claim: the inherited mesh has two cut crenels and
 the artwork supports a sloping damaged rim, not eight invented notches.
 
 All 30 original logical assets have received an individual worker pass. **All initial
-passes are now merged and published, with 34 standalone assets after regrouping. The
+passes are now merged and published, with 39 standalone assets after regrouping. The
 assets are not finished.** “Published”
 means the geometry is included in the latest map export, not that all defects
 are resolved. West Cottage now includes the approved `d01d438af` geometry and its
 new generated bake. Generated hidden details remain inferred.
 
-Latest map publication: `work/derby-refinement/round-2/publication-3/derby.scene.glb`
-to `library/scenes/derby-volumes.scene.glb`, with the document fingerprint updated.
-It contains 34 groups, 270 canonical parts, 308 meshes, and 155 modeled steps.
-Browser acceptance passed: 34 named groups, 270 parts, 14 stair assemblies,
-155 steps, 145 reported crenel notches, 30 interior meshes and seven reveal patches.
-Real ray picking selected Great Keep as a group first, then its part 146.
-All 34 standalone descriptors/models were published from the same scene and
-verified byte-identical to staging. No group or part migration was needed in this
-publication. Custom grouping and world transforms are preserved.
+Latest map publication: `work/derby-refinement/round-2/publication-4/derby.scene.glb`
+to `library/scenes/derby-volumes.scene.glb`, with matching document fingerprint.
+It contains 39 groups, 270 canonical parts, 320 meshes and 155 modeled steps.
+All 39 standalone assets match staging byte-for-byte. Browser acceptance passed:
+14 stair assemblies, 149 reported notches, 34 interior meshes, seven reveal patches,
+13 component ownership selectors, and every selected generated-image hash.
+Real picking selects Great Keep / Main Hall first, then part 146.
 
-The user's selected **two-image South Gatehouse Sunburst result is published**.
-All 17 gate materials carry generated SHA
-`be9bdd585ad7cc53d76733d8bdba4f2bbdb526ea2a45ddc569f93cbba16d6eea`,
-verified in the actual browser-loaded GLB. Only source-hidden texels were filled;
-295,069 source samples were protected exactly. Camera overlap and source-boundary
-tone reconciliation reduce roof seams without changing protected artwork or
-geometry. A subsequent exterior reprojection preserves all 7,161 gate faces.
-Evidence: `round-2/gate-approved-two-image-texture-bake/` and
-`round-2/publication-3/{stage,publication,browser-result}.json`.
+Sixteen asset handoffs were imported with unchanged outside geometry/materials,
+canonical part coverage and retained hidden originals. New protected fills cover
+Southeast Cottage, Northwest Cottage, Postern and Watchtower. The revised east
+Gate roof replaces only parts 013–016; thirteen previous gate materials remain.
+Nine reviewed source-bound models and latest Lower West Curtain/partial Keep
+geometry are included. Lower West Curtain is split into turret, access stair and
+wall walk; Keep has four attached architectural groups. These are named editor
+selections and standalone exports, not claims of complete detached buildings.
 
-Publication 3 imports only the approved West Cottage geometry and its eight
-texture materials, plus six source-protected Lower East Curtain texture materials.
-The browser verifies their selected generated hashes (`0d79dab5c4c06363…` and
-`fbe664a15896bd44…`). All 733 outside mesh material/UV signatures and all 17
-Gate atlas pixel buffers remain unchanged. The two barrel texture candidates
-remain unpublished because their source/AI transitions need further work.
+Source pixels remain protected exactly. Northwest Cottage ridge transitions,
+reverse-view gate roof grain seams, Watchtower brightness differences and coarse
+source texels remain visible limitations. Keep parts 174/179 still lack complete
+native ownership proof. Upper West overrestriction, other unbound candidates,
+the two cottage barrel texture seams and older stale Bridge/East Curtain fills
+are held; their previous published versions remain. The rejected lying-barrel
+candidate was excluded; its subsequently approved simplified revision belongs
+to the next increment.
 
-Working integration checkpoint: `derby-refinement.blend`. The latest scene-wide
-ownership bake is recorded in `round-2/publication-2/reprojection/layers-report.json`:
-five layers, 4,526,903 known texels and 18,853,940 unknown texels before the approved
-gate texture handoff. Eligible hidden areas receive optional source-based synthesis.
-The imported gate atlas remains independent of that display toggle. The checkpoint
-backup is `derby-refinement-before-round2-publication3.blend`; the prior map/document
-backup is `library/scenes/backups/77a204cd9e19a1f6/`. Publication 3 retains the
-existing scene-wide projections, then imports the separately verified Cottage
-and Curtain source-protected atlases with exact geometry guards.
+Ground cleanup removes the Watchtower boom/cage ghost within native mask 233
+and its two-pixel antialias fringe: 7,433 changed pixels, with outside pixels and
+alpha preserved exactly. Missing ground is deterministic local interpolation.
+Evidence: `round-2/watchtower-ground-cleanup/native233-v1/cleanup.json`.
+
+Working checkpoint: `derby-refinement.blend`; backup:
+`derby-refinement-before-round2-publication4.blend`.
+Previous map/document: `library/scenes/backups/822a5b65588692e6/`.
+Map SHA-256: `c897ac97f9b8dad8aaf32b2318a69c6a334ef65d86ff1dc57efcab03faf9578b`.
+Stage, exported metadata, browser and publication evidence:
+`round-2/publication-4/{stage,asset-verification,browser-result,publication}.json`.
+No scene-wide rebake overwrote earlier approved generated atlases.
 
 Updated full-Derby 1920×2752 renders:
-`round-2/publication-3/full-map/reference-solid.png` and
-`round-2/publication-3/full-map/reference-textured.png`. These retain visible
-unfinished Keep/Hall details and other recorded limitations; publication is not
-final asset acceptance.
+`round-2/publication-4/full-map/reference-solid.png` and
+`round-2/publication-4/full-map/reference-textured.png`.
+Keep/Hall and other recorded limitations remain; publication is not completion.
 
 Paths below are relative to `level-editor/work/derby-refinement/`.
 Reusable geometry recipes are in `level-editor/blender/derby_asset_*.py`.

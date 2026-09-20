@@ -18,6 +18,11 @@ def stage(plan_path):
     plan=json.loads(plan_path.read_text())
     output=Path(plan['output']).resolve()
     output.mkdir(parents=True,exist_ok=False)
+    for item in plan['imports']:
+        if item.get('discover_asset_members'):
+            bpy.ops.wm.open_mainfile(filepath=str(Path(item['blend_path']).resolve(strict=True)))
+            item['object_names']=sorted(o.name for o in bpy.data.collections[plan['collection_name']].all_objects
+                if o.type=='MESH' and not o.hide_render and o.get('asset_group')==item['asset_id'])
     bpy.ops.wm.open_mainfile(filepath=str(Path(plan['baseline']).resolve(strict=True)))
     bpy.context.window.scene=bpy.data.scenes[plan['scene_name']]
     collection=bpy.data.collections[plan['collection_name']]
@@ -28,12 +33,16 @@ def stage(plan_path):
         packet=json.loads(Path(item['review_manifest']).read_text())
         names=item.get('object_names',packet['object_names'])
         blend=item['blend_path']
+        blend_hash=hashlib.sha256(Path(blend).read_bytes()).hexdigest()
+        if item.get('blend_sha256') and item['blend_sha256']!=blend_hash:
+            raise ValueError('Reviewed model changed before staging: '+item['asset_id'])
         result=import_asset_geometry(blend,asset_id=item['asset_id'],object_names=names,
             collection_name=collection.name,source_nodes=item.get('source_nodes'))
         if item.get('texture_handoff'):
             result['texture_handoff']=import_asset_textures(item['texture_handoff'],asset_id=item['asset_id'],
                 collection_name=collection.name,source_nodes=item.get('source_nodes'))
         result['review_manifest']=item['review_manifest']
+        result['source_blend_sha256']=blend_hash
         result['review_manifest_sha256']=hashlib.sha256(Path(item['review_manifest']).read_bytes()).hexdigest()
         imports.append(result)
         print('INTEGRATED '+item['asset_id'],flush=True)
