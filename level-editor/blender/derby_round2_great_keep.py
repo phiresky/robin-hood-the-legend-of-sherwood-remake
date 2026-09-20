@@ -143,6 +143,7 @@ def refine_gallery_posts():
     existing=[o for o in working.objects if o.get('round2_keep_recipe')==tag]
     if existing:
         if len(existing)!=3:raise ValueError('Partial gallery post recipe')
+        for obj in existing:obj['projection_component']=obj['round2_keep_component']
         return {'status':'already-applied'}
     reports=[]
     tangent=Vector((129.43988,174.92786,0)).normalized()
@@ -190,8 +191,70 @@ def refine_gallery_posts():
             if not key.startswith('reprojection_'):obj[key]=source[key]
         obj['round2_keep_recipe']=tag
         obj['round2_keep_component']=f'hall-gallery-post-{number:02}'
+        obj['projection_component']=obj['round2_keep_component']
         obj['reviewed_native_mask']=mask
         reports.append({'object':obj.name,'source_node':'building-223','mask_index':mask,
                         'mask_layer':2,'floor':219.75,'gallery_underside':306.212,
                         'faces':len(faces),'nonmanifold_edges':invalid,'degenerate_faces':degenerate})
     return {'posts':reports,'source_state':'patch-000 revealed'}
+
+
+def refine_east_buttresses():
+    """Model two visible east hall piers and their sloping tile copings.
+
+    The roof-cap quadrilaterals were checked as projected overlays on covered
+    artwork. Bases continue behind courtyard masonry; no hidden trim is added.
+    """
+    working=bpy.data.collections['Derby Working']
+    tag='great-keep-hall-east-buttresses-v1'
+    previous=[o for o in working.objects if o.get('round2_keep_recipe')==tag]
+    if previous:
+        if len(previous)!=2:raise ValueError('Partial east buttress recipe')
+        return {'status':'already-applied'}
+    source=next(o for o in working.objects if o.type=='MESH' and not o.hide_render
+                and o.get('source_node')=='building-179')
+    normal=Vector((.833886,-.551937,0));tangent=Vector((.551937,.833886,0))
+    reports=[]
+    for number,x in enumerate((986.5,1040),1):
+        y=-1938.089+(x-990)*(-normal.x/normal.y)
+        center=Vector((x,y,0));vertices=[];faces=[]
+        def prism(width,depth,lower,back_top,front_top):
+            base=len(vertices)
+            for top in (False,True):
+                for lateral,forward in ((-1,-1),(1,-1),(1,depth),(-1,depth)):
+                    p=center+tangent*(lateral*width/2)+normal*forward
+                    p.z=(back_top if forward<0 else front_top) if top else lower
+                    vertices.append(p)
+            faces.extend(tuple(base+i for i in f) for f in
+                         ((3,2,1,0),(4,5,6,7),(0,1,5,4),(1,2,6,5),(2,3,7,6),(3,0,4,7)))
+        prism(20,16,0,430,400)
+        # The projecting collar is visibly continuous across each pier.
+        prism(24,19,231,239,239)
+        mesh=bpy.data.meshes.new(f'Great Keep / east hall buttress {number:02}')
+        mesh.from_pydata(vertices,[],faces)
+        bm=bmesh.new();bm.from_mesh(mesh)
+        bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces))
+        invalid=sum(not e.is_manifold for e in bm.edges)
+        degenerate=sum(f.calc_area()<1e-8 for f in bm.faces)
+        bm.to_mesh(mesh);bm.free()
+        if invalid or degenerate:raise ValueError('Invalid east hall buttress')
+        neutral=bpy.data.materials.get('Great Keep / fireplace unknown')
+        if neutral is None:
+            neutral=bpy.data.materials.new('Great Keep / fireplace unknown')
+            neutral.diffuse_color=(.25,.25,.25,1)
+        mesh.materials.append(neutral)
+        for original in source.data.uv_layers:
+            uv=mesh.uv_layers.new(name=original.name)
+            for loop in uv.data:loop.uv=(.5,.5)
+        obj=bpy.data.objects.new(f'Great Keep / Hall east buttress {number:02}',mesh)
+        working.objects.link(obj);obj.parent=source.parent;obj.matrix_world=Matrix.Identity(4)
+        for key in source.keys():
+            if not key.startswith('reprojection_'):obj[key]=source[key]
+        obj['round2_keep_recipe']=tag
+        obj['round2_keep_component']=f'hall-east-buttress-{number:02}'
+        reports.append({'object':obj.name,'source_node':'building-179','faces':len(faces),
+                        'nonmanifold_edges':invalid,'degenerate_faces':degenerate,
+                        'projecting_depth':16,'cap_back_height':430,'cap_front_height':400,
+                        'width':20,'collar_height':[231,239]})
+    return {'buttresses':reports,'source_state':'covered exterior',
+            'inference':'Concealed depth and lower continuation use wall-normal structural extrusion'}
