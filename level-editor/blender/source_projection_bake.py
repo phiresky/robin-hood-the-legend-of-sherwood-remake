@@ -12,7 +12,8 @@ from pathlib import Path
 def bake(map_name, source_path, report_path, receiver_nodes=None,
          occluder_nodes=None, projection_label="source", texels_per_unit=1,
          elevation_deg=35.0, preserve_authored=True, source_mask_manifest=None,
-         hidden_fill="neutral", synthesis_cache=None, reproject_authored_nodes=None):
+         hidden_fill="neutral", synthesis_cache=None, reproject_authored_nodes=None,
+         hidden_sampler=None):
     import bpy
     import numpy as np
     from mathutils import Vector
@@ -22,6 +23,8 @@ def bake(map_name, source_path, report_path, receiver_nodes=None,
         raise ValueError("Texture density must be positive")
     if hidden_fill not in ("neutral", "synthesized"):
         raise ValueError("hidden_fill must be neutral or synthesized")
+    if hidden_sampler is not None and hidden_fill != "neutral":
+        raise ValueError("An external hidden sampler cannot be combined with synthesis")
     from source_texture_fill import donor_patch, fill_island, choose_donor, synthesize_tiles, prune_donors
     donors_by_asset = {}
     pending_fill = []
@@ -110,7 +113,9 @@ def bake(map_name, source_path, report_path, receiver_nodes=None,
         degenerate = 0
         for face in mesh.polygons:
             mat = mesh.materials[face.material_index] if mesh.materials else None
-            if preserve_authored and obj.get("source_node") not in reproject_authored_nodes and mat and mat.get("projection_preserve") and not mat.get("source_ownership_bake"):
+            if (preserve_authored and obj.get("source_node") not in reproject_authored_nodes
+                    and mat and mat.get("projection_preserve")
+                    and (not mat.get("source_ownership_bake") or mat.get("generated_source_sha256"))):
                 preserved += 1
                 continue
             points = [world[i] for i in face.vertices]
@@ -186,6 +191,11 @@ def bake(map_name, source_path, report_path, receiver_nodes=None,
                 for i in np.flatnonzero(in_source & mask_allowed):
                     accepted[i] = visible_at(positions[i])
             colors[accepted] = pixels[sy[accepted], sx[accepted]]
+            if hidden_sampler is not None:
+                protected_colors = colors[accepted].copy()
+                hidden_sampler(obj, normal, positions, accepted, colors)
+                if not np.array_equal(colors[accepted], protected_colors):
+                    raise ValueError("Hidden sampler modified protected source pixels")
             if hidden_fill == "synthesized":
                 colors[:, 3] = accepted.astype(np.float32)
             inside = best >= 0
@@ -211,6 +221,11 @@ def bake(map_name, source_path, report_path, receiver_nodes=None,
         image.update()
         image.pack()
         mat = existing[1] if existing else bpy.data.materials.new(name)
+        # Reaching this point explicitly replaces the atlas. A subsequent
+        # generated fill can attach fresh approval metadata after baking.
+        for key in ("generated_source_sha256", "generated_camera_manifest", "generated_approved_input_sha256"):
+            if key in mat:
+                del mat[key]
         mat.use_nodes = True
         mat["source_ownership_bake"] = True
         mat["source_ownership_label"] = projection_label
