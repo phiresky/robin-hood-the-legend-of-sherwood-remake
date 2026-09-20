@@ -144,6 +144,11 @@ pub enum ReplayError {
     },
     #[error("missing recorded authoritative input for replay frame {frame}")]
     MissingCommands { frame: u32 },
+    #[error("authoritative input rejected at replay frame {frame}: {source}")]
+    Admission {
+        frame: u32,
+        source: crate::engine::FrameAdvanceError,
+    },
 }
 
 #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
@@ -164,13 +169,21 @@ pub enum RestoreError {
 /// maintaining its own `oldest_frame + VecDeque` arithmetic.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct CommandJournal {
-    frames: VecDeque<crate::engine::SimulationFrameInput>,
+    frames: VecDeque<JournalFrame>,
     /// Frame represented by `frames[0]`. When truncation empties a journal,
     /// this remains the frame at which its next branch must begin.
     oldest_frame: u32,
     /// Required frame for the next record. `None` only for a fresh or fully
     /// cleared journal whose first record establishes a new timeline anchor.
     next_frame: Option<u32>,
+}
+
+/// A tick and the authoritative host transactions admitted at its boundary
+/// before the timeline resumed. Snapshots precede both phases.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct JournalFrame {
+    input: crate::engine::SimulationFrameInput,
+    paused_inputs: Vec<crate::engine::SimulationFrameInput>,
 }
 
 #[derive(Clone, Copy, Debug, thiserror::Error, PartialEq, Eq)]
@@ -186,13 +199,25 @@ impl CommandJournal {
     /// a gap or duplicate means a caller crossed a timeline discontinuity
     /// without first clearing or truncating the journal.
     pub fn record_frame(&mut self, frame: u32, input: crate::engine::SimulationFrameInput) {
+        self.record_frame_with_paused_inputs(frame, input, Vec::new());
+    }
+
+    pub fn record_frame_with_paused_inputs(
+        &mut self,
+        frame: u32,
+        input: crate::engine::SimulationFrameInput,
+        paused_inputs: Vec<crate::engine::SimulationFrameInput>,
+    ) {
         let next_frame = self
             .validate_record(frame)
             .unwrap_or_else(|error| panic!("{error}"));
         if self.frames.is_empty() && self.next_frame.is_none() {
             self.oldest_frame = frame;
         }
-        self.frames.push_back(input);
+        self.frames.push_back(JournalFrame {
+            input,
+            paused_inputs,
+        });
         self.next_frame = Some(next_frame);
     }
 
@@ -226,7 +251,14 @@ impl CommandJournal {
 
     pub fn frame_for(&self, frame: u32) -> Option<&crate::engine::SimulationFrameInput> {
         let index = frame.checked_sub(self.oldest_frame)? as usize;
-        self.frames.get(index)
+        self.frames.get(index).map(|frame| &frame.input)
+    }
+
+    pub fn paused_inputs_for(&self, frame: u32) -> &[crate::engine::SimulationFrameInput] {
+        frame
+            .checked_sub(self.oldest_frame)
+            .and_then(|index| self.frames.get(index as usize))
+            .map_or(&[], |frame| frame.paused_inputs.as_slice())
     }
 
     pub fn oldest_frame(&self) -> Option<u32> {
@@ -262,7 +294,7 @@ impl CommandJournal {
         let Some(frame) = self.frames.get_mut(index as usize) else {
             return false;
         };
-        frame.commands.push(input.into());
+        frame.input.commands.push(input.into());
         true
     }
 
@@ -463,7 +495,9 @@ impl SnapshotHistory {
 /// `begin_frame` captures the optional pre-tick checkpoint. `commit_frame_input`
 /// publishes that checkpoint and the commands together only after the tick
 /// completes. An abandoned host iteration may call `begin_frame` again; the
-/// previous pending capture was never authoritative and is replaced.
+/// previous pending capture was never authoritative and is replaced, unless
+/// paused transactions have already been admitted at that boundary. Those
+/// transactions and their pre-admission snapshot survive until the next tick.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TimelineHistory {
     checkpoints: SnapshotHistory,
@@ -475,6 +509,7 @@ pub struct TimelineHistory {
 struct PendingFrame {
     frame: u32,
     checkpoint: Option<SimSnapshot>,
+    paused_inputs: Vec<crate::engine::SimulationFrameInput>,
 }
 
 impl TimelineHistory {
@@ -487,11 +522,18 @@ impl TimelineHistory {
     }
 
     pub fn begin_frame(&mut self, frame: u32, engine: &Engine) {
+        if self.has_pending_paused_inputs(frame) {
+            return;
+        }
         let checkpoint = self
             .checkpoints
             .should_checkpoint(frame)
             .then(|| SimSnapshot::new(frame, engine));
-        self.pending = Some(PendingFrame { frame, checkpoint });
+        self.pending = Some(PendingFrame {
+            frame,
+            checkpoint,
+            paused_inputs: Vec::new(),
+        });
     }
 
     /// Start a new journal at an exact externally adopted pre-tick state.
@@ -528,11 +570,38 @@ impl TimelineHistory {
         if let Some(checkpoint) = pending.checkpoint {
             self.checkpoints.remember(checkpoint);
         }
-        self.commands.record_frame(pending.frame, input);
+        self.commands
+            .record_frame_with_paused_inputs(pending.frame, input, pending.paused_inputs);
         if let Some(oldest_checkpoint) = self.checkpoints.oldest_frame() {
             self.commands.discard_before(oldest_checkpoint);
         }
         true
+    }
+
+    pub fn has_pending_paused_inputs(&self, frame: u32) -> bool {
+        self.pending
+            .as_ref()
+            .is_some_and(|pending| pending.frame == frame && !pending.paused_inputs.is_empty())
+    }
+
+    pub fn commit_paused_input(
+        &mut self,
+        boundary: u32,
+        input: crate::engine::SimulationFrameInput,
+    ) {
+        let pending = self
+            .pending
+            .as_mut()
+            .expect("paused input requires an open timeline frame");
+        assert_eq!(
+            pending.frame, boundary,
+            "paused input must belong to the open frame"
+        );
+        pending.paused_inputs.push(input);
+    }
+
+    pub fn paused_inputs_for(&self, frame: u32) -> &[crate::engine::SimulationFrameInput] {
+        self.commands.paused_inputs_for(frame)
     }
 
     #[cfg(test)]
@@ -703,8 +772,7 @@ pub fn replay_frames_to_frame<'a>(
         let frame = frame_for(snapshot.frame).ok_or(ReplayError::MissingCommands {
             frame: snapshot.frame,
         })?;
-        let _discarded_frame_output =
-            replay_authoritative_frame(&mut snapshot, assets, frame).output;
+        let _discarded_frame_output = try_replay_authoritative_frame(&mut snapshot, assets, frame)?;
     }
 
     Ok((
@@ -714,6 +782,51 @@ pub fn replay_frames_to_frame<'a>(
             replay_us: start.elapsed().as_micros(),
         },
     ))
+}
+
+/// Replay a journal including transactions admitted while the timeline paused.
+pub fn replay_journal_to_frame(
+    mut snapshot: SimSnapshot,
+    assets: &LevelAssets,
+    target_frame: u32,
+    journal: &CommandJournal,
+) -> Result<(SimSnapshot, ReplayTiming), ReplayError> {
+    validate_replay_boundary(snapshot.frame, target_frame)?;
+    let start = Instant::now();
+    let start_frame = snapshot.frame;
+    while snapshot.frame < target_frame {
+        let frame = snapshot.frame;
+        let input = journal
+            .frame_for(frame)
+            .ok_or(ReplayError::MissingCommands { frame })?;
+        replay_paused_inputs(
+            &mut snapshot.engine,
+            assets,
+            journal.paused_inputs_for(frame),
+        )
+        .map_err(|source| ReplayError::Admission { frame, source })?;
+        let _discarded_frame_output = try_replay_authoritative_frame(&mut snapshot, assets, input)?;
+    }
+    Ok((
+        snapshot,
+        ReplayTiming {
+            replayed_frames: target_frame - start_frame,
+            replay_us: start.elapsed().as_micros(),
+        },
+    ))
+}
+
+/// Apply paused transactions without advancing the reconstruction cursor.
+/// Their presentation output has already been handled by the live host.
+pub fn replay_paused_inputs(
+    engine: &mut Engine,
+    assets: &LevelAssets,
+    inputs: &[crate::engine::SimulationFrameInput],
+) -> Result<(), crate::engine::FrameAdvanceError> {
+    for input in inputs {
+        let _discarded_frame_output = engine.advance_frame(assets, input.clone())?;
+    }
+    Ok(())
 }
 
 pub fn replay_authoritative_frame(
@@ -734,6 +847,15 @@ pub fn replay_authoritative_frame_profiled(
     assets: &LevelAssets,
     frame: &crate::engine::SimulationFrameInput,
 ) -> ReplayFrameResult {
+    try_replay_authoritative_frame(snapshot, assets, frame)
+        .unwrap_or_else(|error| panic!("authoritative frame admission failed: {error}"))
+}
+
+pub fn try_replay_authoritative_frame(
+    snapshot: &mut SimSnapshot,
+    assets: &LevelAssets,
+    frame: &crate::engine::SimulationFrameInput,
+) -> Result<ReplayFrameResult, ReplayError> {
     let apply_start = Instant::now();
     let frame = frame.clone();
     let apply_us = apply_start.elapsed().as_micros();
@@ -741,16 +863,19 @@ pub fn replay_authoritative_frame_profiled(
     let output = snapshot
         .engine
         .advance_frame(assets, frame)
-        .unwrap_or_else(|error| panic!("authoritative frame admission failed: {error}"));
+        .map_err(|source| ReplayError::Admission {
+            frame: snapshot.frame,
+            source,
+        })?;
     let tick_us = tick_start.elapsed().as_micros();
     snapshot.frame = snapshot
         .frame
         .checked_add(1)
         .expect("reconstruction timeline frame counter overflowed");
-    ReplayFrameResult {
+    Ok(ReplayFrameResult {
         timing: ReplayFrameTiming { apply_us, tick_us },
         output,
-    }
+    })
 }
 
 #[cfg(test)]

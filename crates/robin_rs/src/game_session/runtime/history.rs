@@ -103,6 +103,28 @@ impl ReconstructionHistory {
         self.buffer.truncate_recent_after(frame);
     }
 
+    pub(in crate::game_session) fn commit_paused(
+        &mut self,
+        boundary: u32,
+        input: SimulationFrameInput,
+    ) {
+        if !self.capture_enabled || boundary < self.buffer.next_record_frame() {
+            return;
+        }
+        // Do not retain empty host refreshes while a menu remains open.
+        if !input.run_hourglass
+            && !input.run_post_initialize
+            && input.external_facts.is_empty()
+            && input.external_actions.is_empty()
+            && input.commands.is_empty()
+            && input.post_external_actions.is_empty()
+            && input.post_commands.is_empty()
+        {
+            return;
+        }
+        self.buffer.end_paused_input(boundary, input);
+    }
+
     pub(in crate::game_session) fn commit(&mut self, input: SimulationFrameInput, engine: &Engine) {
         if !self.capture_enabled {
             return;
@@ -133,6 +155,71 @@ robin_util::deny_deserialize!(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paused_inputs_survive_rewind_and_recent_checkpoint_restoration() {
+        use robin_engine::player_command::PlayerCommand;
+        use robin_engine::replay::state_hash;
+        use robin_engine::sim_timeline::{
+            RestorePolicy, replay_authoritative_frame, replay_paused_inputs,
+        };
+        let (mut engine, assets) = robin_engine::test_support::fresh_engine_sized(640.0, 480.0);
+        let mut history = ReconstructionHistory::new(RewindBuffer::new(), None, true);
+        history.begin_frame(0, &engine);
+        let first = SimulationFrameInput::no_hourglass();
+        engine.advance_frame(&assets, first.clone()).unwrap();
+        history.commit(first, &engine);
+        // Retain the state before paused inputs, including at an exact checkpoint.
+        history.checkpoint_recent(1, &engine);
+        let before_pause = state_hash(&engine);
+        for on in [true, false, true] {
+            history.begin_frame(1, &engine);
+            let paused = SimulationFrameInput::no_hourglass()
+                .with_post_commands(vec![PlayerCommand::SetGoldenEyeMode { on }.into()]);
+            engine.advance_frame(&assets, paused.clone()).unwrap();
+            history.commit_paused(1, paused);
+        }
+        assert_eq!(
+            state_hash(&history.buffer.rewind_to(&assets, 1).unwrap()),
+            before_pause
+        );
+        assert_eq!(
+            state_hash(
+                &history
+                    .buffer
+                    .restore_recent(&assets, 1, RestorePolicy::Exact)
+                    .unwrap()
+                    .engine
+            ),
+            before_pause
+        );
+        history.begin_frame(1, &engine);
+        let next = SimulationFrameInput::default();
+        engine.advance_frame(&assets, next.clone()).unwrap();
+        history.commit(next, &engine);
+        assert_eq!(
+            state_hash(&history.buffer.rewind_to(&assets, 2).unwrap()),
+            state_hash(&engine)
+        );
+        let mut recent = history
+            .buffer
+            .restore_recent(&assets, 0, RestorePolicy::Exact)
+            .unwrap();
+        for frame in 0..2 {
+            replay_paused_inputs(
+                &mut recent.engine,
+                &assets,
+                history.buffer.paused_inputs_for(frame),
+            )
+            .unwrap();
+            let _output = replay_authoritative_frame(
+                &mut recent,
+                &assets,
+                history.buffer.frame_for(frame).unwrap(),
+            );
+        }
+        assert_eq!(state_hash(&recent.engine), state_hash(&engine));
+    }
 
     #[test]
     fn snapshot_adoption_replaces_history_and_reopens_the_adopted_boundary() {

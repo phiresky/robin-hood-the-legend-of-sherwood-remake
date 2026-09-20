@@ -1234,6 +1234,27 @@ impl TimelineRuntime {
         }
     }
 
+    pub(super) fn commit_paused_history(&mut self, frame: &MissionFrame) {
+        let transition = frame.timeline_transition();
+        assert_eq!(transition.before, transition.after);
+        self.history
+            .commit_paused(transition.before.number(), frame.authoritative_input());
+    }
+
+    pub(super) fn replay_buffered_paused_inputs(
+        &self,
+        engine: &mut Engine,
+        assets: &LevelAssets,
+        boundary: u32,
+    ) {
+        robin_engine::sim_timeline::replay_paused_inputs(
+            engine,
+            assets,
+            self.history.buffer.paused_inputs_for(boundary),
+        )
+        .expect("buffered paused input admission failed");
+    }
+
     /// React to a completed in-mission save or load on the live side,
     /// keeping the recording one linear timeline.
     ///

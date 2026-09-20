@@ -644,6 +644,8 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                     store_rewind_commands: !consumed_buffered,
                 },
             );
+        } else if !rewind_active {
+            runtime.commit_paused_history(&frame);
         }
 
         super::frame_perf::record(super::frame_perf::Phase::History, phase_start);

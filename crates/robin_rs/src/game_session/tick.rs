@@ -982,6 +982,9 @@ pub(super) fn run_forward_ticks_with_session_modals(
         let record_live_input = source.records_live_input();
         let append_history = source.history() == ManualHistory::Append;
         let replay_timeline_after = source.replay_after();
+        if !append_history && replay_timeline_after.is_none() {
+            timeline.replay_buffered_paused_inputs(engine, assets, frame);
+        }
         let simulation_frame = source.into_input(|| transaction.authoritative_input());
         transaction.adopt_authoritative_input(simulation_frame.clone());
         // Buffered scrubbing is not a new live record. The linear recorder
@@ -1033,6 +1036,9 @@ pub(super) fn run_forward_ticks_with_session_modals(
             timeline.advance_frame();
         }
         transaction.commit_timeline_after(timeline.current_frame());
+        if append_history && after.number() == frame {
+            timeline.commit_paused_history(&transaction);
+        }
         refresh_authoritative_multiplayer_state(host, timeline.frame_number(), engine);
 
         // If the tick queued any modal, drop it silently and keep
@@ -1967,6 +1973,102 @@ mod tests {
                 .unwrap()
                 .run_hourglass
         );
+    }
+
+    #[test]
+    fn buffered_forward_steps_reapply_paused_history_at_the_same_boundary() {
+        use robin_engine::replay::state_hash;
+        let (assets, mut manager, mut host, mut dev, mut game, mut timeline) =
+            stepping_fixture(None);
+        let initial = manager.engine.clone();
+        run_forward_ticks(
+            step_world!(manager, host, assets, dev, game),
+            &mut timeline,
+            1,
+            &mut Default::default(),
+        )
+        .unwrap();
+        let paused = engine_api::SimulationFrameInput::no_hourglass().with_external_actions(vec![
+            engine_api::ExternalAction::ConsoleCommand {
+                command: robin_engine::console::ConsoleCommand::Goldeneye,
+                selected_view_element: None,
+            },
+        ]);
+        timeline.begin_history_frame(1, &manager.engine);
+        manager
+            .engine
+            .advance_frame(&assets, paused.clone())
+            .unwrap();
+        timeline.history_mut().commit_paused(1, paused.clone());
+        run_forward_ticks(
+            step_world!(manager, host, assets, dev, game),
+            &mut timeline,
+            1,
+            &mut Default::default(),
+        )
+        .unwrap();
+        let expected = state_hash(&manager.engine);
+        rewind_to_frame(&mut manager, &mut host, &assets, &mut timeline, 0).unwrap();
+        run_forward_ticks(
+            step_world!(manager, host, assets, dev, game),
+            &mut timeline,
+            1,
+            &mut Default::default(),
+        )
+        .unwrap();
+        run_forward_ticks(
+            step_world!(manager, host, assets, dev, game),
+            &mut timeline,
+            1,
+            &mut Default::default(),
+        )
+        .unwrap();
+        assert_eq!(state_hash(&manager.engine), expected);
+        assert_eq!(timeline.history().buffer().paused_inputs_for(1).len(), 1);
+        // Dense replay owns the paused record separately. Seeking to frame
+        // one must restore before it and admit that record exactly once.
+        let mut file =
+            one_frame_replay_file(timeline.history().buffer().frame_for(0).unwrap().clone());
+        file.header.total_frames = 3;
+        file.frames.insert(
+            1,
+            ReplayFrame {
+                timeline_before: 1,
+                timeline_after: 1,
+                input: paused,
+                host_controls: Vec::new(),
+            },
+        );
+        file.frames.insert(
+            2,
+            ReplayFrame {
+                timeline_before: 1,
+                timeline_after: 2,
+                input: timeline.history().buffer().frame_for(1).unwrap().clone(),
+                host_controls: Vec::new(),
+            },
+        );
+        let (_, mut manager, mut host, mut dev, mut game, mut timeline) =
+            stepping_fixture(Some(ReplayPlayer::new(file.try_into().unwrap())));
+        manager.engine = initial;
+        run_forward_ticks(
+            step_world!(manager, host, assets, dev, game),
+            &mut timeline,
+            3,
+            &mut Default::default(),
+        )
+        .unwrap();
+        assert_eq!(state_hash(&manager.engine), expected);
+        rewind_to_frame(&mut manager, &mut host, &assets, &mut timeline, 1).unwrap();
+        assert_eq!(timeline.replay().playback().unwrap().current_frame(), 1);
+        run_forward_ticks(
+            step_world!(manager, host, assets, dev, game),
+            &mut timeline,
+            2,
+            &mut Default::default(),
+        )
+        .unwrap();
+        assert_eq!(state_hash(&manager.engine), expected);
     }
 
     #[test]

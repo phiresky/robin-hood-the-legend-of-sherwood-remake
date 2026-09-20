@@ -396,6 +396,9 @@ impl HeadlessMission {
             }
         }
         frame.commit_timeline_after(timeline.current_frame());
+        if !timeline_advances {
+            timeline.commit_paused_history(frame);
+        }
     }
 
     fn drain_headless_steps(&mut self, allow_timeline_steps: bool) {

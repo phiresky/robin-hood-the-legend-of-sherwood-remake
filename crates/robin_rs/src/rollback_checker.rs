@@ -23,7 +23,9 @@ use std::thread::JoinHandle;
 use web_time::Instant;
 
 use robin_engine::engine::{Engine, LevelAssets};
-use robin_engine::sim_timeline::{CommandJournal, SimSnapshot as Snapshot, replay_frames_to_frame};
+use robin_engine::sim_timeline::{
+    CommandJournal, SimSnapshot as Snapshot, replay_journal_to_frame,
+};
 
 /// Number of frames to rewind and replay each check.  5 ticks = 0.2s
 /// at the game's fixed 25 fps simulation rate.
@@ -127,7 +129,11 @@ impl RollbackChecker {
                 );
                 return;
             };
-            window.record_frame(frame, input);
+            window.record_frame_with_paused_inputs(
+                frame,
+                input,
+                history.paused_inputs_for(frame).to_vec(),
+            );
         }
 
         let clone_start = Instant::now();
@@ -194,9 +200,12 @@ impl RollbackCheckJob {
         let start = self.start;
         let replay_start = Instant::now();
         let replayed = tracing::dispatcher::with_default(&silent, || {
-            replay_frames_to_frame(start, &self.assets, end_frame.saturating_add(1), |frame| {
-                self.history.frame_for(frame)
-            })
+            replay_journal_to_frame(
+                start,
+                &self.assets,
+                end_frame.saturating_add(1),
+                &self.history,
+            )
         });
         let (sim_snapshot, _timing) = match replayed {
             Ok(replayed) => replayed,

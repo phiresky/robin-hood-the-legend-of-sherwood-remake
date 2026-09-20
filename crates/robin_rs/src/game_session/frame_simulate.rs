@@ -1388,6 +1388,8 @@ impl InteractiveFrameSimulation {
                         store_rewind_commands: !consumed_buffered,
                     },
                 );
+            } else if !rewind_active {
+                runtime.commit_paused_history(&frame);
             }
             runtime.finish_recording(&mut frame);
             runtime.lifecycle_mut().trace(FrameContractStage::Exit);
@@ -1446,6 +1448,8 @@ impl InteractiveFrameSimulation {
                         store_rewind_commands: !consumed_buffered,
                     },
                 );
+            } else if !rewind_active {
+                runtime.commit_paused_history(&frame);
             }
             runtime.finish_recording(&mut frame);
             runtime.lifecycle_mut().trace(FrameContractStage::Exit);

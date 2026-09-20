@@ -874,6 +874,65 @@ fn spatial_presentation_snaps_layer_transitions_and_new_entities() {
 }
 
 #[test]
+fn spatial_presentation_accepts_airborne_projectiles_and_snaps_layer_assignment() {
+    use crate::coordinates::WorldPoint3D;
+    use crate::element::{ElementData, ElementKind, ElementProjectile, Entity};
+    use crate::position_interface::Layer;
+
+    for (before_layer, after_layer) in [(None, None), (None, Some(0)), (Some(0), None)] {
+        let (mut previous, _) = frame_api_fixture();
+        let id = previous
+            .inner
+            .add_test_entity(Entity::Projectile(ElementProjectile {
+                element: {
+                    let mut element = ElementData::default();
+                    element.kind = ElementKind::ObjectProjectile;
+                    element.active = true;
+                    element
+                },
+                object: Default::default(),
+                projectile: Default::default(),
+            }));
+        let element = previous.inner.elem_mut(id);
+        element.set_position(WorldPoint3D::ZERO);
+        match before_layer {
+            Some(layer) => element.set_layer(layer),
+            None => element.clear_layer(),
+        }
+        let mut current = previous.clone();
+        let element = current.inner.elem_mut(id);
+        element.set_position(WorldPoint3D::new(40.0, 0.0, 0.0));
+        match after_layer {
+            Some(layer) => element.set_layer(layer),
+            None => element.clear_layer(),
+        }
+        let previous_hash = crate::replay::state_hash(&previous);
+        let current_hash = crate::replay::state_hash(&current);
+        let before = previous.spatial_presentation_snapshot();
+        let after = current.spatial_presentation_snapshot();
+        assert_eq!(
+            after.poses[&id].layer,
+            after_layer.map(|layer| Layer::new(layer).unwrap())
+        );
+        let mut presentation = PresentationEngine::new(&current);
+        presentation.apply_spatial_presentation(&before, &after, 0.5);
+        let view = presentation.view();
+        let sampled = view.get_entity(id).unwrap().element_data();
+        assert_eq!(
+            sampled.position().x,
+            if before_layer == after_layer {
+                20.0
+            } else {
+                40.0
+            }
+        );
+        assert_eq!(sampled.optional_layer(), after.poses[&id].layer);
+        assert_eq!(crate::replay::state_hash(&previous), previous_hash);
+        assert_eq!(crate::replay::state_hash(&current), current_hash);
+    }
+}
+
+#[test]
 fn presentation_diagnostics_cannot_restore_live_presentation_or_simulation() {
     let (engine, _, _, _) = selection_boundary_fixture();
     let presentation = PresentationEngine::new(&engine);
@@ -2674,4 +2733,82 @@ fn adoption_rejects_malformed_fog_grid_atomically() {
     );
     assert_eq!(crate::replay::state_hash(&live), before_hash);
     assert_eq!(live.frame_counter(), 92);
+}
+
+#[test]
+fn journal_replays_paused_sound_resolutions_before_the_next_fifo_entry() {
+    use crate::engine::{ExternalFacts, SimulationFrameInput, SoundBoundary};
+    use crate::sim_timeline::{
+        CommandJournal, ReplayError, SimSnapshot, replay_frames_to_frame, replay_journal_to_frame,
+    };
+    use crate::sound::{ExclamationGroup, PendingExclamation, ResolvedExclamation};
+
+    let mut assets = LevelAssets::default();
+    let mut engine = Engine::new_for_test(640.0, 480.0, Default::default(), &mut assets).unwrap();
+    let sounds = [
+        (111, 1313555539, 3, 24),
+        (90, 1313621075, 3, 21),
+        (94, 1465074771, 5, 32),
+    ];
+    for (actor_id, profile_id, exclamation_id, _) in sounds {
+        engine
+            .inner
+            .feedback
+            .sound_sim
+            .pending_exclamations
+            .push(PendingExclamation {
+                actor_id,
+                group: ExclamationGroup::Civilian,
+                profile_id,
+                exclamation_id,
+                variant: -1,
+            });
+    }
+    let resolve = |entries: &[(u32, u32, u16, u32)]| {
+        SimulationFrameInput::no_hourglass().with_external_facts(
+            ExternalFacts::default().with_sound_boundary(SoundBoundary::live(
+                entries
+                    .iter()
+                    .map(|&(actor_id, profile_id, exclamation_id, duration_frames)| {
+                        ResolvedExclamation {
+                            actor_id,
+                            identifier: (profile_id & 0xffff0000) | u32::from(exclamation_id),
+                            exclamation_id,
+                            duration_frames,
+                        }
+                    })
+                    .collect(),
+            )),
+        )
+    };
+    let initial = SimSnapshot::new(0, &engine);
+    let first = SimulationFrameInput::no_hourglass();
+    let paused = resolve(&sounds[..1]);
+    let next = resolve(&sounds[1..]);
+    let mut journal = CommandJournal::default();
+    engine.advance_frame(&assets, first.clone()).unwrap();
+    journal.record_frame(0, first);
+    engine.advance_frame(&assets, paused.clone()).unwrap();
+    engine.advance_frame(&assets, next.clone()).unwrap();
+    journal.record_frame_with_paused_inputs(1, next, vec![paused]);
+
+    let (boundary, _) = replay_journal_to_frame(initial.clone(), &assets, 1, &journal).unwrap();
+    assert_eq!(
+        crate::replay::state_hash(&boundary.engine),
+        crate::replay::state_hash(&initial.engine)
+    );
+    let (replayed, timing) =
+        replay_journal_to_frame(initial.clone(), &assets, 2, &journal).unwrap();
+    assert_eq!(timing.replayed_frames, 2);
+    assert_eq!(
+        crate::replay::state_hash(&replayed.engine),
+        crate::replay::state_hash(&engine)
+    );
+
+    // Omitting the paused transaction reproduces the rejected FIFO. The
+    // background checker must receive an error rather than panic.
+    let error = replay_frames_to_frame(initial, &assets, 2, |frame| journal.frame_for(frame))
+        .err()
+        .expect("missing sound boundary is rejected");
+    assert!(matches!(error, ReplayError::Admission { frame: 1, .. }));
 }

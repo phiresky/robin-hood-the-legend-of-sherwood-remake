@@ -221,11 +221,12 @@ fn prepare_pre_tick_timeline(
                 runtime.history().buffer().oldest_cmd_frame()
             )));
         };
-        if runtime.replay().playback().is_some() && frame.external_actions().is_empty() {
-            frame.adopt_authoritative_input(recorded);
+        if frame.has_recorded_input() && frame.external_actions().is_empty() {
+            // The dense replay stream already admits paused inputs separately.
             consumed_buffered = true;
             tracing::trace!("Replay reused rewind-buffer frame {}", current_frame);
         } else if frame.commands().is_empty() && frame.external_actions().is_empty() {
+            runtime.replay_buffered_paused_inputs(&mut manager.engine, assets, current_frame);
             frame.adopt_authoritative_input(recorded);
             consumed_buffered = true;
             tracing::trace!("Auto-replay -> frame {}", current_frame);

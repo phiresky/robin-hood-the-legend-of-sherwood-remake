@@ -112,6 +112,9 @@ impl RewindBuffer {
     /// [`SNAPSHOT_INTERVAL`] — non-aligned frames still need to
     /// register their commands but don't add to the snapshot ring.
     pub fn begin_frame(&mut self, frame: u32, engine: &Engine) {
+        if self.history.has_pending_paused_inputs(frame) {
+            return;
+        }
         self.history.begin_frame(frame, engine);
         self.pending_recent = Some(Snapshot::new(frame, engine));
     }
@@ -119,6 +122,9 @@ impl RewindBuffer {
     /// Journal a seek tick without copying the network rollback cache.
     /// Periodic checkpoints and commands still support ordinary rewind.
     pub(crate) fn begin_seek_frame(&mut self, frame: u32, engine: &Engine) {
+        if self.history.has_pending_paused_inputs(frame) {
+            return;
+        }
         self.history.begin_frame(frame, engine);
         self.pending_recent = None;
     }
@@ -141,6 +147,18 @@ impl RewindBuffer {
         {
             self.recent_checkpoints.remember(snapshot);
         }
+    }
+
+    pub fn end_paused_input(
+        &mut self,
+        boundary: u32,
+        input: robin_engine::engine::SimulationFrameInput,
+    ) {
+        self.history.commit_paused_input(boundary, input);
+    }
+
+    pub fn paused_inputs_for(&self, frame: u32) -> &[robin_engine::engine::SimulationFrameInput] {
+        self.history.paused_inputs_for(frame)
     }
 
     /// Reconstruct the pre-tick sim state at `target_frame` by
@@ -189,7 +207,16 @@ impl RewindBuffer {
         }
 
         while snapshot.frame < target_frame {
-            let frame = self.history.frame_for(snapshot.frame)?;
+            let boundary = snapshot.frame;
+            let frame = self.history.frame_for(boundary)?;
+            if let Err(error) = robin_engine::sim_timeline::replay_paused_inputs(
+                &mut snapshot.engine,
+                assets,
+                self.history.paused_inputs_for(boundary),
+            ) {
+                tracing::error!(boundary, %error, "rewind paused input admission failed");
+                return None;
+            }
             let _discarded_frame_output =
                 replay_authoritative_frame(&mut snapshot, assets, frame).output;
             // Cache the state we just produced — it's the pre-tick

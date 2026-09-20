@@ -1192,8 +1192,17 @@ fn rewind_from_recent_timeline_history(
         corrected_history.remember(snapshot.clone());
         replay_remember += remember_start.elapsed();
         let command_lookup_start = web_time::Instant::now();
-        let frame = rewind_buffer.frame_for(snapshot.frame)?;
+        let boundary = snapshot.frame;
+        let frame = rewind_buffer.frame_for(boundary)?;
         replay_command_lookup += command_lookup_start.elapsed();
+        if let Err(error) = robin_engine::sim_timeline::replay_paused_inputs(
+            &mut snapshot.engine,
+            assets,
+            rewind_buffer.paused_inputs_for(boundary),
+        ) {
+            tracing::error!(boundary, %error, "rollback paused input admission failed");
+            return None;
+        }
         let replayed_frame = replay_authoritative_frame_profiled(&mut snapshot, assets, frame);
         replay_apply += duration_from_micros(replayed_frame.timing.apply_us);
         replay_tick += duration_from_micros(replayed_frame.timing.tick_us);

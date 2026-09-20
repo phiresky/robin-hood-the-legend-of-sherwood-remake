@@ -14,6 +14,8 @@ const HOST_NAMES: &[&str] = &[
 ];
 const REPLAY_NAMES: &[&str] = &[
     "replay_frames_to_frame",
+    "try_replay_authoritative_frame",
+    "replay_journal_to_frame",
     "replay_authoritative_frame",
     "replay_authoritative_frame_profiled",
 ];
@@ -122,6 +124,21 @@ fn production_reconstruction_has_no_host_scratch_and_uses_complete_frames() {
         (
             "../robin_engine/src/sim_timeline.rs",
             "replay_authoritative_frame_profiled",
+            false,
+        ),
+        (
+            "../robin_engine/src/sim_timeline.rs",
+            "try_replay_authoritative_frame",
+            true,
+        ),
+        (
+            "../robin_engine/src/sim_timeline.rs",
+            "replay_journal_to_frame",
+            false,
+        ),
+        (
+            "../robin_engine/src/sim_timeline.rs",
+            "replay_paused_inputs",
             true,
         ),
         (
