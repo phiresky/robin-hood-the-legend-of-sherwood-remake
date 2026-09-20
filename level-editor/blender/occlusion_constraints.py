@@ -16,7 +16,10 @@ Manifest schema (paths relative to this manifest):
   }
 }
 
-Each assignment unions its masks. A source_node assignment overrides its asset
+Each assignment unions its masks, then subtracts optional exclude_mask_indices.
+Exclusions require exclusions_reviewed=true and a nonempty exclusion_reason:
+overlapping silhouettes alone do not establish foreground ownership.
+A source_node assignment overrides its asset
 group assignment. Labels absent from projections, and objects without an explicit
 assignment, remain unconstrained. A present label requires an exact source hash,
 nonempty state description and reviewed=true on EVERY assignment. State names
@@ -28,7 +31,25 @@ White pixels are owned; black pixels are outside the reviewed silhouette.
 These masks constrain texture evidence only; they never modify geometry.
 """
 import json
+import hashlib
 from pathlib import Path
+
+
+def evidence_record(manifest_path):
+    """Bind review output to assignments, inventory, and referenced bitmap bytes."""
+    path = Path(manifest_path).resolve(strict=True)
+    manifest = json.loads(path.read_text())
+    inventory_path = (path.parent / manifest['mask_inventory']).resolve(strict=True)
+    inventory = json.loads(inventory_path.read_text())
+    selected = {index for projection in manifest['projections'].values()
+                for assignment in projection['assignments']
+                for index in assignment.get('mask_indices', []) + assignment.get('exclude_mask_indices', [])}
+    paths = [path, inventory_path]
+    for record in inventory['masks']:
+        if record['index'] in selected:
+            paths.append((inventory_path.parent / (record['png'] if 'png' in record
+                          else record['folder'] + '/mask.png')).resolve(strict=True))
+    return {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
 
 
 def _load_bitmap(path):
@@ -85,8 +106,14 @@ class SourceMaskConstraints:
             indices = assignment.get("mask_indices")
             if not isinstance(indices, list) or not indices:
                 raise ValueError("Source-mask assignment requires mask indices")
+            exclusions = assignment.get("exclude_mask_indices", [])
+            if not isinstance(exclusions, list):
+                raise ValueError("Source-mask exclusions must be a list")
+            if exclusions and (assignment.get("exclusions_reviewed") is not True or
+                               not str(assignment.get("exclusion_reason", "")).strip()):
+                raise ValueError("Foreground mask exclusions require explicit semantic review and reason")
             masks = []
-            for index in indices:
+            for index in indices + exclusions:
                 if type(index) is not int or index not in records:
                     raise ValueError(f"Unknown occlusion-mask index {index!r}")
                 if index not in cache:
@@ -110,7 +137,7 @@ class SourceMaskConstraints:
             mapping = self.assignment_by_node if kinds[0] == "source_node" else self.assignment_by_group
             if target in mapping:
                 raise ValueError(f"Duplicate source-mask assignment {target}")
-            mapping[target] = masks
+            mapping[target] = (masks[:len(indices)], masks[len(indices):])
 
     def for_object(self, obj):
         return self.assignment_by_node.get(obj.get("source_node"),
@@ -121,6 +148,12 @@ class SourceMaskConstraints:
         import numpy as np
         if masks is None:
             return np.ones(len(sx), dtype=bool)
+        includes, excludes = masks
+        accepted = self._union(includes, sx, sy)
+        return accepted & ~self._union(excludes, sx, sy)
+
+    def _union(self, masks, sx, sy):
+        import numpy as np
         accepted = np.zeros(len(sx), dtype=bool)
         top_y = self.source_size[1] - 1 - sy
         for left, top, bitmap in masks:
@@ -128,3 +161,14 @@ class SourceMaskConstraints:
             inside = (x >= 0) & (x < bitmap.shape[1]) & (y >= 0) & (y < bitmap.shape[0])
             accepted[inside] |= bitmap[y[inside], x[inside]]
         return accepted
+
+    def allowed_pixel(self, obj, sx, top_y):
+        """Scalar top-origin counterpart for review rays, with identical ownership."""
+        masks = self.for_object(obj)
+        if masks is None:
+            return True
+        def member(entries):
+            return any(0 <= sx-left < bitmap.shape[1] and
+                       0 <= top_y-top < bitmap.shape[0] and bitmap[top_y-top, sx-left]
+                       for left, top, bitmap in entries)
+        return member(masks[0]) and not member(masks[1])

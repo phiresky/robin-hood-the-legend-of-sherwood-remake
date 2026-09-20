@@ -113,12 +113,13 @@ def _review_layers(config):
                  if o.type == "MESH" and not o.hide_render}
     exterior = available - {node for nodes in interior.values() for node in nodes}
     occluders = projection_occluders(manifest, available)
-    partitions = [("exterior", sorted(exterior), sorted(exterior))]
-    partitions.extend(("interior", sorted(nodes), occluders[patch]) for patch, nodes in interior.items())
+    partitions = [("exterior", "exterior", sorted(exterior), sorted(exterior))]
+    partitions.extend(("interior", "interior-" + patch, sorted(nodes), occluders[patch]) for patch, nodes in interior.items())
     exterior_source = _mission_review_source(config) or str((path.parent / manifest['sources']['exterior']).resolve())
     return [{"source_path": exterior_source if source == 'exterior' else str((path.parent / manifest["sources"][source]).resolve()),
-             "receiver_nodes": nodes, "occluder_nodes": blockers}
-            for source, nodes, blockers in partitions]
+             "receiver_nodes": nodes, "occluder_nodes": blockers,
+             **({"projection_label": label} if config.get('source_mask_manifest') else {})}
+            for source, label, nodes, blockers in partitions]
 
 
 def _mission_review_source(config):
@@ -160,16 +161,19 @@ def _reproject(config, report_dir):
         _json(report_dir / "layers.json", manifest)
         return reproject_layers(report_dir / "layers.json", report_dir,
                                 ownership_nodes=config['part_ids'], preserve_authored=False,
-                                exterior_source=_mission_review_source(config))
+                                exterior_source=_mission_review_source(config),
+                                source_mask_manifest=config.get('source_mask_manifest'))
     report = reproject_map(config["map_name"], config["source_path"],
                            Path(report_dir) / "source.json",
                            elevation_deg=config["elevation_degrees"])
     from source_projection_bake import bake
     report['ownership'] = bake(config['map_name'], config['source_path'],
                                Path(report_dir) / 'ownership.json',
+                               projection_label='exterior',
                                receiver_nodes=config['part_ids'],
                                elevation_deg=config['elevation_degrees'],
-                               preserve_authored=False)
+                               preserve_authored=False,
+                               source_mask_manifest=config.get('source_mask_manifest'))
     return report
 
 
@@ -181,12 +185,13 @@ def _render(config, output, baseline=None):
                          width=config["width"], height=config["height"],
                          elevation_degrees=config["elevation_degrees"],
                          context_padding=config["context_padding"],
-                         projection_layers=_review_layers(config))
+                         projection_layers=_review_layers(config),
+                         source_mask_manifest=config.get('source_mask_manifest'))
 
 
 def prepare(workspace_dir, *, asset_id, scene_name, collection_name, source_path,
             grouping_manifest, inventory_path, review_path, projection_manifest=None, width=384, height=512,
-            elevation_degrees=35.0, context_padding=24):
+            elevation_degrees=35.0, context_padding=24, source_mask_manifest=None):
     """Create a new workspace from the loaded scene; refuse an existing directory.
 
     Call from a disposable Blender process opened on the accepted full scene.
@@ -232,6 +237,13 @@ def prepare(workspace_dir, *, asset_id, scene_name, collection_name, source_path
     shutil.copy2(source_path, reference / "source.png")
     config["source_path"] = str(reference / "source.png")
     config["projection_manifest"] = None
+    if source_mask_manifest:
+        # Keep editable receiver assignments local; referenced inventories remain read-only.
+        path = Path(source_mask_manifest).resolve(strict=True)
+        masks = json.loads(path.read_text())
+        masks['mask_inventory'] = str((path.parent / masks['mask_inventory']).resolve(strict=True))
+        _json(workspace / 'source-masks.json', masks)
+        config['source_mask_manifest'] = str(workspace / 'source-masks.json')
     if projection_manifest:
         path = Path(projection_manifest).resolve()
         layers = _copy_manifest_images(json.loads(path.read_text()), path.parent, reference)

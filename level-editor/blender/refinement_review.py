@@ -60,7 +60,7 @@ def _tile(buffers, width, height, path):
 def render_review(output_dir, *, scene_name, collection_name, asset_id,
                   source_path, frame_manifest=None, width=384, height=512,
                   elevation_degrees=35.0, context_padding=24, projection_layers=None,
-                  lighting=None):
+                  lighting=None, source_mask_manifest=None):
     """Render context.png, solid.png, textured.png, views.json and individual views.
 
     Coordinates use the map's orthographic projection: source x=X,
@@ -71,6 +71,8 @@ def render_review(output_dir, *, scene_name, collection_name, asset_id,
     scene context geometry in collection_name even in an isolated worker file.
     The crop is raw source artwork including background, not a silhouette cutout.
     This function does not mutate materials or save the blend file.
+    source_mask_manifest optionally restricts evidence per receiver/layer to
+    reviewed silhouettes minus explicitly reviewed foreground masks.
     """
     if width <= 0 or height <= 0 or context_padding < 0:
         raise ValueError("Positive render dimensions and nonnegative padding required")
@@ -120,6 +122,14 @@ def render_review(output_dir, *, scene_name, collection_name, asset_id,
                                            "receiver_nodes": sorted(present, key=str),
                                            "occluder_nodes": sorted(present, key=str)}]
         layers, receiver_layers, layer_records = [], {}, []
+        mask_record = None
+        if source_mask_manifest:
+            from occlusion_constraints import SourceMaskConstraints, evidence_record
+            mask_record = evidence_record(source_mask_manifest)
+            if baseline and baseline.get('source_mask_evidence') not in (None, mask_record):
+                raise ValueError('Reviewed source-mask evidence changed since baseline')
+        elif baseline and baseline.get('source_mask_evidence'):
+            raise ValueError('Cannot drop source-mask evidence from a frozen review')
         for definition in definitions:
             receivers, occluders = set(definition["receiver_nodes"]), set(definition["occluder_nodes"])
             if (receivers | occluders) - present:
@@ -131,15 +141,23 @@ def render_review(output_dir, *, scene_name, collection_name, asset_id,
             if (sw, sh) != (source_width, source_height):
                 raise ValueError("Projection layers must share source image dimensions")
             tree, layer_owners, _ = _tree([o for o in all_objects if o.get("source_node") in occluders])
-            layer = (pixels, tree, layer_owners)
+            constraints = (SourceMaskConstraints(source_mask_manifest,
+                           definition.get('projection_label', 'exterior'),
+                           hashlib.sha256(path.read_bytes()).hexdigest(), (sw, sh))
+                           if source_mask_manifest else None)
+            layer = (pixels, tree, layer_owners, constraints)
             layers.append(layer)
             receiver_layers.update({node: layer for node in receivers})
             layer_records.append({**definition, "source_path": str(path),
                                   "source_sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
         if any(o.get("source_node") not in receiver_layers for o in objects):
             raise ValueError("Every review object needs an explicit projection receiver layer")
-        if baseline and baseline["projection_layers"] != layer_records:
+        def without_labels(records):
+            return [{k: v for k, v in row.items() if k != 'projection_label'} for row in records]
+        if baseline and without_labels(baseline["projection_layers"]) != without_labels(layer_records):
             raise ValueError("Projection layer sources or membership changed since baseline")
+        if baseline and baseline.get('source_mask_evidence') and baseline['projection_layers'] != layer_records:
+            raise ValueError('Source-mask projection labels changed since baseline')
         scene.render.resolution_x, scene.render.resolution_y = width, height
         scene.render.pixel_aspect_x = scene.render.pixel_aspect_y = 1
         target = (Vector(tuple(min(p[a] for p in points) for a in range(3))) +
@@ -200,7 +218,7 @@ def render_review(output_dir, *, scene_name, collection_name, asset_id,
             bottom, top = min(p.y for p in frame), max(p.y for p in frame)
             direction = camera.matrix_world.to_3x3() @ Vector((0, 0, -1))
             values, known = array("f"), array("f")
-            counts = {"source": 0, "unknown": 0, "background": 0}
+            counts = {"source": 0, "unknown": 0, "background": 0, "mask_rejected": 0}
             for y in range(height):
                 for x in range(width):
                     origin = camera.matrix_world @ Vector((left + (x + .5) * (right - left) / width,
@@ -209,7 +227,7 @@ def render_review(output_dir, *, scene_name, collection_name, asset_id,
                     verified = False
                     if hit is not None:
                         owner = owners[triangle]
-                        pixels, tree, layer_owners = receiver_layers[owner.get("source_node")]
+                        pixels, tree, layer_owners, constraints = receiver_layers[owner.get("source_node")]
                         sx, sy = hit.x, hit.dot(source_down)
                         verified = (normal.dot(toward_source) > max(.05, float(owner.get("projection_min_cosine", .05)))
                                     and 0 <= sx < source_width and 0 <= sy < source_height
@@ -218,6 +236,9 @@ def render_review(output_dir, *, scene_name, collection_name, asset_id,
                             sample = hit + Vector((math.floor(sx) + .5 - sx, 0, 0)) + source_down * (math.floor(sy) + .5 - sy)
                             _, _, sampled, _ = tree.ray_cast(sample + toward_source * 100000, -toward_source)
                             verified = sampled is not None and layer_owners[sampled] == owner
+                        if verified and constraints and not constraints.allowed_pixel(owner, int(sx), int(sy)):
+                            verified = False
+                            counts['mask_rejected'] += 1
                     if verified:
                         offset = ((source_height - 1 - int(sy)) * source_width + int(sx)) * 4
                         values.extend((*pixels[offset:offset + 3], 1))
@@ -246,11 +267,12 @@ def render_review(output_dir, *, scene_name, collection_name, asset_id,
                     "framing": baseline.get("framing", "legacy shared scale") if baseline else "Per-view evaluated geometry, 4 percent padding; frozen for modified comparison",
                     "context_crop": crop, "source_image": str(source_path), "source_sha256": source_hash,
                     "projection_layers": layer_records, "views": records,
+                    "source_mask_evidence": mask_record,
                     "lighting": lighting_record,
                     "lighting_basis": "World-space direction inferred from upper-left reference illumination; not recovered metadata" if lighting_record else "Historical camera-relative Workbench studio",
                     "source_blend": bpy.data.filepath, "object_names": sorted(o.name for o in objects),
-                    "known_rule": "Fresh source pixels, facing source, unoccluded in declared layer, sampled texel ray belongs to the same mesh. Identical rule in all eight views.",
-                    "limitations": ["Artwork/background segmentation is not inferred. An oversized model can still project background onto itself; compare context and solid silhouettes.",
+                    "known_rule": "Fresh source pixels, facing source, unoccluded in declared layer, sampled texel ray belongs to the same mesh, inside any reviewed receiver mask and outside its reviewed foreground exclusions. Identical rule in all eight views.",
+                    "limitations": ["Artwork ownership is constrained only where explicit reviewed masks exist. Unassigned oversized models can still project background onto themselves; compare context and solid silhouettes.",
                                     "Visibility is checked per output pixel; nearest source-texel ownership is conservative at boundaries."]}
         (output / "views.json").write_text(json.dumps(manifest, indent=2) + "\n")
         return manifest
