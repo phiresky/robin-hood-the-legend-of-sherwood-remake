@@ -136,7 +136,17 @@ pub struct DirectorCameraFrame {
 // Retain the former save projection's serde name; all camera fields now persist.
 #[serde(rename = "PersistedCameraState")]
 pub struct CameraState {
-    /// Top-left corner of the view in map coordinates.
+    /// Logical top-left position of the deterministic director camera.
+    ///
+    /// This is **not** the actual viewport currently visible to a player.
+    /// Local scrolling, widescreen offsets, split-screen cameras, and
+    /// refresh-rate presentation all live in the host and may make the
+    /// rendered viewport differ from this value. The engine uses this cursor
+    /// only for deterministic director behavior: advancing `CameraGoto`
+    /// slides, clamping logical camera targets, determining when a scripted
+    /// camera movement has reached its target, and chaining sequential
+    /// director commands. The host projects/interpolates the resulting
+    /// logical camera frames into the actual render viewport.
     pub view_position: MapPoint,
     /// Target position for camera slide animations.
     pub camera_slide: MapPoint,

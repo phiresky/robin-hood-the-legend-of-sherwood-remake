@@ -79,30 +79,16 @@ impl ViewportState {
                 .slide_target
                 .filter(|target| *target == after.view_position)
         });
-        if let Some(target) = target {
-            if self.zoom_factor != after.zoom_factor {
-                self.zoom_by(after.zoom_factor / self.zoom_factor, None);
+        if let Some(_target) = target {
+            // The engine has already advanced its logical director camera for
+            // this fixed tick. Adopt that endpoint here; refresh-rate
+            // interpolation owns the motion between this endpoint and the
+            // previous one. Re-interpolating the host viewport from the
+            // director's progress here and then interpolating it again during
+            // presentation produces a visibly uneven camera cadence.
+            if before.view_position != after.view_position {
+                self.adopt_director_camera(after.view_position, view_size, after.zoom_factor);
             }
-            let distance = |point: MapPoint| (point.x - target.x).hypot(point.y - target.y);
-            let remaining_before = distance(before.view_position);
-            let progress = if remaining_before == 0.0 {
-                1.0
-            } else {
-                (1.0 - distance(after.view_position) / remaining_before).clamp(0.0, 1.0)
-            };
-            // Use the shared pan's progress, but interpolate from the local
-            // viewport. This preserves deterministic sequence completion and
-            // makes every peer arrive at the scripted destination together.
-            // TODO: a shared pan with zero distance has no duration to reuse;
-            // presenting a local-only pan then needs a separate visual clock.
-            self.old_view_position = self.view_position;
-            let target_x =
-                target.x + (view_size.x - self.screen_size.x) / (2.0 * after.zoom_factor);
-            let target_y =
-                target.y + (view_size.y - self.screen_size.y) / (2.0 * after.zoom_factor);
-            self.view_position.x += (target_x - self.view_position.x) * progress;
-            self.view_position.y += (target_y - self.view_position.y) * progress;
-            self.clip_view();
         } else if before.view_position != after.view_position
             && before.zoom_factor == after.zoom_factor
         {
@@ -421,8 +407,10 @@ mod viewport_touch_tests {
             ..start
         };
         viewport.advance_director_camera(start, halfway, view_size);
-        close(viewport.view_position.x, 1586.0);
-        close(viewport.view_position.y, 1512.0);
+        // The host adopts the logical endpoint; refresh-rate sampling owns
+        // interpolation between this endpoint and the previous one.
+        close(viewport.view_position.x, 472.0);
+        close(viewport.view_position.y, 724.0);
 
         // Completion can clear the slide in the same tick that it arrives.
         let end = engine_api::DirectorCameraFrame {
