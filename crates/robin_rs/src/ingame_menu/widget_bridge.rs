@@ -129,8 +129,50 @@ impl ScreenKey {
                 Keycode::Tab => Some(Self::Next),
                 _ => None,
             },
+            // Keep controller menus on the same logical accept/cancel keys
+            // as keyboard menus.  Directional buttons are handled by each
+            // screen's existing Up/Down navigation path.
+            GameEvent::GamepadButton {
+                button: 0 | 6,
+                pressed: true,
+                ..
+            } => Some(Self::Confirm),
+            GameEvent::GamepadButton {
+                button: 1 | 4,
+                pressed: true,
+                ..
+            } => Some(Self::Cancel),
             _ => None,
         }
+    }
+}
+
+/// Translate a controller's D-pad to the keyboard direction understood by
+/// menu screens.  Keeping this conversion here makes every modal use the
+/// same bindings without making widgets aware of physical devices.
+pub fn gamepad_direction(event: &GameEvent) -> Option<crate::gfx_types::Keycode> {
+    match event {
+        GameEvent::GamepadButton {
+            button: 11,
+            pressed: true,
+            ..
+        } => Some(crate::gfx_types::Keycode::Up),
+        GameEvent::GamepadButton {
+            button: 12,
+            pressed: true,
+            ..
+        } => Some(crate::gfx_types::Keycode::Down),
+        GameEvent::GamepadButton {
+            button: 13,
+            pressed: true,
+            ..
+        } => Some(crate::gfx_types::Keycode::Left),
+        GameEvent::GamepadButton {
+            button: 14,
+            pressed: true,
+            ..
+        } => Some(crate::gfx_types::Keycode::Right),
+        _ => None,
     }
 }
 

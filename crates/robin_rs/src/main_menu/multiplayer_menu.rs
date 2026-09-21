@@ -267,9 +267,9 @@ impl MultiplayerMenuState {
 
         for (id, y) in [
             (ID_LOCAL, 20),
-            (ID_RULE, 50),
-            (ID_SCALE, 80),
-            (ID_KEYBOARD, 110),
+            (ID_KEYBOARD, 50),
+            (ID_RULE, 80),
+            (ID_SCALE, 110),
             (ID_ASSIGNMENTS, 140),
         ] {
             frame.add_widget_absolute(widget_bridge::make_button_enabled(
@@ -321,7 +321,7 @@ impl MultiplayerMenuState {
                 return tick;
             }
         }
-        self.update_buttons();
+        self.update_buttons(io.window.local_players.keyboard);
         let (screen, activated) = self.handle_input(&mut io.screen_io());
         if let Some(id) = activated
             && let Some(tick) = self
@@ -560,7 +560,7 @@ impl MultiplayerMenuState {
         mission.map_or(1, |m| m.roster_slots)
     }
 
-    fn update_buttons(&mut self) {
+    fn update_buttons(&mut self, keyboard_player: bool) {
         let matchmaking_connected = self.matchmaking_client.is_some();
         let can_join = matches!(self.mode, MenuMode::Games)
             && self
@@ -583,8 +583,18 @@ impl MultiplayerMenuState {
             .update_widget(ID_LOCAL, Some("Local co-op"), true);
         let editable =
             self.local || matches!(self.mode, MenuMode::Missions | MenuMode::Hosted { .. });
-        self.frame
-            .update_widget(ID_RULE, Some(&format!("{:?}", self.coop.control)), editable);
+        self.frame.update_widget(
+            ID_RULE,
+            Some(&format!(
+                "Control: {}",
+                match self.coop.control {
+                    robin_engine::coop::CharacterControl::Shared => "shared",
+                    robin_engine::coop::CharacterControl::Exclusive => "exclusive",
+                    robin_engine::coop::CharacterControl::Assigned => "assigned",
+                }
+            )),
+            editable,
+        );
         self.frame.update_widget(
             ID_SCALE,
             Some(&format!(
@@ -593,14 +603,21 @@ impl MultiplayerMenuState {
             )),
             editable,
         );
-        self.frame
-            .update_widget(ID_KEYBOARD, Some("Keyboard player"), self.local);
+        self.frame.update_widget(
+            ID_KEYBOARD,
+            Some(if keyboard_player {
+                "Keyboard on"
+            } else {
+                "Keyboard off"
+            }),
+            self.local,
+        );
         self.frame.update_widget(
             ID_ASSIGNMENTS,
             Some(if self.edit_assignments {
-                "Assignments"
+                "Assign heroes"
             } else {
-                "Duplicate choices"
+                "Choose copies"
             }),
             editable,
         );
@@ -648,7 +665,7 @@ impl MultiplayerMenuState {
             }
             self.coop.players = count;
             self.status = format!(
-                "{} players (keyboard {}). Press A to join; choose mission and rules.",
+                "{} players (keyboard {}). A joins controllers; use the buttons on the right to configure co-op.",
                 io.window.local_players.count(),
                 if io.window.local_players.keyboard {
                     "on"
@@ -660,6 +677,24 @@ impl MultiplayerMenuState {
         let transform = screen.transform;
         for event in &screen.events {
             self.input_state.update_from_event(event, transform);
+            if let Some(direction) = widget_bridge::gamepad_direction(event) {
+                match direction {
+                    Keycode::Up => {
+                        self.selected = self.selected.saturating_sub(1);
+                        if rows_len > 0 {
+                            self.scroll_view.reveal(self.selected);
+                        }
+                    }
+                    Keycode::Down => {
+                        if rows_len > 0 {
+                            self.selected = (self.selected + 1).min(rows_len - 1);
+                            self.scroll_view.reveal(self.selected);
+                        }
+                    }
+                    _ => {}
+                }
+                continue;
+            }
             if self.scroll_view.handle_event(
                 event,
                 transform,
@@ -1594,6 +1629,24 @@ impl MultiplayerMenuState {
                 LIST_RECT.x,
                 LIST_RECT.y + LIST_RECT.h + 16,
             );
+            if self.local {
+                render_text_virt_font(
+                    renderer,
+                    font,
+                    transform,
+                    "Control = who may use each hero. HP = duplicate enemy health.",
+                    LIST_RECT.x,
+                    LIST_RECT.y + LIST_RECT.h + 28,
+                );
+                render_text_virt_font(
+                    renderer,
+                    font,
+                    transform,
+                    "Assign heroes swaps the roster; Choose copies selects duplicates.",
+                    LIST_RECT.x,
+                    LIST_RECT.y + LIST_RECT.h + 40,
+                );
+            }
         }
     }
 }

@@ -544,6 +544,18 @@ impl MainMenuState {
         let mut exit_requested = false;
         for event in events {
             self.input_state.update_from_event(&event, transform);
+            if let Some(direction) = widget_bridge::gamepad_direction(&event) {
+                match direction {
+                    Keycode::Up => {
+                        move_keyboard_selection(&self.frame, &mut self.keyboard_selection, -1)
+                    }
+                    Keycode::Down => {
+                        move_keyboard_selection(&self.frame, &mut self.keyboard_selection, 1)
+                    }
+                    _ => {}
+                }
+                continue;
+            }
             match ScreenKey::from_event(&event) {
                 Some(ScreenKey::Quit | ScreenKey::Cancel) => exit_requested = true,
                 Some(ScreenKey::Confirm) => activated = Some(self.keyboard_selection),
