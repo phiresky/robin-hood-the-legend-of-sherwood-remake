@@ -115,8 +115,8 @@ use runtime::{
     MissionPresentationPhase, MissionRuntime, MissionWorld,
 };
 use tick::{
-    StepUiGates, dismiss_pending_modals, drain_steps, modal_state_pending,
-    post_render_engine_cleanup, pre_render_engine_setup, sync_render_camera,
+    StepUiGates, dismiss_pending_modals, drain_steps, modal_state_pending, pre_render_engine_setup,
+    sync_render_camera,
 };
 
 use crate::app_effect::{AppEffect, SoundMode};

@@ -1881,9 +1881,6 @@ mod tests {
         {
             let mut phase = world.post_tick_input_phase(&mut frame);
             phase
-                .commands
-                .push(PlayerCommand::ClearNpcDoubleStatusBarFlags);
-            phase
                 .external_actions
                 .push(robin_engine::engine::ExternalAction::Native {
                     name: "post-tick cursor fixture".into(),
@@ -1894,7 +1891,7 @@ mod tests {
         }
         assert_eq!(frame.commands.commands.len(), 1);
         assert!(frame.external_actions.is_empty());
-        assert_eq!(frame.post_commands.commands.len(), 1);
+        assert_eq!(frame.post_commands.commands.len(), 0);
         assert_eq!(frame.post_external_actions.len(), 1);
         {
             let phase = world.audio_phase();
@@ -3965,14 +3962,6 @@ mod tests {
         assert!(!recorded.run_hourglass);
         assert!(!recorded.simulation_body_allowed);
         assert!(!recorded.run_post_initialize);
-
-        // Renderer cleanup must not append commands to replay transactions.
-        super::super::tick::post_render_engine_cleanup(
-            &mut frame,
-            robin_engine::player_command::PlayerId::HOST,
-            true,
-        );
-        assert!(frame.post_commands().is_empty());
     }
 
     #[test]

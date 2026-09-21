@@ -477,11 +477,6 @@ impl FixedTickRender<'_, '_> {
             saved_camera.apply(host.frontend);
             host.frontend.presentation.draw_order = saved_draw_order;
             sync_render_camera(host.frontend);
-            post_render_engine_cleanup(
-                frame,
-                host.local_seat,
-                runtime.replay().playback().is_some(),
-            );
         } else {
             native_refresh_interpolation.clear();
         }

@@ -424,7 +424,6 @@ impl EngineInner {
             | MinimapRightClick
             | MinimapToggle
             | SelectFollowElement { .. }
-            | ClearNpcDoubleStatusBarFlags
             | SetAmountOfSpeaking { .. }
             | SetFixHardReactionTimes { .. }
             | SetFogOfWar { .. }
@@ -903,9 +902,6 @@ impl EngineInner {
             // ── Display / UI setters ────────────────────────────
             SelectFollowElement { entity_id } => {
                 self.select_follow_element(seat, *entity_id);
-            }
-            ClearNpcDoubleStatusBarFlags => {
-                self.clear_npc_double_status_bar_flags();
             }
             SetAmountOfSpeaking { amount } => {
                 assert!(

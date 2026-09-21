@@ -183,8 +183,6 @@ pub struct AiActorData {
 
     pub custom_values: [i32; NpcCustomValue::COUNT],
 
-    pub display_double_status_bar: bool,
-
     // -- Cross-module reference: AI controller --
     /// The NPC's AI brain — either an enemy AI or a civilian AI.
     pub ai_brain: AiBrain,
@@ -379,7 +377,6 @@ impl Default for AiActorData {
             worst_detected_type: DetectableType::None,
             has_given_money_to_beggar: false,
             custom_values: [0; NpcCustomValue::COUNT],
-            display_double_status_bar: false,
             ai_brain: AiBrain::None,
             alerted: false,
             // The engine overwrites this with the correct day/night

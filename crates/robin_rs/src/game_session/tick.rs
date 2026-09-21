@@ -13,7 +13,7 @@ use robin_engine::ai::AlertLevel;
 use robin_engine::coordinates::MapBBox;
 use robin_engine::engine as engine_api;
 use robin_engine::engine_manager as engine_manager_api;
-use robin_engine::player_command::{PlayerCommand, PlayerId, PlayerInput};
+use robin_engine::player_command::{PlayerCommand, PlayerId};
 use robin_engine::sound_cache::SampleLoader;
 
 /// Per-frame audio tick.
@@ -194,21 +194,6 @@ pub(super) fn sync_render_camera(frontend: &mut crate::host::HostFrontend) {
                 ),
                 zoom,
             );
-    }
-}
-
-/// Post-render bookkeeping: clear the one-shot `display_double_status_bar`
-/// NPC flag after `render_combat_status_bars` has observed it.
-pub(super) fn post_render_engine_cleanup(
-    frame: &mut super::runtime::MissionFrame,
-    local_seat: robin_engine::player_command::PlayerId,
-    playing_back: bool,
-) {
-    if !playing_back {
-        frame.stage_post_commands().push(PlayerInput::new(
-            local_seat,
-            PlayerCommand::ClearNpcDoubleStatusBarFlags,
-        ));
     }
 }
 

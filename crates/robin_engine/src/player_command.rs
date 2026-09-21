@@ -1304,10 +1304,6 @@ pub enum PlayerCommand {
     SelectFollowElement {
         entity_id: Option<EntityId>,
     },
-    /// Clear the one-shot `display_double_status_bar` flag on every
-    /// NPC.  Issued after the bars have been rendered for the frame.
-    ClearNpcDoubleStatusBarFlags,
-
     /// Change the authoritative hero-comment frequency immediately.
     /// Hero speech reads the active profile setting on every
     /// call; carrying the edit as a command gives replay, rollback, and

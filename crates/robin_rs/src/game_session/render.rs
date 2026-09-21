@@ -1331,7 +1331,6 @@ impl RenderContext<'_> {
 /// - preparing the zoom presentation through the screenshot/thumbnail/wide
 ///   update boundary before drawing;
 /// - calling `renderer.present()` after this function returns;
-/// - running `post_render_engine_cleanup` to clear one-shot NPC flags;
 /// - skipping the whole trio in fast-forward (`host.frontend.presentation.skip_render`).
 pub(super) fn render_frame(
     engine: &PresentationView<'_>,
@@ -1629,9 +1628,6 @@ fn render_world_pass(
     // opponents, and any NPC flagged by bow/stone hover or
     // double-status-bar marking.
     render_combat_status_bars(host, engine, renderer);
-    // The one-shot "display double status bar" NPC flag is cleared in
-    // `post_render_engine_cleanup` (main loop) — `render_frame` is
-    // read-only on PresentationView.
 
     // ── GPU phase: trajectory preview ──
     // Draws dots along projectile arcs every 7 world units.

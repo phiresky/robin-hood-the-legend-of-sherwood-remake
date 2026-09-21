@@ -64,9 +64,6 @@ pub(crate) fn render_mission_countdown(
 /// - Every selected PC currently swordfighting, plus every opponent on
 ///   that PC's opponents list.
 ///
-/// The `NpcData::display_double_status_bar` flag (set by the soldier
-/// hover path, currently unimplemented) is also honoured so the feature is
-/// ready once that call site lands.
 pub(crate) fn render_combat_status_bars(
     host: &HostDraw<'_>,
     engine: &PresentationView<'_>,
@@ -94,20 +91,6 @@ pub(crate) fn render_combat_status_bars(
         targets.insert(pc_id);
         for &opp in &h.opponents {
             targets.insert(opp);
-        }
-    }
-
-    // NPCs that got `display_double_status_bar` set by other code paths
-    // (soldier mouse focus, AI, etc.).  The flag is one-shot:
-    // consumers elsewhere clear it after rendering.  We only *read* it
-    // here to keep this function `&PresentationView<'_>`; the clearing happens in
-    // `clear_display_flags`.
-    for npc_id in engine.npc_ids() {
-        let Some(e) = engine.get_entity(npc_id) else {
-            continue;
-        };
-        if e.npc_data().is_some_and(|n| n.display_double_status_bar) {
-            targets.insert(npc_id);
         }
     }
 

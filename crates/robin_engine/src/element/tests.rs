@@ -1520,7 +1520,6 @@ fn golden_ai_actor_fixture(ai_brain: AiBrain, seed: u16) -> AiActorData {
         worst_detected_type: DetectableType::Friend,
         has_given_money_to_beggar: true,
         custom_values: [-1, 2, -3, 4, -5, 6, -7, 8, -9, 10],
-        display_double_status_bar: true,
         ai_brain,
         alerted: true,
         view_radius: 19,

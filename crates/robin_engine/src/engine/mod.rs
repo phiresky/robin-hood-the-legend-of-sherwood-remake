@@ -2537,21 +2537,6 @@ impl EngineInner {
         self.get_entity(pc_id).and_then(|e| e.pc_data())?.kind
     }
 
-    /// Clear the one-shot `display_double_status_bar` flag on every NPC.
-    /// Resets the flag right after the bar renderer draws.  The
-    /// renderer is a host-side `&EngineInner` pass, so the clear runs
-    /// here.
-    pub(crate) fn clear_npc_double_status_bar_flags(&mut self) {
-        let ids = self.world.entities.npc_ids().collect::<Vec<_>>();
-        for id in ids {
-            if let Some(e) = self.get_entity_mut(id)
-                && let Some(npc) = e.npc_data_mut()
-            {
-                npc.display_double_status_bar = false;
-            }
-        }
-    }
-
     /// Restore the simulation RNG from a known seed.  Used when
     /// loading a replay or a save — replay/load is a mission-lifecycle
     /// boundary, outside the per-tick input pipeline.
