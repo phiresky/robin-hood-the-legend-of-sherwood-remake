@@ -815,7 +815,7 @@ async fn run_mission_body(
         // mission is being entered. Use that live roster for the local route;
         // the launch payload can be stale when a second controller joined on
         // the final lobby frame.
-        let players = if window.local_players.enabled {
+        let players = if !args.multiplayer.server && args.multiplayer.connect.is_none() {
             window.local_players.count().max(1) as u32
         } else {
             expected_players
