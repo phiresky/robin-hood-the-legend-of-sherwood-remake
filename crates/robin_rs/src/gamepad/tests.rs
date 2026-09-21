@@ -150,12 +150,12 @@ fn mouse_delta_offset() {
         rz: AXIS_CENTER + 1638, // dx ≈ 1.0
         ..Default::default()
     };
-    state.sliders[0] = AXIS_CENTER + 1638; // screen dy ≈ -1.0
+    state.sliders[0] = AXIS_CENTER + 1638; // screen dy ≈ +1.0
     pad.update(state);
 
     let (dx, dy) = pad.mouse_delta();
     assert!((dx - 1.0).abs() < 0.01);
-    assert!((dy + 1.0).abs() < 0.01);
+    assert!((dy - 1.0).abs() < 0.01);
 }
 
 #[test]
