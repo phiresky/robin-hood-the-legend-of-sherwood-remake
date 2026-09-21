@@ -25,11 +25,15 @@ use std::sync::mpsc::{Receiver, Sender};
 pub const START_DELAY_MS: u64 = 1_500;
 
 /// How often hosts re-announce and joiners re-signal, and how long
-/// soft state lives without a refresh.
+/// soft state lives without a refresh. The lease must outlast a DHT
+/// bootstrap round: when gossip temporarily loses its neighbors, the
+/// rendezvous lookup can take up to 15 seconds before the peer is joined
+/// again. Expiring sooner makes a host announce a false player count while
+/// the joiner still considers itself connected.
 #[cfg(not(target_arch = "wasm32"))]
 const BROADCAST_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 #[cfg(not(target_arch = "wasm32"))]
-const SOFT_STATE_TTL: std::time::Duration = std::time::Duration::from_secs(8);
+const SOFT_STATE_TTL: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// One advertised game, as seen in the browser list.
 #[derive(Debug, Clone, Serialize, Deserialize)]
