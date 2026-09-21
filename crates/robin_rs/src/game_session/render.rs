@@ -1366,7 +1366,7 @@ fn render_frame_with_hud(
 
     let layout = &host.frontend.split_screen;
     if host.frontend.local_player_count > 1
-        && !layout.views.is_empty()
+        && layout.views.len() > 1
         && host.viewport().screen_size == host.frontend.viewport.screen_size
     {
         for (index, view) in layout.views.iter().enumerate() {
@@ -1429,7 +1429,7 @@ fn render_frame_with_hud(
                             (a[1] + ny * offset) as i32,
                             (b[0] + nx * offset) as i32,
                             (b[1] + ny * offset) as i32,
-                            [210, 220, 235, alpha],
+                            [0, 0, 0, ((alpha as f32) * layout.divider_alpha) as u8],
                         );
                     }
                 }

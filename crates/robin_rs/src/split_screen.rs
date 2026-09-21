@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 pub struct SplitScreen {
     pub views: Vec<SplitView>,
     positions: Vec<[f32; 2]>,
+    #[serde(default)]
+    pub divider_alpha: f32,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SplitView {
@@ -17,6 +19,10 @@ impl SplitScreen {
     pub fn update(&mut self, players: &[(u8, [f32; 2])], width: f32, height: f32, zoom: f32) {
         if players.is_empty() || width <= 0.0 || height <= 0.0 {
             self.views.clear();
+            self.divider_alpha *= 0.8;
+            if self.divider_alpha < 0.01 {
+                self.divider_alpha = 0.0;
+            }
             return;
         }
         for &(seat, position) in players {
@@ -118,6 +124,11 @@ impl SplitScreen {
                 }
             })
             .collect();
+        let target_alpha = if self.views.len() > 1 { 1.0 } else { 0.0 };
+        self.divider_alpha += (target_alpha - self.divider_alpha) * 0.2;
+        if (self.divider_alpha - target_alpha).abs() < 0.01 {
+            self.divider_alpha = target_alpha;
+        }
     }
 }
 fn distance_squared(a: [f32; 2], b: [f32; 2]) -> f32 {
