@@ -106,19 +106,12 @@ fn default_replay_path() -> String {
     // `%:z` → `+HH:MM`; we strip the inner colon so the whole stamp is
     // filesystem-safe (e.g. `2026-04-17T09-32-15+02-00`).
     let stamp = jiff::Zoned::now()
-        .strftime("%Y-%m-%dT%H-%M-%S%:z")
+        .strftime("%Y-%m-%dT%H-%M-%S%:z-%3f")
         .to_string()
         .replace(':', "-");
-    dir.join(format!(
-        "{stamp}-{}-{}.mission",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("valid clock")
-            .subsec_nanos()
-    ))
-    .to_string_lossy()
-    .into_owned()
+    dir.join(format!("{stamp}.mission"))
+        .to_string_lossy()
+        .into_owned()
 }
 
 #[cfg(all(not(target_arch = "wasm32"), not(test)))]
@@ -773,5 +766,25 @@ mod tests {
         assert!(should_record_local_replay(false, false));
         assert!(!should_record_local_replay(true, false));
         assert!(!should_record_local_replay(false, true));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn default_replay_path_uses_three_digit_milliseconds() {
+        let path = std::path::PathBuf::from(default_replay_path());
+        let name = path
+            .file_name()
+            .expect("default replay path has a filename")
+            .to_str()
+            .expect("default replay filename is UTF-8");
+        let stem = name
+            .strip_suffix(".mission")
+            .expect("default replay path uses the mission extension");
+        let milliseconds = stem
+            .rsplit_once('-')
+            .expect("default replay path has a millisecond suffix")
+            .1;
+        assert_eq!(milliseconds.len(), 3);
+        assert!(milliseconds.bytes().all(|byte| byte.is_ascii_digit()));
     }
 }
