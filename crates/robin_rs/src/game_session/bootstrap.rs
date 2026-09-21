@@ -1433,11 +1433,19 @@ impl InteractiveMissionBuilder {
             && let Some(expected_players) = args.multiplayer.expected_players
         {
             sim_config.coop = args.multiplayer.coop;
-            sim_config.coop.players = expected_players
+            let roster_players =
+                if args.multiplayer.expected_players.is_some() && window.local_players.enabled {
+                    expected_players.max(window.local_players.count() as u32)
+                } else {
+                    expected_players
+                };
+            sim_config.coop.players = roster_players
                 .try_into()
                 .expect("local co-op player count fits the supported roster");
             tracing::info!(
                 players = sim_config.coop.players,
+                launch_players = expected_players,
+                roster_players = window.local_players.count(),
                 "local co-op simulation roster configured before engine construction"
             );
         }
