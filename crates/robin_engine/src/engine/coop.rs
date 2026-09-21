@@ -152,6 +152,12 @@ impl EngineInner {
             if let Some(Entity::Pc(pc)) = self.get_entity_mut(assigned) {
                 pc.pc.portrait.open = !pc.pc.portrait.burned;
             }
+            tracing::info!(
+                seat = index,
+                ?assigned,
+                portrait_slot = self.world.pc_ids.iter().position(|&id| id == assigned),
+                "co-op initial character assignment"
+            );
         }
     }
 
