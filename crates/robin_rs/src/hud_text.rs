@@ -793,8 +793,8 @@ fn format_peer_label<'a>(
             label.push_str(", ");
         }
         if nickname.is_empty() {
-            // Preserve the seat-number label for unnamed peers.
-            write!(&mut label, "P{}", player_id.0).expect("writing to a String cannot fail");
+            write!(&mut label, "Player {}", usize::from(player_id.0) + 1)
+                .expect("writing to a String cannot fail");
         } else {
             label.push_str(nickname);
         }
@@ -924,7 +924,12 @@ mod tests {
                 (PlayerId(2), true, "")
             ])
             .as_deref(),
-            Some("Robin, P2"),
+            Some("Robin, Player 3"),
+        );
+        assert_eq!(
+            format_peer_label([(PlayerId(0), true, ""), (PlayerId(1), true, "Player 2")])
+                .as_deref(),
+            Some("Player 1, Player 2"),
         );
         assert_eq!(
             format_peer_label([
