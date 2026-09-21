@@ -130,6 +130,114 @@ impl SplitScreen {
             self.divider_alpha = target_alpha;
         }
     }
+
+    /// Rebuild the camera geometry for a refresh-rate presentation sample.
+    ///
+    /// Group membership and the smoothed fixed-tick camera remain stable, but
+    /// each member's movement since the last tick is applied to its view.
+    /// This keeps the split camera and interpolated world entities on the same
+    /// sample without changing deterministic grouping or camera smoothing.
+    pub fn presentation_views(
+        &self,
+        players: &[(u8, [f32; 2])],
+        width: f32,
+        height: f32,
+        zoom: f32,
+    ) -> Vec<SplitView> {
+        if self.views.is_empty() || width <= 0.0 || height <= 0.0 {
+            return Vec::new();
+        }
+        let centers: Vec<[f32; 2]> = self
+            .views
+            .iter()
+            .map(|view| {
+                let mut center = view.center;
+                let mut count = 0u32;
+                for &seat in &view.members {
+                    let Some(current) = players
+                        .iter()
+                        .find(|(player, _)| *player == seat)
+                        .map(|(_, position)| *position)
+                    else {
+                        continue;
+                    };
+                    let Some(previous) = self.positions.get(seat as usize) else {
+                        continue;
+                    };
+                    center[0] += current[0] - previous[0];
+                    center[1] += current[1] - previous[1];
+                    count += 1;
+                }
+                if count > 0 {
+                    center[0] = view.center[0] + (center[0] - view.center[0]) / count as f32;
+                    center[1] = view.center[1] + (center[1] - view.center[1]) / count as f32;
+                }
+                center
+            })
+            .collect();
+        build_views(
+            self.views.iter().map(|view| view.members.clone()).collect(),
+            centers,
+            width,
+            height,
+            zoom,
+        )
+    }
+}
+
+fn build_views(
+    groups: Vec<Vec<u8>>,
+    centers: Vec<[f32; 2]>,
+    width: f32,
+    height: f32,
+    zoom: f32,
+) -> Vec<SplitView> {
+    let mut mean = [0.0; 2];
+    let total_members: usize = groups.iter().map(Vec::len).sum();
+    for (center, group) in centers.iter().zip(&groups) {
+        for axis in 0..2 {
+            mean[axis] += center[axis] * group.len() as f32 / total_members.max(1) as f32;
+        }
+    }
+    let extent = centers
+        .iter()
+        .map(|p| ((p[0] - mean[0]).abs() / width).max((p[1] - mean[1]).abs() / height))
+        .fold(0.01f32, f32::max);
+    let projection = zoom.min(0.32 / extent);
+    let mut sites: Vec<_> = centers
+        .iter()
+        .map(|p| {
+            [
+                width * 0.5 + (p[0] - mean[0]) * projection,
+                height * 0.5 + (p[1] - mean[1]) * projection,
+            ]
+        })
+        .collect();
+    for index in 0..sites.len() {
+        for other in 0..index {
+            if distance_squared(sites[index], sites[other]) < 0.01 {
+                sites[index][0] += 0.25 * (index + 1) as f32;
+            }
+        }
+    }
+    groups
+        .into_iter()
+        .enumerate()
+        .map(|(index, members)| {
+            let mut polygon = vec![[0., 0.], [width, 0.], [width, height], [0., height]];
+            for (other, site) in sites.iter().enumerate() {
+                if other != index {
+                    polygon = clip_cell(&polygon, sites[index], *site);
+                }
+            }
+            SplitView {
+                members,
+                center: centers[index],
+                site: sites[index],
+                polygon,
+            }
+        })
+        .collect()
 }
 fn distance_squared(a: [f32; 2], b: [f32; 2]) -> f32 {
     (a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)
@@ -236,6 +344,27 @@ mod tests {
         }
         assert_eq!(layout.views.len(), 1);
         assert_eq!(layout.views[0].members.len(), 5);
+    }
+
+    #[test]
+    fn presentation_views_follow_interpolated_member_delta() {
+        let mut layout = SplitScreen::default();
+        layout.update(&[(0, [1000., 1000.]), (1, [3000., 1000.])], 1000., 800., 1.);
+        let before = layout.views[0].center;
+        let views =
+            layout.presentation_views(&[(0, [1100., 1000.]), (1, [3000., 1000.])], 1000., 800., 1.);
+        assert_eq!(views.len(), layout.views.len());
+        assert!((views[0].center[0] - (before[0] + 100.)).abs() < 0.001);
+        let base = crate::host::ViewportState::new(1000., 800.);
+        for view in &views {
+            let camera = view.viewport(&base);
+            let point = camera.map_to_screen_unclamped(robin_engine::coordinates::MapPoint::new(
+                view.center[0],
+                view.center[1],
+            ));
+            assert!((point.x - view.site[0]).abs() < 0.001);
+            assert!((point.y - view.site[1]).abs() < 0.001);
+        }
     }
 }
 

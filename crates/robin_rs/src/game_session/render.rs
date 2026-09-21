@@ -1365,11 +1365,43 @@ fn render_frame_with_hud(
         .unwrap_or_else(|err| panic!("render_frame requires prepared zoom presentation: {err}"));
 
     let layout = &host.frontend.split_screen;
+    let presentation_players: Vec<_> = if host.frontend.local_player_count > 1 {
+        engine
+            .active_peer_selections()
+            .filter_map(|(seat, selected, _)| {
+                selected
+                    .first()
+                    .copied()
+                    .and_then(|id| engine.get_entity(id))
+                    .map(|entity| {
+                        let point = entity.element_data().position_map();
+                        (seat.0, [point.x, point.y])
+                    })
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let presentation_views = if host.frontend.local_player_count > 1 {
+        layout.presentation_views(
+            &presentation_players,
+            host.viewport().screen_size.x,
+            host.viewport().screen_size.y,
+            host.viewport().zoom_factor,
+        )
+    } else {
+        Vec::new()
+    };
+    let views = if presentation_views.is_empty() {
+        &layout.views
+    } else {
+        &presentation_views
+    };
     if host.frontend.local_player_count > 1
-        && layout.views.len() > 1
+        && views.len() > 1
         && host.viewport().screen_size == host.frontend.viewport.screen_size
     {
-        for (index, view) in layout.views.iter().enumerate() {
+        for (index, view) in views.iter().enumerate() {
             let viewport = view.viewport(host.viewport());
             let mut player_host = host.with_viewport(&viewport);
             player_host.local_seat = robin_engine::player_command::PlayerId(view.members[0]);
@@ -1402,8 +1434,8 @@ fn render_frame_with_hud(
             }
             ctx.renderer.finish_split_view(index, &view.polygon);
         }
-        if layout.views.len() > 1 {
-            for view in &layout.views {
+        if views.len() > 1 {
+            for view in views {
                 for edge in 0..view.polygon.len() {
                     let a = view.polygon[edge];
                     let b = view.polygon[(edge + 1) % view.polygon.len()];
