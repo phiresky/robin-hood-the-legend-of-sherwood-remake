@@ -1673,7 +1673,8 @@ fn mission_choices(
     let mut choices = campaign
         .missions
         .iter()
-        .map(|m| {
+        .enumerate()
+        .map(|(mission_number, m)| {
             let profile = m.profile(profiles);
             let fallback = if profile.mission_name.trim().is_empty() {
                 if profile.mission_filename.trim().is_empty() {
@@ -1684,13 +1685,17 @@ fn mission_choices(
             } else {
                 profile.mission_name.clone()
             };
-            let label = application_context.localized_mission_name(profile.id, &fallback);
+            let mission_name = application_context.localized_mission_name(profile.id, &fallback);
+            // Keep the selector's numbering consistent with the leaderboard
+            // mission list; the profile id is an internal resource id and is
+            // intentionally not shown here.
+            let label = format!("{:02} {}", mission_number + 1, mission_name);
             MissionChoice {
                 roster_slots: usize::from(profile.number_of_beam_mes).clamp(1, 5),
                 mission_id: profile.id,
                 #[cfg(target_arch = "wasm32")]
                 authoritative_basename: profile.mission_filename.clone(),
-                mission_name: label.clone(),
+                mission_name,
                 label,
                 custom: None,
             }
