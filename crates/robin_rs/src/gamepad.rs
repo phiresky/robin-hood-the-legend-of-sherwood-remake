@@ -428,7 +428,10 @@ impl GamePadState {
     /// `AXIS_CENTER`.
     pub fn mouse_delta(&self) -> (f32, f32) {
         let dx = (self.current.rz - AXIS_CENTER) as f32 / MOUSE_CONVERSION;
-        let dy = (self.current.sliders[0] - AXIS_CENTER) as f32 / MOUSE_CONVERSION;
+        // gilrs reports the right-stick Y direction opposite to the screen
+        // cursor convention used by the game: pushing up must move the
+        // cursor toward the top of the screen.
+        let dy = -((self.current.sliders[0] - AXIS_CENTER) as f32 / MOUSE_CONVERSION);
         (dx, dy)
     }
 

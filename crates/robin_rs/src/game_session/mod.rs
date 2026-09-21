@@ -807,10 +807,19 @@ async fn run_mission_body(
     } = start;
     if args.replay_data.is_none() && args.multiplayer.expected_players.is_some() {
         sim_config.coop = args.multiplayer.coop;
-        let players = args
+        let expected_players = args
             .multiplayer
             .expected_players
             .expect("checked player count");
+        // Local co-op membership is maintained by the window while the
+        // mission is being entered. Use that live roster for the local route;
+        // the launch payload can be stale when a second controller joined on
+        // the final lobby frame.
+        let players = if window.local_players.enabled {
+            window.local_players.count().max(1) as u32
+        } else {
+            expected_players
+        };
         if !(1..=5).contains(&players) {
             return MissionOutcome::new(
                 campaign,
