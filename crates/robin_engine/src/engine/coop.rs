@@ -13,7 +13,7 @@ impl EngineInner {
         if rules.players == 1 && rules.control == CharacterControl::Shared {
             return;
         }
-        let originals: Vec<_> = self
+        let party: Vec<_> = self
             .world
             .pc_ids
             .iter()
@@ -24,15 +24,23 @@ impl EngineInner {
                     .is_some_and(|pc| {
                         pc.playable
                             && pc.mission_role == crate::human_control::MissionRole::PlayerParty
-                            && pc.coop_origin.is_none()
                     })
+            })
+            .collect();
+        let originals: Vec<_> = party
+            .iter()
+            .copied()
+            .filter(|&id| {
+                self.get_entity(id)
+                    .and_then(Entity::pc_data)
+                    .is_some_and(|pc| pc.coop_origin.is_none())
             })
             .collect();
         if originals.is_empty() {
             tracing::warn!("co-op mission has no playable party to duplicate");
             return;
         }
-        let mut party = originals.clone();
+        let mut party = party;
         while party.len() < rules.players as usize {
             let slot = party.len();
             let source = originals
