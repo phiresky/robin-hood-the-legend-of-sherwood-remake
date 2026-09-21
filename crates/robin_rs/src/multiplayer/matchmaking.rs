@@ -336,6 +336,9 @@ mod native {
             game: GameListing,
             /// Joiner nickname → last time their Join signal was seen.
             joiners: HashMap<String, Instant>,
+            /// Start is held briefly so a Join datagram already in flight is
+            /// included in the authoritative player count.
+            start_requested: Option<Instant>,
             /// Set once Start was pressed.
             started: Option<JoinedGame>,
         },
@@ -568,6 +571,10 @@ mod native {
                         && (joiners.contains_key(&nickname) || joiners.len() < 4)
                     {
                         joiners.insert(nickname, Instant::now());
+                        game.players = 1 + joiners.len() as u32;
+                        let _ = self
+                            .events
+                            .send(MatchmakingEvent::GameUpdated(game.clone()));
                     }
                 }
                 TopicMsg::Leave { game_id, nickname } => {
@@ -628,6 +635,7 @@ mod native {
                     self.role = Role::Hosting {
                         game: game.clone(),
                         joiners: HashMap::new(),
+                        start_requested: None,
                         started: None,
                     };
                     self.broadcast(&TopicMsg::Announce { game: game.clone() })
@@ -667,10 +675,28 @@ mod native {
                     self.role = Role::Browsing;
                 }
                 Command::Start => {
+                    // Gossip Join messages and UI commands are serviced by
+                    // the same worker. Give an in-flight Join a chance to be
+                    // received before fixing the session's seat count.
+                    if let Role::Hosting {
+                        start_requested,
+                        started,
+                        ..
+                    } = &mut self.role
+                    {
+                        if started.is_some() {
+                            return true;
+                        }
+                        if start_requested.is_none() {
+                            *start_requested = Some(Instant::now());
+                            return true;
+                        }
+                    }
                     let (joined, announce) = {
                         let Role::Hosting {
                             game,
                             joiners,
+                            start_requested,
                             started,
                         } = &mut self.role
                         else {
@@ -679,6 +705,7 @@ mod native {
                             ));
                             return true;
                         };
+                        *start_requested = None;
                         let start_at_epoch_ms = match try_current_epoch_ms()
                             .map_err(crate::multiplayer::MultiplayerError::from)
                             .and_then(checked_start_epoch_ms)
@@ -718,6 +745,18 @@ mod native {
         async fn tick(&mut self) {
             let now = Instant::now();
 
+            let start_due = matches!(
+                &self.role,
+                Role::Hosting {
+                    start_requested: Some(requested),
+                    started: None,
+                    ..
+                } if now.duration_since(*requested) >= std::time::Duration::from_millis(750)
+            );
+            if start_due {
+                self.handle_command(Command::Start).await;
+            }
+
             // Expire listings that stopped being announced.
             let before = self.listings.len();
             self.listings
@@ -734,6 +773,7 @@ mod native {
                     Role::Hosting {
                         game,
                         joiners,
+                        start_requested: _,
                         started,
                     } => {
                         joiners.retain(|_, seen| now.duration_since(*seen) < SOFT_STATE_TTL);
