@@ -11,11 +11,12 @@ impl EngineInner {
         // selection, so late admission cannot leave a connected player with
         // no playable character. Network co-op already carries its final
         // player count in SimConfig and therefore skips this path.
+        let required_players = target.0.saturating_add(1).min(5);
         if target.0 > 0
-            && self.control.sim_config.coop.players == 1
+            && required_players > self.control.sim_config.coop.players
             && self.control.sim_config.coop.control == crate::coop::CharacterControl::Shared
         {
-            self.control.sim_config.coop.players = target.0.saturating_add(1).min(5);
+            self.control.sim_config.coop.players = required_players;
             self.initialize_coop_party();
             tracing::info!(
                 players = self.control.sim_config.coop.players,
