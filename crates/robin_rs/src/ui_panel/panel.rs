@@ -99,15 +99,13 @@ struct PcSlot<'e> {
 }
 
 impl<'e> PcSlot<'e> {
-    fn resolve(
-        engine: &'e PresentationView<'_>,
-        local_seat: PlayerId,
-        slot: u16,
-        x: u16,
-        pc_id: EntityId,
-    ) -> Self {
+    fn resolve(engine: &'e PresentationView<'_>, slot: u16, x: u16, pc_id: EntityId) -> Self {
         let entity = engine.get_entity(pc_id);
-        let is_selected = engine.hero_selection(local_seat).contains(&pc_id);
+        // The portrait strip is shared by the local split-screen party: keep
+        // every hero open when any local or network seat has selected it.
+        let is_selected = engine
+            .active_peer_selections()
+            .any(|(_, selection, _)| selection.contains(&pc_id));
 
         // ── Extract PC-specific state for overlay rendering ──
         let (is_dead, is_coma, is_sword_fighting, is_guarded, has_trumpet) = match entity {
@@ -210,7 +208,7 @@ impl HudDrawCtx<'_> {
                 self.render_allied_portrait(item, x, sh, hovered);
                 continue;
             };
-            let pc = PcSlot::resolve(engine, self.local_seat, slot, x, pc_id);
+            let pc = PcSlot::resolve(engine, slot, x, pc_id);
             if pc.is_burned() {
                 self.draw_burned_pc(&pc, sh);
             } else {

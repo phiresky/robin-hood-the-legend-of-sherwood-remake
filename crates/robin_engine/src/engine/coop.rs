@@ -24,6 +24,7 @@ impl EngineInner {
                     .is_some_and(|pc| {
                         pc.playable
                             && pc.mission_role == crate::human_control::MissionRole::PlayerParty
+                            && pc.coop_origin.is_none()
                     })
             })
             .collect();
