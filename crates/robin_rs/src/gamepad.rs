@@ -1265,6 +1265,14 @@ impl LocalPlayers {
     pub fn count(&self) -> usize {
         usize::from(self.keyboard) + self.devices.len()
     }
+    pub fn join_device(&mut self, which: u32) {
+        if self.count() >= robin_engine::coop::MAX_PLAYERS
+            || self.devices.iter().any(|(id, _)| *id == which)
+        {
+            return;
+        }
+        self.devices.push((which, GamepadDeviceInput::default()));
+    }
     pub fn join_event(&mut self, event: &crate::gfx_types::GameEvent) {
         if let crate::gfx_types::GameEvent::GamepadButton {
             which,
@@ -1272,12 +1280,14 @@ impl LocalPlayers {
             pressed: true,
         } = *event
         {
-            if self.count() < robin_engine::coop::MAX_PLAYERS
-                && !self.devices.iter().any(|(id, _)| *id == which)
-            {
-                let mut device = GamepadDeviceInput::default();
-                device.fold(event);
-                self.devices.push((which, device));
+            let before = self.devices.len();
+            self.join_device(which);
+            if self.devices.len() > before {
+                self.devices
+                    .last_mut()
+                    .expect("joined device exists")
+                    .1
+                    .fold(event);
             }
         }
     }

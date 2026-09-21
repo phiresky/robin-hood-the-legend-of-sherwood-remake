@@ -825,6 +825,12 @@ impl MultiplayerMenuState {
                 self.selected = 0;
                 io.window.local_players = Default::default();
                 io.window.local_players.accept_new_devices = true;
+                #[cfg(feature = "gamepad")]
+                if let Some(gamepads) = io.window.gamepads.as_ref() {
+                    for (id, _) in gamepads.gamepads() {
+                        io.window.local_players.join_device(usize::from(id) as u32);
+                    }
+                }
                 self.status =
                     "Local co-op: press A on each controller to join. Choose a mission and rules."
                         .into();
