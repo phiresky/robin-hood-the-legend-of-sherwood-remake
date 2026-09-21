@@ -602,8 +602,13 @@ impl GamePadState {
             .is_some_and(|h| !h.opponents.is_empty());
 
         if engine.frame_counter().is_multiple_of(5)
-            && let Some((dx, dy, running)) = self.movement_offset()
+            && let Some((dx, stick_dy, running)) = self.movement_offset()
         {
+            // The DirectInput-style movement vector uses screen/map Y, while
+            // gilrs' left-stick Y is positive toward the bottom of the pad's
+            // logical coordinate system. Flip it at the direct-move target;
+            // cursor movement has its own, already-correct conversion.
+            let dy = -stick_dy;
             let dest = engine_coordinates::MapPoint::new(leader_pos.x + dx, leader_pos.y + dy);
 
             // Validity check: probe the destination and only dispatch
