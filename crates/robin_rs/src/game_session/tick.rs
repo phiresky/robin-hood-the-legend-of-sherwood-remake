@@ -13,6 +13,8 @@ use robin_engine::ai::AlertLevel;
 use robin_engine::coordinates::MapBBox;
 use robin_engine::engine as engine_api;
 use robin_engine::engine_manager as engine_manager_api;
+#[cfg(test)]
+use robin_engine::player_command::PlayerInput;
 use robin_engine::player_command::{PlayerCommand, PlayerId};
 use robin_engine::sound_cache::SampleLoader;
 
