@@ -458,31 +458,31 @@ fn manage_qa_timer_expiration_with_selected_pc() {
 }
 
 #[test]
-fn standard_button_to_gamepad_button_mapping() {
+fn gamepad_button_action_mapping() {
     assert_eq!(
-        standard_button_to_gamepad_button(0),
+        gamepad_button_action(GamepadButton::South),
         Some(GamePadButton::ActionA)
     );
     assert_eq!(
-        standard_button_to_gamepad_button(1),
+        gamepad_button_action(GamepadButton::East),
         Some(GamePadButton::ActionB)
     );
     assert_eq!(
-        standard_button_to_gamepad_button(3),
+        gamepad_button_action(GamepadButton::North),
         Some(GamePadButton::CancelParade)
     );
     // D-pad buttons are routed elsewhere.
-    assert_eq!(standard_button_to_gamepad_button(11), None);
+    assert_eq!(gamepad_button_action(GamepadButton::DPadUp), None);
 }
 
 #[test]
 fn is_dpad_button_covers_all_four() {
-    assert!(is_dpad_button(11));
-    assert!(is_dpad_button(12));
-    assert!(is_dpad_button(13));
-    assert!(is_dpad_button(14));
-    assert!(!is_dpad_button(10));
-    assert!(!is_dpad_button(15));
+    assert!(is_dpad_button(GamepadButton::DPadUp));
+    assert!(is_dpad_button(GamepadButton::DPadDown));
+    assert!(is_dpad_button(GamepadButton::DPadLeft));
+    assert!(is_dpad_button(GamepadButton::DPadRight));
+    assert!(!is_dpad_button(GamepadButton::LeftTrigger));
+    assert!(!is_dpad_button(GamepadButton::Start));
 }
 
 #[test]
@@ -498,18 +498,18 @@ fn dpad_to_pov_cardinal_and_diagonal() {
 fn apply_axis_event_translates_rz_to_directinput_center() {
     let mut pad = GamePadState::new();
     // Standard axis 2 = RightX, value 0 (center) → rz = AXIS_CENTER.
-    pad.apply_axis_event(2, 0);
+    pad.apply_axis_event(GamepadAxis::RightStickX, 0);
     assert_eq!(pad.pending.rz, AXIS_CENTER);
     // Standard axis 2, value 1638 → rz ≈ AXIS_CENTER + 1638 → dx ≈ 1.0
-    pad.apply_axis_event(2, 1638);
+    pad.apply_axis_event(GamepadAxis::RightStickX, 1638);
     assert_eq!(pad.pending.rz, AXIS_CENTER + 1638);
 }
 
 #[test]
 fn apply_axis_event_left_stick_stays_signed() {
     let mut pad = GamePadState::new();
-    pad.apply_axis_event(0, 25000); // LeftX
-    pad.apply_axis_event(1, -25000); // LeftY
+    pad.apply_axis_event(GamepadAxis::LeftStickX, 25000);
+    pad.apply_axis_event(GamepadAxis::LeftStickY, -25000);
     assert_eq!(pad.pending.x, 25000);
     assert_eq!(pad.pending.y, -25000);
 }
@@ -527,7 +527,7 @@ fn apply_button_event_mirrors_pressed_state() {
 fn process_gamepad_input_promotes_pending_to_current() {
     let mut pad = GamePadState::new();
     let mut threaded = ThreadedInput::new();
-    pad.apply_axis_event(0, 15000);
+    pad.apply_axis_event(GamepadAxis::LeftStickX, 15000);
     let engine = empty_engine();
     let _ = pad.process_gamepad_input(0, &engine, PlayerId::HOST, &mut threaded);
     assert_eq!(pad.current.x, 15000);
@@ -555,7 +555,7 @@ fn local_join_uses_a_once_per_device_and_respects_five_player_limit() {
     for which in 0..8 {
         let event = GameEvent::GamepadButton {
             which,
-            button: 0,
+            button: GamepadButton::South,
             pressed: true,
         };
         players.join_event(&event);
@@ -566,7 +566,7 @@ fn local_join_uses_a_once_per_device_and_respects_five_player_limit() {
     players.keyboard = false;
     players.join_event(&GameEvent::GamepadButton {
         which: 7,
-        button: 0,
+        button: GamepadButton::South,
         pressed: true,
     });
     assert_eq!(players.devices.len(), 5);
@@ -580,7 +580,7 @@ fn local_join_capacity_and_reconnect_preserve_seat() {
     for which in 0..7 {
         let event = GameEvent::GamepadButton {
             which,
-            button: 0,
+            button: GamepadButton::South,
             pressed: true,
         };
         players.join_event(&event);
@@ -592,7 +592,7 @@ fn local_join_capacity_and_reconnect_preserve_seat() {
     assert!(!players.devices[2].1.is_connected());
     players.fold(&GameEvent::GamepadButton {
         which: 42,
-        button: 0,
+        button: GamepadButton::South,
         pressed: true,
     });
     assert_eq!(players.devices[2].0, 42);

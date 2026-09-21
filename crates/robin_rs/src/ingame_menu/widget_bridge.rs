@@ -10,7 +10,7 @@
 use crate::cursor::CursorRenderer;
 use crate::ingame_menu::resources::SealButton;
 
-use crate::gfx_types::GameEvent;
+use crate::gfx_types::{GameEvent, GamepadAxis, GamepadButton};
 use crate::input::KeyboardState;
 use crate::renderer::Renderer;
 use crate::sound::{AudioBackend, SoundManager};
@@ -133,12 +133,12 @@ impl ScreenKey {
             // as keyboard menus.  Directional buttons are handled by each
             // screen's existing Up/Down navigation path.
             GameEvent::GamepadButton {
-                button: 0 | 6,
+                button: GamepadButton::South | GamepadButton::Start,
                 pressed: true,
                 ..
             } => Some(Self::Confirm),
             GameEvent::GamepadButton {
-                button: 1 | 4,
+                button: GamepadButton::East | GamepadButton::Select,
                 pressed: true,
                 ..
             } => Some(Self::Cancel),
@@ -153,37 +153,45 @@ impl ScreenKey {
 pub fn gamepad_direction(event: &GameEvent) -> Option<crate::gfx_types::Keycode> {
     match event {
         GameEvent::GamepadButton {
-            button: 11,
+            button: GamepadButton::DPadUp,
             pressed: true,
             ..
         } => Some(crate::gfx_types::Keycode::Up),
         GameEvent::GamepadButton {
-            button: 12,
+            button: GamepadButton::DPadDown,
             pressed: true,
             ..
         } => Some(crate::gfx_types::Keycode::Down),
         GameEvent::GamepadButton {
-            button: 13,
+            button: GamepadButton::DPadLeft,
             pressed: true,
             ..
         } => Some(crate::gfx_types::Keycode::Left),
         GameEvent::GamepadButton {
-            button: 14,
+            button: GamepadButton::DPadRight,
             pressed: true,
             ..
         } => Some(crate::gfx_types::Keycode::Right),
-        GameEvent::GamepadAxis { axis: 0, value, .. } if *value < -16_000 => {
-            Some(crate::gfx_types::Keycode::Left)
-        }
-        GameEvent::GamepadAxis { axis: 0, value, .. } if *value > 16_000 => {
-            Some(crate::gfx_types::Keycode::Right)
-        }
-        GameEvent::GamepadAxis { axis: 1, value, .. } if *value < -16_000 => {
-            Some(crate::gfx_types::Keycode::Up)
-        }
-        GameEvent::GamepadAxis { axis: 1, value, .. } if *value > 16_000 => {
-            Some(crate::gfx_types::Keycode::Down)
-        }
+        GameEvent::GamepadAxis {
+            axis: GamepadAxis::LeftStickX,
+            value,
+            ..
+        } if *value < -16_000 => Some(crate::gfx_types::Keycode::Left),
+        GameEvent::GamepadAxis {
+            axis: GamepadAxis::LeftStickX,
+            value,
+            ..
+        } if *value > 16_000 => Some(crate::gfx_types::Keycode::Right),
+        GameEvent::GamepadAxis {
+            axis: GamepadAxis::LeftStickY,
+            value,
+            ..
+        } if *value < -16_000 => Some(crate::gfx_types::Keycode::Up),
+        GameEvent::GamepadAxis {
+            axis: GamepadAxis::LeftStickY,
+            value,
+            ..
+        } if *value > 16_000 => Some(crate::gfx_types::Keycode::Down),
         _ => None,
     }
 }

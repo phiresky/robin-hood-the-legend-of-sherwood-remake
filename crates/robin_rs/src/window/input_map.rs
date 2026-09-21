@@ -7,6 +7,8 @@ use super::GameWindow;
 #[cfg(feature = "gamepad")]
 use crate::gfx_types::GameEvent;
 use crate::gfx_types::Keycode;
+#[cfg(feature = "gamepad")]
+use crate::gfx_types::{GamepadAxis, GamepadButton};
 
 #[cfg(feature = "gamepad")]
 impl GameWindow {
@@ -23,7 +25,7 @@ impl GameWindow {
                         events.push(GameEvent::GamepadRemoved { which });
                     }
                     gilrs::EventType::ButtonPressed(btn, _) => {
-                        if let Some(b) = gilrs_button_to_index(btn) {
+                        if let Some(b) = gilrs_button(btn) {
                             events.push(GameEvent::GamepadButton {
                                 which,
                                 button: b,
@@ -32,7 +34,7 @@ impl GameWindow {
                         }
                     }
                     gilrs::EventType::ButtonReleased(btn, _) => {
-                        if let Some(b) = gilrs_button_to_index(btn) {
+                        if let Some(b) = gilrs_button(btn) {
                             events.push(GameEvent::GamepadButton {
                                 which,
                                 button: b,
@@ -41,7 +43,7 @@ impl GameWindow {
                         }
                     }
                     gilrs::EventType::AxisChanged(axis, value, _) => {
-                        if let Some(a) = gilrs_axis_to_index(axis) {
+                        if let Some(a) = gilrs_axis(axis) {
                             let v = (value * 32767.0).clamp(-32768.0, 32767.0) as i16;
                             events.push(GameEvent::GamepadAxis {
                                 which,
@@ -157,38 +159,38 @@ pub(super) fn physical_key_to_keycode(key: PhysicalKey) -> Keycode {
 }
 
 #[cfg(feature = "gamepad")]
-fn gilrs_button_to_index(b: gilrs::Button) -> Option<u8> {
+fn gilrs_button(b: gilrs::Button) -> Option<GamepadButton> {
     use gilrs::Button as B;
     Some(match b {
-        B::South => 0,
-        B::East => 1,
-        B::West => 2,
-        B::North => 3,
-        B::Select => 4,
-        B::Mode => 5,
-        B::Start => 6,
-        B::LeftThumb => 7,
-        B::RightThumb => 8,
-        B::LeftTrigger => 9,
-        B::RightTrigger => 10,
-        B::DPadUp => 11,
-        B::DPadDown => 12,
-        B::DPadLeft => 13,
-        B::DPadRight => 14,
+        B::South => GamepadButton::South,
+        B::East => GamepadButton::East,
+        B::West => GamepadButton::West,
+        B::North => GamepadButton::North,
+        B::Select => GamepadButton::Select,
+        B::Mode => GamepadButton::Mode,
+        B::Start => GamepadButton::Start,
+        B::LeftThumb => GamepadButton::LeftThumb,
+        B::RightThumb => GamepadButton::RightThumb,
+        B::LeftTrigger => GamepadButton::LeftTrigger,
+        B::RightTrigger => GamepadButton::RightTrigger,
+        B::DPadUp => GamepadButton::DPadUp,
+        B::DPadDown => GamepadButton::DPadDown,
+        B::DPadLeft => GamepadButton::DPadLeft,
+        B::DPadRight => GamepadButton::DPadRight,
         _ => return None,
     })
 }
 
 #[cfg(feature = "gamepad")]
-fn gilrs_axis_to_index(a: gilrs::Axis) -> Option<u8> {
+fn gilrs_axis(a: gilrs::Axis) -> Option<GamepadAxis> {
     use gilrs::Axis as A;
     Some(match a {
-        A::LeftStickX => 0,
-        A::LeftStickY => 1,
-        A::RightStickX => 2,
-        A::RightStickY => 3,
-        A::LeftZ => 4,
-        A::RightZ => 5,
+        A::LeftStickX => GamepadAxis::LeftStickX,
+        A::LeftStickY => GamepadAxis::LeftStickY,
+        A::RightStickX => GamepadAxis::RightStickX,
+        A::RightStickY => GamepadAxis::RightStickY,
+        A::LeftZ => GamepadAxis::LeftZ,
+        A::RightZ => GamepadAxis::RightZ,
         _ => return None,
     })
 }

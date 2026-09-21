@@ -4,6 +4,8 @@
 //! rectangles, blend modes, and keys. The renderer/window backends consume
 //! them and translate as needed.
 
+use serde::{Deserialize, Serialize};
+
 // ---------------------------------------------------------------------
 // Color
 // ---------------------------------------------------------------------
@@ -387,6 +389,59 @@ pub enum Keycode {
     Unknown,
 }
 
+/// Named gamepad controls emitted by gilrs. Keeping these names at the
+/// window-event boundary avoids leaking legacy numeric ordinals into menus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum GamepadButton {
+    South,
+    East,
+    West,
+    North,
+    Select,
+    Mode,
+    Start,
+    LeftThumb,
+    RightThumb,
+    LeftTrigger,
+    RightTrigger,
+    DPadUp,
+    DPadDown,
+    DPadLeft,
+    DPadRight,
+}
+
+impl GamepadButton {
+    pub const fn ui_name(self) -> &'static str {
+        match self {
+            Self::South => "A",
+            Self::East => "B",
+            Self::West => "X",
+            Self::North => "Y",
+            Self::Select => "Select",
+            Self::Mode => "Guide",
+            Self::Start => "Start",
+            Self::LeftThumb => "Left stick press",
+            Self::RightThumb => "Right stick press",
+            Self::LeftTrigger => "LB",
+            Self::RightTrigger => "RB",
+            Self::DPadUp => "D-pad up",
+            Self::DPadDown => "D-pad down",
+            Self::DPadLeft => "D-pad left",
+            Self::DPadRight => "D-pad right",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum GamepadAxis {
+    LeftStickX,
+    LeftStickY,
+    RightStickX,
+    RightStickY,
+    LeftZ,
+    RightZ,
+}
+
 // ---------------------------------------------------------------------
 // Game events (re-exported from window)
 // ---------------------------------------------------------------------
@@ -456,12 +511,12 @@ pub enum GameEvent {
     },
     GamepadAxis {
         which: u32,
-        axis: u8,
+        axis: GamepadAxis,
         value: i16,
     },
     GamepadButton {
         which: u32,
-        button: u8,
+        button: GamepadButton,
         pressed: bool,
     },
     /// Window gained (`true`) or lost (`false`) keyboard focus. Drives the

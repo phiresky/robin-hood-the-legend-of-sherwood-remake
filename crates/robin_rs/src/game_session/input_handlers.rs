@@ -295,7 +295,13 @@ mod gamepad_admission_tests {
         let mut input = ThreadedInput::new();
         let mut commands = FrameCommands::new();
         let mut device = GamepadDeviceInput::default();
-        for button in [11, 14, 0, 1, 4] {
+        for button in [
+            crate::gfx_types::GamepadButton::DPadUp,
+            crate::gfx_types::GamepadButton::DPadRight,
+            crate::gfx_types::GamepadButton::South,
+            crate::gfx_types::GamepadButton::East,
+            crate::gfx_types::GamepadButton::Select,
+        ] {
             device.fold(&GameEvent::GamepadButton {
                 which: 1,
                 button,

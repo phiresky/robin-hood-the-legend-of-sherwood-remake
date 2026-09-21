@@ -4,6 +4,7 @@
 //! state), edge-detection between frames, and the sword-swing gesture
 //! recognizer.
 
+use crate::gfx_types::{GamepadAxis, GamepadButton};
 use crate::input::{MouseButton, ThreadedInput};
 use enum_map::{Enum, EnumMap};
 use robin_engine::coordinates as engine_coordinates;
@@ -214,18 +215,11 @@ impl GamepadDeviceInput {
                 button,
                 pressed,
             } if self.accept_device(which) => {
-                if is_dpad_button(button) {
-                    let slot = match button {
-                        11 => 0, // Up
-                        12 => 2, // Down
-                        13 => 3, // Left
-                        14 => 1, // Right
-                        _ => unreachable!("classified D-pad button"),
-                    };
+                if let Some(slot) = dpad_slot(button) {
                     self.dpad[slot] = pressed;
                     let [up, right, down, left] = self.dpad;
                     self.state.apply_dpad_state(up, right, down, left);
-                } else if let Some(gamepad_button) = standard_button_to_gamepad_button(button) {
+                } else if let Some(gamepad_button) = gamepad_button_action(button) {
                     self.state.apply_button_event(gamepad_button, pressed);
                 }
             }
@@ -257,6 +251,12 @@ mod device_input_tests {
     use crate::gfx_types::GameEvent;
 
     fn button(which: u32, button: u8, pressed: bool) -> GameEvent {
+        let button = match button {
+            0 => GamepadButton::South,
+            11 => GamepadButton::DPadUp,
+            14 => GamepadButton::DPadRight,
+            _ => panic!("test button mapping"),
+        };
         GameEvent::GamepadButton {
             which,
             button,
@@ -283,13 +283,13 @@ mod device_input_tests {
         input.fold(&button(1, 11, true));
         input.fold(&GameEvent::GamepadAxis {
             which: 1,
-            axis: 0,
+            axis: GamepadAxis::LeftStickX,
             value: 123,
         });
         input.fold(&button(2, 14, true));
         input.fold(&GameEvent::GamepadAxis {
             which: 2,
-            axis: 0,
+            axis: GamepadAxis::LeftStickX,
             value: -999,
         });
         input.fold(&GameEvent::GamepadRemoved { which: 2 });
@@ -347,7 +347,7 @@ mod device_input_tests {
         let mut input = GamepadDeviceInput::default();
         input.fold(&GameEvent::GamepadAxis {
             which: 1,
-            axis: 0,
+            axis: GamepadAxis::LeftStickX,
             value: 321,
         });
         input.fold(&button(1, 0, true));
@@ -454,20 +454,20 @@ impl GamePadState {
     /// convention (centered at `AXIS_CENTER = 0x7FFF`) so we translate
     /// here to keep the rest of the dispatcher (and the existing sword
     /// gesture tests) unchanged.
-    pub fn apply_axis_event(&mut self, which_axis: u8, value: i16) {
+    pub fn apply_axis_event(&mut self, which_axis: GamepadAxis, value: i16) {
         match which_axis {
-            0 => self.pending.x = value as i32,
-            1 => self.pending.y = value as i32,
-            2 => self.pending.rz = value as i32 + AXIS_CENTER,
-            3 => self.pending.sliders[0] = value as i32 + AXIS_CENTER,
-            _ => {} // triggers not used by the game
+            GamepadAxis::LeftStickX => self.pending.x = value as i32,
+            GamepadAxis::LeftStickY => self.pending.y = value as i32,
+            GamepadAxis::RightStickX => self.pending.rz = value as i32 + AXIS_CENTER,
+            GamepadAxis::RightStickY => self.pending.sliders[0] = value as i32 + AXIS_CENTER,
+            GamepadAxis::LeftZ | GamepadAxis::RightZ => {} // triggers not used by the game
         }
     }
 
     /// Apply a button press/release event to the in-flight state.
     ///
-    /// The caller maps standard button ordinals to a [`GamePadButton`] via
-    /// [`standard_button_to_gamepad_button`].
+    /// The caller maps named gilrs buttons to the game's action bindings via
+    /// [`gamepad_button_action`].
     pub fn apply_button_event(&mut self, button: GamePadButton, pressed: bool) {
         self.pending.buttons[button] = pressed;
     }
@@ -954,18 +954,18 @@ pub enum QaEvent {
 /// Returns `None` for buttons that are routed as POV-hat state
 /// (D-pad) or that the game doesn't bind. D-pad buttons must be
 /// tracked separately by the caller and fed into [`GamePadState::apply_dpad_state`].
-pub fn standard_button_to_gamepad_button(standard_button: u8) -> Option<GamePadButton> {
-    Some(match standard_button {
-        0 => GamePadButton::ActionA,      // South (A / Cross) → first ability
-        1 => GamePadButton::ActionB,      // East (B / Circle) → second ability
-        2 => GamePadButton::ActionC,      // West  → X (ActionC=2)
-        3 => GamePadButton::CancelParade, // North → Y
-        9 => GamePadButton::SelectPrevCharacter, // LeftShoulder (LB)
-        10 => GamePadButton::SelectNextCharacter, // RightShoulder (RB)
-        4 => GamePadButton::AltChoice,    // Back → modifier
-        6 => GamePadButton::QaManage,     // Start → QA
-        7 => GamePadButton::CrouchChinese, // LeftStick press
-        8 => GamePadButton::SimulatedLeftMouse, // RightStick press
+pub fn gamepad_button_action(button: GamepadButton) -> Option<GamePadButton> {
+    Some(match button {
+        GamepadButton::South => GamePadButton::ActionA,
+        GamepadButton::East => GamePadButton::ActionB,
+        GamepadButton::West => GamePadButton::ActionC,
+        GamepadButton::North => GamePadButton::CancelParade,
+        GamepadButton::LeftTrigger => GamePadButton::SelectPrevCharacter,
+        GamepadButton::RightTrigger => GamePadButton::SelectNextCharacter,
+        GamepadButton::Select => GamePadButton::AltChoice,
+        GamepadButton::Start => GamePadButton::QaManage,
+        GamepadButton::LeftThumb => GamePadButton::CrouchChinese,
+        GamepadButton::RightThumb => GamePadButton::SimulatedLeftMouse,
         _ => return None,
     })
 }
@@ -973,8 +973,24 @@ pub fn standard_button_to_gamepad_button(standard_button: u8) -> Option<GamePadB
 /// Whether `standard_button` is a D-pad button (its state feeds the POV hat,
 /// not a `GamePadButton`). Standard ordinals: `Up=11`, `Down=12`,
 /// `Left=13`, `Right=14`.
-pub fn is_dpad_button(standard_button: u8) -> bool {
-    matches!(standard_button, 11..=14)
+pub fn is_dpad_button(button: GamepadButton) -> bool {
+    matches!(
+        button,
+        GamepadButton::DPadUp
+            | GamepadButton::DPadDown
+            | GamepadButton::DPadLeft
+            | GamepadButton::DPadRight
+    )
+}
+
+fn dpad_slot(button: GamepadButton) -> Option<usize> {
+    Some(match button {
+        GamepadButton::DPadUp => 0,
+        GamepadButton::DPadRight => 1,
+        GamepadButton::DPadDown => 2,
+        GamepadButton::DPadLeft => 3,
+        _ => return None,
+    })
 }
 
 // ── POV hat helper ──────────────────────────────────────────────────
@@ -1245,7 +1261,7 @@ impl LocalPlayers {
         }
         if let crate::gfx_types::GameEvent::GamepadButton {
             which,
-            button: 0,
+            button: GamepadButton::South,
             pressed: true,
         } = *event
         {
@@ -1264,7 +1280,7 @@ impl LocalPlayers {
     pub fn leave_event(&mut self, event: &crate::gfx_types::GameEvent) -> bool {
         let crate::gfx_types::GameEvent::GamepadButton {
             which,
-            button: 1,
+            button: GamepadButton::East,
             pressed: true,
         } = *event
         else {
@@ -1289,7 +1305,7 @@ impl LocalPlayers {
             && matches!(
                 event,
                 GameEvent::GamepadButton {
-                    button: 0,
+                    button: GamepadButton::South,
                     pressed: true,
                     ..
                 }

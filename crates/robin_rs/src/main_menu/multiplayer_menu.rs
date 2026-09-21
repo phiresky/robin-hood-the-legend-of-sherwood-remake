@@ -665,13 +665,14 @@ impl MultiplayerMenuState {
             }
             self.coop.players = count;
             self.status = format!(
-                "{} players (keyboard {}). A joins controllers; use the buttons on the right to configure co-op.",
+                "{} players (keyboard {}). {} joins controllers; use the buttons on the right to configure co-op.",
                 io.window.local_players.count(),
                 if io.window.local_players.keyboard {
                     "on"
                 } else {
                     "off"
-                }
+                },
+                crate::gfx_types::GamepadButton::South.ui_name()
             );
         }
         let transform = screen.transform;
@@ -683,14 +684,14 @@ impl MultiplayerMenuState {
                     // the generic Confirm path cannot start the mission in
                     // the same frame.
                     GameEvent::GamepadButton {
-                        button: 0,
+                        button: crate::gfx_types::GamepadButton::South,
                         pressed: true,
                         ..
                     } => continue,
                     // B removes the controller that pressed it. With no
                     // controller left, retain the normal Back behavior.
                     GameEvent::GamepadButton {
-                        button: 1,
+                        button: crate::gfx_types::GamepadButton::East,
                         pressed: true,
                         ..
                     } if io.window.local_players.leave_event(event) => continue,

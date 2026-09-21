@@ -1027,7 +1027,7 @@ impl CampaignMapModalState {
                 },
                 None => match event {
                     GameEvent::GamepadButton {
-                        button: 1,
+                        button: crate::gfx_types::GamepadButton::East,
                         pressed: true,
                         ..
                     } => GameEvent::KeyDown {
