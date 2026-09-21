@@ -1443,17 +1443,22 @@ fn render_frame_with_hud(
                     let length = (dx * dx + dy * dy).sqrt().max(1.0);
                     let nx = -dy / length;
                     let ny = dx / length;
-                    // Feather the seam across seven pixels. Polygon edges
+                    // Feather the seam across eleven pixels. Polygon edges
                     // are shared by adjacent views, so the mirrored passes
-                    // build a soft, symmetric divider without a hard outline.
+                    // build a broad, dark, symmetric divider without a hard
+                    // outline.
                     for (offset, alpha) in [
-                        (-3.0, 18),
-                        (-2.0, 30),
-                        (-1.0, 48),
-                        (0.0, 78),
-                        (1.0, 48),
-                        (2.0, 30),
-                        (3.0, 18),
+                        (-5.0, 16),
+                        (-4.0, 28),
+                        (-3.0, 48),
+                        (-2.0, 80),
+                        (-1.0, 112),
+                        (0.0, 128),
+                        (1.0, 112),
+                        (2.0, 80),
+                        (3.0, 48),
+                        (4.0, 28),
+                        (5.0, 16),
                     ] {
                         ctx.renderer.render_gpu_line_rgba(
                             (a[0] + nx * offset) as i32,
