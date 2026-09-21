@@ -1407,13 +1407,31 @@ fn render_frame_with_hud(
                 for edge in 0..view.polygon.len() {
                     let a = view.polygon[edge];
                     let b = view.polygon[(edge + 1) % view.polygon.len()];
-                    ctx.renderer.render_gpu_line(
-                        a[0] as i32,
-                        a[1] as i32,
-                        b[0] as i32,
-                        b[1] as i32,
-                        [210, 220, 235],
-                    );
+                    let dx = b[0] - a[0];
+                    let dy = b[1] - a[1];
+                    let length = (dx * dx + dy * dy).sqrt().max(1.0);
+                    let nx = -dy / length;
+                    let ny = dx / length;
+                    // Feather the seam across seven pixels. Polygon edges
+                    // are shared by adjacent views, so the mirrored passes
+                    // build a soft, symmetric divider without a hard outline.
+                    for (offset, alpha) in [
+                        (-3.0, 18),
+                        (-2.0, 30),
+                        (-1.0, 48),
+                        (0.0, 78),
+                        (1.0, 48),
+                        (2.0, 30),
+                        (3.0, 18),
+                    ] {
+                        ctx.renderer.render_gpu_line_rgba(
+                            (a[0] + nx * offset) as i32,
+                            (a[1] + ny * offset) as i32,
+                            (b[0] + nx * offset) as i32,
+                            (b[1] + ny * offset) as i32,
+                            [210, 220, 235, alpha],
+                        );
+                    }
                 }
             }
         }

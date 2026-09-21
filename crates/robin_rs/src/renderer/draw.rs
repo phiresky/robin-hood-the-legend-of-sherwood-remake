@@ -198,8 +198,21 @@ impl Renderer {
     /// to the line direction — so diagonal lines render as a real line
     /// rather than the bounding-box outline placeholder. Used by the
     /// view-cone outlines and debug overlays.
-    pub fn render_gpu_line(&mut self, x1: i32, y1: i32, x2: i32, y2: i32, [r, g, b]: [u8; 3]) {
-        let tint = Color::rgb(r, g, b).to_f32_srgb();
+    pub fn render_gpu_line(&mut self, x1: i32, y1: i32, x2: i32, y2: i32, color: [u8; 3]) {
+        self.render_gpu_line_rgba(x1, y1, x2, y2, [color[0], color[1], color[2], 255]);
+    }
+
+    /// Draw a one-pixel line with alpha blending. Used for soft split-view
+    /// seams; the regular line helper remains opaque for debug overlays.
+    pub fn render_gpu_line_rgba(
+        &mut self,
+        x1: i32,
+        y1: i32,
+        x2: i32,
+        y2: i32,
+        [r, g, b, a]: [u8; 4],
+    ) {
+        let tint = Color::rgba(r, g, b, a).to_f32_srgb();
         // Axis-aligned single-pixel strips stay on the rect path to avoid
         // half-pixel rounding from the perpendicular offset.
         if y1 == y2 {
@@ -218,7 +231,7 @@ impl Renderer {
                 tint,
                 operation: DrawOperation::Quad {
                     texture: QuadTexture::White,
-                    blend: BlendMode::None,
+                    blend: BlendMode::Blend,
                 },
             });
             return;
@@ -239,7 +252,7 @@ impl Renderer {
                 tint,
                 operation: DrawOperation::Quad {
                     texture: QuadTexture::White,
-                    blend: BlendMode::None,
+                    blend: BlendMode::Blend,
                 },
             });
             return;
@@ -274,7 +287,7 @@ impl Renderer {
             tint,
             operation: DrawOperation::Quad {
                 texture: QuadTexture::White,
-                blend: BlendMode::None,
+                blend: BlendMode::Blend,
             },
         });
     }
