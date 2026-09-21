@@ -1694,8 +1694,7 @@ fn mission_choices(
     let mut choices = campaign
         .missions
         .iter()
-        .enumerate()
-        .map(|(mission_number, m)| {
+        .map(|m| {
             let profile = m.profile(profiles);
             let fallback = if profile.mission_name.trim().is_empty() {
                 if profile.mission_filename.trim().is_empty() {
@@ -1710,9 +1709,10 @@ fn mission_choices(
             // Keep the selector's numbering consistent with the leaderboard
             // mission list; the profile id is an internal resource id and is
             // intentionally not shown here.
-            let number =
-                leaderboard_mission_number(&profile.mission_filename).unwrap_or(mission_number + 1);
-            let label = format!("{:02} {}", number, mission_name);
+            let label = campaign_mission_number(&profile.mission_filename).map_or_else(
+                || mission_name.clone(),
+                |number| format!("{number:02} {mission_name}"),
+            );
             MissionChoice {
                 roster_slots: usize::from(profile.number_of_beam_mes).clamp(1, 5),
                 mission_id: profile.id,
@@ -1795,15 +1795,27 @@ fn mission_choices(
     choices
 }
 
-/// Extract the stable numeric prefix used by leaderboard mission identities
-/// (for example `H01_Lin_VL` → `1`).
-fn leaderboard_mission_number(filename: &str) -> Option<usize> {
-    let digits: String = filename
-        .chars()
-        .skip_while(|character| !character.is_ascii_digit())
-        .take_while(|character| character.is_ascii_digit())
-        .collect();
-    (!digits.is_empty()).then(|| digits.parse().ok()).flatten()
+/// Campaign numbers used by the leaderboard/walkthrough mission list.
+fn campaign_mission_number(filename: &str) -> Option<usize> {
+    Some(match filename {
+        "H01_Lin_VL" => 1,
+        "S01_Not_VL" => 2,
+        "S02_Lei_MP" => 3,
+        "H02_Not_EC" => 4,
+        "H03_Der_MK" => 5,
+        "S03_FoB_MP" => 6,
+        "H04_Lei_VL" => 7,
+        "H05_Lin_EC" => 8,
+        "S04_Der_EC" => 9,
+        "H07_Not_MK" => 10,
+        "Str02_Der_MP" => 11,
+        "S05_Yrk_EC" => 12,
+        "H09_Not_VL" => 13,
+        "H10_Yor_VL" => 14,
+        "Str03_Yor_MK" => 15,
+        "H12_Not_MP" => 16,
+        _ => return None,
+    })
 }
 
 fn multiplayer_nickname(application_context: &ApplicationContext) -> String {
