@@ -13,7 +13,7 @@ impl EngineInner {
         if rules.players == 1 && rules.control == CharacterControl::Shared {
             return;
         }
-        let party: Vec<_> = self
+        let mut party: Vec<_> = self
             .world
             .pc_ids
             .iter()
@@ -27,6 +27,15 @@ impl EngineInner {
                     })
             })
             .collect();
+        // Portrait order and seat assignment must agree. Equal-priority
+        // copies can otherwise move ahead of their original during the
+        // level's priority sort, making both controllers appear to start on
+        // the second portrait.
+        party.sort_by_key(|&id| {
+            self.get_entity(id)
+                .and_then(Entity::pc_data)
+                .is_some_and(|pc| pc.coop_origin.is_some())
+        });
         let originals: Vec<_> = party
             .iter()
             .copied()
