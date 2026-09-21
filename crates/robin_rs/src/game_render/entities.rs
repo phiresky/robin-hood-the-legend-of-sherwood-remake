@@ -47,7 +47,7 @@ pub(super) fn sprite_screen_masks(
 pub(super) fn applicable_sprite_masks(
     engine: &PresentationView<'_>,
     assets: &LevelAssets,
-    actor_layer: u16,
+    actor_layer: Option<u16>,
     sprite_world_bbox: &engine_coordinates::MapBBox,
     actor_position: engine_coordinates::MapPoint,
     projectile_position: engine_coordinates::WorldPoint3D,
@@ -63,6 +63,12 @@ pub(super) fn applicable_sprite_masks(
             engine.sight_obstacles(assets),
         )
     } else {
+        let Some(actor_layer) = actor_layer else {
+            // A layerless entity cannot use the character mask query. This
+            // is valid while an entity is detached from world membership;
+            // leave its sprite unmasked until it acquires a layer.
+            return Vec::new();
+        };
         engine.fast_grid().get_masks_applied_to_character(
             actor_layer,
             sprite_world_bbox,
@@ -272,7 +278,7 @@ struct CachedEntitySprite<'a> {
 /// Mask-relevant facts shared by the teleport ghost and the current sprite.
 #[derive(Clone, Copy)]
 struct EntityMaskFacts {
-    actor_layer: u16,
+    actor_layer: Option<u16>,
     is_flying_human: bool,
     hidden_outline_rgb: Option<(u8, u8, u8)>,
 }
@@ -335,7 +341,7 @@ fn render_cached_entity_sprite(
     let dst_rect = zoomed_sprite_rect(dst_x, dst_y, sw, sh, zoom);
     let kind = entity.kind();
     let facts = EntityMaskFacts {
-        actor_layer: elem.layer(),
+        actor_layer: elem.optional_layer().map(Into::into),
         is_flying_human: elem.posture() == Posture::Flying,
         hidden_outline_rgb: hidden_outline_rgb(ctx.host, entity),
     };
