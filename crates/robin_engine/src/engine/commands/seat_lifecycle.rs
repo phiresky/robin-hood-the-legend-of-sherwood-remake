@@ -6,23 +6,6 @@ use crate::player_command::PlayerId;
 
 impl EngineInner {
     pub(super) fn dispatch_connect_seat(&mut self, target: &PlayerId, nickname: &str) {
-        // A local controller can finish joining on the first gameplay frame.
-        // Expand a single-player shared party before filtering the new seat's
-        // selection, so late admission cannot leave a connected player with
-        // no playable character. Network co-op already carries its final
-        // player count in SimConfig and therefore skips this path.
-        let required_players = target.0.saturating_add(1).min(5);
-        if target.0 > 0
-            && required_players > self.control.sim_config.coop.players
-            && self.control.sim_config.coop.control == crate::coop::CharacterControl::Shared
-        {
-            self.control.sim_config.coop.players = required_players;
-            self.initialize_coop_party();
-            tracing::info!(
-                players = self.control.sim_config.coop.players,
-                "Expanded local co-op party for late seat"
-            );
-        }
         let idx = self.ensure_seat(*target);
         let was_connected = self.players.seats[idx].connected;
         self.players.seats[idx].connected = true;
