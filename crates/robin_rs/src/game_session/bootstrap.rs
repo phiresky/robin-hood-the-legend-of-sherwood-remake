@@ -1422,33 +1422,9 @@ impl InteractiveMissionBuilder {
         let super::MissionStart {
             mission_idx,
             rng_seed,
-            mut sim_config,
+            sim_config,
             ..
         } = start;
-        // Local co-op must configure the simulation before the level loader
-        // creates the party. Seat admission during the loading screen cannot
-        // add duplicate PCs after that point.
-        if !args.multiplayer.server
-            && args.multiplayer.connect.is_none()
-            && let Some(expected_players) = args.multiplayer.expected_players
-        {
-            sim_config.coop = args.multiplayer.coop;
-            let roster_players =
-                if args.multiplayer.expected_players.is_some() && window.local_players.enabled {
-                    expected_players.max(window.local_players.count() as u32)
-                } else {
-                    expected_players
-                };
-            sim_config.coop.players = roster_players
-                .try_into()
-                .expect("local co-op player count fits the supported roster");
-            tracing::info!(
-                players = sim_config.coop.players,
-                launch_players = expected_players,
-                roster_players = window.local_players.count(),
-                "local co-op simulation roster configured before engine construction"
-            );
-        }
         // A checkpoint belongs to one running mission, including when entry
         // into the next mission fails or takes the lost-Sherwood shortcut.
         callbacks.save_manager.clear_session_restart();

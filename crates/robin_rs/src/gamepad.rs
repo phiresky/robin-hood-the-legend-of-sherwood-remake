@@ -1258,11 +1258,6 @@ pub(crate) fn keyboard_movement_state(
 pub struct LocalPlayers {
     pub enabled: bool,
     pub keyboard: bool,
-    /// Whether gameplay event folding may admit an unassigned controller.
-    /// The lobby enables this; mission gameplay keeps the roster fixed while
-    /// still allowing existing devices to disconnect and reconnect.
-    #[serde(default)]
-    pub accept_new_devices: bool,
     pub devices: Vec<(u32, GamepadDeviceInput)>,
 }
 impl Default for LocalPlayers {
@@ -1270,7 +1265,6 @@ impl Default for LocalPlayers {
         Self {
             enabled: false,
             keyboard: true,
-            accept_new_devices: false,
             devices: Vec::new(),
         }
     }
@@ -1285,7 +1279,9 @@ impl LocalPlayers {
         {
             return;
         }
-        self.devices.push((which, GamepadDeviceInput::default()));
+        let mut device = GamepadDeviceInput::default();
+        device.fold(&crate::gfx_types::GameEvent::GamepadAdded { which });
+        self.devices.push((which, device));
     }
     pub fn join_event(&mut self, event: &crate::gfx_types::GameEvent) {
         if let crate::gfx_types::GameEvent::GamepadButton {
@@ -1332,26 +1328,6 @@ impl LocalPlayers {
         };
         if let Some((_, device)) = self.devices.iter_mut().find(|(id, _)| *id == which) {
             device.fold(event);
-        } else if self.enabled
-            && self.accept_new_devices
-            && matches!(
-                event,
-                GameEvent::GamepadButton {
-                    button: GamepadButton::South,
-                    pressed: true,
-                    ..
-                }
-            )
-        {
-            if let Some((id, device)) = self
-                .devices
-                .iter_mut()
-                .find(|(_, device)| !device.is_connected())
-            {
-                *id = which;
-                device.fold(event);
-                device.begin_mission();
-            }
         }
     }
 }

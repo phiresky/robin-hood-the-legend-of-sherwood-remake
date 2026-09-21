@@ -388,7 +388,11 @@ pub(super) fn handle_local_gamepads(
         if !device.admit_gameplay(allowed && !engine.user_locked()) {
             continue;
         }
-        if engine.seat(seat).is_none_or(|state| !state.connected) && seat != PlayerId::HOST {
+        if !engine
+            .seat(seat)
+            .expect("local seat was admitted before gameplay")
+            .connected
+        {
             host.frontend
                 .diagnostics_mut()
                 .queue_console_output(format!("Player {} connected", seat.0 + 1));

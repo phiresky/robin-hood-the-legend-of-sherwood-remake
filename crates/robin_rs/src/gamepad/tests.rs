@@ -587,8 +587,6 @@ fn local_join_capacity_and_reconnect_preserve_seat() {
         players.join_event(&event);
     }
     assert_eq!(players.count(), 5);
-    players.enabled = true;
-    players.accept_new_devices = true;
     players.fold(&GameEvent::GamepadRemoved { which: 2 });
     assert!(!players.devices[2].1.is_connected());
     players.fold(&GameEvent::GamepadButton {
@@ -596,7 +594,37 @@ fn local_join_capacity_and_reconnect_preserve_seat() {
         button: GamepadButton::South,
         pressed: true,
     });
-    assert_eq!(players.devices[2].0, 42);
-    assert!(players.devices[2].1.is_connected());
+    assert_eq!(players.devices[2].0, 2);
+    assert!(!players.devices[2].1.is_connected());
     assert_eq!(players.count(), 5);
+}
+
+#[test]
+fn lobby_seeded_devices_are_connected_and_unknown_devices_do_not_add_seats() {
+    use crate::gfx_types::GameEvent;
+    let mut players = LocalPlayers::default();
+    players.join_device(10);
+    players.join_device(20);
+    assert_eq!(players.count(), 3);
+    assert!(
+        players
+            .devices
+            .iter()
+            .all(|(_, device)| device.is_connected())
+    );
+    players.enabled = true;
+    players.fold(&GameEvent::GamepadButton {
+        which: 30,
+        button: GamepadButton::South,
+        pressed: true,
+    });
+    assert_eq!(players.count(), 3);
+    assert_eq!(
+        players
+            .devices
+            .iter()
+            .map(|(id, _)| *id)
+            .collect::<Vec<_>>(),
+        vec![10, 20]
+    );
 }

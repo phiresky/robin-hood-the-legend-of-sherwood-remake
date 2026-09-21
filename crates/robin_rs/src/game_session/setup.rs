@@ -995,6 +995,29 @@ pub(super) struct MissionPreparationSources<'a> {
     pub(super) args: &'a crate::main_entry::MissionRequest,
 }
 
+/// Freeze lobby rules into the simulation input once, before loading PCs.
+/// Playback keeps the recorded construction config; device state is never
+/// consulted here.
+fn launch_sim_config(
+    mut config: engine_api::SimConfig,
+    args: &crate::main_entry::MissionRequest,
+) -> Result<engine_api::SimConfig, MissionError> {
+    if args.replay.is_none()
+        && args.replay_data.is_none()
+        && let Some(players) = args.multiplayer.expected_players
+    {
+        if !(1..=robin_engine::coop::MAX_PLAYERS as u32).contains(&players) {
+            return Err(MissionError::application(
+                "Co-op supports one to five players",
+            ));
+        }
+        config.coop = args.multiplayer.coop;
+        config.coop.players = players as u8;
+        config.coop.validate().map_err(MissionError::application)?;
+    }
+    Ok(config)
+}
+
 pub(super) fn prepare_mission(
     feedback: &mut MissionLoadFeedback<'_>,
     host: &mut Host,
@@ -1019,6 +1042,10 @@ pub(super) fn prepare_mission(
         rng_seed: authoritative_rng_seed,
         sim_config: authoritative_sim_config,
     } = launch;
+    let authoritative_sim_config = match launch_sim_config(authoritative_sim_config, args) {
+        Ok(config) => config,
+        Err(error) => return Err(MissionLoadError::new(campaign, error)),
+    };
     let files = match host.preparation_files() {
         Ok(files) => std::sync::Arc::new(files.snapshot()),
         Err(message) => {
@@ -1542,13 +1569,11 @@ pub(super) fn setup_local_seat_and_multiplayer_snapshot(
     );
 
     // A local co-op launch has a complete roster before the mission starts.
-    // Admit those seats at the same frame-zero boundary as the host seat so
-    // co-op party construction and the initial replay snapshot see every
-    // player. Runtime input still owns disconnect/reconnect handling.
-    if host.transport.net().is_none()
-        && let Some(expected_players) = args.multiplayer.expected_players
-    {
-        for seat in 1..expected_players.min(robin_engine::coop::MAX_PLAYERS as u32) {
+    // Admit the seats from the constructed simulation, so the initial
+    // snapshot has the same roster as the already-created party.
+    // Runtime input still owns disconnect/reconnect handling.
+    if host.transport.net().is_none() && args.multiplayer.expected_players.is_some() {
+        for seat in 1..engine.sim_config().coop.players {
             let player_id = robin_engine::player_command::PlayerId(seat as u8);
             engine
                 .connect_seat(assets, player_id, format!("Player {}", seat + 1))
@@ -1842,6 +1867,37 @@ mod tests {
                 timer: PhaseTimer::new("stage fixture"),
             },
         }
+    }
+
+    #[test]
+    fn lobby_roster_reaches_engine_construction_and_replay_identity() {
+        for players in [1, 2, 3, 5] {
+            let mut prepared = prepared_stage_fixture();
+            let mut args =
+                crate::main_entry::MissionRequest::from(crate::main_entry::LaunchConfig::default());
+            args.multiplayer.expected_players = Some(players);
+            // The campaign starts with single-player defaults, as it does
+            // when a mission is selected from the multiplayer menu.
+            assert_eq!(prepared.launch.sim_config.coop.players, 1);
+            prepared.launch.sim_config =
+                launch_sim_config(prepared.launch.sim_config, &args).unwrap();
+            assert_eq!(prepared.launch.sim_config.coop.players, players as u8);
+            assert!(prepared.launch.sim_config.coop.validate().is_ok());
+        }
+    }
+
+    #[test]
+    fn playback_keeps_recorded_roster_and_invalid_live_rosters_fail() {
+        let mut args =
+            crate::main_entry::MissionRequest::from(crate::main_entry::LaunchConfig::default());
+        let config = engine_api::SimConfig::default();
+        for count in [0, 6, 256] {
+            args.multiplayer.expected_players = Some(count);
+            assert!(launch_sim_config(config, &args).is_err());
+        }
+        args.multiplayer.expected_players = Some(3);
+        args.replay = Some("recorded.rhrec.jsonl".into());
+        assert_eq!(launch_sim_config(config, &args).unwrap(), config);
     }
 
     #[test]
