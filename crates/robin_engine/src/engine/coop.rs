@@ -396,6 +396,20 @@ mod tests {
     }
 
     #[test]
+    fn two_player_party_assigns_first_and_duplicate_to_different_seats() {
+        let engine = party(1, 2);
+        assert_eq!(engine.world.pc_ids.len(), 2);
+        assert_ne!(
+            engine.players.seats[0].selection,
+            engine.players.seats[1].selection
+        );
+        assert_ne!(
+            engine.players.seats[0].assigned_character,
+            engine.players.seats[1].assigned_character
+        );
+    }
+
+    #[test]
     fn assigned_single_player_can_select_assigned_hero() {
         let mut engine = party(1, 1);
         engine.control.sim_config.coop.control = CharacterControl::Assigned;
