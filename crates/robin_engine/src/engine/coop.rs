@@ -83,6 +83,15 @@ impl EngineInner {
             self.add_detectable_for_all_npc(id, crate::element::DetectableType::Enemy);
             party.push(id);
         }
+        // The duplicate is cloned from the mission hero after the normal
+        // single-player priority selection has opened that hero's portrait.
+        // Co-op selection is seat-owned, so discard that inherited visual
+        // state before applying the deterministic seat assignments below.
+        for &id in &party {
+            if let Some(Entity::Pc(pc)) = self.get_entity_mut(id) {
+                pc.pc.portrait.open = false;
+            }
+        }
         let percent = self.coop_enemy_health_percent();
         let ids = self.world.soldier_registry.all().to_vec();
         for id in ids {
@@ -113,6 +122,9 @@ impl EngineInner {
             assigned_party.push(assigned);
             self.players.seats[index].assigned_character = Some(assigned);
             self.players.seats[index].selection = vec![assigned];
+            if let Some(Entity::Pc(pc)) = self.get_entity_mut(assigned) {
+                pc.pc.portrait.open = !pc.pc.portrait.burned;
+            }
         }
     }
 
