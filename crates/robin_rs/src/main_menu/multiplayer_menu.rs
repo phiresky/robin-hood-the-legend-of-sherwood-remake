@@ -954,18 +954,20 @@ impl MultiplayerMenuState {
     ) -> Option<MultiplayerMenuTick> {
         match id {
             ID_CREATE if self.local && matches!(self.mode, MenuMode::Missions) => {
-                if io.window.local_players.count() == 0 {
+                let player_count = io.window.local_players.count();
+                if player_count == 0 {
                     self.status = "Press A to join, or enable a keyboard player.".into();
                     return None;
                 }
                 if let Some(mission) = self.missions.get(self.selected) {
                     io.window.local_players.enabled = true;
+                    self.coop.players = player_count as u8;
                     return Some(MultiplayerMenuTick::Finished(Some(MultiplayerLaunch {
                         coop: self.coop,
                         mission_id: mission.mission_id,
                         mission_name: mission.mission_name.clone(),
                         role: MultiplayerRole::Local,
-                        expected_players: self.coop.players as u32,
+                        expected_players: player_count as u32,
                         start_at_epoch_ms: None,
                         local_custom: mission.custom.clone(),
                         distributed_mod: None,

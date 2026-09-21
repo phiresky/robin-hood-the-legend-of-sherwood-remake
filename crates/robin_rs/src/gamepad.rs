@@ -428,11 +428,7 @@ impl GamePadState {
     /// `AXIS_CENTER`.
     pub fn mouse_delta(&self) -> (f32, f32) {
         let dx = (self.current.rz - AXIS_CENTER) as f32 / MOUSE_CONVERSION;
-        // SDL/gilrs reports positive right-stick Y when the stick points
-        // down, while screen coordinates also grow downwards.  The original
-        // DirectInput path used the opposite convention, so invert this
-        // value before applying it to the screen cursor.
-        let dy = -((self.current.sliders[0] - AXIS_CENTER) as f32 / MOUSE_CONVERSION);
+        let dy = (self.current.sliders[0] - AXIS_CENTER) as f32 / MOUSE_CONVERSION;
         (dx, dy)
     }
 
