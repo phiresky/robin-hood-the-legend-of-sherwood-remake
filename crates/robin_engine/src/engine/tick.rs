@@ -696,7 +696,7 @@ pub(super) fn entity_system_detail_guard(phase: EntitySystemDetail) -> EntitySys
         phase,
         start: tracing::enabled!(
             target: "robin_engine::engine::tick::entity_system_perf",
-            tracing::Level::INFO
+            tracing::Level::DEBUG
         )
         .then(web_time::Instant::now),
     }
@@ -705,7 +705,7 @@ pub(super) fn entity_system_detail_guard(phase: EntitySystemDetail) -> EntitySys
 fn finish_entity_system_detail_frame() {
     if !tracing::enabled!(
         target: "robin_engine::engine::tick::entity_system_perf",
-        tracing::Level::INFO
+        tracing::Level::DEBUG
     ) {
         return;
     }
@@ -718,7 +718,7 @@ fn finish_entity_system_detail_frame() {
         let frames = u128::from(stats.frames);
         let per_frame = |phase: EntitySystemDetail| stats.total_us[phase as usize] / frames;
         let calls = |phase: EntitySystemDetail| stats.calls[phase as usize];
-        tracing::info!(
+        tracing::debug!(
             target: "robin_engine::engine::tick::entity_system_perf",
             frames = stats.frames,
             prepare_npc_us = per_frame(EntitySystemDetail::PrepareNpc),
@@ -743,7 +743,7 @@ fn time_hourglass_phase<T>(phase: HourglassPhase, f: impl FnOnce() -> T) -> T {
     trace_hourglass_phase(phase);
     let timer = tracing::enabled!(
         target: "robin_engine::engine::tick::phase_perf",
-        tracing::Level::INFO
+        tracing::Level::DEBUG
     )
     .then(web_time::Instant::now);
     let result = f();
@@ -754,7 +754,7 @@ fn time_hourglass_phase<T>(phase: HourglassPhase, f: impl FnOnce() -> T) -> T {
             if phase == HourglassPhase::DeferredEffectsEnd {
                 stats.count += 1;
                 if stats.count >= HOURGLASS_LOG_INTERVAL {
-                    tracing::info!(
+                    tracing::debug!(
                         target: "robin_engine::engine::tick::phase_perf",
                         count = stats.count,
                         deferred_start_us = stats.total_us[0] / stats.count as u128,
@@ -889,7 +889,7 @@ impl HourglassStats {
             return;
         }
         let avg = self.total_us / self.count as u128;
-        tracing::info!(
+        tracing::debug!(
             target: "robin_engine::engine::tick::perf",
             count = self.count,
             avg_us = avg,
@@ -909,7 +909,7 @@ struct HourglassTimer {
 
 impl HourglassTimer {
     fn start() -> Option<Self> {
-        if !tracing::enabled!(target: "robin_engine::engine::tick::perf", tracing::Level::INFO) {
+        if !tracing::enabled!(target: "robin_engine::engine::tick::perf", tracing::Level::DEBUG) {
             return None;
         }
         Some(Self {

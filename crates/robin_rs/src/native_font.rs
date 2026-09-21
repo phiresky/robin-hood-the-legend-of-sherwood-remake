@@ -191,7 +191,7 @@ impl NativeFont {
         let alpha_width = alpha_pic.width;
         let alpha_pixels = bytes_to_u16(&alpha_pic.data);
 
-        tracing::info!(
+        tracing::debug!(
             "Loaded native font '{}': {}px, {} chars, glyph={}x{}, alpha={}x{}",
             name,
             height,
@@ -469,7 +469,7 @@ pub fn load_font_config(files: &SbFileSystem) -> Result<HashMap<String, FontEntr
 
     let text = String::from_utf8_lossy(&buf);
     let result = parse_font_config(&text);
-    tracing::info!("Font config: {} entries", result.len());
+    tracing::debug!("Font config: {} entries", result.len());
     Ok(result)
 }
 

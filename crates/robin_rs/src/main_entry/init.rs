@@ -278,7 +278,7 @@ pub(super) fn add_overlay_data_dirs(
         roots.sort();
         for path in roots {
             match crate::mod_pack::mount_mod_overlay(files, &path) {
-                Ok(()) => tracing::info!("Registered mod overlay: {}", path.display()),
+                Ok(()) => tracing::debug!("Registered mod overlay: {}", path.display()),
                 Err(SbFileError::PathAlreadyPresent) => {}
                 Err(error) => {
                     tracing::warn!("Failed to register mod overlay {}: {error}", path.display())

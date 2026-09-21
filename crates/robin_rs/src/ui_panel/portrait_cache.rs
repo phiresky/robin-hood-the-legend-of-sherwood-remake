@@ -246,7 +246,7 @@ impl PortraitCache {
             match res.get_picture(res_id, sub_id) {
                 Ok(pic) => {
                     let sid = owned_picture_surface(renderer, &mut self.owned_surfaces, pic)?;
-                    tracing::info!(
+                    tracing::debug!(
                         "Loaded {label}: resource {res_id} sub {sub_id}, surface {sid:?} ({}x{})",
                         pic.width,
                         pic.height,

@@ -219,7 +219,7 @@ pub(crate) fn load_bank(
             let width = picture.width;
             let height = picture.height;
             let surface = crate::ui_panel::pic_to_surface(renderer, picture);
-            tracing::info!(
+            tracing::debug!(
                 label,
                 resource_id,
                 sub,

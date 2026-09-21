@@ -310,7 +310,7 @@ impl PerfStats {
             return;
         }
         let checks = u128::from(self.checks);
-        tracing::info!(
+        tracing::debug!(
             target: "robin_rs::rollback_checker::perf",
             checks = self.checks,
             end_bookkeeping_avg_us = self.end_bookkeeping_us / checks,

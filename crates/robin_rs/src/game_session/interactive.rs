@@ -446,7 +446,7 @@ impl NativeRefreshInterpolation {
             return None;
         };
         if self.presentation_clock.period_us != period_us {
-            tracing::info!(period_us, "presentation clock follows monitor refresh");
+            tracing::debug!(period_us, "presentation clock follows monitor refresh");
         }
         let sample_us = self.presentation_clock.reserve(now_us, period_us);
         #[cfg(not(target_arch = "wasm32"))]

@@ -55,7 +55,7 @@ impl Engine {
                 // An exhausted pool supplies a display label only; it must not
                 // fabricate another campaign registration.
                 let display_name = generated.unwrap_or_else(|| "Misteryman".to_owned());
-                tracing::info!("Peasant {kind:?} → {display_name:?}");
+                tracing::debug!("Peasant {kind:?} → {display_name:?}");
                 localized_names[slot] = Some(display_name);
             }
             Ok(())

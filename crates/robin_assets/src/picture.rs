@@ -664,11 +664,24 @@ impl Picture {
             }
             SixteenPacking::Bzip => decompress_sixteen_bzip(payload, decoded_limit)?,
         };
-        if original_format && data.len() > expected && data.len() == decoded_limit {
-            tracing::warn!(
-                "Original Sixteen picture {width}x{height} retains RGB24 export length; discarding {} trailing bytes",
-                data.len() - expected
+        if original_format && data.len() > decoded_limit {
+            bail!(
+                "Sixteen pixel payload: expected {expected} bytes or the known RGB24 export length {decoded_limit} bytes, got {}",
+                data.len()
             );
+        }
+        if original_format && data.len() > expected {
+            let trailing = data.len() - expected;
+            if data.len() == decoded_limit {
+                tracing::debug!(
+                    "Original Sixteen picture {width}x{height} retains expected RGB24 export length; discarding {trailing} trailing bytes"
+                );
+            } else {
+                tracing::warn!(
+                    "Original Sixteen picture {width}x{height} has unexpected export length: {trailing} trailing bytes (expected {})",
+                    expected / 2
+                );
+            }
             data.truncate(expected);
         }
         if data.len() != expected {

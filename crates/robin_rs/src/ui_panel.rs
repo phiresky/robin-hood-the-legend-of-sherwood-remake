@@ -1079,14 +1079,14 @@ pub fn load_localized_character_names(
             None => continue,
         };
         if let Some((localized, table_id, sub_id)) = menu_text_string(text_res, str_id) {
-            tracing::info!(
+            tracing::debug!(
                 "Localized name for {kind:?}: {localized:?} (table {table_id}, sub {sub_id})"
             );
             out[kind.as_index()] = Some(localized);
             loaded += 1;
         }
     }
-    tracing::info!("Loaded {loaded} localized character names");
+    tracing::debug!("Loaded {loaded} localized character names");
     out
 }
 
