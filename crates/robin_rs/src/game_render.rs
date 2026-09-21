@@ -361,6 +361,7 @@ pub(crate) fn map_sprite_bounds(
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 struct SpritePlacement {
     world_origin: MapPoint,
+    smooth_world_origin: MapPoint,
     screen_origin: (i32, i32),
     screen_position: (f32, f32),
 }
@@ -379,6 +380,10 @@ fn sprite_placement(
     let smooth_y = (position.y - center.y + offset.y - view.y) * zoom;
     SpritePlacement {
         world_origin: MapPoint::new(x, y),
+        smooth_world_origin: MapPoint::new(
+            position.x - center.x + offset.x,
+            position.y - center.y + offset.y,
+        ),
         screen_origin: (((x - view.x) * zoom) as i32, ((y - view.y) * zoom) as i32),
         screen_position: (smooth_x, smooth_y),
     }

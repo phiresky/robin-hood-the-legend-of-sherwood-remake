@@ -384,7 +384,7 @@ fn render_cached_entity_sprite(
             variant,
             shadow_color,
             shadow_level,
-            placement.world_origin,
+            placement.smooth_world_origin,
             view,
             zoom,
         );
@@ -1084,7 +1084,7 @@ pub(super) fn render_fx_entities_gpu<I>(
                     variant,
                     shadow_color,
                     shadow_level,
-                    placement.world_origin,
+                    placement.smooth_world_origin,
                     view,
                     zoom,
                 );
