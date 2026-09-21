@@ -1396,6 +1396,18 @@ fn render_frame_with_hud(
     } else {
         &presentation_views
     };
+    // View membership can split before the camera transforms do: the layout
+    // keeps nearby players on a shared camera until they exceed the framing
+    // margin. Only show the divider once the rendered cameras truly diverge.
+    let cameras_desynchronized = if views.len() > 1 {
+        let first = views[0].viewport(host.viewport()).view_position;
+        views.iter().skip(1).any(|view| {
+            let position = view.viewport(host.viewport()).view_position;
+            (position.x - first.x).abs() > 0.01 || (position.y - first.y).abs() > 0.01
+        })
+    } else {
+        false
+    };
     if host.frontend.local_player_count > 1
         && views.len() > 1
         && host.viewport().screen_size == host.frontend.viewport.screen_size
@@ -1433,7 +1445,7 @@ fn render_frame_with_hud(
             }
             ctx.renderer.finish_split_view(index, &view.polygon);
         }
-        if views.len() > 1 {
+        if cameras_desynchronized {
             for view in views {
                 for edge in 0..view.polygon.len() {
                     let a = view.polygon[edge];
