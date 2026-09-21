@@ -1443,22 +1443,28 @@ fn render_frame_with_hud(
                     let length = (dx * dx + dy * dy).sqrt().max(1.0);
                     let nx = -dy / length;
                     let ny = dx / length;
-                    // Feather the seam across eleven pixels. Polygon edges
+                    // Feather the seam across seventeen pixels. Polygon edges
                     // are shared by adjacent views, so the mirrored passes
                     // build a broad, dark, symmetric divider without a hard
                     // outline.
                     for (offset, alpha) in [
-                        (-5.0, 16),
-                        (-4.0, 28),
-                        (-3.0, 48),
-                        (-2.0, 80),
-                        (-1.0, 112),
-                        (0.0, 128),
-                        (1.0, 112),
-                        (2.0, 80),
-                        (3.0, 48),
-                        (4.0, 28),
-                        (5.0, 16),
+                        (-8.0, 24),
+                        (-7.0, 32),
+                        (-6.0, 48),
+                        (-5.0, 72),
+                        (-4.0, 104),
+                        (-3.0, 140),
+                        (-2.0, 180),
+                        (-1.0, 208),
+                        (0.0, 255),
+                        (1.0, 208),
+                        (2.0, 180),
+                        (3.0, 140),
+                        (4.0, 104),
+                        (5.0, 72),
+                        (6.0, 48),
+                        (7.0, 32),
+                        (8.0, 24),
                     ] {
                         ctx.renderer.render_gpu_line_rgba(
                             (a[0] + nx * offset) as i32,
@@ -1902,6 +1908,10 @@ fn render_overlay_pass(
 
     // ── GPU phase: pause overlay ──
     if let (Some(menu), Some(resources)) = (pause_menu, menu_resources) {
+        // Multiplayer keeps advancing while this local menu is open. Refresh
+        // the modal source every frame so the cyan pause treatment follows
+        // the live simulation instead of holding the frame from menu entry.
+        renderer.clear_frozen_scene();
         renderer.freeze_scene_for_modal();
         let briefings = Some(engine.short_briefings());
         // Look up each short briefing's localized string from the
