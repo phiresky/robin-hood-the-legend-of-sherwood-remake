@@ -677,6 +677,26 @@ impl MultiplayerMenuState {
         let transform = screen.transform;
         for event in &screen.events {
             self.input_state.update_from_event(event, transform);
+            if self.local {
+                match event {
+                    // A is the local-lobby join button. Consume it here so
+                    // the generic Confirm path cannot start the mission in
+                    // the same frame.
+                    GameEvent::GamepadButton {
+                        button: 0,
+                        pressed: true,
+                        ..
+                    } => continue,
+                    // B removes the controller that pressed it. With no
+                    // controller left, retain the normal Back behavior.
+                    GameEvent::GamepadButton {
+                        button: 1,
+                        pressed: true,
+                        ..
+                    } if io.window.local_players.leave_event(event) => continue,
+                    _ => {}
+                }
+            }
             if let Some(direction) = widget_bridge::gamepad_direction(event) {
                 match direction {
                     Keycode::Up => {

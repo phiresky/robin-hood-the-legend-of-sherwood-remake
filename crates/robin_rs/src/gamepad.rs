@@ -1258,6 +1258,22 @@ impl LocalPlayers {
             }
         }
     }
+
+    /// Remove the local controller that requested to leave the lobby.
+    /// Returns whether a controller was actually removed.
+    pub fn leave_event(&mut self, event: &crate::gfx_types::GameEvent) -> bool {
+        let crate::gfx_types::GameEvent::GamepadButton {
+            which,
+            button: 1,
+            pressed: true,
+        } = *event
+        else {
+            return false;
+        };
+        let before = self.devices.len();
+        self.devices.retain(|(id, _)| *id != which);
+        self.devices.len() != before
+    }
     pub fn fold(&mut self, event: &crate::gfx_types::GameEvent) {
         use crate::gfx_types::GameEvent;
         let which = match *event {
