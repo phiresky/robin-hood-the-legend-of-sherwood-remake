@@ -250,7 +250,7 @@ impl PauseMenu {
         transform: MenuTransform,
         audio: ScreenAudio<'_>,
     ) -> PauseMenuOutcome {
-        if let Some(direction) = super::widget_bridge::gamepad_direction(event) {
+        if let Some(direction) = self.input_state.gamepad_direction(event) {
             match direction {
                 Keycode::Up => self.move_keyboard_selection(-1),
                 Keycode::Down => self.move_keyboard_selection(1),

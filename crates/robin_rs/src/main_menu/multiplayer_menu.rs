@@ -698,7 +698,7 @@ impl MultiplayerMenuState {
                     _ => {}
                 }
             }
-            if let Some(direction) = widget_bridge::gamepad_direction(event) {
+            if let Some(direction) = self.input_state.gamepad_direction(event) {
                 match direction {
                     Keycode::Up => {
                         self.selected = self.selected.saturating_sub(1);
@@ -1710,7 +1710,9 @@ fn mission_choices(
             // Keep the selector's numbering consistent with the leaderboard
             // mission list; the profile id is an internal resource id and is
             // intentionally not shown here.
-            let label = format!("{:02} {}", mission_number + 1, mission_name);
+            let number =
+                leaderboard_mission_number(&profile.mission_filename).unwrap_or(mission_number + 1);
+            let label = format!("{:02} {}", number, mission_name);
             MissionChoice {
                 roster_slots: usize::from(profile.number_of_beam_mes).clamp(1, 5),
                 mission_id: profile.id,
@@ -1791,6 +1793,17 @@ fn mission_choices(
         }
     }
     choices
+}
+
+/// Extract the stable numeric prefix used by leaderboard mission identities
+/// (for example `H01_Lin_VL` → `1`).
+fn leaderboard_mission_number(filename: &str) -> Option<usize> {
+    let digits: String = filename
+        .chars()
+        .skip_while(|character| !character.is_ascii_digit())
+        .take_while(|character| character.is_ascii_digit())
+        .collect();
+    (!digits.is_empty()).then(|| digits.parse().ok()).flatten()
 }
 
 fn multiplayer_nickname(application_context: &ApplicationContext) -> String {

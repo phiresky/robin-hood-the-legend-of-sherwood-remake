@@ -1020,7 +1020,7 @@ impl CampaignMapModalState {
             // normalize controller navigation here before its keyboard-only
             // event routing. This also makes B consistently close details or
             // leave the manager.
-            let event = match crate::ingame_menu::widget_bridge::gamepad_direction(&event) {
+            let event = match self.input.gamepad_direction(&event) {
                 Some(keycode) => GameEvent::KeyDown {
                     keycode,
                     physical_key: None,

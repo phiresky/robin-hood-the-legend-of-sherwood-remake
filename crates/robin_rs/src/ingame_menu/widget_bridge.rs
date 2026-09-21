@@ -714,6 +714,7 @@ pub struct ModalInputState {
     /// frame-based counter.
     pending_double_click_left: bool,
     pending_double_click_right: bool,
+    gamepad_axis_direction: Option<crate::gfx_types::Keycode>,
 }
 
 impl Default for ModalInputState {
@@ -729,6 +730,7 @@ impl Default for ModalInputState {
             capture: CaptureSlot::default(),
             pending_double_click_left: false,
             pending_double_click_right: false,
+            gamepad_axis_direction: None,
         }
     }
 }
@@ -900,6 +902,26 @@ impl ModalInputState {
             _ => {}
         }
         event
+    }
+
+    /// Return a controller direction once per stick deflection. A neutral
+    /// sample rearms the direction, preventing one held stick from racing
+    /// through an entire menu.
+    pub fn gamepad_direction(&mut self, event: &GameEvent) -> Option<crate::gfx_types::Keycode> {
+        let direction = super::widget_bridge::gamepad_direction(event);
+        let is_axis = matches!(event, GameEvent::GamepadAxis { .. });
+        if !is_axis {
+            return direction;
+        }
+        if let Some(direction) = direction {
+            if self.gamepad_axis_direction == Some(direction) {
+                return None;
+            }
+            self.gamepad_axis_direction = Some(direction);
+            return Some(direction);
+        }
+        self.gamepad_axis_direction = None;
+        None
     }
 
     /// Build a [`WidgetInput`] for this frame.  Held-down and one-shot
