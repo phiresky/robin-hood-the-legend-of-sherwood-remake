@@ -95,9 +95,19 @@ enum TopicMsg {
     /// Host: my game exists, in this state, with this many players.
     Announce { game: GameListing },
     /// Joiner: I want a seat in this game (repeated while waiting).
-    Join { game_id: String, nickname: String },
+    Join {
+        game_id: String,
+        nickname: String,
+        #[serde(default)]
+        peer_id: String,
+    },
     /// Joiner: I backed out.
-    Leave { game_id: String, nickname: String },
+    Leave {
+        game_id: String,
+        nickname: String,
+        #[serde(default)]
+        peer_id: String,
+    },
     /// Host: the game starts — connect and be ready at `start_at`.
     Start { game: JoinedGame },
 }
@@ -349,6 +359,7 @@ mod native {
 
     struct Worker {
         nickname: String,
+        local_peer_id: String,
         role: Role,
         /// Live listings by game id, with the last refresh time.
         listings: HashMap<String, (GameListing, Instant)>,
@@ -381,6 +392,7 @@ mod native {
             .spawn();
 
         let local_id = endpoint.secret_key().public();
+        let local_peer_id = local_id.to_string();
         let rendezvous = match TopicRendezvous::new(TOPIC, *local_id.as_bytes()) {
             Ok(rendezvous) => rendezvous,
             Err(e) => {
@@ -433,6 +445,7 @@ mod native {
 
         let mut worker = Worker {
             nickname,
+            local_peer_id,
             role: Role::Browsing,
             listings: HashMap::new(),
             neighbors: 0,
@@ -488,6 +501,7 @@ mod native {
                 .broadcast(&TopicMsg::Leave {
                     game_id: game_id.clone(),
                     nickname: worker.nickname.clone(),
+                    peer_id: worker.local_peer_id.clone(),
                 })
                 .await;
         }
@@ -564,24 +578,42 @@ mod native {
                         _ => {}
                     }
                 }
-                TopicMsg::Join { game_id, nickname } => {
+                TopicMsg::Join {
+                    game_id,
+                    nickname,
+                    peer_id,
+                } => {
+                    let joiner_id = if peer_id.is_empty() {
+                        nickname
+                    } else {
+                        peer_id.clone()
+                    };
                     if let Role::Hosting { game, joiners, .. } = &mut self.role
                         && game.id == game_id
-                        && nickname != self.nickname
-                        && (joiners.contains_key(&nickname) || joiners.len() < 4)
+                        && peer_id != self.local_peer_id
+                        && (joiners.contains_key(&joiner_id) || joiners.len() < 4)
                     {
-                        joiners.insert(nickname, Instant::now());
+                        joiners.insert(joiner_id, Instant::now());
                         game.players = 1 + joiners.len() as u32;
                         let _ = self
                             .events
                             .send(MatchmakingEvent::GameUpdated(game.clone()));
                     }
                 }
-                TopicMsg::Leave { game_id, nickname } => {
+                TopicMsg::Leave {
+                    game_id,
+                    nickname,
+                    peer_id,
+                } => {
+                    let joiner_id = if peer_id.is_empty() {
+                        nickname
+                    } else {
+                        peer_id
+                    };
                     if let Role::Hosting { game, joiners, .. } = &mut self.role
                         && game.id == game_id
                     {
-                        joiners.remove(&nickname);
+                        joiners.remove(&joiner_id);
                     }
                 }
                 TopicMsg::Start { game } => {
@@ -657,6 +689,7 @@ mod native {
                     self.broadcast(&TopicMsg::Join {
                         game_id,
                         nickname: self.nickname.clone(),
+                        peer_id: self.local_peer_id.clone(),
                     })
                     .await;
                     self.last_broadcast = Instant::now();
@@ -667,6 +700,7 @@ mod native {
                         self.broadcast(&TopicMsg::Leave {
                             game_id: game_id.clone(),
                             nickname: self.nickname.clone(),
+                            peer_id: self.local_peer_id.clone(),
                         })
                         .await;
                     }
@@ -795,6 +829,7 @@ mod native {
                         outgoing.push(TopicMsg::Join {
                             game_id: game_id.clone(),
                             nickname: self.nickname.clone(),
+                            peer_id: self.local_peer_id.clone(),
                         });
                     }
                 }
