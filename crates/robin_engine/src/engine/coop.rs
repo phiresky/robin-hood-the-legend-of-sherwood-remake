@@ -83,6 +83,33 @@ impl EngineInner {
             self.add_detectable_for_all_npc(id, crate::element::DetectableType::Enemy);
             party.push(id);
         }
+        // Keep the portrait order and the seat-assignment order identical.
+        // Copies are appended to the entity table, but a later level or save
+        // operation can reorder `pc_ids`; relying on that incidental order
+        // lets both seats resolve to the duplicate portrait.
+        let copy_status: std::collections::HashMap<_, _> = self
+            .world
+            .pc_ids
+            .iter()
+            .copied()
+            .map(|id| {
+                let is_copy = self
+                    .get_entity(id)
+                    .and_then(Entity::pc_data)
+                    .is_some_and(|pc| pc.coop_origin.is_some());
+                (id, is_copy)
+            })
+            .collect();
+        self.world
+            .pc_ids
+            .sort_by_key(|id| copy_status.get(id).copied().unwrap_or(false));
+        party = self
+            .world
+            .pc_ids
+            .iter()
+            .copied()
+            .filter(|id| party.contains(id))
+            .collect();
         // The duplicate is cloned from the mission hero after the normal
         // single-player priority selection has opened that hero's portrait.
         // Co-op selection is seat-owned, so discard that inherited visual
