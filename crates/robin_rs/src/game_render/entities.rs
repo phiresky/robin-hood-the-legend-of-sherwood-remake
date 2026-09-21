@@ -389,7 +389,16 @@ fn render_cached_entity_sprite(
             zoom,
         );
     } else {
-        renderer.render_cached_sprite(bank_id, variant, shadow_color, shadow_level, dst_rect);
+        renderer.render_cached_sprite_subpixel(
+            bank_id,
+            variant,
+            shadow_color,
+            shadow_level,
+            placement.screen_position.0,
+            placement.screen_position.1,
+            sw as f32 * zoom,
+            sh as f32 * zoom,
+        );
     }
 
     // ── Sprite occlusion masks ──
@@ -1069,9 +1078,6 @@ pub(super) fn render_fx_entities_gpu<I>(
                 view,
                 zoom,
             );
-            let (dst_x, dst_y) = placement.screen_origin;
-
-            let dst_rect = zoomed_sprite_rect(dst_x, dst_y, sw, sh, zoom);
             if uses_pixel_fog_visibility(entity) {
                 renderer.render_cached_map_sprite(
                     bank_id,
@@ -1083,12 +1089,15 @@ pub(super) fn render_fx_entities_gpu<I>(
                     zoom,
                 );
             } else {
-                renderer.render_cached_sprite(
+                renderer.render_cached_sprite_subpixel(
                     bank_id,
                     variant,
                     shadow_color,
                     shadow_level,
-                    dst_rect,
+                    placement.screen_position.0,
+                    placement.screen_position.1,
+                    sw as f32 * zoom,
+                    sh as f32 * zoom,
                 );
             }
         }

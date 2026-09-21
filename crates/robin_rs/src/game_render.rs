@@ -362,6 +362,7 @@ pub(crate) fn map_sprite_bounds(
 struct SpritePlacement {
     world_origin: MapPoint,
     screen_origin: (i32, i32),
+    screen_position: (f32, f32),
 }
 
 /// Floor the sprite anchor in world space before zoom, then truncate screen pixels.
@@ -374,9 +375,12 @@ fn sprite_placement(
 ) -> SpritePlacement {
     let x = (position.x - center.x).floor() + offset.x;
     let y = (position.y - center.y).floor() + offset.y;
+    let smooth_x = (position.x - center.x + offset.x - view.x) * zoom;
+    let smooth_y = (position.y - center.y + offset.y - view.y) * zoom;
     SpritePlacement {
         world_origin: MapPoint::new(x, y),
         screen_origin: (((x - view.x) * zoom) as i32, ((y - view.y) * zoom) as i32),
+        screen_position: (smooth_x, smooth_y),
     }
 }
 

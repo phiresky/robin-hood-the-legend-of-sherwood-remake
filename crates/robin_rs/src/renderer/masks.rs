@@ -319,16 +319,19 @@ impl Renderer {
         });
     }
 
-    /// Queue a cached sprite as an alpha-blended GPU overlay quad.
-    /// `pub(crate)` to match the original visibility so game_render
-    /// can still reach it.
-    pub(crate) fn render_cached_sprite(
+    /// Queue a world sprite with fractional screen coordinates. Fixed-tick
+    /// entity positions are interpolated for presentation, so converting the
+    /// destination to integers here would reintroduce 25 Hz camera jitter.
+    pub(crate) fn render_cached_sprite_subpixel(
         &mut self,
         bank_id: u32,
         variant: SpriteVariant,
         shadow_color: u16,
         shadow_level: u16,
-        dst_rect: Rect,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
     ) -> bool {
         let key = SpriteCacheKey {
             bank_id,
@@ -340,9 +343,24 @@ impl Renderer {
             return false;
         };
         self.frame.queued.push(QueuedDraw {
-            dst: dst_rect,
-            uv_corners: None,
-            corners: None,
+            dst: Rect::new(
+                x as i32,
+                y as i32,
+                width.ceil().max(1.0) as u32,
+                height.ceil().max(1.0) as u32,
+            ),
+            uv_corners: Some([
+                [uv[0], uv[1]],
+                [uv[2], uv[1]],
+                [uv[0], uv[3]],
+                [uv[2], uv[3]],
+            ]),
+            corners: Some([
+                (x, y),
+                (x + width, y),
+                (x, y + height),
+                (x + width, y + height),
+            ]),
             uv,
             tint: [1.0, 1.0, 1.0, 1.0],
             operation: DrawOperation::Quad {
