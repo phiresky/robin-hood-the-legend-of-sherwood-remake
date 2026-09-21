@@ -824,6 +824,7 @@ impl MultiplayerMenuState {
                 self.mode = MenuMode::Missions;
                 self.selected = 0;
                 io.window.local_players = Default::default();
+                io.window.local_players.accept_new_devices = true;
                 self.status =
                     "Local co-op: press A on each controller to join. Choose a mission and rules."
                         .into();
@@ -892,6 +893,7 @@ impl MultiplayerMenuState {
                     }
                     self.local = false;
                     io.window.local_players.enabled = false;
+                    io.window.local_players.accept_new_devices = false;
                     self.mode = MenuMode::Games;
                     self.selected = 0;
                     self.scroll_view.reset();
@@ -961,6 +963,7 @@ impl MultiplayerMenuState {
                 }
                 if let Some(mission) = self.missions.get(self.selected) {
                     io.window.local_players.enabled = true;
+                    io.window.local_players.accept_new_devices = false;
                     self.coop.players = player_count as u8;
                     return Some(MultiplayerMenuTick::Finished(Some(MultiplayerLaunch {
                         coop: self.coop,

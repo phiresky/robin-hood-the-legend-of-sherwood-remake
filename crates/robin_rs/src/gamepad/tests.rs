@@ -588,6 +588,7 @@ fn local_join_capacity_and_reconnect_preserve_seat() {
     }
     assert_eq!(players.count(), 5);
     players.enabled = true;
+    players.accept_new_devices = true;
     players.fold(&GameEvent::GamepadRemoved { which: 2 });
     assert!(!players.devices[2].1.is_connected());
     players.fold(&GameEvent::GamepadButton {

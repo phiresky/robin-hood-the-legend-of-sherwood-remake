@@ -867,6 +867,20 @@ async fn run_mission_body(
                 return MissionOutcome::new(campaign, rng_seed, sim_config, Err(error));
             }
         }
+        if args.multiplayer.expected_players.is_some()
+            && !args.multiplayer.server
+            && args.multiplayer.connect.is_none()
+        {
+            let roster_players = window.local_players.count().max(1) as u8;
+            tracing::info!(
+                configured_players = sim_config.coop.players,
+                roster_players,
+                roster_devices = window.local_players.devices.len(),
+                keyboard_player = window.local_players.keyboard,
+                "Local co-op roster sealed for mission setup"
+            );
+            sim_config.coop.players = roster_players;
+        }
         let outcome = run_mission_with_seed(
             window,
             callbacks,
