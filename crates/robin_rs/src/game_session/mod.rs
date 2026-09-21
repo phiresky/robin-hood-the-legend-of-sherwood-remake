@@ -811,15 +811,10 @@ async fn run_mission_body(
             .multiplayer
             .expected_players
             .expect("checked player count");
-        // Local co-op membership is maintained by the window while the
-        // mission is being entered. Use that live roster for the local route;
-        // the launch payload can be stale when a second controller joined on
-        // the final lobby frame.
-        let players = if !args.multiplayer.server && args.multiplayer.connect.is_none() {
-            window.local_players.count().max(1) as u32
-        } else {
-            expected_players
-        };
+        // The launch payload is the lobby's authoritative roster snapshot.
+        // The window keeps physical devices alive for reconnects, but its
+        // device state can change while the loading screen is being entered.
+        let players = expected_players;
         if !(1..=5).contains(&players) {
             return MissionOutcome::new(
                 campaign,
@@ -866,20 +861,6 @@ async fn run_mission_body(
             Err(error) => {
                 return MissionOutcome::new(campaign, rng_seed, sim_config, Err(error));
             }
-        }
-        if args.multiplayer.expected_players.is_some()
-            && !args.multiplayer.server
-            && args.multiplayer.connect.is_none()
-        {
-            let roster_players = window.local_players.count().max(1) as u8;
-            tracing::info!(
-                configured_players = sim_config.coop.players,
-                roster_players,
-                roster_devices = window.local_players.devices.len(),
-                keyboard_player = window.local_players.keyboard,
-                "Local co-op roster sealed for mission setup"
-            );
-            sim_config.coop.players = roster_players;
         }
         let outcome = run_mission_with_seed(
             window,

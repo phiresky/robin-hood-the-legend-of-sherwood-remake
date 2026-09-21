@@ -62,9 +62,10 @@ impl Engine {
         })
     }
 
-    /// Admit the initial local player without advancing the simulation. This
-    /// also consumes startup effects at the canonical frame-zero boundary.
-    pub fn connect_initial_seat(
+    /// Apply a seat connection at the startup boundary without advancing the
+    /// hourglass. This is the same `ConnectSeat` command used during normal
+    /// gameplay; callers use it only when constructing a mission snapshot.
+    pub fn connect_seat(
         &mut self,
         assets: &LevelAssets,
         player_id: PlayerId,

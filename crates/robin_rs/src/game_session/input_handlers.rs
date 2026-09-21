@@ -35,6 +35,28 @@ pub(super) fn handle_gamepad_events(
         host.transport.local_seat(),
         threaded_input,
     );
+
+    // A normal single-player mission starts with a free camera.  The first
+    // physical pad input should put it into the same locker/follow mode as
+    // the original gamepad path, so direct movement keeps the controlled PC
+    // in view.  D-pad scrolling is dispatched afterwards and deliberately
+    // clears this follow target when the player explicitly pans the camera.
+    if host.frontend.local_player_count == 0
+        && device.has_input()
+        && !manager.engine.locker_active()
+        && let Some(&pc) = manager
+            .engine
+            .hero_selection(host.transport.local_seat())
+            .first()
+    {
+        dispatch_local_command(
+            &host.transport,
+            frame_cmds,
+            &PlayerCommand::SelectFollowElement {
+                entity_id: Some(pc),
+            },
+        );
+    }
     for cmd in &gamepad_frame.viewport {
         match cmd {
             ViewportCommand::Scroll(dir) => apply_local_viewport_scroll(host, *dir),

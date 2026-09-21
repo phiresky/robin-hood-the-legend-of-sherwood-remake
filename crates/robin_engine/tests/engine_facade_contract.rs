@@ -201,7 +201,7 @@ fn engine_public_mutation_surface_is_an_exact_capability_allowlist() {
         // Same transaction and capability; only the unused hash is omitted.
         "advance_frame_without_hash",
         // Shared startup submits ordinary frame inputs through advance_frame.
-        "connect_initial_seat",
+        "connect_seat",
         "register_mission_peasant_names",
         "host_console",
         "finish_mission_bootstrap",

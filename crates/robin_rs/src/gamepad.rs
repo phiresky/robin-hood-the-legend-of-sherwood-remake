@@ -170,6 +170,20 @@ impl GamepadDeviceInput {
     pub fn is_connected(&self) -> bool {
         self.active.is_some()
     }
+
+    /// Whether the selected controller has any non-neutral physical input.
+    /// This is kept separate from generated commands because the right stick
+    /// and a held button can be meaningful input even when they do not emit a
+    /// simulation command on every frame.
+    pub fn has_input(&self) -> bool {
+        let state = &self.state.current;
+        state.x != 0
+            || state.y != 0
+            || state.rz != AXIS_CENTER
+            || state.sliders.iter().any(|&value| value != AXIS_CENTER)
+            || state.povs.iter().any(|&value| value != u32::MAX)
+            || state.buttons.values().any(|&pressed| pressed)
+    }
     /// Physical device state outlives missions; gesture and QA history do not.
     /// Seed both edge samples from held input so a menu-held button cannot
     /// become a synthetic press when the next mission starts.

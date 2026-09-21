@@ -1534,12 +1534,28 @@ pub(super) fn setup_local_seat_and_multiplayer_snapshot(
 
     let nickname = args.config.cli.mp_nickname.clone();
     engine
-        .connect_initial_seat(assets, host.transport.local_seat(), nickname)
+        .connect_seat(assets, host.transport.local_seat(), nickname)
         .expect("bootstrap ConnectSeat admission");
     tracing::info!(
         seat = ?host.transport.local_seat(),
         "bootstrap ConnectSeat applied to local engine",
     );
+
+    // A local co-op launch has a complete roster before the mission starts.
+    // Admit those seats at the same frame-zero boundary as the host seat so
+    // co-op party construction and the initial replay snapshot see every
+    // player. Runtime input still owns disconnect/reconnect handling.
+    if host.transport.net().is_none()
+        && let Some(expected_players) = args.multiplayer.expected_players
+    {
+        for seat in 1..expected_players.min(robin_engine::coop::MAX_PLAYERS as u32) {
+            let player_id = robin_engine::player_command::PlayerId(seat as u8);
+            engine
+                .connect_seat(assets, player_id, format!("Player {}", seat + 1))
+                .expect("bootstrap local co-op ConnectSeat admission");
+            tracing::info!(?player_id, "bootstrap local co-op seat connected");
+        }
+    }
     if let Some(net) = host.transport.net() {
         match net
             .publish_initial_snapshot(0, engine)

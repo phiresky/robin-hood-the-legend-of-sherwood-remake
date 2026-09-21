@@ -361,7 +361,7 @@ mod tests {
             .register_mission_peasant_names(&reference.assets, &mut std::array::from_fn(|_| None))
             .unwrap();
         native
-            .connect_initial_seat(
+            .connect_seat(
                 &reference.assets,
                 robin_engine::player_command::PlayerId::HOST,
                 String::new(),

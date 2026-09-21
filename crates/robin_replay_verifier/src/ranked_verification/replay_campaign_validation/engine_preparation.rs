@@ -83,7 +83,7 @@ impl ApprovedReplayCampaignContent {
         engine
             .register_mission_peasant_names(assets, &mut names)
             .and_then(|()| {
-                engine.connect_initial_seat(
+                engine.connect_seat(
                     assets,
                     robin_engine::player_command::PlayerId::HOST,
                     String::new(),
