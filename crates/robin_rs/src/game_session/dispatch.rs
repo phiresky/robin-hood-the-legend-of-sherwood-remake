@@ -1,7 +1,7 @@
 //! Local command dispatch: stages player commands into the authoritative
 //! frame transaction or routes them to the multiplayer transport.
 
-use crate::host::{Host, HostTransport};
+use crate::host::{Host, HostTransport, LocalFollowCamera};
 use robin_engine::coordinates::ScreenVec;
 use robin_engine::engine as engine_api;
 use robin_engine::player_command::{FrameCommands, PlayerCommand};
@@ -77,7 +77,42 @@ pub(super) fn apply_local_viewport_scroll(host: &mut Host, dir: engine_api::Scro
         engine_api::ScrollDirection::Right => ScreenVec::new(STEP, 0.0),
     };
     host.frontend.viewport.scroll_by(delta);
+    host.frontend
+        .local_follow_cameras
+        .remove(&host.transport.local_seat().0);
     host.frontend.input.cancel_multi_selection();
+}
+
+/// Change the player-controlled follow camera without entering the
+/// deterministic command stream. Mission-script camera locks use a separate
+/// engine-owned path.
+pub(crate) fn set_local_follow_target(
+    host: &mut Host,
+    engine: &robin_engine::engine::Engine,
+    target: Option<robin_engine::element::EntityId>,
+) {
+    let seat = host.transport.local_seat().0;
+    let Some(target) = target else {
+        host.frontend.local_follow_cameras.remove(&seat);
+        return;
+    };
+    let Some(entity) = engine.get_entity(target) else {
+        return;
+    };
+    let point = entity.element_data().position_map();
+    let viewport = &mut host.frontend.viewport;
+    let mut anchor = viewport.map_to_screen_unclamped(point);
+    if anchor.x < 0.0
+        || anchor.y < 0.0
+        || anchor.x > viewport.screen_size.x
+        || anchor.y > viewport.screen_size.y - robin_engine::engine::PANNEL_HEIGHT
+    {
+        viewport.center_on_point(point);
+        anchor = viewport.map_to_screen_unclamped(point);
+    }
+    host.frontend
+        .local_follow_cameras
+        .insert(seat, LocalFollowCamera { target, anchor });
 }
 
 #[cfg(test)]

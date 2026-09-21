@@ -37,7 +37,8 @@ mod frontend;
 pub(crate) use frontend::{FrontendPreferenceEffects, QueueStripAnimations};
 pub use frontend::{
     FrontendPreferences, FrontendPresentation, FrontendResources, HostFrontend, HostTitbitPreview,
-    InteractionReset, ItemEffectPreview, PrintScreenRequest, QueueStripAnimation,
+    InteractionReset, ItemEffectPreview, LocalFollowCamera, PrintScreenRequest,
+    QueueStripAnimation,
 };
 pub(crate) use frontend::{HostContextSnapshot, QueueStripIdentity};
 mod effects;

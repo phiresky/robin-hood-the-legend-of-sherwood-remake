@@ -70,7 +70,9 @@ use debriefing::{
     SettledDebriefingOutcome, final_debriefing_outcome_from_replay, final_debriefing_result,
 };
 use dispatch::apply_local_viewport_scroll;
-pub(crate) use dispatch::{dispatch_local_command, dispatch_local_commands};
+pub(crate) use dispatch::{
+    dispatch_local_command, dispatch_local_commands, set_local_follow_target,
+};
 use frame_simulate::{FrameSimulationFlags, FrameSimulationOutcome, InteractiveFrameSimulation};
 use input_handlers::{handle_console_overlay_events, handle_gamepad_events, handle_hold_to_rewind};
 use interactive::{

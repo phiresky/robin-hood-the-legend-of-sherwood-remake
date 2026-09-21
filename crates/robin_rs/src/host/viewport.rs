@@ -139,6 +139,18 @@ impl ViewportState {
         self.clip_view();
     }
 
+    /// Place a host-local follow camera so a map point remains at a chosen
+    /// screen anchor. This is presentation state and must not feed the
+    /// deterministic director camera.
+    pub fn follow_map_point(&mut self, point: MapPoint, anchor: ScreenPoint) {
+        self.old_view_position = self.view_position;
+        self.view_position = MapPoint::new(
+            point.x - anchor.x / self.zoom_factor,
+            point.y - anchor.y / self.zoom_factor,
+        );
+        self.clip_view();
+    }
+
     pub fn zoom_by(&mut self, factor: f32, mouse_screen: Option<ScreenPoint>) {
         let next = (self.zoom_factor * factor).clamp(0.5, 2.0);
         if (next - self.zoom_factor).abs() < f32::EPSILON {

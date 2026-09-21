@@ -277,10 +277,7 @@ fn dispatch_pre_tick_pointer_commands(
                 .engine
                 .find_focusable_npc(assets, mouse_map, engine_element::Focus::View)
     {
-        let cmd = PlayerCommand::SelectFollowElement {
-            entity_id: Some(id),
-        };
-        dispatch_local_command(&host.transport, &mut frame.stage_commands(), &cmd);
+        set_local_follow_target(host, &manager.engine, Some(id));
     }
 
     let bow_armed = manager

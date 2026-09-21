@@ -176,10 +176,11 @@ pub struct CameraState {
     pub displacement: MapVec,
     pub displacement_counter: u16,
 
-    /// Snapshot of the followed element's screen-space position when
-    /// locker mode engaged (or was last retargeted).  The director work
-    /// loop tries to keep the target at this exact screen point every
-    /// frame.  Populated by `select_follow_element`. Not strictly
+    /// Snapshot of the followed element's screen-space position when the
+    /// mission director's `LockCameraOn` engaged (or was last retargeted).
+    /// The director work loop tries to keep the target at this exact screen
+    /// point every frame. Player-controlled follow cameras are host-local and
+    /// do not use this field. Not strictly
     /// serialization state, but while it lives on `EngineInner` it
     /// participates in serde/hash.
     pub position_saved: ScreenPoint,

@@ -405,6 +405,21 @@ impl FixedTickRender<'_, '_> {
             let render_engine = native_refresh_interpolation
                 .engine()
                 .unwrap_or_else(|| engine.presentation_view());
+            if let Some(follow) = host
+                .frontend
+                .local_follow_cameras
+                .get(&host.local_seat.0)
+                .copied()
+                && let Some(entity) = render_engine.get_entity(follow.target)
+            {
+                // Player locker mode is host-local. Place the visible camera
+                // from the interpolated target so the target, animated
+                // scenery, and map share one refresh sample.
+                let target_position = entity.element_data().position_map();
+                host.frontend
+                    .viewport
+                    .follow_map_point(target_position, follow.anchor);
+            }
             host.frontend.presentation.draw_order = render_engine.compute_display_order();
             sync_render_camera(host.frontend);
             if host.frontend.diagnostics().info_displayed() && resources.hud_fonts.is_some() {

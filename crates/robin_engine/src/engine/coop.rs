@@ -113,8 +113,6 @@ impl EngineInner {
             assigned_party.push(assigned);
             self.players.seats[index].assigned_character = Some(assigned);
             self.players.seats[index].selection = vec![assigned];
-            self.players.seats[index].follow_element = Some(assigned);
-            self.players.seats[index].locker_active = true;
         }
     }
 

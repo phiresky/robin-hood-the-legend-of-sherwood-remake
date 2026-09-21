@@ -133,10 +133,11 @@ impl SplitScreen {
 
     /// Rebuild the camera geometry for a refresh-rate presentation sample.
     ///
-    /// Group membership and the smoothed fixed-tick camera remain stable, but
-    /// each member's movement since the last tick is applied to its view.
-    /// This keeps the split camera and interpolated world entities on the same
-    /// sample without changing deterministic grouping or camera smoothing.
+    /// Group membership remains stable, while each camera center is derived
+    /// from the same refresh-rate positions used to render the world. The
+    /// fixed-tick update still owns grouping and hysteresis; this presentation
+    /// pass prevents a fixed-tick camera center from lagging interpolated
+    /// entities by a fractional frame.
     pub fn presentation_views(
         &self,
         players: &[(u8, [f32; 2])],
@@ -151,7 +152,7 @@ impl SplitScreen {
             .views
             .iter()
             .map(|view| {
-                let mut center = view.center;
+                let mut center = [0.0; 2];
                 let mut count = 0u32;
                 for &seat in &view.members {
                     let Some(current) = players
@@ -161,16 +162,15 @@ impl SplitScreen {
                     else {
                         continue;
                     };
-                    let Some(previous) = self.positions.get(seat as usize) else {
-                        continue;
-                    };
-                    center[0] += current[0] - previous[0];
-                    center[1] += current[1] - previous[1];
+                    center[0] += current[0];
+                    center[1] += current[1];
                     count += 1;
                 }
                 if count > 0 {
-                    center[0] = view.center[0] + (center[0] - view.center[0]) / count as f32;
-                    center[1] = view.center[1] + (center[1] - view.center[1]) / count as f32;
+                    center[0] /= count as f32;
+                    center[1] /= count as f32;
+                } else {
+                    center = view.center;
                 }
                 center
             })

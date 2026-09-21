@@ -234,6 +234,10 @@ pub struct HostFrontend {
     pub local_disconnected: std::collections::BTreeSet<u8>,
     pub local_cursors: std::collections::BTreeMap<u8, [f32; 2]>,
     pub split_screen: crate::split_screen::SplitScreen,
+    /// Per-seat player-controlled follow cameras. Mission-script director
+    /// locks remain in the deterministic engine; these targets only affect
+    /// this host's visible viewport.
+    pub local_follow_cameras: std::collections::BTreeMap<u8, LocalFollowCamera>,
     pub peer_rtt: std::collections::BTreeMap<u8, (u32, u32)>,
     pub pending_pings: std::collections::BTreeMap<u8, u32>,
     pub last_ping_ms: u32,
@@ -268,6 +272,12 @@ pub struct HostFrontend {
     /// 40 ms frame target by ten unless console or engine fast-forward is active.
     /// Neither snapshot state nor deterministic input; survives save restoration.
     pub slow_motion: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct LocalFollowCamera {
+    pub target: EntityId,
+    pub anchor: ScreenPoint,
 }
 
 /// Mission-owned decoded and uploaded resources. Snapshot restoration deliberately
@@ -442,6 +452,7 @@ impl HostFrontend {
     /// handles, camera pose, preferences and diagnostics history remain live.
     pub(super) fn restore_snapshot(&mut self) {
         self.reset_interaction(InteractionReset::SnapshotRestored);
+        self.local_follow_cameras.clear();
         self.diagnostics.clear_console_output();
         self.pending_print_screen = None;
     }

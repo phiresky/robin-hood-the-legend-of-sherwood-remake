@@ -1,6 +1,6 @@
 //! Gamepad / hold-to-rewind / console-overlay per-frame input handlers.
 
-use super::{apply_local_viewport_scroll, dispatch_local_command};
+use super::{apply_local_viewport_scroll, dispatch_local_command, set_local_follow_target};
 use crate::console_overlay::ConsoleOverlay;
 use crate::gamepad::{GamepadDeviceInput, QaEvent, ViewportCommand};
 use crate::gfx_types::GameEvent;
@@ -43,19 +43,16 @@ pub(super) fn handle_gamepad_events(
     // clears this follow target when the player explicitly pans the camera.
     if host.frontend.local_player_count == 0
         && device.has_input()
-        && !manager.engine.locker_active()
+        && !host
+            .frontend
+            .local_follow_cameras
+            .contains_key(&host.transport.local_seat().0)
         && let Some(&pc) = manager
             .engine
             .hero_selection(host.transport.local_seat())
             .first()
     {
-        dispatch_local_command(
-            &host.transport,
-            frame_cmds,
-            &PlayerCommand::SelectFollowElement {
-                entity_id: Some(pc),
-            },
-        );
+        set_local_follow_target(host, &manager.engine, Some(pc));
     }
     for cmd in &gamepad_frame.viewport {
         match cmd {
@@ -75,7 +72,11 @@ pub(super) fn handle_gamepad_events(
         }
     }
     for cmd in &gamepad_frame.cmds {
-        dispatch_local_command(&host.transport, frame_cmds, cmd);
+        if let PlayerCommand::SelectFollowElement { entity_id } = cmd {
+            set_local_follow_target(host, &manager.engine, *entity_id);
+        } else {
+            dispatch_local_command(&host.transport, frame_cmds, cmd);
+        }
     }
     if let Some(qa_event) = gamepad_frame.qa {
         let cmd = match qa_event {
