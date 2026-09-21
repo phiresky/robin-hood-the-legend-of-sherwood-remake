@@ -186,12 +186,12 @@ pub fn gamepad_direction(event: &GameEvent) -> Option<crate::gfx_types::Keycode>
             axis: GamepadAxis::LeftStickY,
             value,
             ..
-        } if *value < -16_000 => Some(crate::gfx_types::Keycode::Up),
+        } if *value < -16_000 => Some(crate::gfx_types::Keycode::Down),
         GameEvent::GamepadAxis {
             axis: GamepadAxis::LeftStickY,
             value,
             ..
-        } if *value > 16_000 => Some(crate::gfx_types::Keycode::Down),
+        } if *value > 16_000 => Some(crate::gfx_types::Keycode::Up),
         _ => None,
     }
 }
