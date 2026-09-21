@@ -250,6 +250,13 @@ impl PauseMenu {
         transform: MenuTransform,
         audio: ScreenAudio<'_>,
     ) -> PauseMenuOutcome {
+        if let Some(direction) = super::widget_bridge::gamepad_direction(event) {
+            match direction {
+                Keycode::Up => self.move_keyboard_selection(-1),
+                Keycode::Down => self.move_keyboard_selection(1),
+                _ => {}
+            }
+        }
         // Keyboard shortcuts (focus-manager behaviour). The pause menu has no
         // window-close or Tab binding of its own.
         match ScreenKey::from_event(event) {

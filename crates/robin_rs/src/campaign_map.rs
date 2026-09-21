@@ -1016,6 +1016,27 @@ impl CampaignMapModalState {
 
         self.sync_scroll_views(false);
         for event in events {
+            // Campaign manager predates the shared modal widget bridge, so
+            // normalize controller navigation here before its keyboard-only
+            // event routing. This also makes B consistently close details or
+            // leave the manager.
+            let event = match crate::ingame_menu::widget_bridge::gamepad_direction(&event) {
+                Some(keycode) => GameEvent::KeyDown {
+                    keycode,
+                    physical_key: None,
+                },
+                None => match event {
+                    GameEvent::GamepadButton {
+                        button: 1,
+                        pressed: true,
+                        ..
+                    } => GameEvent::KeyDown {
+                        keycode: Keycode::Escape,
+                        physical_key: None,
+                    },
+                    event => event,
+                },
+            };
             #[cfg(not(target_arch = "wasm32"))]
             if self.registration_open() && !matches!(event, GameEvent::Quit) {
                 self.input.update_from_event(&event, transform);

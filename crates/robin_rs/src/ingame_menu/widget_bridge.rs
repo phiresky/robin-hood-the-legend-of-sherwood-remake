@@ -172,6 +172,18 @@ pub fn gamepad_direction(event: &GameEvent) -> Option<crate::gfx_types::Keycode>
             pressed: true,
             ..
         } => Some(crate::gfx_types::Keycode::Right),
+        GameEvent::GamepadAxis { axis: 0, value, .. } if *value < -16_000 => {
+            Some(crate::gfx_types::Keycode::Left)
+        }
+        GameEvent::GamepadAxis { axis: 0, value, .. } if *value > 16_000 => {
+            Some(crate::gfx_types::Keycode::Right)
+        }
+        GameEvent::GamepadAxis { axis: 1, value, .. } if *value < -16_000 => {
+            Some(crate::gfx_types::Keycode::Up)
+        }
+        GameEvent::GamepadAxis { axis: 1, value, .. } if *value > 16_000 => {
+            Some(crate::gfx_types::Keycode::Down)
+        }
         _ => None,
     }
 }
