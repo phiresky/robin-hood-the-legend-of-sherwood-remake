@@ -78,7 +78,7 @@ const check = (condition: unknown, message: string) => {
   if (!condition) throw new Error(message);
 };
 const viewport = new EditorViewport({
-  document: () => current,
+  document: doc,
   selection: () => null,
   level: () => null,
   showObstacles: () => false,
@@ -315,6 +315,26 @@ async function run() {
   await pause();
   check(!document.querySelector('div[style*="100000"]'), "Canceled marquee must be removed");
   await clickSpline("river");
+  const riverBefore = current.splines!.find((path) => path.id === "river")!;
+  const riverHandle = project(handles().find((handle) => handle.userData.splinePoint === 1)!);
+  pointer("pointerdown", riverHandle);
+  pointer("pointermove", { clientX: riverHandle.clientX + 25, clientY: riverHandle.clientY + 10 });
+  pointer("pointerup", { clientX: riverHandle.clientX + 25, clientY: riverHandle.clientY + 10 });
+  await pause();
+  const riverAfter = current.splines!.find((path) => path.id === "river")!;
+  check(
+    riverAfter.points[1]![0] !== riverBefore.points[1]![0],
+    "River drag must commit the new position",
+  );
+  const renderedRiver = (
+    internals.splines as unknown as {
+      views: Map<string, { path: LevelSpline }>;
+    }
+  ).views.get("river")!;
+  check(
+    JSON.stringify(renderedRiver.path.points) === JSON.stringify(riverAfter.points),
+    "River release must not restore stale geometry after committing the new position",
+  );
   const done = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(
     (button) => button.textContent === "Done editing",
   )!;

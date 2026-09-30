@@ -2006,6 +2006,9 @@ export class EditorViewport {
         if (this.orbit) this.orbit.enabled = true;
       }
       this.updateSplinePreview(() => {
+        // Clear against the pre-commit document. Signal publication may lag behind
+        // the commit's synchronous view update, so cleanup afterward can restore stale geometry.
+        this.previewSpline(null);
         if (event.type === "pointerup" && this.splineMode?.path.id === active.mode.path.id) {
           if (active.index === null) {
             if (!active.moved && this.splineMode.drawing) active.mode.append(active.point);
@@ -2020,7 +2023,6 @@ export class EditorViewport {
             } else active.mode.move(active.index, active.point);
           } else active.mode.selectPoint(active.index);
         }
-        this.previewSpline(null);
       });
     };
     canvas.addEventListener(
