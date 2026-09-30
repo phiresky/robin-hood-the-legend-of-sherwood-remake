@@ -382,6 +382,17 @@ test("Paths browsing exposes every spline without enabling other paths' point ha
     ),
     new Set(["river", "other"]),
   );
+  const handles = layer.controls.children.filter(
+    (child) => child instanceof THREE.Mesh && child.geometry instanceof THREE.SphereGeometry,
+  ) as THREE.Mesh<THREE.SphereGeometry>[];
+  assert.equal(handles.length, river.points.length + other.points.length);
+  const inactive = handles.find((handle) => handle.userData.splinePath === "other")!;
+  const handleRay = new THREE.Raycaster(
+    inactive.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(10, 0, 100)),
+    new THREE.Vector3(0, 0, -1),
+  );
+  assert.equal(layer.hitPath(handleRay), "other", "Visible points select their own path");
+  assert.equal(layer.hitHandle(handleRay), null, "Inactive points must not drag the active path");
   const wide = layer.controls.children.filter(
     (child) => "isLine2" in child,
   ) as import("three/addons/lines/Line2.js").Line2[];

@@ -195,12 +195,11 @@ export class SplineLayer {
         this.controls.add(line);
       }
     }
-    if (!selected) return;
     path.points.forEach((point, index) => {
       const handle = new THREE.Mesh(
-        new THREE.SphereGeometry(9, 10, 8),
+        new THREE.SphereGeometry(12, 10, 8),
         new THREE.MeshBasicMaterial({
-          color: index === this.mode?.point ? 0xffcd59 : 0x77e4e8,
+          color: selected ? (index === this.mode?.point ? 0xffcd59 : 0x77e4e8) : 0x96a8b8,
           transparent: true,
           depthTest: false,
           depthWrite: false,
@@ -209,7 +208,8 @@ export class SplineLayer {
       handle.userData.noSunShadow = true;
       handle.position.set(...gameToScene(this.camera, ...point));
       handle.position.z += 4;
-      handle.userData.splinePoint = index;
+      handle.userData.splinePath = path.id;
+      if (selected) handle.userData.splinePoint = index;
       handle.renderOrder = 103;
       this.controls.add(handle);
     });
