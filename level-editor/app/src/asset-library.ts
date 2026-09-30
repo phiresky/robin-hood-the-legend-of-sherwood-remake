@@ -9,6 +9,11 @@ const refinedLevels = new Set<string>(REFINED_LEVELS.map((name) => name.toLowerC
 
 export const ASSET_DRAG_TYPE = "application/x-rle-asset";
 
+export function isGameplayHelper(entry: ProjectionAssetEntry): boolean {
+  const parts = entry.editor?.parts;
+  return !!parts?.length && parts.every((part) => part.gameplay_only === true);
+}
+
 /** Published metadata takes precedence; older catalogs remain browsable. */
 export function assetType(entry: ProjectionAssetEntry): string {
   if (entry.editor_usage === "map-background") return "Background";
@@ -41,10 +46,12 @@ export function filterAssets(
   search: string,
   type: string,
   source: string,
+  showHelpers = false,
 ) {
   const terms = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
   return entries.filter(
     (entry) =>
+      (showHelpers || !isGameplayHelper(entry)) &&
       (!type || assetType(entry) === type) &&
       (!source ||
         (source === REFINED_LEVELS_FILTER

@@ -9,6 +9,7 @@ import {
   assetType,
   assetTags,
   filterAssets,
+  isGameplayHelper,
 } from "./asset-library";
 
 export default function AssetLibrary(props: {
@@ -29,6 +30,7 @@ export default function AssetLibrary(props: {
   const [search, setSearch] = createSignal("");
   const [type, setType] = createSignal("");
   const [source, setSource] = createSignal(REFINED_LEVELS_FILTER);
+  const [showHelpers, setShowHelpers] = createSignal(false);
   const renderer = props.renderer ?? new AssetPreviewRenderer();
   onCleanup(() => {
     if (!props.renderer) renderer.dispose();
@@ -40,9 +42,12 @@ export default function AssetLibrary(props: {
       setType("");
       setSource(REFINED_LEVELS_FILTER);
       setSearch("");
+      setShowHelpers(false);
     },
   );
-  const filtered = () => filterAssets(props.entries, search(), type(), source());
+  const visibleEntries = () =>
+    props.entries.filter((entry) => showHelpers() || !isGameplayHelper(entry));
+  const filtered = () => filterAssets(props.entries, search(), type(), source(), showHelpers());
   return (
     <aside
       class="shared-library"
@@ -90,7 +95,7 @@ export default function AssetLibrary(props: {
                   onChange={(event) => setType(event.currentTarget.value)}
                 >
                   <option value="">All types</option>
-                  <For each={[...new Set(props.entries.map(assetType))].sort()}>
+                  <For each={[...new Set(visibleEntries().map(assetType))].sort()}>
                     {(value) => <option value={value}>{value}</option>}
                   </For>
                 </select>
@@ -108,6 +113,17 @@ export default function AssetLibrary(props: {
                     {(value) => <option value={value}>{value}</option>}
                   </For>
                 </select>
+              </label>
+              <label class="library-helper-toggle">
+                <input
+                  type="checkbox"
+                  checked={showHelpers()}
+                  onChange={(event) => {
+                    setShowHelpers(event.currentTarget.checked);
+                    setType("");
+                  }}
+                />
+                Show gameplay helpers
               </label>
             </>
           }

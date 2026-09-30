@@ -2051,3 +2051,7 @@ cutouts aligned with terrain instead of rounding each piece separately.
   the complete asset gameplay catalog and verifies model chunks before loading them.
   Texture baking now repairs collapsed UV charts, fits packed layouts into one tile,
   and includes retained meshes outside the scene hierarchy.
+
+- The asset library hides non-rendering gameplay helpers by default. Enable
+  “Show gameplay helpers” to browse lighting regions, navigation frames and similar
+  metadata assets alongside the visible scenery.
