@@ -202,7 +202,7 @@ export class SplineLayer {
     if (!showPoints) return;
     path.points.forEach((point, index) => {
       const handle = new THREE.Mesh(
-        new THREE.SphereGeometry(16, 10, 8),
+        new THREE.SphereGeometry(24, 10, 8),
         new THREE.MeshBasicMaterial({
           color: selected
             ? (this.mode?.selectedPoints ?? [this.mode?.point]).includes(index)
