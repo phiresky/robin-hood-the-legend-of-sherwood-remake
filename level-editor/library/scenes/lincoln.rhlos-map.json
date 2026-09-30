@@ -507,7 +507,7 @@
       "model": "3d-assets/lincoln/lincoln-southwest-cliff-lower-ledges/model.glb",
       "model_sha256": "4828c255bd9f0a0945401bdaba649a4e3daabc0ba41745041f831b92093a707c",
       "descriptor": "3d-assets/lincoln/lincoln-southwest-cliff-lower-ledges/asset.json",
-      "descriptor_sha256": "7ed748b6abd45cbb5223dd3d3bd5f0a0ef36f132abdd42a57c44f1f67698a8e6",
+      "descriptor_sha256": "1ed4cf3d67eb1bffe5a5f310484df72922f8ca899d3a0bae36480bab83793aeb",
       "id": "lincoln-southwest-cliff-lower-ledges"
     },
     {
@@ -640,7 +640,7 @@
       "model": "3d-assets/lincoln/lincoln-village-west-cottage/model.glb",
       "model_sha256": "5b77cfa1cf89b205536911203ce6b824db1af69d7d8277729a78c0d8c11d5ffc",
       "descriptor": "3d-assets/lincoln/lincoln-village-west-cottage/asset.json",
-      "descriptor_sha256": "a78cce24a50f502fd497067cf33ae807b1dd1a20b532cb35ab691c2bc5930649",
+      "descriptor_sha256": "e51f0283c0f59755cd4fa69535c170cd9ac859f5a01878b8038039d4db4523f2",
       "id": "lincoln-village-west-cottage"
     },
     {

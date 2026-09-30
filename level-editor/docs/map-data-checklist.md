@@ -1,7 +1,7 @@
 # Map data: editor → game
 
-Latest mask inventory: **2,946 unrecovered records** after the southwest-bank and
-south-hall publication below. Earlier batch totals are historical snapshots.
+Latest mask inventory: **2,943 unrecovered records** after the Lincoln cliff and
+cottage publication below. Earlier batch totals are historical snapshots.
 
 Compilation reads **placed assets and the editor scene only**. One-time recovery
 from existing levels may populate asset-local metadata; exporting never reads
@@ -3258,3 +3258,27 @@ Recipes are in `refinement/catalogs/leicester-masks.json`; recovery evidence is
 native fixtures are under `work/map-compile/leicester-bank-hall-mask-publication`.
 The southeast manor candidate remains deferred because its proposed receiving
 anchor did not pass the elevation check; no definition was published for it.
+
+### Published Lincoln cliff and cottage masks
+
+Lincoln's southwest cliff lower ledges now own view masks 62 and 64 (2,230 and
+3,295 pixels); the village west cottage owns projectile mask 92 (351 pixels).
+All 5,876 covered pixels match exactly. Recovery produces 16,346 asset-local
+triangles from the pinned meshes. Neither asset has appearance controls, and
+these masks have no obstacle links or mask-state references. Ground receiving
+anchors have a four-unit interior margin at the reviewed placement; projectile
+thresholds retain the world XY datum.
+
+Baseline and independent one-pixel eastward moves retain exact coverage and
+rules. Other baseline gameplay geometry and compile warnings are unchanged.
+Rust constructs all three exports with 62 movement areas, 541 sight obstacles,
+89 doors, 10 jump pairs and 132 elevation boundaries. All ten library scenes
+reopen with valid pins. Only two Lincoln descriptor references change; placements
+and user ZIPs remain unchanged. Full traversal, arbitrary rearrangements and
+rendered parity remain unverified.
+
+The recipes are in `refinement/catalogs/lincoln-masks.json`. Recovery evidence is
+`work/map-compile/lincoln-next-static-mask-review.json`; publication snapshots and
+native fixtures are under `work/map-compile/lincoln-static-mask-publication`.
+The bailey cottage candidate 169 remains unpublished: mesh coverage passes, but
+the proposed receiving anchor is too far away to accept without further review.
