@@ -1,3 +1,4 @@
+import LibraryBrowser from "./LibraryBrowser";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import type { MapCamera } from "@rle/shared";
 import { MissionEntities } from "./mission.ts";
@@ -150,19 +151,16 @@ export default function MissionCharacterChoices(props: {
     );
   return (
     <div class="mission-character-choices">
-      <label>
-        Find character
-        <input
-          type="search"
-          value={search()}
-          onInput={(event) => setSearch(event.currentTarget.value)}
-        />
-      </label>
-      <div
-        class="asset-grid"
-        role="group"
-        aria-label="Character profiles"
-        style={{ "max-height": "360px", overflow: "auto" }}
+      <LibraryBrowser
+        search={search()}
+        onSearch={setSearch}
+        searchLabel="Find character"
+        placeholder="Search characters or filenames…"
+        label="Character profiles"
+        maxHeight="360px"
+        summary={`${filtered().length} of ${props.profiles.length} characters`}
+        empty={!filtered().length}
+        emptyMessage="No matching characters."
       >
         <For each={filtered()}>
           {(profile) => (
@@ -175,10 +173,7 @@ export default function MissionCharacterChoices(props: {
             />
           )}
         </For>
-      </div>
-      <Show when={!filtered().length}>
-        <p class="hint">No matching characters.</p>
-      </Show>
+      </LibraryBrowser>
     </div>
   );
 }

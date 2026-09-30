@@ -1,3 +1,4 @@
+import LibraryBrowser from "./LibraryBrowser";
 import { For, Show, createSignal, onCleanup } from "solid-js";
 import type { ProjectionAssetEntry } from "@rle/shared";
 import AssetPreview, { AssetPreviewRenderer } from "./AssetPreview";
@@ -42,34 +43,42 @@ export default function AssetPickerDialog(props: {
           ×
         </button>
       </div>
-      <div class="asset-picker-filters">
-        <input
-          aria-label="Search assets"
-          placeholder="Search…"
-          value={query()}
-          onInput={(event) => setQuery(event.currentTarget.value)}
-        />
-        <select
-          aria-label="Source map"
-          value={map()}
-          onChange={(event) => setMap(event.currentTarget.value)}
-        >
-          <option value="">All maps</option>
-          <For each={[...new Set(props.entries.map((entry) => entry.source_map))].sort()}>
-            {(name) => <option value={name}>{name}</option>}
-          </For>
-        </select>
-      </div>
-      <Show when={props.emptyLabel}>
-        <button class="asset-picker-none" onClick={() => props.onSelect("")}>
-          {props.emptyLabel}
-        </button>
-      </Show>
-      <div class="asset-grid">
+      <LibraryBrowser
+        search={query()}
+        onSearch={setQuery}
+        searchLabel="Search assets"
+        label={props.title}
+        summary={`${entries().length} of ${props.entries.length} assets`}
+        empty={!entries().length}
+        emptyMessage="No matching assets."
+        filters={
+          <label>
+            Source map
+            <select
+              aria-label="Source map"
+              value={map()}
+              onChange={(event) => setMap(event.currentTarget.value)}
+            >
+              <option value="">All maps</option>
+              <For each={[...new Set(props.entries.map((entry) => entry.source_map))].sort()}>
+                {(name) => <option value={name}>{name}</option>}
+              </For>
+            </select>
+          </label>
+        }
+        beforeGrid={
+          <Show when={props.emptyLabel}>
+            <button class="asset-picker-none" onClick={() => props.onSelect("")}>
+              {props.emptyLabel}
+            </button>
+          </Show>
+        }
+      >
         <For each={entries()}>
           {(entry) => (
             <button
-              class={props.selected === entry.id ? "asset-card selected" : "asset-card"}
+              class="asset-card"
+              aria-pressed={props.selected === entry.id ? "true" : "false"}
               onClick={() => props.onSelect(entry.id)}
             >
               <AssetPreview entry={entry} root={props.root} renderer={renderer} />
@@ -80,10 +89,7 @@ export default function AssetPickerDialog(props: {
             </button>
           )}
         </For>
-      </div>
-      <Show when={!entries().length}>
-        <p>No matching assets.</p>
-      </Show>
+      </LibraryBrowser>
     </dialog>
   );
 }

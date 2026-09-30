@@ -70,7 +70,7 @@ async function until(test: () => boolean) {
   }
   throw new Error(
     "Shared library acceptance timed out; inspector: " +
-      [...document.querySelectorAll(".inspector-tabs button")].map((b) => b.outerHTML).join(" "),
+      [...document.querySelectorAll(".editor-modes button")].map((b) => b.outerHTML).join(" "),
   );
 }
 
@@ -345,6 +345,16 @@ export async function checkSharedLibrary() {
   };
   try {
     assert(
+      !document.querySelector(".editor-modes"),
+      "Editing modes should be absent before loading a map",
+    );
+    assert(
+      ![...document.querySelectorAll(".editor-bar button")].some(
+        (b) => b.textContent?.trim() === "View settings",
+      ),
+      "View settings should be absent before loading a map",
+    );
+    assert(
       Math.abs(elevation() - 35) < 1e-8,
       "Initial camera differs from the default map elevation",
     );
@@ -353,12 +363,14 @@ export async function checkSharedLibrary() {
         (document.querySelector('select[aria-label="Source level"]') as HTMLSelectElement)
           ?.value === "refined-levels",
     );
-    await until(() => document.querySelectorAll(".asset-card").length === 2);
+    await until(() => document.querySelectorAll(".asset-library-host .asset-card").length === 2);
     await select("Source level", "");
-    await until(() => document.querySelectorAll(".asset-card").length === 40);
+    await until(() => document.querySelectorAll(".asset-library-host .asset-card").length === 40);
     await select("Map", "York");
     await until(() => !!document.querySelector("[data-map-name]"));
-    await until(() => !document.querySelector(".asset-card:first-child .preview-status"));
+    await until(
+      () => !document.querySelector(".asset-library-host .asset-card:first-child .preview-status"),
+    );
     assert(
       !(document.querySelector(".spline-panel") as HTMLElement).checkVisibility(),
       "Drawing controls clutter the initial inspector",
@@ -369,6 +381,68 @@ export async function checkSharedLibrary() {
     );
     await select("Map", "York");
     await until(() => !!document.querySelector("[data-map-name]"));
+    assert(document.querySelector(".editor-bar .editor-modes"), "Modes must be in the title bar");
+    assert(
+      [...document.querySelectorAll(".editor-modes button")]
+        .map((b) => b.textContent?.trim())
+        .join(",") === "Assets,Paths,Terrain,Mission",
+      "Unexpected editing modes",
+    );
+    click("Help");
+    await until(() => document.querySelector("#editor-help h2")?.textContent === "Assets controls");
+    click("Terrain");
+    await until(
+      () => document.querySelector("#editor-help h2")?.textContent === "Terrain controls",
+    );
+    assert(
+      document.querySelector("#editor-help")!.textContent.includes("Subdivide"),
+      "Terrain help lacks subdivision",
+    );
+    await until(
+      () => !!document.querySelector("#asset-browser .material-picker")?.checkVisibility(),
+    );
+    assert(
+      !document.querySelector(".asset-library-host")?.checkVisibility(),
+      "Terrain should replace the asset library",
+    );
+    assert(
+      !document.querySelector(".editor-panel .material-picker"),
+      "Material library remains in inspector",
+    );
+    click("Mission");
+    await until(
+      () => document.querySelector("#editor-help h2")?.textContent === "Mission controls",
+    );
+    assert(
+      !document.querySelector('#asset-browser select[aria-label="Mission"]'),
+      "Maps without original missions should not show an empty loader",
+    );
+    assert(
+      !document.querySelector("#editor-help")!.textContent.includes("Load a mission"),
+      "Mission help should not advertise an unavailable loader",
+    );
+    assert(
+      !document.querySelector('.editor-bar select[aria-label="Mission"]'),
+      "Mission loader remains in title bar",
+    );
+    assert(
+      document
+        .querySelector('#asset-browser select[aria-label="Character category"]')
+        ?.checkVisibility(),
+      "Character category must be in left library",
+    );
+    click("Paths");
+    await until(() => document.querySelector("#editor-help h2")?.textContent === "Paths controls");
+    await until(
+      () => !!document.querySelector("#asset-browser .spline-preset-grid")?.checkVisibility(),
+    );
+    assert(
+      !document.querySelector(".editor-panel .spline-preset-grid"),
+      "Path library remains in inspector",
+    );
+    click("Help");
+    click("Assets");
+    await until(() => !!document.querySelector(".asset-library-host")?.checkVisibility());
     const originalWidth = document.querySelector(".editor-canvas")!.getBoundingClientRect().width;
     (document.querySelector('button[aria-label="Hide asset library"]') as HTMLElement).click();
     await until(
@@ -440,17 +514,21 @@ export async function checkSharedLibrary() {
       "3D preview did not render any geometry",
     );
     await select("Asset type", "Building");
-    await until(() => document.querySelectorAll(".asset-card").length === 1);
+    await until(() => document.querySelectorAll(".asset-library-host .asset-card").length === 1);
     await select("Source level", "Derby");
-    await until(() => document.querySelectorAll(".asset-card").length === 0);
+    await until(() => document.querySelectorAll(".asset-library-host .asset-card").length === 0);
     await select("Source level", "Leicester");
-    await until(() => document.querySelectorAll(".asset-card").length === 1);
+    await until(() => document.querySelectorAll(".asset-library-host .asset-card").length === 1);
     await select("Map", "York");
     await until(
       () => document.querySelector("[data-map-name]")?.getAttribute("data-map-name") === "York",
     );
-    await until(() => document.querySelector(".asset-card")?.getAttribute("draggable") === "true");
-    const card = document.querySelector(".asset-card")!;
+    await until(
+      () =>
+        document.querySelector(".asset-library-host .asset-card")?.getAttribute("draggable") ===
+        "true",
+    );
+    const card = document.querySelector(".asset-library-host .asset-card")!;
     const transfer = new DataTransfer();
     card.dispatchEvent(new PointerEvent("pointerenter"));
     await until(() => {
@@ -602,7 +680,7 @@ export async function checkSharedLibrary() {
     await until(
       () => !(document.querySelector(".library-content") as HTMLElement).checkVisibility(),
     );
-    click("Draw");
+    click("Terrain");
     await until(() =>
       (document.querySelector(".terrain-settings") as HTMLElement).checkVisibility(),
     );
@@ -627,8 +705,8 @@ export async function checkSharedLibrary() {
     await until(
       () =>
         (
-          [...document.querySelectorAll(".inspector-tabs button")].find(
-            (b) => b.textContent === "Selection",
+          [...document.querySelectorAll(".editor-modes button")].find(
+            (b) => b.textContent === "Assets",
           ) as HTMLButtonElement
         ).disabled,
     );
@@ -727,7 +805,7 @@ export async function checkSharedLibrary() {
     );
     click("Done editing");
     await until(() => document.querySelectorAll(".spline-list button").length === 3);
-    click("View");
+    click("View settings");
     await until(() =>
       (
         document.querySelector('input[aria-label="Cast sun shadows"]') as HTMLElement
@@ -770,7 +848,7 @@ export async function checkSharedLibrary() {
     await until(
       () => document.querySelector("[data-map-name]")?.getAttribute("data-map-name") === "Lincoln",
     );
-    click("Draw");
+    click("Paths");
     await until(() => !!document.querySelector(".spline-preset-grid"));
     click("Battlement wall");
     await until(() => !!document.querySelector('input[aria-label="Corner tower scale"]'));
@@ -826,7 +904,7 @@ export async function checkSharedLibrary() {
     );
     click("Add to scene");
     await until(() => document.querySelectorAll(".object-list li").length > 0);
-    click("View");
+    click("View settings");
     await until(() =>
       (document.querySelector(".export-settings") as HTMLElement).checkVisibility(),
     );

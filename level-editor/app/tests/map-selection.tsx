@@ -1,3 +1,4 @@
+import { publishedMapLabel } from "../src/map-label";
 import { Show, createSignal } from "solid-js";
 import StatusDialog from "../src/StatusDialog";
 import ErrorDialog from "../src/ErrorDialog";
@@ -81,7 +82,7 @@ async function main() {
           toolbarStart={() => (
             <>
               <RobinMascot />
-              <h1>Robin Hood Map Editor</h1>
+              <h1>Editor</h1>
             </>
           )}
           index={() => null}
@@ -125,8 +126,18 @@ async function main() {
   try {
     await until(() => !!document.querySelector('[data-map="York"]'));
     assert(!current(), "Single map unexpectedly auto-opened");
+    assert(!document.querySelector(".editor-modes"), "Editor modes visible before map load");
+    assert(
+      ![...document.querySelectorAll("button")].some(
+        (button) => button.textContent?.trim() === "View settings",
+      ),
+      "View settings visible before map load",
+    );
     assert(!document.querySelector('select[aria-label="Map"]'), "Header map selector remains");
-    assert(!document.querySelector('[aria-label="Delete York"]'), "Built-in delete button shown");
+    assert(
+      !document.querySelector(`[aria-label="Delete ${publishedMapLabel("York", false)}"]`),
+      "Built-in delete button shown",
+    );
     assert(!warns(), "Clean screen warns on unload");
     const headerHeight = document.querySelector("header")!.getBoundingClientRect().height;
     setStatus({ message: "Compiling map and sprite occlusion…", busy: true });
@@ -248,13 +259,10 @@ async function main() {
     assert(current() === "York (Modified)" && confirmations === 1, "Cancel discarded dirty map");
     click("Save *");
     await until(() => !warns());
-    await until(() => !!document.querySelector(".status-dialog button"));
-    document.querySelector<HTMLButtonElement>(".status-dialog button")!.click();
-    await until(() => !document.querySelector(".status-dialog"));
     click("Close map");
     await until(() => !current());
     await until(() => !!document.querySelector('[data-map="York (Modified)"] img'));
-    click("Rename York (Modified)");
+    click(`Rename ${publishedMapLabel("York", true)}`);
     await until(() => !!document.querySelector('[data-map="Renamed map"]'));
     await open("Renamed map");
     click("Close map");

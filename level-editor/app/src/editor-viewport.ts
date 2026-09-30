@@ -271,14 +271,10 @@ export class EditorViewport {
   }
   /** Face a compass direction while retaining the current working location and scale. */
   setCardinalView(direction: "N" | "E" | "S" | "W") {
-    this.orientCamera(
-      { N: 0, E: -Math.PI / 2, S: Math.PI, W: Math.PI / 2 }[direction],
-      false,
-      true,
-    );
+    this.orientCamera({ N: 0, E: -Math.PI / 2, S: Math.PI, W: Math.PI / 2 }[direction]);
   }
   rotateViewQuarterTurn(turns = 1) {
-    this.orientCamera(this.cameraAzimuth() + (turns * Math.PI) / 2, false, true);
+    this.orientCamera(this.cameraAzimuth() + (turns * Math.PI) / 2);
   }
   topView() {
     this.orientCamera(this.cameraAzimuth(), true);
@@ -289,36 +285,20 @@ export class EditorViewport {
     const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion);
     return Math.atan2(-right.z, right.x);
   }
-  private orientCamera(azimuth: number, top = false, animate = false) {
+  private orientCamera(azimuth: number, top = false) {
     if (!this.camera || !this.orbit || !Number.isFinite(azimuth)) return;
-    this.flight = null;
-    const damping = this.orbit.enableDamping;
-    this.orbit.enableDamping = false;
-    this.orbit.update();
     const offset = this.camera.position.clone().sub(this.orbit.target);
     const radius = Math.max(1, offset.length());
-    // OrbitControls uses this same tiny pole margin; it prevents undefined yaw
-    // and leaves an imperceptible tilt in the top view.
+    // OrbitControls uses this same tiny pole margin to keep top-view yaw defined.
     const polar = top
       ? 1e-6
       : Math.max(1e-6, Math.acos(THREE.MathUtils.clamp(offset.y / radius, -1, 1)));
     const position = this.orbit.target
       .clone()
       .add(new THREE.Vector3().setFromSphericalCoords(radius, polar, azimuth));
-    if (animate) {
-      const destination = this.lookState(position, this.orbit.target, this.frustum);
-      destination.zoom = this.camera.zoom;
-      this.orbit.enableDamping = damping;
-      this.flyTo(destination);
-      return;
-    }
-    this.camera.position.copy(position);
-    this.camera.up.set(0, 1, 0);
-    this.camera.lookAt(this.orbit.target);
-    this.orbit.enabled = true;
-    this.orbit.update();
-    this.orbit.enableDamping = damping;
-    this.camera.updateMatrixWorld();
+    const destination = this.lookState(position, this.orbit.target, this.frustum);
+    destination.zoom = this.camera.zoom;
+    this.flyTo(destination);
   }
   private assetDisplayMode: "visible" | "outline" | "hidden" = "visible";
   private readonly assetOutline = new AssetOutlineRenderer();
@@ -1077,8 +1057,21 @@ export class EditorViewport {
 
   private flyTo(to: CameraState, ms = 700) {
     if (!this.camera || !this.orbit) return;
+    const from = this.currentState();
+    // Consume pending control inertia without moving the visible start pose.
+    // Interrupted flights must begin exactly where the previous frame left off.
+    const damping = this.orbit.enableDamping;
+    this.orbit.enableDamping = false;
+    this.orbit.update();
+    this.orbit.enableDamping = damping;
+    this.camera.position.copy(from.position);
+    this.camera.quaternion.copy(from.quaternion);
+    this.orbit.target.copy(from.target);
+    this.camera.zoom = from.zoom;
+    this.camera.updateProjectionMatrix();
+    this.camera.updateMatrixWorld();
     this.flight = {
-      from: this.currentState(),
+      from,
       to,
       start: performance.now(),
       ms,
@@ -1091,9 +1084,19 @@ export class EditorViewport {
     const raw = Math.min(1, (performance.now() - this.flight.start) / this.flight.ms);
     const t = raw < 0.5 ? 2 * raw * raw : 1 - Math.pow(-2 * raw + 2, 2) / 2; // ease in-out
     const { from, to } = this.flight;
-    this.camera.position.lerpVectors(from.position, to.position, t);
     this.camera.quaternion.slerpQuaternions(from.quaternion, to.quaternion, t);
     this.orbit.target.lerpVectors(from.target, to.target, t);
+    // Interpolate the orbit's orientation and radius, not a chord through the map.
+    // Local +Z points back from the focus, keeping it centered throughout the turn.
+    const radius = THREE.MathUtils.lerp(
+      from.position.distanceTo(from.target),
+      to.position.distanceTo(to.target),
+      t,
+    );
+    this.camera.position
+      .set(0, 0, radius)
+      .applyQuaternion(this.camera.quaternion)
+      .add(this.orbit.target);
     this.frustum = from.frustum + (to.frustum - from.frustum) * t;
     this.camera.zoom = from.zoom + (to.zoom - from.zoom) * t;
     this.applyFrustum();

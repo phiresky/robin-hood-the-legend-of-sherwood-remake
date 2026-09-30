@@ -1,3 +1,4 @@
+import LibraryPortal from "./LibraryPortal";
 import { For, Show, createEffect, createSignal, onCleanup, untrack } from "solid-js";
 import { parseLevel3D, type Level3D, type Vec3 } from "@rle/shared";
 import type { EditorViewport } from "./editor-viewport.ts";
@@ -15,6 +16,7 @@ export default function MissionPanel(props: {
   commit(document: Level3D): void;
   onError(message: string): void;
   active: boolean;
+  libraryMount?: HTMLElement;
   viewport: EditorViewport;
   library?(): FileSystemDirectoryHandle | null;
 }) {
@@ -249,9 +251,6 @@ export default function MissionPanel(props: {
         Drag a character onto the map to add it. Click a placed character or its list entry to
         select it, then drag it to move it. Blue outlines are PCs; red outlines are NPCs.
       </p>
-      <Show when={catalogStatus()}>
-        <p role="status">{catalogStatus()}</p>
-      </Show>
       <Show when={mission().importedFrom}>
         <p class="hint">
           Imported from {mission().importedFrom}. Campaign spawn slots use blue outlines until
@@ -266,30 +265,37 @@ export default function MissionPanel(props: {
           </details>
         </Show>
       </Show>
+      <LibraryPortal mount={props.libraryMount} active={props.active}>
+        <Show when={catalogStatus()}>
+          <p role="status">{catalogStatus()}</p>
+        </Show>
+        <fieldset disabled={!props.document() || !visible()}>
+          <label>
+            Character category
+            <select
+              aria-label="Character category"
+              value={category()}
+              onChange={(event) => setCategory(event.currentTarget.value === "npc" ? "npc" : "pc")}
+            >
+              <option value="pc">PCs</option>
+              <option value="npc">NPCs</option>
+            </select>
+          </label>
+          <Show when={!!catalog() && !!props.document()}>
+            <MissionCharacterChoices
+              root={catalog()!.root}
+              camera={props.document()!.camera}
+              profiles={catalog()!.profiles.filter((profile) => profile.kind === category())}
+              onDragStart={(key) => props.viewport.startMissionPaletteDrag(key)}
+              onDragEnd={() => props.viewport.endMissionPaletteDrag()}
+            />
+          </Show>
+          <Show when={spriteStatus()}>
+            <p role="status">{spriteStatus()}</p>
+          </Show>
+        </fieldset>
+      </LibraryPortal>
       <fieldset disabled={!props.document() || !visible()}>
-        <label>
-          Character category
-          <select
-            aria-label="Character category"
-            value={category()}
-            onChange={(event) => setCategory(event.currentTarget.value === "npc" ? "npc" : "pc")}
-          >
-            <option value="pc">PCs</option>
-            <option value="npc">NPCs</option>
-          </select>
-        </label>
-        <Show when={!!catalog() && !!props.document()}>
-          <MissionCharacterChoices
-            root={catalog()!.root}
-            camera={props.document()!.camera}
-            profiles={catalog()!.profiles.filter((profile) => profile.kind === category())}
-            onDragStart={(key) => props.viewport.startMissionPaletteDrag(key)}
-            onDragEnd={() => props.viewport.endMissionPaletteDrag()}
-          />
-        </Show>
-        <Show when={spriteStatus()}>
-          <p role="status">{spriteStatus()}</p>
-        </Show>
         <section class="object-list mission-element-list">
           <h3>Mission elements ({entries().length})</h3>
           <ul aria-label="Mission elements">

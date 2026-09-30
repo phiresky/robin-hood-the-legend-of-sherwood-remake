@@ -1997,9 +1997,11 @@ cutouts aligned with terrain instead of rounding each piece separately.
   relative offsets; Alt-drag moves horizontally and ordinary dragging changes
   elevation. Local subdivision leaves unrelated cells unchanged.
 
-- Cardinal and 90° rotation camera buttons use the same smooth transition as the Game camera control,
+- Top, cardinal and 90° rotation camera buttons use the same smooth transition as the Game camera control,
   which now sits beside them in the viewport navigation bar. Camera clipping follows
   current terrain and assets after resizing, edits and previews without refitting the lens.
+  Camera transitions interpolate orbit orientation and distance around their focus,
+  avoiding inward cuts and jumps when another camera button interrupts a transition.
 
 - New terrain grids use square world-space cells rather than square projected pixels.
   Terrain grid edges use thicker screen-space lines. Dragging an endpoint after
@@ -2012,3 +2014,9 @@ cutouts aligned with terrain instead of rounding each piece separately.
   levels selected vertices to their average height without changing their footprint.
   Delete removes selected vertices and reconnects the surrounding ground as one
   undoable edit, rejecting deletions that cannot form a valid surface.
+
+- Editor modes in the title bar select matching left-side libraries and right-side
+  inspectors: Assets, Paths, Terrain, and Mission. Search and preview-card controls
+  are shared across assets, wall/fence presets, textured materials, and characters.
+  Mission loading lives above the character library; View settings remains separate.
+  Help follows the active mode, and map-only controls stay out of the map-selection title bar.

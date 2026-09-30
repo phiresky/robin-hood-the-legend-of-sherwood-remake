@@ -1,3 +1,4 @@
+import LibraryPortal from "./LibraryPortal";
 import MaterialPicker from "./MaterialPicker";
 import ScrubNumber from "./ScrubNumber";
 import { alignTerrainDiagonals, flattenTerrainVertices } from "./terrain-selection";
@@ -21,6 +22,7 @@ export default function TerrainPanel(props: {
   disabled?: boolean;
   active?: boolean;
   viewport: EditorViewport;
+  libraryMount?: HTMLElement;
 }) {
   const [selected, setSelected] = createSignal<string[]>([]);
   const [cells, setCells] = createSignal<string[]>([]);
@@ -174,13 +176,35 @@ export default function TerrainPanel(props: {
   }
   return (
     <section class="view-settings terrain-settings">
+      <LibraryPortal mount={props.libraryMount} active={props.active !== false}>
+        <p class="hint">
+          {vertices().length
+            ? `Apply a material to ${vertices().length} selected vertices.`
+            : "Select terrain vertices, edges or cells to apply a material."}
+        </p>
+        <MaterialPicker
+          label="Vertex material"
+          value={vertices().length ? vertexMaterial(vertices()[0]!) : ""}
+          customMaterials={props.document()?.customMaterials ?? []}
+          onCustomMaterialsChange={customMaterials}
+          disabled={!props.document() || props.disabled}
+          selectionDisabled={!vertices().length}
+          onChange={(material) => {
+            const g = grid(),
+              ids = new Set(selected()),
+              cellIds = new Set(cells());
+            if (g && ids.size)
+              publish({
+                ...g,
+                vertices: g.vertices.map((item) =>
+                  ids.has(item.id) ? { ...item, material, materialMix: undefined } : item,
+                ),
+                cells: g.cells.map((cell) => (cellIds.has(cell.id) ? { ...cell, material } : cell)),
+              });
+          }}
+        />
+      </LibraryPortal>
       <h2>Terrain grid</h2>
-      <p class="hint">
-        Click a vertex, edge or cell to select it. Drag to change elevation; hold Alt to move
-        horizontally. Shift adds to or removes from the selection. Shift-drag to add a rectangle of
-        vertices; right-drag rotates the camera. Double-click a cell, edge or vertex to subdivide
-        there. Delete removes selected vertices and reconnects the ground.
-      </p>
       <fieldset disabled={props.disabled || !props.document()}>
         <Show
           when={grid()}
@@ -236,23 +260,6 @@ export default function TerrainPanel(props: {
                 Flatten
               </button>
             </Show>
-            <MaterialPicker
-              label="Vertex material"
-              value={vertexMaterial(vertices()[0]!)}
-              customMaterials={props.document()?.customMaterials ?? []}
-              onCustomMaterialsChange={customMaterials}
-              onChange={(material) => {
-                const g = grid(),
-                  ids = new Set(selected());
-                if (g)
-                  publish({
-                    ...g,
-                    vertices: g.vertices.map((item) =>
-                      ids.has(item.id) ? { ...item, material, materialMix: undefined } : item,
-                    ),
-                  });
-              }}
-            />
             <Show when={new Set(vertices().map(vertexMaterial)).size > 1}>
               <p class="hint">
                 Mixed vertex materials. Choosing a material applies it to every selected vertex.
@@ -277,13 +284,6 @@ export default function TerrainPanel(props: {
                 ? "Selected cell"
                 : `${selectedCells().length} selected cells`}
             </strong>
-            <MaterialPicker
-              label="Terrain material"
-              value={selectedCells()[0]!.material}
-              customMaterials={props.document()?.customMaterials ?? []}
-              onCustomMaterialsChange={customMaterials}
-              onChange={(material) => changeCell({ material })}
-            />
             <Show when={new Set(selectedCells().map((cell) => cell.material)).size > 1}>
               <p class="hint">
                 Mixed cell materials. Choosing a material applies it to every selected cell and its

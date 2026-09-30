@@ -162,7 +162,7 @@ drags likewise preview live and commit one undo step; Escape cancels the drag.
 | move | drag the selected building/part along the ground, use the gizmo (tick "lift" for height), or type/drag the X, Y, Z inputs |
 | turn | `q` / `e` (15°), or type/drag the rotation input; Shift gives finer input dragging |
 | duplicate / delete | `d` / `Del` |
-| asset display | View → Visible / Outline / Hidden changes the viewport only; individual document hide checkboxes still exclude objects from export |
+| asset display | View settings → Visible / Outline / Hidden changes the viewport only; individual document hide checkboxes still exclude objects from export |
 | cardinal / top view | N/E/S/W and 90° turns smoothly transition while preserving the working target and scale; Top view is also available |
 | snap a floating part | parts tagged "float?" show the suggested Δ; the button shifts y and z by −Δ (same map pixels) |
 | undo / redo | `ctrl+z` / `ctrl+shift+z` |
@@ -176,8 +176,11 @@ carrying the affine matrix.
 
 ## Terrain and workspace
 
-Draw has separate **Terrain** and **Paths** subtabs. Finish or cancel a path before
-switching to Terrain. Terrain highlights the vertices a drag will move on hover:
+**Assets**, **Paths**, **Terrain**, and **Mission** modes live in the title bar.
+Each mode shows its library on the left and the selected item’s details on the right.
+Materials, assets, walls/fences, and characters share search and preview-card controls.
+For maps with original missions available, the mission loader sits above the character library; camera and display controls
+remain available through **View settings**. Finish or cancel a path before switching modes. Terrain highlights the vertices a drag will move on hover:
 a vertex, both endpoints of an edge, or all corners of a cell. Shift-click toggles
 selection; Shift-drag adds vertices inside a screen rectangle. Right-drag rotates
 the camera. Vertices have a 10-pixel pick radius at every zoom and perspective.
@@ -210,7 +213,7 @@ Placed assets preserve their height above the terrain when moved horizontally or
 the ground changes. Manual Z edits remain available for every asset, including floating
 parts. Terrain edits and affected asset movements share one undo operation.
 
-View → Workspace changes the working width and height in pixels. Shrinking keeps all
+View settings → Workspace changes the working width and height in pixels. Shrinking keeps all
 terrain and assets outside the boundary; enlarging restores their workspace coverage
 and adds ground only where needed. The optional Export frame overrides the workspace
 for compilation. Cropped mission placements are omitted with a report, while the

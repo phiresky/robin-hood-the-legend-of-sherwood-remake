@@ -303,7 +303,11 @@ try {
     expected.sort((a, b) => a.localeCompare(b)),
   );
   assert.equal(after.commits, before.commits);
-  assert.deepEqual(await evalJS("terrainTest.point(9)"), screenPoints[9]);
+  const unchangedPoint = await evalJS("terrainTest.point(9)");
+  assert.ok(
+    Math.hypot(unchangedPoint.x - screenPoints[9].x, unchangedPoint.y - screenPoints[9].y) < 1e-6,
+    "marquee selection must not move the camera",
+  );
   const extra = screenPoints[26];
   await drag({ x: extra.x - 4, y: extra.y - 4 }, { x: extra.x + 4, y: extra.y + 4 }, false, 8);
   after = await evalJS("terrainTest.state()");

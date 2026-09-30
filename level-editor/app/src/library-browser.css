@@ -1,0 +1,104 @@
+.library-browser {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  min-width: 0;
+}
+.library-browser-filters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.library-browser-filters > input.search {
+  grid-column: 1 / -1;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid #45515d;
+  border-radius: 5px;
+  background: #171d24;
+  color: #e5eaf0;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.library-browser-filters > input.search:focus {
+  outline: 2px solid #80b4c8;
+  outline-offset: 1px;
+}
+.library-browser-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: #b4c0cf;
+  font-size: 11px;
+}
+.library-browser-filters select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 7px;
+}
+.library-browser-summary {
+  margin: 0;
+  color: #9aaabc;
+  font-size: 11px;
+}
+.library-browser > .asset-grid {
+  padding: 0;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+}
+.library-browser .asset-card {
+  min-width: 0;
+}
+.library-browser button.asset-card {
+  padding: 0;
+  text-align: left;
+  color: inherit;
+}
+.library-browser .asset-card-info {
+  display: block;
+}
+.library-browser button.asset-card[aria-pressed="true"] {
+  border-color: #ddc268;
+  background: #3d3c2e;
+  box-shadow: inset 0 0 0 1px #ddc268;
+}
+.library-browser button.asset-card:focus-visible {
+  outline: 2px solid #80b4c8;
+  outline-offset: -2px;
+}
+.library-browser button.asset-card:disabled {
+  opacity: 0.6;
+}
+.shared-library .library-browser {
+  flex: 1;
+  padding: 0 12px 12px;
+  overflow: hidden;
+}
+.material-picker {
+  min-width: 0;
+  margin: 10px 0;
+  padding: 10px;
+  border: 1px solid #38434c;
+  border-radius: 6px;
+}
+.material-picker .material-preview {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+}
+.material-picker .material-selection {
+  margin: 0 0 10px;
+  color: #bacfe1;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.material-picker details {
+  margin-top: 12px;
+}

@@ -80,7 +80,7 @@ export default function App() {
         toolbarStart={() => (
           <>
             <RobinMascot />
-            <h1 title="Robin Hood Map Editor">Robin Hood Map Editor</h1>
+            <h1 title="Robin Hood Map Editor">Editor</h1>
           </>
         )}
       />

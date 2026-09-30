@@ -984,13 +984,24 @@ test("cardinal and top camera controls preserve target, zoom and lens through qu
   camera.zoom = 2.5;
   const orbit = new OrbitControls(camera);
   orbit.target.copy(target);
+  orbit.update();
   Object.assign(viewport, { camera, orbit, frustum: 125, perspective: 30 });
-  viewport.topView();
-  const initialRotation = camera.quaternion.clone();
+  const beforeTop = camera.quaternion.clone();
   const flight = viewport as unknown as {
     flight: { start: number; ms: number } | null;
     stepFlight(): void;
   };
+  viewport.topView();
+  assert.ok(camera.quaternion.angleTo(beforeTop) < 1e-7, "top click does not snap the camera");
+  assert.equal(flight.flight?.ms, 700);
+  flight.flight!.start = performance.now() - 350;
+  flight.stepFlight();
+  assert.ok(camera.quaternion.angleTo(beforeTop) > 0.1, "top view interpolates halfway through");
+  assert.ok(flight.flight);
+  flight.flight!.start = performance.now() - 701;
+  flight.stepFlight();
+  assert.ok(camera.getWorldDirection(new THREE.Vector3()).y < -0.999999);
+  const initialRotation = camera.quaternion.clone();
   viewport.setCardinalView("E");
   assert.ok(
     camera.quaternion.angleTo(initialRotation) < 1e-7,
@@ -1087,5 +1098,47 @@ test("channel previews move attached assets and cancellation restores the commit
   assert.equal(document.groups[0]!.transform.dz, 0);
   viewport.setSplineEdit(null);
   assert.equal(view.wrapper.position.z, 0);
+  viewport.dispose();
+});
+
+test("camera turns orbit their focus without cutting inward and interrupt without jumping", () => {
+  const { viewport } = fixture();
+  const camera = new THREE.OrthographicCamera(-100, 100, 100, -100, 0.1, 10000);
+  const target = new THREE.Vector3(50, 70, -200);
+  camera.position.copy(target).add(new THREE.Vector3(0, 200, 300));
+  const orbit = new OrbitControls(camera);
+  orbit.target.copy(target);
+  orbit.update();
+  Object.assign(viewport, { camera, orbit, frustum: 125, perspective: 30 });
+  const radius = camera.position.distanceTo(target);
+  const flight = viewport as unknown as { flight: { start: number } | null; stepFlight(): void };
+  viewport.setCardinalView("S");
+  for (const elapsed of [100, 250, 350, 500, 650]) {
+    flight.flight!.start = performance.now() - elapsed;
+    flight.stepFlight();
+    assert.ok(Math.abs(camera.position.distanceTo(target) - radius) < 1e-6);
+    assert.ok(
+      camera
+        .getWorldDirection(new THREE.Vector3())
+        .dot(target.clone().sub(camera.position).normalize()) >
+        1 - 1e-8,
+      "focus stays centered",
+    );
+  }
+  const position = camera.position.clone(),
+    rotation = camera.quaternion.clone();
+  viewport.topView();
+  assert.ok(camera.position.distanceTo(position) < 1e-8);
+  assert.ok(camera.quaternion.angleTo(rotation) < 1e-7);
+  flight.flight!.start = performance.now() - 701;
+  flight.stepFlight();
+  const completed = camera.position.clone();
+  orbit.update();
+  assert.ok(
+    camera.position.distanceTo(completed) < 1e-6,
+    "returning control to orbit does not jump",
+  );
+  assert.ok(Math.abs(camera.position.distanceTo(target) - radius) < 1e-6);
+  Object.assign(viewport, { camera: null, orbit: null });
   viewport.dispose();
 });

@@ -1,3 +1,4 @@
+import LibraryBrowser from "./LibraryBrowser";
 import { For, Show, createEffect, createSignal, onCleanup } from "solid-js";
 import type { ProjectionAssetEntry } from "@rle/shared";
 import AssetPreview, { AssetPreviewRenderer } from "./AssetPreview";
@@ -68,64 +69,67 @@ export default function AssetLibrary(props: {
         <h2>Asset library</h2>
       </header>
       <div id="asset-library-content" class="library-content" hidden={props.collapsed}>
-        <div class="library-filters">
-          <input
-            class="search"
-            aria-label="Find assets"
-            placeholder="Search assets or tags…"
-            value={search()}
-            onInput={(event) => setSearch(event.currentTarget.value)}
-          />
-          <label>
-            Asset type
-            <select
-              aria-label="Asset type"
-              value={type()}
-              onChange={(event) => setType(event.currentTarget.value)}
-            >
-              <option value="">All types</option>
-              <For each={[...new Set(props.entries.map(assetType))].sort()}>
-                {(value) => <option value={value}>{value}</option>}
-              </For>
-            </select>
-          </label>
-          <label>
-            Source level
-            <select
-              aria-label="Source level"
-              value={source()}
-              onChange={(event) => setSource(event.currentTarget.value)}
-            >
-              <option value={REFINED_LEVELS_FILTER}>All refined levels</option>
-              <option value="">All levels</option>
-              <For each={[...new Set(props.entries.map((entry) => entry.source_map))].sort()}>
-                {(value) => <option value={value}>{value}</option>}
-              </For>
-            </select>
-          </label>
-        </div>
-        <p class="library-summary" aria-live="polite">
-          {filtered().length} of {props.entries.length} assets · Hover to rotate
-        </p>
-        <Show when={!props.root}>
-          <p class="hint">Waiting for assets…</p>
-        </Show>
-        <Show when={props.loading}>
-          <p class="hint">Loading shared library…</p>
-        </Show>
-        <Show when={props.error}>
-          <p class="library-error" role="alert">
-            {props.error}
-          </p>
-        </Show>
-        <Show when={!props.loading && props.root && !props.error && !filtered().length}>
-          <p class="hint">
-            {props.entries.length
-              ? "No assets match these filters."
-              : "No published 3D assets in this library."}
-          </p>
-        </Show>
-        <div class="asset-grid">
+        <LibraryBrowser
+          search={search()}
+          onSearch={setSearch}
+          searchLabel="Find assets"
+          placeholder="Search assets or tags…"
+          label="Asset library"
+          summary={`${filtered().length} of ${props.entries.length} assets · Hover to rotate`}
+          filters={
+            <>
+              <label>
+                Asset type
+                <select
+                  aria-label="Asset type"
+                  value={type()}
+                  onChange={(event) => setType(event.currentTarget.value)}
+                >
+                  <option value="">All types</option>
+                  <For each={[...new Set(props.entries.map(assetType))].sort()}>
+                    {(value) => <option value={value}>{value}</option>}
+                  </For>
+                </select>
+              </label>
+              <label>
+                Source level
+                <select
+                  aria-label="Source level"
+                  value={source()}
+                  onChange={(event) => setSource(event.currentTarget.value)}
+                >
+                  <option value={REFINED_LEVELS_FILTER}>All refined levels</option>
+                  <option value="">All levels</option>
+                  <For each={[...new Set(props.entries.map((entry) => entry.source_map))].sort()}>
+                    {(value) => <option value={value}>{value}</option>}
+                  </For>
+                </select>
+              </label>
+            </>
+          }
+          beforeGrid={
+            <>
+              <Show when={!props.root}>
+                <p class="hint">Waiting for assets…</p>
+              </Show>
+              <Show when={props.loading}>
+                <p class="hint">Loading shared library…</p>
+              </Show>
+              <Show when={props.error}>
+                <p class="library-error" role="alert">
+                  {props.error}
+                </p>
+              </Show>
+              <Show when={!props.loading && props.root && !props.error && !filtered().length}>
+                <p class="hint">
+                  {props.entries.length
+                    ? "No assets match these filters."
+                    : "No published 3D assets in this library."}
+                </p>
+              </Show>
+            </>
+          }
+        >
           <For each={filtered()}>
             {(entry) => {
               const [appearances, setAppearances] = createSignal<ProjectionAssetEntry[]>([entry]);
@@ -222,7 +226,7 @@ export default function AssetLibrary(props: {
               );
             }}
           </For>
-        </div>
+        </LibraryBrowser>
         <footer>
           {props.canInsert
             ? "Drag an asset into the scene to place it."

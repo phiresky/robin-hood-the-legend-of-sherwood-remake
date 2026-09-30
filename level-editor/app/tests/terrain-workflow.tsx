@@ -195,8 +195,9 @@ Object.assign(window, {
       internals.terrainControls.mode.selectCells?.([]);
     },
     frame: () => viewport.frameContent(true),
-    top: () => {
+    top: async () => {
       viewport.topView();
+      await new Promise((resolve) => setTimeout(resolve, 800));
       viewport.setCardinalView("N");
     },
   },

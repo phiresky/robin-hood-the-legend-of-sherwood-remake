@@ -1,3 +1,4 @@
+import EditorHelp from "./EditorHelp";
 import TerrainPanel from "./TerrainPanel";
 import NewMapSettings from "./NewMapSettings";
 import WorkspacePanel from "./WorkspacePanel";
@@ -89,8 +90,9 @@ export default function Editor3D(props: EditorProps) {
   );
   const [creatingMap, setCreatingMap] = createSignal(false);
   const [newMapError, setNewMapError] = createSignal("");
-  const [panel, setPanel] = createSignal("Selection");
-  const [drawMode, setDrawMode] = createSignal<"Terrain" | "Paths">("Terrain");
+  const [panel, setPanel] = createSignal("Assets");
+  const [viewSettings, setViewSettings] = createSignal(false);
+  const [libraryMount, setLibraryMount] = createSignal<HTMLElement>();
   const [libraryOpen, setLibraryOpen] = createSignal(true);
   const [libraryWidth, setLibraryWidth] = createSignal(284);
   let libraryResize: { x: number; width: number } | undefined;
@@ -100,6 +102,8 @@ export default function Editor3D(props: EditorProps) {
   const [helpOpen, setHelpOpen] = createSignal(false);
   const [editingPath, setEditingPath] = createSignal(false);
   const [missionName, setMissionName] = createSignal("");
+  const availableMissions = () =>
+    missionsForMap(props.index(), doc()?.sourceMap ?? doc()?.map ?? mapName());
   const [missionInfo, setMissionInfo] = createSignal("");
   const [populationPlaying, setPopulationPlaying] = createSignal(true);
   const [populationRoutes, setPopulationRoutes] = createSignal(false);
@@ -477,7 +481,8 @@ export default function Editor3D(props: EditorProps) {
       if (disposed || props.library() !== library) return;
       setMaps((current) => [...new Set([...current, name])].sort());
       newMapDialog.close();
-      setPanel("Selection");
+      setPanel("Assets");
+      setViewSettings(false);
       await openMap(name);
     } catch (error) {
       if (!disposed) setNewMapError(error instanceof Error ? error.message : String(error));
@@ -1052,7 +1057,7 @@ export default function Editor3D(props: EditorProps) {
   }
 
   function onKey(e: KeyboardEvent) {
-    if (window.document.querySelector("dialog[open]")) return;
+    if (!doc() || window.document.querySelector("dialog[open]")) return;
     if (["INPUT", "SELECT", "TEXTAREA"].includes((e.target as HTMLElement).tagName)) return;
     if (e.key === "z" && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
       e.preventDefault();
@@ -1066,13 +1071,15 @@ export default function Editor3D(props: EditorProps) {
     } else if (e.key === "s" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       void save();
-    } else if (e.key === "Delete" || e.key === "Backspace") deleteSelected();
-    else if (e.key === "d" && !e.ctrlKey) duplicateSelected();
-    else if (e.key === "q") rotateSelected(-15);
-    else if (e.key === "e") rotateSelected(15);
-    else if (e.key === "g") viewport.gameCamera();
+    } else if (e.key === "g") viewport.gameCamera();
     else if (e.key === "f") viewport.frameContent();
-    else if (e.key === "Escape") select(null);
+    else if (panel() === "Assets") {
+      if (e.key === "Delete" || e.key === "Backspace") deleteSelected();
+      else if (e.key === "d" && !e.ctrlKey) duplicateSelected();
+      else if (e.key === "q") rotateSelected(-15);
+      else if (e.key === "e") rotateSelected(15);
+      else if (e.key === "Escape") select(null);
+    }
   }
   window.addEventListener("keydown", onKey, {
     signal: viewport.listeners.signal,
@@ -1188,7 +1195,7 @@ export default function Editor3D(props: EditorProps) {
     }),
     ({ selection, revealInList, panel }) => {
       // List selections are already visible; keep the user's scroll position.
-      if (!selection || !revealInList || panel !== "Selection") return undefined;
+      if (!selection || !revealInList || panel !== "Assets") return undefined;
       // Wait for the selected row and any expanded parent to finish rendering.
       const frame = requestAnimationFrame(() => {
         const list = sceneObjectList;
@@ -1288,32 +1295,36 @@ export default function Editor3D(props: EditorProps) {
             {mapLabel(mapName()!)}
           </span>
         </Show>
+
         <Show when={doc()}>
-          <label class="mission-picker">
-            Mission
-            <select
-              aria-label="Mission"
-              value={missionName()}
-              disabled={
-                !props.index() ||
-                !mapName() ||
-                !missionsForMap(props.index(), doc()?.sourceMap ?? doc()?.map ?? mapName()).length
-              }
-              onChange={(e) => {
-                const value = e.currentTarget.value;
-                e.currentTarget.value = missionName();
-                if (value) void openMap("", value);
-                else if (mapName()) void openMap(mapName()!);
-              }}
-            >
-              <option value="">Map only</option>
-              <For
-                each={missionsForMap(props.index(), doc()?.sourceMap ?? doc()?.map ?? mapName())}
-              >
-                {(mission) => <option value={mission.id}>{mission.label}</option>}
-              </For>
-            </select>
-          </label>
+          <nav class="editor-modes" aria-label="Editor mode">
+            <For each={["Assets", "Paths", "Terrain", "Mission"]}>
+              {(name) => (
+                <button
+                  aria-pressed={panel() === name ? "true" : "false"}
+                  class={panel() === name ? "selected" : ""}
+                  disabled={editingPath() && name !== "Paths"}
+                  title={
+                    editingPath() && name !== "Paths"
+                      ? "Finish or cancel the path before switching tools"
+                      : undefined
+                  }
+                  onClick={() => {
+                    setPanel(name);
+                    setViewSettings(false);
+                  }}
+                >
+                  {name}
+                </button>
+              )}
+            </For>
+          </nav>
+          <button
+            aria-pressed={viewSettings() ? "true" : "false"}
+            onClick={() => setViewSettings(!viewSettings())}
+          >
+            View settings
+          </button>
         </Show>
         <span class="spacer" />
         <Show when={doc()}>
@@ -1429,32 +1440,76 @@ export default function Editor3D(props: EditorProps) {
           class={`asset-browser${libraryOpen() ? "" : " collapsed"}`}
           style={{ width: libraryOpen() ? `${libraryWidth()}px` : "44px" }}
         >
-          <AssetLibrary
-            root={props.library()?.handle ?? null}
-            entries={assetEntries()}
-            collapsed={!libraryOpen()}
-            onToggle={() => setLibraryOpen(!libraryOpen())}
-            onPreload={(entry) => {
-              preloadAsset(entry);
-            }}
-            onDragStart={(entry) => {
-              void startAssetDrag(entry);
-            }}
-            onDragReturn={hideAssetDrag}
-            loading={libraryLoading()}
-            error={libraryError()}
-            canInsert={canInsert()}
-            onAdd={(entry) => void addAsset(entry)}
-            onDragEnd={() => {
-              if (!assetDrag?.dropped) cancelAssetDrag();
-            }}
-          />
+          <div class="asset-library-host" hidden={panel() !== "Assets"}>
+            <AssetLibrary
+              root={props.library()?.handle ?? null}
+              entries={assetEntries()}
+              collapsed={!libraryOpen()}
+              onToggle={() => setLibraryOpen(!libraryOpen())}
+              onPreload={(entry) => {
+                preloadAsset(entry);
+              }}
+              onDragStart={(entry) => {
+                void startAssetDrag(entry);
+              }}
+              onDragReturn={hideAssetDrag}
+              loading={libraryLoading()}
+              error={libraryError()}
+              canInsert={canInsert()}
+              onAdd={(entry) => void addAsset(entry)}
+              onDragEnd={() => {
+                if (!assetDrag?.dropped) cancelAssetDrag();
+              }}
+            />
+          </div>
+          <section class="shared-library mode-library" hidden={panel() === "Assets"}>
+            <header class="library-heading">
+              <button
+                onClick={() => setLibraryOpen(!libraryOpen())}
+                aria-expanded={libraryOpen() ? "true" : "false"}
+                aria-controls="mode-library-content"
+                aria-label={libraryOpen() ? "Hide library" : "Show library"}
+              >
+                {libraryOpen() ? "←" : "→"}
+              </button>
+              <h2>
+                {panel() === "Terrain"
+                  ? "Terrain materials"
+                  : panel() === "Mission"
+                    ? "Characters"
+                    : "Paths & walls"}
+              </h2>
+            </header>
+            <div id="mode-library-content" class="mode-library-content" hidden={!libraryOpen()}>
+              <Show when={doc() && panel() === "Mission" && availableMissions().length > 0}>
+                <label class="mission-picker">
+                  Mission
+                  <select
+                    aria-label="Mission"
+                    value={missionName()}
+                    onChange={(e) => {
+                      const value = e.currentTarget.value;
+                      e.currentTarget.value = missionName();
+                      if (value) void openMap("", value);
+                      else if (mapName()) void openMap(mapName()!);
+                    }}
+                  >
+                    <option value="">Map only</option>
+                    <For each={availableMissions()}>
+                      {(mission) => <option value={mission.id}>{mission.label}</option>}
+                    </For>
+                  </select>
+                </label>
+              </Show>
+              <div ref={setLibraryMount} />
+            </div>
+          </section>
           <div
             class="library-resizer"
             hidden={!libraryOpen()}
             role="separator"
             tabindex={0}
-            aria-label="Resize asset library"
+            aria-label="Resize library"
             aria-orientation="vertical"
             aria-valuemin={200}
             aria-valuemax={maxLibraryWidth()}
@@ -1626,57 +1681,18 @@ export default function Editor3D(props: EditorProps) {
               </div>
             </section>
           </Show>
-          <Show when={helpOpen()}>
-            <div id="editor-help" class="viewport-help">
-              <div class="detail-head">
-                <h2>Viewport controls</h2>
-                <button aria-label="Close help" onClick={() => setHelpOpen(false)}>
-                  ×
-                </button>
-              </div>
-              <dl>
-                <dt>Select / move</dt>
-                <dd>Click / drag object</dd>
-                <dt>Select a part</dt>
-                <dd>Alt-click</dd>
-                <dt>Pan / orbit</dt>
-                <dd>Left / right drag</dd>
-                <dt>Zoom</dt>
-                <dd>Mouse wheel</dd>
-                <dt>Frame / game view</dt>
-                <dd>F / G</dd>
-                <dt>Rotate</dt>
-                <dd>Q / E</dd>
-                <dt>Duplicate / delete</dt>
-                <dd>D / Delete</dd>
-                <dt>Save / undo</dt>
-                <dd>Ctrl or ⌘ + S / Z</dd>
-              </dl>
-            </div>
+          <Show when={helpOpen() && doc()}>
+            <EditorHelp
+              mode={panel()}
+              hasMissionLoader={availableMissions().length > 0}
+              onClose={() => setHelpOpen(false)}
+            />
           </Show>
         </div>
         <aside class="editor-panel" aria-label="Inspector">
-          <nav class="inspector-tabs" aria-label="Inspector sections">
-            <For each={["Selection", "Draw", "View", "Mission"]}>
-              {(name) => (
-                <button
-                  aria-pressed={panel() === name ? "true" : "false"}
-                  class={panel() === name ? "selected" : ""}
-                  disabled={editingPath() && name !== "Draw"}
-                  title={
-                    editingPath() && name !== "Draw"
-                      ? "Finish or cancel the path before switching tools"
-                      : undefined
-                  }
-                  onClick={() => setPanel(name)}
-                >
-                  {name}
-                </button>
-              )}
-            </For>
-          </nav>
-          <div class="inspector-content" hidden={panel() !== "Mission"}>
+          <div class="inspector-content" hidden={panel() !== "Mission" || viewSettings()}>
             <MissionPanel
+              libraryMount={libraryMount()}
               library={() => props.library()?.handle ?? null}
               document={doc}
               commit={pushHistory}
@@ -1685,62 +1701,31 @@ export default function Editor3D(props: EditorProps) {
               viewport={viewport}
             />
           </div>
-          <div class="inspector-content" hidden={panel() !== "Draw"}>
-            <nav class="draw-subtabs" role="tablist" aria-label="Draw mode">
-              <For each={["Terrain", "Paths"] as const}>
-                {(mode) => (
-                  <button
-                    role="tab"
-                    id={`draw-tab-${mode.toLowerCase()}`}
-                    aria-controls={`draw-panel-${mode.toLowerCase()}`}
-                    aria-selected={drawMode() === mode ? "true" : "false"}
-                    disabled={editingPath() && mode === "Terrain"}
-                    title={
-                      editingPath() && mode === "Terrain"
-                        ? "Finish or cancel the path first"
-                        : undefined
-                    }
-                    onClick={() => setDrawMode(mode)}
-                  >
-                    {mode}
-                  </button>
-                )}
-              </For>
-            </nav>
-            <div
-              role="tabpanel"
-              id="draw-panel-terrain"
-              aria-labelledby="draw-tab-terrain"
-              hidden={drawMode() !== "Terrain"}
-            >
-              <TerrainPanel
-                viewport={viewport}
-                active={panel() === "Draw" && drawMode() === "Terrain"}
-                document={doc}
-                commit={commitTerrain}
-                onError={props.onError}
-                disabled={editingPath()}
-              />
-            </div>
-            <div
-              role="tabpanel"
-              id="draw-panel-paths"
-              aria-labelledby="draw-tab-paths"
-              hidden={drawMode() !== "Paths"}
-            >
-              <SplinePanel
-                document={doc}
-                library={() => props.library()?.handle ?? null}
-                entries={assetEntries}
-                viewport={viewport}
-                commit={commitTerrain}
-                onError={props.onError}
-                active={panel() === "Draw" && drawMode() === "Paths"}
-                onEditingChange={setEditingPath}
-              />
-            </div>
+          <div class="inspector-content" hidden={panel() !== "Terrain" || viewSettings()}>
+            <TerrainPanel
+              libraryMount={libraryMount()}
+              viewport={viewport}
+              active={panel() === "Terrain"}
+              document={doc}
+              commit={commitTerrain}
+              onError={props.onError}
+              disabled={editingPath()}
+            />
           </div>
-          <div class="inspector-content" hidden={panel() !== "View"}>
+          <div class="inspector-content" hidden={panel() !== "Paths" || viewSettings()}>
+            <SplinePanel
+              libraryMount={libraryMount()}
+              document={doc}
+              library={() => props.library()?.handle ?? null}
+              entries={assetEntries}
+              viewport={viewport}
+              commit={commitTerrain}
+              onError={props.onError}
+              active={panel() === "Paths"}
+              onEditingChange={setEditingPath}
+            />
+          </div>
+          <div class="inspector-content" hidden={!viewSettings()}>
             <section class="view-settings">
               <h2>Camera &amp; display</h2>
               <div class="camera-directions" aria-label="Camera direction">
@@ -2036,7 +2021,10 @@ export default function Editor3D(props: EditorProps) {
               </Show>
             </section>
           </div>
-          <div class="inspector-content selection-inspector" hidden={panel() !== "Selection"}>
+          <div
+            class="inspector-content selection-inspector"
+            hidden={panel() !== "Assets" || viewSettings()}
+          >
             <Show
               when={selectedTransform()}
               fallback={

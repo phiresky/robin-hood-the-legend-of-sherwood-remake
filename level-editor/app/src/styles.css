@@ -1047,3 +1047,20 @@ select, input.search { background: #171c22; border-color: var(--border); min-hei
   background: #315b67;
   border-color: #5d99a9;
 }
+
+/* Tool modes live beside the document title; their libraries share the left sidebar. */
+.editor-modes { display: flex; gap: 3px; flex-shrink: 0; }
+.editor-modes button { padding: 6px 9px; background: transparent; border-color: transparent; }
+.editor-modes button.selected { background: #34443b; border-color: #506758; color: #d9eedb; }
+.asset-library-host { display: flex; width: 100%; min-height: 0; }
+.mode-library-content { flex: 1; min-height: 0; overflow-y: auto; padding: 0 12px 12px; }
+.mode-library-section { min-width: 0; }
+.mode-library-section > .hint { margin: 0 0 12px; }
+.mode-library-section fieldset { min-width: 0; }
+.mode-library-section .material-picker { margin: 0; padding: 0; border: 0; }
+.mode-library-section .material-picker legend { padding: 0 0 8px; }
+.mode-library .library-browser { padding: 0; overflow: visible; }
+
+.viewport-help { max-height: calc(100% - 70px); overflow-y: auto; }
+.mode-library-content > .mission-picker { margin-bottom: 14px; flex-direction: column; align-items: stretch; }
+.mode-library-content > .mission-picker select { width: 100%; max-width: none; }

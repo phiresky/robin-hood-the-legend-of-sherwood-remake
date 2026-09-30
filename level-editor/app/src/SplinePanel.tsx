@@ -1,3 +1,5 @@
+import LibraryPortal from "./LibraryPortal";
+import LibraryBrowser from "./LibraryBrowser";
 import ScrubNumber from "./ScrubNumber";
 import { For, Show, createEffect, createSignal, onCleanup, untrack } from "solid-js";
 import {
@@ -28,6 +30,7 @@ export default function SplinePanel(props: {
   commit(document: Level3D): void;
   onError(message: string): void;
   active?: boolean;
+  libraryMount?: HTMLElement;
   onEditingChange?(editing: boolean): void;
 }) {
   const [active, setActive] = createSignal("");
@@ -36,6 +39,7 @@ export default function SplinePanel(props: {
   const [section, setSection] = createSignal(-1);
   const [picker, setPicker] = createSignal<"wall" | "corner" | null>(null);
   const [sourceMap, setSourceMap] = createSignal("");
+  const [presetSearch, setPresetSearch] = createSignal("");
   const previewRenderer = new AssetPreviewRenderer();
   onCleanup(() => previewRenderer.dispose());
   const [busy, setBusy] = createSignal(false);
@@ -540,14 +544,20 @@ export default function SplinePanel(props: {
             </For>
           </div>
         </Show>
+      </Show>
+      <LibraryPortal mount={props.libraryMount} active={props.active !== false}>
         <h3>Create a path</h3>
-        <p class="hint">Choose a surface, then click the map to place points.</p>
+        <p class="hint">
+          {path()
+            ? "Finish or stop editing the current path to create another."
+            : "Choose a surface, then click the map to place points."}
+        </p>
         <div class="spline-preset-grid">
           <For each={["road", "river"] as const}>
             {(kind) => (
               <button
                 class="asset-card"
-                disabled={busy() || !props.document()}
+                disabled={busy() || !props.document() || !!path()}
                 onClick={() => void begin(kind)}
               >
                 <svg
@@ -566,28 +576,41 @@ export default function SplinePanel(props: {
         </div>
         <details class="spline-settings">
           <summary>Walls &amp; fences</summary>
-          <label>
-            Source map
-            <select
-              aria-label="Preset source map"
-              value={sourceMap()}
-              onChange={(event) => setSourceMap(event.currentTarget.value)}
-            >
-              <option value="">All maps</option>
-              <For each={[...new Set(sources().map((entry) => entry.source_map))].sort()}>
-                {(name) => <option value={name}>{name}</option>}
-              </For>
-            </select>
-          </label>
-          <Show when={!props.library()}>
-            <p class="hint">Load an asset library to draw walls and fences.</p>
-          </Show>
-          <div class="spline-preset-grid">
+          <LibraryBrowser
+            search={presetSearch()}
+            onSearch={setPresetSearch}
+            searchLabel="Search walls and fences"
+            label="Walls and fences"
+            maxHeight="360px"
+            filters={
+              <label>
+                Source map
+                <select
+                  aria-label="Preset source map"
+                  value={sourceMap()}
+                  onChange={(event) => setSourceMap(event.currentTarget.value)}
+                >
+                  <option value="">All maps</option>
+                  <For each={[...new Set(sources().map((entry) => entry.source_map))].sort()}>
+                    {(name) => <option value={name}>{name}</option>}
+                  </For>
+                </select>
+              </label>
+            }
+            beforeGrid={
+              <Show when={!props.library()}>
+                <p class="hint">Load an asset library to draw walls and fences.</p>
+              </Show>
+            }
+          >
             <For
               each={choices().filter(
                 (p) =>
-                  !sourceMap() ||
-                  props.entries().find((e) => e.id === p.asset)?.source_map === sourceMap(),
+                  (!sourceMap() ||
+                    props.entries().find((e) => e.id === p.asset)?.source_map === sourceMap()) &&
+                  `${p.name} ${p.asset}`
+                    .toLowerCase()
+                    .includes(presetSearch().trim().toLowerCase()),
               )}
             >
               {(preset) => {
@@ -595,7 +618,7 @@ export default function SplinePanel(props: {
                 return (
                   <button
                     class="asset-card"
-                    disabled={busy()}
+                    disabled={busy() || !props.document() || !!path()}
                     onClick={() => void begin("wall", preset)}
                   >
                     <Show when={entry() && props.library()}>
@@ -612,9 +635,9 @@ export default function SplinePanel(props: {
                 );
               }}
             </For>
-          </div>
+          </LibraryBrowser>
         </details>
-      </Show>
+      </LibraryPortal>
       <Show when={picker() && props.library()}>
         <AssetPickerDialog
           title={picker() === "wall" ? "Choose wall type" : "Choose corner type"}
@@ -988,32 +1011,34 @@ export default function SplinePanel(props: {
                     ),
                   })}
                 />
-                <MaterialPicker
-                  label="Point material"
-                  value={
-                    current().pointMaterials?.[point()] ??
-                    (current().kind === "river" ? "water_still" : "path_dirt")
-                  }
-                  customMaterials={props.document()?.customMaterials ?? []}
-                  onCustomMaterialsChange={(customMaterials) => {
-                    const document = props.document();
-                    if (document) publish({ ...document, customMaterials });
-                  }}
-                  onChange={(id) =>
-                    patch({
-                      texture: undefined,
-                      pointMaterialMixes: current().pointMaterialMixes?.map((mix, i) =>
-                        i === point() ? null : mix,
-                      ),
-                      pointMaterials: current().points.map((_, i) =>
-                        i === point()
-                          ? id
-                          : (current().pointMaterials?.[i] ??
-                            (current().kind === "river" ? "water_still" : "path_dirt")),
-                      ),
-                    })
-                  }
-                />
+                <LibraryPortal mount={props.libraryMount} active={props.active !== false}>
+                  <MaterialPicker
+                    label="Point material"
+                    value={
+                      current().pointMaterials?.[point()] ??
+                      (current().kind === "river" ? "water_still" : "path_dirt")
+                    }
+                    customMaterials={props.document()?.customMaterials ?? []}
+                    onCustomMaterialsChange={(customMaterials) => {
+                      const document = props.document();
+                      if (document) publish({ ...document, customMaterials });
+                    }}
+                    onChange={(id) =>
+                      patch({
+                        texture: undefined,
+                        pointMaterialMixes: current().pointMaterialMixes?.map((mix, i) =>
+                          i === point() ? null : mix,
+                        ),
+                        pointMaterials: current().points.map((_, i) =>
+                          i === point()
+                            ? id
+                            : (current().pointMaterials?.[i] ??
+                              (current().kind === "river" ? "water_still" : "path_dirt")),
+                        ),
+                      })
+                    }
+                  />
+                </LibraryPortal>
                 <Show when={current().pointMaterialMixes?.[point()]}>
                   <p class="hint">
                     This inserted point preserves a material blend. Choosing a material replaces
