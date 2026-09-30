@@ -19,7 +19,7 @@ export class TerrainLayer {
       this.camera === document.camera &&
       this.customMaterials === document.customMaterials
     )
-      return;
+      return false;
     this.clear();
     const textures = new Map<string, THREE.DataTexture>();
     const texture = (id: string) => {
@@ -136,6 +136,7 @@ export class TerrainLayer {
     this.camera = document.camera;
     this.splines = document.splines;
     this.customMaterials = document.customMaterials;
+    return true;
   }
   clear() {
     this.root.traverse((node) => {

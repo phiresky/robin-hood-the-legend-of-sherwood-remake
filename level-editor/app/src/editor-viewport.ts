@@ -1598,7 +1598,8 @@ export class EditorViewport {
   syncViews(d: Level3D, rebuildFraming = true, splinePreview = false) {
     this.clippingBoundsDirty = true;
     this.missionMarkers.sync(d, this.missionEdit?.selected);
-    this.terrain.sync(d);
+    if (this.terrain.sync(d))
+      this.sunlight.setGround(this.terrain.root.children.length ? this.terrain.root : this.ground);
     this.workspaceFrame.visible = !!d.size;
     if (d.size) {
       const [width, height] = d.size;

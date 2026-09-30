@@ -1,3 +1,4 @@
+import { checkTerrainSunShadows } from "./terrain-sun";
 import { listFiles } from "../src/fs";
 import { render } from "@solidjs/web";
 import * as THREE from "three";
@@ -76,6 +77,7 @@ async function until(test: () => boolean) {
 
 export async function checkSharedLibrary() {
   checkPathControlVisibility();
+  checkTerrainSunShadows();
   let viewport: EditorViewport | undefined;
   const setup = EditorViewport.prototype.setup;
   EditorViewport.prototype.setup = function (element) {

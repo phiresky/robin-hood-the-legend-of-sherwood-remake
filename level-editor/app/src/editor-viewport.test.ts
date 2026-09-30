@@ -1145,3 +1145,52 @@ test("camera turns orbit their focus without cutting inward and interrupt withou
   Object.assign(viewport, { camera: null, orbit: null });
   viewport.dispose();
 });
+
+test("sun shadow receivers follow editable terrain replacement and retirement", () => {
+  const { viewport, publish } = fixture();
+  const document = {
+    ...documentFixture(),
+    objects: [],
+    groups: [],
+    terrain: createTerrainGrid([0, 0, 100, 100], 100, 0),
+    lighting: { enabled: true, sunAzimuth: 90, sunElevation: 45, shadowOpacity: 0.5 },
+  };
+  const internal = viewport as unknown as {
+    terrain: { root: THREE.Group };
+    sunlight: { root: THREE.Group };
+  };
+  const receivers = () => {
+    const meshes: THREE.Mesh[] = [];
+    internal.sunlight.root.traverse((node) => {
+      if (node instanceof THREE.Mesh) meshes.push(node);
+    });
+    return meshes;
+  };
+  publish(document);
+  assert.ok(
+    receivers().length > 0,
+    "Editable ground must receive sun shadows without a loaded ground asset",
+  );
+  const original = receivers()[0]!;
+  assert.equal(original.geometry, (internal.terrain.root.children[0] as THREE.Mesh).geometry);
+  assert.equal(original.receiveShadow, true);
+  const raised = {
+    ...document,
+    terrain: {
+      ...document.terrain,
+      vertices: document.terrain.vertices.map((v) => ({
+        ...v,
+        position: [v.position[0], v.position[1], 40] as [number, number, number],
+      })),
+    },
+  };
+  publish(raised);
+  assert.notEqual(receivers()[0]!.geometry, original.geometry);
+  assert.equal(
+    receivers()[0]!.geometry,
+    (internal.terrain.root.children[0] as THREE.Mesh).geometry,
+  );
+  publish({ ...document, terrain: undefined });
+  assert.equal(receivers().length, 0);
+  viewport.dispose();
+});

@@ -8,6 +8,7 @@ export class SunLighting {
   private receiver: THREE.Object3D | null = null;
   private material = new THREE.ShadowMaterial({
     color: 0x26303a,
+    side: THREE.DoubleSide,
     opacity: 0.45,
     depthWrite: false,
     polygonOffset: true,
