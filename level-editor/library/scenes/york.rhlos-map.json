@@ -185,7 +185,7 @@
       "model": "3d-assets/york/york-castle-west-lane-front-timber-house/model.glb",
       "model_sha256": "a45ae3f64ed1516c7a2d02e6de8e7fdf6080924939227cc577f53468c2330b74",
       "descriptor": "3d-assets/york/york-castle-west-lane-front-timber-house/asset.json",
-      "descriptor_sha256": "b781bdbfb1bdde890352ce06c3c098dfa47d056e47271f70e81b4da86891edbd",
+      "descriptor_sha256": "8597ae037760e39c471f09d4d0b7b2751fff831a2fcd37e2578c203be1d6760c",
       "id": "york-castle-west-lane-front-timber-house"
     },
     {
@@ -199,7 +199,7 @@
       "model": "3d-assets/york/york-castle-west-lane-rear-timber-house/model.glb",
       "model_sha256": "de86c8043aad1c55f8ccada35e7f4d7ad28fdfa3ed812dc469c24205fea0c7c9",
       "descriptor": "3d-assets/york/york-castle-west-lane-rear-timber-house/asset.json",
-      "descriptor_sha256": "ff56edd022f8b33dabddb23ab07087c14a061d52d6c52edc2c04b5eea0ad0663",
+      "descriptor_sha256": "057253b5d853f2ff2558b0369b92d4b09380306c702745a8fdeca20a30d6f482",
       "id": "york-castle-west-lane-rear-timber-house"
     },
     {
@@ -388,7 +388,7 @@
       "model": "3d-assets/york/york-east-quay-front-timber-house/model.glb",
       "model_sha256": "3ebff6b29ef9de6be015096f10998a8f6b9ae62898ac2f45c1d59eb5a0251d82",
       "descriptor": "3d-assets/york/york-east-quay-front-timber-house/asset.json",
-      "descriptor_sha256": "fff9a95a1015fb456f7987966fbd8754bf0a463a81a856eb8afe7ef037dc6030",
+      "descriptor_sha256": "7b1acf054f273ca7abf923bd0344ae39673e7d2f8b2ca70fef0d7d776220099c",
       "id": "york-east-quay-front-timber-house"
     },
     {
@@ -766,7 +766,7 @@
       "model": "3d-assets/york/york-north-river-lane-northern-timber-house/model.glb",
       "model_sha256": "f2127f542aec768863df7f0c92b5eea811b986824ac98485e43ccdca8ac29d16",
       "descriptor": "3d-assets/york/york-north-river-lane-northern-timber-house/asset.json",
-      "descriptor_sha256": "0e56c2c083b900cf33b161cee5227aec1d0286cb1333f877424f0977d746ac37",
+      "descriptor_sha256": "b8ad407db2a8a207772a892ca14a1dcc285fd3a231ed7b275874d59116f48059",
       "id": "york-north-river-lane-northern-timber-house"
     },
     {
@@ -780,7 +780,7 @@
       "model": "3d-assets/york/york-north-river-lane-rear-timber-house/model.glb",
       "model_sha256": "33b6c326e3a056a7821a1510906302eaf04e931d4bee05d600e7dc7e416da51a",
       "descriptor": "3d-assets/york/york-north-river-lane-rear-timber-house/asset.json",
-      "descriptor_sha256": "65c9409b3e7af85d1b5efb8f36d4b7c6d849821fc20d7bd54043fdd9027bd1be",
+      "descriptor_sha256": "a4b772d6ab98f2a951a24ed190ae4f54a33f7683366dc7f4c75b605a03d16938",
       "id": "york-north-river-lane-rear-timber-house"
     },
     {
@@ -801,14 +801,14 @@
       "model": "3d-assets/york/york-north-river-lane-stone-house/model.glb",
       "model_sha256": "c94862761a7684fa5a736d181618589a53b25c87ad8101169ff09ef07e1f939b",
       "descriptor": "3d-assets/york/york-north-river-lane-stone-house/asset.json",
-      "descriptor_sha256": "2f93ee723f092f5d0918dad5abaf3dffb22aa6da5d961a23f269e3c27ae31779",
+      "descriptor_sha256": "a81f11965f1d86aea41a0bfeae54261098c215a93c0b1a1b0469b97b713d3306",
       "id": "york-north-river-lane-stone-house"
     },
     {
       "model": "3d-assets/york/york-north-river-lane-west-low-house/model.glb",
       "model_sha256": "11908856936bf9173e235b9cd57a7a05e52aa5ea1184c502af4c99b08121110e",
       "descriptor": "3d-assets/york/york-north-river-lane-west-low-house/asset.json",
-      "descriptor_sha256": "ba85dce566794c6728f379fecb725060bee52216257c5e55786fe65bfe77300e",
+      "descriptor_sha256": "c14b80a506edcca8d7a9aca8fc43c5c6eff7269067e184180be448f7ce896bee",
       "id": "york-north-river-lane-west-low-house"
     },
     {
@@ -1074,7 +1074,7 @@
       "model": "3d-assets/york/york-riverside-stone-storehouse/model.glb",
       "model_sha256": "24d0ae8611a482a94326a15c95b0131e76ff5cad4ba4ba56466bb675bfe0ac3c",
       "descriptor": "3d-assets/york/york-riverside-stone-storehouse/asset.json",
-      "descriptor_sha256": "0496dd1da1558033148300439a5e6e5066eb9027e6d0d1c9a25875089040f908",
+      "descriptor_sha256": "6a3e96379df5a8fbb706f141c60cf4189c0ee42c991efe844f0ca8dde6227e74",
       "id": "york-riverside-stone-storehouse"
     },
     {

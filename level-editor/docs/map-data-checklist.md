@@ -1,7 +1,7 @@
 # Map data: editor → game
 
-Latest mask inventory: **2,943 unrecovered records** after the Lincoln cliff and
-cottage publication below. Earlier batch totals are historical snapshots.
+Latest mask inventory: **2,935 unrecovered records** after the York projectile-mask
+publication below. Earlier batch totals are historical snapshots.
 
 Compilation reads **placed assets and the editor scene only**. One-time recovery
 from existing levels may populate asset-local metadata; exporting never reads
@@ -3282,3 +3282,33 @@ The recipes are in `refinement/catalogs/lincoln-masks.json`. Recovery evidence i
 native fixtures are under `work/map-compile/lincoln-static-mask-publication`.
 The bailey cottage candidate 169 remains unpublished: mesh coverage passes, but
 the proposed receiving anchor is too far away to accept without further review.
+
+### Published York house projectile masks and relocation gap
+
+Eight static projectile masks are now asset-local: castle west-lane front/rear
+houses 569/574, east-quay front house 525, north-river-lane northern/rear/stone/low
+houses 560/557/548/553, and riverside storehouse 2. Their 6,765 covered pixels match
+exactly, using 1,574 triangles from pinned meshes without appearance controls.
+They have no character boundaries, obstacle links or mask-state controls.
+Projectile thresholds retain the world XY datum; receiving anchors lie on
+nearby unblocked ground. Five central-city candidates lack a suitable nearby
+ground anchor; stone-shop candidate 401 has a distant anchor. All remain deferred.
+
+Each mask retains exact coverage and rules when its asset moves one pixel east.
+Other baseline geometry and warnings are unchanged. Rust constructs the baseline
+and all eight moved exports with 161 movement areas, 1,180 sight obstacles and
+178 elevation boundaries. All ten saved scenes reopen, with only eight York
+descriptor pins changed and no placement or user-ZIP changes.
+
+The castle west-lane front-house move exposes a separate unresolved connection
+gap: door projections drop from 254 to 252 and jump pairs from 72 to 70.
+Jump sockets for pairs 70 and 71 require coincident join points within 0.0001
+units; moving one house by one pixel disconnects both pairs. Other seven moves
+retain the baseline counts. Mask translation passes, but this is explicitly
+not proof of rearranged roof traversal parity. Flexible, bounded jump attachment
+authoring and runtime traversal verification remain required; simply increasing
+the matching tolerance could create ambiguous or invalid connections.
+
+Recipes are in `refinement/catalogs/york-masks.json`; recovery evidence is
+`work/map-compile/york-next-static-mask-review.json`. Publication snapshots and
+the nine native fixtures are under `work/map-compile/york-static-mask-publication`.
