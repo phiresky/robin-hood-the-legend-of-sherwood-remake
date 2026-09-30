@@ -540,6 +540,7 @@ struct ChunkInfo {
 pub struct ChunkReader {
     file: SbFile,
     chunk_stack: Vec<ChunkInfo>,
+    record_names: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 impl ChunkReader {
@@ -547,6 +548,7 @@ impl ChunkReader {
         Self {
             file,
             chunk_stack: Vec::new(),
+            record_names: Default::default(),
         }
     }
 
@@ -590,6 +592,16 @@ impl ChunkReader {
         expected_tag: &[u8; 4],
         expected_version: u32,
     ) -> Result<(), LevelError> {
+        self.chunk_start_versions(expected_tag, expected_version, &[])
+            .map(|_| ())
+    }
+
+    fn chunk_start_versions(
+        &mut self,
+        expected_tag: &[u8; 4],
+        expected_version: u32,
+        additional_versions: &[u32],
+    ) -> Result<u32, LevelError> {
         let mut tag = [0u8; 4];
         self.ensure_available(4, "chunk tag")?;
         LegacyReader::new(&mut self.file).read_bytes("chunk tag", &mut tag)?;
@@ -609,7 +621,7 @@ impl ChunkReader {
             });
         }
 
-        if version != expected_version {
+        if version != expected_version && !additional_versions.contains(&version) {
             return Err(LevelError::ChunkVersionMismatch {
                 tag: tag_str(&tag),
                 expected: expected_version,
@@ -625,6 +637,32 @@ impl ChunkReader {
             tag,
         });
 
+        Ok(version)
+    }
+
+    /// Spellforge adds a name before each record in selected full-game chunks.
+    fn named_chunk_start(
+        &mut self,
+        format: LevelFormat,
+        tag: &[u8; 4],
+        base_version: u32,
+    ) -> Result<bool, LevelError> {
+        let additional = [base_version + 1];
+        let versions = match format {
+            LevelFormat::Fullgame => additional.as_slice(),
+            LevelFormat::Demo => &[],
+        };
+        Ok(self.chunk_start_versions(tag, base_version, versions)? != base_version)
+    }
+
+    fn read_record_name(&mut self, named: bool, group: &str) -> Result<(), LevelError> {
+        if named {
+            let name = self.read_string()?;
+            self.record_names
+                .entry(group.to_owned())
+                .or_default()
+                .push(name);
+        }
         Ok(())
     }
 
@@ -2020,6 +2058,9 @@ pub struct LoadedProtoLevel {
 )]
 pub struct LoadedMission {
     pub format: LevelFormat,
+    /// Spellforge record names in each authored group's slot order.
+    #[serde(default)]
+    pub record_names: std::collections::BTreeMap<String, Vec<String>>,
     /// Rust-authored geometry-only missions need a vacant slot zero because
     /// their AI handles use zero as the null sentinel.
     #[serde(default)]
@@ -3380,6 +3421,7 @@ impl LoadedLevel {
             },
             mission: LoadedMission {
                 format: LevelFormat::Fullgame,
+                record_names: Default::default(),
                 reserve_null_ai_handle: false,
                 authored_spawn_roster: false,
                 header: MissionHeader {
@@ -4160,6 +4202,7 @@ pub fn load_mission(
 
     Ok(LoadedMission {
         format,
+        record_names: std::mem::take(&mut reader.record_names),
         reserve_null_ai_handle: false,
         authored_spawn_roster: false,
         header,
@@ -4274,12 +4317,13 @@ fn read_civilians(
     format: LevelFormat,
     is_beggar: &dyn Fn(u32) -> bool,
 ) -> Result<Vec<RawCivilian>, LevelError> {
-    reader.chunk_start(format.civilian_tag(), format.civilian_ver())?;
+    let named = reader.named_chunk_start(format, format.civilian_tag(), format.civilian_ver())?;
 
     let count = reader.read_u16()?;
     let mut civilians = Vec::with_capacity(count as usize);
 
     for _ in 0..count {
+        reader.read_record_name(named, "civilians")?;
         let position_x = reader.read_u16()?;
         let position_y = reader.read_u16()?;
         let direction = reader.read_u32()?;
@@ -4363,12 +4407,13 @@ fn read_soldiers(
     reader: &mut ChunkReader,
     format: LevelFormat,
 ) -> Result<Vec<RawSoldier>, LevelError> {
-    reader.chunk_start(format.soldier_tag(), format.soldier_ver())?;
+    let named = reader.named_chunk_start(format, format.soldier_tag(), format.soldier_ver())?;
 
     let count = reader.read_u16()?;
     let mut soldiers = Vec::with_capacity(count as usize);
 
     for _ in 0..count {
+        reader.read_record_name(named, "soldiers")?;
         let position_x = reader.read_u16()?;
         let position_y = reader.read_u16()?;
         let direction = reader.read_u32()?;
@@ -4433,12 +4478,13 @@ fn read_soldiers(
 // ── Beam-me points ─────────────────────────────────────────────
 
 fn read_beam_mes(reader: &mut ChunkReader, format: LevelFormat) -> Result<Vec<BeamMe>, LevelError> {
-    reader.chunk_start(format.beamme_tag(), format.beamme_ver())?;
+    let named = reader.named_chunk_start(format, format.beamme_tag(), format.beamme_ver())?;
 
     let count = reader.read_u16()?;
     let mut beam_mes = Vec::with_capacity(count as usize);
 
     for index in 0..count {
+        reader.read_record_name(named, "spawns")?;
         let pos_x = reader.read_i16()?;
         let pos_y = reader.read_i16()?;
         let direction = reader.read_u32()?;
@@ -4573,12 +4619,13 @@ fn read_targets(
     reader: &mut ChunkReader,
     format: LevelFormat,
 ) -> Result<Vec<RawTarget>, LevelError> {
-    reader.chunk_start(format.target_tag(), format.target_ver())?;
+    let named = reader.named_chunk_start(format, format.target_tag(), format.target_ver())?;
 
     let count = reader.read_u16()?;
     let mut targets = Vec::with_capacity(count as usize);
 
     for _ in 0..count {
+        reader.read_record_name(named, "targets")?;
         let position_x = reader.read_i16()?;
         let position_y = reader.read_i16()?;
         let position_z = reader.read_i16()?;
@@ -4659,12 +4706,13 @@ fn read_pcs_to_rescue(
     reader: &mut ChunkReader,
     format: LevelFormat,
 ) -> Result<Vec<RawPcRescue>, LevelError> {
-    reader.chunk_start(format.pc_tag(), format.pc_ver())?;
+    let named = reader.named_chunk_start(format, format.pc_tag(), format.pc_ver())?;
 
     let count = reader.read_u16()?;
     let mut pcs = Vec::with_capacity(count as usize);
 
     for _ in 0..count {
+        reader.read_record_name(named, "heroes")?;
         let position_x = reader.read_i16()?;
         let position_y = reader.read_i16()?;
         let direction = reader.read_u32()?;
@@ -4716,12 +4764,13 @@ fn read_bonuses(
     reader: &mut ChunkReader,
     format: LevelFormat,
 ) -> Result<Vec<RawBonus>, LevelError> {
-    reader.chunk_start(format.bonus_tag(), format.bonus_ver())?;
+    let named = reader.named_chunk_start(format, format.bonus_tag(), format.bonus_ver())?;
 
     let count = reader.read_u16()?;
     let mut bonuses = Vec::with_capacity(count as usize);
 
     for _ in 0..count {
+        reader.read_record_name(named, "items")?;
         let bonus_type = reader.read_u16()?;
         let quantity = reader.read_u16()?;
         let position_x = reader.read_u16()?;
@@ -4755,12 +4804,13 @@ fn read_scrolls(
     reader: &mut ChunkReader,
     format: LevelFormat,
 ) -> Result<Vec<RawScroll>, LevelError> {
-    reader.chunk_start(format.scroll_tag(), format.scroll_ver())?;
+    let named = reader.named_chunk_start(format, format.scroll_tag(), format.scroll_ver())?;
 
     let count = reader.read_u16()?;
     let mut scrolls = Vec::with_capacity(count as usize);
 
     for _ in 0..count {
+        reader.read_record_name(named, "scrolls")?;
         let position_x = reader.read_u16()?;
         let position_y = reader.read_u16()?;
         let direction = reader.read_u32()?;
@@ -5386,12 +5436,13 @@ fn read_script_objects(
     reader: &mut ChunkReader,
     format: LevelFormat,
 ) -> Result<RawScriptObjects, LevelError> {
-    reader.chunk_start(format.script_tag(), format.script_ver())?;
+    let named = reader.named_chunk_start(format, format.script_tag(), format.script_ver())?;
 
     // Script points
     let num_points = reader.read_u16()?;
     let mut points = Vec::with_capacity(num_points as usize);
     for _ in 0..num_points {
+        reader.read_record_name(named, "points")?;
         let x = reader.read_i16()?;
         let y = reader.read_i16()?;
         let sector = reader.read_u16()?;
@@ -5408,6 +5459,7 @@ fn read_script_objects(
     let num_sectors = reader.read_u16()?;
     let mut sectors = Vec::with_capacity(num_sectors as usize);
     for _ in 0..num_sectors {
+        reader.read_record_name(named, "sectors")?;
         let polygon = read_sector_polygon(reader, format)?;
         let sector_ref = reader.read_u16()?;
         let layer = reader.read_u16()?;
@@ -5573,12 +5625,13 @@ fn read_hiking_paths(
     reader: &mut ChunkReader,
     format: LevelFormat,
 ) -> Result<Vec<RawHikingPath>, LevelError> {
-    reader.chunk_start(format.path_tag(), format.path_ver())?;
+    let named = reader.named_chunk_start(format, format.path_tag(), format.path_ver())?;
 
     let num_paths = reader.read_u16()?;
     let mut paths = Vec::with_capacity(num_paths as usize);
 
     for _ in 0..num_paths {
+        reader.read_record_name(named, "patrols")?;
         let num_waypoints = reader.read_u16()?;
         let mut waypoints = Vec::with_capacity(num_waypoints as usize);
 
@@ -6789,6 +6842,158 @@ mod tests {
         assert_eq!(s.alert_path_id, 11);
         assert!(!s.tower_guard);
         assert!(s.subordinate_ids.is_empty());
+    }
+
+    #[test]
+    fn named_spawn_records_preserve_slots_scripts_and_summary() {
+        for (format, version) in [
+            (LevelFormat::Demo, 3),
+            (LevelFormat::Fullgame, 4),
+            (LevelFormat::Fullgame, 5),
+        ] {
+            let mut payload = 2u16.to_le_bytes().to_vec();
+            for (index, name) in ["Placeholder_1", "Second spawn"].iter().enumerate() {
+                if version == 5 {
+                    payload.extend(build_string(name));
+                }
+                payload.extend((500 + index as i16).to_le_bytes());
+                payload.extend(600i16.to_le_bytes());
+                payload.extend(8u32.to_le_bytes());
+                payload.extend(7u32.to_le_bytes());
+                payload.extend(2u16.to_le_bytes());
+                payload.extend(3u16.to_le_bytes());
+                payload.extend(1u16.to_le_bytes());
+                payload.extend(4u32.to_le_bytes());
+                payload.extend([1, 0, 1, 0, 0, 0, 0, 0, 0, 0]);
+                payload.push(u8::from(index == 0));
+                if index == 0 {
+                    payload.extend(build_string("SpawnScript"));
+                }
+                payload.push(2 + index as u8);
+            }
+            let spawn = build_chunk(format.beamme_tag(), version, &payload);
+            let mut group = 1u16.to_le_bytes().to_vec();
+            group.extend(spawn);
+            let elements = build_chunk(format.element_tag(), format.element_ver(), &group);
+            let mut header = vec![0; 8];
+            header.extend(build_string("TestMap"));
+            header.extend(0u32.to_le_bytes());
+            let mut mission = build_chunk(format.header_tag(), format.header_ver(), &header);
+            mission.extend(elements);
+            let bytes = build_chunk(format.mission_tag(), format.file_version(), &mission);
+            let (_dir, path) = write_temp_file("named-spawns.rhm", &bytes);
+            let mut reader = ChunkReader::new(SbFile::open(&path).unwrap());
+            let mission = load_mission(&mut reader, format, &|_| false).unwrap();
+            assert_eq!(mission.beam_mes.len(), 2);
+            if version == 5 {
+                assert_eq!(
+                    mission.record_names["spawns"],
+                    ["Placeholder_1", "Second spawn"]
+                );
+                let encoded = bitcode::encode(&mission);
+                let restored: LoadedMission = bitcode::decode(&encoded).unwrap();
+                assert_eq!(restored.record_names, mission.record_names);
+            } else {
+                assert!(mission.record_names.is_empty());
+            }
+            for (index, spawn) in mission.beam_mes.iter().enumerate() {
+                assert_eq!(spawn.index, index as u16);
+                assert_eq!(spawn.position, MapPoint::new(500.0 + index as f32, 600.0));
+                assert_eq!(spawn.direction, 8);
+                assert_eq!(spawn.action, 7);
+                assert_eq!(spawn.projection_area, 2);
+                assert_eq!(spawn.sector, 3);
+                assert_eq!(spawn.layer, 1);
+                assert_eq!(spawn.material, 4);
+                assert_eq!(
+                    spawn.script.as_deref(),
+                    (index == 0).then_some("SpawnScript")
+                );
+                assert_eq!(spawn.required_pc, 2 + index as u8);
+            }
+            let files = crate::sbfile::SbFileSystem::new(std::sync::Arc::new(
+                robin_util::asset_fs::AssetVfs::new(),
+            ));
+            let summary = scan_mission_for_beam_mes_with_files(&path, &files).unwrap();
+            assert_eq!(summary.number_of_beam_mes, 2);
+            assert_eq!(summary.action_flags.len(), 2);
+            for flags in summary.action_flags {
+                assert!(flags.climb && flags.lockpick);
+                assert!(!flags.jump && !flags.archery);
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires ROBINHOOD_NAMED_MISSIONS_DIR and ROBINHOOD_PROFILE_CPF"]
+    fn spellforge_mission_corpus_loads_all_named_chunks() {
+        let root = std::env::var("ROBINHOOD_NAMED_MISSIONS_DIR").unwrap();
+        let profile_path = std::env::var("ROBINHOOD_PROFILE_CPF").unwrap();
+        let mut profiles = crate::profiles::ProfileManager::new();
+        profiles
+            .load_all_legacy_cpf(&mut SbFile::open(&profile_path).unwrap())
+            .unwrap();
+        let mut count = 0;
+        let mut groups = std::collections::BTreeSet::new();
+        for entry in std::fs::read_dir(root).unwrap() {
+            let path = entry.unwrap().path();
+            if !path
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("rhm"))
+            {
+                continue;
+            }
+            let mut reader = ChunkReader::new(SbFile::open(path.to_str().unwrap()).unwrap());
+            let mission = load_mission(&mut reader, LevelFormat::Fullgame, &|index| {
+                profiles
+                    .get_civilian(index)
+                    .expect("corpus civilian profile")
+                    .civilian_type
+                    == crate::profiles::CivilianType::Beggar
+            })
+            .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+            groups.extend(mission.record_names.keys().cloned());
+            count += 1;
+        }
+        assert!(count > 0);
+        for group in [
+            "spawns",
+            "civilians",
+            "soldiers",
+            "heroes",
+            "targets",
+            "items",
+            "scrolls",
+            "points",
+            "sectors",
+            "patrols",
+        ] {
+            assert!(groups.contains(group), "corpus did not exercise {group}");
+        }
+        println!("Parsed {count} missions and all named record groups");
+    }
+
+    #[test]
+    fn named_spawn_records_reject_unknown_versions_and_truncated_names() {
+        for (format, version) in [(LevelFormat::Fullgame, 6), (LevelFormat::Demo, 5)] {
+            let bytes = build_chunk(format.beamme_tag(), version, &0u16.to_le_bytes());
+            let (_dir, path) = write_temp_file("unknown-spawns.rhm", &bytes);
+            let mut reader = ChunkReader::new(SbFile::open(&path).unwrap());
+            assert!(matches!(
+                read_beam_mes(&mut reader, format),
+                Err(LevelError::ChunkVersionMismatch { found, .. }) if found == version
+            ));
+        }
+        let mut payload = 1u16.to_le_bytes().to_vec();
+        payload.extend(20u16.to_le_bytes());
+        payload.extend(b"short");
+        let bytes = build_chunk(b"SCOT", 5, &payload);
+        let (_dir, path) = write_temp_file("truncated-spawns.rhm", &bytes);
+        let mut reader = ChunkReader::new(SbFile::open(&path).unwrap());
+        assert!(matches!(
+            read_beam_mes(&mut reader, LevelFormat::Fullgame),
+            Err(LevelError::Legacy(_))
+        ));
     }
 
     #[test]

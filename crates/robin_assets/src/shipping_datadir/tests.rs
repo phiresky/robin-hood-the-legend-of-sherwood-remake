@@ -984,10 +984,10 @@ fn native_shipping_format_roundtrips_and_rejects_legacy_payloads() {
     datadir.locales.insert("de-DE".into(), german);
 
     let encoded = encode_native(&datadir);
-    assert_eq!(&encoded[..8], b"RHDDNA19");
+    assert_eq!(&encoded[..8], b"RHDDNA20");
     let mut previous_version = encoded.clone();
-    previous_version[..8].copy_from_slice(b"RHDDNA18");
-    previous_version[8..12].copy_from_slice(&18u32.to_le_bytes());
+    previous_version[..8].copy_from_slice(b"RHDDNA19");
+    previous_version[8..12].copy_from_slice(&19u32.to_le_bytes());
     assert!(decode_native(&previous_version).is_err());
     assert_eq!(&encoded[..8], &SHIPPING_DATADIR_MAGIC);
     let decoded = decode_native(&encoded).expect("decode native shipping datadir");
@@ -1129,10 +1129,10 @@ fn mission_payload_roundtrips_independently() {
         .audio_durations_ms
         .insert("sounds/arrow.opus".into(), 1_234);
     let encoded = encode_mission_native(&mission);
-    assert_eq!(&encoded[..8], b"RHMISN10");
+    assert_eq!(&encoded[..8], b"RHMISN11");
     let mut previous_version = encoded.clone();
-    previous_version[..8].copy_from_slice(b"RHMISN09");
-    previous_version[8..12].copy_from_slice(&9u32.to_le_bytes());
+    previous_version[..8].copy_from_slice(b"RHMISN10");
+    previous_version[8..12].copy_from_slice(&10u32.to_le_bytes());
     assert!(
         decode_mission_compressed(&zstd_compress_with_window(&previous_version, 30).unwrap())
             .is_err()

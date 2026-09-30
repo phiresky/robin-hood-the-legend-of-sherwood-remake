@@ -1081,7 +1081,11 @@ pub(super) fn prepare_mission(
     // thread continues with the sprite bank, scripts, and minimap.
     let level_directory = game.global_options.level_directory.clone();
     let loaded_result = preparation::load_mission_binaries(
-        host,
+        host.frontend.resources.shipping.as_deref(),
+        args.content
+            .resolved_mission_assets
+            .as_ref()
+            .is_some_and(|resolved| resolved.is_archive()),
         &campaign,
         &assets.profile_manager,
         mission_name.as_deref(),
@@ -1765,6 +1769,86 @@ pub(super) fn init_audio_backend(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn archive_mission_ignores_same_name_bundled_level() {
+        let chunk = |tag: &[u8; 4], version: u32, payload: &[u8]| {
+            let mut bytes = tag.to_vec();
+            bytes.extend((4 + payload.len() as u32).to_le_bytes());
+            bytes.extend(version.to_le_bytes());
+            bytes.extend(payload);
+            bytes
+        };
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Map.rhp"), chunk(b"MEUH", 2, &[])).unwrap();
+        let mut header = vec![0; 8];
+        header.extend(10u16.to_le_bytes());
+        header.extend(b"ArchiveMap");
+        header.extend(0u32.to_le_bytes());
+        std::fs::write(
+            dir.path().join("Mission.rhm"),
+            chunk(b"DUTY", 2, &chunk(b"FOOT", 4, &header)),
+        )
+        .unwrap();
+        let files = engine_sbfile::SbFileSystem::new(std::sync::Arc::new(
+            robin_util::asset_fs::AssetVfs::new(),
+        ));
+        let mut profiles = engine_profiles::ProfileManager::new();
+        profiles.missions.push(engine_profiles::MissionProfile {
+            mission_filename: "Mission".into(),
+            proto_level_filename: "Map".into(),
+            ..Default::default()
+        });
+        let mut campaign = Campaign::new();
+        let mut mission = robin_engine::mission::Mission::new();
+        mission.profile_idx = Some(0);
+        campaign.missions.push(mission);
+        campaign.current_mission_idx = Some(0);
+        let mut shipping = robin_assets::shipping_datadir::ShippingDatadir::default();
+        shipping.levels.insert(
+            "Mission".into(),
+            robin_engine::level_data::LoadedLevel::hackable_from_json(
+                br#"{"map_filename":"BundledMap","spawn":[50,50],"spawn_player":false,
+                     "walkable_polygon":[[0,0],[100,0],[100,100]]}"#,
+            )
+            .unwrap(),
+        );
+        for (archive, cached, expected) in [
+            (true, false, "ArchiveMap"),
+            (true, true, "ArchiveMap"),
+            (false, true, "BundledMap"),
+        ] {
+            let mut screen = None;
+            let loaded = preparation::load_mission_binaries(
+                cached.then_some(&shipping),
+                archive,
+                &campaign,
+                &profiles,
+                Some("Mission"),
+                dir.path().to_str().unwrap(),
+                &files,
+                &mut (None, &mut screen),
+            )
+            .unwrap();
+            assert_eq!(loaded.mission.header.map_filename, expected);
+        }
+        // A missing archive mission must fail even if the bundled copy exists.
+        std::fs::remove_file(dir.path().join("Mission.rhm")).unwrap();
+        let mut screen = None;
+        assert!(
+            preparation::load_mission_binaries(
+                Some(&shipping),
+                true,
+                &campaign,
+                &profiles,
+                Some("Mission"),
+                dir.path().to_str().unwrap(),
+                &files,
+                &mut (None, &mut screen),
+            )
+            .is_err()
+        );
+    }
 
     #[test]
     fn named_soldier_speech_preload_uses_the_spawn_profile() {

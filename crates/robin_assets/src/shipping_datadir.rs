@@ -885,12 +885,12 @@ impl ShippingAssets {
 static GLOBAL: OnceLock<Arc<ShippingAssets>> = OnceLock::new();
 
 #[cfg(test)]
-#[path = "shipping_v19_contract.rs"]
-mod v19_contract;
+#[path = "shipping_v20_contract.rs"]
+mod v20_contract;
 
 #[cfg(test)]
-#[path = "shipping_v10_contract.rs"]
-mod v10_contract;
+#[path = "shipping_v11_contract.rs"]
+mod v11_contract;
 
 /// Explicit legacy adapter: install a shipping datadir as the process-wide instance so lower-level
 /// loaders can consult it for pre-parsed data. Installation and VFS mount

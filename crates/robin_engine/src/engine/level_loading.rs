@@ -2053,6 +2053,37 @@ impl EngineInner {
         }
         self.finish_mission_identity_stage(&loaded, mission_name, proto_level_name);
         self.initialize_mission_display_depths();
+        let names = std::sync::Arc::make_mut(&mut assets.scripts.names);
+        for (group, offset) in [
+            ("points", 0),
+            (
+                "sectors",
+                loaded
+                    .mission
+                    .script_objects
+                    .as_ref()
+                    .map_or(0, |objects| objects.points.len() + objects.lines.len()),
+            ),
+        ] {
+            if let Some(records) = loaded.mission.record_names.get(group) {
+                for (index, name) in records.iter().enumerate() {
+                    names.locations.insert(
+                        name.clone(),
+                        crate::natives::ScriptHandleCodec::location_handle_from_index(
+                            offset + index,
+                        ),
+                    );
+                }
+            }
+        }
+        if let Some(records) = loaded.mission.record_names.get("patrols") {
+            for (index, name) in records.iter().enumerate() {
+                names.patrols.insert(
+                    name.clone(),
+                    crate::natives::ScriptHandleCodec::way_handle_from_index(index),
+                );
+            }
+        }
         self.load_mission_script_stage(
             assets,
             mission_name,

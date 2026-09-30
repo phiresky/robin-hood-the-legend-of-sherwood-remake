@@ -1,5 +1,12 @@
 # Post-port Features
 
+- **Spellforge named mission records.** Mission loading and team-requirement
+  scans accept SCOT version 5 and the companion named actor, item, scroll,
+  location, and patrol formats. Lua name lookups bind to the created entities
+  and authored location/patrol slots. Custom mission archives take precedence
+  over already loaded bundled levels with the same mission basename. Packaged
+  data uses datadir schema 20 / mission schema 11 and must be regenerated.
+
 - **Minimal editor missions.** The Mission tab adds player spawn points and NPC
   soldiers with placement, facing and profile controls. Its character palette
   displays actual library sprites and uses canonical profile identities. A PC/NPC

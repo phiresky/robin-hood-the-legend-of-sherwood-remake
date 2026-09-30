@@ -92,6 +92,10 @@ impl ScriptHandleCodec {
         Self::decode(handle, ScriptHandleKind::Building)
     }
 
+    pub fn way_handle_from_index(index: usize) -> i32 {
+        Self::encode(ScriptHandleKind::Way, index)
+    }
+
     pub fn way_index(handle: i32) -> Option<usize> {
         Self::decode(handle, ScriptHandleKind::Way)
     }

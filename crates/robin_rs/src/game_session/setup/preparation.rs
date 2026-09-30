@@ -369,7 +369,8 @@ pub(super) fn publish_initial_sprite_variants(
 }
 
 pub(super) fn load_mission_binaries(
-    host: &Host,
+    shipping: Option<&robin_assets::shipping_datadir::ShippingDatadir>,
+    archive_mission: bool,
     campaign: &Campaign,
     profiles: &engine_profiles::ProfileManager,
     mission_name: Option<&str>,
@@ -381,13 +382,11 @@ pub(super) fn load_mission_binaries(
     let mut progress = |delta: f32| {
         tick_progress(loading_screen, event_pump.as_deref_mut(), delta);
     };
-    if let Some(name) = mission_name
-        && let Some(level) = host
-            .frontend
-            .resources
-            .shipping
-            .as_ref()
-            .and_then(|datadir| datadir.loaded_level(name))
+    // Archive missions own their level data even when a bundled mission with
+    // the same basename was loaded earlier in this process.
+    if !archive_mission
+        && let Some(name) = mission_name
+        && let Some(level) = shipping.and_then(|datadir| datadir.loaded_level(name))
     {
         tracing::info!(mission = name, "level loaded from shipping mission payload");
         progress(1.0);

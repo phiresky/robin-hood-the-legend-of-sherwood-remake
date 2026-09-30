@@ -59,10 +59,12 @@ use super::*;
 // Datadir v19 / mission v10: raw sight obstacles carry optional ordered
 // receiving-plane anchors. Loaded levels occur in both payloads, changing
 // their bitcode layouts even when the optional anchors are absent.
-pub(super) const SHIPPING_DATADIR_MAGIC: [u8; 8] = *b"RHDDNA19";
-pub(super) const SHIPPING_MISSION_MAGIC: [u8; 8] = *b"RHMISN10";
-pub const SHIPPING_DATADIR_VERSION: u32 = 19;
-pub const SHIPPING_MISSION_VERSION: u32 = 10;
+// Datadir v20 / mission v11: loaded missions retain Spellforge record names
+// for runtime Lua bindings, changing the level's bitcode layout.
+pub(super) const SHIPPING_DATADIR_MAGIC: [u8; 8] = *b"RHDDNA20";
+pub(super) const SHIPPING_MISSION_MAGIC: [u8; 8] = *b"RHMISN11";
+pub const SHIPPING_DATADIR_VERSION: u32 = 20;
+pub const SHIPPING_MISSION_VERSION: u32 = 11;
 
 /// Encode the versioned native-bitcode payload stored inside `datadir.bin`.
 pub fn encode_native(datadir: &ShippingDatadir) -> Vec<u8> {

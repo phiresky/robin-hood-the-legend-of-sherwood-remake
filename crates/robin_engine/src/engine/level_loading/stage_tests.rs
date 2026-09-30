@@ -1,6 +1,66 @@
 use super::*;
 
 #[test]
+fn named_scrolls_bind_to_spawned_entities_including_inactive_slots() {
+    let config = SimConfig {
+        script_enabled: false,
+        ..Default::default()
+    };
+    let sim = crate::sim_rng::SimulationContext::with_seed_and_config(7, config);
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let mut staging = LevelLoadStaging::default();
+    let mut loaded = crate::level_data::LoadedLevel::hackable_from_json(
+        br#"{"map_filename":"Named","spawn":[50,50],"spawn_player":false,
+             "walkable_polygon":[[0,0],[100,0],[100,100],[0,100]]}"#,
+    )
+    .unwrap();
+    for (x, present) in [(20, false), (40, true)] {
+        loaded.mission.scrolls.push(crate::level_data::RawScroll {
+            position_x: x,
+            position_y: 20,
+            direction: 0,
+            action: 0,
+            obstacle_index: u16::MAX,
+            sector: 0,
+            layer: 0,
+            presence: [present; 3],
+            tutorial: false,
+            force_visible: false,
+            script_class: None,
+        });
+    }
+    loaded
+        .mission
+        .record_names
+        .insert("scrolls".into(), vec!["Hidden".into(), "Visible".into()]);
+    engine
+        .initialize_from_mission(
+            &sim,
+            &mut assets,
+            &mut staging,
+            "Named",
+            "Named",
+            loaded,
+            "Data/Levels",
+            (100.0, 100.0),
+            &mut |_| {},
+        )
+        .unwrap();
+    let names = &assets.scripts.names;
+    assert!(names.actors.is_empty());
+    assert_eq!(names.scrolls.len(), 2);
+    for (index, name) in ["Hidden", "Visible"].iter().enumerate() {
+        let id = assets.entities.scroll_entity_ids[index];
+        assert_eq!(
+            names.scrolls[*name],
+            crate::natives::ScriptHandleCodec::actor_handle(id)
+        );
+        assert!(engine.world.entities.get(id).is_some());
+    }
+}
+
+#[test]
 fn graph_free_mission_installs_actor_footprints_before_spawning() {
     let mut loaded = crate::level_data::LoadedLevel::hackable_from_json(include_bytes!(
         "../../../../../mods/multi-team-demos/Data/Levels/MultiTeamFourGrades.level.json"

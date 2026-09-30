@@ -1,10 +1,10 @@
-//! Frozen v19 descriptor with exported engine picture metadata. Do not update when rearranging runtime
+//! Frozen v20 descriptor with exported engine picture metadata. Do not update when rearranging runtime
 //! representations; a deliberate format change must introduce a new version.
-//! v19 keeps the v18 container fields; loaded levels gain optional receiving-plane
-//! anchors on sight obstacles. The magic and version below pin that layout.
+//! v20 retains named mission records for Spellforge lookups.
+//! The magic and version below pin that layout.
 use super::*;
 #[derive(Debug, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
-struct FrozenShippingV19 {
+struct FrozenShippingV20 {
     pub profiles: Option<ProfileManager>,
     pub res_files: std::collections::BTreeMap<String, ResourceManager>,
     pub pak_files: std::collections::BTreeMap<String, Vec<EncodedPicture>>,
@@ -56,11 +56,17 @@ struct FrozenShippingV19 {
 }
 
 #[test]
-fn v19_wire_and_json_match_frozen_descriptor_with_runtime_state() {
+fn v20_wire_and_json_match_frozen_descriptor_with_runtime_state() {
     let mut datadir = ShippingDatadir::from_payload(ShippingDatadirPayload {
         profiles: Some(ProfileManager::default()),
         ..Default::default()
     });
+    let mut level = LoadedLevel::empty();
+    level
+        .mission
+        .record_names
+        .insert("soldiers".into(), vec!["Guard".into()]);
+    datadir.levels.insert("fixture".into(), level);
     datadir
         .res_files
         .insert("fixture.res".into(), ResourceManager::new());
@@ -81,12 +87,12 @@ fn v19_wire_and_json_match_frozen_descriptor_with_runtime_state() {
     datadir
         .locales
         .insert("en-US".into(), ShippingLocale::default());
-    let frozen: FrozenShippingV19 =
+    let frozen: FrozenShippingV20 =
         serde_json::from_value(serde_json::to_value(&datadir).unwrap()).unwrap();
     let expected = bitcode::encode(&frozen);
     let before = encode_native(&datadir);
-    assert_eq!(&before[..8], b"RHDDNA19");
-    assert_eq!(&before[8..12], &19u32.to_le_bytes());
+    assert_eq!(&before[..8], b"RHDDNA20");
+    assert_eq!(&before[8..12], &20u32.to_le_bytes());
     assert_eq!(&before[12..], expected);
     datadir.set_remote_base_url("https://invalid.example/assets".into());
     datadir.runtime.source_dir = Some(PathBuf::from("/example"));

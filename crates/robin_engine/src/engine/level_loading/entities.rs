@@ -2,6 +2,33 @@
 
 use super::*;
 
+/// Bind names to the actual entity IDs, including sparse/skipped spawn slots.
+fn bind_named_entity(
+    assets: &mut LevelAssets,
+    loaded: &crate::level_data::LoadedLevel,
+    group: &str,
+    index: usize,
+    id: EntityId,
+) {
+    let Some(names) = loaded.mission.record_names.get(group) else {
+        return;
+    };
+    let name = names
+        .get(index)
+        .expect("named mission record is missing its slot");
+    let bindings = std::sync::Arc::make_mut(&mut assets.scripts.names);
+    let table = match group {
+        "items" => &mut bindings.items,
+        "scrolls" => &mut bindings.scrolls,
+        "civilians" | "heroes" | "soldiers" | "targets" => &mut bindings.actors,
+        _ => panic!("unexpected named entity group {group}"),
+    };
+    table.insert(
+        name.clone(),
+        crate::natives::ScriptHandleCodec::actor_handle(id),
+    );
+}
+
 /// Bind decision personality separately from the actor's physical combat profile.
 fn configure_enemy_ai_profile(
     ai: &mut crate::ai_enemy::EnemyAi,
@@ -272,6 +299,7 @@ impl EngineInner {
                 },
             });
             let eid = self.add_entity(entity);
+            bind_named_entity(assets, loaded, "civilians", npc_register_number, eid);
             // FriendlyAi is constructed before the entity is inserted, so
             // its original-game actor reference cannot be initialized until the
             // stable runtime handle is known. Soldiers perform the same
@@ -293,7 +321,7 @@ impl EngineInner {
         // These are full PC actors that the player must rescue during
         // the mission; spawned playable=false so they're NPCs until
         // rescued.
-        for raw in &loaded.mission.pcs_to_rescue {
+        for (index, raw) in loaded.mission.pcs_to_rescue.iter().enumerate() {
             let char_profile = profiles.get_character(raw.profile_index).ok_or_else(|| {
                 EngineError::ProfileSpriteLoadFailed {
                     kind: "rescue PC",
@@ -644,6 +672,7 @@ impl EngineInner {
                 },
             });
             let eid = self.add_entity(entity);
+            bind_named_entity(assets, loaded, "heroes", index, eid);
             if let Some(ai) = self
                 .world
                 .entities
@@ -673,7 +702,17 @@ impl EngineInner {
             loaded.mission.civilians.len(),
             0,
             config,
-        )
+        )?;
+        for (index, id) in assets
+            .entities
+            .soldier_entity_ids
+            .clone()
+            .into_iter()
+            .enumerate()
+        {
+            bind_named_entity(assets, loaded, "soldiers", index, id);
+        }
+        Ok(())
     }
 
     pub(super) fn spawn_soldier_slice(
@@ -946,7 +985,7 @@ impl EngineInner {
         // profile preloaded before mission entities, matching the original
         // filename/profile-keyed SpriteScriptor cache.
         let sprite_ambiance = Some(self.world.weather.ambiance.to_sprite_ambiance());
-        for raw in &loaded.mission.targets {
+        for (index, raw) in loaded.mission.targets.iter().enumerate() {
             let mut sprite = crate::sprite::Sprite::default();
             let (frame_kind, base_dir) = if raw.character_sprite {
                 (
@@ -1078,7 +1117,8 @@ impl EngineInner {
                     ..Default::default()
                 },
             });
-            self.add_entity(entity);
+            let named_eid = self.add_entity(entity);
+            bind_named_entity(assets, loaded, "targets", index, named_eid);
         }
     }
 
@@ -1101,7 +1141,7 @@ impl EngineInner {
         // Each bonus type has its own RHS file and profile name living
         // next to the character sprites; the bonus is constructed from
         // the corresponding pre-loaded master sprite.
-        for raw in &loaded.mission.bonuses {
+        for (index, raw) in loaded.mission.bonuses.iter().enumerate() {
             let (sprite_file, profile_name, object_type) =
                 match bonus_type_to_sprite_asset(raw.bonus_type) {
                     Some(t) => t,
@@ -1222,7 +1262,8 @@ impl EngineInner {
                     ..Default::default()
                 },
             });
-            self.add_entity(entity);
+            let named_eid = self.add_entity(entity);
+            bind_named_entity(assets, loaded, "items", index, named_eid);
             // Each RANSOM bonus feeds its mapped value
             // (100/500/1000/2500/5000) into `bonus_money`. Without this,
             // the "Level money" debriefing row and the `money` console
@@ -1258,7 +1299,7 @@ impl EngineInner {
             .entities
             .scroll_entity_ids
             .reserve(loaded.mission.scrolls.len());
-        for raw in &loaded.mission.scrolls {
+        for (index, raw) in loaded.mission.scrolls.iter().enumerate() {
             let mut sprite = crate::sprite::Sprite::default();
             if let Err(e) = sprite.load_frame_info(
                 assets.sprite_scriptor_mut(),
@@ -1338,6 +1379,7 @@ impl EngineInner {
                 script_hourglass_timeout: 0,
             });
             let scroll_eid = self.add_entity(entity);
+            bind_named_entity(assets, loaded, "scrolls", index, scroll_eid);
             assets.entities.scroll_entity_ids.push(scroll_eid);
 
             // `force_visible` flips the canonical scroll-domain status to
