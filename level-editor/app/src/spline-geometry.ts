@@ -1,3 +1,5 @@
+import { TextureAreaFilter } from "./texture-area-filter.ts";
+import { terrainMaterial } from "../../shared/src/terrain-materials.ts";
 import { terrainTexture, terrainMaterialTexture } from "./terrain-texture.ts";
 import * as THREE from "three";
 import { excludedCornerAssetIds } from "./spline-corners.ts";
@@ -85,6 +87,40 @@ export function riverMesh(
   return mesh;
 }
 
+// Retain prefiltered CPU data across drag frames without retaining GPU textures.
+const filteredMaterials = new Map<string, TextureAreaFilter>();
+let filteredMaterialBytes = 0;
+function filteredMaterial(id: string, document: Level3D | undefined, width: number) {
+  const key = JSON.stringify([terrainMaterial(id, document?.customMaterials), width]);
+  const cached = filteredMaterials.get(key);
+  if (cached) {
+    filteredMaterials.delete(key);
+    filteredMaterials.set(key, cached);
+    return cached;
+  }
+  const texture = terrainMaterialTexture(id, document?.customMaterials, true);
+  let filtered: TextureAreaFilter;
+  try {
+    filtered = new TextureAreaFilter(
+      { ...texture.image, data: texture.image.data as Uint8Array },
+      width,
+    );
+  } finally {
+    texture.dispose();
+  }
+  const budget = 32 * 1024 * 1024;
+  while (filteredMaterials.size && filteredMaterialBytes + filtered.byteLength > budget) {
+    const oldest = filteredMaterials.keys().next().value!;
+    filteredMaterialBytes -= filteredMaterials.get(oldest)!.byteLength;
+    filteredMaterials.delete(oldest);
+  }
+  if (filtered.byteLength <= budget) {
+    filteredMaterials.set(key, filtered);
+    filteredMaterialBytes += filtered.byteLength;
+  }
+  return filtered;
+}
+
 /** Bake the longitudinal material blend into a regular texture, also usable by depth export. */
 export function blendedSplineTexture(
   path: LevelSpline,
@@ -99,7 +135,7 @@ export function blendedSplineTexture(
   const width = preview ? 64 : 128,
     height = Math.max(2, Math.min(preview ? 512 : 4096, Math.ceil(length / 2)));
   const data = new Uint8Array(width * height * 4);
-  const textures = new Map<string, THREE.DataTexture>();
+  const textures = new Map<string, { filter: TextureAreaFilter; row: Float32Array }>();
   const ids =
     path.pointMaterials ??
     path.points.map(() => (path.kind === "river" ? "water_still" : "path_dirt"));
@@ -108,7 +144,10 @@ export function blendedSplineTexture(
     ...(path.pointMaterialMixes ?? []).flatMap((mix) => Object.keys(mix ?? {})),
   ])
     if (!textures.has(id))
-      textures.set(id, terrainMaterialTexture(id, document?.customMaterials, true));
+      textures.set(id, {
+        filter: filteredMaterial(id, document, width),
+        row: new Float32Array(width * 4),
+      });
   const singleStoneCenters = new Map<string, number[]>();
   const arcLengths = curve.getLengths();
   const sections = path.closed ? path.points.length : path.points.length - 1;
@@ -131,54 +170,46 @@ export function blendedSplineTexture(
         }),
       );
     }
-  try {
-    for (let row = 0; row < height; row++) {
-      const distance = (row / (height - 1)) * length;
-      const weights = splineMaterialWeightsAt(path, curve.getUtoTmapping(row / (height - 1), 0));
-      // Material weights, source rows, and isolated stone locations are constant across a row.
-      const sources = Object.entries(weights)
-        .filter(([, weight]) => weight > 0)
-        .map(([id, weight]) => {
-          const tile = textures.get(id)!.image;
-          const centers = singleStoneCenters.get(id);
-          const center = centers?.length
-            ? centers.reduce((a, b) => (Math.abs(a - distance) < Math.abs(b - distance) ? a : b))
-            : undefined;
-          const rowInTile =
-            center === undefined
-              ? Math.floor(distance) % tile.height
-              : Math.max(
-                  0,
-                  Math.min(tile.height - 1, Math.floor(distance - center + tile.height / 2)),
-                );
-          return {
-            pixels: tile.data as Uint8Array,
-            width: tile.width,
-            offset: rowInTile * tile.width * 4,
-            weight,
-          };
-        });
-      for (let column = 0; column < width; column++) {
-        const target = (row * width + column) * 4;
-        let red = 0,
-          green = 0,
-          blue = 0,
-          alpha = 0;
-        for (const source of sources) {
-          const offset = source.offset + Math.floor((column / width) * source.width) * 4;
-          red += source.pixels[offset]! * source.weight;
-          green += source.pixels[offset + 1]! * source.weight;
-          blue += source.pixels[offset + 2]! * source.weight;
-          alpha += source.pixels[offset + 3]! * source.weight;
-        }
-        data[target] = Math.round(red);
-        data[target + 1] = Math.round(green);
-        data[target + 2] = Math.round(blue);
-        data[target + 3] = Math.round(alpha);
+  const footprint = Math.max(1, length / (height - 1));
+  for (let row = 0; row < height; row++) {
+    const distance = (row / (height - 1)) * length;
+    const weights = splineMaterialWeightsAt(path, curve.getUtoTmapping(row / (height - 1), 0));
+    // Material weights, source rows, and isolated stone locations are constant across a row.
+    const sources = Object.entries(weights)
+      .filter(([, weight]) => weight > 0)
+      .map(([id, weight]) => {
+        const tile = textures.get(id)!;
+        const centers = singleStoneCenters.get(id);
+        const center = centers?.length
+          ? centers.reduce((a, b) => (Math.abs(a - distance) < Math.abs(b - distance) ? a : b))
+          : undefined;
+        // Integrate the full source footprint; single stones clamp rather than repeat.
+        const sourceRow =
+          center === undefined ? distance : distance - center + tile.filter.height / 2;
+        tile.filter.sampleRow(sourceRow + 0.5, footprint, center === undefined, tile.row);
+        return { pixels: tile.row, weight };
+      });
+    for (let column = 0; column < width; column++) {
+      const target = (row * width + column) * 4;
+      let red = 0,
+        green = 0,
+        blue = 0,
+        alpha = 0;
+      for (const source of sources) {
+        const offset = column * 4;
+        red += source.pixels[offset]! * source.weight;
+        green += source.pixels[offset + 1]! * source.weight;
+        blue += source.pixels[offset + 2]! * source.weight;
+        alpha += source.pixels[offset + 3]! * source.weight;
       }
+      // Keep the ribbon boundary transparent after averaging its narrow feather.
+      if (column === 0 || column === width - 1) alpha = 0;
+      const unpremultiply = alpha > 0 ? 255 / alpha : 0;
+      data[target] = Math.round(Math.max(0, Math.min(255, red * unpremultiply)));
+      data[target + 1] = Math.round(Math.max(0, Math.min(255, green * unpremultiply)));
+      data[target + 2] = Math.round(Math.max(0, Math.min(255, blue * unpremultiply)));
+      data[target + 3] = Math.round(Math.max(0, Math.min(255, alpha)));
     }
-  } finally {
-    for (const texture of textures.values()) texture.dispose();
   }
   const texture = new THREE.DataTexture(data, width, height);
   texture.colorSpace = THREE.SRGBColorSpace;

@@ -472,7 +472,24 @@ test("live path blends use bounded textures while preserving endpoint materials 
       const offset = ((t.image.height - 1) * row * t.image.width + t.image.width / 2) * 4;
       return Array.from(t.image.data.slice(offset, offset + 4));
     };
-    assert.deepEqual(pixel(preview), pixel(committed));
+    const endpointMaterial = path.pointMaterials![row]!;
+    for (const [texture, isPreview] of [
+      [preview, true],
+      [committed, false],
+    ] as const) {
+      const reference = blendedSplineTexture(
+        { ...path, pointMaterials: [endpointMaterial, endpointMaterial] },
+        camera,
+        undefined,
+        isPreview,
+      );
+      assert.deepEqual(
+        pixel(texture),
+        pixel(reference),
+        "Endpoint sampling must use only its own material",
+      );
+      reference.dispose();
+    }
   }
   committed.dispose();
   preview.dispose();
