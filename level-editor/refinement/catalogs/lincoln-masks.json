@@ -113,6 +113,56 @@
           "review": "The receiving anchor is inside this asset's recovered flat 415.001-unit surface and the source receiving layer. Character thresholds, when present, use that plane even where they extend beyond navigation. Complete coverage is supported by this mesh among the audited candidates. No obstacle links or patch controls are present; projectile boundaries use the world XY datum."
         }
       ]
+    },
+    {
+      "asset": "lincoln-southwest-cliff-lower-ledges",
+      "model_sha256": "4828c255bd9f0a0945401bdaba649a4e3daabc0ba41745041f831b92093a707c",
+      "entries": [
+        {
+          "source": 62,
+          "id": "static-occlusion-62",
+          "node": "building-427",
+          "anchor": [
+            145,
+            1854,
+            0
+          ],
+          "review": "Complete pixel coverage is supported by the pinned asset mesh with no appearance controls. This static mask has no obstacle or patch links. The receiving anchor is on nearby unblocked ground; projectile thresholds, when present, retain the world XY datum."
+        },
+        {
+          "source": 64,
+          "id": "static-occlusion-64",
+          "node": "building-427",
+          "anchor": [
+            165,
+            1601,
+            0
+          ],
+          "review": "Complete pixel coverage is supported by the pinned asset mesh with no appearance controls. This static mask has no obstacle or patch links. The receiving anchor is on nearby unblocked ground; projectile thresholds, when present, retain the world XY datum."
+        }
+      ]
+    },
+    {
+      "asset": "lincoln-village-west-cottage",
+      "model_sha256": "5b77cfa1cf89b205536911203ce6b824db1af69d7d8277729a78c0d8c11d5ffc",
+      "entries": [
+        {
+          "source": 92,
+          "id": "static-occlusion-92",
+          "node": "building-010",
+          "anchor": [
+            17,
+            489,
+            0
+          ],
+          "projectileHeights": [
+            0,
+            0,
+            0
+          ],
+          "review": "Complete pixel coverage is supported by the pinned asset mesh with no appearance controls. This static mask has no obstacle or patch links. The receiving anchor is on nearby unblocked ground; projectile thresholds, when present, retain the world XY datum."
+        }
+      ]
     }
   ]
 }

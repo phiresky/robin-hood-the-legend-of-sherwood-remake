@@ -464,6 +464,193 @@
           "review": "Complete coverage is supported by this house mesh among the audited building candidates. The receiving anchor and any character thresholds lie on the flat 90.00101-unit town surface. No obstacle links or patch references are present; projectile boundaries use the world XY datum."
         }
       ]
+    },
+    {
+      "asset": "york-castle-west-lane-front-timber-house",
+      "model_sha256": "a45ae3f64ed1516c7a2d02e6de8e7fdf6080924939227cc577f53468c2330b74",
+      "entries": [
+        {
+          "source": 569,
+          "id": "static-occlusion-569",
+          "node": "building-751",
+          "anchor": [
+            2343,
+            606,
+            0
+          ],
+          "projectileHeights": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "review": "Complete pixel coverage is supported by this pinned asset mesh, without appearance controls. This static projectile mask has no character boundary, obstacle links or patch references. Its receiving anchor is on nearby unblocked ground; projectile thresholds retain the world XY datum."
+        }
+      ]
+    },
+    {
+      "asset": "york-castle-west-lane-rear-timber-house",
+      "model_sha256": "de86c8043aad1c55f8ccada35e7f4d7ad28fdfa3ed812dc469c24205fea0c7c9",
+      "entries": [
+        {
+          "source": 574,
+          "id": "static-occlusion-574",
+          "node": "building-744",
+          "anchor": [
+            2335,
+            582,
+            0
+          ],
+          "projectileHeights": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "review": "Complete pixel coverage is supported by this pinned asset mesh, without appearance controls. This static projectile mask has no character boundary, obstacle links or patch references. Its receiving anchor is on nearby unblocked ground; projectile thresholds retain the world XY datum."
+        }
+      ]
+    },
+    {
+      "asset": "york-east-quay-front-timber-house",
+      "model_sha256": "3ebff6b29ef9de6be015096f10998a8f6b9ae62898ac2f45c1d59eb5a0251d82",
+      "entries": [
+        {
+          "source": 525,
+          "id": "static-occlusion-525",
+          "node": "building-695",
+          "anchor": [
+            2062,
+            831,
+            0
+          ],
+          "projectileHeights": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "review": "Complete pixel coverage is supported by this pinned asset mesh, without appearance controls. This static projectile mask has no character boundary, obstacle links or patch references. Its receiving anchor is on nearby unblocked ground; projectile thresholds retain the world XY datum."
+        }
+      ]
+    },
+    {
+      "asset": "york-north-river-lane-northern-timber-house",
+      "model_sha256": "f2127f542aec768863df7f0c92b5eea811b986824ac98485e43ccdca8ac29d16",
+      "entries": [
+        {
+          "source": 560,
+          "id": "static-occlusion-560",
+          "node": "building-733",
+          "anchor": [
+            2051,
+            412,
+            0
+          ],
+          "projectileHeights": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "review": "Complete pixel coverage is supported by this pinned asset mesh, without appearance controls. This static projectile mask has no character boundary, obstacle links or patch references. Its receiving anchor is on nearby unblocked ground; projectile thresholds retain the world XY datum."
+        }
+      ]
+    },
+    {
+      "asset": "york-north-river-lane-rear-timber-house",
+      "model_sha256": "33b6c326e3a056a7821a1510906302eaf04e931d4bee05d600e7dc7e416da51a",
+      "entries": [
+        {
+          "source": 557,
+          "id": "static-occlusion-557",
+          "node": "building-730",
+          "anchor": [
+            2163,
+            604,
+            0
+          ],
+          "projectileHeights": [
+            0,
+            0
+          ],
+          "review": "Complete pixel coverage is supported by this pinned asset mesh, without appearance controls. This static projectile mask has no character boundary, obstacle links or patch references. Its receiving anchor is on nearby unblocked ground; projectile thresholds retain the world XY datum."
+        }
+      ]
+    },
+    {
+      "asset": "york-north-river-lane-stone-house",
+      "model_sha256": "c94862761a7684fa5a736d181618589a53b25c87ad8101169ff09ef07e1f939b",
+      "entries": [
+        {
+          "source": 548,
+          "id": "static-occlusion-548",
+          "node": "building-710",
+          "anchor": [
+            2097,
+            716,
+            0
+          ],
+          "projectileHeights": [
+            0,
+            0,
+            0
+          ],
+          "review": "Complete pixel coverage is supported by this pinned asset mesh, without appearance controls. This static projectile mask has no character boundary, obstacle links or patch references. Its receiving anchor is on nearby unblocked ground; projectile thresholds retain the world XY datum."
+        }
+      ]
+    },
+    {
+      "asset": "york-north-river-lane-west-low-house",
+      "model_sha256": "11908856936bf9173e235b9cd57a7a05e52aa5ea1184c502af4c99b08121110e",
+      "entries": [
+        {
+          "source": 553,
+          "id": "static-occlusion-553",
+          "node": "building-722",
+          "anchor": [
+            1938,
+            674,
+            0
+          ],
+          "projectileHeights": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "review": "Complete pixel coverage is supported by this pinned asset mesh, without appearance controls. This static projectile mask has no character boundary, obstacle links or patch references. Its receiving anchor is on nearby unblocked ground; projectile thresholds retain the world XY datum."
+        }
+      ]
+    },
+    {
+      "asset": "york-riverside-stone-storehouse",
+      "model_sha256": "24d0ae8611a482a94326a15c95b0131e76ff5cad4ba4ba56466bb675bfe0ac3c",
+      "entries": [
+        {
+          "source": 2,
+          "id": "static-occlusion-2",
+          "node": "building-000",
+          "anchor": [
+            1530,
+            830,
+            0
+          ],
+          "projectileHeights": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "review": "Complete pixel coverage is supported by this pinned asset mesh, without appearance controls. This static projectile mask has no character boundary, obstacle links or patch references. Its receiving anchor is on nearby unblocked ground; projectile thresholds retain the world XY datum."
+        }
+      ]
     }
   ]
 }

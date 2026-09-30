@@ -1,5 +1,8 @@
 # Map data: editor → game
 
+Latest mask inventory: **2,935 unrecovered records** after the York projectile-mask
+publication below. Earlier batch totals are historical snapshots.
+
 Compilation reads **placed assets and the editor scene only**. One-time recovery
 from existing levels may populate asset-local metadata; exporting never reads
 those levels. Moving, rotating or duplicating an asset must carry its gameplay
@@ -3232,3 +3235,80 @@ The recipe is `refinement/catalogs/leicester-masks.json`. State support evidence
 is `work/map-compile/leicester-static-mask-state-proof.json`; transaction snapshots
 and four baseline/independently moved native fixtures are under
 `work/map-compile/leicester-static-mask-publication`.
+
+### Published southwest-bank and south-hall masks
+
+Leicester's southwest edge bank now owns view mask 226 (22,302 pixels), and its
+south hall owns projectile mask 208 (5,059 pixels). All 27,361 covered pixels
+match exactly using 1,898 asset-local triangles from the pinned meshes. Neither
+asset has appearance controls; both records have no obstacle or mask-state links.
+The hall's projectile threshold retains the world XY datum. Receiving anchors
+are on adjacent navigable ground and move with their owning assets.
+
+Both masks retain exact coverage and rules after independent one-pixel eastward
+moves. Other baseline gameplay geometry and compile warnings are unchanged.
+Rust constructs the baseline and both moved exports: 55 movement areas, 444 sight
+obstacles, 105 doors and 23 jump pairs in each. These checks do not establish
+full traversal or visual parity. All ten library scenes reopen with valid pins;
+four shared descriptor references changed in Leicester and Wychford, with no
+placement changes. The user ZIPs remain unchanged.
+
+Recipes are in `refinement/catalogs/leicester-masks.json`; recovery evidence is
+`work/map-compile/next-static-mask-review.json`, and publication snapshots plus
+native fixtures are under `work/map-compile/leicester-bank-hall-mask-publication`.
+The southeast manor candidate remains deferred because its proposed receiving
+anchor did not pass the elevation check; no definition was published for it.
+
+### Published Lincoln cliff and cottage masks
+
+Lincoln's southwest cliff lower ledges now own view masks 62 and 64 (2,230 and
+3,295 pixels); the village west cottage owns projectile mask 92 (351 pixels).
+All 5,876 covered pixels match exactly. Recovery produces 16,346 asset-local
+triangles from the pinned meshes. Neither asset has appearance controls, and
+these masks have no obstacle links or mask-state references. Ground receiving
+anchors have a four-unit interior margin at the reviewed placement; projectile
+thresholds retain the world XY datum.
+
+Baseline and independent one-pixel eastward moves retain exact coverage and
+rules. Other baseline gameplay geometry and compile warnings are unchanged.
+Rust constructs all three exports with 62 movement areas, 541 sight obstacles,
+89 doors, 10 jump pairs and 132 elevation boundaries. All ten library scenes
+reopen with valid pins. Only two Lincoln descriptor references change; placements
+and user ZIPs remain unchanged. Full traversal, arbitrary rearrangements and
+rendered parity remain unverified.
+
+The recipes are in `refinement/catalogs/lincoln-masks.json`. Recovery evidence is
+`work/map-compile/lincoln-next-static-mask-review.json`; publication snapshots and
+native fixtures are under `work/map-compile/lincoln-static-mask-publication`.
+The bailey cottage candidate 169 remains unpublished: mesh coverage passes, but
+the proposed receiving anchor is too far away to accept without further review.
+
+### Published York house projectile masks and relocation gap
+
+Eight static projectile masks are now asset-local: castle west-lane front/rear
+houses 569/574, east-quay front house 525, north-river-lane northern/rear/stone/low
+houses 560/557/548/553, and riverside storehouse 2. Their 6,765 covered pixels match
+exactly, using 1,574 triangles from pinned meshes without appearance controls.
+They have no character boundaries, obstacle links or mask-state controls.
+Projectile thresholds retain the world XY datum; receiving anchors lie on
+nearby unblocked ground. Five central-city candidates lack a suitable nearby
+ground anchor; stone-shop candidate 401 has a distant anchor. All remain deferred.
+
+Each mask retains exact coverage and rules when its asset moves one pixel east.
+Other baseline geometry and warnings are unchanged. Rust constructs the baseline
+and all eight moved exports with 161 movement areas, 1,180 sight obstacles and
+178 elevation boundaries. All ten saved scenes reopen, with only eight York
+descriptor pins changed and no placement or user-ZIP changes.
+
+The castle west-lane front-house move exposes a separate unresolved connection
+gap: door projections drop from 254 to 252 and jump pairs from 72 to 70.
+Jump sockets for pairs 70 and 71 require coincident join points within 0.0001
+units; moving one house by one pixel disconnects both pairs. Other seven moves
+retain the baseline counts. Mask translation passes, but this is explicitly
+not proof of rearranged roof traversal parity. Flexible, bounded jump attachment
+authoring and runtime traversal verification remain required; simply increasing
+the matching tolerance could create ambiguous or invalid connections.
+
+Recipes are in `refinement/catalogs/york-masks.json`; recovery evidence is
+`work/map-compile/york-next-static-mask-review.json`. Publication snapshots and
+the nine native fixtures are under `work/map-compile/york-static-mask-publication`.
