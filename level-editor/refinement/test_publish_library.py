@@ -4,8 +4,9 @@ from pathlib import Path
 import struct
 import tempfile
 import unittest
+from unittest.mock import patch
 
-from publish_library import stage_library
+from publish_library import stage_library, put_catalog, put_model
 from cloudflare_publish import worker_config
 
 
@@ -16,6 +17,36 @@ def glb(document):
 
 
 class PublishLibraryTest(unittest.TestCase):
+    def test_large_model_parts_preserve_exact_runtime_bytes(self):
+        data = bytes(range(256)) * 10
+        payloads, index = {}, {}
+        with patch('publish_library.MAX_FILE_BYTES', 1000):
+            put_model('3d-assets/house/lossy.glb', data, index,
+                      lambda path, value: payloads.__setitem__(path, value))
+        model = index['model_shards']['3d-assets/house/lossy.glb']
+        rebuilt = b''.join(payloads[part['path']] for part in model['parts'])
+        self.assertEqual(rebuilt, data)
+        self.assertEqual(model['bytes'], len(data))
+        self.assertEqual(model['sha256'], hashlib.sha256(data).hexdigest())
+        for part in model['parts']:
+            self.assertLessEqual(len(payloads[part['path']]), 1000)
+            self.assertEqual(part['sha256'], hashlib.sha256(payloads[part['path']]).hexdigest())
+
+    def test_large_catalog_uses_content_addressed_batches(self):
+        index = {'version': 1, 'assets': [{'id': str(i), 'editor': {'data': 'x' * 250}}
+                                         for i in range(8)]}
+        payloads = {}
+        with patch('publish_library.MAX_FILE_BYTES', 1000):
+            put_catalog(index, lambda path, data: payloads.__setitem__(path, data))
+        manifest = json.loads(payloads['3d-assets/index.json'])
+        restored = []
+        for shard in manifest['asset_shards']:
+            data = payloads[shard['path']]
+            self.assertLessEqual(len(data), 1000)
+            self.assertEqual(hashlib.sha256(data).hexdigest(), shard['sha256'])
+            restored.extend(json.loads(data)['assets'])
+        self.assertEqual(restored, index['assets'])
+
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
@@ -100,6 +131,36 @@ class PublishLibraryTest(unittest.TestCase):
             self.assertEqual(report['payloads']['game-data/'+relative], {
                 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()})
         self.assertFalse((site/'notes.txt').exists())
+
+    def test_gameplay_only_frames_need_no_lossy_derivative(self):
+        descriptor = json.loads((self.asset/'asset.json').read_bytes())
+        descriptor['parts'] = [{'node': 'frame', 'scenery': True, 'gameplay_only': True}]
+        (self.asset/'asset.json').write_text(json.dumps(descriptor))
+        (self.asset/'lossy.glb').unlink()
+        (self.asset/'lossy.glb.receipt.json').unlink()
+        model = {'asset': {'version': '2.0'}, 'nodes': [{'name': 'frame',
+                 'extras': {'scenery': True, 'gameplay_only': True}}],
+                 'scenes': [{'nodes': [0]}], 'scene': 0}
+        original = glb(model)
+        (self.asset/'model.glb').write_bytes(original)
+        report = self.stage()
+        runtime = '3d-assets/house/model.runtime.glb'
+        self.assertIn(runtime, report['payloads'])
+        site = self.root/'deploy/site/editor/library'
+        index = json.loads((site/'3d-assets/index.json').read_bytes())
+        self.assertEqual(index['assets'][0]['lossy_model'], 'house/model.runtime.glb')
+        self.assertEqual(index['assets'][0]['model_sha256'], hashlib.sha256(original).hexdigest())
+        output = (site/runtime).read_bytes()
+        size = struct.unpack_from('<I', output, 12)[0]
+        self.assertEqual(json.loads(output[20:20+size]), model)
+        self.assertFalse((site/'3d-assets/house/model.glb').exists())
+        self.assertEqual((self.asset/'model.glb').read_bytes(), original)
+
+    def test_visual_assets_still_require_lossy_models(self):
+        (self.asset/'lossy.glb').unlink()
+        (self.asset/'lossy.glb.receipt.json').unlink()
+        with self.assertRaisesRegex(ValueError, 'current lossy GLB'):
+            self.stage()
 
     def test_missing_game_data_index_rejected(self):
         (self.library/'game-data/index.json').unlink()

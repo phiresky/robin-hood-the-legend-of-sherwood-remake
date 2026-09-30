@@ -4,8 +4,8 @@ From `level-editor/`, run:
 
 ```sh
 pnpm library:game-data
-pnpm library:publish
 pnpm editor:publish
+pnpm library:publish
 ```
 
 These deploy two static-asset Workers using the pinned Wrangler dependency in
@@ -41,6 +41,7 @@ fails for missing game data, missing or stale lossy models, external runtime GLB
 map pins, or files exceeding Cloudflare's static asset limits. It uploads only:
 
 - Optimized models and palette previews.
+- Metadata-only gameplay frames packaged as runtime GLBs, without a texture bake.
 - A generated asset catalog containing the editor fields, descriptor hashes, and verified original-model hashes.
 - Published maps and their generated listing.
 - Population sprite catalogs filtered to referenced sprites, and those images.
@@ -52,6 +53,19 @@ identities in the catalog and saved maps; the editor renders optimized models
 without fetching originals.
 The source library is never modified. `report.json` records each uploaded
 payload's hash and size and remains outside the public assets directory.
+
+Catalogs larger than the per-file limit are split into content-addressed JSON
+batches. The editor verifies each batch hash and reconstructs the complete catalog,
+including asset gameplay definitions. Deploy the updated editor before the first
+batched library; older editors do not understand the batch manifest.
+Runtime GLBs exceeding the per-file limit are also transported in hashed chunks.
+The HTTP filesystem verifies and reassembles their exact bytes before the model
+loader sees them; this does not simplify geometry or reduce texture quality.
+
+Visual assets still require current lossy derivatives. For assets with transformed
+mesh nodes, use the lossy generator's `--no-quantize` option to preserve their authored
+transforms while retaining normal compact texture baking. Gameplay-only assets with
+actual meshes or textures do not qualify for the metadata-only exemption.
 
 Cloudflare references: [subdirectory asset routing](https://developers.cloudflare.com/workers/static-assets/routing/advanced/serving-a-subdirectory/),
 [Worker routes](https://developers.cloudflare.com/workers/configuration/routing/routes/),

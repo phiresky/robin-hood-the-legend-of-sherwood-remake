@@ -47,6 +47,42 @@ UNLIT = {'pbrMetallicRoughness': {'baseColorTexture': {'index': 0}}, 'extensions
 
 
 class LossyAssetsTest(unittest.TestCase):
+    def test_collapsed_charts_are_rescued_without_changing_valid_charts(self):
+        source = np.array([[[0., 0.], [1., 0.], [0., 1.]]] * 4)
+        source[3] = 0
+        packed = source.copy()
+        packed[1:3] = .5
+        rescued, count = lossy_assets.rescue_collapsed_charts(source, packed)
+        rescued = rescued.reshape(-1, 3, 2)
+        self.assertEqual(count, 2)
+        np.testing.assert_array_equal(rescued[0], packed[0])
+        np.testing.assert_array_equal(rescued[3], packed[3])
+        for face in rescued[1:3]:
+            self.assertGreater(abs(np.linalg.det(face[1:] - face[0])), 0)
+        self.assertLess(rescued[1, :, 0].max(), rescued[2, :, 0].min())
+
+    def test_outside_tile_layout_is_fitted_with_one_uniform_transform(self):
+        class UV:
+            def __init__(self, values): self.values = np.array(values, dtype=np.float32).ravel()
+            def foreach_get(self, _name, output): output[:] = self.values
+            def foreach_set(self, _name, values): self.values[:] = values
+        layers = [UV([[.4, 1.2], [1.4, 1.2], [.4, 1.4]]),
+                  UV([[1.5, 1.5], [1.8, 1.5], [1.5, 1.8]])]
+        objects = [SimpleNamespace(data=SimpleNamespace(loops=[0]*3,
+                   uv_layers={lossy_assets.NEW_UV: SimpleNamespace(uv=uv)})) for uv in layers]
+        before = np.concatenate([uv.values.copy() for uv in layers]).reshape(-1, 2)
+        scale = lossy_assets.fit_atlas_tile(objects, .01)
+        after = np.concatenate([uv.values for uv in layers]).reshape(-1, 2)
+        self.assertGreaterEqual(after.min(), .009999)
+        self.assertLessEqual(after.max(), .990001)
+        np.testing.assert_allclose(after - after[0], (before - before[0]) * scale, atol=1e-7)
+        lossy_assets.check_atlas_uvs(before, after)
+
+    def test_atlas_writer_rejects_skipped_textured_mesh_even_with_shared_material(self):
+        doc, binary, _ = lossy_assets.read_glb(self.root / 'derby/house/model.glb')
+        with self.assertRaisesRegex(ValueError, 'Textured primitive 0/0 was not rebuilt'):
+            lossy_assets.write_lossy(doc, binary, [], b'avif', self.root / 'bad.glb')
+
     def test_packed_uvs_cannot_destroy_source_textured_triangles(self):
         source = np.array([[[0., 0.], [1., 0.], [0., 1.]]])
         lossy_assets.check_atlas_uvs(source, source * .5 + .1)
@@ -226,6 +262,34 @@ class LossyAssetsTest(unittest.TestCase):
         uv = np.array([[0, 0], [1, 0], [0, 1]], dtype=np.float32)
         _, template = quantizer.convert('TEXCOORD_0', uv, {'componentType': 5126}, [0, 1, 2])
         self.assertEqual(template['componentType'], 5123)
+
+    def test_untextured_derivative_preserves_transformed_geometry_without_quantization(self):
+        doc, buffers, _ = lossy_assets.read_glb(self.root / 'derby/house/model.glb')
+        doc['images'] = []
+        doc['textures'] = []
+        doc['materials'] = [{'pbrMetallicRoughness': {'baseColorFactor': [.5, .4, .3, 1]}}]
+        doc['nodes'][0]['translation'] = [7, 8, 9]
+        original = lossy_assets.accessor_array(doc, buffers, 0)
+        output = self.root / 'untextured.glb'
+        lossy_assets.write_lossy(doc, buffers, [], b'', output, reencoded={})
+        written, binary, _ = lossy_assets.read_glb(output)
+        self.assertEqual(written['nodes'], doc['nodes'])
+        self.assertEqual(written['materials'], doc['materials'])
+        self.assertEqual(written['images'], [])
+        self.assertNotIn('EXT_texture_avif', written.get('extensionsRequired', []))
+        index = written['meshes'][0]['primitives'][0]['attributes']['POSITION']
+        np.testing.assert_array_equal(lossy_assets.accessor_array(written, binary, index), original)
+        self.assertEqual(lossy_assets.static_check(self.root, 'untextured.glb', quantize=False), [])
+        self.assertTrue(lossy_assets.static_check(self.root, 'untextured.glb'))
+
+    def test_reencoded_duplicate_images_share_one_buffer(self):
+        doc, buffers, _ = lossy_assets.read_glb(self.root / 'derby/house/model.glb')
+        doc['images'].append(dict(doc['images'][0]))
+        output = self.root / 'shared-images.glb'
+        lossy_assets.write_lossy(doc, buffers, [], b'', output,
+                                 reencoded={0: b'same avif', 1: b'same avif'})
+        written, _, _ = lossy_assets.read_glb(output)
+        self.assertEqual(written['images'][0]['bufferView'], written['images'][1]['bufferView'])
 
     def test_triangle_precision_rejects_flips_and_preserves_safe_rounding(self):
         triangle = np.array([[0., 0.], [1., 0.], [0., 1.]])

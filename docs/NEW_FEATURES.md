@@ -2045,3 +2045,9 @@ cutouts aligned with terrain instead of rounding each piece separately.
   nearest curve section, interpolating width, elevation offset, and material blend.
   Shift-drag adds enclosed points of the selected path to the selection. Dragging
   a selected point moves the selected set; clicking a point selects it alone.
+
+- Library publishing supports metadata-only gameplay frames, hashed catalog batches,
+  and exact-byte chunked delivery of large runtime models. The HTTP editor restores
+  the complete asset gameplay catalog and verifies model chunks before loading them.
+  Texture baking now repairs collapsed UV charts, fits packed layouts into one tile,
+  and includes retained meshes outside the scene hierarchy.

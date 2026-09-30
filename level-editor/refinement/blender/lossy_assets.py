@@ -34,8 +34,9 @@ them). Vertices are quantized with KHR_mesh_quantization (`--no-quantize` keeps 
 2. The atlas is square, a multiple of `--multiple` texels, sized so `--density-coverage` (95%)
    of the surface meets its weakest-direction target: `--density` texels per map pixel
    (the source artwork scale), capped by the source's strongest direction to retain its detail.
-   If the required atlas exceeds `--max-size`, or packing collapses triangles or leaves the
-   texture tile, the published layout and resolution are retained and only re-encoded.
+   Packed layouts are fitted uniformly into one tile. Collapsed textured triangles get
+   separate small charts and are repacked. If the required atlas exceeds `--max-size`,
+   or packing remains unsafe, the published layout and resolution are retained and re-encoded.
    Physical-opacity assets (foliage), tiled textures, and an already-filled single-image atlas
    also retain their original layouts. `--min-size` applies to successfully repacked atlases.
 3. Cycles EMIT bakes the original textures through their original UVs into the atlas (one joined
@@ -380,6 +381,7 @@ def load_images(doc, binary, directory, base=None, decode_avif=False):
     import bpy
     directory.mkdir(parents=True, exist_ok=True)
     images = {}
+    decoded_images = {}
     physical_alpha = {found[1] for mesh in doc.get('meshes', []) for primitive in mesh['primitives']
                       if (found := display_texture(doc, primitive))
                       and doc['materials'][primitive['material']].get('alphaMode', 'OPAQUE') != 'OPAQUE'}
@@ -392,6 +394,10 @@ def load_images(doc, binary, directory, base=None, decode_avif=False):
             chunk = binary[view.get('buffer', 0)]
             data = chunk[view.get('byteOffset', 0):view.get('byteOffset', 0) + view['byteLength']]
         extension = {'image/png': 'png', 'image/jpeg': 'jpg', 'image/avif': 'avif'}[image['mimeType']]
+        key = (hashlib.sha256(data).digest(), index in physical_alpha)
+        if key in decoded_images:
+            images[index] = decoded_images[key]
+            continue
         path = directory / f'image-{index}.{extension}'
         path.write_bytes(data)
         if extension == 'avif':
@@ -404,6 +410,7 @@ def load_images(doc, binary, directory, base=None, decode_avif=False):
         # premultiply away their synthesized RGB while sampling for the bake.
         loaded.alpha_mode = 'STRAIGHT' if index in physical_alpha else 'NONE'
         images[index] = loaded
+        decoded_images[key] = loaded
     return images
 
 
@@ -419,7 +426,11 @@ def build_objects(doc, binary, images, collection, label):
     """One Blender object per textured glTF mesh, plus per-object corner records for the writer."""
     import bpy
     objects, records = [], []
-    for mesh_index, world in sorted(mesh_instances(doc).items()):
+    instances = mesh_instances(doc)
+    # Retained, uninstanced meshes still belong to the document and need valid
+    # atlas coordinates if an editor later attaches them to a scene node.
+    for mesh_index in range(len(doc.get('meshes', []))):
+        world = instances.get(mesh_index, np.eye(4))
         mesh_doc = doc['meshes'][mesh_index]
         transform = world
         positions, faces, corners, uvs, slots, materials = [], [], [], [], [], []
@@ -513,6 +524,59 @@ def check_packed_objects(objects):
         check_atlas_uvs(*arrays)
 
 
+def rescue_collapsed_charts(source, packed):
+    """Give collapsed textured triangles separate charts for another packing attempt.
+
+    Very thin triangles can disappear at float32 UV precision. Baking a small
+    independent chart preserves their texture without changing their geometry.
+    """
+    source = np.asarray(source, dtype=np.float64).reshape(-1, 3, 2)
+    result = np.asarray(packed, dtype=np.float32).reshape(-1, 3, 2).copy()
+    def area(values):
+        edges = values[:, 1:].astype(np.float64) - values[:, :1]
+        return np.abs(edges[:, 0, 0] * edges[:, 1, 1] - edges[:, 0, 1] * edges[:, 1, 0])
+    collapsed = np.flatnonzero((area(source) > 0) & (area(result) == 0))
+    for slot, face in enumerate(collapsed):
+        # Distinct coordinates disconnect these charts from adjacent faces.
+        result[face] = np.array([[0, 0], [.01, 0], [0, .01]]) + [2 + slot * .02, 2]
+    return result.ravel(), len(collapsed)
+
+
+def rescue_packed_objects(objects):
+    count = 0
+    for obj in objects:
+        arrays = []
+        for name in (SOURCE_UV, NEW_UV):
+            uv = np.empty(len(obj.data.loops) * 2, dtype=np.float32)
+            obj.data.uv_layers[name].uv.foreach_get('vector', uv)
+            arrays.append(uv)
+        repaired, changed = rescue_collapsed_charts(*arrays)
+        if changed:
+            obj.data.uv_layers[NEW_UV].uv.foreach_set('vector', repaired)
+        count += changed
+    return count
+
+
+def fit_atlas_tile(objects, margin):
+    """Fit the entire packed layout into tile 1001 with one uniform transform."""
+    arrays = []
+    for obj in objects:
+        uv = np.empty(len(obj.data.loops) * 2, dtype=np.float32)
+        obj.data.uv_layers[NEW_UV].uv.foreach_get('vector', uv)
+        arrays.append(uv.reshape(-1, 2))
+    values = np.concatenate(arrays).astype(np.float64)
+    if not np.isfinite(values).all():
+        raise UnsafeAtlasError('Packed atlas contains non-finite UVs')
+    low, high = values.min(axis=0), values.max(axis=0)
+    if values.min() >= 0 and values.max() <= 1:
+        return 1.0
+    scale = (1 - 2 * margin) / max(float((high - low).max()), 1e-12)
+    for obj, uv in zip(objects, arrays):
+        uv = ((uv.astype(np.float64) - low) * scale + margin).astype(np.float32)
+        obj.data.uv_layers[NEW_UV].uv.foreach_set('vector', uv.ravel())
+    return scale
+
+
 def choose_size(args, targets, weakest, area):
     """Size meeting target density over the requested fraction of surface area."""
     require(0 < args.density_coverage <= 1, 'density coverage must be in (0, 1]')
@@ -537,22 +601,33 @@ def unwrap(objects, args, targets):
     # Relaxing the projected charts can fold/collapse finely tessellated curved roofs.
     # Keep the projection and normalize island scale before packing.
     bpy.ops.uv.average_islands_scale()
+    bpy.ops.object.mode_set(mode='OBJECT')
+    rescue_packed_objects(objects)
     margin, history = 0.003, []
     for _ in range(8):
         bpy.ops.object.mode_set(mode='EDIT')
         bpy.ops.mesh.select_all(action='SELECT')
         bpy.ops.uv.select_all(action='SELECT')
-        bpy.ops.uv.pack_islands(udim_source='CLOSEST_UDIM', rotate=True, rotate_method='ANY', scale=True,
+        bpy.ops.uv.pack_islands(udim_source='ACTIVE_UDIM', rotate=True, rotate_method='ANY', scale=True,
                                 margin_method='FRACTION', margin=margin, shape_method=args.pack_shape)
         bpy.ops.object.mode_set(mode='OBJECT')
+        tile_scale = fit_atlas_tile(objects, margin)
+        if rescue_packed_objects(objects):
+            continue
         check_packed_objects(objects)
         area = np.concatenate([face_geometry(o, NEW_UV)[0] for o in objects])
         weakest = np.concatenate([face_axes(o, NEW_UV, 1, 1)[:, 0] for o in objects])
         size, required = choose_size(args, targets, weakest, area)
+        # A very small candidate atlas can request huge fractional gutters.
+        # That squeezes thin charts almost flat; grow the image instead once
+        # padding reaches five percent of the tile.
+        if margin >= .05:
+            required = max(required, args.pack_margin_px / (margin * tile_scale))
+            size = min(args.max_size, max(size, args.multiple * math.ceil(required / args.multiple)))
         history.append({'margin_fraction': margin, 'size': size, 'required_size': required})
-        if margin * size >= args.pack_margin_px - 1e-9:
+        if margin * tile_scale * size >= args.pack_margin_px - 1e-9:
             return size, required, history
-        margin = args.pack_margin_px / size
+        margin = min(.05, args.pack_margin_px / (size * tile_scale))
     raise RuntimeError(f'Pack margin did not converge: {history}')
 
 
@@ -792,6 +867,8 @@ def write_lossy(doc, binary, records, atlas_bytes, output, drop_normals=True, te
             source = doc['meshes'][mesh_index]['primitives'][prim_index]
             corners = rebuilt.get(mesh_index, {}).get(prim_index)
             if corners is None:
+                require(reencoded is not None or display_texture(doc, source) is None,
+                        f'Textured primitive {mesh_index}/{prim_index} was not rebuilt')
                 # Untouched primitive, or keep-layout mode (original UVs and images, re-encoded).
                 textured = reencoded is not None and display_texture(doc, source) is not None
                 unlit = textured and 'KHR_materials_unlit' in doc['materials'][source['material']].get('extensions', {})
@@ -839,11 +916,18 @@ def write_lossy(doc, binary, records, atlas_bytes, output, drop_normals=True, te
     if reencoded is not None:
         # Keep-layout mode: same images, textures, samplers and materials; AVIF image data.
         require(not texture_file, 'Sibling texture files are only supported for a single atlas')
+        image_views = {}
+        def image_view(index):
+            data = reencoded[index]
+            checksum = hashlib.sha256(data).digest()
+            if checksum not in image_views:
+                image_views[checksum] = builder.view(data)
+            return image_views[checksum]
         out['images'] = [{**({'name': image['name']} if 'name' in image else {}), 'mimeType': 'image/avif',
-                          'bufferView': builder.view(reencoded[index])} for index, image in enumerate(doc['images'])]
+                          'bufferView': image_view(index)} for index, image in enumerate(doc.get('images', []))]
         out['textures'] = [{**{k: v for k, v in texture.items() if k in ('sampler', 'name')},
                             'extensions': {'EXT_texture_avif': {'source': avif_source(texture)}}}
-                           for texture in doc['textures']]
+                           for texture in doc.get('textures', [])]
         textured = set()
         samplers = None
     else:
@@ -884,8 +968,9 @@ def write_lossy(doc, binary, records, atlas_bytes, output, drop_normals=True, te
             pbr.pop('baseColorTexture', None)
             material.pop('emissiveTexture', None)
             material.pop('emissiveFactor', None)
-    for key in ('extensionsUsed', 'extensionsRequired'):
-        out[key] = sorted(set(out.get(key, [])) | {'EXT_texture_avif'})
+    if out.get('images'):
+        for key in ('extensionsUsed', 'extensionsRequired'):
+            out[key] = sorted(set(out.get(key, [])) | {'EXT_texture_avif'})
     if quantizer:
         quantizer.apply_nodes(out)
     out['accessors'] = builder.accessors
@@ -998,6 +1083,19 @@ def derive(asset_id, model_path, lossy_path, args, work):
     bpy.ops.wm.read_homefile(use_empty=True, use_factory_startup=True)
     doc, binary, source_bytes = read_glb(model_path)
     work.mkdir(parents=True)
+    if not any(display_texture(doc, primitive) for mesh in doc['meshes'] for primitive in mesh['primitives']):
+        require(not doc.get('images') and not doc.get('textures'), 'Untextured model has unused texture resources')
+        lossy_path.parent.mkdir(parents=True, exist_ok=True)
+        data, normals = write_lossy(doc, binary, [], b'', lossy_path, drop_normals=False,
+                                   normal_bits=None if args.no_quantize else args.normal_bits, reencoded={})
+        report = {'asset_id': asset_id, 'mode': 'untextured geometry',
+                  'source_sha256': sha(model_path), 'lossy_sha256': sha(lossy_path),
+                  'bytes': {'source_glb': len(source_bytes), 'lossy_glb': len(data)}, 'normals': normals}
+        receipt = {'source': report['source_sha256'], 'output': report['lossy_sha256'],
+                   'settings': settings(args), 'tools': tool_versions()}
+        Path(str(lossy_path) + '.receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
+        (work / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
+        return report
     images = load_images(doc, binary, work / 'source-images', base=model_path.parent)
     need_alpha = any(doc['materials'][p['material']].get('alphaMode', 'OPAQUE') != 'OPAQUE'
                      for m in doc['meshes'] for p in m['primitives'] if display_texture(doc, p))
@@ -1049,12 +1147,16 @@ def derive(asset_id, model_path, lossy_path, args, work):
         alpha_images = {image for m in doc['meshes'] for p in m['primitives'] for found in [display_texture(doc, p)]
                         if found and doc['materials'][p['material']].get('alphaMode', 'OPAQUE') != 'OPAQUE'
                         for image in [found[1]]}
+        encoded_images = {}
         for index, image in images.items():
             source = Image.open(image.filepath_raw)
             keep_alpha = index in alpha_images and 'A' in source.getbands()
-            reencoded[index], avif_command, png = encode_avif(np.asarray(source.convert('RGBA' if keep_alpha else 'RGB')),
-                                                             work, args, name=f'image-{index}')
-            png.unlink()
+            key = (sha(Path(image.filepath_raw)), keep_alpha)
+            if key not in encoded_images:
+                encoded_images[key], avif_command, png = encode_avif(np.asarray(source.convert('RGBA' if keep_alpha else 'RGB')),
+                                                                   work, args, name=f'image-{index}')
+                png.unlink()
+            reencoded[index] = encoded_images[key]
             size.append(list(image.size))
         for index in range(len(doc.get('images', []))):
             require(index in reencoded, f'Image {index} was not decoded')
@@ -1262,7 +1364,7 @@ def main_derive(args):
     require(not failures, f'Failed assets: {failures}')
 
 
-ALGORITHM_VERSION = 3
+ALGORITHM_VERSION = 4
 
 SETTING_KEYS = ('density_coverage', 'density', 'nearest_density', 'pack_shape', 'multiple', 'min_size', 'max_size', 'quality', 'reencode_utilization', 'reuse_ratio', 'keep_normals',
                 'texture_file', 'no_quantize', 'normal_bits', 'speed', 'angle_limit', 'pack_margin_px', 'bake_margin')
@@ -1274,6 +1376,9 @@ def settings(args):
 
 
 def summary_row(report):
+    if report.get('mode') == 'untextured geometry':
+        return {'asset': report['asset_id'], 'mode': report['mode'],
+                'glb_bytes': [report['bytes']['source_glb'], report['bytes']['lossy_glb']]}
     validation, b, t = report['validation'], report['bytes'], report['textures']
     d = validation['differences']['overall'] if validation else None
     return {'asset': report['asset_id'], 'extent_map_px': [round(v) for v in report['on_map']['extent_map_px']],
@@ -1314,7 +1419,7 @@ def main_export_worker(args):
 
 # --- live library ------------------------------------------------------------------------------
 
-def static_check(root, model):
+def static_check(root, model, *, quantize=True):
     """Reasons this model cannot be derived, found without Blender (empty list = derivable)."""
     reasons = []
     if not model.endswith('.glb'):
@@ -1327,9 +1432,11 @@ def static_check(root, model):
                 require(primitive.get('mode', 4) == 4, 'non-triangle primitive')
                 require(not primitive.get('targets'), 'morph targets')
                 textured += display_texture(doc, primitive) is not None
-        require(textured, 'no textured primitive')
+        require(doc['meshes'], 'no meshes')
+        if not textured:
+            require(not doc.get('images') and not doc.get('textures'), 'Untextured model has unused texture resources')
         for node in doc['nodes']:
-            require('mesh' not in node or not any(k in node for k in ('matrix', 'translation', 'rotation', 'scale')),
+            require(not quantize or 'mesh' not in node or not any(k in node for k in ('matrix', 'translation', 'rotation', 'scale')),
                     'transformed mesh node')
     except (ValueError, KeyError, FileNotFoundError) as error:
         reasons.append(f'{type(error).__name__}: {error}')
@@ -1418,7 +1525,7 @@ def main_library(args):
         model = entry['model']
         lossy = str(Path(model).parent / lossy_name(Path(model)))
         preview = str(Path(model).parent / preview_name(Path(model)))
-        reasons = static_check(root, model)
+        reasons = static_check(root, model, quantize=not args.no_quantize)
         lossy_state = 'refused' if reasons else 'current' if not args.force and receipt_current(root, model, lossy, args) else 'derive'
         # A re-derived lossy model always gets a new preview; a refused one previews the model.
         preview_source = model if reasons else lossy
@@ -1598,7 +1705,7 @@ def refresh_derivatives(root, work, *, lossy=True, previews=True, ids=None, sett
                 (root/(previous+'.receipt.json')).unlink(missing_ok=True)
                 report['removed'].append(entry['id'])
             continue
-        reasons = static_check(root, model)
+        reasons = static_check(root, model, quantize=not args.no_quantize)
         if reasons:
             previous = entry.pop('lossy_model', None)
             if previous is not None:

@@ -4,6 +4,36 @@ The shared generator is `refinement/blender/lossy_assets.py`. It preserves trian
 counts, rebakes the published textures, encodes AVIF, and optionally quantizes
 vertex attributes. The original `model.glb` remains the source of truth.
 
+## Split-asset publication repairs (2026-09-30)
+
+Algorithm version 4 includes all retained meshes, even those outside the scene
+hierarchy, so no textured primitive is left with old UVs pointing at a new atlas.
+Packed layouts use one uniform transform to fit the texture tile. Collapsed
+textured triangles receive separate small charts and are repacked; geometry stays
+unchanged. Fractional gutters are capped at five percent, growing small atlases
+instead of squeezing their charts almost flat.
+
+Twenty missing or unsuitable derivatives were rebuilt with `--no-quantize` to
+preserve transformed mesh nodes. Checks confirmed identical triangle positions,
+scene structure and node metadata for all twenty outputs. Examples:
+
+| Asset | Source GLB | Runtime GLB | Atlas |
+| --- | ---: | ---: | --- |
+| York north display tables remainder | 23,955,916 B | 9,496 B | 160² |
+| York market state assembly | 311,529,252 B | 467,732 B | 1360² |
+| Nottingham northwest timber house remainder | 1,933,728 B | 360,972 B | 2688² |
+
+Eight-view comparisons at up to 512 pixels measured mean max-channel error of
+2.85 for the tables, 2.04 for Nottingham's northern state assembly and 1.72 for
+the northwest timber house; worst-view p95 was 7, 7 and 6 respectively (0–255).
+Evidence lives in `work/map-compile/repaired-atlas-validation/` and
+`work/map-compile/publication-table-gutters/`.
+
+The Nottingham castle assembly requires an approximately 10,946-pixel single
+atlas at the configured density. It retains its separate re-encoded textures
+instead of losing detail at the 4096 cap (3,131,328-byte runtime GLB). Foliage and
+other texture-reuse cases also retain their established layouts.
+
 ## Derby south gatehouse
 
 The angle-based relaxation after Smart UV Project collapsed roof charts before

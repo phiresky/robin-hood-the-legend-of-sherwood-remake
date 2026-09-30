@@ -1,4 +1,5 @@
 import { publishedMapLabel } from "./map-label.ts";
+import { loadHttpAssetCatalog, loadHttpModelParts } from "./http-asset-catalog.ts";
 import { writeMapThumbnail, thumbnailExtensions } from "./map-thumbnail";
 import { validateNewMap } from "./new-map";
 import { isNotFound, listFiles, writeText } from "./fs.ts";
@@ -45,15 +46,20 @@ export async function openHttpLibrary(
   base = (import.meta.env?.BASE_URL ?? "/") + "library/",
   storage?: FileSystemDirectoryHandle,
 ) {
-  const response = await fetch(base + "3d-assets/index.json", { cache: "no-store" });
-  if (!response.ok) throw new Error(`Cannot load library catalog (${response.status})`);
-  const catalog = await response.json();
-  if (!catalog || !Array.isArray(catalog.assets)) throw new Error("Invalid asset library index");
+  const catalog = await loadHttpAssetCatalog(base);
   const browser = storage ?? (await navigator.storage.getDirectory());
   const workspace = await browser.getDirectoryHandle("sherwood-level-editor", { create: true });
   const maps = await workspace.getDirectoryHandle("maps", { create: true });
   await migrateBrowserMaps(maps);
   const remoteFile = async (path: string) => {
+    if (path === "3d-assets/index.json")
+      return new File([JSON.stringify(catalog)], "index.json", { type: "application/json" });
+    if (catalog.model_shards?.[path])
+      return new File(
+        [await loadHttpModelParts(base, catalog.model_shards[path])],
+        path.split("/").at(-1)!,
+        { type: "model/gltf-binary" },
+      );
     const result = await fetch(base + path.split("/").map(encodeURIComponent).join("/"), {
       cache: "no-cache",
     });

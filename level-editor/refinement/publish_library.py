@@ -19,8 +19,50 @@ MAX_FILE_BYTES = 25 * 1024 * 1024
 MAX_FILES = 20_000
 
 
+def put_catalog(index, put):
+    """Keep the legacy index when it fits; otherwise publish immutable asset batches."""
+    data = encoded(index)
+    if len(data) <= MAX_FILE_BYTES:
+        put('3d-assets/index.json', data)
+        return
+    shards, batch = [], []
+    def flush():
+        payload = encoded({'version': index['version'], 'assets': batch})
+        checksum = digest(payload)
+        path = f'3d-assets/catalog-{checksum}.json'
+        put(path, payload)
+        shards.append({'path': path, 'sha256': checksum})
+    size = 0
+    for entry in index['assets']:
+        length = len(encoded(entry))
+        if batch and size + length > MAX_FILE_BYTES // 2:
+            flush()
+            batch = []
+            size = 0
+        batch.append(entry)
+        size += length
+    if batch:
+        flush()
+    put('3d-assets/index.json', encoded({**index, 'assets': [], 'asset_shards': shards}))
+
+
 def digest(data):
     return hashlib.sha256(data).hexdigest()
+
+
+def put_model(relative, data, index, put):
+    """Transport large runtime models in verified pieces without changing any GLB bytes."""
+    if len(data) <= MAX_FILE_BYTES:
+        put(relative, data)
+        return
+    shards = []
+    for start in range(0, len(data), MAX_FILE_BYTES // 2):
+        chunk = data[start:start + MAX_FILE_BYTES // 2]
+        checksum = digest(chunk)
+        path = f'3d-assets/model-chunk-{checksum}.bin'
+        put(path, chunk)
+        shards.append({'path': path, 'sha256': checksum})
+    index.setdefault('model_shards', {})[relative] = {'bytes': len(data), 'sha256': digest(data), 'parts': shards}
 
 
 def safe_file(root, relative):
@@ -44,6 +86,23 @@ def self_contained_glb(data, name):
     for record in model.get('buffers', []) + model.get('images', []):
         if 'uri' in record and not record['uri'].startswith('data:'):
             raise ValueError(f'Runtime GLB requires an external resource: {name}: {record["uri"]}')
+    return model
+
+
+def gameplay_frame_glb(data, entry):
+    """Package metadata-only frames without requiring a geometry/texture derivative."""
+    parts = entry.get('editor', {}).get('parts', [])
+    if not parts or not all(part.get('gameplay_only') is True for part in parts):
+        raise ValueError(f'Asset needs a current lossy GLB before publication: {entry["id"]}')
+    model = self_contained_glb(data, entry['model'])
+    if (len(data) != 20 + struct.unpack_from('<I', data, 12)[0]
+            or any(model.get(key) for key in ('meshes', 'buffers', 'bufferViews', 'accessors',
+                                             'images', 'textures', 'materials', 'skins', 'animations'))
+            or any('mesh' in node or 'skin' in node for node in model.get('nodes', []))):
+        raise ValueError(f'Gameplay frame contains renderable resources: {entry["id"]}')
+    raw = json.dumps(model, separators=(',', ':')).encode()
+    raw += b' ' * (-len(raw) % 4)
+    return struct.pack('<5I', 0x46546c67, 2, 20 + len(raw), len(raw), 0x4e4f534a) + raw
 
 
 def stage_library(library, output, *, worker_name='robinhood-editor-library'):
@@ -83,22 +142,33 @@ def stage_library(library, output, *, worker_name='robinhood-editor-library'):
         data = safe_file(library, relative).read_bytes()
         if expected is not None and digest(data) != expected:
             raise ValueError(f'Asset changed while staging: {relative}')
-        if glb: self_contained_glb(data, relative)
-        put(relative, data)
+        if glb:
+            self_contained_glb(data, relative)
+            put_model(relative, data, index, put)
+        else:
+            put(relative, data)
         return data
 
     for entry in index['assets']:
-        if not entry['model'].endswith('.glb') or not entry.get('lossy_model'):
+        if not entry['model'].endswith('.glb'):
             raise ValueError(f'Asset needs a current lossy GLB before publication: {entry["id"]}')
-        lossy = '3d-assets/'+entry['lossy_model']
-        receipt = json.loads(safe_file(library, lossy+'.receipt.json').read_bytes())
         model = '3d-assets/'+entry['model']
         # Recheck the original at snapshot time, but never add it to the upload.
         with safe_file(library, model).open('rb') as source:
             source_hash = hashlib.file_digest(source, 'sha256').hexdigest()
-        if receipt.get('source') != source_hash:
-            raise ValueError(f'Original changed while staging: {model}')
-        copy(lossy, receipt['output'], glb=True)
+        if entry.get('lossy_model'):
+            lossy = '3d-assets/'+entry['lossy_model']
+            receipt = json.loads(safe_file(library, lossy+'.receipt.json').read_bytes())
+            if receipt.get('source') != source_hash:
+                raise ValueError(f'Original changed while staging: {model}')
+            copy(lossy, receipt['output'], glb=True)
+        else:
+            data = safe_file(library, model).read_bytes()
+            if digest(data) != source_hash:
+                raise ValueError(f'Original changed while staging: {model}')
+            runtime = gameplay_frame_glb(data, entry)
+            entry['lossy_model'] = str(Path(entry['model']).with_suffix('.runtime.glb'))
+            put('3d-assets/'+entry['lossy_model'], runtime)
         entry['model_sha256'] = source_hash
         descriptor_path = '3d-assets/'+entry['descriptor']
         raw = safe_file(library, descriptor_path).read_bytes()
@@ -158,7 +228,7 @@ def stage_library(library, output, *, worker_name='robinhood-editor-library'):
         path = safe_file(library/'game-data', relative)
         put('game-data/'+relative, path.read_bytes())
     put('game-data/index.json', game_index_data)
-    put('3d-assets/index.json', encoded(index))
+    put_catalog(index, put)
     put('scenes/index.json', encoded(maps))
     # Static asset responses are public and revalidate paths that change between releases.
     (site/'_headers').write_text('''/editor/library/*

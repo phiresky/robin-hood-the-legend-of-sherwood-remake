@@ -33,8 +33,51 @@ export async function checkHttpLibrary() {
       "Old forest.level3d.json",
       JSON.stringify({ map: "Old forest", revision: "legacy" }),
     );
+    const assets = [{ id: "frame", editor: { gameplay: { surfaces: [] } } }];
+    const shard = JSON.stringify({ version: 1, assets });
+    const hash = Array.from(
+      new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(shard))),
+      (byte) => byte.toString(16).padStart(2, "0"),
+    ).join("");
+    const path = `3d-assets/catalog-${hash}.json`;
+    remote.set("/library/" + path, shard);
+    const model = "chunked model bytes";
+    const digest = async (value: string) =>
+      Array.from(
+        new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))),
+        (byte) => byte.toString(16).padStart(2, "0"),
+      ).join("");
+    const parts = [];
+    for (const chunk of [model.slice(0, 7), model.slice(7)]) {
+      const sha256 = await digest(chunk);
+      const path = `3d-assets/model-chunk-${sha256}.bin`;
+      remote.set("/library/" + path, chunk);
+      parts.push({ path, sha256 });
+    }
+    remote.set(
+      "/library/3d-assets/index.json",
+      JSON.stringify({
+        version: 1,
+        assets: [],
+        asset_shards: [{ path, sha256: hash }],
+        model_shards: {
+          "3d-assets/chunked.glb": { bytes: model.length, sha256: await digest(model), parts },
+        },
+      }),
+    );
     let connection = await openHttpLibrary("/library/", storage);
     let library = connection.handle;
+    const assetDirectory = await library.getDirectoryHandle("3d-assets");
+    assert(
+      (await (await (await assetDirectory.getFileHandle("chunked.glb")).getFile()).text()) ===
+        model,
+      "Chunked runtime model bytes changed",
+    );
+    const hydrated = await readJson<{ assets: unknown[] }>(assetDirectory, "index.json");
+    assert(
+      JSON.stringify(hydrated.assets) === JSON.stringify(assets),
+      "Catalog shards lost embedded gameplay",
+    );
     assert(
       (await readJson<{ revision: string }>(storedMaps, "Old forest.rhlos-map.json")).revision ===
         "legacy",
