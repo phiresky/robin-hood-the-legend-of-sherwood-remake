@@ -55,7 +55,7 @@
       "model": "3d-assets/leicester/leicester-south-hall/model.glb",
       "model_sha256": "911e8b958895edb864820bfae9843c0cc85b08e4f11fb806220c7879afd00879",
       "descriptor": "3d-assets/leicester/leicester-south-hall/asset.json",
-      "descriptor_sha256": "1dc44c6b542dc6704da9b6615f799ac4ffb679f429db6749a1f1ed241b72250b",
+      "descriptor_sha256": "206bcb2e7bbe6076ed4fa6d4fbdcf07914bcf617ca3a7e65ee0e2fc715f5120e",
       "id": "leicester-south-hall"
     },
     {
@@ -391,7 +391,7 @@
       "model": "3d-assets/leicester/leicester-southwest-edge-bank/model.glb",
       "model_sha256": "fd421f54a1e523dd64be6dd7379e168a0a18992e71a76fd8937e35ba0951fa09",
       "descriptor": "3d-assets/leicester/leicester-southwest-edge-bank/asset.json",
-      "descriptor_sha256": "698fcced2c20b570f18ef98039510b3ddefa901cad9db97d5f6c876783d0eb9c",
+      "descriptor_sha256": "5453b54424ab43f284a51fbb0ac792e6934c6f62e0423c9d81c21aa93c3f32ee",
       "id": "leicester-southwest-edge-bank"
     },
     {

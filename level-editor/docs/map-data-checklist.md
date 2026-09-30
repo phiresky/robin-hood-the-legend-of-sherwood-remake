@@ -1,5 +1,8 @@
 # Map data: editor → game
 
+Latest mask inventory: **2,946 unrecovered records** after the southwest-bank and
+south-hall publication below. Earlier batch totals are historical snapshots.
+
 Compilation reads **placed assets and the editor scene only**. One-time recovery
 from existing levels may populate asset-local metadata; exporting never reads
 those levels. Moving, rotating or duplicating an asset must carry its gameplay
@@ -3232,3 +3235,26 @@ The recipe is `refinement/catalogs/leicester-masks.json`. State support evidence
 is `work/map-compile/leicester-static-mask-state-proof.json`; transaction snapshots
 and four baseline/independently moved native fixtures are under
 `work/map-compile/leicester-static-mask-publication`.
+
+### Published southwest-bank and south-hall masks
+
+Leicester's southwest edge bank now owns view mask 226 (22,302 pixels), and its
+south hall owns projectile mask 208 (5,059 pixels). All 27,361 covered pixels
+match exactly using 1,898 asset-local triangles from the pinned meshes. Neither
+asset has appearance controls; both records have no obstacle or mask-state links.
+The hall's projectile threshold retains the world XY datum. Receiving anchors
+are on adjacent navigable ground and move with their owning assets.
+
+Both masks retain exact coverage and rules after independent one-pixel eastward
+moves. Other baseline gameplay geometry and compile warnings are unchanged.
+Rust constructs the baseline and both moved exports: 55 movement areas, 444 sight
+obstacles, 105 doors and 23 jump pairs in each. These checks do not establish
+full traversal or visual parity. All ten library scenes reopen with valid pins;
+four shared descriptor references changed in Leicester and Wychford, with no
+placement changes. The user ZIPs remain unchanged.
+
+Recipes are in `refinement/catalogs/leicester-masks.json`; recovery evidence is
+`work/map-compile/next-static-mask-review.json`, and publication snapshots plus
+native fixtures are under `work/map-compile/leicester-bank-hall-mask-publication`.
+The southeast manor candidate remains deferred because its proposed receiving
+anchor did not pass the elevation check; no definition was published for it.

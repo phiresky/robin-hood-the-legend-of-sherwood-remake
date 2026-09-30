@@ -329,6 +329,47 @@
           "review": "Character boundary heights follow the asset-owned sloped receiving surface (building-126). Full coverage is supported by this asset mesh; linked obstacles have one local owner and no patch controls the mask. Projectile boundaries use the world XY datum."
         }
       ]
+    },
+    {
+      "asset": "leicester-southwest-edge-bank",
+      "model_sha256": "fd421f54a1e523dd64be6dd7379e168a0a18992e71a76fd8937e35ba0951fa09",
+      "entries": [
+        {
+          "source": 226,
+          "id": "static-occlusion-226",
+          "node": "building-382",
+          "anchor": [
+            175,
+            1870,
+            0
+          ],
+          "review": "Complete coverage is supported by the pinned asset mesh, which has no appearance controls. The ground receiving anchor is in adjacent navigable space. No obstacle links or mask-state references are present. Projectile thresholds, when present, use the world XY datum."
+        }
+      ]
+    },
+    {
+      "asset": "leicester-south-hall",
+      "model_sha256": "911e8b958895edb864820bfae9843c0cc85b08e4f11fb806220c7879afd00879",
+      "entries": [
+        {
+          "source": 208,
+          "id": "static-occlusion-208",
+          "node": "building-105",
+          "anchor": [
+            1050,
+            1690,
+            0
+          ],
+          "projectileHeights": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "review": "Complete coverage is supported by the pinned asset mesh, which has no appearance controls. The ground receiving anchor is in adjacent navigable space. No obstacle links or mask-state references are present. Projectile thresholds, when present, use the world XY datum."
+        }
+      ]
     }
   ]
 }
