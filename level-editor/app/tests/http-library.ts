@@ -78,6 +78,24 @@ export async function checkHttpLibrary() {
       JSON.stringify(hydrated.assets) === JSON.stringify(assets),
       "Catalog shards lost embedded gameplay",
     );
+    const nextAssets = [{ ...assets[0], descriptor_sha256: "a".repeat(64) }];
+    const nextShard = JSON.stringify({ version: 1, assets: nextAssets });
+    const nextHash = await digest(nextShard);
+    const nextPath = `3d-assets/catalog-${nextHash}.json`;
+    remote.set("/library/" + nextPath, nextShard);
+    remote.set(
+      "/library/3d-assets/index.json",
+      JSON.stringify({
+        version: 1,
+        assets: [],
+        asset_shards: [{ path: nextPath, sha256: nextHash }],
+      }),
+    );
+    const refreshed = await readJson<{ assets: unknown[] }>(assetDirectory, "index.json");
+    assert(
+      JSON.stringify(refreshed.assets) === JSON.stringify(nextAssets),
+      "Open HTTP library retained stale asset descriptor pins after a catalog update",
+    );
     assert(
       (await readJson<{ revision: string }>(storedMaps, "Old forest.rhlos-map.json")).revision ===
         "legacy",

@@ -46,14 +46,18 @@ export async function openHttpLibrary(
   base = (import.meta.env?.BASE_URL ?? "/") + "library/",
   storage?: FileSystemDirectoryHandle,
 ) {
-  const catalog = await loadHttpAssetCatalog(base);
+  let catalog = await loadHttpAssetCatalog(base);
   const browser = storage ?? (await navigator.storage.getDirectory());
   const workspace = await browser.getDirectoryHandle("sherwood-level-editor", { create: true });
   const maps = await workspace.getDirectoryHandle("maps", { create: true });
   await migrateBrowserMaps(maps);
   const remoteFile = async (path: string) => {
-    if (path === "3d-assets/index.json")
+    if (path === "3d-assets/index.json") {
+      // Maps and their descriptor pins can change while this connection is open.
+      // Refresh the manifest too, including the model chunks for the new release.
+      catalog = await loadHttpAssetCatalog(base);
       return new File([JSON.stringify(catalog)], "index.json", { type: "application/json" });
+    }
     if (catalog.model_shards?.[path])
       return new File(
         [await loadHttpModelParts(base, catalog.model_shards[path])],
