@@ -139,13 +139,13 @@ export class SplineLayer {
     this.controls.clear();
     if (this.browse) {
       for (const view of this.views.values()) {
-        if (view.path.id !== path?.id) this.addControls(view.path, false);
+        if (view.path.id !== path?.id) this.addControls(view.path, false, !path);
       }
     }
     if (path) this.addControls(path, true);
     this.root.updateWorldMatrix(true, true);
   }
-  private addControls(path: LevelSpline, selected: boolean) {
+  private addControls(path: LevelSpline, selected: boolean, showPoints = true) {
     if (path.kind === "road" && this.document) {
       const road = path;
       path = {
@@ -195,9 +195,10 @@ export class SplineLayer {
         this.controls.add(line);
       }
     }
+    if (!showPoints) return;
     path.points.forEach((point, index) => {
       const handle = new THREE.Mesh(
-        new THREE.SphereGeometry(12, 10, 8),
+        new THREE.SphereGeometry(16, 10, 8),
         new THREE.MeshBasicMaterial({
           color: selected ? (index === this.mode?.point ? 0xffcd59 : 0x77e4e8) : 0x96a8b8,
           transparent: true,

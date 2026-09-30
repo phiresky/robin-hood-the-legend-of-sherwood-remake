@@ -426,12 +426,26 @@ test("Paths browsing exposes every spline without enabling other paths' point ha
     river.points.length,
   );
   assert.equal(
+    layer.controls.children.filter(
+      (child) => child instanceof THREE.Mesh && child.geometry instanceof THREE.SphereGeometry,
+    ).length,
+    river.points.length,
+    "Selecting a path hides the other paths' points",
+  );
+  assert.equal(
     layer.hitPath(ray),
     "other",
     "Other paths remain selectable while editing a saved path",
   );
   layer.setMode(null);
   assert.equal(layer.hitPath(ray), "other", "Done editing returns to browse overlays");
+  assert.equal(
+    layer.controls.children.filter(
+      (child) => child instanceof THREE.Mesh && child.geometry instanceof THREE.SphereGeometry,
+    ).length,
+    river.points.length + other.points.length,
+    "Clearing selection restores every path's points",
+  );
   layer.setBrowse(false);
   assert.equal(layer.controls.children.length, 0, "Leaving Paths removes overlays");
   layer.clear();
