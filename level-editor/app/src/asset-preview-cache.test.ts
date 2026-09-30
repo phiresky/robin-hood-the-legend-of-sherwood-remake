@@ -25,6 +25,37 @@ function fixture() {
   return { asset, disposed };
 }
 
+test("foliage previews use ownership masks without tinting their textures or changing cutouts", async () => {
+  const f = fixture();
+  f.asset.geometry.setAttribute("color", new THREE.Float32BufferAttribute([0, 1, 1, 0, 1, 1], 3));
+  Object.assign(f.asset.material, { vertexColors: true, alphaTest: 0.5, side: THREE.DoubleSide });
+  f.asset.material.userData = {
+    foliage_physical_opacity: true,
+    opacity_semantics: "physical-coverage",
+    source_ownership_semantics: "separate-mask",
+    source_ownership_channel: "vertex-color-r",
+  };
+  const cache = new AssetPreviewCache({ load: async () => f.asset });
+  const lease = await cache.acquire(root, entry());
+  const material = (lease.asset as THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>)
+    .material;
+  const shader = {
+    uniforms: {},
+    vertexShader: "",
+    fragmentShader:
+      "#include <map_fragment>\n#include <color_fragment>\n#include <alphatest_fragment>",
+  } as THREE.WebGLProgramParametersWithUniforms;
+  material.onBeforeCompile(shader, {} as THREE.WebGLRenderer);
+  assert.doesNotMatch(shader.fragmentShader, /#include <color_fragment>/);
+  assert.match(shader.fragmentShader, /#include <map_fragment>/);
+  assert.match(shader.fragmentShader, /#include <alphatest_fragment>/);
+  assert.equal(material.alphaTest, 0.5);
+  assert.equal(material.map, f.asset.material.map);
+  lease.release();
+  cache.dispose();
+  assert.deepEqual(f.disposed, [1, 1, 1]);
+});
+
 test("preview cache coalesces loads and returns independent roots sharing owned resources", async () => {
   const f = fixture();
   let loads = 0;

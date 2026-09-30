@@ -2,6 +2,7 @@ import * as THREE from "three";
 import type { ProjectionAssetEntry } from "@rle/shared";
 import { loadProjectionAssetPreview } from "./projection-library.ts";
 import { disposeObjectResources } from "./resources.ts";
+import { TextureDisplay } from "./texture-display.ts";
 
 export interface AssetPreviewLease {
   /** Independent transform hierarchy; geometry, materials and textures belong to the cache. */
@@ -71,6 +72,7 @@ export function estimatePreviewBytes(root: THREE.Object3D): number {
 
 /** Bounded parsed-preview LRU. Active cards pin their resources until their lease is released. */
 export class AssetPreviewCache {
+  private readonly textureDisplay = new TextureDisplay();
   private readonly roots = new WeakMap<FileSystemDirectoryHandle, number>();
   private nextRoot = 0;
   private readonly entries = new Map<string, CachedPreview>();
@@ -120,6 +122,7 @@ export class AssetPreviewCache {
             throw new Error("Asset preview cache was cleared during loading");
           }
           created.asset = asset;
+          this.textureDisplay.apply(asset);
           created.bytes = estimatePreviewBytes(asset);
           this.bytes += created.bytes;
           this.trim();
