@@ -139,6 +139,7 @@ export class TerrainControls {
   private preview: (grid: TerrainGrid | null) => void;
   constructor(preview: (grid: TerrainGrid | null) => void) {
     this.preview = preview;
+    // Join the transparent pass so path surfaces cannot cover terrain editing overlays.
     this.root.renderOrder = 1100;
   }
   setMode(mode: TerrainEditMode | null) {
@@ -197,6 +198,7 @@ export class TerrainControls {
         vertexColors: true,
         size: 7,
         sizeAttenuation: false,
+        transparent: true,
         depthTest: false,
         depthWrite: false,
       }),
@@ -223,6 +225,7 @@ export class TerrainControls {
           vertexColors: true,
           size: 12,
           sizeAttenuation: false,
+          transparent: true,
           depthTest: false,
           depthWrite: false,
         }),
@@ -276,6 +279,7 @@ export class TerrainControls {
         vertexColors: true,
         linewidth: 2.5,
         worldUnits: false,
+        transparent: true,
         depthTest: false,
         depthWrite: false,
       }),
