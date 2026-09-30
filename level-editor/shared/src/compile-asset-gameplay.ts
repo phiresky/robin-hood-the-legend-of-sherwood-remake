@@ -4,6 +4,7 @@ import { assembleSightVolumes } from "./assemble-sight-volumes.ts";
 import { orderSightVolumes } from "./order-sight-volumes.ts";
 import { compileSoundSource } from "./compile-sound-source.ts";
 import { fixedPolygonBoolean } from "./fixed-polygon-boolean.ts";
+import { unionMovementSurfaces } from "./union-movement-surfaces.ts";
 import { assembleNavigationRegions, type NavigationPiece } from "./assemble-navigation-regions.ts";
 import { allocateLightReceivingLayers } from "./allocate-light-receiving-layers.ts";
 import { compactNavigationLayers } from "./compact-navigation-layers.ts";
@@ -1081,7 +1082,7 @@ function compileAssetGameplayAttempt(
       polygon(s.polygon)[0]!,
       ...s.holes.map((h) => polygon(h)[0]!),
     ]);
-    let merged = preserve ? [] : polygonClipping.union(input[0]!, ...input.slice(1));
+    let merged = preserve ? [] : unionMovementSurfaces(input, `Movement layer ${layer}`, warnings);
     // Authored movement exclusions belong to a plane and follow their asset placement.
     // Subtract whole polygons so holes in blockers remain walkable islands.
     for (const blocker of movementBlockers) {
