@@ -2,10 +2,27 @@ import * as THREE from "three";
 import { unzlibSync } from "fflate";
 
 import { terrainMaterial, type CustomTerrainMaterial } from "../../shared/src/terrain-materials.ts";
+import { TexturePixelCache } from "./texture-pixel-cache.ts";
 import tiles from "./terrain-textures/tiles.json" with { type: "json" };
+
+// Retain CPU pixels only; every caller owns its texture and mutable pixel array.
+const pixelCache = new TexturePixelCache(64 * 1024 * 1024);
+function textureFromPixels(data: Uint8Array, width: number, height: number) {
+  const texture = new THREE.DataTexture(data, width, height);
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.magFilter = THREE.LinearFilter;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.generateMipmaps = true;
+  texture.needsUpdate = true;
+  return texture;
+}
 
 /** Bundled indexed art is decoded synchronously, including for immediate map baking. */
 export function terrainTexture(kind: "grass" | "dirt" | "water" | "paved", feather = false) {
+  const key = `base:${kind}:${feather}`;
+  const cached = pixelCache.get(key);
+  if (cached) return textureFromPixels(cached.data, cached.width, cached.height);
   const tile = tiles[kind];
   const palette = atob(tile.palette),
     pixels = unzlibSync(Uint8Array.from(atob(tile.pixelsZlib), (c) => c.charCodeAt(0)));
@@ -19,14 +36,8 @@ export function terrainTexture(kind: "grass" | "dirt" | "water" | "paved", feath
       ? Math.min(255, Math.min(u, 1 - u) * (kind === "water" ? 12800 : 2200))
       : 255;
   }
-  const texture = new THREE.DataTexture(data, width, tile.size);
-  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.magFilter = THREE.LinearFilter;
-  texture.minFilter = THREE.LinearMipmapLinearFilter;
-  texture.generateMipmaps = true;
-  texture.needsUpdate = true;
-  return texture;
+  pixelCache.set(key, { data, width, height: tile.size });
+  return textureFromPixels(data, width, tile.size);
 }
 
 /**
@@ -40,6 +51,20 @@ export function terrainMaterialTexture(
   feather = false,
 ) {
   const material = terrainMaterial(id, customMaterials);
+  const key = JSON.stringify([
+    "material",
+    material.id,
+    material.category,
+    material.color,
+    material.textureBase,
+    feather,
+  ]);
+  const cached = pixelCache.get(key);
+  if (cached) {
+    const texture = textureFromPixels(cached.data, cached.width, cached.height);
+    texture.name = `terrain-material:${id}`;
+    return texture;
+  }
   const texture = terrainTexture(material.textureBase, feather);
   const data = texture.image.data as Uint8Array;
   const rgb = [1, 3, 5].map((offset) => parseInt(material.color.slice(offset, offset + 2), 16));
@@ -59,6 +84,7 @@ export function terrainMaterialTexture(
     addMaterialDetails(data, texture.image.width, texture.image.height, id);
   }
   texture.name = `terrain-material:${id}`;
+  pixelCache.set(key, { data, width: texture.image.width, height: texture.image.height });
   return texture;
 }
 

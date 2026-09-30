@@ -33,3 +33,26 @@ test("custom texture colors and unknown material failures remain explicit", () =
   assert.throws(() => terrainMaterialTexture("missing"), /Unknown terrain material/);
   texture.dispose();
 });
+
+test("cached source pixels remain independently owned and custom edits invalidate their colors", () => {
+  const first = terrainMaterialTexture("path_dirt", [], true);
+  const expected = new Uint8Array(first.image.data);
+  first.image.data.fill(0);
+  first.dispose();
+  const second = terrainMaterialTexture("path_dirt", [], true);
+  assert.deepEqual(second.image.data, expected);
+  const red = terrainMaterialTexture(
+    "custom",
+    [{ id: "custom", name: "Color", color: "#ff0000" }],
+    true,
+  );
+  const green = terrainMaterialTexture(
+    "custom",
+    [{ id: "custom", name: "Color", color: "#00ff00" }],
+    true,
+  );
+  assert.notDeepEqual(red.image.data, green.image.data);
+  second.dispose();
+  red.dispose();
+  green.dispose();
+});

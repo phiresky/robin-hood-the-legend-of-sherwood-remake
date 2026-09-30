@@ -1592,7 +1592,7 @@ export class EditorViewport {
     ];
   }
 
-  syncViews(d: Level3D, rebuildFraming = true) {
+  syncViews(d: Level3D, rebuildFraming = true, splinePreview = false) {
     this.clippingBoundsDirty = true;
     this.missionMarkers.sync(d, this.missionEdit?.selected);
     this.terrain.sync(d);
@@ -1624,7 +1624,7 @@ export class EditorViewport {
       this.exportFrame.computeLineDistances();
     }
     const syncSplines = () => {
-      this.splines.sync(d.splines ?? [], d.camera, this.sourceNodes, d);
+      this.splines.sync(d.splines ?? [], d.camera, this.sourceNodes, d, splinePreview);
       this.splines.setBrowse(this.splineSelection !== null);
     };
     if (rebuildFraming) syncSplines();
@@ -1805,6 +1805,7 @@ export class EditorViewport {
         this.syncViews(
           path ? followTerrainEdit(document, { ...document, splines }) : document,
           false,
+          path !== null,
         );
         this.splineTerrainPreview = path !== null;
       }

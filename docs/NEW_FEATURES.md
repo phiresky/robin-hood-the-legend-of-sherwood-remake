@@ -2033,3 +2033,10 @@ cutouts aligned with terrain instead of rounding each piece separately.
 - Paths mode shows all spline centerlines; click a line to select its path.
   Spline lines use the terrain grid's screen-space thickness and, together with
   their control points, remain visible above terrain, path surfaces, and assets.
+
+- Path surface textures use half the previous resolution in each dimension;
+  dragging uses a bounded 64×512 live material blend and restores the committed
+  surface resolution on release. Source terrain/material pixels share a 64 MiB
+  least-recently-used CPU cache while rendered textures retain independent ownership.
+  River previews reuse the surface synchronized with their channel instead of
+  generating it twice per pointer update.

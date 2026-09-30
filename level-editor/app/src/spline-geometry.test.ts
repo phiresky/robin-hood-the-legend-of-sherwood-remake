@@ -49,13 +49,13 @@ test("point materials produce a synchronous texture spanning the complete path",
     pointMaterials: ["water_still", "water_white"],
   };
   const texture = blendedSplineTexture(path, camera);
-  assert.equal(texture.image.width, 256);
-  assert.equal(texture.image.height, 100);
+  assert.equal(texture.image.width, 128);
+  assert.equal(texture.image.height, 50);
   assert.equal(texture.repeat.y, path.repeatLength / 100);
   assert.notDeepEqual(
-    Array.from((texture.image.data as Uint8Array).slice(128 * 4, 128 * 4 + 4)),
+    Array.from((texture.image.data as Uint8Array).slice(64 * 4, 64 * 4 + 4)),
     Array.from(
-      (texture.image.data as Uint8Array).slice((99 * 256 + 128) * 4, (99 * 256 + 128) * 4 + 4),
+      (texture.image.data as Uint8Array).slice((49 * 128 + 64) * 4, (49 * 128 + 64) * 4 + 4),
     ),
   );
   texture.dispose();
@@ -423,5 +423,57 @@ test("Paths browsing exposes every spline without enabling other paths' point ha
   assert.equal(layer.hitPath(ray), "other", "Done editing returns to browse overlays");
   layer.setBrowse(false);
   assert.equal(layer.controls.children.length, 0, "Leaving Paths removes overlays");
+  layer.clear();
+});
+
+test("live path blends use bounded textures while preserving endpoint materials and world repeat", () => {
+  const path: LevelSpline = {
+    ...river,
+    points: [
+      [0, 0, 0],
+      [4000, 0, 0],
+    ],
+    pointMaterials: ["water_still", "water_white"],
+  };
+  const committed = blendedSplineTexture(path, camera);
+  const preview = blendedSplineTexture(path, camera, undefined, true);
+  assert.equal(committed.image.width, 128);
+  assert.equal(committed.image.height, 2000);
+  assert.equal(preview.image.width, 64);
+  assert.equal(preview.image.height, 512);
+  assert.equal(preview.repeat.y, committed.repeat.y);
+  for (const row of [0, 1]) {
+    const pixel = (t: THREE.DataTexture) => {
+      const offset = ((t.image.height - 1) * row * t.image.width + t.image.width / 2) * 4;
+      return Array.from(t.image.data.slice(offset, offset + 4));
+    };
+    assert.deepEqual(pixel(preview), pixel(committed));
+  }
+  committed.dispose();
+  preview.dispose();
+});
+
+test("river preview sync builds one surface and restores committed quality even for the same path", () => {
+  const path: LevelSpline = {
+    ...river,
+    pointMaterials: ["water_still", "water_white", "water_still"],
+  };
+  const document = { camera, splines: [path] } as Level3D;
+  const layer = new SplineLayer();
+  const sources = new Map<string, THREE.Object3D>();
+  const surface = () =>
+    layer.root.children.find((child) => child instanceof THREE.Mesh) as THREE.Mesh<
+      THREE.BufferGeometry,
+      THREE.MeshBasicMaterial
+    >;
+  layer.sync([path], camera, sources, document, true);
+  const initial = surface();
+  assert.equal((initial.material.map as THREE.DataTexture).image.width, 64);
+  layer.showPreview(path);
+  assert.equal(surface(), initial);
+  assert.equal(layer.root.children.filter((child) => child instanceof THREE.Mesh).length, 1);
+  layer.sync([path], camera, sources, document);
+  assert.notEqual(surface(), initial);
+  assert.equal((surface().material.map as THREE.DataTexture).image.width, 128);
   layer.clear();
 });

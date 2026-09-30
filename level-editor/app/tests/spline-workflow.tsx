@@ -160,7 +160,7 @@ async function run() {
   geometry.dispose();
   const tile = blendedSplineTexture(road, current.camera, current);
   check(
-    tile.image.width === 256 && tile.image.height > 100,
+    tile.image.width === 128 && tile.image.height > 50,
     "Material blend texture not generated",
   );
   tile.dispose();

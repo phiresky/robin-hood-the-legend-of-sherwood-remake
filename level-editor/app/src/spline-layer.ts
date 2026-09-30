@@ -38,7 +38,10 @@ export class SplineLayer {
   readonly root = new THREE.Group();
   readonly controls = new THREE.Group();
   private browse = false;
-  private views = new Map<string, { path: LevelSpline; object: THREE.Object3D }>();
+  private views = new Map<
+    string,
+    { path: LevelSpline; object: THREE.Object3D; preview: boolean }
+  >();
   private preview: { path: LevelSpline; object: THREE.Object3D } | null = null;
   private camera: MapCamera = { kind: "oblique-orthographic", elevation_deg: 35 };
   private sources = new Map<string, THREE.Object3D>();
@@ -57,16 +60,17 @@ export class SplineLayer {
         if (node instanceof THREE.Mesh) node.geometry.dispose();
       });
   }
-  private build(path: LevelSpline) {
+  private build(path: LevelSpline, preview = false) {
     return path.kind === "wall"
       ? wallMesh(path, this.camera, this.sources)
-      : riverMesh(path, this.camera, this.document);
+      : riverMesh(path, this.camera, this.document, preview);
   }
   sync(
     paths: LevelSpline[],
     camera: MapCamera,
     sources: Map<string, THREE.Object3D>,
     document?: Level3D,
+    preview = false,
   ) {
     const terrainChanged =
       this.document?.terrain !== document?.terrain ||
@@ -84,10 +88,15 @@ export class SplineLayer {
       }
     for (const path of paths) {
       const previous = this.views.get(path.id);
-      if (previous?.path === path && !(terrainChanged && path.kind !== "wall")) continue;
-      const object = this.build(path);
+      if (
+        previous?.path === path &&
+        (path.kind === "wall" || previous.preview === preview) &&
+        !(terrainChanged && path.kind !== "wall")
+      )
+        continue;
+      const object = this.build(path, preview);
       if (previous) this.release(previous.path, previous.object);
-      this.views.set(path.id, { path, object });
+      this.views.set(path.id, { path, object, preview });
       this.root.add(object);
     }
     this.refreshControls(this.preview?.path ?? this.mode?.path);
@@ -104,8 +113,15 @@ export class SplineLayer {
     if (mode?.drawing && mode.path.points.length >= 2) this.showPreview(mode.path);
   }
   showPreview(path: LevelSpline) {
+    // River previews already synchronize their surface alongside the carved terrain.
+    // Reuse that result instead of baking the same path a second time per pointer move.
+    if (this.views.get(path.id)?.path === path) {
+      this.clearPreview();
+      this.refreshControls(path);
+      return;
+    }
     // A failed replacement must not discard the last valid preview.
-    const object = this.build(path);
+    const object = this.build(path, true);
     this.clearPreview();
     this.root.add(object);
     this.preview = { path, object };

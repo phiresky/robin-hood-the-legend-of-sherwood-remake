@@ -51,11 +51,16 @@ export function defaultRiverTexture(road = false) {
   return terrainTexture(road ? "dirt" : "water", true);
 }
 
-export function riverMesh(path: LevelSpline, camera: MapCamera, document?: Level3D) {
+export function riverMesh(
+  path: LevelSpline,
+  camera: MapCamera,
+  document?: Level3D,
+  preview = false,
+) {
   const texture = path.texture
     ? new THREE.TextureLoader().load(path.texture)
     : path.pointMaterials
-      ? blendedSplineTexture(path, camera, document)
+      ? blendedSplineTexture(path, camera, document, preview)
       : defaultRiverTexture(path.kind === "road");
   if (!path.texture && !path.pointMaterials) texture.repeat.y = path.repeatLength / 1024;
   texture.wrapS = THREE.ClampToEdgeWrapping;
@@ -81,11 +86,18 @@ export function riverMesh(path: LevelSpline, camera: MapCamera, document?: Level
 }
 
 /** Bake the longitudinal material blend into a regular texture, also usable by depth export. */
-export function blendedSplineTexture(path: LevelSpline, camera: MapCamera, document?: Level3D) {
+export function blendedSplineTexture(
+  path: LevelSpline,
+  camera: MapCamera,
+  document?: Level3D,
+  preview = false,
+) {
   const curve = splineCurve(path, camera),
     length = curve.getLength();
-  const width = 256,
-    height = Math.max(2, Math.min(8192, Math.ceil(length)));
+  // Live dragging preserves the current material blend with a bounded sampling cost.
+  // Committed surfaces and exports always use the full-resolution bake.
+  const width = preview ? 64 : 128,
+    height = Math.max(2, Math.min(preview ? 512 : 4096, Math.ceil(length / 2)));
   const data = new Uint8Array(width * height * 4);
   const textures = new Map<string, THREE.DataTexture>();
   const ids =
@@ -123,13 +135,11 @@ export function blendedSplineTexture(path: LevelSpline, camera: MapCamera, docum
     for (let row = 0; row < height; row++) {
       const distance = (row / (height - 1)) * length;
       const weights = splineMaterialWeightsAt(path, curve.getUtoTmapping(row / (height - 1), 0));
-      for (let column = 0; column < width; column++) {
-        const target = (row * width + column) * 4;
-        const values = [0, 0, 0, 0];
-        for (const [id, weight] of Object.entries(weights)) {
-          if (!weight) continue;
-          const tile = textures.get(id)!.image,
-            pixels = tile.data as Uint8Array;
+      // Material weights, source rows, and isolated stone locations are constant across a row.
+      const sources = Object.entries(weights)
+        .filter(([, weight]) => weight > 0)
+        .map(([id, weight]) => {
+          const tile = textures.get(id)!.image;
           const centers = singleStoneCenters.get(id);
           const center = centers?.length
             ? centers.reduce((a, b) => (Math.abs(a - distance) < Math.abs(b - distance) ? a : b))
@@ -141,12 +151,30 @@ export function blendedSplineTexture(path: LevelSpline, camera: MapCamera, docum
                   0,
                   Math.min(tile.height - 1, Math.floor(distance - center + tile.height / 2)),
                 );
-          const source = (rowInTile * tile.width + Math.floor((column / width) * tile.width)) * 4;
-          for (let channel = 0; channel < 4; channel++)
-            values[channel]! += pixels[source + channel]! * weight;
+          return {
+            pixels: tile.data as Uint8Array,
+            width: tile.width,
+            offset: rowInTile * tile.width * 4,
+            weight,
+          };
+        });
+      for (let column = 0; column < width; column++) {
+        const target = (row * width + column) * 4;
+        let red = 0,
+          green = 0,
+          blue = 0,
+          alpha = 0;
+        for (const source of sources) {
+          const offset = source.offset + Math.floor((column / width) * source.width) * 4;
+          red += source.pixels[offset]! * source.weight;
+          green += source.pixels[offset + 1]! * source.weight;
+          blue += source.pixels[offset + 2]! * source.weight;
+          alpha += source.pixels[offset + 3]! * source.weight;
         }
-        for (let channel = 0; channel < 4; channel++)
-          data[target + channel] = Math.round(values[channel]!);
+        data[target] = Math.round(red);
+        data[target + 1] = Math.round(green);
+        data[target + 2] = Math.round(blue);
+        data[target + 3] = Math.round(alpha);
       }
     }
   } finally {
