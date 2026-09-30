@@ -1,5 +1,6 @@
 import earcut, { flatten } from "earcut";
-import clipping, { type MultiPolygon, type Polygon } from "polygon-clipping";
+import type { MultiPolygon, Polygon } from "polygon-clipping";
+import { fixedClipping as clipping } from "./fixed-polygon-boolean.ts";
 import type { TerrainTriangle } from "./authored-terrain.ts";
 import type { Level3D } from "./level3d.ts";
 import type { Vec3 } from "./scene.ts";

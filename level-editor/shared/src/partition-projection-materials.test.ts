@@ -168,3 +168,57 @@ test("equivalent native receiving planes retain authored anchors across an overl
   ];
   assert.throws(() => partitionProjectionMaterials(boundary, [first, second]), /conflicting/);
 });
+
+test("touching physical and generated receivers remain separate without a false overlap", () => {
+  const first = {
+    polygon: square(0, 50),
+    defaultMaterial: 2,
+    materialIndices: [],
+    explicit: true,
+    owner: "physical",
+    obstacleIndex: 0,
+  };
+  const second = {
+    polygon: square(50, 100),
+    defaultMaterial: 4,
+    materialIndices: [],
+    explicit: true,
+    owner: "generated",
+  };
+  const pieces = partitionProjectionMaterials(square(0, 100), [first, second]);
+  assert.equal(pieces.length, 2);
+  assert.deepEqual(
+    pieces.map((piece) => piece.defaultMaterial),
+    [2, 4],
+  );
+  assert.throws(
+    () =>
+      partitionProjectionMaterials(square(0, 100), [
+        first,
+        { ...second, polygon: square(49, 100) },
+      ]),
+    /physical and generated receivers/,
+  );
+});
+
+test("footprint extension still detects conflicts beyond the receiving polygon bounds", () => {
+  const first = {
+    polygon: square(0, 20),
+    footprint: square(0, 60),
+    defaultMaterial: 2,
+    materialIndices: [],
+    explicit: true,
+    owner: "first",
+  };
+  const second = {
+    polygon: square(50, 100),
+    defaultMaterial: 4,
+    materialIndices: [],
+    explicit: true,
+    owner: "second",
+  };
+  assert.throws(
+    () => partitionProjectionMaterials(square(0, 100), [first, second]),
+    /conflicting projection materials/,
+  );
+});

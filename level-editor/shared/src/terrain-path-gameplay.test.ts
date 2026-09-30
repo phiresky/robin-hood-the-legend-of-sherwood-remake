@@ -104,3 +104,40 @@ test("road cuts retain barycentric material mixtures on uncovered ground", () =>
     });
   }
 });
+
+test("curved road cuts with near-coincident edges preserve ground and road coverage", () => {
+  // Successive strip intersections used to overflow the floating-point sweep queue here.
+  const original = ground()[0]!;
+  original.points = [
+    [1792, 1027.8489739410745, 0],
+    [1920, 1101.2667577940083, 0],
+    [1792, 1101.2667577940083, 0],
+  ];
+  for (const p of original.points) p[2] = p[0] * 0.2 + p[1] * 0.1;
+  const curved = road({
+    width: 193.71,
+    repeatLength: 180,
+    points: [
+      [325.73, 852.2597039459637, 0],
+      [761.7244462957661, 925.2436421573115, 0],
+      [1222.987605469606, 1077.5562631503121, 0],
+      [1470.959039974546, 1579.482748662872, 0],
+      [1946.9504354817886, 1023.3710085852365, 0],
+    ],
+    pointMaterials: ["path_flagstone", "water_white_stone", "path_dirt", "path_dirt", "path_dirt"],
+  });
+  const pieces = roadTerrainPieces({ camera, splines: [curved] }, [original]);
+  const area = ({ points: [a, b, c] }: (typeof pieces)[number]) =>
+    Math.abs((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])) / 2;
+  const coverage = new Map<string, number>();
+  for (const piece of pieces) {
+    coverage.set(piece.cell.material, (coverage.get(piece.cell.material) ?? 0) + area(piece));
+    for (const [x, y, z] of piece.points) assert.ok(Math.abs(z - x * 0.2 - y * 0.1) < 1e-8);
+  }
+  assert.ok(
+    Math.abs(pieces.reduce((sum, piece) => sum + area(piece), 0) - area(original)) < 0.0001,
+  );
+  assert.deepEqual([...coverage.keys()].sort(), ["grass_short", "path_dirt"]);
+  assert.ok(Math.abs(coverage.get("path_dirt")! - 3827.188) < 0.001);
+  assert.ok(Math.abs(coverage.get("grass_short")! - 871.55) < 0.001);
+});

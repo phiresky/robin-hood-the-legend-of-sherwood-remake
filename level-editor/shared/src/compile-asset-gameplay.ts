@@ -1091,9 +1091,8 @@ function compileAssetGameplayAttempt(
         contourGroups.push(blocker.movementContour);
         continue;
       }
-      merged = polygonClipping.difference(merged, [
-        polygon(blocker.polygon)[0]!,
-        ...blocker.holes.map((h) => polygon(h)[0]!),
+      merged = fixedPolygonBoolean("difference", merged, [
+        [polygon(blocker.polygon)[0]!, ...blocker.holes.map((h) => polygon(h)[0]!)],
       ]);
     }
     // Intersect solids with this surface's plane in world XY, then project

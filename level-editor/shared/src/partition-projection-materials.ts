@@ -21,6 +21,18 @@ export interface ProjectionMaterialSupport {
   tiePriority?: number;
 }
 const shape = (points: Point[]): Polygon => [[...points, points[0]!]];
+type Bounds = [number, number, number, number];
+const geometryBounds = (geometry: MultiPolygon): Bounds => {
+  const bounds: Bounds = [Infinity, Infinity, -Infinity, -Infinity];
+  for (const polygon of geometry)
+    for (const [x, y] of polygon[0]!) {
+      bounds[0] = Math.min(bounds[0], x);
+      bounds[1] = Math.min(bounds[1], y);
+      bounds[2] = Math.max(bounds[2], x);
+      bounds[3] = Math.max(bounds[3], y);
+    }
+  return bounds;
+};
 const area = (polygons: MultiPolygon) =>
   polygons.reduce(
     (sum, polygon) =>
@@ -49,7 +61,8 @@ export function partitionProjectionMaterials(
 ): ProjectionMaterialSupport[] {
   if (!supports.some((support) => support.explicit))
     return [{ polygon: boundary, defaultMaterial: 0, materialIndices: [], explicit: false }];
-  const members: { support: ProjectionMaterialSupport; geometry: MultiPolygon }[] = [];
+  const members: { support: ProjectionMaterialSupport; geometry: MultiPolygon; bounds: Bounds }[] =
+    [];
   for (const support of supports) {
     if (!support.explicit) continue;
     const coverage = support.footprint
@@ -57,29 +70,40 @@ export function partitionProjectionMaterials(
       : shape(support.polygon);
     const geometry = clipping.intersection(shape(boundary), coverage);
     if (!geometry.length) continue;
-    members.push({ support, geometry });
+    members.push({ support, geometry, bounds: geometryBounds(geometry) });
   }
-  for (const [index, member] of members.entries())
-    for (const other of members.slice(index + 1)) {
-      const overlap = area(clipping.intersection(member.geometry, other.geometry));
+  for (let index = 0; index < members.length; index++) {
+    const member = members[index]!;
+    for (let otherIndex = index + 1; otherIndex < members.length; otherIndex++) {
+      const other = members[otherIndex]!;
+      // Bounds use already clipped fixed-point geometry, so touching boxes cannot
+      // hide positive-area intersections through a rounding discrepancy.
       if (
-        (member.support.obstacleIndex !== undefined) !==
-          (other.support.obstacleIndex !== undefined) &&
-        overlap > 1e-7
+        member.bounds[2] <= other.bounds[0] ||
+        other.bounds[2] <= member.bounds[0] ||
+        member.bounds[3] <= other.bounds[1] ||
+        other.bounds[3] <= member.bounds[1]
       )
-        throw new Error(
-          "Overlapping physical and generated receivers require explicit volumes for both surfaces",
-        );
-      if (
+        continue;
+      const mixedReceivers =
+        (member.support.obstacleIndex !== undefined) !==
+        (other.support.obstacleIndex !== undefined);
+      const conflictingMaterials =
         !(member.support.owner && member.support.owner === other.support.owner) &&
         (member.support.priority ?? 0) === (other.support.priority ?? 0) &&
         (member.support.tiePriority ?? 0) === (other.support.tiePriority ?? 0) &&
         (member.support.defaultMaterial !== other.support.defaultMaterial ||
           !equivalentProjectionPlanes(member.support.planePoints, other.support.planePoints) ||
           (member.support.materialSignature ?? JSON.stringify(member.support.materialIndices)) !==
-            (other.support.materialSignature ?? JSON.stringify(other.support.materialIndices))) &&
-        overlap > 1e-7
-      )
+            (other.support.materialSignature ?? JSON.stringify(other.support.materialIndices)));
+      if (!mixedReceivers && !conflictingMaterials) continue;
+      const overlap = area(clipping.intersection(member.geometry, other.geometry));
+      if (overlap <= 1e-7) continue;
+      if (mixedReceivers)
+        throw new Error(
+          "Overlapping physical and generated receivers require explicit volumes for both surfaces",
+        );
+      if (conflictingMaterials)
         throw new Error(
           `Overlapping receiving surfaces have conflicting projection materials: ${member.support.owner ?? "unnamed"} and ${other.support.owner ?? "unnamed"}`,
           {
@@ -90,6 +114,7 @@ export function partitionProjectionMaterials(
           },
         );
     }
+  }
   members.sort(
     (a, b) =>
       (b.support.priority ?? 0) - (a.support.priority ?? 0) ||
@@ -107,6 +132,7 @@ export function partitionProjectionMaterials(
   if (implicit.length)
     members.push({
       support: { polygon: boundary, defaultMaterial: 0, materialIndices: [], explicit: false },
+      bounds: geometryBounds([shape(boundary)]),
       geometry: clipping.intersection(
         remaining,
         clipping.union(
