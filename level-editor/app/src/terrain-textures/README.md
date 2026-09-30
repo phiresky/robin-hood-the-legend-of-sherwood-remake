@@ -23,3 +23,20 @@ covers 1024 game units, so moving or resizing ground preserves its texture scale
 Roads and rivers use 256-pixel-wide strips of the dirt/water swatches with feathered
 edges and the same 1024-unit length repeat, rather than squeezing the larger tiles
 into each short spline repeat.
+
+## Material library previews
+
+`material-previews.png` is a small atlas used by material library cards. It contains
+128 × 128 downsampled previews of every named material, followed by four untinted
+base tiles for custom material colors. The adjacent JSON records the tile order;
+indices run left to right, then top to bottom. Preview generation uses the same
+full-resolution designs as terrain rendering and export, then applies a box filter.
+
+Regenerate after changing the material catalog, base tiles, or procedural details:
+
+```sh
+pnpm --dir level-editor --filter app generate-material-previews
+```
+
+The generated PNG and JSON are committed so opening the library does not generate
+full-size terrain textures on the browser's main thread.

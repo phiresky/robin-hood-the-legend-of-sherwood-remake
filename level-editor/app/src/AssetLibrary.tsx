@@ -13,6 +13,7 @@ import {
 
 export default function AssetLibrary(props: {
   root: FileSystemDirectoryHandle | null;
+  renderer?: AssetPreviewRenderer;
   entries: ProjectionAssetEntry[];
   loading: boolean;
   error: string;
@@ -28,16 +29,19 @@ export default function AssetLibrary(props: {
   const [search, setSearch] = createSignal("");
   const [type, setType] = createSignal("");
   const [source, setSource] = createSignal(REFINED_LEVELS_FILTER);
+  const renderer = props.renderer ?? new AssetPreviewRenderer();
+  onCleanup(() => {
+    if (!props.renderer) renderer.dispose();
+  });
   createEffect(
     () => props.root,
     () => {
+      renderer.cache.clear();
       setType("");
       setSource(REFINED_LEVELS_FILTER);
       setSearch("");
     },
   );
-  const renderer = new AssetPreviewRenderer();
-  onCleanup(() => renderer.dispose());
   const filtered = () => filterAssets(props.entries, search(), type(), source());
   return (
     <aside

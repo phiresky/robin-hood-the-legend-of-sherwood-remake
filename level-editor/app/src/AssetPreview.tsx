@@ -1,11 +1,11 @@
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import * as THREE from "three";
 import type { ProjectionAssetEntry } from "@rle/shared";
-import { loadProjectionAssetPreview } from "./projection-library";
-import { disposeObjectResources } from "./resources";
+import { AssetPreviewCache } from "./asset-preview-cache";
 
 /** One context for the whole catalog, regardless of how many cards are visible. */
 export class AssetPreviewRenderer {
+  readonly cache = new AssetPreviewCache();
   private renderer?: THREE.WebGLRenderer;
   render(scene: THREE.Scene, camera: THREE.Camera, canvas: HTMLCanvasElement) {
     const renderer = (this.renderer ??= new THREE.WebGLRenderer({ antialias: true, alpha: true }));
@@ -17,6 +17,7 @@ export class AssetPreviewRenderer {
     context.drawImage(renderer.domElement, 0, 0);
   }
   dispose() {
+    this.cache.dispose();
     this.renderer?.dispose();
     this.renderer?.forceContextLoss();
     this.renderer = undefined;
@@ -30,7 +31,7 @@ export default function AssetPreview(props: {
 }) {
   const [status, setStatus] = createSignal("Loading 3D preview…");
   let canvas: HTMLCanvasElement;
-  let asset: THREE.Object3D | undefined;
+  let releaseLease: (() => void) | undefined;
   let observer: IntersectionObserver;
   let generation = 0;
   let visible = false;
@@ -39,18 +40,19 @@ export default function AssetPreview(props: {
   function release() {
     generation++;
     draw = undefined;
-    if (asset) disposeObjectResources([asset]);
-    asset = undefined;
+    releaseLease?.();
+    releaseLease = undefined;
   }
   async function load(root: FileSystemDirectoryHandle, entry: ProjectionAssetEntry) {
     const current = ++generation;
     try {
-      const loaded = await loadProjectionAssetPreview(root, entry);
+      const loaded = await props.renderer.cache.acquire(root, entry);
       if (!visible || current !== generation) {
-        disposeObjectResources([loaded]);
+        loaded.release();
         return;
       }
-      asset = loaded;
+      releaseLease = () => loaded.release();
+      const asset = loaded.asset;
       const scene = new THREE.Scene();
       scene.add(asset, new THREE.HemisphereLight(0xffffff, 0x8c93aa, 2.5));
       const light = new THREE.DirectionalLight(0xffffff, 2);

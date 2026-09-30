@@ -7,6 +7,7 @@ import AssetLibrary from "../src/AssetLibrary";
 import MissionCharacterChoices from "../src/MissionCharacterChoices";
 import "../src/styles.css";
 
+const [defaultCategory, setDefaultCategory] = createSignal<string>();
 const [value, setValue] = createSignal("grass_short");
 const [custom, setCustom] = createSignal<CustomTerrainMaterial[]>([]);
 const [disabled, setDisabled] = createSignal(false);
@@ -16,12 +17,14 @@ const portalMount = document.createElement("div");
 portalMount.id = "library-test-sidebar";
 portalMount.style.width = "340px";
 if (location.search.includes("portal")) document.body.prepend(portalMount);
+const mountStart = performance.now();
 const dispose = render(
   () => (
     <div style={{ display: "flex", gap: "20px", height: "650px" }}>
       <div class="editor-panel" style={{ width: "340px", overflow: "auto" }}>
         <LibraryPortal mount={location.search.includes("portal") ? portalMount : undefined}>
           <MaterialPicker
+            defaultCategory={defaultCategory()}
             value={value()}
             onChange={(id) => {
               changes++;
@@ -60,6 +63,9 @@ const dispose = render(
   ),
   document.querySelector("#root")!,
 );
+const firstFrame = new Promise<number>((resolve) =>
+  requestAnimationFrame(() => resolve(performance.now() - mountStart)),
+);
 const pause = () => new Promise((resolve) => setTimeout(resolve, 50));
 function check(value: unknown, message: string) {
   if (!value) throw new Error(message);
@@ -82,6 +88,14 @@ async function run() {
   ];
   check(cards().length === terrainMaterials.length, "Full material catalog is missing");
   const canvas = document.querySelector<HTMLCanvasElement>(".material-preview")!;
+  for (let i = 0; i < 100 && canvas.dataset.previewReady !== "true"; i++) await pause();
+  check(canvas.dataset.previewReady === "true", "Visible material thumbnail never loaded");
+  check(
+    canvas.width === 128 && canvas.height === 128,
+    "Library previews must not allocate full terrain textures",
+  );
+  const ready = document.querySelectorAll('.material-preview[data-preview-ready="true"]').length;
+  check(ready < terrainMaterials.length, "Offscreen material previews should stay lazy");
   const pixels = canvas.getContext("2d")!.getImageData(0, 0, canvas.width, canvas.height).data;
   check(
     pixels.some((value, i) => i % 4 === 3 && value > 0),
@@ -102,6 +116,21 @@ async function run() {
     styles.every((style) => style === styles[0]),
     "Library searches have inconsistent styling",
   );
+  setDefaultCategory("path");
+  await pause();
+  check(
+    cards().length === terrainMaterials.filter((m) => m.category === "path").length,
+    "Road default must show path materials",
+  );
+  input('[aria-label="Material category"]', "", "change");
+  await pause();
+  check(
+    cards().length === terrainMaterials.length,
+    "Default category must allow browsing other materials",
+  );
+  setDefaultCategory("river");
+  await pause();
+  check(value() === "grass_short", "Changing default category must not edit the selected material");
   input('[aria-label="Material category"]', "river", "change");
   await pause();
   check(
@@ -162,7 +191,7 @@ async function run() {
   check(cards().length === terrainMaterials.length + 1, "Clearing filters did not restore catalog");
   if (!location.search.includes("keep")) dispose();
   document.querySelector("#result")!.textContent =
-    "PASS shared asset/character/material search styling, texture previews, category and ID filtering, material application, custom materials and disabled controls";
+    `PASS shared libraries, lazy 128px previews, category defaults, filtering and application; first frame ${Math.round(await firstFrame)}ms; initially rendered ${ready}/${terrainMaterials.length} thumbnails`;
 }
 run().catch((error) => {
   document.querySelector("#result")!.textContent = "FAIL " + (error.stack ?? error);

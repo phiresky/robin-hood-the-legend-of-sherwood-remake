@@ -13,6 +13,7 @@ import {
 } from "@rle/shared";
 import { sampleSpline, splineMaterialWeightsAt } from "../../shared/src/spline-sampling.ts";
 import { riverGeometry, blendedSplineTexture } from "../src/spline-geometry.ts";
+import type { SplineLayer, SplineEditMode } from "../src/spline-layer.ts";
 import { EditorViewport } from "../src/editor-viewport.ts";
 import { packageCompiledMap } from "../src/map-compile.ts";
 import SplinePanel from "../src/SplinePanel.tsx";
@@ -200,6 +201,53 @@ async function run() {
   const zip = await packageCompiledMap(compiled, pixels, appearance);
   await stage("package");
   check(zip.length > 1000, "Map ZIP is empty");
+  const internals = viewport as unknown as {
+    camera: THREE.Camera;
+    splines: SplineLayer;
+    splineMode: SplineEditMode | null;
+  };
+  const canvas = document.querySelector<HTMLCanvasElement>("#view canvas")!;
+  async function clickSpline(id: string) {
+    const line = internals.splines.controls.children.find(
+      (child) => child.userData.splinePath === id,
+    ) as THREE.Line;
+    check(line, `Missing visible spline ${id}`);
+    const position = new THREE.Vector3().fromBufferAttribute(
+      line.geometry.getAttribute("position"),
+      12,
+    );
+    line.localToWorld(position).project(internals.camera);
+    const rect = canvas.getBoundingClientRect();
+    const event = {
+      bubbles: true,
+      button: 0,
+      pointerId: 7,
+      clientX: rect.left + ((position.x + 1) * rect.width) / 2,
+      clientY: rect.top + ((1 - position.y) * rect.height) / 2,
+    };
+    canvas.dispatchEvent(new PointerEvent("pointerdown", event));
+    canvas.dispatchEvent(new PointerEvent("pointerup", event));
+    await pause();
+    check(internals.splineMode?.path.id === id, `Clicking spline ${id} did not select it`);
+  }
+  await clickSpline("road");
+  await clickSpline("river");
+  const done = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(
+    (button) => button.textContent === "Done editing",
+  )!;
+  check(done, "Selected spline details are missing");
+  done.click();
+  await pause();
+  check(!internals.splineMode, "Done editing did not clear spline selection");
+  check(
+    new Set(
+      internals.splines.controls.children.flatMap((child) =>
+        child.userData.splinePath ? [child.userData.splinePath] : [],
+      ),
+    ).size === 2,
+    "All spline outlines must remain after finishing selection",
+  );
+  await stage("viewport-path-selection");
   check(!errors.length, errors.join("\n"));
   Object.assign(window, {
     __splineImages: { screenshot },

@@ -363,3 +363,65 @@ test("prepared fence strips preserve narrow rails between thick posts", () => {
   rail.geometry.dispose();
   post.geometry.dispose();
 });
+
+test("Paths browsing exposes every spline without enabling other paths' point handles", () => {
+  const other: LevelSpline = {
+    ...river,
+    id: "other",
+    points: river.points.map(([x, y, z]) => [x, y + 400, z]),
+  };
+  const layer = new SplineLayer();
+  layer.sync([river, other], camera, new Map());
+  assert.equal(layer.controls.children.length, 0);
+  layer.setBrowse(true);
+  assert.deepEqual(
+    new Set(
+      layer.controls.children.flatMap((child) =>
+        child.userData.splinePath ? [child.userData.splinePath] : [],
+      ),
+    ),
+    new Set(["river", "other"]),
+  );
+  const wide = layer.controls.children.filter(
+    (child) => "isLine2" in child,
+  ) as import("three/addons/lines/Line2.js").Line2[];
+  assert.equal(wide.length, 4);
+  for (const line of wide) {
+    assert.equal(line.material.linewidth, 2.5);
+    assert.equal(line.material.transparent, true);
+    assert.equal(line.material.depthTest, false);
+  }
+  const line = layer.controls.children.find(
+    (child) => child.userData.splinePath === "other",
+  ) as THREE.Line;
+  const point = new THREE.Vector3().fromBufferAttribute(line.geometry.getAttribute("position"), 12);
+  const ray = new THREE.Raycaster(
+    point.clone().add(new THREE.Vector3(0, 0, 100)),
+    new THREE.Vector3(0, 0, -1),
+  );
+  assert.equal(layer.hitPath(ray), "other");
+  assert.equal(layer.hitHandle(ray), null);
+  layer.setMode({
+    path: river,
+    drawing: false,
+    point: 0,
+    append() {},
+    move() {},
+    selectPoint() {},
+  });
+  assert.equal(
+    layer.controls.children.filter((child) => typeof child.userData.splinePoint === "number")
+      .length,
+    river.points.length,
+  );
+  assert.equal(
+    layer.hitPath(ray),
+    "other",
+    "Other paths remain selectable while editing a saved path",
+  );
+  layer.setMode(null);
+  assert.equal(layer.hitPath(ray), "other", "Done editing returns to browse overlays");
+  layer.setBrowse(false);
+  assert.equal(layer.controls.children.length, 0, "Leaving Paths removes overlays");
+  layer.clear();
+});

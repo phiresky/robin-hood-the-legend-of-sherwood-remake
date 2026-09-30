@@ -2020,3 +2020,16 @@ cutouts aligned with terrain instead of rounding each piece separately.
   are shared across assets, wall/fence presets, textured materials, and characters.
   Mission loading lives above the character library; View settings remains separate.
   Help follows the active mode, and map-only controls stay out of the map-selection title bar.
+
+- Material libraries use prebuilt 128px thumbnails and draw only visible cards,
+  avoiding full terrain texture generation when selecting a path. Roads and rivers
+  initially filter to their respective material categories; other categories remain available.
+
+- Asset and wall libraries share a parsed-model preview cache across mode switches.
+  Recently used previews remain available within a 64-entry / estimated 128 MiB
+  budget; visible cards pin their resources until released, and eviction disposes
+  geometry and textures. Concurrent requests share one load.
+
+- Paths mode shows all spline centerlines; click a line to select its path.
+  Spline lines use the terrain grid's screen-space thickness and, together with
+  their control points, remain visible above terrain, path surfaces, and assets.

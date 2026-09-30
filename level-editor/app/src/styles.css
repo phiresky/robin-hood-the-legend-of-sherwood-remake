@@ -1064,3 +1064,7 @@ select, input.search { background: #171c22; border-color: var(--border); min-hei
 .viewport-help { max-height: calc(100% - 70px); overflow-y: auto; }
 .mode-library-content > .mission-picker { margin-bottom: 14px; flex-direction: column; align-items: stretch; }
 .mode-library-content > .mission-picker select { width: 100%; max-width: none; }
+
+.mode-library-section > .spline-settings { border-top: 0; padding-top: 0; }
+.path-material-library { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
+.path-material-library legend { font-size: 14px; font-weight: 600; }

@@ -247,6 +247,7 @@ export async function checkSharedLibrary() {
   const publishedMaps = new Map(
     [...files].filter(([name]) => name.startsWith("scenes/") && name.endsWith(".rhlos-map.json")),
   );
+  let modelReads = 0;
   const handle = (prefix: string): FileSystemDirectoryHandle =>
     ({
       name: "shared-library-fixture",
@@ -263,7 +264,10 @@ export async function checkSharedLibrary() {
         const path = prefix + name;
         if (!files.has(path) && !options?.create) throw new DOMException(path, "NotFoundError");
         return {
-          getFile: async () => original ?? files.get(path)!,
+          getFile: async () => {
+            if (path.endsWith(".glb")) modelReads++;
+            return original ?? files.get(path)!;
+          },
           createWritable: async () => {
             let value: BlobPart = "";
             return {
@@ -443,6 +447,19 @@ export async function checkSharedLibrary() {
     click("Help");
     click("Assets");
     await until(() => !!document.querySelector(".asset-library-host")?.checkVisibility());
+    await until(
+      () => !document.querySelector(".asset-library-host .asset-card:first-child .preview-status"),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const readsBeforeModeSwitch = modelReads;
+    click("Terrain");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    click("Assets");
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    assert(
+      modelReads === readsBeforeModeSwitch,
+      "Returning to Assets reloaded cached preview GLBs",
+    );
     const originalWidth = document.querySelector(".editor-canvas")!.getBoundingClientRect().width;
     (document.querySelector('button[aria-label="Hide asset library"]') as HTMLElement).click();
     await until(

@@ -7,7 +7,8 @@
     "dev": "vite",
     "preview": "vite preview",
     "build": "vite build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "generate-material-previews": "node scripts/generate-material-previews.ts"
   },
   "dependencies": {
     "@rle/shared": "workspace:*",

@@ -887,7 +887,10 @@ test("incremental edits rebuild changed wall assets and undo restores their geom
   ];
   const layer = (viewport as unknown as { splines: import("./spline-layer.ts").SplineLayer })
     .splines;
-  const height = () => new THREE.Box3().setFromObject(layer.root).getSize(new THREE.Vector3()).z;
+  const height = () => {
+    layer.root.updateWorldMatrix(true, true);
+    return new THREE.Box3().setFromObject(layer.root).getSize(new THREE.Vector3()).y;
+  };
   viewport.syncViews(document, false);
   const originalHeight = height();
   const originalMesh = layer.root.children[1];

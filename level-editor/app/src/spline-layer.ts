@@ -1,4 +1,7 @@
 import * as THREE from "three";
+import { Line2 } from "three/addons/lines/Line2.js";
+import { LineGeometry } from "three/addons/lines/LineGeometry.js";
+import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import {
   gameToScene,
   type LevelSpline,
@@ -34,6 +37,7 @@ export class SplineLayer {
   }
   readonly root = new THREE.Group();
   readonly controls = new THREE.Group();
+  private browse = false;
   private views = new Map<string, { path: LevelSpline; object: THREE.Object3D }>();
   private preview: { path: LevelSpline; object: THREE.Object3D } | null = null;
   private camera: MapCamera = { kind: "oblique-orthographic", elevation_deg: 35 };
@@ -86,6 +90,12 @@ export class SplineLayer {
       this.views.set(path.id, { path, object });
       this.root.add(object);
     }
+    this.refreshControls(this.preview?.path ?? this.mode?.path);
+  }
+  setBrowse(enabled: boolean) {
+    if (this.browse === enabled) return;
+    this.browse = enabled;
+    this.refreshControls(this.preview?.path ?? this.mode?.path);
   }
   setMode(mode: SplineEditMode | null) {
     this.mode = mode;
@@ -111,7 +121,15 @@ export class SplineLayer {
   private refreshControls(path?: LevelSpline) {
     disposeObjectResources([this.controls]);
     this.controls.clear();
-    if (!path) return;
+    if (this.browse) {
+      for (const view of this.views.values()) {
+        if (view.path.id !== path?.id) this.addControls(view.path, false);
+      }
+    }
+    if (path) this.addControls(path, true);
+    this.root.updateWorldMatrix(true, true);
+  }
+  private addControls(path: LevelSpline, selected: boolean) {
     if (path.kind === "road" && this.document) {
       const road = path;
       path = {
@@ -131,19 +149,37 @@ export class SplineLayer {
         const points = Array.from({ length: 25 }, (_, i) =>
           curve.getPoint((section + i / 24) / count).add(new THREE.Vector3(0, 0, 4)),
         );
+        const color = selected ? (section === this.mode?.section ? 0xffcd59 : 0x77e4e8) : 0x96a8b8;
+        // Native lines remain precise picking targets; wide lines provide CSS-pixel width.
         const line = new THREE.Line(
           new THREE.BufferGeometry().setFromPoints(points),
-          new THREE.LineBasicMaterial({
-            color: section === this.mode?.section ? 0xffcd59 : 0x77e4e8,
+          new THREE.LineBasicMaterial({ visible: false }),
+        );
+        const geometry = new LineGeometry();
+        geometry.setPositions(points.flatMap((point) => point.toArray()));
+        const wide = new Line2(
+          geometry,
+          new LineMaterial({
+            color,
+            linewidth: 2.5,
+            worldUnits: false,
+            // Transparent surfaces render after opaque geometry, so overlays join that final pass.
+            transparent: true,
             depthTest: false,
             depthWrite: false,
           }),
         );
-        line.userData.splineSection = section;
+        wide.renderOrder = 102;
+        wide.userData.noSunShadow = true;
+        wide.raycast = () => {};
+        this.controls.add(wide);
+        line.userData.splinePath = path.id;
+        if (selected) line.userData.splineSection = section;
         line.renderOrder = 102;
         this.controls.add(line);
       }
     }
+    if (!selected) return;
     path.points.forEach((point, index) => {
       const handle = new THREE.Mesh(
         new THREE.SphereGeometry(9, 10, 8),
@@ -158,10 +194,23 @@ export class SplineLayer {
       handle.position.set(...gameToScene(this.camera, ...point));
       handle.position.z += 4;
       handle.userData.splinePoint = index;
-      handle.renderOrder = 101;
+      handle.renderOrder = 103;
       this.controls.add(handle);
     });
     this.root.updateWorldMatrix(true, true);
+  }
+  hitPath(ray: THREE.Raycaster): string | null {
+    this.root.updateWorldMatrix(true, true);
+    const previous = ray.params.Line.threshold;
+    ray.params.Line.threshold = 8;
+    try {
+      const hit = ray
+        .intersectObjects(this.controls.children)
+        .find((hit) => typeof hit.object.userData.splinePath === "string");
+      return hit ? hit.object.userData.splinePath : null;
+    } finally {
+      ray.params.Line.threshold = previous;
+    }
   }
   hitHandle(ray: THREE.Raycaster): number | null {
     this.root.updateWorldMatrix(true, true);
@@ -184,6 +233,7 @@ export class SplineLayer {
     }
   }
   clear() {
+    this.browse = false;
     this.setMode(null);
     for (const view of this.views.values()) this.release(view.path, view.object);
     this.views.clear();

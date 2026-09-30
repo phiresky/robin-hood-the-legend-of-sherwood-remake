@@ -6,6 +6,7 @@ import AssetPreview, { AssetPreviewRenderer } from "./AssetPreview";
 /** The same preview cards for wall strips and matching corner models. */
 export default function AssetPickerDialog(props: {
   title: string;
+  renderer?: AssetPreviewRenderer;
   root: FileSystemDirectoryHandle;
   entries: ProjectionAssetEntry[];
   selected?: string;
@@ -13,8 +14,10 @@ export default function AssetPickerDialog(props: {
   onSelect(id: string): void;
   onClose(): void;
 }) {
-  const renderer = new AssetPreviewRenderer();
-  onCleanup(() => renderer.dispose());
+  const renderer = props.renderer ?? new AssetPreviewRenderer();
+  onCleanup(() => {
+    if (!props.renderer) renderer.dispose();
+  });
   const [query, setQuery] = createSignal("");
   const [map, setMap] = createSignal("");
   const entries = () =>

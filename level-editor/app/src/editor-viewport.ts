@@ -546,6 +546,11 @@ export class EditorViewport {
   }
   private readonly sunlight = new SunLighting();
   private splineMode: SplineEditMode | null = null;
+  private splineSelection: ((id: string) => void) | null = null;
+  setSplineSelection(select: ((id: string) => void) | null) {
+    this.splineSelection = select;
+    this.splines.setBrowse(select !== null);
+  }
   private readonly partViews = new Map<string, View>();
   private readonly groupViews = new Map<string, View>();
   private readonly sourceNodes = new Map<string, THREE.Object3D>();
@@ -1001,7 +1006,7 @@ export class EditorViewport {
           if (id) this.missionEdit.select(id);
           return;
         }
-        if (!this.splineMode) this.pick(e, e.altKey);
+        if (!this.splineMode && !this.splineSelection) this.pick(e, e.altKey);
       },
       { signal: this.listeners.signal },
     );
@@ -1618,7 +1623,10 @@ export class EditorViewport {
       );
       this.exportFrame.computeLineDistances();
     }
-    const syncSplines = () => this.splines.sync(d.splines ?? [], d.camera, this.sourceNodes, d);
+    const syncSplines = () => {
+      this.splines.sync(d.splines ?? [], d.camera, this.sourceNodes, d);
+      this.splines.setBrowse(this.splineSelection !== null);
+    };
     if (rebuildFraming) syncSplines();
     else this.updateSplinePreview(syncSplines);
     const aliveGroups = new Set<string>();
@@ -1838,10 +1846,19 @@ export class EditorViewport {
       "pointerdown",
       (event) => {
         const mode = this.splineMode;
-        if (!mode || event.button !== 0 || gesture) return;
+        if ((!mode && !this.splineSelection) || event.button !== 0 || gesture) return;
         const point = this.assetDropPosition(event.clientX, event.clientY);
         if (!point) return;
         const index = this.splines.hitHandle(this.raycaster);
+        if (index === null && !mode?.drawing && this.splineSelection) {
+          const id = this.splines.hitPath(this.raycaster);
+          if (id && id !== mode?.path.id) {
+            consume(event);
+            this.splineSelection(id);
+            return;
+          }
+        }
+        if (!mode) return;
         if (!mode.drawing && index === null) {
           const section = this.splines.hitSection(this.raycaster);
           if (section !== null) {

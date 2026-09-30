@@ -31,6 +31,7 @@ export default function SplinePanel(props: {
   onError(message: string): void;
   active?: boolean;
   libraryMount?: HTMLElement;
+  previewRenderer?: AssetPreviewRenderer;
   onEditingChange?(editing: boolean): void;
 }) {
   const [active, setActive] = createSignal("");
@@ -40,8 +41,10 @@ export default function SplinePanel(props: {
   const [picker, setPicker] = createSignal<"wall" | "corner" | null>(null);
   const [sourceMap, setSourceMap] = createSignal("");
   const [presetSearch, setPresetSearch] = createSignal("");
-  const previewRenderer = new AssetPreviewRenderer();
-  onCleanup(() => previewRenderer.dispose());
+  const previewRenderer = props.previewRenderer ?? new AssetPreviewRenderer();
+  onCleanup(() => {
+    if (!props.previewRenderer) previewRenderer.dispose();
+  });
   const [busy, setBusy] = createSignal(false);
   const [presets, setPresets] = createSignal(readWallPresets());
 
@@ -408,6 +411,21 @@ export default function SplinePanel(props: {
     });
     setPoint(Math.max(0, index - 1));
   }
+  createEffect(
+    () => ({ enabled: props.active !== false, map: props.document()?.map }),
+    ({ enabled }) =>
+      props.viewport.setSplineSelection(
+        enabled
+          ? (id) => {
+              if (draft() || busy()) return;
+              pendingSources = [];
+              setActive(id);
+              setPoint(0);
+              setSection(-1);
+            }
+          : null,
+      ),
+  );
   let editingMap: string | undefined;
   createEffect(
     () => props.document()?.map,
@@ -515,6 +533,7 @@ export default function SplinePanel(props: {
     disposed = true;
     attempt++;
     window.removeEventListener("keydown", onKey, true);
+    props.viewport.setSplineSelection(null);
     props.viewport.setSplineEdit(null);
   });
   return (
@@ -640,6 +659,7 @@ export default function SplinePanel(props: {
       </LibraryPortal>
       <Show when={picker() && props.library()}>
         <AssetPickerDialog
+          renderer={previewRenderer}
           title={picker() === "wall" ? "Choose wall type" : "Choose corner type"}
           root={props.library()!}
           entries={
@@ -1012,32 +1032,35 @@ export default function SplinePanel(props: {
                   })}
                 />
                 <LibraryPortal mount={props.libraryMount} active={props.active !== false}>
-                  <MaterialPicker
-                    label="Point material"
-                    value={
-                      current().pointMaterials?.[point()] ??
-                      (current().kind === "river" ? "water_still" : "path_dirt")
-                    }
-                    customMaterials={props.document()?.customMaterials ?? []}
-                    onCustomMaterialsChange={(customMaterials) => {
-                      const document = props.document();
-                      if (document) publish({ ...document, customMaterials });
-                    }}
-                    onChange={(id) =>
-                      patch({
-                        texture: undefined,
-                        pointMaterialMixes: current().pointMaterialMixes?.map((mix, i) =>
-                          i === point() ? null : mix,
-                        ),
-                        pointMaterials: current().points.map((_, i) =>
-                          i === point()
-                            ? id
-                            : (current().pointMaterials?.[i] ??
-                              (current().kind === "river" ? "water_still" : "path_dirt")),
-                        ),
-                      })
-                    }
-                  />
+                  <section class="path-material-library">
+                    <MaterialPicker
+                      defaultCategory={current().kind === "river" ? "river" : "path"}
+                      label="Point material"
+                      value={
+                        current().pointMaterials?.[point()] ??
+                        (current().kind === "river" ? "water_still" : "path_dirt")
+                      }
+                      customMaterials={props.document()?.customMaterials ?? []}
+                      onCustomMaterialsChange={(customMaterials) => {
+                        const document = props.document();
+                        if (document) publish({ ...document, customMaterials });
+                      }}
+                      onChange={(id) =>
+                        patch({
+                          texture: undefined,
+                          pointMaterialMixes: current().pointMaterialMixes?.map((mix, i) =>
+                            i === point() ? null : mix,
+                          ),
+                          pointMaterials: current().points.map((_, i) =>
+                            i === point()
+                              ? id
+                              : (current().pointMaterials?.[i] ??
+                                (current().kind === "river" ? "water_still" : "path_dirt")),
+                          ),
+                        })
+                      }
+                    />
+                  </section>
                 </LibraryPortal>
                 <Show when={current().pointMaterialMixes?.[point()]}>
                   <p class="hint">

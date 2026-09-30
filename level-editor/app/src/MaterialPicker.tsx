@@ -6,7 +6,9 @@ import {
 } from "@rle/shared";
 
 import LibraryBrowser from "./LibraryBrowser";
-import { terrainMaterialTexture } from "./terrain-texture";
+import { tintMaterialPreview } from "./material-preview";
+import previewAtlasUrl from "./terrain-textures/material-previews.png";
+import previewAtlas from "./terrain-textures/material-previews.json";
 
 export interface MaterialPickerProps {
   value: string;
@@ -16,13 +18,20 @@ export interface MaterialPickerProps {
   label?: string;
   disabled?: boolean;
   selectionDisabled?: boolean;
+  defaultCategory?: string;
 }
 
 /** Shared catalog chooser. Creating a custom material adds it to the map catalog. */
 export default function MaterialPicker(props: MaterialPickerProps) {
   const id = createUniqueId();
   const [search, setSearch] = createSignal("");
-  const [category, setCategory] = createSignal("");
+  const [category, setCategory] = createSignal(props.defaultCategory ?? "");
+  createEffect(
+    () => props.defaultCategory,
+    (value) => {
+      setCategory(value ?? "");
+    },
+  );
   const [name, setName] = createSignal("");
   const [color, setColor] = createSignal("#8c7853");
   const [feedback, setFeedback] = createSignal("");
@@ -159,33 +168,94 @@ export default function MaterialPicker(props: MaterialPickerProps) {
   );
 }
 
-/** Use the same pixels as the terrain surface and exported map bake. */
+let atlasImage: Promise<HTMLImageElement> | undefined;
+function loadPreviewAtlas() {
+  if (!atlasImage) {
+    atlasImage = new Promise<HTMLImageElement>((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => {
+        atlasImage = undefined;
+        reject(new Error("Could not load material preview atlas"));
+      };
+      image.src = previewAtlasUrl;
+    });
+  }
+  return atlasImage;
+}
+
+/** Visible cards use prebuilt thumbnails; full terrain textures belong to the map renderer. */
 function MaterialPreview(props: { material: CustomTerrainMaterial }) {
   let canvas!: HTMLCanvasElement;
+  const [error, setError] = createSignal("");
   createEffect(
     () => props.material,
     (material) => {
-      const texture = terrainMaterialTexture(material.id, [material]);
-      try {
-        canvas.width = texture.image.width;
-        canvas.height = texture.image.height;
-        const context = canvas.getContext("2d");
-        if (!context) throw new Error("Material previews need a 2D canvas context");
-        const pixels = context.createImageData(canvas.width, canvas.height);
-        pixels.data.set(texture.image.data!);
-        context.putImageData(pixels, 0, 0);
-      } finally {
-        texture.dispose();
-      }
+      let active = true;
+      setError("");
+      canvas.dataset.previewReady = "false";
+      const draw = async () => {
+        try {
+          const image = await loadPreviewAtlas();
+          if (!active) return;
+          const presetIndex = previewAtlas.materials.indexOf(material.id);
+          const baseIndex = previewAtlas.bases.indexOf(material.textureBase ?? "dirt");
+          const index = presetIndex >= 0 ? presetIndex : previewAtlas.materials.length + baseIndex;
+          if (presetIndex < 0 && baseIndex < 0) throw new Error("Unknown material preview base");
+          const context = canvas.getContext("2d");
+          if (!context) throw new Error("Material previews need a 2D canvas context");
+          const size = previewAtlas.tileSize;
+          context.drawImage(
+            image,
+            (index % previewAtlas.columns) * size,
+            Math.floor(index / previewAtlas.columns) * size,
+            size,
+            size,
+            0,
+            0,
+            size,
+            size,
+          );
+          if (presetIndex < 0) {
+            const pixels = context.getImageData(0, 0, size, size);
+            tintMaterialPreview(pixels.data, material.color);
+            context.putImageData(pixels, 0, 0);
+          }
+          canvas.dataset.previewReady = "true";
+        } catch (cause) {
+          if (active) setError(cause instanceof Error ? cause.message : String(cause));
+        }
+      };
+      const observer = new IntersectionObserver((entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          observer.disconnect();
+          void draw();
+        }
+      });
+      observer.observe(canvas);
+      return () => {
+        active = false;
+        observer.disconnect();
+      };
     },
   );
   return (
-    <canvas
-      ref={(element) => {
-        canvas = element;
-      }}
-      class="material-preview"
-      aria-hidden="true"
-    />
+    <>
+      <canvas
+        ref={(element) => {
+          canvas = element;
+        }}
+        width={previewAtlas.tileSize}
+        height={previewAtlas.tileSize}
+        class="material-preview"
+        style={{ "background-color": props.material.color }}
+        aria-hidden="true"
+      />
+      <Show when={error()}>
+        <span class="hint" role="status">
+          Preview unavailable: {error()}
+        </span>
+      </Show>
+    </>
   );
 }

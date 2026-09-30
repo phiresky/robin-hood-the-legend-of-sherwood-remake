@@ -35,6 +35,7 @@ import { encodeMapThumbnail, writeMapThumbnail } from "./map-thumbnail";
 import SplinePanel from "./SplinePanel";
 import LightingPanel from "./LightingPanel";
 import AssetLibrary from "./AssetLibrary";
+import { AssetPreviewRenderer } from "./AssetPreview";
 import ScrubNumber from "./ScrubNumber";
 import { ASSET_DRAG_TYPE } from "./asset-library";
 import { insertProjectionAsset } from "./asset-commands";
@@ -81,6 +82,8 @@ export interface EditorProps {
 }
 
 export default function Editor3D(props: EditorProps) {
+  const previewRenderer = new AssetPreviewRenderer();
+  onCleanup(() => previewRenderer.dispose());
   let viewportElement!: HTMLDivElement;
   let newMapDialog!: HTMLDialogElement;
   const [newMapName, setNewMapName] = createSignal("Untitled map");
@@ -1442,6 +1445,7 @@ export default function Editor3D(props: EditorProps) {
         >
           <div class="asset-library-host" hidden={panel() !== "Assets"}>
             <AssetLibrary
+              renderer={previewRenderer}
               root={props.library()?.handle ?? null}
               entries={assetEntries()}
               collapsed={!libraryOpen()}
@@ -1714,6 +1718,7 @@ export default function Editor3D(props: EditorProps) {
           </div>
           <div class="inspector-content" hidden={panel() !== "Paths" || viewSettings()}>
             <SplinePanel
+              previewRenderer={previewRenderer}
               libraryMount={libraryMount()}
               document={doc}
               library={() => props.library()?.handle ?? null}
