@@ -44,13 +44,22 @@ function useful(p: XY[]) {
   return p.length >= 3 && Math.abs(area(p)) > EPS;
 }
 function bounds(p: XY[]) {
-  return [
-    Math.min(...p.map((p) => p[0])),
-    Math.min(...p.map((p) => p[1])),
-    Math.max(...p.map((p) => p[0])),
-    Math.max(...p.map((p) => p[1])),
-  ];
+  let minX = Infinity,
+    minY = Infinity,
+    maxX = -Infinity,
+    maxY = -Infinity;
+  for (const [x, y] of p) {
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+  }
+  return [minX, minY, maxX, maxY];
 }
+function channelPiece(poly: XY[], plane: Plane) {
+  return { poly, plane, bounds: bounds(poly) };
+}
+
 function overlaps(a: number[], b: number[]) {
   return a[0]! <= b[2]! && a[2]! >= b[0]! && a[1]! <= b[3]! && a[3]! >= b[1]!;
 }
@@ -192,38 +201,41 @@ export function evaluateRiverChannels(
   const result: TerrainTriangle[] = [];
   for (const source of base) {
     const sourceBounds = bounds(source.points.map(xy));
-    let pieces = [{ poly: source.points.map(xy), plane: plane(source.points) }];
+    let pieces = [channelPiece(source.points.map(xy), plane(source.points))];
     for (const cut of cuts) {
       if (!overlaps(sourceBounds, cut.bounds)) continue;
-      pieces = pieces.flatMap((piece) => {
-        if (!overlaps(bounds(piece.poly), cut.bounds)) return [piece];
-        if (piece.poly.every((p) => height(piece.plane, p) <= height(cut.plane, p) + EPS))
-          return [piece];
+      const outside: typeof pieces = [];
+      for (const piece of pieces) {
+        if (
+          !overlaps(piece.bounds, cut.bounds) ||
+          piece.poly.every((p) => height(piece.plane, p) <= height(cut.plane, p) + EPS)
+        ) {
+          outside.push(piece);
+          continue;
+        }
         let inside = piece.poly;
-        const outside: typeof pieces = [];
         for (let i = 0; i < 3 && useful(inside); i++) {
           const a = xy(cut.points[i]!),
             b = xy(cut.points[(i + 1) % 3]!);
           const distance = (p: XY) => cross(a, b, p);
           const part = clip(inside, distance, false);
-          if (useful(part)) outside.push({ poly: part, plane: piece.plane });
+          if (useful(part)) outside.push(channelPiece(part, piece.plane));
           inside = clip(inside, distance, true);
         }
         if (useful(inside)) {
           const delta = (p: XY) => height(piece.plane, p) - height(cut.plane, p);
-          if (inside.every((p) => delta(p) <= EPS))
-            outside.push({ poly: inside, plane: piece.plane });
+          if (inside.every((p) => delta(p) <= EPS)) outside.push(channelPiece(inside, piece.plane));
           else if (inside.every((p) => delta(p) >= -EPS))
-            outside.push({ poly: inside, plane: cut.plane });
+            outside.push(channelPiece(inside, cut.plane));
           else {
             const lower = clip(inside, delta, true),
               upper = clip(inside, delta, false);
-            if (useful(lower)) outside.push({ poly: lower, plane: cut.plane });
-            if (useful(upper)) outside.push({ poly: upper, plane: piece.plane });
+            if (useful(lower)) outside.push(channelPiece(lower, cut.plane));
+            if (useful(upper)) outside.push(channelPiece(upper, piece.plane));
           }
         }
-        return outside;
-      });
+      }
+      pieces = outside;
     }
     let index = 0;
     for (const piece of pieces)
