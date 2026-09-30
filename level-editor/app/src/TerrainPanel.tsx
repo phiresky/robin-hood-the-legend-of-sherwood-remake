@@ -1,6 +1,6 @@
 import MaterialPicker from "./MaterialPicker";
 import ScrubNumber from "./ScrubNumber";
-import { flattenTerrainVertices } from "./terrain-selection";
+import { alignTerrainDiagonals, flattenTerrainVertices } from "./terrain-selection";
 import type { EditorViewport } from "./editor-viewport";
 import { For, Show, createSignal, createEffect, onCleanup, untrack } from "solid-js";
 import {
@@ -135,7 +135,7 @@ export default function TerrainPanel(props: {
     if (!g || !selection.length) return;
     const ids = new Set(selection.map((vertex) => vertex.id));
     const delta = value - center()[axis]!;
-    const next = {
+    const moved = {
       ...g,
       vertices: g.vertices.map((item) => {
         if (!ids.has(item.id)) return item;
@@ -144,6 +144,7 @@ export default function TerrainPanel(props: {
         return { ...item, position };
       }),
     };
+    const next = axis === 2 && delta !== 0 ? alignTerrainDiagonals(moved, [...ids]) : moved;
     if (commit) {
       cancelPreview();
       publish(next);
@@ -188,7 +189,15 @@ export default function TerrainPanel(props: {
               onClick={() => {
                 const d = props.document();
                 if (d)
-                  publish(createTerrainGrid(d.exportBounds ?? [0, 0, ...(d.size ?? [1200, 900])]));
+                  publish(
+                    createTerrainGrid(
+                      d.exportBounds ?? [0, 0, ...(d.size ?? [1200, 900])],
+                      128,
+                      0,
+                      "grass_short",
+                      128 * Math.sin((d.camera.elevation_deg * Math.PI) / 180),
+                    ),
+                  );
               }}
             >
               Create terrain grid

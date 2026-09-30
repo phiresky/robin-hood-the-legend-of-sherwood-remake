@@ -183,7 +183,12 @@ selection; Shift-drag adds vertices inside a screen rectangle. Right-drag rotate
 the camera. Vertices have a 10-pixel pick radius at every zoom and perspective.
 Double-click a cell to subdivide it, or an edge/vertex to subdivide its incident cells. Delete removes selected vertices and reconnects the surrounding
 ground; it does not punch a hole. Invalid deletions leave the terrain unchanged.
-Dragging a selected target moves the entire selection, preserving relative heights.
+After selecting an edge or cell, dragging a vertex moves only that vertex.
+Selections built with Shift-click or Shift-drag move together, preserving relative heights.
+New grids use square cells in world X/Y, with partial cells at map boundaries.
+Grid edges use 2.5-pixel lines at every zoom. Height edits split quads across
+isolated corners of the selection boundary, making slopes mirror around the
+selection. These diagonals persist in saves and exports; concave cells keep a valid split.
 Ordinary dragging changes elevation; Alt-drag moves horizontally. Numeric X/Y/Z
 inputs edit one vertex or translate a selection by its center. Flatten sets selected
 vertices to their average height without moving them horizontally. Escape cancels a drag.

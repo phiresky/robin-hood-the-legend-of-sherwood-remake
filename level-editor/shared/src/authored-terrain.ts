@@ -29,6 +29,8 @@ export interface TerrainCell {
 export interface TerrainGrid {
   version: 1;
   spacing: number;
+  /** Row spacing in map pixels; omitted grids use spacing on both axes. */
+  rowSpacing?: number;
   vertices: TerrainVertex[];
   cells: TerrainCell[];
   texture?: string;
@@ -71,6 +73,7 @@ export function validateTerrainGrid(value: unknown): asserts value is TerrainGri
     !g ||
     g.version !== 1 ||
     !Number.isFinite(g.spacing) ||
+    (g.rowSpacing !== undefined && (!Number.isFinite(g.rowSpacing) || g.rowSpacing <= 0)) ||
     g.spacing <= 0 ||
     !Array.isArray(g.vertices) ||
     !Array.isArray(g.cells)
@@ -184,6 +187,7 @@ export function createTerrainGrid(
   spacing = 128,
   height = 0,
   material = "grass_short",
+  rowSpacing = spacing,
 ): TerrainGrid {
   const [x, y, w, h] = bounds;
   if (
@@ -195,8 +199,10 @@ export function createTerrainGrid(
     !Number.isFinite(height)
   )
     throw new Error("Terrain bounds and spacing must be positive and finite");
+  if (!Number.isFinite(rowSpacing) || rowSpacing <= 0)
+    throw new Error("Terrain row spacing must be positive and finite");
   const columns = Math.ceil(w / spacing),
-    rows = Math.ceil(h / spacing);
+    rows = Math.ceil(h / rowSpacing);
   if ((columns + 1) * (rows + 1) > 1000000)
     throw new Error("Terrain grid is too dense; increase spacing");
   const vertices: TerrainVertex[] = [],
@@ -205,7 +211,7 @@ export function createTerrainGrid(
     for (let c = 0; c <= columns; c++)
       vertices.push({
         id: `v-${r}-${c}`,
-        position: [x + Math.min(w, c * spacing), y + Math.min(h, r * spacing), height],
+        position: [x + Math.min(w, c * spacing), y + Math.min(h, r * rowSpacing), height],
         material,
       });
   for (let r = 0; r < rows; r++)
@@ -217,7 +223,13 @@ export function createTerrainGrid(
         material,
       });
     }
-  return { version: 1, spacing, vertices, cells };
+  return {
+    version: 1,
+    spacing,
+    ...(rowSpacing !== spacing ? { rowSpacing } : {}),
+    vertices,
+    cells,
+  };
 }
 type TerrainDocument = Pick<Level3D, "terrain"> & Partial<Pick<Level3D, "splines" | "camera">>;
 const terrainCache = new WeakMap<
@@ -427,7 +439,13 @@ export function expandTerrainGrid(
   const cover: MultiPolygon = grid.cells.map((c) => [
     c.vertices.map((i) => grid.vertices[i]!.position.slice(0, 2) as Point),
   ]);
-  const base = createTerrainGrid(bounds, grid.spacing, 0, grid.cells[0]?.material ?? "grass_short");
+  const base = createTerrainGrid(
+    bounds,
+    grid.spacing,
+    0,
+    grid.cells[0]?.material ?? "grass_short",
+    grid.rowSpacing ?? grid.spacing,
+  );
   const vertices = [...grid.vertices],
     cells = [...grid.cells];
   const lookup = new Map(vertices.map((v, i) => [`${v.position[0]},${v.position[1]}`, i]));

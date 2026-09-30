@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseLevel3D, parseSceneDoc } from "@rle/shared";
+import { parseLevel3D, parseSceneDoc, gameToScene } from "@rle/shared";
 import { createNewMap, validateNewMap } from "./new-map.ts";
 
 function fixture(fail?: string) {
@@ -52,7 +52,17 @@ test("new map settings define terrain extent, spacing and initial elevation", as
   assert.deepEqual(doc.size, [512, 256]);
   assert.equal(doc.terrain?.spacing, 128);
   assert.ok(doc.terrain?.vertices.every((vertex) => vertex.position[2] === 42));
-  assert.equal(doc.terrain?.cells.length, 8);
+  assert.equal(doc.terrain?.cells.length, 16);
+  const terrain = doc.terrain!;
+  const [a, b, , d] = terrain.cells[0]!.vertices.map((i) =>
+    gameToScene(doc.camera, ...terrain.vertices[i]!.position),
+  );
+  assert.ok(
+    Math.abs(
+      Math.hypot(...b!.map((v, i) => v - a![i]!)) - Math.hypot(...d!.map((v, i) => v - a![i]!)),
+    ) < 1e-8,
+    "cell edges have equal world-space lengths",
+  );
   const invalid = fixture();
   await assert.rejects(
     createNewMap(invalid.root, "Invalid", { size: [0, 200], spacing: 128, height: 0 }),

@@ -2001,7 +2001,12 @@ cutouts aligned with terrain instead of rounding each piece separately.
   which now sits beside them in the viewport navigation bar. Camera clipping follows
   current terrain and assets after resizing, edits and previews without refitting the lens.
 
-- Terrain vertex picking uses a forgiving screen-space radius. Double-click refines
+- New terrain grids use square world-space cells rather than square projected pixels.
+  Terrain grid edges use thicker screen-space lines. Dragging an endpoint after
+  picking an edge or cell moves only that vertex; explicit Shift selections move together.
+  Height edits orient quad diagonals across isolated selection-boundary corners,
+  persisting the resulting slopes in saves and exports.
+  Terrain vertex picking uses a forgiving screen-space radius. Double-click refines
   the clicked cell or cells sharing the clicked edge/vertex. Right-drag retains
   camera rotation; Shift-drag adds a rectangle of vertices to the selection. Flatten
   levels selected vertices to their average height without changing their footprint.

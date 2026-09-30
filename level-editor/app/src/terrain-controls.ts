@@ -1,4 +1,7 @@
 import * as THREE from "three";
+import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
+import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
+import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import {
   cellTriangles,
   gameToScene,
@@ -6,6 +9,7 @@ import {
   type TerrainGrid,
   type MapCamera,
 } from "@rle/shared";
+import { alignTerrainDiagonals } from "./terrain-selection.ts";
 import { disposeObjectResources } from "./resources.ts";
 
 type Position = [number, number, number];
@@ -49,7 +53,8 @@ export function moveTerrainVertices(
         : v,
     );
     if (vertices.some((v) => !v.position.every(Number.isFinite))) return null;
-    const next = { ...grid, vertices };
+    const moved = { ...grid, vertices };
+    const next = delta[2] !== 0 ? alignTerrainDiagonals(moved, ids) : moved;
     // A height-only translation cannot alter ground topology. Horizontal motion
     // validates the whole result, including distant boundary intersections.
     if (delta[0] !== 0 || delta[1] !== 0) validateTerrainGrid(next);
@@ -113,6 +118,9 @@ type Gesture = {
   moved: boolean;
   clickIds?: string[];
   dragStarted?: boolean;
+  target?: Target;
+  moveTarget?: Target | null;
+  beforeTarget?: Target | null;
 };
 
 /** Transient multi-selection handles. A completed move creates exactly one edit. */
@@ -121,6 +129,8 @@ export class TerrainControls {
   private mode: TerrainEditMode | null = null;
   private drag: Gesture | null = null;
   private selection: string[] = [];
+  // Direct feature picks are distinct from deliberate Shift/box multi-selection.
+  private selectionTarget: Target | null = null;
   private hover: string[] = [];
   private canvas: HTMLCanvasElement | null = null;
   private finishOrbit: (() => void) | null = null;
@@ -140,10 +150,17 @@ export class TerrainControls {
     )
       this.cancel();
     this.mode = mode;
+    const previousSelection = new Set(this.selection);
     this.selection =
       mode?.selectedVertices?.slice() ?? (mode?.selectedVertex ? [mode.selectedVertex] : []);
     const known = new Set(mode?.grid.vertices.map((v) => v.id) ?? []);
     this.selection = this.selection.filter((id) => known.has(id));
+    if (
+      !mode ||
+      this.selection.length !== previousSelection.size ||
+      this.selection.some((id) => !previousSelection.has(id))
+    )
+      this.selectionTarget = null;
     this.hover = [];
     this.draw(this.drag?.kind === "move" ? this.drag.grid : (mode?.grid ?? null));
   }
@@ -242,12 +259,32 @@ export class TerrainControls {
     lineGeometry.setAttribute("color", new THREE.Float32BufferAttribute(edgeColors, 3));
     const line = new THREE.LineSegments(
       lineGeometry,
-      new THREE.LineBasicMaterial({ vertexColors: true, depthTest: false, depthWrite: false }),
+      new THREE.LineBasicMaterial({ visible: false }),
     );
     line.userData.terrainEdges = edges;
     line.userData.noSunShadow = true;
     line.renderOrder = 1100;
     this.root.add(line);
+    // WebGL native lines are fixed at one pixel on most platforms. Wide-line
+    // geometry keeps the entire grid readable at a consistent screen width.
+    const wideGeometry = new LineSegmentsGeometry();
+    wideGeometry.setPositions(segments.flatMap((point) => point.toArray()));
+    wideGeometry.setColors(edgeColors);
+    const wide = new LineSegments2(
+      wideGeometry,
+      new LineMaterial({
+        vertexColors: true,
+        linewidth: 2.5,
+        worldUnits: false,
+        depthTest: false,
+        depthWrite: false,
+      }),
+    );
+    wide.renderOrder = 1100;
+    wide.userData.noSunShadow = true;
+    // The invisible native segments above retain the existing edge hit testing.
+    wide.raycast = () => {};
+    this.root.add(wide);
     const indices: number[] = [],
       cells: string[] = [];
     for (const cell of grid.cells)
@@ -270,10 +307,11 @@ export class TerrainControls {
     this.root.updateWorldMatrix(true, false);
     return ray.ray.clone().applyMatrix4(new THREE.Matrix4().copy(this.root.matrixWorld).invert());
   }
-  private select(ids: string[]) {
+  private select(ids: string[], target: Target | null = null) {
     const mode = this.mode;
     if (!mode) return;
     this.selection = [...new Set(ids)];
+    this.selectionTarget = target;
     const selected = new Set(this.selection);
     const cells = mode.grid.cells
       .filter((c) => c.vertices.every((i) => selected.has(mode.grid.vertices[i]!.id)))
@@ -286,6 +324,13 @@ export class TerrainControls {
   }
   private movingIds(target: Target) {
     const selected = new Set(this.selection);
+    if (
+      this.selectionTarget &&
+      (target.kind !== this.selectionTarget.kind ||
+        target.ids.length !== this.selectionTarget.ids.length ||
+        target.ids.some((id) => !this.selectionTarget!.ids.includes(id)))
+    )
+      return target.ids;
     return target.ids.every((id) => selected.has(id)) ? [...this.selection] : target.ids;
   }
   private setHover(ids: string[], grid = this.mode?.grid) {
@@ -407,7 +452,7 @@ export class TerrainControls {
     const drag = this.drag;
     if (!drag) return;
     this.release();
-    if (drag.kind === "move") this.select(drag.before);
+    if (drag.kind === "move") this.select(drag.before, drag.beforeTarget);
     this.hover = [];
     this.preview(null);
     this.draw(this.mode?.grid ?? null);
@@ -481,6 +526,12 @@ export class TerrainControls {
             kind: "move",
             ids,
             clickIds: target.ids,
+            target,
+            beforeTarget: this.selectionTarget,
+            moveTarget:
+              ids.length === before.length && ids.every((id) => before.includes(id))
+                ? this.selectionTarget
+                : target,
             dragStarted: false,
             before,
             startScreen: screen,
@@ -547,7 +598,7 @@ export class TerrainControls {
         } else delta[2] = (drag.startScreen.y - event.clientY) * drag.unitsPerPixel;
         const next = moveTerrainVertices(drag.mode.grid, drag.ids, delta);
         if (!next) return;
-        if (!drag.moved) this.select(drag.ids);
+        if (!drag.moved) this.select(drag.ids, drag.moveTarget);
         drag.grid = next;
         drag.moved = delta.some((n) => Math.abs(n) > 0.01);
         this.preview(next);
@@ -582,7 +633,7 @@ export class TerrainControls {
           !drag.dragStarted &&
           Math.hypot(event.clientX - drag.startScreen.x, event.clientY - drag.startScreen.y) <= 3
         )
-          this.select(drag.clickIds ?? drag.ids);
+          this.select(drag.clickIds ?? drag.ids, drag.target);
         this.preview(null);
         this.hover = [];
         this.draw(this.mode?.grid ?? null);

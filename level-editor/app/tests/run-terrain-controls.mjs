@@ -227,6 +227,20 @@ try {
         before.document.terrain.vertices[i].position[2],
     );
   assert.equal(after.commits, before.commits + 1);
+  // Picking an edge does not turn its endpoints into a Shift-built group.
+  const edgeEndpoint = await evalJS("terrainTest.point(11)");
+  await mouse("mouseMoved", edgeEndpoint);
+  assert.deepEqual(await evalJS("terrainTest.state().hover"), [edgeIds[0]]);
+  before = await evalJS("terrainTest.state()");
+  await drag(edgeEndpoint, { x: edgeEndpoint.x, y: edgeEndpoint.y - 16 });
+  after = await evalJS("terrainTest.state()");
+  assert.deepEqual(after.selected, [edgeIds[0]]);
+  assert.ok(
+    after.document.terrain.vertices[11].position[2] >
+      before.document.terrain.vertices[11].position[2],
+  );
+  assert.deepEqual(after.document.terrain.vertices[12], before.document.terrain.vertices[12]);
+  assert.equal(after.commits, before.commits + 1);
   // Cell center hit: the complete perimeter, not the rendering triangle beneath it.
   const cell = after.document.terrain.cells[10];
   const corners = await evalJS(`(${JSON.stringify(cell.vertices)}).map(i => terrainTest.point(i))`);

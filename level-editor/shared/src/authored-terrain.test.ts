@@ -239,3 +239,20 @@ test("empty subdivision is a no-op and unknown cell selections fail explicitly",
   );
   assert.deepEqual(grid, before);
 });
+
+test("anisotropic map-pixel row spacing survives saves and workspace growth", () => {
+  const terrain = createTerrainGrid([0, 0, 200, 100], 100, 0, "grass_short", 50);
+  const document = parseLevel3D(JSON.parse(JSON.stringify({ ...terrainFixture(), terrain })));
+  assert.equal(document.terrain!.rowSpacing, 50);
+  const grown = expandTerrainGrid(document.terrain!, [0, 0, 400, 200]);
+  assert.equal(grown.rowSpacing, 50);
+  validateTerrainGrid(grown);
+  for (const vertex of grown.vertices) {
+    assert.equal(vertex.position[0] % 100, 0);
+    assert.equal(vertex.position[1] % 50, 0);
+  }
+  for (const rowSpacing of [0, -1, NaN, Infinity]) {
+    assert.throws(() => createTerrainGrid([0, 0, 100, 100], 100, 0, "grass_short", rowSpacing));
+    assert.throws(() => validateTerrainGrid({ ...terrain, rowSpacing }));
+  }
+});

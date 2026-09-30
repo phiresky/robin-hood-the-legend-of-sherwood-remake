@@ -36,6 +36,7 @@ export async function createNewMap(
       options.spacing,
       options.height,
       "grass_short",
+      options.spacing * Math.sin((35 * Math.PI) / 180),
     ),
     camera: { kind: "oblique-orthographic", elevation_deg: 35 },
     sceneAssets: [],

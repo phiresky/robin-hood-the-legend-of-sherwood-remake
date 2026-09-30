@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
-import type { TerrainGrid, MapCamera } from "@rle/shared";
+import { createTerrainGrid, terrainHeightAt, type TerrainGrid, type MapCamera } from "@rle/shared";
 import {
   moveTerrainVertex,
   moveTerrainVertices,
@@ -30,7 +30,7 @@ test("grid edit preserves other vertices and input while accepting XYZ changes",
   assert.deepEqual(next.vertices[0]!.position, [10, 10, 40]);
   assert.deepEqual(original.vertices[0]!.position, [0, 0, 0]);
   assert.equal(next.vertices[1], original.vertices[1]);
-  assert.equal(next.cells, original.cells);
+  assert.equal(next.cells[0]!.diagonal, 1);
 });
 test("grid edit rejects collapsed, inverted, and nonfinite candidates", () => {
   const original = grid();
@@ -549,4 +549,56 @@ test("cancelled or wholly invalid terrain drags preserve the previous selection"
   } finally {
     h.dispose();
   }
+});
+
+test("dragging an endpoint after an edge or cell pick moves only that vertex", () => {
+  for (const [x, y] of [
+    [50, 0],
+    [50, 80],
+  ]) {
+    const h = interactionHarness();
+    try {
+      h.pointer("pointerdown", x!, y!);
+      h.pointer("pointerup", x!, y!);
+      assert.ok(h.selected().length > 1);
+      h.pointer("pointermove", 0, 0);
+      assert.deepEqual(h.controls.root.userData.terrainHoverVertices, ["a"]);
+      h.pointer("pointerdown", 0, 0);
+      h.pointer("pointermove", 0, -20);
+      h.pointer("pointerup", 0, -20);
+      assert.deepEqual(h.selected(), ["a"]);
+      assert.equal(h.commits.length, 1);
+      assert.ok(h.commits[0]!.vertices[0]!.position[2] > 0);
+      for (const i of [1, 2, 3])
+        assert.deepEqual(h.commits[0]!.vertices[i], h.mode.grid.vertices[i]);
+    } finally {
+      h.dispose();
+    }
+  }
+});
+
+test("raising a horizontal edge produces mirrored corner slopes that survive serialization", () => {
+  const original = createTerrainGrid([0, 0, 300, 200], 100);
+  const ids = original.vertices
+    .filter((v) => v.position[1] === 100 && (v.position[0] === 100 || v.position[0] === 200))
+    .map((v) => v.id);
+  const moved = moveTerrainVertices(original, ids, [0, 0, 40])!;
+  const saved = JSON.parse(JSON.stringify(moved)) as TerrainGrid;
+  for (const x of [10, 25, 50, 75, 90]) {
+    for (const y of [10, 25, 50, 75, 90]) {
+      const height = terrainHeightAt({ terrain: moved }, x, y)!;
+      assert.ok(Math.abs(height - terrainHeightAt({ terrain: saved }, 300 - x, y)!) < 1e-8);
+      assert.ok(Math.abs(height - terrainHeightAt({ terrain: saved }, x, 200 - y)!) < 1e-8);
+    }
+  }
+  assert.equal(
+    terrainHeightAt({ terrain: moved }, 25, 25),
+    0,
+    "ground outside the corner stays flat",
+  );
+  assert.equal(terrainHeightAt({ terrain: moved }, 75, 75), 20);
+  assert.ok(
+    original.cells.every((c) => c.diagonal === undefined),
+    "undo source is untouched",
+  );
 });
