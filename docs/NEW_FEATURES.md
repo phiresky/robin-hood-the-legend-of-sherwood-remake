@@ -1,5 +1,10 @@
 # Post-port Features
 
+- **Mission failure reports.** Failed menu mission launches automatically queue
+  diagnostic reports before displaying the recovery dialog. Desktop reports
+  include recent logs and mission, multiplayer role, and datadir context; browser
+  reports include recent logs. Upload failures retain reports for retry.
+
 - **Spellforge named mission records.** Mission loading and team-requirement
   scans accept SCOT version 5 and the companion named actor, item, scroll,
   location, and patrol formats. Lua name lookups bind to the created entities

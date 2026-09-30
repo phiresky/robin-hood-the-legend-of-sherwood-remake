@@ -992,10 +992,37 @@ async fn acknowledge_menu_launch<T, F: std::future::Future<Output = Result<(), S
     result: Result<T, String>,
     show_error: impl FnOnce(String) -> F,
 ) -> Result<Option<T>, LaunchError> {
+    acknowledge_menu_launch_with_report(result, show_error, |description| {
+        #[cfg(not(target_arch = "wasm32"))]
+        match crate::bug_report::capture(
+            robin_run_protocol::diagnostics::DiagnosticKindV1::Bug,
+            description,
+            None,
+        ) {
+            Ok(_) => crate::bug_report::submit_pending(),
+            Err(error) => tracing::warn!("Cannot queue mission failure report: {error:#}"),
+        }
+        // Browser diagnostics capture the mission-failure log below.
+        #[cfg(target_arch = "wasm32")]
+        let _ = description;
+    })
+    .await
+}
+
+async fn acknowledge_menu_launch_with_report<
+    T,
+    F: std::future::Future<Output = Result<(), String>>,
+>(
+    result: Result<T, String>,
+    show_error: impl FnOnce(String) -> F,
+    report: impl FnOnce(&str),
+) -> Result<Option<T>, LaunchError> {
     match result {
         Ok(value) => Ok(Some(value)),
         Err(error) => {
-            tracing::error!("Mission launch failed: {error}");
+            let description = format!("Mission launch failed: {error}");
+            tracing::error!("{description}");
+            report(&description);
             // TODO(i18n): translate the mission-launch warning guidance.
             let message = format!(
                 "The mission could not be loaded or continued. Select OK to return to the main menu.\n\n{error}"
@@ -1399,15 +1426,22 @@ mod menu_launch_tests {
         let diagnostic =
             "malformed Data/Characters/Archer.sprites.vq.zst: unsupported authored sprite format";
         let mut notices = Vec::new();
-        let result = pollster::block_on(super::acknowledge_menu_launch::<(), _>(
+        let reports = std::cell::RefCell::new(Vec::new());
+        let result = pollster::block_on(super::acknowledge_menu_launch_with_report::<(), _>(
             Err(diagnostic.into()),
             |message| {
+                assert_eq!(reports.borrow().len(), 1);
                 notices.push(message);
                 std::future::ready(Ok(()))
             },
+            |description| reports.borrow_mut().push(description.to_owned()),
         ))
         .unwrap();
         assert_eq!(result, None);
+        assert_eq!(
+            reports.borrow()[0],
+            format!("Mission launch failed: {diagnostic}")
+        );
         assert_eq!(notices.len(), 1);
         assert!(notices[0].contains(diagnostic));
         assert!(notices[0].contains("return to the main menu"));
@@ -1416,12 +1450,13 @@ mod menu_launch_tests {
     #[test]
     fn successful_menu_launch_preserves_exit_without_warning() {
         let mut warnings = 0;
-        let result = pollster::block_on(super::acknowledge_menu_launch(
+        let result = pollster::block_on(super::acknowledge_menu_launch_with_report(
             Ok(super::SessionResult::ExitRequested),
             |_| {
                 warnings += 1;
                 std::future::ready(Ok(()))
             },
+            |_| panic!("successful launch must not submit a report"),
         ))
         .unwrap();
         assert_eq!(result, Some(super::SessionResult::ExitRequested));
@@ -1430,9 +1465,11 @@ mod menu_launch_tests {
 
     #[test]
     fn failed_warning_keeps_the_mission_diagnostic() {
-        let error = pollster::block_on(super::acknowledge_menu_launch::<(), _>(
+        let mut reports = Vec::new();
+        let error = pollster::block_on(super::acknowledge_menu_launch_with_report::<(), _>(
             Err("unsupported authored sprite format".into()),
             |_| std::future::ready(Err("missing menu resources".into())),
+            |description| reports.push(description.to_owned()),
         ))
         .unwrap_err();
         assert!(
@@ -1441,6 +1478,10 @@ mod menu_launch_tests {
                 .contains("unsupported authored sprite format")
         );
         assert!(error.to_string().contains("missing menu resources"));
+        assert_eq!(
+            reports,
+            ["Mission launch failed: unsupported authored sprite format"]
+        );
     }
 }
 

@@ -160,7 +160,7 @@ export function installDiagnostics(queueStore?: DiagnosticQueue): { log: (line: 
         showStatus('Report queued for submission.');
         void flush();
     };
-    const failure = (error: unknown): void => {
+    const failure = (error: unknown, kind: DiagnosticReport['kind'] = 'fatal_error'): void => {
         const detail = error instanceof Error ? error.message : String(error);
         const panic = detail.includes('panicked at');
         // The panic hook runs before the same WASM invocation traps. Preserve
@@ -171,7 +171,7 @@ export function installDiagnostics(queueStore?: DiagnosticQueue): { log: (line: 
         if (automaticReports >= 3) return;
         reportedFailures.add(detail);
         automaticReports++;
-        void queue(panic ? 'panic' : 'fatal_error', detail, error instanceof Error ? error.stack ?? null : null)
+        void queue(panic ? 'panic' : kind, detail, error instanceof Error ? error.stack ?? null : null)
             .catch(failure => showStatus(`Could not queue crash report: ${String(failure)}`));
     };
     button.addEventListener('click', () => { dialog.showModal(); description.focus(); });
@@ -213,6 +213,8 @@ export function installDiagnostics(queueStore?: DiagnosticQueue): { log: (line: 
             if (logHead >= 1024) { logLines.splice(0, logHead); logHead = 0; }
             // Rust wasm panic hooks write to console.error before wasm traps.
             if (line.includes('panicked at')) failure(line);
+            const missionFailure = line.indexOf('Mission launch failed:');
+            if (missionFailure >= 0) failure(line.slice(missionFailure), 'bug');
         },
     };
 }

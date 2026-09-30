@@ -125,12 +125,17 @@ test('automatic reports ignore resize notifications and coalesce panic/trap dupl
     reporter.log('panicked at engine.rs:12: missing entity');
     reporter.failure(new WebAssembly.RuntimeError('unreachable executed'));
     reporter.log('panicked at engine.rs:12: missing entity');
-    reporter.failure(new Error('a distinct failure'));
+    const missionFailure = "Mission launch failed: Level load failed: IO error: chunk version mismatch in 'SCOT': expected 4, found 5";
+    reporter.log(`ERROR run.rs:1000 ${missionFailure}`);
+    reporter.log(`ERROR run.rs:1000 ${missionFailure}`);
     for (let retry = 0; retry < 100 && (await queue.list()).length < 3; retry++) await new Promise(resolve => setTimeout(resolve, 10));
     const reports = (await queue.list()).map(row => JSON.parse(row.body));
     assert.equal(reports.length, 3);
     assert.deepEqual(reports.map(report => report.description).sort(), [
-        'a distinct failure', 'panicked at engine.rs:12: missing entity', 'unreachable',
+        missionFailure, 'panicked at engine.rs:12: missing entity', 'unreachable',
     ]);
     assert.equal(reports.find(report => report.description.includes('panicked at')).kind, 'panic');
+    const missionReport = reports.find(report => report.description === missionFailure);
+    assert.equal(missionReport.kind, 'bug');
+    assert.match(missionReport.recent_log, /chunk version mismatch in 'SCOT'/);
 });
