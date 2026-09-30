@@ -4,6 +4,24 @@ import * as THREE from "three";
 import { PopulationView } from "./population-view.ts";
 import type { Population, PopulationSpriteCatalog } from "@rle/shared";
 const camera = { kind: "oblique-orthographic" as const, elevation_deg: 35 };
+test("missing legacy population files warn without preventing map loading", async () => {
+  const saved = population();
+  saved.spriteCatalog = "population/wychford/sprites.json";
+  const before = structuredClone(saved);
+  const root = {
+    async getDirectoryHandle() {
+      throw new DOMException(
+        "Missing library file: population/wychford/sprites.json",
+        "NotFoundError",
+      );
+    },
+  } as unknown as FileSystemDirectoryHandle;
+  const view = await PopulationView.load(root, saved, camera);
+  assert.equal(view.count, 0);
+  assert.match(view.warnings.join("\n"), /Legacy population preview unavailable.*wychford/);
+  assert.deepEqual(saved, before);
+  view.dispose();
+});
 const frame = {
   rect: [0, 0, 16, 32] as [number, number, number, number],
   offset: [-8, 32] as [number, number],

@@ -82,6 +82,13 @@ export class PopulationView implements SceneEntities {
       return view;
     } catch (error) {
       view.dispose();
+      if (error instanceof Error && error.name === "NotFoundError") {
+        const unavailable = new PopulationView({ ...population, actors: [], items: [] }, camera);
+        unavailable.warnings.push(
+          `Legacy population preview unavailable: ${error.message}. Saved population data is retained; editable Mission characters are unaffected.`,
+        );
+        return unavailable;
+      }
       throw error;
     }
   }
