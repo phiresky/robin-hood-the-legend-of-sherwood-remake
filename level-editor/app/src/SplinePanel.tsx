@@ -19,7 +19,7 @@ import AssetPreview, { AssetPreviewRenderer } from "./AssetPreview";
 import AssetPickerDialog from "./AssetPickerDialog";
 import { availableWallPresets, builtInWallPresets, cornerAssetIds } from "./spline-presets";
 import MaterialPicker from "./MaterialPicker";
-import { splineMaterialWeightsAt } from "../../shared/src/spline-sampling.ts";
+import { insertSplinePoint } from "./spline-insertion";
 import { terrainHeightAt } from "../../shared/src/authored-terrain.ts";
 
 export default function SplinePanel(props: {
@@ -36,7 +36,12 @@ export default function SplinePanel(props: {
 }) {
   const [active, setActive] = createSignal("");
   const [draft, setDraft] = createSignal<LevelSpline | null>(null);
-  const [point, setPoint] = createSignal(0);
+  const [point, setPointValue] = createSignal(0);
+  const [selectedPoints, setSelectedPoints] = createSignal<number[] | null>(null);
+  const setPoint: typeof setPointValue = (value) => {
+    setSelectedPoints(null);
+    return setPointValue(value);
+  };
   const [section, setSection] = createSignal(-1);
   const [picker, setPicker] = createSignal<"wall" | "corner" | null>(null);
   const [sourceMap, setSourceMap] = createSignal("");
@@ -169,6 +174,17 @@ export default function SplinePanel(props: {
         onCancel={() => props.viewport.previewSpline(null)}
       />
     );
+  }
+  function insertPoint(index: number, fraction = 0.5, position?: Vec3) {
+    const current = path();
+    if (!current || busy()) return;
+    if (current.points.length >= 256) {
+      props.onError("A path supports at most 256 control points");
+      return;
+    }
+    change(insertSplinePoint(current, index, fraction, position));
+    setPoint(index + 1);
+    setSection(-1);
   }
   function move(index: number, position: Vec3) {
     const current = path();
@@ -442,15 +458,17 @@ export default function SplinePanel(props: {
       current: props.active === false ? null : path(),
       selected: point(),
       selectedSection: section(),
+      selectedPoints: selectedPoints(),
       drawing: !!draft(),
     }),
-    ({ current, selected, selectedSection, drawing }) => {
+    ({ current, selected, selectedSection, selectedPoints, drawing }) => {
       untrack(() =>
         props.viewport.setSplineEdit(
           current
             ? {
                 path: current,
                 point: selected,
+                selectedPoints: selectedPoints ?? [selected],
                 section: selectedSection,
                 drawing,
                 append(position) {
@@ -491,6 +509,23 @@ export default function SplinePanel(props: {
                   });
                 },
                 move,
+                movePoints(indices, delta) {
+                  const latest = path();
+                  if (latest)
+                    patch({
+                      points: latest.points.map((p, i) =>
+                        indices.includes(i)
+                          ? [p[0] + delta[0], p[1] + delta[1], p[2] + delta[2]]
+                          : p,
+                      ),
+                    });
+                },
+                selectPoints(indices) {
+                  if (indices.length) setPointValue(indices[0]!);
+                  setSelectedPoints(indices);
+                  setSection(-1);
+                },
+                insert: insertPoint,
                 selectPoint(index) {
                   setPoint(index);
                   setSection(-1);
@@ -1132,61 +1167,11 @@ export default function SplinePanel(props: {
             <div class="spline-actions">
               <button
                 disabled={current().points.length < 2 || current().points.length >= 256}
-                onClick={() => {
-                  const points = current().points,
-                    index = Math.min(
-                      point(),
-                      current().closed ? points.length - 1 : points.length - 2,
-                    );
-                  const a = points[index]!,
-                    b = points[(index + 1) % points.length]!;
-                  patch({
-                    points: [
-                      ...points.slice(0, index + 1),
-                      a.map((v, i) => (v + b[i]!) / 2) as Vec3,
-                      ...points.slice(index + 1),
-                    ],
-                    cornerDisabled: current().cornerDisabled?.map((i) => (i > index ? i + 1 : i)),
-                    pointWidths: current().pointWidths
-                      ? [
-                          ...current().pointWidths!.slice(0, index + 1),
-                          (current().pointWidths![index]! +
-                            current().pointWidths![(index + 1) % points.length]!) /
-                            2,
-                          ...current().pointWidths!.slice(index + 1),
-                        ]
-                      : undefined,
-                    pointHeightOffsets: current().pointHeightOffsets
-                      ? [
-                          ...current().pointHeightOffsets!.slice(0, index + 1),
-                          (current().pointHeightOffsets![index]! +
-                            current().pointHeightOffsets![(index + 1) % points.length]!) /
-                            2,
-                          ...current().pointHeightOffsets!.slice(index + 1),
-                        ]
-                      : undefined,
-                    pointMaterials: current().pointMaterials
-                      ? [
-                          ...current().pointMaterials!.slice(0, index + 1),
-                          current().pointMaterials![index]!,
-                          ...current().pointMaterials!.slice(index + 1),
-                        ]
-                      : undefined,
-                    pointMaterialMixes: [
-                      ...current()
-                        .points.slice(0, index + 1)
-                        .map((_, i) => current().pointMaterialMixes?.[i] ?? null),
-                      splineMaterialWeightsAt(
-                        current(),
-                        (index + 0.5) / (current().closed ? points.length : points.length - 1),
-                      ),
-                      ...current()
-                        .points.slice(index + 1)
-                        .map((_, i) => current().pointMaterialMixes?.[index + 1 + i] ?? null),
-                    ],
-                  });
-                  setPoint(index + 1);
-                }}
+                onClick={() =>
+                  insertPoint(
+                    Math.min(point(), current().points.length - (current().closed ? 1 : 2)),
+                  )
+                }
               >
                 Insert point
               </button>

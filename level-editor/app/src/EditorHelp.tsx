@@ -12,7 +12,9 @@ const controls: Record<string, [string, string][]> = {
   Paths: [
     ["Start a path", "Choose a footpath, river, wall or fence in the library"],
     ["Add points", "Click empty ground"],
-    ["Move a point", "Drag a path point"],
+    ["Move points", "Drag a selected path point"],
+    ["Extend selection", "Shift-drag a selection box; click a point to select it alone"],
+    ["Insert a point", "Double-click ground with a path selected"],
     ["Surface design", "Select a point, then choose a material on the left"],
     ["Finish / exit", "Enter finishes a new path; Escape exits editing"],
     ["Remove a point", "Delete / Backspace"],

@@ -18,7 +18,11 @@ export interface SplineEditMode {
   drawing: boolean;
   point: number;
   section?: number;
+  selectedPoints?: number[];
+  selectPoints?(indices: number[]): void;
+  movePoints?(indices: number[], delta: Vec3): void;
   append(point: Vec3): void;
+  insert?(section: number, fraction: number, point: Vec3): void;
   move(index: number, point: Vec3): void;
   selectPoint(index: number): void;
   selectSection?(index: number): void;
@@ -200,7 +204,11 @@ export class SplineLayer {
       const handle = new THREE.Mesh(
         new THREE.SphereGeometry(16, 10, 8),
         new THREE.MeshBasicMaterial({
-          color: selected ? (index === this.mode?.point ? 0xffcd59 : 0x77e4e8) : 0x96a8b8,
+          color: selected
+            ? (this.mode?.selectedPoints ?? [this.mode?.point]).includes(index)
+              ? 0xffcd59
+              : 0x77e4e8
+            : 0x96a8b8,
           transparent: true,
           depthTest: false,
           depthWrite: false,

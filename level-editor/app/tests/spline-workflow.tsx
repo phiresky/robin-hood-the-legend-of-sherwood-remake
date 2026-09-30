@@ -159,10 +159,7 @@ async function run() {
   }
   geometry.dispose();
   const tile = blendedSplineTexture(road, current.camera, current);
-  check(
-    tile.image.width === 128 && tile.image.height > 50,
-    "Material blend texture not generated",
-  );
+  check(tile.image.width === 128 && tile.image.height > 50, "Material blend texture not generated");
   tile.dispose();
   await stage("geometry-material-checks");
   const baseHeight = terrainHeightAt({ ...current, splines: [] }, 240, 260)!;
@@ -231,6 +228,92 @@ async function run() {
     check(internals.splineMode?.path.id === id, `Clicking spline ${id} did not select it`);
   }
   await clickSpline("road");
+  const selectedRoad = () => current.splines!.find((path) => path.id === "road")!;
+  const rect = canvas.getBoundingClientRect();
+  const project = (object: THREE.Object3D) => {
+    const p = object.getWorldPosition(new THREE.Vector3()).project(internals.camera);
+    return {
+      clientX: rect.left + ((p.x + 1) * rect.width) / 2,
+      clientY: rect.top + ((1 - p.y) * rect.height) / 2,
+    };
+  };
+  const line = internals.splines.controls.children.find(
+    (child) => child.userData.splineSection === 0,
+  ) as THREE.Line;
+  const mid = new THREE.Vector3().fromBufferAttribute(line.geometry.getAttribute("position"), 12);
+  line.localToWorld(mid).project(internals.camera);
+  canvas.dispatchEvent(
+    new MouseEvent("dblclick", {
+      bubbles: true,
+      button: 0,
+      clientX: rect.left + ((mid.x + 1) * rect.width) / 2,
+      clientY: rect.top + ((1 - mid.y) * rect.height) / 2,
+    }),
+  );
+  await pause();
+  check(selectedRoad().points.length === 4, "Double-click must insert one control point");
+  check(internals.splineMode?.point === 1, "Inserted control point must be selected");
+  canvas.setPointerCapture = () => {};
+  canvas.releasePointerCapture = () => {};
+  canvas.hasPointerCapture = () => false;
+  const handles = () =>
+    internals.splines.controls.children.filter(
+      (child) => typeof child.userData.splinePoint === "number",
+    );
+  const handlePositions = handles().slice(0, 2).map(project);
+  const start = {
+    clientX: Math.min(...handlePositions.map((p) => p.clientX)) - 4,
+    clientY: Math.min(...handlePositions.map((p) => p.clientY)) - 4,
+  };
+  const end = {
+    clientX: Math.max(...handlePositions.map((p) => p.clientX)) + 4,
+    clientY: Math.max(...handlePositions.map((p) => p.clientY)) + 4,
+  };
+  const pointer = (
+    type: string,
+    position: { clientX: number; clientY: number },
+    shiftKey = false,
+  ) =>
+    canvas.dispatchEvent(
+      new PointerEvent(type, { bubbles: true, button: 0, pointerId: 7, shiftKey, ...position }),
+    );
+  pointer("pointerdown", start, true);
+  pointer("pointermove", end, true);
+  pointer("pointerup", end, true);
+  await pause();
+  check(
+    internals.splineMode?.selectedPoints?.join(",") === "1,0",
+    "Shift marquee must add enclosed points to selection",
+  );
+  const before = selectedRoad().points.map((point) => [...point]);
+  const first = project(handles().find((handle) => handle.userData.splinePoint === 0)!);
+  pointer("pointerdown", first);
+  pointer("pointermove", { clientX: first.clientX + 20, clientY: first.clientY + 10 });
+  pointer("pointerup", { clientX: first.clientX + 20, clientY: first.clientY + 10 });
+  await pause();
+  const after = selectedRoad().points;
+  check(Math.abs(after[0]![0] - before[0]![0]!) > 1, "Selected point must move");
+  check(
+    Math.abs(after[0]![0] - before[0]![0]! - (after[1]![0] - before[1]![0]!)) < 1e-6,
+    "Marquee selected points must move together",
+  );
+  check(
+    JSON.stringify(after.slice(2)) === JSON.stringify(before.slice(2)),
+    "Unselected points must stay in place",
+  );
+  const single = project(handles().find((handle) => handle.userData.splinePoint === 0)!);
+  pointer("pointerdown", single);
+  pointer("pointerup", single);
+  await pause();
+  check(
+    internals.splineMode?.selectedPoints?.join(",") === "0",
+    "Single click must collapse selection",
+  );
+  pointer("pointerdown", start, true);
+  pointer("pointermove", end, true);
+  window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  await pause();
+  check(!document.querySelector('div[style*="100000"]'), "Canceled marquee must be removed");
   await clickSpline("river");
   const done = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(
     (button) => button.textContent === "Done editing",

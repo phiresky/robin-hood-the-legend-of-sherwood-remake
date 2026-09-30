@@ -1,3 +1,4 @@
+import { nearestSplineSection } from "./spline-insertion.ts";
 import { TerrainControls, type TerrainEditMode } from "./terrain-controls.ts";
 import { MissionLayer } from "./mission-layer.ts";
 import { CHARACTER_DRAG_TYPE } from "./mission-character-catalog.ts";
@@ -546,6 +547,7 @@ export class EditorViewport {
   }
   private readonly sunlight = new SunLighting();
   private splineMode: SplineEditMode | null = null;
+  private cancelSplineGesture: (() => void) | null = null;
   private splineSelection: ((id: string) => void) | null = null;
   setSplineSelection(select: ((id: string) => void) | null) {
     this.splineSelection = select;
@@ -812,6 +814,7 @@ export class EditorViewport {
     this.cancelMissionDrag?.();
     this.missionEdit = null;
     this.missionMarkers.clear();
+    this.cancelSplineGesture?.();
     this.splineMode = null;
     this.splineTerrainPreview = false;
     this.exportFrame.visible = false;
@@ -1816,6 +1819,7 @@ export class EditorViewport {
   }
 
   setSplineEdit(mode: SplineEditMode | null) {
+    if (mode?.path.id !== this.splineMode?.path.id) this.cancelSplineGesture?.();
     if (this.splineTerrainPreview) this.previewSpline(null);
     if (mode && this.terrainMode) {
       this.terrainMode.deselect?.();
@@ -1838,7 +1842,21 @@ export class EditorViewport {
       x: number;
       y: number;
       moved: boolean;
+      indices: number[];
+      box: boolean;
     } | null = null;
+    let marquee: HTMLDivElement | null = null;
+    const release = () => {
+      const pointer = gesture?.pointer;
+      gesture = null;
+      marquee?.remove();
+      marquee = null;
+      if (pointer !== undefined && canvas.hasPointerCapture(pointer))
+        canvas.releasePointerCapture(pointer);
+      if (this.orbit) this.orbit.enabled = true;
+    };
+    this.cancelSplineGesture = release;
+    this.listeners.signal.addEventListener("abort", release, { once: true });
     const consume = (event: PointerEvent) => {
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -1848,6 +1866,27 @@ export class EditorViewport {
       (event) => {
         const mode = this.splineMode;
         if ((!mode && !this.splineSelection) || event.button !== 0 || gesture) return;
+        if (event.shiftKey && mode && !mode.drawing && mode.selectPoints) {
+          consume(event);
+          gesture = {
+            mode,
+            index: null,
+            point: [0, 0, 0],
+            pointer: event.pointerId,
+            x: event.clientX,
+            y: event.clientY,
+            moved: false,
+            indices: mode.selectedPoints ?? [mode.point],
+            box: true,
+          };
+          marquee = canvas.ownerDocument.createElement("div");
+          marquee.style.cssText =
+            "position:fixed;pointer-events:none;z-index:100000;border:1px solid #68efff;background:#68efff22;";
+          canvas.ownerDocument.body.appendChild(marquee);
+          canvas.setPointerCapture(event.pointerId);
+          if (this.orbit) this.orbit.enabled = false;
+          return;
+        }
         const point = this.assetDropPosition(event.clientX, event.clientY);
         if (!point) return;
         const index = this.splines.hitHandle(this.raycaster);
@@ -1877,11 +1916,18 @@ export class EditorViewport {
           x: event.clientX,
           y: event.clientY,
           moved: false,
+          indices:
+            index !== null && mode.selectedPoints?.includes(index)
+              ? mode.selectedPoints
+              : index === null
+                ? []
+                : [index],
+          box: false,
         };
         // Empty-space gestures remain available to camera panning; only a click adds a point.
         if (index !== null) {
           consume(event);
-          mode.selectPoint(index);
+          if (!mode.selectedPoints?.includes(index)) mode.selectPoint(index);
           canvas.setPointerCapture(event.pointerId);
           if (this.orbit) this.orbit.enabled = false;
         }
@@ -1893,6 +1939,17 @@ export class EditorViewport {
       (event) => {
         if (!gesture || gesture.pointer !== event.pointerId) return;
         gesture.moved ||= Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) > 4;
+        if (gesture.box) {
+          consume(event);
+          if (marquee)
+            Object.assign(marquee.style, {
+              left: `${Math.min(gesture.x, event.clientX)}px`,
+              top: `${Math.min(gesture.y, event.clientY)}px`,
+              width: `${Math.abs(gesture.x - event.clientX)}px`,
+              height: `${Math.abs(gesture.y - event.clientY)}px`,
+            });
+          return;
+        }
         if (gesture.index === null) return;
         consume(event);
         const point = this.assetDropPosition(event.clientX, event.clientY);
@@ -1900,7 +1957,12 @@ export class EditorViewport {
         if (gesture.index !== null) point[2] = gesture.mode.path.points[gesture.index]![2];
         gesture.point = point;
         if (gesture.index !== null) {
-          const points = gesture.mode.path.points.map((p, i) => (i === gesture!.index ? point : p));
+          const start = gesture.mode.path.points[gesture.index]!;
+          const points = gesture.mode.path.points.map((p, i): Vec3 =>
+            gesture!.indices.includes(i)
+              ? [p[0] + point[0] - start[0], p[1] + point[1] - start[1], p[2]]
+              : p,
+          );
           this.previewSpline({ ...gesture.mode.path, points });
         }
       },
@@ -1909,6 +1971,32 @@ export class EditorViewport {
     const finish = (event: PointerEvent) => {
       if (!gesture || gesture.pointer !== event.pointerId) return;
       const active = gesture;
+      if (active.box) {
+        consume(event);
+        const indices = new Set(active.indices);
+        if (event.type === "pointerup") {
+          const rect = canvas.getBoundingClientRect();
+          for (const handle of this.splines.controls.children) {
+            const index = handle.userData.splinePoint;
+            if (typeof index !== "number") continue;
+            const p = handle.getWorldPosition(new THREE.Vector3()).project(this.activeCamera());
+            const x = rect.left + ((p.x + 1) * rect.width) / 2;
+            const y = rect.top + ((1 - p.y) * rect.height) / 2;
+            if (
+              p.z >= -1 &&
+              p.z <= 1 &&
+              x >= Math.min(active.x, event.clientX) &&
+              x <= Math.max(active.x, event.clientX) &&
+              y >= Math.min(active.y, event.clientY) &&
+              y <= Math.max(active.y, event.clientY)
+            )
+              indices.add(index);
+          }
+          active.mode.selectPoints?.([...indices]);
+        }
+        release();
+        return;
+      }
       gesture = null;
       active.moved ||= Math.hypot(event.clientX - active.x, event.clientY - active.y) > 4;
       if (active.index !== null) {
@@ -1921,16 +2009,60 @@ export class EditorViewport {
         if (event.type === "pointerup" && this.splineMode?.path.id === active.mode.path.id) {
           if (active.index === null) {
             if (!active.moved && this.splineMode.drawing) active.mode.append(active.point);
-          } else active.mode.move(active.index, active.point);
+          } else if (active.moved) {
+            if (active.mode.movePoints) {
+              const start = active.mode.path.points[active.index]!;
+              active.mode.movePoints(active.indices, [
+                active.point[0] - start[0],
+                active.point[1] - start[1],
+                0,
+              ]);
+            } else active.mode.move(active.index, active.point);
+          } else active.mode.selectPoint(active.index);
         }
         this.previewSpline(null);
       });
     };
+    canvas.addEventListener(
+      "dblclick",
+      (event) => {
+        const mode = this.splineMode;
+        const document = this.bindings.document();
+        if (!mode || mode.drawing || !mode.insert || !document || event.button !== 0) return;
+        const position = this.assetDropPosition(event.clientX, event.clientY);
+        if (!position || this.splines.hitHandle(this.raycaster) !== null) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const { section, fraction } = nearestSplineSection(mode.path, document.camera, position);
+        mode.insert(section, fraction, position);
+      },
+      { capture: true, signal: this.listeners.signal },
+    );
     canvas.addEventListener("pointerup", finish, { capture: true, signal: this.listeners.signal });
     canvas.addEventListener("pointercancel", finish, {
       capture: true,
       signal: this.listeners.signal,
     });
+    canvas.addEventListener(
+      "lostpointercapture",
+      (event) => {
+        if (gesture?.pointer === event.pointerId) {
+          release();
+          this.previewSpline(null);
+        }
+      },
+      { signal: this.listeners.signal },
+    );
+    window.addEventListener(
+      "keydown",
+      (event) => {
+        if (event.key === "Escape" && gesture) {
+          release();
+          this.previewSpline(null);
+        }
+      },
+      { signal: this.listeners.signal },
+    );
   }
 
   /** Locate the drop on visible terrain, falling back to the map ground plane. */

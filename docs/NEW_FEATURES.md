@@ -2040,3 +2040,8 @@ cutouts aligned with terrain instead of rounding each piece separately.
   least-recently-used CPU cache while rendered textures retain independent ownership.
   River previews reuse the surface synchronized with their channel instead of
   generating it twice per pointer update.
+
+- Double-clicking ground with a path selected inserts a control point into its
+  nearest curve section, interpolating width, elevation offset, and material blend.
+  Shift-drag adds enclosed points of the selected path to the selection. Dragging
+  a selected point moves the selected set; clicking a point selects it alone.
