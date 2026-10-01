@@ -10,6 +10,11 @@ use robin_assets::shipping_datadir as assets_shipping_datadir;
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
+    // This branch must precede updater activation, tracing, CLI parsing and
+    // all game initialization. It never installs a recursive panic reporter.
+    if robin_rs::crash_reporter::run_if_requested() {
+        return;
+    }
     // The GUI subsystem detaches us from any console; re-attach to the
     // parent's so stdout/stderr reach the terminal when launched from one.
     #[cfg(windows)]
@@ -29,9 +34,20 @@ fn main() {
     robin_rs::init_tracing();
     let args = robin_rs::main_entry::parse_cli();
     robin_rs::diagnostic_context::initialize(&args);
-    if args.upgrade_replay.is_none() && args.replay_hash_output.is_none() {
-        robin_rs::bug_report::submit_pending();
-    }
+    // Keep the helper's stdin open for the entire process lifetime. Abrupt
+    // termination closes it in the OS, without relying on Rust destructors.
+    let _reporter = if args.upgrade_replay.is_none() && args.replay_hash_output.is_none() {
+        match robin_rs::crash_reporter::start() {
+            Ok(child) => Some(child),
+            Err(error) => {
+                tracing::warn!("Cannot start crash reporter; using in-process upload: {error:#}");
+                robin_rs::bug_report::submit_pending();
+                None
+            }
+        }
+    } else {
+        None
+    };
     #[cfg(all(
         feature = "auto-update",
         any(target_os = "windows", target_os = "linux", target_os = "macos")

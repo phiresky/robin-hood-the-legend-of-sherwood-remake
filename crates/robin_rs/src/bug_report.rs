@@ -245,6 +245,7 @@ pub fn take_messages() -> Vec<String> {
     }
 }
 fn message(text: String) {
+    crate::crash_reporter::note(&text);
     tracing::info!("{text}");
     if let Ok(mut messages) = MESSAGES.lock() {
         if messages.len() >= 20 {
@@ -274,32 +275,95 @@ pub fn submit_pending() {
         tracing::warn!("Cannot start diagnostic uploader: {error}");
     }
 }
-fn upload_pending() -> Result<()> {
-    let directory = directory()?;
-    if !directory.exists() {
-        return Ok(());
-    }
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()?;
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+pub(crate) struct UploadBatch {
+    pub(crate) submitted: usize,
+    pub(crate) remaining: usize,
+    pub(crate) busy: bool,
+    pub(crate) more: bool,
+}
+
+pub(crate) fn upload_pending() -> Result<UploadBatch> {
+    upload_pending_with_cursor(&mut None)
+}
+
+pub(crate) fn upload_pending_with_cursor(
+    cursor: &mut Option<std::ffi::OsString>,
+) -> Result<UploadBatch> {
     let endpoint = format!(
         "{}/diagnostics",
         crate::leaderboard_preferences::NATIVE_PRODUCTION_API_BASE_URL
     );
+    upload_pending_batch_at(&directory()?, &endpoint, cursor)
+}
+
+#[cfg(test)]
+pub(crate) fn upload_pending_at(directory: &Path, endpoint: &str) -> Result<UploadBatch> {
+    upload_pending_batch_at(directory, endpoint, &mut None)
+}
+
+pub(crate) fn upload_pending_batch_at(
+    directory: &Path,
+    endpoint: &str,
+    cursor: &mut Option<std::ffi::OsString>,
+) -> Result<UploadBatch> {
+    if !directory.exists() {
+        return Ok(UploadBatch::default());
+    }
+    // Every uploader, including manual submissions, shares this process lock.
+    // The OS releases it if an uploader dies halfway through a request.
+    let queue_lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(directory.join("upload.lock"))?;
+    match fs2::FileExt::try_lock_exclusive(&queue_lock) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+            return Ok(UploadBatch {
+                busy: true,
+                ..Default::default()
+            });
+        }
+        Err(error) => return Err(error.into()),
+    }
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(120))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?;
     let mut paths = std::fs::read_dir(&directory)?.collect::<std::io::Result<Vec<_>>>()?;
     paths.sort_by_key(|entry| entry.file_name());
-    for entry in paths
+    let paths: Vec<_> = paths
         .into_iter()
         .filter(|e| e.file_name().to_string_lossy().ends_with(".pending.json"))
-        .take(20)
-    {
+        .collect();
+    let mut result = UploadBatch {
+        remaining: paths.len(),
+        ..Default::default()
+    };
+    // Advance across failures as well as successes so a damaged report cannot
+    // permanently hide later reports behind the batch limit.
+    let mut candidates = paths
+        .into_iter()
+        .filter(|entry| cursor.as_ref().is_none_or(|last| entry.file_name() > *last));
+    let batch: Vec<_> = candidates.by_ref().take(20).collect();
+    result.more = candidates.next().is_some();
+    *cursor = if result.more {
+        batch.last().map(|entry| entry.file_name())
+    } else {
+        None
+    };
+    for entry in batch {
         let path = entry.path();
-        let result = upload_one(&client, &endpoint, &path);
-        match result {
+        let upload = upload_one(&client, endpoint, &path);
+        match upload {
             Ok(receipt) => {
                 std::fs::rename(&path, path.with_extension("submitted"))?;
+                result.submitted += 1;
+                result.remaining -= 1;
                 message(format!("Report submitted: {}", receipt.report_id));
             }
             Err(error) => {
@@ -307,7 +371,7 @@ fn upload_pending() -> Result<()> {
             }
         }
     }
-    Ok(())
+    Ok(result)
 }
 fn upload_one(
     client: &reqwest::blocking::Client,

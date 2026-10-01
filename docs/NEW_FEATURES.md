@@ -1829,10 +1829,21 @@ with stub tools.
 ## Crash and bug reporting
 
 The native game queues Rust panic and fatal startup/game-loop reports under the
-OS data directory's `robin_hood/reports`. On the next launch it retries pending
-reports against the leaderboard VPS at `POST /api/v1/diagnostics`. Uploads run on
-a background worker with a timeout and no redirects. Reports remain queued on
-failure and are marked submitted only after a matching receipt.
+OS data directory's `robin_hood/reports`. Before game initialization, a separate
+upload-only process starts from the same executable. It submits older reports,
+then waits on a pipe held open by the game. Normal exit, panic, or abrupt process
+termination closes that pipe; the helper uploads newly queued reports even when
+the game cannot complete startup. It skips game initialization and the updater,
+and never starts another helper. Replay-upgrade workers do not start uploaders.
+
+Reports go to the leaderboard VPS at `POST /api/v1/diagnostics`, with connection
+and request timeouts and no redirects. After game exit the helper drains bounded
+batches, retrying failures after 1, 5, and 20 seconds. Reports remain queued when
+offline and are marked submitted only after a matching receipt. A process lock
+serializes helper and manual uploads; the OS releases it after a crash. Local
+`uploader.log` records receipts and failures. If helper startup fails, the game
+falls back to its background upload worker. The helper uploads captured reports;
+it cannot capture failures that prevent the OS from starting the executable.
 
 Open the in-game console (`~`) and enter `BUGREPORT description of the problem`
 to submit a manual report. Submission status and the report ID appear in the
