@@ -25,7 +25,7 @@ SOURCES = {
 }
 
 
-def import_bridge(source, library, scale=20.0):
+def import_bridge(source, library, scale=10.0):
     data = source.read_bytes()
     digest = hashlib.sha256(data).hexdigest()
     if digest not in SOURCES:
