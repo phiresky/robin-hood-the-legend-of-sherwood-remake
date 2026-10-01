@@ -125,6 +125,19 @@ export class TerrainLayer {
       geometry.setAttribute("uv", new THREE.Float32BufferAttribute(b.uvs, 2));
       geometry.setAttribute("terrainSurfaceUv", new THREE.Float32BufferAttribute(b.surfaceUvs, 2));
       geometry.setAttribute("terrainWeights", new THREE.Float32BufferAttribute(b.weights, 3));
+      // Map-to-scene conversion reverses Y. Keep terrain faces pointing upward so
+      // the shadow normal bias samples above the surface rather than beneath it.
+      const indices: number[] = [];
+      for (let i = 0; i < b.positions.length; i += 9) {
+        const x = b.positions[i]!,
+          y = b.positions[i + 1]!;
+        const crossZ =
+          (b.positions[i + 3]! - x) * (b.positions[i + 7]! - y) -
+          (b.positions[i + 4]! - y) * (b.positions[i + 6]! - x);
+        const vertex = i / 3;
+        indices.push(vertex, vertex + (crossZ < 0 ? 2 : 1), vertex + (crossZ < 0 ? 1 : 2));
+      }
+      geometry.setIndex(indices);
       geometry.computeVertexNormals();
       const mesh = new THREE.Mesh(geometry, material);
       mesh.userData.terrainSurface = true;

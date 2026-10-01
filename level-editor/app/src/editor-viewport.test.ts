@@ -32,9 +32,10 @@ function fixture() {
   return {
     viewport,
     selection: () => selection,
-    publish: (next: Level3D, rebuildFraming = true) => {
-      document = next;
+    publish: (next: Level3D, rebuildFraming = true, deferredBinding = false) => {
+      if (!deferredBinding) document = next;
       viewport.syncViews(next, rebuildFraming);
+      document = next;
     },
   };
 }
@@ -1210,18 +1211,22 @@ test("incremental revisions refresh sun settings and invalidate cached shadows",
   internal.renderer = { shadowMap };
   try {
     const lighting = { enabled: true, sunAzimuth: 90, sunElevation: 35, shadowOpacity: 0.7 };
-    publish({ ...document, lighting }, false);
+    publish({ ...document, lighting }, false, true);
     assert.equal(internal.sunlight.sun.visible, true);
     assert.equal(shadowMap.enabled, true);
     assert.equal(shadowMap.needsUpdate, true);
     const position = internal.sunlight.sun.position.clone();
     shadowMap.needsUpdate = false;
-    publish({ ...document, lighting: { ...lighting, sunAzimuth: 270, shadowOpacity: 0.3 } }, false);
+    publish(
+      { ...document, lighting: { ...lighting, sunAzimuth: 270, shadowOpacity: 0.3 } },
+      false,
+      true,
+    );
     assert.ok(internal.sunlight.sun.position.distanceTo(position) > 100);
     assert.equal(internal.sunlight.sun.shadow.intensity, 0.3);
     assert.equal(shadowMap.needsUpdate, true);
     shadowMap.needsUpdate = false;
-    publish({ ...document, lighting: { ...lighting, enabled: false } }, false);
+    publish({ ...document, lighting: { ...lighting, enabled: false } }, false, true);
     assert.equal(internal.sunlight.sun.visible, false);
     assert.equal(shadowMap.enabled, false);
     assert.equal(shadowMap.needsUpdate, true);

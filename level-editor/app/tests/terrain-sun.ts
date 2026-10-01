@@ -57,6 +57,19 @@ export function checkTerrainSunShadows() {
       throw new Error("Disabling sun left shadows on terrain");
     // A raised ridge must shadow the flat land west of it, without object casters.
     caster.visible = false;
+    sun.sync(
+      { enabled: true, sunAzimuth: 305, sunElevation: 48, shadowOpacity: 0 },
+      [terrain.root],
+      new THREE.Box3().setFromObject(terrain.root),
+    );
+    const flatUnshadowed = render();
+    sun.sun.shadow.intensity = 1;
+    const flatShadowed = render();
+    let flatDarkened = 0;
+    for (let i = 0; i < flatUnshadowed.length; i += 4)
+      if (flatUnshadowed[i]! - flatShadowed[i]! > 3) flatDarkened++;
+    if (flatDarkened > 5)
+      throw new Error(`Empty flat terrain shadows itself (${flatDarkened} pixels)`);
     const ridge = createTerrainGrid([0, 0, 400, 400], 50, 0);
     for (const vertex of ridge.vertices) if (vertex.position[0] === 250) vertex.position[2] = 120;
     terrain.sync({
@@ -118,8 +131,10 @@ function checkViewportSunUpdates() {
     camera: { kind: "oblique-orthographic", elevation_deg: 35 },
     terrain: grid,
   };
+  // Model publication inside a reactive batch: the accessor still exposes the prior revision.
+  let publishedDocument = document;
   const viewport = new EditorViewport({
-    document: () => document,
+    document: () => publishedDocument,
     selection: () => null,
     level: () => null,
     showObstacles: () => false,
@@ -155,9 +170,11 @@ function checkViewportSunUpdates() {
       lighting: { enabled: true, sunAzimuth: 90, sunElevation: 35, shadowOpacity: 0 },
     };
     viewport.syncViews(document, false);
+    publishedDocument = document;
     const unshadowed = render();
     document = { ...document, lighting: { ...document.lighting!, shadowOpacity: 1 } };
     viewport.syncViews(document, false);
+    publishedDocument = document;
     const shadowed = render();
     let changed = 0;
     for (let i = 0; i < shadowed.length; i += 4) if (unshadowed[i]! - shadowed[i]! > 10) changed++;
@@ -165,6 +182,7 @@ function checkViewportSunUpdates() {
       throw new Error(`Incremental viewport lighting produced no shadows (${changed} pixels)`);
     document = { ...document, lighting: { ...document.lighting!, enabled: false } };
     viewport.syncViews(document, false);
+    publishedDocument = document;
     if (render().some((value, i) => value !== disabled[i]))
       throw new Error("Incremental viewport lighting did not disable cleanly");
   } finally {

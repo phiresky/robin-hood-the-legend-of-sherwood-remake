@@ -1684,7 +1684,7 @@ export class EditorViewport {
     }
     if (!rebuildFraming) {
       // Incremental revisions still change lighting, casters, and terrain bounds.
-      this.refreshSunLighting();
+      this.refreshSunLighting(d);
       // Rebuilding the projection point cache below walks every vertex in every imported mesh;
       // doing that for each 15° button press makes a large map appear frozen.
       this.refreshSelectionBox();
@@ -1696,7 +1696,7 @@ export class EditorViewport {
     if (s && !(s.kind === "group" ? aliveGroups : aliveParts).has(s.id)) this.select(null);
     else this.refreshSelectionBox();
     const bounds = this.contentBox();
-    this.refreshSunLighting(bounds);
+    this.refreshSunLighting(d, bounds);
     this.framingBounds.copy(bounds);
     this.framingPoints = [];
     this.framingKey = "";
@@ -1772,8 +1772,8 @@ export class EditorViewport {
     this.bindings.commitTransform(next);
   }
 
-  private refreshSunLighting(bounds = this.contentBox()) {
-    const settings = this.bindings.document()?.lighting;
+  private refreshSunLighting(document = this.bindings.document(), bounds = this.contentBox()) {
+    const settings = document?.lighting;
     this.sunlight.sync(settings, [this.objectsRoot, this.splines.root, this.terrain.root], bounds);
     if (this.renderer) {
       this.renderer.shadowMap.enabled = !!settings?.enabled;
