@@ -22,6 +22,9 @@
   ],
   "volumes": [],
   "asset_geometry": {
+    "warnings": [
+      "Wall spline wall-path, asset wall: Spline solids follow the model's upper surfaces and extend to its base; undercut openings require authored volumes."
+    ],
     "motion_data": {
       "layers": [
         [
@@ -57,24 +60,53 @@
                   "points": [
                     [
                       400,
-                      194
+                      177
                     ],
                     [
                       400,
-                      206
+                      223
                     ],
                     [
                       100,
-                      206
+                      223
                     ],
                     [
                       100,
-                      194
+                      177
                     ]
                   ]
                 }
               }
             ]
+          }
+        ],
+        [
+          {
+            "is_lift": false,
+            "state_id": 0,
+            "polygon": {
+              "points": [
+                [
+                  100,
+                  144
+                ],
+                [
+                  400,
+                  144
+                ],
+                [
+                  400,
+                  174
+                ],
+                [
+                  100,
+                  174
+                ]
+              ]
+            },
+            "skeleton_segments": [],
+            "flags": 0,
+            "obstacles": []
           }
         ],
         []
@@ -86,48 +118,19 @@
         "points": [
           {
             "x": 200,
-            "y": 194.2646484375,
+            "y": 177.056640625,
             "z_bottom": 0,
             "z_top": 32.76608180999756
           },
           {
             "x": 100,
-            "y": 194.2646484375,
+            "y": 177.056640625,
             "z_bottom": 0,
             "z_top": 32.76608180999756
           },
           {
             "x": 100,
-            "y": 205.7353515625,
-            "z_bottom": 0,
-            "z_top": 32.76608180999756
-          }
-        ],
-        "solid": true,
-        "opaque": true,
-        "mouse": true,
-        "show_shadow_polygon": false,
-        "default_material": 3,
-        "projection_area": null,
-        "material_indices": []
-      },
-      {
-        "points": [
-          {
-            "x": 200,
-            "y": 194.2646484375,
-            "z_bottom": 0,
-            "z_top": 32.76608180999756
-          },
-          {
-            "x": 100,
-            "y": 205.7353515625,
-            "z_bottom": 0,
-            "z_top": 32.76608180999756
-          },
-          {
-            "x": 200,
-            "y": 205.7353515625,
+            "y": 222.943359375,
             "z_bottom": 0,
             "z_top": 32.76608180999756
           }
@@ -136,27 +139,27 @@
         "opaque": true,
         "mouse": true,
         "show_shadow_polygon": false,
-        "default_material": 3,
+        "default_material": 2,
         "projection_area": null,
         "material_indices": []
       },
       {
         "points": [
           {
-            "x": 300,
-            "y": 194.2646484375,
+            "x": 200,
+            "y": 177.056640625,
+            "z_bottom": 0,
+            "z_top": 32.76608180999756
+          },
+          {
+            "x": 100,
+            "y": 222.943359375,
             "z_bottom": 0,
             "z_top": 32.76608180999756
           },
           {
             "x": 200,
-            "y": 194.2646484375,
-            "z_bottom": 0,
-            "z_top": 32.76608180999756
-          },
-          {
-            "x": 200,
-            "y": 205.7353515625,
+            "y": 222.943359375,
             "z_bottom": 0,
             "z_top": 32.76608180999756
           }
@@ -165,7 +168,7 @@
         "opaque": true,
         "mouse": true,
         "show_shadow_polygon": false,
-        "default_material": 3,
+        "default_material": 2,
         "projection_area": null,
         "material_indices": []
       },
@@ -173,19 +176,19 @@
         "points": [
           {
             "x": 300,
-            "y": 194.2646484375,
+            "y": 177.056640625,
             "z_bottom": 0,
             "z_top": 32.76608180999756
           },
           {
             "x": 200,
-            "y": 205.7353515625,
+            "y": 177.056640625,
             "z_bottom": 0,
             "z_top": 32.76608180999756
           },
           {
-            "x": 300,
-            "y": 205.7353515625,
+            "x": 200,
+            "y": 222.943359375,
             "z_bottom": 0,
             "z_top": 32.76608180999756
           }
@@ -194,27 +197,27 @@
         "opaque": true,
         "mouse": true,
         "show_shadow_polygon": false,
-        "default_material": 3,
+        "default_material": 2,
         "projection_area": null,
         "material_indices": []
       },
       {
         "points": [
           {
-            "x": 400,
-            "y": 194.2646484375,
+            "x": 300,
+            "y": 177.056640625,
+            "z_bottom": 0,
+            "z_top": 32.76608180999756
+          },
+          {
+            "x": 200,
+            "y": 222.943359375,
             "z_bottom": 0,
             "z_top": 32.76608180999756
           },
           {
             "x": 300,
-            "y": 194.2646484375,
-            "z_bottom": 0,
-            "z_top": 32.76608180999756
-          },
-          {
-            "x": 300,
-            "y": 205.7353515625,
+            "y": 222.943359375,
             "z_bottom": 0,
             "z_top": 32.76608180999756
           }
@@ -223,7 +226,7 @@
         "opaque": true,
         "mouse": true,
         "show_shadow_polygon": false,
-        "default_material": 3,
+        "default_material": 2,
         "projection_area": null,
         "material_indices": []
       },
@@ -231,19 +234,19 @@
         "points": [
           {
             "x": 400,
-            "y": 194.2646484375,
+            "y": 177.056640625,
             "z_bottom": 0,
             "z_top": 32.76608180999756
           },
           {
             "x": 300,
-            "y": 205.7353515625,
+            "y": 177.056640625,
             "z_bottom": 0,
             "z_top": 32.76608180999756
           },
           {
-            "x": 400,
-            "y": 205.7353515625,
+            "x": 300,
+            "y": 222.943359375,
             "z_bottom": 0,
             "z_top": 32.76608180999756
           }
@@ -252,7 +255,384 @@
         "opaque": true,
         "mouse": true,
         "show_shadow_polygon": false,
-        "default_material": 3,
+        "default_material": 2,
+        "projection_area": null,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 400,
+            "y": 177.056640625,
+            "z_bottom": 0,
+            "z_top": 32.76608180999756
+          },
+          {
+            "x": 300,
+            "y": 222.943359375,
+            "z_bottom": 0,
+            "z_top": 32.76608180999756
+          },
+          {
+            "x": 400,
+            "y": 222.943359375,
+            "z_bottom": 0,
+            "z_top": 32.76608180999756
+          }
+        ],
+        "solid": true,
+        "opaque": true,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 2,
+        "projection_area": null,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 200,
+            "y": 206.8828125,
+            "z_bottom": 0,
+            "z_top": 37.68099403381348
+          },
+          {
+            "x": 100,
+            "y": 206.8828125,
+            "z_bottom": 0,
+            "z_top": 37.68099403381348
+          },
+          {
+            "x": 100,
+            "y": 222.943359375,
+            "z_bottom": 0,
+            "z_top": 37.68099403381348
+          }
+        ],
+        "solid": true,
+        "opaque": true,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 2,
+        "projection_area": null,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 200,
+            "y": 206.8828125,
+            "z_bottom": 0,
+            "z_top": 37.68099403381348
+          },
+          {
+            "x": 100,
+            "y": 222.943359375,
+            "z_bottom": 0,
+            "z_top": 37.68099403381348
+          },
+          {
+            "x": 200,
+            "y": 222.943359375,
+            "z_bottom": 0,
+            "z_top": 37.68099403381348
+          }
+        ],
+        "solid": true,
+        "opaque": true,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 2,
+        "projection_area": null,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 300,
+            "y": 206.8828125,
+            "z_bottom": 0,
+            "z_top": 37.68099403381348
+          },
+          {
+            "x": 200,
+            "y": 206.8828125,
+            "z_bottom": 0,
+            "z_top": 37.68099403381348
+          },
+          {
+            "x": 200,
+            "y": 222.943359375,
+            "z_bottom": 0,
+            "z_top": 37.68099403381348
+          }
+        ],
+        "solid": true,
+        "opaque": true,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 2,
+        "projection_area": null,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 300,
+            "y": 206.8828125,
+            "z_bottom": 0,
+            "z_top": 37.68099403381348
+          },
+          {
+            "x": 200,
+            "y": 222.943359375,
+            "z_bottom": 0,
+            "z_top": 37.68099403381348
+          },
+          {
+            "x": 300,
+            "y": 222.943359375,
+            "z_bottom": 0,
+            "z_top": 37.68099403381348
+          }
+        ],
+        "solid": true,
+        "opaque": true,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 2,
+        "projection_area": null,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 400,
+            "y": 206.8828125,
+            "z_bottom": 0,
+            "z_top": 37.68099403381348
+          },
+          {
+            "x": 300,
+            "y": 206.8828125,
+            "z_bottom": 0,
+            "z_top": 37.68099403381348
+          },
+          {
+            "x": 300,
+            "y": 222.943359375,
+            "z_bottom": 0,
+            "z_top": 37.68099403381348
+          }
+        ],
+        "solid": true,
+        "opaque": true,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 2,
+        "projection_area": null,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 400,
+            "y": 206.8828125,
+            "z_bottom": 0,
+            "z_top": 37.68099403381348
+          },
+          {
+            "x": 300,
+            "y": 222.943359375,
+            "z_bottom": 0,
+            "z_top": 37.68099403381348
+          },
+          {
+            "x": 400,
+            "y": 222.943359375,
+            "z_bottom": 0,
+            "z_top": 37.68099403381348
+          }
+        ],
+        "solid": true,
+        "opaque": true,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 2,
+        "projection_area": null,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 140,
+            "y": 206.8828125,
+            "z_bottom": 0,
+            "z_top": 49.14912223815918
+          },
+          {
+            "x": 120,
+            "y": 206.8828125,
+            "z_bottom": 0,
+            "z_top": 49.14912223815918
+          },
+          {
+            "x": 120,
+            "y": 222.943359375,
+            "z_bottom": 0,
+            "z_top": 49.14912223815918
+          }
+        ],
+        "solid": true,
+        "opaque": true,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 2,
+        "projection_area": null,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 140,
+            "y": 206.8828125,
+            "z_bottom": 0,
+            "z_top": 49.14912223815918
+          },
+          {
+            "x": 120,
+            "y": 222.943359375,
+            "z_bottom": 0,
+            "z_top": 49.14912223815918
+          },
+          {
+            "x": 140,
+            "y": 222.943359375,
+            "z_bottom": 0,
+            "z_top": 49.14912223815918
+          }
+        ],
+        "solid": true,
+        "opaque": true,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 2,
+        "projection_area": null,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 240,
+            "y": 206.8828125,
+            "z_bottom": 0,
+            "z_top": 49.14912223815918
+          },
+          {
+            "x": 220,
+            "y": 206.8828125,
+            "z_bottom": 0,
+            "z_top": 49.14912223815918
+          },
+          {
+            "x": 220,
+            "y": 222.943359375,
+            "z_bottom": 0,
+            "z_top": 49.14912223815918
+          }
+        ],
+        "solid": true,
+        "opaque": true,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 2,
+        "projection_area": null,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 240,
+            "y": 206.8828125,
+            "z_bottom": 0,
+            "z_top": 49.14912223815918
+          },
+          {
+            "x": 220,
+            "y": 222.943359375,
+            "z_bottom": 0,
+            "z_top": 49.14912223815918
+          },
+          {
+            "x": 240,
+            "y": 222.943359375,
+            "z_bottom": 0,
+            "z_top": 49.14912223815918
+          }
+        ],
+        "solid": true,
+        "opaque": true,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 2,
+        "projection_area": null,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 340,
+            "y": 206.8828125,
+            "z_bottom": 0,
+            "z_top": 49.14912223815918
+          },
+          {
+            "x": 320,
+            "y": 206.8828125,
+            "z_bottom": 0,
+            "z_top": 49.14912223815918
+          },
+          {
+            "x": 320,
+            "y": 222.943359375,
+            "z_bottom": 0,
+            "z_top": 49.14912223815918
+          }
+        ],
+        "solid": true,
+        "opaque": true,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 2,
+        "projection_area": null,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 340,
+            "y": 206.8828125,
+            "z_bottom": 0,
+            "z_top": 49.14912223815918
+          },
+          {
+            "x": 320,
+            "y": 222.943359375,
+            "z_bottom": 0,
+            "z_top": 49.14912223815918
+          },
+          {
+            "x": 340,
+            "y": 222.943359375,
+            "z_bottom": 0,
+            "z_top": 49.14912223815918
+          }
+        ],
+        "solid": true,
+        "opaque": true,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 2,
         "projection_area": null,
         "material_indices": []
       },
@@ -1854,6 +2234,216 @@
         "mouse": true,
         "show_shadow_polygon": false,
         "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 200,
+            "y": 206.76608180999756,
+            "z_bottom": 32.76608180999756,
+            "z_top": 32.76608180999756
+          },
+          {
+            "x": 100.39136981964111,
+            "y": 206.76608180999756,
+            "z_bottom": 32.76608180999756,
+            "z_top": 32.76608180999756
+          },
+          {
+            "x": 200,
+            "y": 177.056640625,
+            "z_bottom": 32.76608180999756,
+            "z_top": 32.76608180999756
+          }
+        ],
+        "projection_area": [
+          2,
+          1
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 2,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 300,
+            "y": 206.76608180999756,
+            "z_bottom": 32.76608180999756,
+            "z_top": 32.76608180999756
+          },
+          {
+            "x": 200.3913698196411,
+            "y": 206.76608180999756,
+            "z_bottom": 32.76608180999756,
+            "z_top": 32.76608180999756
+          },
+          {
+            "x": 300,
+            "y": 177.056640625,
+            "z_bottom": 32.76608180999756,
+            "z_top": 32.76608180999756
+          }
+        ],
+        "projection_area": [
+          2,
+          1
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 2,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 400,
+            "y": 206.76608180999756,
+            "z_bottom": 32.76608180999756,
+            "z_top": 32.76608180999756
+          },
+          {
+            "x": 300.3913698196411,
+            "y": 206.76608180999756,
+            "z_bottom": 32.76608180999756,
+            "z_top": 32.76608180999756
+          },
+          {
+            "x": 400,
+            "y": 177.056640625,
+            "z_bottom": 32.76608180999756,
+            "z_top": 32.76608180999756
+          }
+        ],
+        "projection_area": [
+          2,
+          1
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 2,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 100.39136981964111,
+            "y": 206.76608180999756,
+            "z_bottom": 32.76608180999756,
+            "z_top": 32.76608180999756
+          },
+          {
+            "x": 100,
+            "y": 206.76608180999756,
+            "z_bottom": 32.76608180999756,
+            "z_top": 32.76608180999756
+          },
+          {
+            "x": 100,
+            "y": 177.056640625,
+            "z_bottom": 32.76608180999756,
+            "z_top": 32.76608180999756
+          },
+          {
+            "x": 200,
+            "y": 177.056640625,
+            "z_bottom": 32.76608180999756,
+            "z_top": 32.76608180999756
+          }
+        ],
+        "projection_area": [
+          2,
+          1
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 2,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 200,
+            "y": 206.76608180999756,
+            "z_bottom": 32.76608180999756,
+            "z_top": 32.76608180999756
+          },
+          {
+            "x": 200,
+            "y": 177.056640625,
+            "z_bottom": 32.76608180999756,
+            "z_top": 32.76608180999756
+          },
+          {
+            "x": 300,
+            "y": 177.056640625,
+            "z_bottom": 32.76608180999756,
+            "z_top": 32.76608180999756
+          },
+          {
+            "x": 200.3913698196411,
+            "y": 206.76608180999756,
+            "z_bottom": 32.76608180999756,
+            "z_top": 32.76608180999756
+          }
+        ],
+        "projection_area": [
+          2,
+          1
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 2,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 300.3913698196411,
+            "y": 206.76608180999756,
+            "z_bottom": 32.76608180999756,
+            "z_top": 32.76608180999756
+          },
+          {
+            "x": 300,
+            "y": 206.76608180999756,
+            "z_bottom": 32.76608180999756,
+            "z_top": 32.76608180999756
+          },
+          {
+            "x": 300,
+            "y": 177.056640625,
+            "z_bottom": 32.76608180999756,
+            "z_top": 32.76608180999756
+          },
+          {
+            "x": 400,
+            "y": 177.056640625,
+            "z_bottom": 32.76608180999756,
+            "z_top": 32.76608180999756
+          }
+        ],
+        "projection_area": [
+          2,
+          1
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 2,
         "material_indices": []
       }
     ],

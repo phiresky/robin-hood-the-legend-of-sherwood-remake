@@ -4,6 +4,7 @@ import copy
 import hashlib
 import json
 import math
+import subprocess
 from pathlib import Path
 import numpy as np
 
@@ -63,7 +64,16 @@ def strip_gameplay(triangles, node, *, material, opaque, elevation=35):
             'draft': {'issues': ['Spline collision uses a conservative continuous barrier envelope; openings and walkable tops require authored gameplay surfaces/volumes.']}}
 
 
-def author(library, presets, output, corners=()):
+def model_gameplay(triangles, node, policy, model):
+    if 'walkwayHeight' not in policy:
+        return strip_gameplay(triangles, node, **policy)
+    tool = Path(__file__).resolve().parents[2] / 'pipeline/src/author-wall-walkway.ts'
+    result = subprocess.run(['node', str(tool), str(model.resolve()), node, json.dumps(policy)],
+                            check=True, capture_output=True, text=True)
+    return json.loads(result.stdout)
+
+
+def author(library, presets, output, corners=(), ids=None):
     from build_segments import primitives, read_glb, node_matrix
     root = library / '3d-assets'
     index = json.loads((root / 'index.json').read_text())['assets']
@@ -73,6 +83,8 @@ def author(library, presets, output, corners=()):
     policies = {row['id']: row['collision'] for row in json.loads((Path(__file__).parent / 'recipes.json').read_text())}
     corner_ids = {row['cornerAsset'] for row in presets if row.get('cornerAsset')} | set(corners)
     for identity in sorted(strip_ids | corner_ids):
+        if ids is not None and identity not in ids:
+            continue
         entry = entries[identity]
         raw = (root / entry['descriptor']).read_bytes()
         digest = hashlib.sha256(raw).hexdigest()
@@ -84,7 +96,7 @@ def author(library, presets, output, corners=()):
                            [p['node'] for p in descriptor['parts'] if p.get('default_hidden')])
         triangles = [attrs['POSITION'][indices] for attrs, ids, _, _ in parts for indices in ids]
         if identity in strip_ids:
-            gameplay = strip_gameplay(triangles, descriptor['parts'][0]['node'], **policies[identity])
+            gameplay = model_gameplay(triangles, descriptor['parts'][0]['node'], policies[identity], root / entry['model'])
         else:
             gameplay = copy.deepcopy(descriptor['gameplay'])
             frames = {}
@@ -119,5 +131,6 @@ if __name__ == '__main__':
     parser.add_argument('--presets', type=Path, default=Path('app/src/assets/wall-presets.json'))
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--corners', nargs='*', default=[], help='Additional selectable corner assets to calibrate')
+    parser.add_argument('--ids', nargs='+', help='Only stage these strip/corner assets')
     args = parser.parse_args()
-    author(args.library, json.loads(args.presets.read_text()), args.output, args.corners)
+    author(args.library, json.loads(args.presets.read_text()), args.output, args.corners, args.ids)

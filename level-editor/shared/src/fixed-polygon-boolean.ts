@@ -46,8 +46,12 @@ export function fixedPolygonBoolean(
     return [];
   const clipper = new ClipperLib.Clipper();
   clipper.StrictlySimple = true;
-  clipper.AddPaths(subjectPaths, ClipperLib.PolyType.ptSubject, true);
-  clipper.AddPaths(clipPaths, ClipperLib.PolyType.ptClip, true);
+  const hasSubject = clipper.AddPaths(subjectPaths, ClipperLib.PolyType.ptSubject, true);
+  const hasClips = clipper.AddPaths(clipPaths, ClipperLib.PolyType.ptClip, true);
+  // Rings can collapse to lines or points at the requested clipping precision.
+  // An empty subject has ordinary set semantics, even if its input array was nonempty.
+  if ((!hasSubject && !hasClips) || (!hasSubject && operation !== "union" && operation !== "xor"))
+    return [];
   const result = new ClipperLib.PolyTree();
   if (
     !clipper.Execute(

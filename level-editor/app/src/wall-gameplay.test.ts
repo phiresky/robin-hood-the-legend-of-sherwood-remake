@@ -65,10 +65,13 @@ test("curved, trimmed, sloping and flipped wall collision covers the correspondi
           const contained = shapes.some(({ points, top, bottom }) => {
             const signs = points.map((a, j) => {
               const b = points[(j + 1) % points.length]!;
-              return (b.x - a.x) * (y - a.y) - (b.y - a.y) * (x - a.x);
+              return (
+                ((b.x - a.x) * (y - a.y) - (b.y - a.y) * (x - a.x)) /
+                Math.hypot(b.x - a.x, b.y - a.y)
+              );
             });
             return (
-              (signs.every((n) => n >= -0.01) || signs.every((n) => n <= 0.01)) &&
+              (signs.every((n) => n >= -0.002) || signs.every((n) => n <= 0.002)) &&
               z >= planeHeight(bottom, [x, y]) - 0.001 &&
               z <= planeHeight(top, [x, y]) + 0.001
             );

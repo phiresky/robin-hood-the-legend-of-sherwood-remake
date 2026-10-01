@@ -3,6 +3,35 @@ import assert from "node:assert/strict";
 import { fixedPolygonBoolean } from "./fixed-polygon-boolean.ts";
 import type { Polygon } from "polygon-clipping";
 
+test("sub-grid polygons that collapse during snapping retain empty-set semantics", () => {
+  const tiny: Polygon = [
+    [
+      [0.1, 0.1],
+      [0.2, 0.1],
+      [0.1, 0.2],
+    ],
+  ];
+  const square: Polygon = [
+    [
+      [0, 0],
+      [10, 0],
+      [10, 10],
+      [0, 10],
+    ],
+  ];
+  assert.deepEqual(fixedPolygonBoolean("difference", tiny, [tiny], 1), []);
+  assert.deepEqual(fixedPolygonBoolean("intersection", tiny, [square], 1), []);
+  for (const operation of ["union", "xor"] as const)
+    assert.deepEqual(
+      fixedPolygonBoolean(operation, tiny, [square], 1),
+      fixedPolygonBoolean("union", square, [], 1),
+    );
+  assert.deepEqual(
+    fixedPolygonBoolean("difference", square, [tiny], 1),
+    fixedPolygonBoolean("union", square, [], 1),
+  );
+});
+
 test("solid slices preserve near-coincident fractional edges", () => {
   const footprint: Polygon = [
     [

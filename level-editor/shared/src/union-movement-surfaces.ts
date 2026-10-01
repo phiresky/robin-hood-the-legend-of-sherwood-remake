@@ -12,7 +12,7 @@ export function unionMovementSurfaces(
   } catch (error) {
     if (
       !(error instanceof Error) ||
-      !/Unable to find segment .* in SweepLine tree|Infinite loop when passing sweep line/.test(
+      !/Unable to find segment .* in SweepLine tree|Infinite loop when passing sweep line|Unable to complete output ring|Maximum call stack size exceeded/.test(
         error.message,
       )
     )

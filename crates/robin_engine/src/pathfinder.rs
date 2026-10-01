@@ -1592,23 +1592,51 @@ impl PathSearch<'_> {
             .max(self.scratch.current_half_diagonal.y)
             + 6.0;
         let mut points = vec![source, goal];
-        for &obstacle_index in &self.partition.motion[layer][area] {
-            let obstacle = &motion_area.motion_obstacles[obstacle_index];
-            for &corner in &obstacle.polygon {
-                for (dx, dy) in [
-                    (-clearance, -clearance),
-                    (clearance, -clearance),
+        let boundaries = std::iter::once(motion_area.polygon.as_slice()).chain(
+            self.partition.motion[layer][area]
+                .iter()
+                .map(|&index| motion_area.motion_obstacles[index].polygon.as_slice()),
+        );
+        for (boundary_index, boundary) in boundaries.enumerate() {
+            let winding: f32 = boundary
+                .iter()
+                .enumerate()
+                .map(|(i, a)| {
+                    let b = boundary[(i + 1) % boundary.len()];
+                    a.x * b.y - b.x * a.y
+                })
+                .sum();
+            for (index, &corner) in boundary.iter().enumerate() {
+                if boundary_index == 0 {
+                    let previous = boundary[(index + boundary.len() - 1) % boundary.len()];
+                    let next = boundary[(index + 1) % boundary.len()];
+                    let turn = (corner.x - previous.x) * (next.y - corner.y)
+                        - (corner.y - previous.y) * (next.x - corner.x);
+                    // Only inward corners of the area's boundary obstruct a
+                    // route between positions already inside the area.
+                    if turn * winding >= 0.0 {
+                        continue;
+                    }
+                }
+                // Keep close docking points for narrow walkways as well as the
+                // wider candidates used around ordinary architectural obstacles.
+                for (x, y) in [
+                    (
+                        self.scratch.current_half_diagonal.x + 0.5,
+                        self.scratch.current_half_diagonal.y + 0.5,
+                    ),
                     (clearance, clearance),
-                    (-clearance, clearance),
                 ] {
-                    let candidate = MapPoint::new(corner.x + dx, corner.y + dy);
-                    if self.object_position_authorized(grid, candidate)
-                        && !points.iter().any(|point| {
-                            (point.x - candidate.x).abs() < 0.5
-                                && (point.y - candidate.y).abs() < 0.5
-                        })
-                    {
-                        points.push(candidate);
+                    for (dx, dy) in [(-x, -y), (x, -y), (x, y), (-x, y)] {
+                        let candidate = MapPoint::new(corner.x + dx, corner.y + dy);
+                        if self.object_position_authorized(grid, candidate)
+                            && !points.iter().any(|point| {
+                                (point.x - candidate.x).abs() < 0.5
+                                    && (point.y - candidate.y).abs() < 0.5
+                            })
+                        {
+                            points.push(candidate);
+                        }
                     }
                 }
             }

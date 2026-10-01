@@ -1,7 +1,7 @@
 [
   {
     "id": "spline-derby-upper-curtain",
-    "collision": {"material": 2, "opaque": true},
+    "collision": {"material": 2, "opaque": true, "walkwayHeight": 134.29},
     "name": "Derby \u00b7 Upper bailey battlements",
     "source": "derby-upper-east-curtain",
     "interval": [-240, 40],
@@ -14,7 +14,7 @@
   },
   {
     "id": "spline-derby-lower-curtain",
-    "collision": {"material": 2, "opaque": true},
+    "collision": {"material": 2, "opaque": true, "walkwayHeight": 183.13},
     "name": "Derby \u00b7 Lower bailey stone wall",
     "source": "derby-lower-east-curtain",
     "start": 0.21,
@@ -50,7 +50,7 @@
   },
   {
     "id": "spline-leicester-castle",
-    "collision": {"material": 2, "opaque": true},
+    "collision": {"material": 2, "opaque": true, "walkwayHeight": 183.01},
     "name": "Leicester \u00b7 Castle curtain",
     "source": "leicester-southwest-wall-turret",
     "include_nodes": ["component 112", "component 121"],
@@ -82,7 +82,7 @@
   },
   {
     "id": "spline-lincoln-east-curtain",
-    "collision": {"material": 2, "opaque": true},
+    "collision": {"material": 2, "opaque": true, "walkwayHeight": 167.25},
     "name": "Lincoln \u00b7 Crenellated curtain",
     "source": "lincoln-east-curtain-wall-middle",
     "start": 0.06,
@@ -137,7 +137,7 @@
   },
   {
     "id": "spline-nottingham-castle-wall",
-    "collision": {"material": 2, "opaque": true},
+    "collision": {"material": 2, "opaque": true, "walkwayHeight": 305.25},
     "name": "Nottingham \u00b7 Castle courtyard wall",
     "source": "nottingham-castle-east-courtyard-wall",
     "start": 0.05,

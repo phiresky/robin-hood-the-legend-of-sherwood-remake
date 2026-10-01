@@ -2162,3 +2162,9 @@ cutouts aligned with terrain instead of rounding each piece separately.
   download, preserving texture payloads and mesh detail while adapting scale and axes.
 
 - The default “All refined levels” asset selection also includes Sketchfab imports. Multi-map PBR assets now receive lossy AVIF derivatives while retaining geometry, UVs, normals, and material parameters; independent normal/roughness channels use higher-quality 4:4:4 encoding. Long Wood Bridge includes a lossy model and lightweight preview.
+
+- Prepared curtain-wall assets can carry compact model-derived collision caps and
+  explicitly selected walkways. Export bends these definitions with the wall,
+  joins repeated sections, and keeps parapets outside the walking area. Generated
+  maps can route characters around inward area corners, including curved wall
+  walks and bent platforms, without a precomputed navigation graph.

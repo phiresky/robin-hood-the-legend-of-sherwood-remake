@@ -12,7 +12,7 @@ from pathlib import Path
 import struct
 import sys
 import numpy as np
-from author_gameplay import strip_gameplay
+from author_gameplay import model_gameplay
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT/'refinement/blender'))
@@ -234,8 +234,8 @@ def build(recipe, entries):
         for name in ('lossy.glb','lossy.glb.receipt.json','preview.glb','preview.glb.receipt.json'):
             (folder/name).unlink(missing_ok=True)
     model_path.write_bytes(glb)
-    gameplay = strip_gameplay([triangle for attrs, _, _ in output for triangle in attrs['POSITION'].reshape(-1, 3, 3)],
-                              'scenery-wall-strip', **recipe['collision'])
+    gameplay = model_gameplay([triangle for attrs, _, _ in output for triangle in attrs['POSITION'].reshape(-1, 3, 3)],
+                             'scenery-wall-strip', recipe['collision'], model_path)
     gameplay['spline']['modelSha256'] = sha(model_path)
     descriptor={'version':1,'kind':'projection-mapped-asset','id':recipe['id'],'name':recipe['name'],'source_map':entry['source_map'],
                 'asset_type':'Wall','tags':['spline-wall','derived-strip'],'model':'model.glb','model_scene':'default','resources':[],

@@ -700,6 +700,55 @@ fn recovered_static_exports_construct_native_geometry() {
                 );
             }
         }
+        if let Some(probes) = result["route_probes"].as_array() {
+            use robin_engine::coordinates::MapPoint;
+            use robin_engine::pathfinder::PathFinder;
+            let mut route_grid = grid.clone();
+            let graph = &assets.navigation.pathfinder_graph;
+            let mut finder = PathFinder::new();
+            finder.initialize_from_graph(graph, &mut route_grid);
+            for probe in probes {
+                let point = |name: &str| {
+                    MapPoint::new(
+                        probe[name][0].as_f64().unwrap() as f32,
+                        probe[name][1].as_f64().unwrap() as f32,
+                    )
+                };
+                let goal = point("end");
+                for point in [point("start"), goal] {
+                    assert!(
+                        route_grid.is_reachable_thick(
+                            point,
+                            point,
+                            probe["layer"].as_u64().unwrap() as u16,
+                            route_grid.try_move_box_half_diagonal(0).unwrap()
+                        ),
+                        "{file}: route endpoint does not fit: {point:?}"
+                    );
+                }
+                let route = finder.find_path(
+                    graph,
+                    &route_grid,
+                    probe["layer"].as_u64().unwrap() as u16,
+                    probe["sector"].as_u64().unwrap() as u16,
+                    0,
+                    point("start"),
+                    goal,
+                    false,
+                );
+                assert_eq!(
+                    route.as_ref().and_then(|r| r.last()),
+                    Some(&goal),
+                    "{file}: route probe {probe}, start sector {:?}, goal sector {:?}",
+                    route_grid.get_sector(
+                        point("start"),
+                        point("start"),
+                        probe["layer"].as_u64().unwrap() as u16
+                    ),
+                    route_grid.get_sector(goal, goal, probe["layer"].as_u64().unwrap() as u16)
+                );
+            }
+        }
         assert_eq!(
             assets.audio.sound_source_required_ids,
             expected_sounds
@@ -2018,6 +2067,68 @@ fn authored_spline_wall_blocks_native_sight_and_routes_around_its_ends() {
                     && obstacle.is_blocking_ray_3d([250., 150., 20.], [250., 250., 20.])
             })
     );
+}
+
+#[test]
+fn spline_walkway_crosses_repetitions_behind_solid_battlements() {
+    use robin_engine::coordinates::MapPoint;
+    use robin_engine::pathfinder::PathFinder;
+    let mut assets = LevelAssets::new();
+    let engine = construct(
+        include_bytes!("fixtures/asset-spline-walkway.level.json"),
+        &mut assets,
+    );
+    let mut grid = engine.fast_grid().clone();
+    let start = MapPoint::new(120., 159.);
+    let end = MapPoint::new(380., 159.);
+    assert!(
+        grid.is_reachable_thin(start, end, 1),
+        "wall deck crosses repeat joins"
+    );
+    assert!(
+        !grid.is_reachable_thin(start, MapPoint::new(120., 185.), 1),
+        "parapets stay outside the walking area"
+    );
+    assert!(
+        !grid.is_reachable_thin(MapPoint::new(250., 150.), MapPoint::new(250., 250.), 0),
+        "wall remains solid at ground height"
+    );
+    let graph = &assets.navigation.pathfinder_graph;
+    let mut finder = PathFinder::new();
+    finder.initialize_from_graph(graph, &mut grid);
+    assert_eq!(
+        finder
+            .find_path(graph, &grid, 1, 2, 0, start, end, false)
+            .unwrap()
+            .last(),
+        Some(&end)
+    );
+}
+
+#[test]
+fn curved_spline_walkway_routes_around_its_outer_boundary() {
+    use robin_engine::coordinates::MapPoint;
+    use robin_engine::pathfinder::PathFinder;
+    let mut assets = LevelAssets::new();
+    let engine = construct(
+        include_bytes!("fixtures/asset-spline-curved-walkway.level.json"),
+        &mut assets,
+    );
+    let mut grid = engine.fast_grid().clone();
+    let start = MapPoint::new(125.32, 158.32);
+    let end = MapPoint::new(394.32, 250.37);
+    assert!(!grid.is_reachable_thin(start, end, 1));
+    let graph = &assets.navigation.pathfinder_graph;
+    let mut finder = PathFinder::new();
+    finder.initialize_from_graph(graph, &mut grid);
+    let route = finder
+        .find_path(graph, &grid, 1, 2, 0, start, end, false)
+        .expect("curved deck has a route");
+    assert_eq!(route.last(), Some(&end));
+    let footprint = grid.try_move_box_half_diagonal(0).unwrap();
+    for segment in route.windows(2) {
+        assert!(grid.is_reachable_thick(segment[0], segment[1], 1, footprint));
+    }
 }
 
 #[test]

@@ -131,13 +131,21 @@ export function wallSplineGameplay(
         throw new Error("invalid or excessive wall repetition");
       const bands = run?.curved === false ? 1 : 12;
       const framesByDistance = new Map<number, { point: Vector3; normal: Vector3 }>();
+      const toGame = (point: Vec3): Vec3 => {
+        const p = sceneToGame(document.camera, point);
+        return [
+          Math.round(p[0] * 1024) / 1024,
+          Math.round(p[1] * 1024) / 1024,
+          Math.round(p[2] * 1048576) / 1048576,
+        ];
+      };
       const warp = (p: Vec3, repeat: number): Vec3 => {
         if (corner) {
           const sx = (path.cornerScale ?? 1) * (path.cornerWidthScale ?? 1),
             sz = path.cornerScale ?? 1;
           const x = (p[0] - (bounds.min[0] + bounds.max[0]) / 2) * sx,
             y = (p[1] - (bounds.min[1] + bounds.max[1]) / 2) * sx;
-          return sceneToGame(document.camera, [
+          return toGame([
             corner.position.x + x * Math.cos(corner.rotation) - y * Math.sin(corner.rotation),
             corner.position.y + x * Math.sin(corner.rotation) + y * Math.cos(corner.rotation),
             corner.position.z + (p[2] - bounds.min[2]) * sz,
@@ -159,12 +167,16 @@ export function wallSplineGameplay(
           (((p[cross]! - center) * run.width) / width) *
           (axis === 1 ? -1 : 1) *
           (run.flipCrossSection ? -1 : 1);
-        return sceneToGame(document.camera, [
+        return toGame([
           frame.point.x + frame.normal.x * lateral,
           frame.point.y + frame.normal.y * lateral,
           frame.point.z + p[2] - bounds.min[2],
         ]);
       };
+      let stations = Array.from(
+        { length: bands + 1 },
+        (_, i) => start + ((end - start) * i) / bands,
+      );
       const pieces = (vertices: Vertex[], emit: (v: Vertex[], repeat: number) => void) => {
         const indices = earcut(vertices.flatMap((v) => v.slice(0, 2)));
         for (let repeat = 0; repeat < repeats; repeat++)
@@ -174,12 +186,13 @@ export function wallSplineGameplay(
               emit(triangle, repeat);
               continue;
             }
-            for (let band = 0; band < bands; band++) {
-              const a = start + ((end - start) * band) / bands,
-                b =
-                  start +
-                  (end - start) * Math.min((band + 1) / bands, length / run.repeatLength - repeat);
-              if (b <= a) continue;
+            for (let band = 0; band + 1 < stations.length; band++) {
+              const a = stations[band]!,
+                b = Math.min(
+                  stations[band + 1]!,
+                  start + (end - start) * (length / run.repeatLength - repeat),
+                );
+              if (b - a <= 1e-7) continue;
               const polygon = clip(clip(triangle, axis, a, true), axis, b, false);
               for (let j = 1; j + 1 < polygon.length; j++)
                 if (Math.abs(area(polygon[0]!, polygon[j]!, polygon[j + 1]!)) > 1e-7)
@@ -199,6 +212,33 @@ export function wallSplineGameplay(
             continue;
           templates.push({ id: part.node, node: part.node, shape: part.obstacle_local_game });
         }
+      // Shared longitudinal cuts prevent T-junctions opening between independently
+      // triangulated solids and walkways when their common edge bends along a curve.
+      if (run?.curved !== false) {
+        for (const volume of templates)
+          for (const p of volume.shape.points)
+            stations.push(source(volume.node, [p.x, p.y, p.z_bottom])[axis]);
+        for (const surface of [
+          ...data.surfaces,
+          ...(data.movementBlockers ?? []),
+          ...(data.movementClearances ?? []),
+        ]) {
+          const points = surface.polygon.map(([x, y], i): Vec3 => [
+            x,
+            y,
+            typeof surface.height === "number" ? surface.height : surface.height[i]!,
+          ]);
+          const plane = heightPlane(points);
+          for (const p of [
+            ...points,
+            ...(surface.holes ?? []).flatMap((h) =>
+              h.map(([x, y]): Vec3 => [x, y, planeHeight(plane, [x, y])]),
+            ),
+          ])
+            stations.push(source(surface.node, p)[axis]);
+        }
+      }
+      stations = [...new Set(stations.filter((x) => x >= start && x <= end))].sort((a, b) => a - b);
       for (const volume of templates) {
         const points = volume.shape.points.map((p) => {
           const a = source(volume.node, [p.x, p.y, p.z_bottom]),

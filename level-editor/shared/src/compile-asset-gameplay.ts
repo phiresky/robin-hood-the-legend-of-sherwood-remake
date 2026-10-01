@@ -1155,6 +1155,7 @@ function compileAssetGameplayAttempt(
         surface.polygon.map(([x, y]): Point => [x, y + planeHeight(plane, [x, y])]),
       ),
     );
+    const wallCuts: Polygon[] = [];
     for (const { owner, footprint, bounds: solidBounds, top, bottom } of solidGeometry) {
       // Most grid triangles are far from most placed solids. Their disjoint
       // world-space bounds exclude intersection before any polygon operations.
@@ -1195,8 +1196,47 @@ function compileAssetGameplayAttempt(
         if (preserve) {
           cutouts.push(...regions);
           contourGroups.push(...regions.map(() => undefined));
-        } else if (regions.length) merged = polygonClipping.difference(merged, regions);
+        } else if (regions.length) {
+          if (owner.startsWith("wall-spline-")) wallCuts.push(...regions);
+          else merged = polygonClipping.difference(merged, regions);
+        }
       }
+    }
+    // Join neighboring wall triangles before rounding their boundary. Rounding
+    // each subtraction separately can turn shared diagonals into walkable slivers.
+    if (wallCuts.length) {
+      const joined = unionMovementSurfaces(wallCuts, `Wall cuts on layer ${layer}`, warnings);
+      // Subpixel cracks from snapped T-junctions cannot represent walkable holes.
+      // Remove these before grid rounding can inflate them into narrow islands.
+      let sealedHoles = 0;
+      const seal = (regions: Polygon[]) =>
+        regions.map((region) =>
+          region.filter((ring, index) => {
+            if (!index) return true;
+            const perimeter = ring.reduce(
+              (sum, p, i) =>
+                sum +
+                Math.hypot(
+                  p[0] - ring[(i + 1) % ring.length]![0],
+                  p[1] - ring[(i + 1) % ring.length]![1],
+                ),
+              0,
+            );
+            const retain = Math.abs(signedArea(ring)) > perimeter / 2;
+            if (!retain) sealedHoles++;
+            return retain;
+          }),
+        );
+      const rounded = normalizeGeneratedMotion(
+        seal(joined),
+        `Wall cuts on layer ${layer}`,
+        warnings,
+      );
+      merged = fixedPolygonBoolean("difference", merged, [seal(rounded)], 1);
+      if (sealedHoles)
+        warnings.push(
+          `Movement layer ${layer}: sealed ${sealedHoles} wall-cut holes too narrow for integer-grid navigation.`,
+        );
     }
     if (preserve) {
       navigationPieces.push({
@@ -1210,9 +1250,25 @@ function compileAssetGameplayAttempt(
     }
     if (group.some((s) => s.polygon.some(outsideFrame)))
       merged = fixedPolygonBoolean("intersection", merged, [frame]);
-    for (const poly of merged.flatMap((region) =>
-      normalizeGeneratedMotion([region], `Movement layer ${layer}`, warnings),
-    )) {
+    const normalized = walls.descriptors.length
+      ? normalizeGeneratedMotion(merged, `Movement layer ${layer}`, warnings)
+      : merged.flatMap((region) =>
+          normalizeGeneratedMotion([region], `Movement layer ${layer}`, warnings),
+        );
+    for (const poly of normalized) {
+      if (wallCuts.length) {
+        const boundary = poly[0]!;
+        const perimeter = boundary.reduce((sum, p, i) => {
+          const next = boundary[(i + 1) % boundary.length]!;
+          return sum + Math.hypot(p[0] - next[0], p[1] - next[1]);
+        }, 0);
+        if (Math.abs(signedArea(boundary)) <= perimeter / 2) {
+          warnings.push(
+            `Movement layer ${layer}: omitted a wall-cut fragment too narrow for integer-grid navigation.`,
+          );
+          continue;
+        }
+      }
       const quantized = quantizeGeneratedMotionPolygon(
         poly,
         quantize,

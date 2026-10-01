@@ -68,6 +68,29 @@ features. Model hashes bind calibration to the authored model. All 19 presets pa
 native construction and movement probes; all ten saved maps still compile.
 The publication retains rollback data under `work/map-compile/spline-gameplay-publication`.
 
+Five curtain strips also have explicit wall-walk recipes: Derby upper/lower,
+Leicester castle, Lincoln east and Nottingham castle. The authoring tool dissolves
+model cap triangles into compact asset-local solids, selects the recipe's deck
+height, and subtracts parapets and other higher caps from that deck. The compiler
+deforms these definitions at the current placement; it never reads a level file.
+Shared curve cuts, exact source endpoints and joint grid rounding keep repeated
+decks connected and suppress false tiny ground islands. Straight spans avoid
+unneeded subdivisions. Grounded cap solids still require manually authored volumes
+for undercut openings; choosing a deck does not create stairs or tower entrances.
+Native regression fixtures verify full-character routes across repeats and around
+curved deck boundaries, while collision blocks parapets and ground-level crossings.
+The graph-free pathfinder now considers inward area corners as well as obstacles,
+with close docking candidates for narrow passages. These checks cover the tested
+placements, not every bend, width or connection to another asset.
+All five default-width and double-width flat wall walks pass native routing in
+straight and curved placements. All 19 presets, two extra corner choices and ten
+saved maps pass native construction; the saved maps retain their reviewed static
+geometry. Rising curved wall walks still fragment into separate navigation areas:
+loading them is verified, but traversal across their changing planes remains open.
+The five installed definitions have rollback data in
+`work/map-compile/wall-walkway-publication`; route diagnostics are in
+`work/map-compile/wall-walkway-native-v15`.
+
 Current combined drafts recover all 27 map-source movement transitions.
 York's market assembly completes the movement-state ownership inventory.
 Nottingham has both after assembling its four changing northern facade parts.
