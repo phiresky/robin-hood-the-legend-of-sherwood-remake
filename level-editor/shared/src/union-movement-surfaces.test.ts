@@ -69,7 +69,7 @@ test("ordinary movement unions preserve contour ordering without warnings", () =
   const warnings: string[] = [];
   assert.deepEqual(
     unionMovementSurfaces(input, "Movement layer 0", warnings),
-    clipping.union(...input),
+    clipping.union(input[0]!, ...input.slice(1)),
   );
   assert.deepEqual(warnings, []);
 });

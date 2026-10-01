@@ -17,6 +17,11 @@ import {
 } from "./assemble-navigation-joins.ts";
 import { assembleJumpSegments, type PlacedJumpSegment } from "./assemble-jump-segments.ts";
 import { createJumpClearance } from "./jump-clearance.ts";
+import {
+  generateJumpLedges,
+  jumpLandingBand,
+  type JumpLandingBand,
+} from "./generate-jump-ledges.ts";
 import { assembleLiftSegments, type PlacedLiftSegment } from "./assemble-lift-segments.ts";
 import { assembleInteriors, type PlacedInterior } from "./assemble-interiors.ts";
 import {
@@ -294,6 +299,8 @@ function compileAssetGameplayAttempt(
   }[] = [];
   const jumpZones: { id: string; polygon: Point[]; anchor: Vec3; helper: boolean }[] = [];
   const jumpSegments: PlacedJumpSegment[] = [];
+  const generatedLandings = new Map<string, JumpLandingBand>();
+  const generatedJumpZoneIds = new Set<string>();
   const jumpPairs: { id: string; long: boolean; edges: { zone: string; a: Vec3; b: Vec3 }[] }[] =
     [];
   const transitions: {
@@ -716,6 +723,18 @@ function compileAssetGameplayAttempt(
         ),
       };
       const change = dynamic.find((d) => d.surface === surface);
+      if (surface.jump) {
+        const generated = generateJumpLedges(
+          `${placement.id}/${surface.id}`,
+          points.map(([x, y, z]): Point => [x, y - z]),
+          placed.holes,
+          plane,
+          surface.jump,
+        );
+        jumpSegments.push(...generated.segments);
+        for (const [id, band] of generated.landings) generatedLandings.set(id, band);
+        warnings.push(...generated.warnings);
+      }
       const receiver =
         surface.projectionVolume === undefined
           ? undefined
@@ -910,9 +929,26 @@ function compileAssetGameplayAttempt(
     jumpSegments,
     jumpSegments.some((segment) => segment.attachment) ? createJumpClearance(sight) : undefined,
   );
-  jumpPairs.push(...assembledJumps.pairs);
+  for (const pair of assembledJumps.pairs) {
+    for (const [side, edge] of pair.edges.entries()) {
+      const band = generatedLandings.get(edge.zone);
+      if (!band) continue;
+      const id = `${pair.id}/landing-${side}`;
+      const zone = jumpLandingBand(id, edge, band);
+      zone.polygon = ring(
+        zone.polygon.map(([x, y]): Point => [quantize(x), quantize(y)]),
+        id,
+      );
+      jumpZones.push(zone);
+      generatedJumpZoneIds.add(id);
+      edge.zone = id;
+    }
+    jumpPairs.push(pair);
+  }
   warnings.push(...assembledJumps.warnings);
-  for (const segment of assembledJumps.unmatched)
+  for (const segment of assembledJumps.unmatched.filter(
+    (segment) => !generatedLandings.has(segment.edge.zone),
+  ))
     warnings.push(
       `Jump ${segment.id}: no matching edge after placement; connection is unavailable.`,
     );
@@ -1438,15 +1474,18 @@ function compileAssetGameplayAttempt(
       return indices;
     });
   // Detached edges have no runtime connection. Retain zones used by any remaining pair.
-  if (options.bestEffort || cropped) {
+  if (options.bestEffort || cropped || generatedJumpZoneIds.size) {
     const unavailable = new Set<string>();
     for (const zone of jumpZones) {
+      if (!options.bestEffort && !cropped && !generatedJumpZoneIds.has(zone.id)) continue;
       try {
         resolve(zone.anchor, `${zone.id} landing anchor`);
       } catch (error) {
         if (
           !(error instanceof UnresolvedSurface) ||
-          (!options.bestEffort && !(error instanceof OutsideExportFrame))
+          (!options.bestEffort &&
+            !generatedJumpZoneIds.has(zone.id) &&
+            !(error instanceof OutsideExportFrame))
         )
           throw error;
         unavailable.add(zone.id);

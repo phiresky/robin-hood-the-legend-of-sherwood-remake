@@ -22,6 +22,8 @@ import {
   joinedNavigationCompilerFixture,
   crossAssetJumpCompilerFixture,
   obstructedJumpCompilerFixture,
+  surfaceJumpCompilerFixture,
+  multiDestinationJumpCompilerFixture,
   doorTransitionCompilerFixture,
   doorAnchorCompilerFixture,
   projectionMaterialCompilerFixture,
@@ -827,6 +829,76 @@ test("walkways and roof jumps reconnect to replacement assets without original n
     }
   }
 });
+test("surface rules construct jump edges and landing zones without recovered jump metadata", () => {
+  const { document, assets, hut, upper } = surfaceJumpCompilerFixture();
+  assert.equal(hut.gameplay!.jumpSegments!.length, 0);
+  assert.equal(upper.gameplay!.jumpZones!.length, 0);
+  const generated = compileAssetGameplay(document, assets, bounds);
+  assert.equal(generated.jump_line_pairs!.length, 1);
+  assert.equal(generated.jump_zones!.length, 2);
+  const west = hut.gameplay!.surfaces.find((surface) => surface.id === "west")!;
+  west.jump!.maxGap = 1;
+  assert.equal(compileAssetGameplay(document, assets, bounds).jump_line_pairs, undefined);
+  west.jump!.edges = [999];
+  assert.throws(() => compileAssetGameplay(document, assets, bounds), /invalid surface jump rules/);
+});
+
+test("one generated ledge connects to multiple separately placed roofs", () => {
+  const { document, assets } = multiDestinationJumpCompilerFixture();
+  const geometry = compileAssetGameplay(document, assets, bounds);
+  assert.equal(geometry.jump_line_pairs!.length, 2);
+  assert.equal(geometry.jump_zones!.length, 4);
+  const spans = geometry
+    .jump_line_pairs!.map(({ line1 }) => [
+      Math.min(line1.point_a[1], line1.point_b[1]),
+      Math.max(line1.point_a[1], line1.point_b[1]),
+    ])
+    .sort((a, b) => a[0]! - b[0]!);
+  assert.ok(spans[0]![1]! < spans[1]![0]!);
+  document.groups.find((group) => group.id === "jump-upper-second")!.transform.dx = 100;
+  assert.equal(compileAssetGameplay(document, assets, bounds).jump_line_pairs!.length, 1);
+});
+
+test("surface-generated courtyard connections survive a rotated, elevated duplicate", () => {
+  const { document, assets, hut, upper } = multiDestinationJumpCompilerFixture();
+  hut.gameplay!.surfaces.find((surface) => surface.id === "west")!.height = 40;
+  upper.gameplay!.surfaces.find((surface) => surface.id === "east")!.height = 40;
+  for (const group of document.groups.filter((group) => group.id.startsWith("jump-upper")))
+    group.transform.dy -= 100;
+  const angle = (37 * Math.PI) / 180;
+  const sinView = Math.sin((document.camera.elevation_deg * Math.PI) / 180);
+  const originals = [...document.groups];
+  for (const group of originals) {
+    const t = group.transform;
+    document.groups.push({
+      ...structuredClone(group),
+      id: `${group.id}-copy`,
+      transform: {
+        dx: 1000 + t.dx * Math.cos(angle) - (t.dy / sinView) * Math.sin(angle),
+        dy: 300 + (t.dx * Math.sin(angle) + (t.dy / sinView) * Math.cos(angle)) * sinView,
+        dz: t.dz + 30,
+        rot_deg: 37,
+      },
+    });
+  }
+  for (const part of [...document.objects].filter((part) => part.group))
+    document.objects.push({
+      ...structuredClone(part),
+      id: `${part.id}-copy`,
+      group: `${part.group}-copy`,
+    });
+  const geometry = compileAssetGameplay(document, assets, bounds);
+  assert.equal(geometry.jump_line_pairs!.length, 4, JSON.stringify(geometry.warnings ?? []));
+  for (const { line1, line2 } of geometry.jump_line_pairs!) {
+    assert.deepEqual(
+      [line1.point_b[0] - line1.point_a[0], line1.point_b[1] - line1.point_a[1]],
+      [line2.point_a[0] - line2.point_b[0], line2.point_a[1] - line2.point_b[1]],
+    );
+    assert.equal(line1.point_a[2], line2.point_a[2]);
+    assert.ok(Math.abs(line1.point_a[0] - line2.point_b[0]) < 100);
+  }
+});
+
 test("moving a separate wall rebuilds the usable jump span", () => {
   const { document, assets } = obstructedJumpCompilerFixture();
   const blocked = compileAssetGameplay(document, assets, bounds);

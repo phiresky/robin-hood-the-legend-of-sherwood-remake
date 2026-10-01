@@ -213,7 +213,7 @@
       "model": "3d-assets/lincoln/lincoln-keep/model.glb",
       "model_sha256": "eca0f74d71cd3a0bff41e6345834b7478f23016ef5c44600826dc3f13bf4b189",
       "descriptor": "3d-assets/lincoln/lincoln-keep/asset.json",
-      "descriptor_sha256": "406c360b53ea3fcc69562019fba12e2d896a531826569d465f4f184779d9c512",
+      "descriptor_sha256": "41de18cec146a02bfc214918989564fc617ef3e2826273382eeeec0e199418da",
       "id": "lincoln-keep"
     },
     {
@@ -269,7 +269,7 @@
       "model": "3d-assets/lincoln/lincoln-inner-gatehouse/model.glb",
       "model_sha256": "cf9126a425b04b32af4c37c1dda8c0656402cdbc4246bca8af69d8e1b6eeebae",
       "descriptor": "3d-assets/lincoln/lincoln-inner-gatehouse/asset.json",
-      "descriptor_sha256": "48bfccf1170541347ea3eb91816851a8c5a08e7adb793f38de46385d3ae820ae",
+      "descriptor_sha256": "db2623d48c716678d4ceee8a62a39017da5336f32b3f4a6d3b11b673ea7bb0fa",
       "id": "lincoln-inner-gatehouse"
     },
     {

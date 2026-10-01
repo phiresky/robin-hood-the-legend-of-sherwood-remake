@@ -8,6 +8,15 @@ export interface AssetWalkableSurface {
   polygon: Point[];
   /** Constant height or one height per polygon vertex; the surface must be planar. */
   height: number | number[];
+  /** Generate reusable long-jump ledges and landing bands from this surface after placement. */
+  jump?: NonNullable<AssetJumpSegment["attachment"]> & {
+    /** Selected polygon edge indices; omit to consider every outer edge. */
+    edges?: number[];
+    /** Distance from the outer boundary to the takeoff line, in map units. */
+    inset: number;
+    /** Walkable depth behind the takeoff line required for a receiving band. */
+    landingDepth: number;
+  };
   /** Retain fractional boundaries through movement assembly; only the final regions snap to the grid. */
   preserveMovementPrecision?: boolean;
   /** Keep this ordinary area's outer contour separate from crossing movement obstacles. */
@@ -829,6 +838,40 @@ export function validateAssetGameplay(
   ]) {
     feature(surface);
     polygon(surface.polygon);
+    if (surface.jump !== undefined) {
+      const jump = surface.jump;
+      if (
+        !jump ||
+        !data.surfaces.includes(surface) ||
+        data.lifts?.some((lift) => lift.surface === surface.id) ||
+        ![
+          jump.inset,
+          jump.landingDepth,
+          jump.maxGap,
+          jump.maxRise,
+          jump.maxDrop,
+          jump.minOverlap,
+        ].every(Number.isFinite) ||
+        jump.inset < 0 ||
+        jump.landingDepth <= 0 ||
+        jump.maxGap <= 0 ||
+        jump.maxRise < 0 ||
+        jump.maxDrop < 0 ||
+        jump.minOverlap <= 0 ||
+        (jump.edges !== undefined &&
+          (!Array.isArray(jump.edges) ||
+            new Set(jump.edges).size !== jump.edges.length ||
+            jump.edges.some(
+              (index) => !Number.isInteger(index) || index < 0 || index >= surface.polygon.length,
+            ))) ||
+        (jump.clearance !== undefined &&
+          (!jump.clearance ||
+            ![jump.clearance.radius, jump.clearance.height].every(Number.isFinite) ||
+            jump.clearance.radius < 0 ||
+            jump.clearance.height < 0))
+      )
+        fail(`invalid surface jump rules on ${surface.id}`);
+    }
     if (
       surface.projectionVolume !== undefined &&
       (disabledParts.has(surface.projectionVolume) ||

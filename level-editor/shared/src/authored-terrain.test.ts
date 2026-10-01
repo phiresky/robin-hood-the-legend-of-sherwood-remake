@@ -263,6 +263,7 @@ test("road-only edits reuse evaluated terrain while river edits invalidate it", 
   const camera = { kind: "oblique-orthographic" as const, elevation_deg: 35 };
   const river = {
     id: "river",
+    name: "River",
     kind: "river" as const,
     width: 40,
     repeatLength: 100,
@@ -296,6 +297,7 @@ test("shared terrain index matches exhaustive geometry through channel edits, ho
   const camera = { kind: "oblique-orthographic" as const, elevation_deg: 35 };
   const river = {
     id: "river",
+    name: "River",
     kind: "river" as const,
     closed: false,
     width: 80,

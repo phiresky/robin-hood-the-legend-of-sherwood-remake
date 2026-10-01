@@ -11,10 +11,9 @@ Place the downloaded ZIP in the game's configured mods directory (normally
 the map from Custom Missions. The installed base datadir supplies characters and
 shared resources. The ZIP is an overlay, not a standalone copy of the game.
 
-The exported descriptor contains map geometry only and disables player spawning.
-The current Custom Missions entry can load that geometry, but it is not a playable
-mission. Player starts, NPCs, items and objectives belong to a mission referencing
-the map; a separate mission-authoring/export workflow is still to be implemented.
+Map gameplay is compiled independently of mission content. The Mission tab can
+author PC spawn points and NPC soldiers, which are included separately in the
+exported descriptor. A map with no Mission characters exports no invented spawns.
 
 The output contains:
 
@@ -75,6 +74,32 @@ A descriptor can contain a `gameplay` definition (see
 - Lift surfaces, high/low entrances, traversal type and local direction.
 - Empty building interiors with shared entrances and per-actor door locks.
 - Map geometry without player spawns or NPCs; those belong to missions.
+
+A walkable surface may opt into generated long-jump connections with a `jump`
+property, for example:
+
+```json
+"jump": {
+  "inset": 8,
+  "landingDepth": 12,
+  "maxGap": 100,
+  "maxRise": 40,
+  "maxDrop": 60,
+  "minOverlap": 16,
+  "clearance": { "radius": 4, "height": 60 }
+}
+```
+
+These are author-selected map-unit limits, not character profile statistics.
+Add `edges: [1, 3]` to restrict generation to selected polygon edges; otherwise
+every outer edge is considered. Only level takeoff lines are generated. Export
+constructs landing bands inside the surface, avoiding holes, and matches current
+neighbours within both assets' limits. No neighbour IDs, original placements or
+saved jump zones are needed. One edge can connect to multiple destinations.
+Touching surface boundaries do not create unnecessary jumps. Flight checks cover
+takeoff, both travel directions and the configured body envelope; blocked spans
+are removed with warnings. Missing neighbours are normal for generated ledges.
+Explicit jump pairs and exact sockets remain available for authored special cases.
 
 For example, a ground-only asset can declare:
 

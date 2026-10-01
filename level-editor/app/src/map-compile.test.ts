@@ -44,6 +44,7 @@ import {
   crossAssetJumpCompilerFixture,
   geometricJumpCompilerFixture,
   obstructedJumpCompilerFixture,
+  multiDestinationJumpCompilerFixture,
   detachedJumpCompilerFixture,
   doorTransitionCompilerFixture,
   doorAnchorCompilerFixture,
@@ -205,6 +206,20 @@ test("obstructed jumps export the clearance checked by native animation", async 
     await readFile(
       new URL(
         "../../../crates/robin_engine/tests/fixtures/asset-jump-obstructed.level.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+});
+
+test("new surface-derived courtyard exports native jump destinations", async () => {
+  const { document, assets } = multiDestinationJumpCompilerFixture();
+  const fixture = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/asset-jump-courtyard.level.json",
         import.meta.url,
       ),
       "utf8",

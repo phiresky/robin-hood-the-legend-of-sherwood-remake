@@ -73,7 +73,7 @@ test("geometric edges connect new neighbours and trim to the overlapping span", 
     },
   ])
     assert.equal(assembleJumpSegments([a, invalid]).pairs.length, 0);
-  assert.throws(() => assembleJumpSegments([a, b, { ...b, id: "duplicate" }]), /exactly one/);
+  assert.equal(assembleJumpSegments([a, b, { ...b, id: "duplicate" }]).pairs.length, 1);
   assert.equal(assembleJumpSegments([a, { ...b, long: false }]).pairs.length, 0);
 });
 

@@ -1583,6 +1583,7 @@ mod tests {
         for bytes in [
             include_bytes!("../../tests/fixtures/asset-jump-geometric.level.json").as_slice(),
             include_bytes!("../../tests/fixtures/asset-jump-obstructed.level.json").as_slice(),
+            include_bytes!("../../tests/fixtures/asset-jump-courtyard.level.json").as_slice(),
         ] {
             let loaded = crate::level_data::LoadedLevel::hackable_from_json(bytes).unwrap();
             let pairs = loaded.proto.jump_line_pairs.clone();
@@ -1613,7 +1614,7 @@ mod tests {
                 },
             })
             .unwrap();
-            assert_eq!(pairs.len(), 1);
+            assert!(!pairs.is_empty());
             for pair in &pairs {
                 for (a, b) in [(&pair.line1, &pair.line2), (&pair.line2, &pair.line1)] {
                     let mut source = JumpLine::new(

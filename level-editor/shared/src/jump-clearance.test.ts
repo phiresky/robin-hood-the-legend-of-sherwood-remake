@@ -101,3 +101,27 @@ test("unsupported automatic flight geometry warns without breaking the export", 
   assert.equal(result.pairs.length, 0);
   assert.match(result.warnings[0]!, /Sloped jump edges/);
 });
+
+test("integer jump heights stay above fractional supporting surfaces", () => {
+  const placed = segments();
+  for (const segment of placed)
+    segment.edge = {
+      ...segment.edge,
+      a: [segment.edge.a[0], segment.edge.a[1] + 10.3, 10.3],
+      b: [segment.edge.b[0], segment.edge.b[1] + 10.3, 10.3],
+    };
+  const result = assembleJumpSegments(
+    placed,
+    createJumpClearance([wall(-10, -100, 20, 300, 0, 10.3), wall(50, -100, 20, 300, 0, 10.3)]),
+  );
+  assert.equal(result.pairs.length, 1);
+  assert.equal(result.pairs[0]!.edges[0]!.a[2], 11);
+});
+
+test("a gap shorter than takeoff cannot create a backward flight", () => {
+  const placed = segments();
+  placed[1]!.edge = { zone: "right", a: [10, 0, 0], b: [10, 100, 0] };
+  const result = assembleJumpSegments(placed, createJumpClearance([]));
+  assert.equal(result.pairs.length, 0);
+  assert.match(result.warnings[0]!, /15-unit takeoff/);
+});

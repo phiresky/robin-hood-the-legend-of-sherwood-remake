@@ -37,8 +37,20 @@ and height add side clearance and headroom; without them only the foot path is
 checked. A moved-wall fixture verifies restored overlap and native collision-free
 animation. Checks conservatively include all obstacle states. Sloped ledges and
 climbing-style automatic connections are omitted with warnings; explicitly authored
-connections remain supported. Library migration and multiple destinations along
-one edge remain open; this is not automatic jump generation for every roof mesh.
+connections remain supported. Walkable surfaces may now declare compact `jump`
+rules; the compiler derives ledges and landing bands from their placed polygons,
+cuts bands around holes and concave boundaries, and can connect one ledge to several
+destinations. Each retained span gets its own receiving anchor and zone. A new
+two-destination courtyard verifies native routing, animation and collision without
+any authored jump segments/zones. Rotated and elevated copies are also covered.
+Eighteen reviewed library surfaces now carry these rules, with descriptor pins
+updated in six saved scenes. All ten scenes still compile and construct native
+geometry without new warnings. A real rock-surface fixture checks a newly placed
+rotated neighbour without saved jump records. Further library adoption remains
+in progress; unmarked roof meshes do not acquire jumps. The authoring tool
+`pipeline/src/configure-surface-jumps.ts` stages descriptor-bound edits, updates
+scene pins and retains rollback snapshots; this publication is backed up in
+`work/map-compile/surface-jump-publication`.
 
 Current combined drafts recover all 27 map-source movement transitions.
 York's market assembly completes the movement-state ownership inventory.

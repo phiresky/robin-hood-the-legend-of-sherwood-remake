@@ -12,6 +12,8 @@ export interface PlacedJumpSegment {
   long: boolean;
   join?: Vec3;
   attachment?: AssetJumpSegment["attachment"];
+  /** Automatic surface ledges exclude the authored inset when deciding whether a gap exists. */
+  surfaceInset?: number;
   edge: { zone: string; a: Vec3; b: Vec3 };
 }
 
@@ -38,6 +40,12 @@ function geometricEdges(a: PlacedJumpSegment, b: PlacedJumpSegment): [Edge, Edge
   const along = (p: readonly number[]) => (p[0]! - aa[0]) * axis[0]! + (p[1]! - aa[1]) * axis[1]!;
   const gapAt = (p: readonly number[]) => -(p[0]! - aa[0]) * axis[1]! + (p[1]! - aa[1]) * axis[0]!;
   if ([ba, bb].some((p) => gapAt(p) <= 1e-4 || gapAt(p) > Math.min(ar.maxGap, br.maxGap)))
+    return null;
+  if (
+    a.surfaceInset !== undefined &&
+    b.surfaceInset !== undefined &&
+    Math.min(gapAt(ba), gapAt(bb)) <= a.surfaceInset + b.surfaceInset + 1e-4
+  )
     return null;
   const startB = along(ba),
     endB = along(bb);
@@ -80,7 +88,13 @@ export function assembleJumpSegments(
   const unmatched: PlacedJumpSegment[] = [];
   const pairs: { id: string; long: boolean; edges: Edge[] }[] = [];
   const warnings: string[] = [];
-  for (const segment of segments) {
+  const candidatesToCompile: {
+    segment: PlacedJumpSegment;
+    other: PlacedJumpSegment;
+    edges: [Edge, Edge];
+  }[] = [];
+  const emitted = new Set<string>();
+  for (const [index, segment] of segments.entries()) {
     if (consumed.has(segment)) continue;
     const candidates = segments.flatMap((other) => {
       if (other === segment) return [];
@@ -89,6 +103,16 @@ export function assembleJumpSegments(
     });
     if (!candidates.length) {
       unmatched.push(segment);
+      continue;
+    }
+    if (segment.attachment) {
+      for (const { other, edges } of candidates) {
+        if (segments.indexOf(other) <= index) continue;
+        const key = JSON.stringify([segment.long, edges]);
+        if (emitted.has(key)) continue;
+        emitted.add(key);
+        candidatesToCompile.push({ segment, other, edges });
+      }
       continue;
     }
     if (candidates.length !== 1 || consumed.has(candidates[0]!.other))
@@ -100,8 +124,12 @@ export function assembleJumpSegments(
       throw new Error(`Jump ${segment.id}: both edges use the same landing zone`);
     consumed.add(segment);
     consumed.add(other);
+    candidatesToCompile.push({ segment, other, edges });
+  }
+  for (const { segment, other, edges } of candidatesToCompile) {
+    const id = segment.attachment ? `${segment.id}/to/${other.id}` : segment.id;
     if (!segment.attachment || !clearance) {
-      pairs.push({ id: segment.id, long: segment.long, edges });
+      pairs.push({ id, long: segment.long, edges });
       continue;
     }
     let blocked: Interval[];
@@ -147,7 +175,7 @@ export function assembleJumpSegments(
         continue;
       if (clearance(finalEdges, segment.long, body).length) continue;
       pairs.push({
-        id: usable.length === 1 ? segment.id : `${segment.id}/span-${index}`,
+        id: usable.length === 1 ? id : `${id}/span-${index}`,
         long: segment.long,
         edges: finalEdges,
       });

@@ -1208,24 +1208,33 @@ fn compiled_roof_jump_routes_enforce_character_skills_and_destination_helpers() 
         include_bytes!("fixtures/asset-jump-detached.level.json").as_slice(),
         include_bytes!("fixtures/asset-jump-geometric.level.json").as_slice(),
         include_bytes!("fixtures/asset-jump-obstructed.level.json").as_slice(),
+        include_bytes!("fixtures/asset-jump-courtyard.level.json").as_slice(),
     ] {
         let mut assets = LevelAssets::new();
         let engine = construct(bytes, &mut assets);
         let view = engine.presentation_view();
         let doors = view.doors();
-        let jump = doors.iter().find(|door| door.is_jump()).unwrap();
-        let actor = ActorAuthInfo {
-            kind: ElementKind::ActorPc,
-            pc_auth_bit: 1,
-            has_lockpick: false,
-            has_climb: false,
-            has_jump: true,
-            is_rider: false,
-            posture: Posture::Upright,
-        };
-        for direct in [false, true] {
-            let (start, goal, source_sector, goal_sector, source_index, goal_index, needs_helper) =
-                if direct {
+        assert!(doors.iter().any(|door| door.is_jump()));
+        for jump in doors.iter().filter(|door| door.is_jump()) {
+            let actor = ActorAuthInfo {
+                kind: ElementKind::ActorPc,
+                pc_auth_bit: 1,
+                has_lockpick: false,
+                has_climb: false,
+                has_jump: true,
+                is_rider: false,
+                posture: Posture::Upright,
+            };
+            for direct in [false, true] {
+                let (
+                    start,
+                    goal,
+                    source_sector,
+                    goal_sector,
+                    source_index,
+                    goal_index,
+                    needs_helper,
+                ) = if direct {
                     (
                         jump.point_out,
                         jump.point_in,
@@ -1246,44 +1255,45 @@ fn compiled_roof_jump_routes_enforce_character_skills_and_destination_helpers() 
                         jump.jump_line_out_helper_needed,
                     )
                 };
-            let route = |actor: &ActorAuthInfo| {
-                find_path_gates_with_sector_indices(
-                    doors,
-                    (start.x, start.y),
-                    i16::from(source_sector) as u16,
-                    source_index,
-                    (goal.x, goal.y),
-                    i16::from(goal_sector) as u16,
-                    goal_index,
-                    Some(actor),
-                    false,
-                    &|_| true,
-                    &|_| None,
-                )
-            };
-            assert_eq!(route(&actor).is_some(), !needs_helper);
-            let supported = ActorAuthInfo {
-                posture: Posture::OnShoulders,
-                ..actor
-            };
-            let path =
-                route(&supported).expect("a supported jumper can cross the compiled roof pair");
-            assert_eq!(path.len(), 1);
-            assert_eq!(path[0].direct, direct);
-            assert!(
-                route(&ActorAuthInfo {
-                    has_jump: false,
-                    ..supported
-                })
-                .is_none()
-            );
-            assert!(
-                route(&ActorAuthInfo {
-                    kind: ElementKind::ActorSoldier,
-                    ..supported
-                })
-                .is_none()
-            );
+                let route = |actor: &ActorAuthInfo| {
+                    find_path_gates_with_sector_indices(
+                        std::slice::from_ref(jump),
+                        (start.x, start.y),
+                        i16::from(source_sector) as u16,
+                        source_index,
+                        (goal.x, goal.y),
+                        i16::from(goal_sector) as u16,
+                        goal_index,
+                        Some(actor),
+                        false,
+                        &|_| true,
+                        &|_| None,
+                    )
+                };
+                assert_eq!(route(&actor).is_some(), !needs_helper);
+                let supported = ActorAuthInfo {
+                    posture: Posture::OnShoulders,
+                    ..actor
+                };
+                let path =
+                    route(&supported).expect("a supported jumper can cross the compiled roof pair");
+                assert_eq!(path.len(), 1);
+                assert_eq!(path[0].direct, direct);
+                assert!(
+                    route(&ActorAuthInfo {
+                        has_jump: false,
+                        ..supported
+                    })
+                    .is_none()
+                );
+                assert!(
+                    route(&ActorAuthInfo {
+                        kind: ElementKind::ActorSoldier,
+                        ..supported
+                    })
+                    .is_none()
+                );
+            }
         }
     }
 }

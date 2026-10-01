@@ -314,6 +314,31 @@ export function geometricJumpCompilerFixture() {
   return fixture;
 }
 
+export function surfaceJumpCompilerFixture() {
+  const fixture = geometricJumpCompilerFixture();
+  for (const [asset, surfaceId, edge] of [
+    [fixture.hut, "west", 1],
+    [fixture.upper, "east", 3],
+  ] as const) {
+    const gameplay = asset.gameplay!;
+    const surface = gameplay.surfaces.find((surface) => surface.id === surfaceId)!;
+    surface.jump = {
+      maxGap: 35,
+      maxRise: 110,
+      maxDrop: 110,
+      minOverlap: 10,
+      inset: 5,
+      landingDepth: 6,
+      edges: [edge],
+      clearance: { radius: 4, height: 40 },
+    };
+    gameplay.jumpZones = [];
+    gameplay.jumpSegments = [];
+  }
+  fixture.document.map = "Surface-derived jump fixture";
+  return fixture;
+}
+
 export function obstructedJumpCompilerFixture() {
   const fixture = geometricJumpCompilerFixture();
   const blocker = structuredClone(fixture.upper);
@@ -353,6 +378,34 @@ export function obstructedJumpCompilerFixture() {
   });
   fixture.document.groups.push({ id: "jump-wall", transform: { ...IDENTITY_TRANSFORM } });
   fixture.document.map = "Obstructed geometric jump fixture";
+  return fixture;
+}
+
+export function multiDestinationJumpCompilerFixture() {
+  const fixture = surfaceJumpCompilerFixture();
+  fixture.upper.gameplay!.surfaces.find((surface) => surface.id === "east")!.polygon = [
+    [110, 20],
+    [140, 20],
+    [140, 80],
+    [110, 80],
+  ];
+  fixture.hut.gameplay!.surfaces.find((surface) => surface.id === "west")!.polygon = [
+    [60, 20],
+    [90, 20],
+    [90, 180],
+    [60, 180],
+  ];
+  const upper = fixture.document.objects.find((part) => part.group === "jump-upper")!;
+  fixture.document.objects.push({
+    ...structuredClone(upper),
+    id: "jump-upper-second-body",
+    group: "jump-upper-second",
+  });
+  fixture.document.groups.push({
+    id: "jump-upper-second",
+    transform: { ...IDENTITY_TRANSFORM, dx: 1, dy: 200 },
+  });
+  fixture.document.map = "New courtyard with two jump destinations";
   return fixture;
 }
 

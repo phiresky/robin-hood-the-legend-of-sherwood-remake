@@ -138,6 +138,13 @@ export function createJumpClearance(obstacles: SightObstacle[]) {
         dy = source.b[1] - source.a[1];
       const length = Math.hypot(dx, dy);
       if (length < EPSILON) throw new Error("Jump edge collapses on the movement grid");
+      if (
+        (-(destination.b[0] - source.a[0]) * dy +
+          (destination.b[1] - destination.b[2] - source.a[1] + source.a[2]) * dx) /
+          length <=
+        15 + EPSILON
+      )
+        throw new Error("Ledges leave no forward flight after the 15-unit takeoff");
       const start: Vec3 = [
         source.a[0] - (15 * dy) / length,
         source.a[1] + (15 * dx) / length,
@@ -198,13 +205,13 @@ export function trimJumpEdges(
 /** Preserve equal, opposing integer vectors so runtime distance-along-edge stays aligned. */
 export function snapJumpEdges(edges: [JumpEdge, JumpEdge]): [JumpEdge, JumpEdge] {
   const snap = (p: Vec3): Vec3 => {
-    const z = Math.round(p[2]);
+    const z = Math.ceil(p[2] - EPSILON) + 0;
     return [Math.round(p[0]), Math.round(p[1] - p[2]) + z, z];
   };
   const a = snap(edges[0].a),
     b = snap(edges[0].b),
     oppositeB = snap(edges[1].b);
-  const z = Math.round(edges[1].a[2]);
+  const z = Math.ceil(edges[1].a[2] - EPSILON) + 0;
   const oppositeA: Vec3 = [
     oppositeB[0] + b[0] - a[0],
     oppositeB[1] - oppositeB[2] + b[1] - b[2] - a[1] + a[2] + z,

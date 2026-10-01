@@ -45,7 +45,7 @@
       "model": "3d-assets/york/york-bridge-square-scaffolded-corner-house/model.glb",
       "model_sha256": "3e9a64b7556c5ccb0e4c05cfd8866f186d2d86249b7448aab75db0bec555fdeb",
       "descriptor": "3d-assets/york/york-bridge-square-scaffolded-corner-house/asset.json",
-      "descriptor_sha256": "09fe4eea27253999128ba01840953dc990b72548416bddf05041d8313c3c01da",
+      "descriptor_sha256": "1fbfb0704326635a6007ef0fd1ffaa710582fb1b5b5fda36f5bc1a0204858983",
       "id": "york-bridge-square-scaffolded-corner-house"
     },
     {
@@ -80,7 +80,7 @@
       "model": "3d-assets/york/york-castle-courtyard-rear-curtain-wall/model.glb",
       "model_sha256": "dc350bb1e51e0642e0453c39c6a2382c4ea22dca1cbfc3951eeed457d343ecd6",
       "descriptor": "3d-assets/york/york-castle-courtyard-rear-curtain-wall/asset.json",
-      "descriptor_sha256": "d76a9996fe887590dcaef6d2a2753c0830af2a57f40e6fa5ee9bfd5d4cb5f5ae",
+      "descriptor_sha256": "ad605e27f6d4976f0531d1f4e59b45b7a430eb5e7017b5bea052fa6e3118bb1e",
       "id": "york-castle-courtyard-rear-curtain-wall"
     },
     {
@@ -129,7 +129,7 @@
       "model": "3d-assets/york/york-castle-north-approach-wall-stair/model.glb",
       "model_sha256": "cd9d595fb9d76ed620bdabeb57de868a10aca3cc146ecfc969ae0025e69cce36",
       "descriptor": "3d-assets/york/york-castle-north-approach-wall-stair/asset.json",
-      "descriptor_sha256": "ea6badbf95b06c647becb37e74fd511010497c55691df32ab99f101d9ea07943",
+      "descriptor_sha256": "ef3a986dae72034992082d6a7fa3144cff943bc368c633a9d07609803cbf44cc",
       "id": "york-castle-north-approach-wall-stair"
     },
     {
@@ -171,7 +171,7 @@
       "model": "3d-assets/york/york-castle-southwest-bastion/model.glb",
       "model_sha256": "b78a9f96782ef870f73f5904f6d6c4eb960a06087b9f5faf7e9a8b4c59cface5",
       "descriptor": "3d-assets/york/york-castle-southwest-bastion/asset.json",
-      "descriptor_sha256": "16c0871c974ab0703a6709e143e7d1407aa01e67eb7121a6fbcdcad16f8f71c7",
+      "descriptor_sha256": "1363fe8e18d3ad31e5e65f25592ffaab22cd95218c6f12e756dc4205edd8d600",
       "id": "york-castle-southwest-bastion"
     },
     {
@@ -339,7 +339,7 @@
       "model": "3d-assets/york/york-east-bridge-raised-terrace/model.glb",
       "model_sha256": "3dfad389423c07eaf7d1c3042ed37618bb634b88764149fd609da646c8e2a2a1",
       "descriptor": "3d-assets/york/york-east-bridge-raised-terrace/asset.json",
-      "descriptor_sha256": "0f24232768b9508a1c1e7de6720ff7e108fde44a5234fdfeb9504df2c41b2796",
+      "descriptor_sha256": "0367fc98f4beb00317dd5c47e58a4ae1ff306b1ec94e3ebb0be17dc091ee6b5e",
       "id": "york-east-bridge-raised-terrace"
     },
     {
@@ -416,7 +416,7 @@
       "model": "3d-assets/york/york-east-riverside-curtain-wall/model.glb",
       "model_sha256": "400a1b186937c3e83422741677213bd85b04284854e9a433150b93543985fc1a",
       "descriptor": "3d-assets/york/york-east-riverside-curtain-wall/asset.json",
-      "descriptor_sha256": "126134bc4839651724bcda20a53417f641330e375b1895a5b7a89eda77e2cd1a",
+      "descriptor_sha256": "f2a67252873a808fe1ccc9dc01d833ac75e0c9934f4a6abe8b512647773ebd19",
       "id": "york-east-riverside-curtain-wall"
     },
     {
@@ -514,7 +514,7 @@
       "model": "3d-assets/york/york-inner-southeast-curtain-wall/model.glb",
       "model_sha256": "351c54e78a8f9906be32cdc906dd98176a12f63ff7ffcf8a22c62ccf011e14c6",
       "descriptor": "3d-assets/york/york-inner-southeast-curtain-wall/asset.json",
-      "descriptor_sha256": "a15ab4f1b46a8e40ed2d0c9830445b36b42a86d69c6ee2df22afd9f1231f27a9",
+      "descriptor_sha256": "07041debac018e5cd98781820f838ead6745ce1c36d6402e062638b0a2c3f013",
       "id": "york-inner-southeast-curtain-wall"
     },
     {
@@ -626,7 +626,7 @@
       "model": "3d-assets/york/york-market-stepped-green-canopy-stall/model.glb",
       "model_sha256": "28466bf4f2c51555a7602b70ad0c86a4985f8952edadb37200c3d64ee571a5fc",
       "descriptor": "3d-assets/york/york-market-stepped-green-canopy-stall/asset.json",
-      "descriptor_sha256": "58aab1680730d8b0549dc496721fd3e56aec0f67193dcd6b934db45475e931ff",
+      "descriptor_sha256": "5b8ba09b0d1558dc3d5d977888c091d85e5e912e1fe4c44ba5c41394543a477e",
       "id": "york-market-stepped-green-canopy-stall"
     },
     {
@@ -1228,7 +1228,7 @@
       "model": "3d-assets/york/york-south-gate-lane-terrace-stairs/model.glb",
       "model_sha256": "5eef167614c73400d5b3a84194b4fdd68300080bc2d623d8f27fa1201418c6d6",
       "descriptor": "3d-assets/york/york-south-gate-lane-terrace-stairs/asset.json",
-      "descriptor_sha256": "b0449f513b622ae1260c8120a34e234fc69acd3ba8e064606bdad90a3fa9696e",
+      "descriptor_sha256": "cfe6fe0654f498c43f121f49b948e43e1d8de8e1d7eac09c53f90e6cf0140d85",
       "id": "york-south-gate-lane-terrace-stairs"
     },
     {

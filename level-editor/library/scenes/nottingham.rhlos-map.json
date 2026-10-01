@@ -27,7 +27,7 @@
       "model": "3d-assets/nottingham/nottingham-castle-approach-ramp/model.glb",
       "model_sha256": "2579dea40fc6e56b5479a272e946f1e8c1e574c4387874a334af0ba1ca53a545",
       "descriptor": "3d-assets/nottingham/nottingham-castle-approach-ramp/asset.json",
-      "descriptor_sha256": "479281354dc1f9d1abfdebd552b3e6c406ec76e52be99fd6dcd4ffc3dab62b53",
+      "descriptor_sha256": "e2f84a48fd8543331604aeae01971e717a2c701c7d1b79ed7f7523b670255fe6",
       "id": "nottingham-castle-approach-ramp"
     },
     {
@@ -363,7 +363,7 @@
       "model": "3d-assets/nottingham/nottingham-north-curtain-wall/model.glb",
       "model_sha256": "8b57af7cf8235e6c4a008ca4635f07fee3bc53df1423e7f9dbfbcbba0ad687da",
       "descriptor": "3d-assets/nottingham/nottingham-north-curtain-wall/asset.json",
-      "descriptor_sha256": "89e029774cdf7739ca455a4b9f3271d17620175532a8a01f5a1b09e5bd02174e",
+      "descriptor_sha256": "e41b9c11847ac4762f94f6186d99b74b001ace49fbd93bf9400ca306f67ebda5",
       "id": "nottingham-north-curtain-wall"
     },
     {
@@ -846,7 +846,7 @@
       "model": "3d-assets/nottingham/nottingham-village-west-rocks/model.glb",
       "model_sha256": "7d5385ac4c301ee809c0ce32b7106423a174e875b49b51d1f66082383a1dfe76",
       "descriptor": "3d-assets/nottingham/nottingham-village-west-rocks/asset.json",
-      "descriptor_sha256": "0aa3fe4b84f2d8521fe3d3486125fcc5731e8dfad99067748301a7399f12bb8a",
+      "descriptor_sha256": "f820ce759fec3306d8e9d335c238c5284282b901d48b89a85daf3386abf2fd65",
       "id": "nottingham-village-west-rocks"
     },
     {

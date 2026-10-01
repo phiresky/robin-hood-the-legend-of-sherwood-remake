@@ -3,14 +3,18 @@
 - **Placement-based jump connections.** Asset jump edges can declare gap, height
   and overlap limits instead of exact connection sockets. Export pairs facing
   parallel edges and clips them to a shared span, allowing new arrangements of
-  independently placed assets. Existing library sockets remain supported; adoption
-  of the new rules is still pending.
+  independently placed assets. Existing library sockets remain supported.
   Geometric matching follows the runtime takeoff normal, with an exported fixture
   checked through native animation translation for both travel directions.
   Level ledges now trim blocked flight spans against placed solids in both
   directions, including takeoff. Optional body radius/height account for headroom
   and side clearance. Unsupported automatic jump shapes warn and are omitted;
   explicit authored connections retain their existing behavior.
+  Surface-level jump rules generate reusable ledges and receiving bands from
+  polygons, including holes, and support multiple neighbouring destinations.
+  No saved jump zones or neighbour identities are required for these surfaces.
+  Eighteen reviewed library surfaces include these rules; the authoring tool
+  stages descriptor-bound edits and updates saved-scene pins with rollback backups.
 
 - **Exact multiplayer teams.** Local and online hosts choose one to five named
   playable characters independently of player count, including duplicates. A
