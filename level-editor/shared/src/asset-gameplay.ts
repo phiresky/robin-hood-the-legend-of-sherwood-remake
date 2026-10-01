@@ -193,8 +193,19 @@ export interface AssetJumpSegment {
   id: string;
   node: string;
   long: boolean;
-  /** Shared local 3D socket; the jump is available only when one complementary edge matches. */
-  join: [number, number, number];
+  /** Legacy exact socket. Geometric attachment rules do not require a socket. */
+  join?: [number, number, number];
+  /**
+   * Connection limits in map units after placement; no neighbour identity.
+   * Viewed in the map plane, the destination must lie to the right of a → b.
+   * Both edges must opt in, face each other and agree on a usable shared span.
+   */
+  attachment?: {
+    maxGap: number;
+    maxRise: number;
+    maxDrop: number;
+    minOverlap: number;
+  };
   edge: AssetJumpPair["edges"][number];
 }
 export interface AssetJumpPair {
@@ -617,7 +628,8 @@ export function validateAssetGameplay(
     const edge = segment.edge;
     if (
       typeof segment.long !== "boolean" ||
-      !point(segment.join, 3) ||
+      (segment.join !== undefined && !point(segment.join, 3)) ||
+      (segment.join === undefined && segment.attachment === undefined) ||
       !edge ||
       !jumpZones.has(edge.zone) ||
       !point(edge.a, 3) ||
@@ -625,6 +637,18 @@ export function validateAssetGameplay(
     )
       fail(`invalid jump segment or missing zone ${segment.id}`);
     usedJumpZones.add(edge.zone);
+    if (segment.attachment !== undefined) {
+      const rules = segment.attachment;
+      if (
+        !rules ||
+        ![rules.maxGap, rules.maxRise, rules.maxDrop, rules.minOverlap].every(Number.isFinite) ||
+        rules.maxGap <= 0 ||
+        rules.maxRise < 0 ||
+        rules.maxDrop < 0 ||
+        rules.minOverlap <= 0
+      )
+        fail(`invalid jump attachment ${segment.id}`);
+    }
   }
   for (const pair of data.jumpPairs ?? []) {
     feature(pair);

@@ -403,7 +403,8 @@ function compileAssetGameplayAttempt(
       jumpSegments.push({
         id: `${placement.id}/${segment.id}`,
         long: segment.long,
-        join: transform(segment.node, segment.join),
+        ...(segment.join ? { join: transform(segment.node, segment.join) } : {}),
+        ...(segment.attachment ? { attachment: segment.attachment } : {}),
         edge: {
           zone: `${placement.id}/${segment.edge.zone}`,
           a: transform(segment.node, segment.edge.a),

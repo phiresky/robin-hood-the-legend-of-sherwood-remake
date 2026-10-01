@@ -42,6 +42,7 @@ import {
   joinedNavigationCompilerFixture,
   nonrenderingVolumeCompilerFixture,
   crossAssetJumpCompilerFixture,
+  geometricJumpCompilerFixture,
   detachedJumpCompilerFixture,
   doorTransitionCompilerFixture,
   doorAnchorCompilerFixture,
@@ -181,6 +182,20 @@ test("cross-asset jumps export the geometry verified by the native traversal fix
     compileMap(document, [0, 0, 2000, 2000], assets).descriptor.asset_geometry,
     fixture.asset_geometry,
   );
+});
+
+test("rearranged geometric jumps export the native traversal fixture", async () => {
+  const { document, assets } = geometricJumpCompilerFixture();
+  const fixture = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/asset-jump-geometric.level.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
 });
 
 test("detached jump export keeps the complete copy with compact native zone references", async () => {

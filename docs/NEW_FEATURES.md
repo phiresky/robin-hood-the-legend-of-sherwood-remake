@@ -1,5 +1,11 @@
 # Post-port Features
 
+- **Placement-based jump connections.** Asset jump edges can declare gap, height
+  and overlap limits instead of exact connection sockets. Export pairs facing
+  parallel edges and clips them to a shared span, allowing new arrangements of
+  independently placed assets. Existing library sockets remain supported; adoption
+  of the new rules and jump-path obstruction checks are still pending.
+
 - **Exact multiplayer teams.** Local and online hosts choose one to five named
   playable characters independently of player count, including duplicates. A
   dedicated review screen supports replacing and removing each slot and warns

@@ -299,6 +299,20 @@ export function crossAssetJumpCompilerFixture() {
   return { ...fixture, upper };
 }
 
+export function geometricJumpCompilerFixture() {
+  const fixture = crossAssetJumpCompilerFixture();
+  for (const asset of [fixture.hut, fixture.upper]) {
+    const segment = asset.gameplay!.jumpSegments![0]!;
+    delete segment.join;
+    segment.attachment = { maxGap: 35, maxRise: 110, maxDrop: 110, minOverlap: 10 };
+  }
+  const placement = fixture.document.groups.find((group) => group.id === "jump-upper")!;
+  placement.transform.dx = 1;
+  placement.transform.dy = 110;
+  fixture.document.map = "Rearranged geometric jump fixture";
+  return fixture;
+}
+
 export function sightTransitionCompilerFixture() {
   const fixture = movementTransitionCompilerFixture();
   const shape = structuredClone(fixture.hut.parts[0]!.obstacle_local_game!);

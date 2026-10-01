@@ -12,7 +12,7 @@ import type {
 export function recoverJumpSegment(
   side: 0 | 1,
   ...args: Parameters<typeof recoverJumpGeometry>
-): { zone: AssetJumpZone; segment: AssetJumpSegment } {
+): { zone: AssetJumpZone; segment: AssetJumpSegment & { join: Vec3 } } {
   const [proto, pairIndex, node, localize, heightAt, receivingFootprints] = args;
   const sourcePair = proto.jump_line_pairs[pairIndex];
   if (!sourcePair) throw new Error(`Missing jump pair ${pairIndex}`);

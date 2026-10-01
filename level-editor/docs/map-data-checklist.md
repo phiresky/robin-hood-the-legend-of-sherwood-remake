@@ -1,7 +1,13 @@
 # Map data: editor → game
 
-Latest mask inventory: **2,935 unrecovered records** after the York projectile-mask
-publication below. Earlier batch totals are historical snapshots.
+The target is **new maps that play well**, assembled from reusable assets and
+editor-authored terrain. Connections must follow the current placement of those
+assets. Existing maps are regression examples, not a requirement to reproduce
+every input record or preserve original arrangements through supplementary data.
+
+Prioritize usable navigation, doors, sight, elevation and jumps in new layouts.
+Recovered record counts below are diagnostics, not acceptance criteria. The latest
+mask inventory is **2,935 unrecovered records**; earlier totals are historical snapshots.
 
 Compilation reads **placed assets and the editor scene only**. One-time recovery
 from existing levels may populate asset-local metadata; exporting never reads
@@ -11,6 +17,15 @@ with it. Global indices and connections are rebuilt after placement.
 **Status:** “Working” means implemented with focused tests, not verified parity
 with Derby/York. “Partial” identifies a remaining gap. “Planned” describes the
 intended construction, not functionality available today.
+
+**New-layout jump connections:** assets may author an oriented jump edge plus
+maximum gap, rise, drop and minimum overlap in map units. Export matches facing
+parallel edges at their current placements and trims them to their shared span;
+no original neighbour identity or connection coordinate is required. A rearranged
+two-asset fixture checks export and native routing with character skills and
+helper requirements. Existing exact sockets remain supported. Library migration,
+multiple destinations along one edge and blocked jump trajectories remain open;
+this is not automatic jump generation for every roof mesh.
 
 Current combined drafts recover all 27 map-source movement transitions.
 York's market assembly completes the movement-state ownership inventory.

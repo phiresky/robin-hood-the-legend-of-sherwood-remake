@@ -826,6 +826,26 @@ test("walkways and roof jumps reconnect to replacement assets without original n
     }
   }
 });
+test("geometric jump rules connect rearranged assets and preserve receiving zones", () => {
+  const { document, assets, hut, upper } = crossAssetJumpCompilerFixture();
+  const low = hut.gameplay!.jumpSegments![0]!,
+    high = upper.gameplay!.jumpSegments![0]!;
+  low.attachment = high.attachment = { maxGap: 35, maxRise: 110, maxDrop: 110, minOverlap: 10 };
+  delete low.join;
+  delete high.join;
+  const group = document.groups.find((g) => g.id === "jump-upper")!;
+  group.transform.dy = 100;
+  group.transform.dx = 1;
+  const moved = compileAssetGameplay(document, assets, bounds);
+  assert.equal(moved.jump_line_pairs!.length, 1);
+  assert.equal(moved.jump_zones!.length, 2);
+  assert.ok(!moved.warnings?.some((w) => w.includes("connection is unavailable")));
+  group.transform.dx = 10;
+  assert.equal(compileAssetGameplay(document, assets, bounds).jump_line_pairs, undefined);
+  low.attachment.maxGap = -1;
+  assert.throws(() => compileAssetGameplay(document, assets, bounds), /invalid jump attachment/);
+});
+
 test("detached edges do not remove landing zones used by another complete jump", () => {
   const { document, assets, hut } = jumpAssetCompilerFixture();
   const expected = compileAssetGameplay(document, assets, bounds);
