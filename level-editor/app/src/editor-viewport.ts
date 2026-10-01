@@ -2273,7 +2273,7 @@ export class EditorViewport {
             depthWrite: false,
             vertexColors: true,
             toneMapped: false,
-            depthTest: false,
+            depthTest: true,
             transparent: true,
             opacity: 0.8,
           }),
