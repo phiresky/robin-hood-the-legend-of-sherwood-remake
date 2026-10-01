@@ -26,6 +26,17 @@ impl MultiplayerAdmission {
     ) -> Result<(), MultiplayerSessionError> {
         *self = match (*self, event) {
             (
+                MultiplayerAdmission::WaitingForStart {
+                    frame: waiting_frame,
+                    start_epoch_ms: waiting_epoch,
+                },
+                MultiplayerAdmissionEvent::BeginSim {
+                    frame,
+                    start_epoch_ms,
+                },
+            ) if frame == waiting_frame && start_epoch_ms == waiting_epoch => *self,
+
+            (
                 MultiplayerAdmission::Running | MultiplayerAdmission::WaitingForStart { .. },
                 MultiplayerAdmissionEvent::HostResynchronizing { frame },
             ) => MultiplayerAdmission::HostWaitingForResyncBegin {
@@ -75,5 +86,36 @@ impl MultiplayerAdmission {
             }
         };
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn repeated_begin_is_idempotent_only_for_the_same_barrier() {
+        let mut state = MultiplayerAdmission::PeerWaitingForBegin {
+            snapshot_frame: 8101,
+        };
+        let begin = MultiplayerAdmissionEvent::BeginSim {
+            frame: 8101,
+            start_epoch_ms: 1234,
+        };
+        state.apply(begin).unwrap();
+        state.apply(begin).unwrap();
+        let waiting = state;
+        for event in [
+            MultiplayerAdmissionEvent::BeginSim {
+                frame: 8102,
+                start_epoch_ms: 1234,
+            },
+            MultiplayerAdmissionEvent::BeginSim {
+                frame: 8101,
+                start_epoch_ms: 1235,
+            },
+        ] {
+            assert!(state.apply(event).is_err());
+            assert_eq!(state, waiting);
+        }
     }
 }

@@ -355,8 +355,6 @@ impl MissionRuntime {
     /// Network ingress remains a driver concern and must run before this
     /// method. That ordering is observable for late multiplayer inputs.
     pub(super) fn begin_frame(&mut self, now_ms: u32) -> MissionFrame {
-        #[cfg(not(target_arch = "wasm32"))]
-        crate::diagnostic_context::frame(self.timeline.frame_number());
         self.timeline.lifecycle.reset_execution_trace();
         let mut frame = MissionFrame::new(now_ms);
         self.timeline
@@ -1017,6 +1015,11 @@ impl TimelineRuntime {
         )?;
         if result.rewrote_sim_state {
             self.history.reset_checker();
+            super::tick::refresh_live_sound_boundary(
+                &mut self.lifecycle.pending_external_facts.sound_boundary,
+                &manager.engine,
+                assets,
+            );
         }
         Ok(result)
     }
@@ -1127,6 +1130,8 @@ impl TimelineRuntime {
     /// Graphical networking can append current-frame inputs before this
     /// boundary; true headless creates an empty frame and opens it directly.
     pub(super) fn open_frame(&mut self, frame: &mut MissionFrame, engine: &Engine) {
+        #[cfg(not(target_arch = "wasm32"))]
+        crate::diagnostic_context::frame(self.frame_number());
         frame.bind_timeline(self.current_frame());
         assert!(
             frame.external_facts.is_empty(),
@@ -4355,6 +4360,16 @@ mod tests {
             &mut phase,
             MissionPhase::Simulation,
             MissionPhase::Bookkeeping,
+        );
+    }
+}
+
+impl MissionFrame {
+    pub(super) fn refresh_live_sound_boundary(&mut self, engine: &Engine, assets: &LevelAssets) {
+        super::tick::refresh_live_sound_boundary(
+            &mut self.external_facts.sound_boundary,
+            engine,
+            assets,
         );
     }
 }

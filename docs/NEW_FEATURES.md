@@ -1841,6 +1841,15 @@ debug log (up to 32 MiB), and active replay JSON files (up to 224 MiB decoded). 
 oversized replay attachments are explicitly reported. Logs and replays can
 contain player names, local paths and gameplay.
 
+Native game-thread panics suppress the secondary “terminated without publishing
+an exit code” report only after the panic report is safely queued. Both graphical
+and headless frame loops update the diagnostic mission frame.
+
+The native script HTTP server tries successive loopback ports when its requested
+port is already occupied (for example, 17640 → 17641). The startup log records
+the actual listening address; `--http-server 0` still disables the server. Other
+socket errors and exhaustion at port 65535 remain explicit startup errors.
+
 Native reports also attach versioned `native-context.json`: the last observed
 lifecycle stage, mission and timeline frame, headless/replay/multiplayer mode,
 selected datadir and core overlay path, successfully mounted mod overlay paths,

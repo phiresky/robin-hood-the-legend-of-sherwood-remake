@@ -985,6 +985,9 @@ impl Engine {
             elapsed_ms = topology_started.elapsed().as_secs_f64() * 1000.0,
             "engine construction: gate and Original topology"
         );
+        if let Err(error) = inner.validate_mission_script_classes(assets) {
+            return Err((error, inner.into_campaign()));
+        }
         let initialize_started = web_time::Instant::now();
         inner.initialize(assets);
         tracing::debug!(

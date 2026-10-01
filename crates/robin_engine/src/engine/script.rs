@@ -2088,6 +2088,64 @@ impl EngineInner {
         }
     }
 
+    /// Reject broken content before script initialization mutates the world.
+    pub(crate) fn validate_mission_script_classes(
+        &self,
+        assets: &LevelAssets,
+    ) -> Result<(), EngineError> {
+        if assets.attachments.spellforge_runtime.is_some() {
+            return Ok(());
+        }
+        let check = |class: &str, owner: String| -> Result<(), EngineError> {
+            if class.is_empty()
+                || self
+                    .scripts
+                    .mission
+                    .as_ref()
+                    .is_some_and(|script| script.manager.find_class(class).is_some())
+            {
+                return Ok(());
+            }
+            Err(EngineError::MissionLevelStage {
+                stage: "script class validation",
+                reason: format!(
+                    "{owner} references script class '{class}' missing from the loaded SCB; install matching level and script files or correct the mod"
+                ),
+            })
+        };
+        for (id, entity) in self.world.entities.actors() {
+            check(
+                &entity.actor_data().expect("actor iterator").script_class,
+                format!("Actor {id:?}"),
+            )?;
+        }
+        for (id, target) in self.world.entities.targets() {
+            check(&target.target.script_class, format!("Target {id:?}"))?;
+        }
+        for (id, scroll) in self.world.entities.scrolls() {
+            check(&scroll.script_class, format!("Scroll {id:?}"))?;
+        }
+        for (path_idx, path) in assets.navigation.hiking_paths.iter().enumerate() {
+            for (wp_idx, wp) in path.waypoints.iter().enumerate() {
+                if let crate::level_data::WaypointCommand::Script(class) = &wp.command {
+                    check(class, format!("Waypoint (path {path_idx}, wp {wp_idx})"))?;
+                }
+            }
+        }
+        for (index, zone) in self.script_domains.zones.scripts.iter().enumerate() {
+            if zone.script_associated {
+                let class = zone.script_class_name.as_deref().ok_or_else(|| {
+                    EngineError::MissionLevelStage {
+                        stage: "script class validation",
+                        reason: format!("Script-associated zone {index} has no class name"),
+                    }
+                })?;
+                check(class, format!("Zone {index}"))?;
+            }
+        }
+        Ok(())
+    }
+
     /// Initialize the loaded mission script.
     ///
     /// Three-phase init:

@@ -2844,3 +2844,38 @@ fn journal_replays_paused_sound_resolutions_before_the_next_fifo_entry() {
         .expect("missing sound boundary is rejected");
     assert!(matches!(error, ReplayError::Admission { frame: 1, .. }));
 }
+
+#[test]
+fn cold_construction_detaches_production_sectors_from_previous_world() {
+    let mut campaign = crate::campaign::Campaign::default();
+    let sector = &mut campaign.production_sectors[5];
+    sector.script_zone = Some(3);
+    sector.amount = 17;
+    let inner = super::super::EngineInner::new_with_campaign(campaign);
+    let sector = &inner.campaign().production_sectors[5];
+    assert_eq!(sector.script_zone, None);
+    assert_eq!(sector.amount, 17);
+}
+
+#[test]
+fn missing_waypoint_script_is_a_recoverable_content_error() {
+    let inner = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    assets.navigation.hiking_paths = vec![crate::level_data::RawHikingPath {
+        waypoints: vec![crate::level_data::RawWaypoint {
+            x: 0,
+            y: 0,
+            sector: 0,
+            level: 0,
+            command: crate::level_data::WaypointCommand::Script("prova".into()),
+        }],
+    }]
+    .into();
+    let error = inner
+        .validate_mission_script_classes(&assets)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("prova"));
+    assert!(error.contains("path 0, wp 0"));
+    assert!(error.contains("matching level and script files"));
+}

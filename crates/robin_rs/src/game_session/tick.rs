@@ -123,39 +123,57 @@ fn resolve_audio_boundary(
     if playing_back {
         return None;
     }
-    let resolved_exclamations: Vec<_> = resolved_exclamations
-        .into_iter()
-        .map(|resolved| {
-            let pending = engine
-                .sound_sim()
-                .pending_exclamations
-                .iter()
-                .find(|pending| {
-                    pending.actor_id == resolved.actor_id
-                        && pending.exclamation_id == resolved.exclamation_id
-                        && ((pending.profile_id & 0xFFFF_0000)
-                            | u32::from(pending.exclamation_id))
-                            == resolved.identifier
-                })
-                .unwrap_or_else(|| {
-                    panic!(
-                        "host resolved speech ({}, {}, {}) without its authoritative pending request",
-                        resolved.actor_id, resolved.identifier, resolved.exclamation_id
-                    )
-                });
+    // Presentation queues are not rolled back. After reconstruction they can
+    // omit newly pending speech or retain already-consumed speech. Resolve the
+    // canonical FIFO using immutable timing metadata, never mixer queue order.
+    let _ = resolved_exclamations;
+    resolve_pending_speech(
+        &engine.sound_sim().pending_exclamations,
+        assets.audio.speech_timing_catalog(),
+    )
+}
+
+/// A network correction invalidates a live mixer boundary sampled from the
+/// abandoned state. Recorded replay boundaries retain their original authority.
+pub(super) fn refresh_live_sound_boundary(
+    boundary: &mut Option<engine_api::SoundBoundary>,
+    engine: &engine_api::Engine,
+    assets: &engine_api::LevelAssets,
+) {
+    if let Some(boundary) = boundary
+        && matches!(boundary.policy, engine_api::SoundBoundaryPolicy::Live)
+    {
+        *boundary = resolve_pending_speech(
+            &engine.sound_sim().pending_exclamations,
+            assets.audio.speech_timing_catalog(),
+        )
+        .unwrap_or_else(|| engine_api::SoundBoundary::live(Vec::new()));
+    }
+}
+
+fn resolve_pending_speech(
+    pending: &[robin_engine::sound::PendingExclamation],
+    catalog: &engine_api::SpeechTimingCatalog,
+) -> Option<engine_api::SoundBoundary> {
+    let resolutions: Vec<_> = pending
+        .iter()
+        .map(|pending| {
+            let identifier = (pending.profile_id & 0xFFFF_0000) | u32::from(pending.exclamation_id);
             let duration_frames = robin_engine::audio_durations::speech_duration_frames(
-                assets.audio.speech_timing_catalog(), resolved.identifier, pending.variant,
-            ).unwrap_or_else(|error| panic!("{error}"));
+                catalog,
+                identifier,
+                pending.variant,
+            )
+            .unwrap_or_else(|error| panic!("{error}"));
             robin_engine::sound::ResolvedExclamation {
-                actor_id: resolved.actor_id,
-                identifier: resolved.identifier,
-                exclamation_id: resolved.exclamation_id,
+                actor_id: pending.actor_id,
+                identifier,
+                exclamation_id: pending.exclamation_id,
                 duration_frames,
             }
         })
         .collect();
-    (!resolved_exclamations.is_empty())
-        .then_some(engine_api::SoundBoundary::live(resolved_exclamations))
+    (!resolutions.is_empty()).then_some(engine_api::SoundBoundary::live(resolutions))
 }
 
 /// Apply pending host presentation updates before `render_frame`.
@@ -1405,8 +1423,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "without its authoritative pending request")]
-    fn live_audio_still_rejects_speech_without_a_pending_request() {
+    fn live_audio_ignores_stale_mixer_speech_after_reconstruction() {
         let (assets, manager, _, _, _, _) = stepping_fixture(None);
         let resolved = crate::sound::ResolvedHostExclamation {
             actor_id: 126,
@@ -1414,7 +1431,66 @@ mod tests {
             exclamation_id: 0,
             length_ms: 1000,
         };
-        resolve_audio_boundary(&manager.engine, &assets, vec![resolved], false);
+        assert!(resolve_audio_boundary(&manager.engine, &assets, vec![resolved], false).is_none());
+    }
+
+    #[test]
+    fn network_correction_drops_stale_live_resolution_but_preserves_replay_facts() {
+        let (assets, manager, _, _, _, _) = stepping_fixture(None);
+        let stale = robin_engine::sound::ResolvedExclamation {
+            actor_id: 142,
+            identifier: 0x5742_000b,
+            exclamation_id: 11,
+            duration_frames: 25,
+        };
+        let mut live = Some(engine_api::SoundBoundary::live(vec![stale.clone()]));
+        refresh_live_sound_boundary(&mut live, &manager.engine, &assets);
+        assert!(live.unwrap().resolutions.is_empty());
+        let mut recorded = Some(engine_api::SoundBoundary::replay(vec![stale]));
+        refresh_live_sound_boundary(&mut recorded, &manager.engine, &assets);
+        assert_eq!(recorded.unwrap().resolutions.len(), 1);
+    }
+
+    #[test]
+    fn reconstructed_speech_resolves_the_complete_canonical_fifo() {
+        use robin_engine::sound::{ExclamationGroup, PendingExclamation};
+        let catalog = engine_api::SpeechTimingCatalog {
+            groups: [30u16, 11]
+                .into_iter()
+                .map(|id| {
+                    (
+                        0x5742_0000 | u32::from(id),
+                        engine_api::SpeechTimingGroup {
+                            gaps: 0,
+                            variants: vec![engine_api::SpeechTimingVariant {
+                                sample_identity: "fixture.wav".into(),
+                                duration_frames: Some(25),
+                            }],
+                        },
+                    )
+                })
+                .collect(),
+        };
+        let pending: Vec<_> = [(141, 30), (142, 11)]
+            .into_iter()
+            .map(|(actor_id, exclamation_id)| PendingExclamation {
+                actor_id,
+                exclamation_id,
+                profile_id: 0x5742_0000,
+                group: ExclamationGroup::Civilian,
+                variant: -1,
+            })
+            .collect();
+        let boundary = resolve_pending_speech(&pending, &catalog).unwrap();
+        assert_eq!(
+            boundary
+                .resolutions
+                .iter()
+                .map(|r| r.actor_id)
+                .collect::<Vec<_>>(),
+            vec![141, 142]
+        );
+        assert!(boundary.resolutions.iter().all(|r| r.duration_frames == 25));
     }
 
     fn stepping_fixture(

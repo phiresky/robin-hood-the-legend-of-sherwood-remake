@@ -84,7 +84,9 @@ pub(crate) enum SessionProtocolFailure {
     InitialSpellforgeAttach(String),
     #[error("multiplayer: failed to attach Spellforge runtime at frame {frame}: {detail}")]
     SpellforgeAttach { frame: u32, detail: String },
-    #[error("multiplayer: rejected incompatible frame-0 host snapshot: {0}")]
+    #[error(
+        "multiplayer: rejected incompatible frame-0 host snapshot: {0}. Host and client must use matching game data and mission mods; check for local overlays replacing the selected level"
+    )]
     InitialSnapshotIncompatible(#[source] robin_engine::engine::SnapshotRestoreError),
     #[error("multiplayer: rejected incompatible host snapshot at frame {frame}: {source}")]
     SnapshotIncompatible {

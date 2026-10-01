@@ -642,7 +642,14 @@ impl EngineInner {
     /// Create the deterministic kernel for a live mission. Downstream crates
     /// construct through the [`Engine`] facade, so every production path must
     /// supply the campaign up front.
-    pub(crate) fn new_with_campaign(campaign: crate::campaign::Campaign) -> Self {
+    pub(crate) fn new_with_campaign(mut campaign: crate::campaign::Campaign) -> Self {
+        // These references belong to the previous world's script zones and
+        // positions. Cold construction rebinds them; saved amounts and occupants
+        // remain campaign-owned and are applied after script initialization.
+        for sector in &mut campaign.production_sectors {
+            sector.script_zone = None;
+            sector.production_points.clear();
+        }
         // Engine starts with canonical seat 0. This is not "the local
         // player"; every peer has the same seat table, and joined peers
         // add deterministic seats via `ConnectSeat`.

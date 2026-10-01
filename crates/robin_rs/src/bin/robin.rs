@@ -592,6 +592,73 @@ mod crash_report_tests {
     }
 
     #[test]
+    fn duplicate_report_child() {
+        if std::env::var_os("ROBIN_DUPLICATE_REPORT_TEST_CHILD").is_none() {
+            return;
+        }
+        use robin_run_protocol::diagnostics::DiagnosticKindV1;
+        std::thread::Builder::new()
+            .name("robin-game".into())
+            .spawn(|| {
+                robin_rs::bug_report::capture_failure(
+                    DiagnosticKindV1::Panic,
+                    "primary game panic",
+                    None,
+                );
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+        robin_rs::bug_report::capture_failure(
+            DiagnosticKindV1::FatalError,
+            "game thread terminated without publishing an exit code",
+            None,
+        );
+        robin_rs::bug_report::capture_failure(
+            DiagnosticKindV1::FatalError,
+            "independent failure",
+            None,
+        );
+    }
+
+    #[test]
+    fn saved_game_panic_suppresses_only_secondary_termination_report() {
+        let directory = tempfile::tempdir().unwrap();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "crash_report_tests::duplicate_report_child",
+                "--nocapture",
+            ])
+            .env("ROBIN_DUPLICATE_REPORT_TEST_CHILD", "1")
+            .env("XDG_DATA_HOME", directory.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let mut descriptions: Vec<String> =
+            std::fs::read_dir(directory.path().join("robin_hood/reports"))
+                .unwrap()
+                .map(|entry| {
+                    let report: robin_run_protocol::diagnostics::DiagnosticReportV1 =
+                        serde_json::from_reader(
+                            std::fs::File::open(entry.unwrap().path()).unwrap(),
+                        )
+                        .unwrap();
+                    report.description
+                })
+                .collect();
+        descriptions.sort();
+        assert_eq!(
+            descriptions,
+            vec!["independent failure", "primary game panic"]
+        );
+    }
+
+    #[test]
     fn panic_hook_persists_report_before_process_exit() {
         let directory = tempfile::tempdir().unwrap();
         let output = std::process::Command::new(std::env::current_exe().unwrap())

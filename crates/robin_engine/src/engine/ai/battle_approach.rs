@@ -465,8 +465,7 @@ impl AiOwnerCtx<'_> {
                         .engine
                         .expect_entity(self.owner, "approach rider")
                         .soldier_data()
-                        .unwrap()
-                        .rider
+                        .is_some_and(|soldier| soldier.rider)
                     && !lift,
                 true,
             ),
@@ -484,8 +483,7 @@ impl AiOwnerCtx<'_> {
             .engine
             .expect_entity(self.owner, "approach rider")
             .soldier_data()
-            .unwrap()
-            .rider
+            .is_some_and(|soldier| soldier.rider)
             && self.execute_ai_maybe_make_rider_attack()
         {
             return;
@@ -511,8 +509,7 @@ impl AiOwnerCtx<'_> {
             .engine
             .expect_entity(self.owner, "approach rider")
             .soldier_data()
-            .unwrap()
-            .rider;
+            .is_some_and(|soldier| soldier.rider);
         if self
             .engine
             .actor_command(self.engine.approach_primary(self.owner)) as u16
@@ -1053,6 +1050,31 @@ mod tests {
                             .command
                             == crate::element::Command::EnterSwordfight
                 })
+        );
+    }
+
+    #[test]
+    fn ai_controlled_hero_can_approach_without_soldier_data() {
+        let (mut engine, assets, soldier, _, target) = prepare_approach(50);
+        let brain = engine
+            .expect_entity(soldier, "fixture")
+            .ai_actor_data()
+            .unwrap()
+            .clone();
+        let mut hero = make_test_pc(Posture::Upright);
+        hero.pc_data_mut().unwrap().ai = Some(Box::new(brain));
+        let owner = engine.add_test_entity(hero);
+        let sector = engine.sector_of(soldier);
+        engine.elem_mut(owner).set_sector(sector);
+        move_actor(&mut engine, owner, 100.0, 500.0);
+        move_actor(&mut engine, target, 140.0, 500.0);
+        engine.enter_ai_think_frame(owner);
+        engine
+            .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+            .execute_ai_reconsider_enemy_approach(false);
+        assert_eq!(
+            engine.enemy(owner).base.current_substate,
+            Substate::AttackingSwordfight
         );
     }
 

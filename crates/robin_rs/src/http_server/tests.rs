@@ -129,6 +129,18 @@ mod transport_lifecycle_tests {
     }
 
     #[test]
+    fn occupied_port_uses_next_available_port() {
+        let occupied = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = occupied.local_addr().unwrap().port();
+        let replay = Arc::new(crate::replay_service::ReplayService::default());
+        let server = start(port, replay.exports(), replay.launches()).unwrap();
+        assert!(server.bind_addr.port() > port);
+        assert!(std::net::TcpStream::connect(server.bind_addr).is_ok());
+        // The original listener is still alive; retrying did not share its port.
+        assert_eq!(occupied.local_addr().unwrap().port(), port);
+    }
+
+    #[test]
     fn socket_disconnect_cancels_queued_and_deferred_requests() {
         for deferred in [false, true] {
             let (mut transport, _) = running();

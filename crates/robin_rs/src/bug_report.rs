@@ -17,6 +17,7 @@ const LOG_LIMIT: usize = MAX_DIAGNOSTIC_LOG_BYTES;
 static LOG: Mutex<VecDeque<u8>> = Mutex::new(VecDeque::new());
 static DROPPED_LOG_BYTES: AtomicUsize = AtomicUsize::new(0);
 static REPLAY: Mutex<Option<PathBuf>> = Mutex::new(None);
+static GAME_PANIC_SAVED: AtomicBool = AtomicBool::new(false);
 static UPLOADING: AtomicBool = AtomicBool::new(false);
 static MESSAGES: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());
 
@@ -215,8 +216,22 @@ fn persist(directory: &Path, report: &DiagnosticReportV1) -> Result<PathBuf> {
 /// Panic capture is disk-only. Upload on the next launch, outside the panic hook.
 #[allow(clippy::print_stderr)]
 pub fn capture_failure(kind: DiagnosticKindV1, description: &str, backtrace: Option<String>) {
+    if matches!(kind, DiagnosticKindV1::FatalError)
+        && description == "game thread terminated without publishing an exit code"
+        && GAME_PANIC_SAVED.load(Ordering::Acquire)
+    {
+        tracing::info!("Game thread panic already queued; omitting secondary termination report");
+        return;
+    }
     match capture(kind, description, backtrace) {
-        Ok(path) => eprintln!("Diagnostic report queued: {}", path.display()),
+        Ok(path) => {
+            if matches!(kind, DiagnosticKindV1::Panic)
+                && std::thread::current().name() == Some("robin-game")
+            {
+                GAME_PANIC_SAVED.store(true, Ordering::Release);
+            }
+            eprintln!("Diagnostic report queued: {}", path.display());
+        }
         Err(error) => eprintln!("Failed to queue diagnostic report: {error:#}"),
     }
 }

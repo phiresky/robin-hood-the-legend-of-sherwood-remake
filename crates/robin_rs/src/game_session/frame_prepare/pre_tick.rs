@@ -23,6 +23,9 @@ fn drain_pre_tick_network(
         .lifecycle_mut()
         .trace(FrameContractStage::SecondNetworkDrain);
     let drain = drain_mission_network(runtime, host, manager, assets, false, current_epoch_ms())?;
+    if drain.rewrote_sim_state {
+        frame.refresh_live_sound_boundary(&manager.engine, assets);
+    }
     if drain.rollback.is_some() {
         // Late input invalidates the capture opened before local input/UI.
         // Reconstruction returns to this same pre-tick frame; retain its

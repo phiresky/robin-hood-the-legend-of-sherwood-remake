@@ -225,19 +225,38 @@ pub(super) fn start(
         .map_err(|e| format!("HTTP runtime: {e}"))?;
     let listener = {
         let _entered = runtime.enter();
-        let socket = tokio::net::TcpSocket::new_v4().map_err(|e| format!("HTTP socket: {e}"))?;
-        // Reuse a stopped listener's address after accepted connections enter
-        // TIME_WAIT. Do not enable Windows SO_REUSEADDR's port-sharing semantics.
-        #[cfg(unix)]
-        socket
-            .set_reuseaddr(true)
-            .map_err(|e| format!("HTTP socket reuse: {e}"))?;
-        socket.bind(std::net::SocketAddr::from(([127, 0, 0, 1], port))).map_err(|e| {
-            format!("script HTTP server failed to bind 127.0.0.1:{port}: {e} (another robin instance? pass `--http-server 0` to disable, or `--http-server <port>` to pick a different port)")
-        })?;
-        socket
-            .listen(128)
-            .map_err(|e| format!("HTTP listen: {e}"))?
+        let mut candidate = port;
+        loop {
+            let socket =
+                tokio::net::TcpSocket::new_v4().map_err(|e| format!("HTTP socket: {e}"))?;
+            // Reuse TIME_WAIT sockets without enabling Windows port sharing.
+            #[cfg(unix)]
+            socket
+                .set_reuseaddr(true)
+                .map_err(|e| format!("HTTP socket reuse: {e}"))?;
+            let result = socket
+                .bind(std::net::SocketAddr::from(([127, 0, 0, 1], candidate)))
+                .and_then(|()| socket.listen(128));
+            match result {
+                Ok(listener) => break listener,
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::AddrInUse
+                        && candidate < u16::MAX
+                        && candidate != 0 =>
+                {
+                    tracing::info!(
+                        port = candidate,
+                        "Script HTTP port occupied; trying the next port"
+                    );
+                    candidate += 1;
+                }
+                Err(error) => {
+                    return Err(format!(
+                        "script HTTP server failed to bind 127.0.0.1:{candidate}: {error}"
+                    ));
+                }
+            }
+        }
     };
     let bind_addr = listener
         .local_addr()
