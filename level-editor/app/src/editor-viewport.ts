@@ -27,6 +27,9 @@ import { SunLighting } from "./sun-lighting.ts";
 import { SplineLayer, type SplineEditMode } from "./spline-layer.ts";
 import type { ExternalAssetSource } from "@rle/shared";
 import * as THREE from "three";
+import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
+import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
+import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import {
@@ -2257,13 +2260,17 @@ export class EditorViewport {
         const q = gameToScene(d.camera, ...b);
         pts.push(p[0], p[1], p[2] + 1, q[0], q[1], q[2] + 1);
       }
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
-      geo.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+      if (pts.length === 0) return;
+      const geo = new LineSegmentsGeometry();
+      geo.setPositions(pts);
+      geo.setColors(colors);
       this.overlayRoot.add(
-        new THREE.LineSegments(
+        new LineSegments2(
           geo,
-          new THREE.LineBasicMaterial({
+          new LineMaterial({
+            linewidth: 2.5,
+            worldUnits: false,
+            depthWrite: false,
             vertexColors: true,
             toneMapped: false,
             depthTest: false,

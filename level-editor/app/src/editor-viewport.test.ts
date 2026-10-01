@@ -1244,7 +1244,7 @@ test("elevation overlay follows modeled terrain revisions without reference-map 
   const document = { ...documentFixture(), objects: [], groups: [], terrain };
   const overlay = (viewport as unknown as { overlayRoot: THREE.Group }).overlayRoot;
   const positions = () =>
-    (overlay.children[0] as THREE.LineSegments).geometry.getAttribute("position");
+    (overlay.children[0] as THREE.LineSegments).geometry.getAttribute("instanceStart");
   publish(document);
   assert.ok(positions().count > 0);
   const initial = positions();
@@ -1255,7 +1255,7 @@ test("elevation overlay follows modeled terrain revisions without reference-map 
   );
   const flattened = { ...document, terrain: createTerrainGrid([0, 0, 128, 128], 128, 0) };
   publish(flattened, false, true);
-  assert.equal(positions().count, 0);
+  assert.equal(overlay.children.length, 0);
   assert.ok(disposed);
   publish(document, false, true);
   assert.deepEqual(Array.from(positions().array), Array.from(initial.array));
