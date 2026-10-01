@@ -2239,18 +2239,33 @@ export class EditorViewport {
             [e.point_a[0], e.point_a[1], 0],
             [e.point_b[0], e.point_b[1], 0],
           ]);
+      const colors: number[] = [];
+      let minHeight = Infinity,
+        maxHeight = -Infinity;
+      for (const [a] of segments) {
+        minHeight = Math.min(minHeight, a[2]);
+        maxHeight = Math.max(maxHeight, a[2]);
+      }
+      const color = new THREE.Color();
       for (const [a, b] of segments) {
+        if (d.terrain) {
+          const height = maxHeight > minHeight ? (a[2] - minHeight) / (maxHeight - minHeight) : 0.5;
+          color.setHSL(((1 - height) * 2) / 3, 1, 0.5);
+        } else color.setHex(0xff70d0);
+        colors.push(color.r, color.g, color.b, color.r, color.g, color.b);
         const p = gameToScene(d.camera, ...a);
         const q = gameToScene(d.camera, ...b);
         pts.push(p[0], p[1], p[2] + 1, q[0], q[1], q[2] + 1);
       }
       const geo = new THREE.BufferGeometry();
       geo.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
+      geo.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
       this.overlayRoot.add(
         new THREE.LineSegments(
           geo,
           new THREE.LineBasicMaterial({
-            color: 0xff70d0,
+            vertexColors: true,
+            toneMapped: false,
             depthTest: false,
             transparent: true,
             opacity: 0.8,
