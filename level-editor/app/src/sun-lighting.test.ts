@@ -26,6 +26,13 @@ test("sun direction, caster exclusions, and borrowed terrain resource ownership"
   );
   assert.equal(caster.castShadow, true);
   assert.equal(water.castShadow, false);
+  assert.equal(lighting.sun.shadow.intensity, settings.shadowOpacity);
+  const receiver = lighting.root.children.find((node) => node instanceof THREE.Mesh) as THREE.Mesh;
+  assert.equal((receiver.material as THREE.ShadowMaterial).opacity, 1);
+  lighting.sync(undefined, [caster, water], new THREE.Box3());
+  assert.equal(lighting.sun.visible, false);
+  assert.equal(receiver.visible, false);
+  assert.equal(lighting.ambient.intensity, Math.PI);
   lighting.setGround(null);
   lighting.dispose();
   assert.equal(disposed, 0);

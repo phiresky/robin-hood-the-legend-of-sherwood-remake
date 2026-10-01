@@ -1,5 +1,5 @@
 <!doctype html><html><head><meta charset="utf-8"><title>Terrain sun regression</title></head><body><pre id="result">RUNNING</pre><script type="module">
 import { checkTerrainSunShadows } from './terrain-sun.ts';
-try { checkTerrainSunShadows(); document.querySelector('#result').textContent = 'PASS sun shadows render on editable terrain and disappear when disabled'; }
+try { checkTerrainSunShadows(); document.querySelector('#result').textContent = 'PASS object and terrain shadows render, disable cleanly, and export with unchanged depth'; }
 catch (error) { document.querySelector('#result').textContent = 'FAIL ' + (error.stack ?? error); }
 </script></body></html>

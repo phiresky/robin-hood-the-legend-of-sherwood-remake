@@ -112,9 +112,9 @@ export function contentBakeBounds(
 }
 
 function depthMaterial(source: THREE.Material, camera: MapCamera, bounds: BakeBounds) {
-  if (!(source instanceof THREE.MeshBasicMaterial))
+  if (!(source instanceof THREE.MeshBasicMaterial || source instanceof THREE.MeshLambertMaterial))
     throw new Error(
-      `Cannot compile depth for material ${source.name || source.type}. Expected an unlit map material.`,
+      `Cannot compile depth for material ${source.name || source.type}. Expected a map or terrain material.`,
     );
   const material = source.clone();
   if (source.userData.terrainMaterialBlend) {

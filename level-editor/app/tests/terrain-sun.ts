@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { createTerrainGrid, type Level3D } from "@rle/shared";
 import { TerrainLayer } from "../src/terrain-layer.ts";
 import { SunLighting } from "../src/sun-lighting.ts";
+import { bakeScene, renderMapBake } from "../src/map-bake-render.ts";
 
 export function checkTerrainSunShadows() {
   const renderer = new THREE.WebGLRenderer();
@@ -39,15 +40,58 @@ export function checkTerrainSunShadows() {
       [caster],
       new THREE.Box3().setFromObject(terrain.root).expandByObject(caster),
     );
+    sun.sun.shadow.intensity = 0;
+    const litWithoutShadows = render();
+    sun.sun.shadow.intensity = 0.7;
     const withShadows = render();
     let darkened = 0;
-    for (let i = 0; i < without.length; i += 4) if (without[i]! - withShadows[i]! > 10) darkened++;
+    for (let i = 0; i < without.length; i += 4)
+      if (litWithoutShadows[i]! - withShadows[i]! > 10) darkened++;
     if (darkened < 50)
       throw new Error(`Editable terrain did not receive sun shadows (${darkened} pixels)`);
     sun.sync(undefined, [caster], new THREE.Box3().setFromObject(terrain.root));
     const disabled = render();
     if (disabled.some((value, i) => value !== without[i]))
       throw new Error("Disabling sun left shadows on terrain");
+    // A raised ridge must shadow the flat land west of it, without object casters.
+    caster.visible = false;
+    const ridge = createTerrainGrid([0, 0, 400, 400], 50, 0);
+    for (const vertex of ridge.vertices) if (vertex.position[0] === 250) vertex.position[2] = 120;
+    terrain.sync({
+      camera: { kind: "oblique-orthographic", elevation_deg: 35 },
+      terrain: ridge,
+    } as Level3D);
+    sun.setGround(terrain.root);
+    sun.sync(
+      { enabled: true, sunAzimuth: 90, sunElevation: 35, shadowOpacity: 1 },
+      [terrain.root],
+      new THREE.Box3().setFromObject(terrain.root),
+    );
+    sun.sun.shadow.intensity = 0;
+    const ridgeUnshadowed = render();
+    sun.sun.shadow.intensity = 1;
+    const ridgeShadowed = render();
+    let terrainShadowPixels = 0;
+    for (let i = 0; i < ridgeUnshadowed.length; i += 4)
+      if (ridgeUnshadowed[i]! - ridgeShadowed[i]! > 10) terrainShadowPixels++;
+    if (terrainShadowPixels < 100)
+      throw new Error(`Terrain ridge did not cast shadows (${terrainShadowPixels} pixels)`);
+    const bake = (shadowOpacity: number) =>
+      renderMapBake(
+        bakeScene([terrain.root]),
+        { kind: "oblique-orthographic", elevation_deg: 35 },
+        [0, 0, 400, 400],
+        { enabled: true, sunAzimuth: 90, sunElevation: 35, shadowOpacity },
+      );
+    const unshadowedBake = bake(0);
+    const shadowedBake = bake(1);
+    let bakedShadowPixels = 0;
+    for (let i = 0; i < shadowedBake.color.length; i += 4)
+      if (unshadowedBake.color[i]! - shadowedBake.color[i]! > 10) bakedShadowPixels++;
+    if (bakedShadowPixels < 100)
+      throw new Error(`Export lost terrain shadows (${bakedShadowPixels} pixels)`);
+    if (shadowedBake.depth.some((value, i) => value !== unshadowedBake.depth[i]))
+      throw new Error("Lighting changed exported terrain depth");
   } finally {
     sun.dispose();
     terrain.clear();

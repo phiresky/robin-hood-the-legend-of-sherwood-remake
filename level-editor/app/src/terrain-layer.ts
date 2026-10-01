@@ -88,7 +88,7 @@ export class TerrainLayer {
     for (const b of batches.values()) {
       const mixed = b.mixes.map(mixture),
         maps = mixed.map((m) => m.texture);
-      const material = new THREE.MeshBasicMaterial({
+      const material = new THREE.MeshLambertMaterial({
         map: maps[0],
         side: THREE.DoubleSide,
       });
@@ -129,7 +129,8 @@ export class TerrainLayer {
       const mesh = new THREE.Mesh(geometry, material);
       mesh.userData.terrainSurface = true;
       mesh.userData.terrainCells = b.cells;
-      mesh.userData.noSunShadow = true;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
       this.root.add(mesh);
     }
     this.terrain = document.terrain;

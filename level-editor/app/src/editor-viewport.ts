@@ -1773,7 +1773,7 @@ export class EditorViewport {
 
   private refreshSunLighting(bounds = this.contentBox()) {
     const settings = this.bindings.document()?.lighting;
-    this.sunlight.sync(settings, [this.objectsRoot, this.splines.root], bounds);
+    this.sunlight.sync(settings, [this.objectsRoot, this.splines.root, this.terrain.root], bounds);
     if (this.renderer) {
       this.renderer.shadowMap.enabled = !!settings?.enabled;
       this.renderer.shadowMap.needsUpdate = true;

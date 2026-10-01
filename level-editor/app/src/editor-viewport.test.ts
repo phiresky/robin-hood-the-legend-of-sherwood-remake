@@ -1146,7 +1146,7 @@ test("camera turns orbit their focus without cutting inward and interrupt withou
   viewport.dispose();
 });
 
-test("sun shadow receivers follow editable terrain replacement and retirement", () => {
+test("lit terrain casts and receives shadows after replacement and retirement", () => {
   const { viewport, publish } = fixture();
   const document = {
     ...documentFixture(),
@@ -1167,13 +1167,11 @@ test("sun shadow receivers follow editable terrain replacement and retirement", 
     return meshes;
   };
   publish(document);
-  assert.ok(
-    receivers().length > 0,
-    "Editable ground must receive sun shadows without a loaded ground asset",
-  );
-  const original = receivers()[0]!;
-  assert.equal(original.geometry, (internal.terrain.root.children[0] as THREE.Mesh).geometry);
+  assert.equal(receivers().length, 0, "Lit terrain does not need a shadow overlay");
+  const original = internal.terrain.root.children[0] as THREE.Mesh;
+  assert.ok(original.material instanceof THREE.MeshLambertMaterial);
   assert.equal(original.receiveShadow, true);
+  assert.equal(original.castShadow, true);
   const raised = {
     ...document,
     terrain: {
@@ -1185,11 +1183,11 @@ test("sun shadow receivers follow editable terrain replacement and retirement", 
     },
   };
   publish(raised);
-  assert.notEqual(receivers()[0]!.geometry, original.geometry);
-  assert.equal(
-    receivers()[0]!.geometry,
-    (internal.terrain.root.children[0] as THREE.Mesh).geometry,
-  );
+  const replacement = internal.terrain.root.children[0] as THREE.Mesh;
+  assert.notEqual(replacement.geometry, original.geometry);
+  assert.equal(replacement.receiveShadow, true);
+  assert.equal(replacement.castShadow, true);
+  assert.equal(receivers().length, 0);
   publish({ ...document, terrain: undefined });
   assert.equal(receivers().length, 0);
   viewport.dispose();
