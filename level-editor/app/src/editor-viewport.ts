@@ -1683,8 +1683,9 @@ export class EditorViewport {
       this.partViews.delete(id);
     }
     if (!rebuildFraming) {
-      // Transform edits only need to move existing wrappers. Rebuilding the
-      // projection point cache below walks every vertex in every imported mesh;
+      // Incremental revisions still change lighting, casters, and terrain bounds.
+      this.refreshSunLighting();
+      // Rebuilding the projection point cache below walks every vertex in every imported mesh;
       // doing that for each 15° button press makes a large map appear frozen.
       this.refreshSelectionBox();
       if (this.bindings.showObstacles()) this.buildOverlays(d);

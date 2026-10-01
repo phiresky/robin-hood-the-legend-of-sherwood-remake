@@ -32,9 +32,9 @@ function fixture() {
   return {
     viewport,
     selection: () => selection,
-    publish: (next: Level3D) => {
+    publish: (next: Level3D, rebuildFraming = true) => {
       document = next;
-      viewport.syncViews(next);
+      viewport.syncViews(next, rebuildFraming);
     },
   };
 }
@@ -1191,4 +1191,42 @@ test("lit terrain casts and receives shadows after replacement and retirement", 
   publish({ ...document, terrain: undefined });
   assert.equal(receivers().length, 0);
   viewport.dispose();
+});
+
+test("incremental revisions refresh sun settings and invalidate cached shadows", () => {
+  const { viewport, publish } = fixture();
+  const document = {
+    ...documentFixture(),
+    objects: [],
+    groups: [],
+    terrain: createTerrainGrid([0, 0, 400, 400], 100, 0),
+  };
+  const internal = viewport as unknown as {
+    sunlight: { sun: THREE.DirectionalLight };
+    renderer: { shadowMap: { enabled: boolean; needsUpdate: boolean } } | null;
+  };
+  const shadowMap = { enabled: false, needsUpdate: false };
+  publish(document);
+  internal.renderer = { shadowMap };
+  try {
+    const lighting = { enabled: true, sunAzimuth: 90, sunElevation: 35, shadowOpacity: 0.7 };
+    publish({ ...document, lighting }, false);
+    assert.equal(internal.sunlight.sun.visible, true);
+    assert.equal(shadowMap.enabled, true);
+    assert.equal(shadowMap.needsUpdate, true);
+    const position = internal.sunlight.sun.position.clone();
+    shadowMap.needsUpdate = false;
+    publish({ ...document, lighting: { ...lighting, sunAzimuth: 270, shadowOpacity: 0.3 } }, false);
+    assert.ok(internal.sunlight.sun.position.distanceTo(position) > 100);
+    assert.equal(internal.sunlight.sun.shadow.intensity, 0.3);
+    assert.equal(shadowMap.needsUpdate, true);
+    shadowMap.needsUpdate = false;
+    publish({ ...document, lighting: { ...lighting, enabled: false } }, false);
+    assert.equal(internal.sunlight.sun.visible, false);
+    assert.equal(shadowMap.enabled, false);
+    assert.equal(shadowMap.needsUpdate, true);
+  } finally {
+    internal.renderer = null;
+    viewport.dispose();
+  }
 });

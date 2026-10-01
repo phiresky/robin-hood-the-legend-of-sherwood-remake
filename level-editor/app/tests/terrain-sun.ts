@@ -1,10 +1,12 @@
 import * as THREE from "three";
 import { createTerrainGrid, type Level3D } from "@rle/shared";
+import { EditorViewport } from "../src/editor-viewport.ts";
 import { TerrainLayer } from "../src/terrain-layer.ts";
 import { SunLighting } from "../src/sun-lighting.ts";
 import { bakeScene, renderMapBake } from "../src/map-bake-render.ts";
 
 export function checkTerrainSunShadows() {
+  checkViewportSunUpdates();
   const renderer = new THREE.WebGLRenderer();
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -97,6 +99,77 @@ export function checkTerrainSunShadows() {
     terrain.clear();
     caster.geometry.dispose();
     caster.material.dispose();
+    target.dispose();
+    renderer.dispose();
+    renderer.forceContextLoss();
+  }
+}
+
+function checkViewportSunUpdates() {
+  const grid = createTerrainGrid([0, 0, 400, 400], 50, 0);
+  for (const vertex of grid.vertices) if (vertex.position[0] === 250) vertex.position[2] = 120;
+  let document: Level3D = {
+    version: 1,
+    map: "shadow-regression",
+    sceneAssets: [],
+    objects: [],
+    groups: [],
+    size: [400, 400],
+    camera: { kind: "oblique-orthographic", elevation_deg: 35 },
+    terrain: grid,
+  };
+  const viewport = new EditorViewport({
+    document: () => document,
+    selection: () => null,
+    level: () => null,
+    showObstacles: () => false,
+    showElevation: () => false,
+    onSelection: () => {},
+    commitTransform: () => {},
+  });
+  const renderer = new THREE.WebGLRenderer();
+  renderer.shadowMap.autoUpdate = false;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
+  const internal = viewport as unknown as {
+    renderer: THREE.WebGLRenderer | null;
+    scene: THREE.Scene;
+  };
+  internal.renderer = renderer;
+  const target = new THREE.WebGLRenderTarget(128, 128);
+  const camera = new THREE.OrthographicCamera(-250, 250, 400, -400, 1, 2000);
+  camera.position.set(200, 1000, 350);
+  camera.up.set(0, 0, -1);
+  camera.lookAt(200, 0, 350);
+  const render = () => {
+    renderer.setRenderTarget(target);
+    renderer.render(internal.scene, camera);
+    const pixels = new Uint8Array(128 * 128 * 4);
+    renderer.readRenderTargetPixels(target, 0, 0, 128, 128, pixels);
+    return pixels;
+  };
+  try {
+    viewport.syncViews(document);
+    const disabled = render();
+    document = {
+      ...document,
+      lighting: { enabled: true, sunAzimuth: 90, sunElevation: 35, shadowOpacity: 0 },
+    };
+    viewport.syncViews(document, false);
+    const unshadowed = render();
+    document = { ...document, lighting: { ...document.lighting!, shadowOpacity: 1 } };
+    viewport.syncViews(document, false);
+    const shadowed = render();
+    let changed = 0;
+    for (let i = 0; i < shadowed.length; i += 4) if (unshadowed[i]! - shadowed[i]! > 10) changed++;
+    if (changed < 100)
+      throw new Error(`Incremental viewport lighting produced no shadows (${changed} pixels)`);
+    document = { ...document, lighting: { ...document.lighting!, enabled: false } };
+    viewport.syncViews(document, false);
+    if (render().some((value, i) => value !== disabled[i]))
+      throw new Error("Incremental viewport lighting did not disable cleanly");
+  } finally {
+    internal.renderer = null;
+    viewport.dispose();
     target.dispose();
     renderer.dispose();
     renderer.forceContextLoss();
