@@ -183,6 +183,54 @@ function channelCuts(document: Pick<Level3D, "splines" | "camera">, maxHeight: n
   return cuts;
 }
 
+type CutNode = { bounds: number[]; entries?: number[]; left?: CutNode; right?: CutNode };
+function cutIndex(cuts: Cut[], entries = cuts.map((_, i) => i)): CutNode {
+  const box = [Infinity, Infinity, -Infinity, -Infinity];
+  for (const i of entries) {
+    const b = cuts[i]!.bounds;
+    box[0] = Math.min(box[0]!, b[0]!);
+    box[1] = Math.min(box[1]!, b[1]!);
+    box[2] = Math.max(box[2]!, b[2]!);
+    box[3] = Math.max(box[3]!, b[3]!);
+  }
+  if (entries.length <= 8) return { bounds: box, entries };
+  const axis = box[2]! - box[0]! >= box[3]! - box[1]! ? 0 : 1;
+  entries.sort(
+    (a, b) =>
+      cuts[a]!.bounds[axis]! +
+      cuts[a]!.bounds[axis + 2]! -
+      cuts[b]!.bounds[axis]! -
+      cuts[b]!.bounds[axis + 2]!,
+  );
+  const middle = Math.floor(entries.length / 2);
+  return {
+    bounds: box,
+    left: cutIndex(cuts, entries.slice(0, middle)),
+    right: cutIndex(cuts, entries.slice(middle)),
+  };
+}
+function nearbyCuts(cuts: Cut[], root: CutNode, box: number[]) {
+  const found: number[] = [];
+  const visit = (node: CutNode) => {
+    if (!overlaps(box, node.bounds)) return;
+    if (node.entries) {
+      for (const index of node.entries) if (overlaps(box, cuts[index]!.bounds)) found.push(index);
+    } else {
+      visit(node.left!);
+      visit(node.right!);
+    }
+  };
+  visit(root);
+  // Preserve clipping order and thus exact tessellation and interpolated attributes.
+  return found.sort((a, b) => a - b).map((i) => cuts[i]!);
+}
+const triangleSources = new WeakMap<TerrainTriangle, TerrainTriangle>();
+/** Recover the unchanged source footprint for spatial lookup of channel fragments. */
+export function riverChannelSource(triangle: TerrainTriangle) {
+  return triangleSources.get(triangle) ?? triangle;
+}
+const maximumHeights = new WeakMap<TerrainTriangle[], number>();
+
 // Documents are immutable. Keep only the latest evaluation per river-array identity;
 // unchanged triangles can retain their exact channel tessellation across local edits.
 const evaluations = new WeakMap<
@@ -190,7 +238,8 @@ const evaluations = new WeakMap<
   {
     signature: string;
     cuts: Cut[];
-    triangles: Map<string, { signature: string; result: TerrainTriangle[] }>;
+    index: CutNode;
+    triangles: WeakMap<TerrainTriangle, TerrainTriangle[]>;
   }
 >();
 
@@ -206,34 +255,40 @@ export function evaluateRiverChannels(
     !document.splines?.some((p) => p.kind === "river" && p.channel?.enabled !== false)
   )
     return base;
-  const maxHeight = base.reduce((max, t) => Math.max(max, ...t.points.map((p) => p[2])), -Infinity);
+  let maxHeight = maximumHeights.get(base);
+  if (maxHeight === undefined) {
+    maxHeight = base.reduce(
+      (max, t) => Math.max(max, t.points[0][2], t.points[1][2], t.points[2][2]),
+      -Infinity,
+    );
+    maximumHeights.set(base, maxHeight);
+  }
   const signature = JSON.stringify([document.camera, document.splines, maxHeight]);
   let evaluation = evaluations.get(document.splines);
   if (!evaluation || evaluation.signature !== signature) {
-    evaluation = { signature, cuts: channelCuts(document, maxHeight), triangles: new Map() };
+    const cuts = channelCuts(document, maxHeight);
+    evaluation = { signature, cuts, index: cutIndex(cuts), triangles: new WeakMap() };
     evaluations.set(document.splines, evaluation);
   }
   const cuts = evaluation.cuts;
   if (!cuts.length) return base;
   const result: TerrainTriangle[] = [];
-  const current = new Map<string, { signature: string; result: TerrainTriangle[] }>();
   for (const source of base) {
-    const cached = evaluation.triangles.get(source.id);
-    const sourceSignature = JSON.stringify(source);
-    if (cached?.signature === sourceSignature) {
-      current.set(source.id, cached);
-      for (const triangle of cached.result) result.push(triangle);
+    const cached = evaluation.triangles.get(source);
+    if (cached) {
+      for (const triangle of cached) result.push(triangle);
       continue;
     }
     const start = result.length;
     const sourceBounds = bounds(source.points.map(xy));
-    const nearby = cuts.filter((cut) => overlaps(sourceBounds, cut.bounds));
+    const nearby = nearbyCuts(cuts, evaluation.index, sourceBounds);
     if (!nearby.length) {
       result.push(source);
-      current.set(source.id, { signature: sourceSignature, result: [source] });
       continue;
     }
-    let pieces = [channelPiece(source.points.map(xy), plane(source.points))];
+    let pieces: ReturnType<typeof channelPiece>[] = [
+      channelPiece(source.points.map(xy), plane(source.points)),
+    ];
     for (const cut of nearby) {
       const outside: typeof pieces = [];
       for (const piece of pieces) {
@@ -269,6 +324,8 @@ export function evaluateRiverChannels(
       pieces = outside;
     }
     let index = 0;
+    const [sourceA, sourceB, sourceC] = source.points.map(xy) as [XY, XY, XY];
+    const sourceArea = cross(sourceA, sourceB, sourceC);
     for (const piece of pieces)
       for (let i = 1; i < piece.poly.length - 1; i++) {
         const points = [piece.poly[0]!, piece.poly[i]!, piece.poly[i + 1]!].map(
@@ -276,10 +333,9 @@ export function evaluateRiverChannels(
         ) as [Vec3, Vec3, Vec3];
         if (Math.abs(cross(...(points.map(xy) as [XY, XY, XY]))) < EPS) continue;
         const barycentric = points.map((p) => {
-          const [a, b, c] = source.points.map(xy) as [XY, XY, XY],
-            d = cross(a, b, c);
-          const u = cross(xy(p), b, c) / d,
-            v = cross(a, xy(p), c) / d;
+          const point = xy(p);
+          const u = cross(point, sourceB, sourceC) / sourceArea,
+            v = cross(sourceA, point, sourceC) / sourceArea;
           return [u, v, 1 - u - v] as Vec3;
         });
         const interpolate = (values: number[][], dimensions: number) =>
@@ -290,25 +346,21 @@ export function evaluateRiverChannels(
           );
         const uv = source.uv ? (interpolate(source.uv, 2) as [XY, XY, XY]) : undefined;
         const materialWeights = source.materials
-          ? (interpolate(
-              source.materialWeights ?? [
-                [1, 0, 0],
-                [0, 1, 0],
-                [0, 0, 1],
-              ],
-              3,
-            ) as [Vec3, Vec3, Vec3])
+          ? source.materialWeights
+            ? (interpolate(source.materialWeights, 3) as [Vec3, Vec3, Vec3])
+            : (barycentric as [Vec3, Vec3, Vec3])
           : undefined;
-        result.push({
+        const triangle: TerrainTriangle = {
           ...source,
           id: `${source.id}/channel-${index++}`,
           points,
           ...(uv ? { uv } : {}),
           ...(materialWeights ? { materialWeights } : {}),
-        });
+        };
+        triangleSources.set(triangle, source);
+        result.push(triangle);
       }
-    current.set(source.id, { signature: sourceSignature, result: result.slice(start) });
+    evaluation.triangles.set(source, result.slice(start));
   }
-  evaluation.triangles = current;
   return result;
 }

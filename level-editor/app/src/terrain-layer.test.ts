@@ -58,3 +58,29 @@ test("local terrain edits retain distant sections and match a clean rebuild", ()
   clean.clear();
   assert.equal(materialDisposals, 1);
 });
+
+test("road-only edits do not regroup or upload unchanged terrain", () => {
+  const terrain = createTerrainGrid([0, 0, 2048, 2048], 64);
+  const path = {
+    id: "road",
+    kind: "road" as const,
+    closed: false,
+    width: 20,
+    repeatLength: 100,
+    points: [
+      [0, 0, 0],
+      [100, 100, 0],
+    ] as [number, number, number][],
+  };
+  const document = {
+    camera: { kind: "oblique-orthographic", elevation_deg: 35 },
+    terrain,
+    splines: [path],
+  } as Level3D;
+  const layer = new TerrainLayer();
+  layer.sync(document);
+  const meshes = [...layer.root.children];
+  assert.equal(layer.sync({ ...document, splines: [{ ...path, width: 80 }] }), false);
+  assert.deepEqual(layer.root.children, meshes);
+  layer.clear();
+});

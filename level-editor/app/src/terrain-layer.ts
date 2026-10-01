@@ -15,10 +15,14 @@ export class TerrainLayer {
   private textureCache = new Map<string, THREE.DataTexture>();
   private mixtureCache = new Map<string, ReturnType<typeof terrainMaterialMixTexture>>();
   private materialCache = new Map<string, THREE.MeshLambertMaterial>();
+  private triangles: TerrainTriangle[] | undefined;
+  private sectionCells: import("@rle/shared").TerrainCell[] | undefined;
+  private sections = new Map<string, number>();
+  private materialIds = new Map<string, number>();
   private batches = new Map<string, { triangles: TerrainTriangle[]; mesh: THREE.Mesh }>();
   private triangleMaterials = new WeakMap<
     TerrainTriangle,
-    { key: string; mixes: Record<string, number>[] }
+    { key: string; mixes: Record<string, number>[]; section?: number; batchKey?: string }
   >();
   private image: THREE.Texture | undefined;
   sync(document: Level3D) {
@@ -29,6 +33,17 @@ export class TerrainLayer {
       this.customMaterials === document.customMaterials
     )
       return false;
+    const triangles = terrainTriangles(document);
+    if (
+      triangles === this.triangles &&
+      this.camera === document.camera &&
+      this.customMaterials === document.customMaterials &&
+      this.terrain?.texture === document.terrain?.texture
+    ) {
+      this.terrain = document.terrain;
+      this.splines = document.splines;
+      return false;
+    }
     // Height-only edits reuse appearance resources. Bound caches during long painting sessions.
     if (
       this.customMaterials !== document.customMaterials ||
@@ -71,10 +86,13 @@ export class TerrainLayer {
       { materialKey: string; mixes: Record<string, number>[]; triangles: TerrainTriangle[] }
     >();
     // Small sections limit geometry uploads without creating a draw call per cell.
-    const sections = new Map(
-      document.terrain?.cells.map((cell, index) => [cell.id, Math.floor(index / 32)]),
-    );
-    for (const t of terrainTriangles(document)) {
+    if (this.sectionCells !== document.terrain?.cells) {
+      this.sectionCells = document.terrain?.cells;
+      this.sections = new Map(
+        this.sectionCells?.map((cell, index) => [cell.id, Math.floor(index / 32)]),
+      );
+    }
+    for (const t of triangles) {
       let entry = this.triangleMaterials.get(t);
       if (!entry) {
         const mixes =
@@ -90,7 +108,17 @@ export class TerrainLayer {
         };
         this.triangleMaterials.set(t, entry);
       }
-      const key = `${sections.get(t.cell.id)}/${entry.key}`;
+      const section = this.sections.get(t.cell.id);
+      if (entry.batchKey === undefined || entry.section !== section) {
+        let materialId = this.materialIds.get(entry.key);
+        if (materialId === undefined) {
+          materialId = this.materialIds.size;
+          this.materialIds.set(entry.key, materialId);
+        }
+        entry.section = section;
+        entry.batchKey = `${section}/${materialId}`;
+      }
+      const key = entry.batchKey;
       let batch = batches.get(key);
       if (!batch) {
         batch = { materialKey: entry.key, mixes: entry.mixes, triangles: [] };
@@ -110,30 +138,36 @@ export class TerrainLayer {
         previousBatches.delete(key);
         continue;
       }
+      const count = batch.triangles.length;
       const b = {
-        ...batch,
-        positions: [] as number[],
-        uvs: [] as number[],
-        surfaceUvs: [] as number[],
-        weights: [] as number[],
-        cells: [] as string[],
+        positions: new Float32Array(count * 9),
+        uvs: new Float32Array(count * 6),
+        surfaceUvs: new Float32Array(count * 6),
+        weights: new Float32Array(count * 9),
+        cells: new Array<string>(count),
       };
-      for (const t of batch.triangles) {
-        b.positions.push(...t.points.flatMap((p) => gameToScene(document.camera, ...p)));
-        b.weights.push(...(t.materialWeights?.flat() ?? [1, 0, 0, 0, 1, 0, 0, 0, 1]));
-        b.cells.push(t.cell.id);
-        b.surfaceUvs.push(...t.points.flatMap((p) => [p[0] / 1024, p[1] / 1024]));
-        b.uvs.push(
-          ...t.indices.flatMap((index, i) =>
-            image && (t.uv?.[i] ?? document.terrain!.vertices[index]?.uv)
-              ? (t.uv?.[i] ?? document.terrain!.vertices[index]!.uv!)
-              : [t.points[i]![0] / 1024, t.points[i]![1] / 1024],
-          ),
-        );
+      for (let triangle = 0; triangle < count; triangle++) {
+        const t = batch.triangles[triangle]!;
+        b.cells[triangle] = t.cell.id;
+        for (let vertex = 0; vertex < 3; vertex++) {
+          const point = t.points[vertex]!,
+            positionOffset = triangle * 9 + vertex * 3,
+            uvOffset = triangle * 6 + vertex * 2;
+          b.positions.set(gameToScene(document.camera, ...point), positionOffset);
+          for (let k = 0; k < 3; k++)
+            b.weights[positionOffset + k] =
+              t.materialWeights?.[vertex]?.[k] ?? (vertex === k ? 1 : 0);
+          b.surfaceUvs[uvOffset] = point[0] / 1024;
+          b.surfaceUvs[uvOffset + 1] = point[1] / 1024;
+          const uv =
+            image && (t.uv?.[vertex] ?? document.terrain!.vertices[t.indices[vertex]!]!.uv);
+          b.uvs[uvOffset] = uv ? uv[0] : point[0] / 1024;
+          b.uvs[uvOffset + 1] = uv ? uv[1] : point[1] / 1024;
+        }
       }
       let material = this.materialCache.get(batch.materialKey);
       if (!material) {
-        const mixed = b.mixes.map(mixture),
+        const mixed = batch.mixes.map(mixture),
           maps = mixed.map((m) => m.texture);
         material = new THREE.MeshLambertMaterial({
           map: maps[0],
@@ -170,10 +204,10 @@ export class TerrainLayer {
         this.materialCache.set(batch.materialKey, material);
       }
       const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute("position", new THREE.Float32BufferAttribute(b.positions, 3));
-      geometry.setAttribute("uv", new THREE.Float32BufferAttribute(b.uvs, 2));
-      geometry.setAttribute("terrainSurfaceUv", new THREE.Float32BufferAttribute(b.surfaceUvs, 2));
-      geometry.setAttribute("terrainWeights", new THREE.Float32BufferAttribute(b.weights, 3));
+      geometry.setAttribute("position", new THREE.BufferAttribute(b.positions, 3));
+      geometry.setAttribute("uv", new THREE.BufferAttribute(b.uvs, 2));
+      geometry.setAttribute("terrainSurfaceUv", new THREE.BufferAttribute(b.surfaceUvs, 2));
+      geometry.setAttribute("terrainWeights", new THREE.BufferAttribute(b.weights, 3));
       // Map-to-scene conversion reverses Y. Keep terrain faces pointing upward so
       // the shadow normal bias samples above the surface rather than beneath it.
       const indices: number[] = [];
@@ -200,6 +234,7 @@ export class TerrainLayer {
       mesh.removeFromParent();
       mesh.geometry.dispose();
     }
+    this.triangles = triangles;
     this.terrain = document.terrain;
     this.camera = document.camera;
     this.splines = document.splines;
@@ -222,6 +257,10 @@ export class TerrainLayer {
     this.triangleMaterials = new WeakMap();
     this.image = undefined;
     this.terrain = undefined;
+    this.triangles = undefined;
+    this.sectionCells = undefined;
+    this.sections.clear();
+    this.materialIds.clear();
     this.camera = undefined;
     this.splines = undefined;
     this.customMaterials = undefined;

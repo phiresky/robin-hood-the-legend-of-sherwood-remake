@@ -2,18 +2,13 @@ import * as THREE from "three";
 import type { Level3D, LevelSpline, MapCamera } from "@rle/shared";
 import { sampleSpline } from "../../shared/src/spline-sampling.ts";
 import {
-  terrainTriangles,
+  terrainTrianglesInBounds,
   terrainHeightAt,
   type TerrainTriangle,
 } from "../../shared/src/authored-terrain.ts";
 
 type Vertex = { x: number; y: number; z: number; offset: number; u: number; v: number };
 type Bounds = { minX: number; minY: number; maxX: number; maxY: number };
-type IndexedTriangle = { triangle: TerrainTriangle; bounds: Bounds };
-const indices = new WeakMap<
-  TerrainTriangle[],
-  { spacing: number; buckets: Map<string, IndexedTriangle[]> }
->();
 const epsilon = 1e-8;
 function bounds(points: { x: number; y: number }[]): Bounds {
   return {
@@ -22,31 +17,6 @@ function bounds(points: { x: number; y: number }[]): Bounds {
     maxX: Math.max(...points.map((p) => p.x)),
     maxY: Math.max(...points.map((p) => p.y)),
   };
-}
-function bucketKeys(b: Bounds, spacing: number) {
-  const keys: string[] = [];
-  for (let x = Math.floor(b.minX / spacing); x <= Math.floor(b.maxX / spacing); x++)
-    for (let y = Math.floor(b.minY / spacing); y <= Math.floor(b.maxY / spacing); y++)
-      keys.push(`${x}/${y}`);
-  return keys;
-}
-function terrainIndex(document: Level3D) {
-  const triangles = terrainTriangles(document);
-  const cached = indices.get(triangles);
-  if (cached) return cached;
-  const spacing = Math.min(64, Math.max(16, document.terrain?.spacing ?? 128));
-  const buckets = new Map<string, IndexedTriangle[]>();
-  for (const triangle of triangles) {
-    const item = { triangle, bounds: bounds(triangle.points.map((p) => ({ x: p[0], y: p[1] }))) };
-    for (const key of bucketKeys(item.bounds, spacing)) {
-      const bucket = buckets.get(key);
-      if (bucket) bucket.push(item);
-      else buckets.set(key, [item]);
-    }
-  }
-  const result = { spacing, buckets };
-  indices.set(triangles, result);
-  return result;
 }
 function interpolate(a: Vertex, b: Vertex, t: number): Vertex {
   return {
@@ -123,7 +93,6 @@ export function roadGeometry(
 ): THREE.BufferGeometry {
   const sine = Math.sin((camera.elevation_deg * Math.PI) / 180),
     cosine = Math.cos((camera.elevation_deg * Math.PI) / 180);
-  const { spacing, buckets } = terrainIndex(document);
   const positions: number[] = [],
     uvs: number[] = [];
   const pairs = sampleSpline(path, camera).map((sample) => {
@@ -158,21 +127,16 @@ export function roadGeometry(
       [a[0]!, a[1]!, b[0]!],
       [a[1]!, b[1]!, b[0]!],
     ]) {
-      const box = bounds(ribbon),
-        candidates = new Set<IndexedTriangle>();
-      for (const key of bucketKeys(box, spacing))
-        for (const item of buckets.get(key) ?? []) {
-          const other = item.bounds;
-          if (
-            other.minX <= box.maxX &&
-            other.maxX >= box.minX &&
-            other.minY <= box.maxY &&
-            other.maxY >= box.minY
-          )
-            candidates.add(item);
-        }
+      const box = bounds(ribbon);
+      const candidates = terrainTrianglesInBounds(document, [
+        box.minX,
+        box.minY,
+        box.maxX,
+        box.maxY,
+      ]);
       let remaining = [{ polygon: ribbon, bounds: box }];
-      for (const { triangle, bounds: triangleBounds } of candidates) {
+      for (const triangle of candidates) {
+        const triangleBounds = bounds(triangle.points.map((p) => ({ x: p[0], y: p[1] })));
         const next: typeof remaining = [];
         for (const piece of remaining) {
           if (!overlaps(piece.bounds, triangleBounds)) {

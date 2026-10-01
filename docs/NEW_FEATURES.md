@@ -2124,3 +2124,9 @@ cutouts aligned with terrain instead of rounding each piece separately.
   edits retain river-cut terrain and other unchanged roads. Attached placements
   reuse both the committed and preview channel meshes during height following. Exact road clipping
   avoids fragmenting ribbons against triangles that do not intersect them.
+
+- Large-map path edits reuse the base terrain spatial index, query only nearby river
+  cuts, and populate modified height-lookup regions on demand. Road fitting shares
+  that index. Terrain mesh updates reuse batch keys and write directly to typed
+  buffers without changing sampling detail. Run
+  `node level-editor/app/tests/large-terrain-path-benchmark.mjs` for a size-scaling benchmark.

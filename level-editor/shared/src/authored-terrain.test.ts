@@ -7,6 +7,8 @@ import {
   subdivideTerrainCells,
   expandTerrainGrid,
   terrainTriangles,
+  terrainTrianglesInBounds,
+  triangleHeightAt,
 } from "./authored-terrain.ts";
 import { compileAssetGameplay } from "./compile-asset-gameplay.ts";
 import { parseLevel3D } from "./validation.ts";
@@ -285,5 +287,45 @@ test("road-only edits reuse evaluated terrain while river edits invalidate it", 
   for (let i = 0; i < 10; i++) {
     assert.equal(terrainTriangles(document), before);
     assert.equal(terrainTriangles(preview), after);
+  }
+});
+
+test("shared terrain index matches exhaustive geometry through channel edits, holes and undo", () => {
+  const grid = createTerrainGrid([-256, -256, 1024, 1024], 128);
+  const terrain = { ...grid, cells: grid.cells.filter((_, i) => i !== 27) };
+  const camera = { kind: "oblique-orthographic" as const, elevation_deg: 35 };
+  const river = {
+    id: "river",
+    kind: "river" as const,
+    closed: false,
+    width: 80,
+    repeatLength: 128,
+    points: [
+      [-200, -100, 0],
+      [100, 200, 0],
+      [650, 100, 0],
+    ] as [number, number, number][],
+  };
+  const before = { terrain, camera, splines: [river] };
+  const after = { ...before, splines: [{ ...river, width: 120 }] };
+  for (const document of [before, after, before]) {
+    const triangles = terrainTriangles(document);
+    for (let i = 0; i < 40; i++) {
+      const x = -320 + ((i * 157) % 1152),
+        y = -320 + ((i * 233) % 1152);
+      const box: [number, number, number, number] = [x, y, x + 96, y + 96];
+      const expected = triangles.filter(
+        ({ points }) =>
+          Math.min(...points.map((p) => p[0])) <= box[2] &&
+          Math.max(...points.map((p) => p[0])) >= box[0] &&
+          Math.min(...points.map((p) => p[1])) <= box[3] &&
+          Math.max(...points.map((p) => p[1])) >= box[1],
+      );
+      assert.deepEqual(new Set(terrainTrianglesInBounds(document, box)), new Set(expected));
+      const height = triangles
+        .map((t) => triangleHeightAt(t.points, x, y))
+        .find((h) => h !== undefined);
+      assert.equal(terrainHeightAt(document, x, y), height);
+    }
   }
 });

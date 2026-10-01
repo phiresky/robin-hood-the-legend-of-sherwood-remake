@@ -7,7 +7,7 @@ import type { Level3D } from "./level3d.ts";
 import type { LevelSpline } from "./splines.ts";
 import type { Point } from "./level.ts";
 import type { GameplayAssetDescriptor, AssetWalkableSurface } from "./asset-gameplay.ts";
-import { evaluateRiverChannels } from "./river-channel.ts";
+import { evaluateRiverChannels, riverChannelSource } from "./river-channel.ts";
 import { sampleSpline, splineCurve, splineMaterialWeightsAt } from "./spline-sampling.ts";
 import { roadTerrainPieces } from "./terrain-path-gameplay.ts";
 import { terrainMaterial } from "./terrain-materials.ts";
@@ -239,7 +239,8 @@ const terrainCache = new WeakMap<
     camera: Level3D["camera"] | undefined;
     triangles: TerrainTriangle[];
     buckets: Map<string, TerrainTriangle[]>;
-    spacing: number;
+    base: TerrainIndex;
+    replacements: Map<TerrainTriangle, TerrainTriangle[]>;
   }[]
 >();
 const cellTriangleCache = new WeakMap<
@@ -250,26 +251,16 @@ const cellTriangleCache = new WeakMap<
     triangles: TerrainTriangle[];
   }
 >();
-function evaluatedTerrain(document: TerrainDocument) {
-  const g = document.terrain;
-  if (!g) return undefined;
-  const recent = terrainCache.get(g) ?? [];
-  for (const old of recent) {
-    if (old.camera !== document.camera) continue;
-    if (old.splines === document.splines) {
-      if (recent[0] !== old) recent.reverse();
-      return old;
-    }
-    const rivers = document.splines?.filter((path) => path.kind === "river") ?? [];
-    const oldRivers = old.splines?.filter((path) => path.kind === "river") ?? [];
-    // Roads and walls do not deform terrain; editing them keeps the channel mesh valid.
-    if (rivers.length === oldRivers.length && rivers.every((river, i) => river === oldRivers[i])) {
-      old.splines = document.splines;
-      if (recent[0] !== old) recent.reverse();
-      return old;
-    }
-  }
-  let triangles = g.cells.flatMap((cell) => {
+type TerrainIndex = {
+  triangles: TerrainTriangle[];
+  buckets: Map<string, TerrainTriangle[]>;
+  spacing: number;
+};
+const baseTerrainCache = new WeakMap<TerrainGrid, TerrainIndex>();
+function baseTerrain(g: TerrainGrid) {
+  const cached = baseTerrainCache.get(g);
+  if (cached) return cached;
+  const triangles = g.cells.flatMap((cell) => {
     const vertices = cell.vertices.map((i) => g.vertices[i]!);
     const cached = cellTriangleCache.get(cell);
     if (
@@ -297,43 +288,121 @@ function evaluatedTerrain(document: TerrainDocument) {
     cellTriangleCache.set(cell, { vertices, textured: !!g.texture, triangles });
     return triangles;
   });
+  const index = {
+    triangles,
+    spacing: Math.min(64, Math.max(32, g.spacing)),
+    buckets: new Map<string, TerrainTriangle[]>(),
+  };
+  for (const triangle of triangles) {
+    const b = triangleBounds(triangle);
+    for (let x = Math.floor(b[0] / index.spacing); x <= Math.floor(b[2] / index.spacing); x++)
+      for (let y = Math.floor(b[1] / index.spacing); y <= Math.floor(b[3] / index.spacing); y++) {
+        const key = `${x}/${y}`;
+        const bucket = index.buckets.get(key);
+        if (bucket) bucket.push(triangle);
+        else index.buckets.set(key, [triangle]);
+      }
+  }
+  baseTerrainCache.set(g, index);
+  return index;
+}
+function evaluatedTerrain(document: TerrainDocument) {
+  const g = document.terrain;
+  if (!g) return undefined;
+  const recent = terrainCache.get(g) ?? [];
+  for (const old of recent) {
+    if (old.camera !== document.camera) continue;
+    if (old.splines === document.splines) {
+      if (recent[0] !== old) recent.reverse();
+      return old;
+    }
+    const rivers = document.splines?.filter((path) => path.kind === "river") ?? [];
+    const oldRivers = old.splines?.filter((path) => path.kind === "river") ?? [];
+    // Roads and walls do not deform terrain; editing them keeps the channel mesh valid.
+    if (rivers.length === oldRivers.length && rivers.every((river, i) => river === oldRivers[i])) {
+      old.splines = document.splines;
+      if (recent[0] !== old) recent.reverse();
+      return old;
+    }
+  }
+  const base = baseTerrain(g);
+  let triangles = base.triangles;
   if (document.camera && document.splines?.some((p) => p.kind === "river"))
     triangles = evaluateRiverChannels(triangles, {
       camera: document.camera,
       splines: document.splines,
     });
-  const buckets = new Map<string, TerrainTriangle[]>(),
-    spacing = Math.min(64, Math.max(32, g.spacing));
-  for (const t of triangles) {
-    const xs = t.points.map((p) => p[0]),
-      ys = t.points.map((p) => p[1]);
-    for (
-      let x = Math.floor(Math.min(...xs) / spacing);
-      x <= Math.floor(Math.max(...xs) / spacing);
-      x++
-    )
-      for (
-        let y = Math.floor(Math.min(...ys) / spacing);
-        y <= Math.floor(Math.max(...ys) / spacing);
-        y++
-      ) {
-        const k = `${x}/${y}`,
-          items = buckets.get(k) ?? [];
-        items.push(t);
-        buckets.set(k, items);
-      }
-  }
+  const replacements = new Map<TerrainTriangle, TerrainTriangle[]>();
+  if (triangles !== base.triangles)
+    for (const triangle of triangles) {
+      const source = riverChannelSource(triangle);
+      if (source === triangle) continue;
+      const parts = replacements.get(source);
+      if (parts) parts.push(triangle);
+      else replacements.set(source, [triangle]);
+    }
   const result = {
     splines: document.splines,
     camera: document.camera,
     triangles,
-    buckets,
-    spacing,
+    base,
+    replacements,
+    buckets: new Map<string, TerrainTriangle[]>(),
   };
   // Placement following alternates queries against the committed and preview terrain.
   // Retain both so every attached object does not rebuild both channel meshes.
   terrainCache.set(g, [result, ...recent.slice(0, 1)]);
   return result;
+}
+type TerrainBounds = [number, number, number, number];
+const triangleBoundsCache = new WeakMap<TerrainTriangle, TerrainBounds>();
+function triangleBounds(triangle: TerrainTriangle): TerrainBounds {
+  let box = triangleBoundsCache.get(triangle);
+  if (!box) {
+    const [a, b, c] = triangle.points;
+    box = [
+      Math.min(a[0], b[0], c[0]),
+      Math.min(a[1], b[1], c[1]),
+      Math.max(a[0], b[0], c[0]),
+      Math.max(a[1], b[1], c[1]),
+    ];
+    triangleBoundsCache.set(triangle, box);
+  }
+  return box;
+}
+function boundsOverlap(a: TerrainBounds, b: TerrainBounds) {
+  return a[0] <= b[2] && a[2] >= b[0] && a[1] <= b[3] && a[3] >= b[1];
+}
+function terrainBucket(
+  data: NonNullable<ReturnType<typeof evaluatedTerrain>>,
+  x: number,
+  y: number,
+) {
+  const key = `${x}/${y}`;
+  const cached = data.buckets.get(key);
+  if (cached) return cached;
+  const source = data.base.buckets.get(key) ?? [];
+  if (!source.some((triangle) => data.replacements.has(triangle))) return source;
+  const spacing = data.base.spacing;
+  const box: TerrainBounds = [x * spacing, y * spacing, (x + 1) * spacing, (y + 1) * spacing];
+  const result: TerrainTriangle[] = [];
+  for (const triangle of source)
+    for (const part of data.replacements.get(triangle) ?? [triangle])
+      if (boundsOverlap(triangleBounds(part), box)) result.push(part);
+  data.buckets.set(key, result);
+  return result;
+}
+/** Exact nearby geometry, sharing the control mesh index across channel edits. */
+export function terrainTrianglesInBounds(document: TerrainDocument, box: TerrainBounds) {
+  const data = evaluatedTerrain(document);
+  if (!data) return [];
+  const result = new Set<TerrainTriangle>(),
+    spacing = data.base.spacing;
+  for (let x = Math.floor(box[0] / spacing); x <= Math.floor(box[2] / spacing); x++)
+    for (let y = Math.floor(box[1] / spacing); y <= Math.floor(box[3] / spacing); y++)
+      for (const triangle of terrainBucket(data, x, y))
+        if (boundsOverlap(triangleBounds(triangle), box)) result.add(triangle);
+  return [...result];
 }
 export function terrainTriangles(document: TerrainDocument): TerrainTriangle[] {
   return evaluatedTerrain(document)?.triangles ?? [];
@@ -358,9 +427,11 @@ export function terrainHeightAt(
 ): number | undefined {
   const data = evaluatedTerrain(document);
   if (!data) return undefined;
-  for (const t of data.buckets.get(
-    `${Math.floor(x / data.spacing)}/${Math.floor(y / data.spacing)}`,
-  ) ?? []) {
+  for (const t of terrainBucket(
+    data,
+    Math.floor(x / data.base.spacing),
+    Math.floor(y / data.base.spacing),
+  )) {
     const z = triangleHeightAt(t.points, x, y);
     if (z !== undefined) return z;
   }
