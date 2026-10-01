@@ -2733,6 +2733,7 @@ mod visual_tests {
                 .unwrap_or(0);
             for view in [
                 "full-team",
+                "online-team",
                 "add-slot",
                 "mission-rules",
                 "assignments",
@@ -2743,8 +2744,14 @@ mod visual_tests {
             ] {
                 state.hero_setup = matches!(
                     view,
-                    "full-team" | "add-slot" | "invalid-team" | "keyboard-focus"
+                    "full-team" | "online-team" | "add-slot" | "invalid-team" | "keyboard-focus"
                 );
+                state.local = view != "online-team";
+                state.status = if view == "online-team" {
+                    "Select your mission team, then create an online lobby.".into()
+                } else {
+                    "1 player joined. Keyboard on. Press A on a controller to join.".into()
+                };
                 state.edit_assignments = view == "assignments";
                 state.coop.control = if matches!(view, "assignments" | "invalid-team") {
                     robin_engine::coop::CharacterControl::Assigned
