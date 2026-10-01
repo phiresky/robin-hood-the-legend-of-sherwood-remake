@@ -44,6 +44,8 @@ export function checkTerrainSunShadows() {
     );
     sun.sun.shadow.intensity = 0;
     const litWithoutShadows = render();
+    if (litWithoutShadows.some((value, i) => Math.abs(value - without[i]!) > 1))
+      throw new Error("Enabling sun changes unshadowed flat terrain color");
     sun.sun.shadow.intensity = 0.7;
     const withShadows = render();
     let darkened = 0;
@@ -66,8 +68,8 @@ export function checkTerrainSunShadows() {
     sun.sun.shadow.intensity = 1;
     const flatShadowed = render();
     let flatDarkened = 0;
-    for (let i = 0; i < flatUnshadowed.length; i += 4)
-      if (flatUnshadowed[i]! - flatShadowed[i]! > 3) flatDarkened++;
+    for (let i = 0; i < flatUnshadowed.length; i++)
+      if (Math.abs(flatUnshadowed[i]! - flatShadowed[i]!) > 1) flatDarkened++;
     if (flatDarkened > 5)
       throw new Error(`Empty flat terrain shadows itself (${flatDarkened} pixels)`);
     const ridge = createTerrainGrid([0, 0, 400, 400], 50, 0);

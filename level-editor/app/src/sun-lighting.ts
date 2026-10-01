@@ -4,7 +4,8 @@ import type { Level3D } from "@rle/shared";
 /** Direct terrain lighting, with shadow overlays for baked ground artwork. */
 export class SunLighting {
   readonly root = new THREE.Group();
-  readonly sun = new THREE.DirectionalLight(0xfff2da, 1);
+  // Neutral light preserves the texture color on unshadowed horizontal terrain.
+  readonly sun = new THREE.DirectionalLight(0xffffff, 1);
   readonly ambient = new THREE.AmbientLight(0xffffff, Math.PI);
   private receiver: THREE.Object3D | null = null;
   private material = new THREE.ShadowMaterial({
