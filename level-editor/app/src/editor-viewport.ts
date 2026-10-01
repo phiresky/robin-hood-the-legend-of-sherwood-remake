@@ -2,6 +2,7 @@ import { nearestSplineSection } from "./spline-insertion.ts";
 import { TerrainControls, type TerrainEditMode } from "./terrain-controls.ts";
 import { MissionLayer } from "./mission-layer.ts";
 import { CHARACTER_DRAG_TYPE } from "./mission-character-catalog.ts";
+import { terrainContours } from "./terrain-contours.ts";
 import { TerrainLayer } from "./terrain-layer.ts";
 import { followTerrainEdit, followTerrainTransform } from "./terrain-follow.ts";
 import { AssetOutlineRenderer } from "./asset-outline.ts";
@@ -1688,7 +1689,7 @@ export class EditorViewport {
       // Rebuilding the projection point cache below walks every vertex in every imported mesh;
       // doing that for each 15° button press makes a large map appear frozen.
       this.refreshSelectionBox();
-      if (this.bindings.showObstacles()) this.buildOverlays(d);
+      if (this.bindings.showObstacles() || this.bindings.showElevation()) this.buildOverlays(d);
       return;
     }
     this.patchDisplay.apply(this.objectsRoot);
@@ -1720,7 +1721,7 @@ export class EditorViewport {
       });
     }
     if (!bounds.isEmpty()) bounds.getBoundingSphere(this.projectionBounds);
-    if (this.bindings.showObstacles()) this.buildOverlays(d);
+    if (this.bindings.showObstacles() || this.bindings.showElevation()) this.buildOverlays(d);
   }
 
   private selectedView(): View | null {
@@ -2230,11 +2231,17 @@ export class EditorViewport {
       );
     }
     const lvl = this.bindings.level();
-    if (this.bindings.showElevation() && lvl) {
+    if (this.bindings.showElevation()) {
       const pts: number[] = [];
-      for (const e of lvl.elevation_lines) {
-        const p = gameToScene(d.camera, e.point_a[0], e.point_a[1], 0);
-        const q = gameToScene(d.camera, e.point_b[0], e.point_b[1], 0);
+      const segments: [Vec3, Vec3][] = d.terrain
+        ? terrainContours(d)
+        : (lvl?.elevation_lines ?? []).map((e) => [
+            [e.point_a[0], e.point_a[1], 0],
+            [e.point_b[0], e.point_b[1], 0],
+          ]);
+      for (const [a, b] of segments) {
+        const p = gameToScene(d.camera, ...a);
+        const q = gameToScene(d.camera, ...b);
         pts.push(p[0], p[1], p[2] + 1, q[0], q[1], q[2] + 1);
       }
       const geo = new THREE.BufferGeometry();

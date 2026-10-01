@@ -2087,3 +2087,7 @@ cutouts aligned with terrain instead of rounding each piece separately.
 - The asset library hides non-rendering gameplay helpers by default. Enable
   “Show gameplay helpers” to browse lighting regions, navigation frames and similar
   metadata assets alongside the visible scenery.
+
+- The level editor’s Elevation lines overlay generates contours every 32 height
+  units from modeled terrain, including spline shaping, and refreshes during edits
+  and undo/redo. Maps without modeled terrain retain imported elevation lines.

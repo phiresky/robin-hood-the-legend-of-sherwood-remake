@@ -12,7 +12,7 @@ import {
 import type { Selection } from "./document-commands.ts";
 import { EditorViewport } from "./editor-viewport.ts";
 
-function fixture() {
+function fixture(showElevation = () => false) {
   let document: Level3D | null = null;
   let selection: Selection = null;
   const viewport = new EditorViewport({
@@ -20,7 +20,7 @@ function fixture() {
     selection: () => selection,
     level: () => null,
     showObstacles: () => false,
-    showElevation: () => false,
+    showElevation,
     onSelection: (next) => {
       selection = next;
       viewport.syncSelection(next);
@@ -1234,4 +1234,33 @@ test("incremental revisions refresh sun settings and invalidate cached shadows",
     internal.renderer = null;
     viewport.dispose();
   }
+});
+
+test("elevation overlay follows modeled terrain revisions without reference-map data", () => {
+  let enabled = true;
+  const { viewport, publish } = fixture(() => enabled);
+  const terrain = createTerrainGrid([0, 0, 128, 128], 128);
+  for (const vertex of terrain.vertices) vertex.position[2] = vertex.position[0];
+  const document = { ...documentFixture(), objects: [], groups: [], terrain };
+  const overlay = (viewport as unknown as { overlayRoot: THREE.Group }).overlayRoot;
+  const positions = () =>
+    (overlay.children[0] as THREE.LineSegments).geometry.getAttribute("position");
+  publish(document);
+  assert.ok(positions().count > 0);
+  const initial = positions();
+  let disposed = false;
+  (overlay.children[0] as THREE.LineSegments).geometry.addEventListener(
+    "dispose",
+    () => (disposed = true),
+  );
+  const flattened = { ...document, terrain: createTerrainGrid([0, 0, 128, 128], 128, 0) };
+  publish(flattened, false, true);
+  assert.equal(positions().count, 0);
+  assert.ok(disposed);
+  publish(document, false, true);
+  assert.deepEqual(Array.from(positions().array), Array.from(initial.array));
+  enabled = false;
+  viewport.buildOverlays();
+  assert.equal(overlay.children.length, 0);
+  viewport.dispose();
 });
