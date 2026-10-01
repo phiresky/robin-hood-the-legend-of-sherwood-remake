@@ -28,9 +28,17 @@ destination and landing alignment at five positions along each edge, in both
 directions. The edge-facing convention is the map-plane normal `(-dy, dx)`.
 Existing exact sockets remain supported. Many recovered library segments are
 short control lines, so migration requires usable ledges from asset surfaces;
-increasing socket tolerances alone is insufficient. Library migration,
-multiple destinations along one edge and blocked jump trajectories remain open;
-this is not automatic jump generation for every roof mesh.
+increasing socket tolerances alone is insufficient. Automatic connections between
+level ledges now check the full long-jump flight ribbon against solid volumes in
+both directions, including takeoff. Blocked portions are removed, clear spans are
+retained and warnings explain omissions. Integer endpoints keep equal opposing
+vectors and are checked again after rounding. Optional asset-authored body radius
+and height add side clearance and headroom; without them only the foot path is
+checked. A moved-wall fixture verifies restored overlap and native collision-free
+animation. Checks conservatively include all obstacle states. Sloped ledges and
+climbing-style automatic connections are omitted with warnings; explicitly authored
+connections remain supported. Library migration and multiple destinations along
+one edge remain open; this is not automatic jump generation for every roof mesh.
 
 Current combined drafts recover all 27 map-source movement transitions.
 York's market assembly completes the movement-state ownership inventory.

@@ -43,6 +43,7 @@ import {
   nonrenderingVolumeCompilerFixture,
   crossAssetJumpCompilerFixture,
   geometricJumpCompilerFixture,
+  obstructedJumpCompilerFixture,
   detachedJumpCompilerFixture,
   doorTransitionCompilerFixture,
   doorAnchorCompilerFixture,
@@ -190,6 +191,20 @@ test("rearranged geometric jumps export the native traversal fixture", async () 
     await readFile(
       new URL(
         "../../../crates/robin_engine/tests/fixtures/asset-jump-geometric.level.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+});
+
+test("obstructed jumps export the clearance checked by native animation", async () => {
+  const { document, assets } = obstructedJumpCompilerFixture();
+  const fixture = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/asset-jump-obstructed.level.json",
         import.meta.url,
       ),
       "utf8",

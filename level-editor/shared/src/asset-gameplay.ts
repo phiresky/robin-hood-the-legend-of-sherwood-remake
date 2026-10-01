@@ -205,6 +205,8 @@ export interface AssetJumpSegment {
     maxRise: number;
     maxDrop: number;
     minOverlap: number;
+    /** Optional upright body envelope in world units; omitted means foot-trajectory checks only. */
+    clearance?: { radius: number; height: number };
   };
   edge: AssetJumpPair["edges"][number];
 }
@@ -648,6 +650,13 @@ export function validateAssetGameplay(
         rules.minOverlap <= 0
       )
         fail(`invalid jump attachment ${segment.id}`);
+      if (
+        rules.clearance &&
+        (![rules.clearance.radius, rules.clearance.height].every(Number.isFinite) ||
+          rules.clearance.radius < 0 ||
+          rules.clearance.height < 0)
+      )
+        fail(`invalid jump clearance ${segment.id}`);
     }
   }
   for (const pair of data.jumpPairs ?? []) {

@@ -4,9 +4,13 @@
   and overlap limits instead of exact connection sockets. Export pairs facing
   parallel edges and clips them to a shared span, allowing new arrangements of
   independently placed assets. Existing library sockets remain supported; adoption
-  of the new rules and jump-path obstruction checks are still pending.
+  of the new rules is still pending.
   Geometric matching follows the runtime takeoff normal, with an exported fixture
   checked through native animation translation for both travel directions.
+  Level ledges now trim blocked flight spans against placed solids in both
+  directions, including takeoff. Optional body radius/height account for headroom
+  and side clearance. Unsupported automatic jump shapes warn and are omitted;
+  explicit authored connections retain their existing behavior.
 
 - **Exact multiplayer teams.** Local and online hosts choose one to five named
   playable characters independently of player count, including duplicates. A

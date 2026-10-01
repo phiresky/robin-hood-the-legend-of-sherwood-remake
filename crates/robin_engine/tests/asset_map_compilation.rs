@@ -1207,6 +1207,7 @@ fn compiled_roof_jump_routes_enforce_character_skills_and_destination_helpers() 
         include_bytes!("fixtures/asset-jump.level.json").as_slice(),
         include_bytes!("fixtures/asset-jump-detached.level.json").as_slice(),
         include_bytes!("fixtures/asset-jump-geometric.level.json").as_slice(),
+        include_bytes!("fixtures/asset-jump-obstructed.level.json").as_slice(),
     ] {
         let mut assets = LevelAssets::new();
         let engine = construct(bytes, &mut assets);

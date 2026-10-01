@@ -21,6 +21,7 @@ import {
   multiPlaneRegionCompilerFixture,
   joinedNavigationCompilerFixture,
   crossAssetJumpCompilerFixture,
+  obstructedJumpCompilerFixture,
   doorTransitionCompilerFixture,
   doorAnchorCompilerFixture,
   projectionMaterialCompilerFixture,
@@ -826,6 +827,22 @@ test("walkways and roof jumps reconnect to replacement assets without original n
     }
   }
 });
+test("moving a separate wall rebuilds the usable jump span", () => {
+  const { document, assets } = obstructedJumpCompilerFixture();
+  const blocked = compileAssetGameplay(document, assets, bounds);
+  assert.equal(blocked.jump_line_pairs!.length, 1);
+  const span = (geometry: typeof blocked) => {
+    const line = geometry.jump_line_pairs![0]!.line1;
+    return Math.hypot(line.point_b[0] - line.point_a[0], line.point_b[1] - line.point_a[1]);
+  };
+  assert.equal(span(blocked), 18);
+  assert.match(blocked.warnings!.join("\n"), /solid obstacles obstruct/);
+  document.groups.find((group) => group.id === "jump-wall")!.transform.dx = 100;
+  const clear = compileAssetGameplay(document, assets, bounds);
+  assert.equal(span(clear), 30);
+  assert.ok(!clear.warnings?.some((warning) => warning.includes("solid obstacles obstruct")));
+});
+
 test("geometric jump rules connect rearranged assets and preserve receiving zones", () => {
   const { document, assets, hut, upper } = crossAssetJumpCompilerFixture();
   const low = hut.gameplay!.jumpSegments![0]!,

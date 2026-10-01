@@ -1,5 +1,11 @@
 import type { Vec3 } from "./scene.ts";
 import type { AssetJumpSegment } from "./asset-gameplay.ts";
+import {
+  trimJumpEdges,
+  snapJumpEdges,
+  type createJumpClearance,
+  type Interval,
+} from "./jump-clearance.ts";
 
 export interface PlacedJumpSegment {
   id: string;
@@ -66,10 +72,14 @@ function matchingEdges(a: PlacedJumpSegment, b: PlacedJumpSegment): [Edge, Edge]
 }
 
 /** Rebuild connections from placed geometry; legacy exact sockets remain supported. */
-export function assembleJumpSegments(segments: PlacedJumpSegment[]) {
+export function assembleJumpSegments(
+  segments: PlacedJumpSegment[],
+  clearance?: ReturnType<typeof createJumpClearance>,
+) {
   const consumed = new Set<PlacedJumpSegment>();
   const unmatched: PlacedJumpSegment[] = [];
   const pairs: { id: string; long: boolean; edges: Edge[] }[] = [];
+  const warnings: string[] = [];
   for (const segment of segments) {
     if (consumed.has(segment)) continue;
     const candidates = segments.flatMap((other) => {
@@ -90,7 +100,65 @@ export function assembleJumpSegments(segments: PlacedJumpSegment[]) {
       throw new Error(`Jump ${segment.id}: both edges use the same landing zone`);
     consumed.add(segment);
     consumed.add(other);
-    pairs.push({ id: segment.id, long: segment.long, edges });
+    if (!segment.attachment || !clearance) {
+      pairs.push({ id: segment.id, long: segment.long, edges });
+      continue;
+    }
+    let blocked: Interval[];
+    const body = {
+      radius: Math.max(
+        segment.attachment.clearance?.radius ?? 0,
+        other.attachment!.clearance?.radius ?? 0,
+      ),
+      height: Math.max(
+        segment.attachment.clearance?.height ?? 0,
+        other.attachment!.clearance?.height ?? 0,
+      ),
+    };
+    const snapped = snapJumpEdges(edges);
+    const length = Math.hypot(snapped[0].b[0] - snapped[0].a[0], snapped[0].b[1] - snapped[0].a[1]);
+    try {
+      blocked = clearance(snapped, segment.long, body).map(([a, b]) => [
+        Math.max(0, a - 1 / length),
+        Math.min(1, b + 1 / length),
+      ]);
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      warnings.push(`Jump ${segment.id}: connection omitted: ${error.message}.`);
+      continue;
+    }
+    let start = 0;
+    const spans: Interval[] = [];
+    for (const [low, high] of [...blocked, [1, 1] as Interval]) {
+      if (low > start) spans.push([start, low]);
+      start = Math.max(start, high);
+    }
+    const minimum = Math.max(segment.attachment.minOverlap, other.attachment!.minOverlap);
+    const usable = spans.filter(([a, b]) => (b - a) * length >= minimum);
+    let retained = 0;
+    for (const [index, [a, b]] of usable.entries()) {
+      const finalEdges = snapJumpEdges(trimJumpEdges(snapped, a, b));
+      if (
+        Math.hypot(
+          finalEdges[0].b[0] - finalEdges[0].a[0],
+          finalEdges[0].b[1] - finalEdges[0].a[1],
+        ) < minimum
+      )
+        continue;
+      if (clearance(finalEdges, segment.long, body).length) continue;
+      pairs.push({
+        id: usable.length === 1 ? segment.id : `${segment.id}/span-${index}`,
+        long: segment.long,
+        edges: finalEdges,
+      });
+      retained++;
+    }
+    if (blocked.length)
+      warnings.push(
+        `Jump ${segment.id}: solid obstacles obstruct the flight; ${retained} usable span(s) retained.`,
+      );
+    else if (!retained)
+      warnings.push(`Jump ${segment.id}: no usable span remains after movement-grid rounding.`);
   }
-  return { pairs, unmatched };
+  return { pairs, unmatched, warnings };
 }

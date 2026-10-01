@@ -314,6 +314,48 @@ export function geometricJumpCompilerFixture() {
   return fixture;
 }
 
+export function obstructedJumpCompilerFixture() {
+  const fixture = geometricJumpCompilerFixture();
+  const blocker = structuredClone(fixture.upper);
+  blocker.id = "jump-wall";
+  blocker.gameplay = {
+    version: 1,
+    collision: "none",
+    surfaces: [],
+    doors: [],
+    volumes: [
+      {
+        id: "jump-obstruction",
+        node: "building-999",
+        shape: {
+          points: [
+            [107, 90],
+            [109, 90],
+            [109, 95],
+            [107, 95],
+          ].map(([x, y]) => ({ x: x!, y: y!, z_bottom: 0, z_top: 200 })),
+          solid: true,
+          opaque: true,
+          mouse: true,
+          show_shadow_polygon: false,
+          default_material: 0,
+        },
+      },
+    ],
+  };
+  fixture.assets.set(blocker.id, blocker);
+  fixture.document.assetSources!.push({ ...fixture.document.assetSources![0]!, id: blocker.id });
+  fixture.document.objects.push({
+    ...structuredClone(fixture.document.objects[0]!),
+    id: "jump-wall-body",
+    group: "jump-wall",
+    node: "asset:jump-wall:building-999",
+  });
+  fixture.document.groups.push({ id: "jump-wall", transform: { ...IDENTITY_TRANSFORM } });
+  fixture.document.map = "Obstructed geometric jump fixture";
+  return fixture;
+}
+
 export function sightTransitionCompilerFixture() {
   const fixture = movementTransitionCompilerFixture();
   const shape = structuredClone(fixture.hut.parts[0]!.obstacle_local_game!);

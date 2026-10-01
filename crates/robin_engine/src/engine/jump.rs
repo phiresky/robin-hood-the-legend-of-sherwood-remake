@@ -1580,67 +1580,124 @@ mod tests {
 
     #[test]
     fn editor_geometric_jump_launches_toward_the_landing_edge() {
-        let loaded = crate::level_data::LoadedLevel::hackable_from_json(include_bytes!(
-            "../../tests/fixtures/asset-jump-geometric.level.json"
-        ))
-        .unwrap();
-        assert_eq!(loaded.proto.jump_line_pairs.len(), 1);
-        for pair in &loaded.proto.jump_line_pairs {
-            for (a, b) in [(&pair.line1, &pair.line2), (&pair.line2, &pair.line1)] {
-                let mut source = JumpLine::new(
-                    MapPoint::new(f32::from(a.point_a.0), f32::from(a.point_a.1)),
-                    MapPoint::new(f32::from(a.point_b.0), f32::from(a.point_b.1)),
-                    f32::from(a.point_a.2),
-                    f32::from(a.point_b.2),
-                );
-                source.long_jump_forced = pair.jump_long;
-                let destination = JumpLine::new(
-                    MapPoint::new(f32::from(b.point_a.0), f32::from(b.point_a.1)),
-                    MapPoint::new(f32::from(b.point_b.0), f32::from(b.point_b.1)),
-                    f32::from(b.point_a.2),
-                    f32::from(b.point_b.2),
-                );
-                for t in [0.0, 0.25, 0.5, 0.75, 1.0] {
-                    let start = MapPoint::new(
-                        f32::from(a.point_a.0)
-                            + t * (f32::from(a.point_b.0) - f32::from(a.point_a.0)),
-                        f32::from(a.point_a.1)
-                            + t * (f32::from(a.point_b.1) - f32::from(a.point_a.1)),
+        for bytes in [
+            include_bytes!("../../tests/fixtures/asset-jump-geometric.level.json").as_slice(),
+            include_bytes!("../../tests/fixtures/asset-jump-obstructed.level.json").as_slice(),
+        ] {
+            let loaded = crate::level_data::LoadedLevel::hackable_from_json(bytes).unwrap();
+            let pairs = loaded.proto.jump_line_pairs.clone();
+            let mut assets = LevelAssets::new();
+            let mut profiles = crate::profiles::ProfileManager::new();
+            let mut campaign = crate::campaign::Campaign::new();
+            let index = campaign
+                .force_next_mission_by_name(&mut profiles, "jump-test", "jump-test", true)
+                .unwrap();
+            campaign.current_mission_idx = Some(index);
+            assets.profile_manager = std::sync::Arc::new(profiles);
+            let _engine = crate::engine::Engine::new(crate::engine::EngineArgs {
+                campaign,
+                level: crate::engine::LevelLoadArgs {
+                    assets: &mut assets,
+                    level_directory: "",
+                    progress: &mut |_| {},
+                    loaded,
+                    bg_pixel_dims: (2000., 2000.),
+                },
+                ground_mark_sprite: None,
+                titbit_row_frame_counts: vec![],
+                rng_seed: 0,
+                original_rng_replay: None,
+                sim_config: crate::engine::SimConfig {
+                    script_enabled: false,
+                    ..Default::default()
+                },
+            })
+            .unwrap();
+            assert_eq!(pairs.len(), 1);
+            for pair in &pairs {
+                for (a, b) in [(&pair.line1, &pair.line2), (&pair.line2, &pair.line1)] {
+                    let mut source = JumpLine::new(
+                        MapPoint::new(f32::from(a.point_a.0), f32::from(a.point_a.1)),
+                        MapPoint::new(f32::from(a.point_b.0), f32::from(a.point_b.1)),
+                        f32::from(a.point_a.2),
+                        f32::from(a.point_b.2),
                     );
-                    let target = MapPoint::new(
-                        f32::from(b.point_b.0)
-                            + t * (f32::from(b.point_a.0) - f32::from(b.point_b.0)),
-                        f32::from(b.point_b.1)
-                            + t * (f32::from(b.point_a.1) - f32::from(b.point_b.1)),
+                    source.long_jump_forced = pair.jump_long;
+                    let destination = JumpLine::new(
+                        MapPoint::new(f32::from(b.point_a.0), f32::from(b.point_a.1)),
+                        MapPoint::new(f32::from(b.point_b.0), f32::from(b.point_b.1)),
+                        f32::from(b.point_a.2),
+                        f32::from(b.point_b.2),
                     );
-                    let target_z = f32::from(b.point_b.2)
-                        + t * (f32::from(b.point_a.2) - f32::from(b.point_b.2));
-                    let steps = build_jump_steps(
-                        &source,
-                        &destination,
-                        start,
-                        Posture::Upright,
-                        false,
-                        false,
-                        f32::from(b.point_a.2) - f32::from(a.point_a.2),
-                    );
-                    let launch = steps[0].target_3d.unwrap();
-                    assert!(
-                        (launch.x - start.x) * (target.x - start.x)
-                            + (launch.y - start.y) * (target.y - start.y)
-                            > 0.0,
-                        "takeoff must move toward the receiving roof"
-                    );
-                    let landing = steps
-                        .iter()
-                        .rev()
-                        .find(|step| step.anim == OrderType::JumpingLong)
-                        .unwrap()
-                        .target_3d
-                        .unwrap();
-                    assert!((landing.x - target.x).abs() < 1e-4);
-                    assert!((landing.y - target.y - target_z).abs() < 1e-4);
-                    assert!((landing.z - target_z).abs() < 1e-4);
+                    for t in [0.0, 0.25, 0.5, 0.75, 1.0] {
+                        let start = MapPoint::new(
+                            f32::from(a.point_a.0)
+                                + t * (f32::from(a.point_b.0) - f32::from(a.point_a.0)),
+                            f32::from(a.point_a.1)
+                                + t * (f32::from(a.point_b.1) - f32::from(a.point_a.1)),
+                        );
+                        let target = MapPoint::new(
+                            f32::from(b.point_b.0)
+                                + t * (f32::from(b.point_a.0) - f32::from(b.point_b.0)),
+                            f32::from(b.point_b.1)
+                                + t * (f32::from(b.point_a.1) - f32::from(b.point_b.1)),
+                        );
+                        let target_z = f32::from(b.point_b.2)
+                            + t * (f32::from(b.point_a.2) - f32::from(b.point_b.2));
+                        let steps = build_jump_steps(
+                            &source,
+                            &destination,
+                            start,
+                            Posture::Upright,
+                            false,
+                            false,
+                            f32::from(b.point_a.2) - f32::from(a.point_a.2),
+                        );
+                        let launch = steps[0].target_3d.unwrap();
+                        assert!(
+                            (launch.x - start.x) * (target.x - start.x)
+                                + (launch.y - start.y) * (target.y - start.y)
+                                > 0.0,
+                            "takeoff must move toward the receiving roof"
+                        );
+                        let landing = steps
+                            .iter()
+                            .rev()
+                            .find(|step| step.anim == OrderType::JumpingLong)
+                            .unwrap()
+                            .target_3d
+                            .unwrap();
+                        assert!((landing.x - target.x).abs() < 1e-4);
+                        assert!((landing.y - target.y - target_z).abs() < 1e-4);
+                        assert!((landing.z - target_z).abs() < 1e-4);
+                        let source_z = source.z_a + t * (source.z_b - source.z_a);
+                        let mut path = vec![
+                            [start.x, start.y + source_z, source_z],
+                            [launch.x, launch.y + source_z, source_z],
+                        ];
+                        path.extend(
+                            steps
+                                .iter()
+                                .filter(|step| step.anim == OrderType::JumpingLong)
+                                .map(|step| {
+                                    let p = step.target_3d.unwrap();
+                                    [p.x, p.y, p.z]
+                                }),
+                        );
+                        for obstacle in assets
+                            .environment
+                            .static_sight_obstacles
+                            .iter()
+                            .filter(|obstacle| obstacle.is_solid())
+                        {
+                            for segment in path.windows(2) {
+                                assert!(
+                                    !obstacle.is_blocking_ray_3d(segment[0], segment[1]),
+                                    "compiled flight intersects a solid obstacle at t={t}"
+                                );
+                            }
+                        }
+                    }
                 }
             }
         }

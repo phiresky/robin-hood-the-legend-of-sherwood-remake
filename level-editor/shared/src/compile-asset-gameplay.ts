@@ -16,6 +16,7 @@ import {
   type PlacedNavigationJoin,
 } from "./assemble-navigation-joins.ts";
 import { assembleJumpSegments, type PlacedJumpSegment } from "./assemble-jump-segments.ts";
+import { createJumpClearance } from "./jump-clearance.ts";
 import { assembleLiftSegments, type PlacedLiftSegment } from "./assemble-lift-segments.ts";
 import { assembleInteriors, type PlacedInterior } from "./assemble-interiors.ts";
 import {
@@ -905,8 +906,12 @@ function compileAssetGameplayAttempt(
     warnings.push(
       `Navigation region ${join.region}: no matching boundary edge after placement; region remains independent.`,
     );
-  const assembledJumps = assembleJumpSegments(jumpSegments);
+  const assembledJumps = assembleJumpSegments(
+    jumpSegments,
+    jumpSegments.some((segment) => segment.attachment) ? createJumpClearance(sight) : undefined,
+  );
   jumpPairs.push(...assembledJumps.pairs);
+  warnings.push(...assembledJumps.warnings);
   for (const segment of assembledJumps.unmatched)
     warnings.push(
       `Jump ${segment.id}: no matching edge after placement; connection is unavailable.`,
