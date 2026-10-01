@@ -8,17 +8,17 @@ test("geometric edges connect new neighbours and trim to the overlapping span", 
     id: "a",
     long: true,
     attachment: rules,
-    edge: { zone: "a", a: [0, 0, 0], b: [0, 40, 0] },
+    edge: { zone: "a", a: [0, 40, 0], b: [0, 0, 0] },
   };
   const b: PlacedJumpSegment = {
     id: "new-neighbour",
     long: true,
     attachment: rules,
-    edge: { zone: "b", a: [10, 60, 10], b: [10, 20, 10] },
+    edge: { zone: "b", a: [10, 20, 10], b: [10, 60, 10] },
   };
   const expected = [
-    { zone: "a", a: [0, 10, 0], b: [0, 40, 0] },
-    { zone: "b", a: [10, 50, 10], b: [10, 20, 10] },
+    { zone: "a", a: [0, 40, 0], b: [0, 10, 0] },
+    { zone: "b", a: [10, 20, 10], b: [10, 50, 10] },
   ];
   assert.deepEqual(assembleJumpSegments([a, b]).pairs[0]!.edges, expected);
   assert.deepEqual(assembleJumpSegments([b, a]).pairs[0]!.edges, [...expected].reverse());
@@ -59,16 +59,16 @@ test("geometric edges connect new neighbours and trim to the overlapping span", 
       ...b,
       edge: {
         zone: "b",
-        a: [-10, 60, 10] as [number, number, number],
-        b: [-10, 20, 10] as [number, number, number],
+        a: [-10, 20, 10] as [number, number, number],
+        b: [-10, 60, 10] as [number, number, number],
       },
     },
     {
       ...b,
       edge: {
         zone: "b",
-        a: [10, 100, 10] as [number, number, number],
-        b: [10, 60, 10] as [number, number, number],
+        a: [10, 60, 10] as [number, number, number],
+        b: [10, 100, 10] as [number, number, number],
       },
     },
   ])

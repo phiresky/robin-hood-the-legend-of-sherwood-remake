@@ -304,6 +304,7 @@ export function geometricJumpCompilerFixture() {
   for (const asset of [fixture.hut, fixture.upper]) {
     const segment = asset.gameplay!.jumpSegments![0]!;
     delete segment.join;
+    [segment.edge.a, segment.edge.b] = [segment.edge.b, segment.edge.a];
     segment.attachment = { maxGap: 35, maxRise: 110, maxDrop: 110, minOverlap: 10 };
   }
   const placement = fixture.document.groups.find((group) => group.id === "jump-upper")!;

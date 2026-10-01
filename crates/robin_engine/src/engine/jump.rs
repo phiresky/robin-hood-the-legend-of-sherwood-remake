@@ -1579,6 +1579,74 @@ mod tests {
     use super::*;
 
     #[test]
+    fn editor_geometric_jump_launches_toward_the_landing_edge() {
+        let loaded = crate::level_data::LoadedLevel::hackable_from_json(include_bytes!(
+            "../../tests/fixtures/asset-jump-geometric.level.json"
+        ))
+        .unwrap();
+        assert_eq!(loaded.proto.jump_line_pairs.len(), 1);
+        for pair in &loaded.proto.jump_line_pairs {
+            for (a, b) in [(&pair.line1, &pair.line2), (&pair.line2, &pair.line1)] {
+                let mut source = JumpLine::new(
+                    MapPoint::new(f32::from(a.point_a.0), f32::from(a.point_a.1)),
+                    MapPoint::new(f32::from(a.point_b.0), f32::from(a.point_b.1)),
+                    f32::from(a.point_a.2),
+                    f32::from(a.point_b.2),
+                );
+                source.long_jump_forced = pair.jump_long;
+                let destination = JumpLine::new(
+                    MapPoint::new(f32::from(b.point_a.0), f32::from(b.point_a.1)),
+                    MapPoint::new(f32::from(b.point_b.0), f32::from(b.point_b.1)),
+                    f32::from(b.point_a.2),
+                    f32::from(b.point_b.2),
+                );
+                for t in [0.0, 0.25, 0.5, 0.75, 1.0] {
+                    let start = MapPoint::new(
+                        f32::from(a.point_a.0)
+                            + t * (f32::from(a.point_b.0) - f32::from(a.point_a.0)),
+                        f32::from(a.point_a.1)
+                            + t * (f32::from(a.point_b.1) - f32::from(a.point_a.1)),
+                    );
+                    let target = MapPoint::new(
+                        f32::from(b.point_b.0)
+                            + t * (f32::from(b.point_a.0) - f32::from(b.point_b.0)),
+                        f32::from(b.point_b.1)
+                            + t * (f32::from(b.point_a.1) - f32::from(b.point_b.1)),
+                    );
+                    let target_z = f32::from(b.point_b.2)
+                        + t * (f32::from(b.point_a.2) - f32::from(b.point_b.2));
+                    let steps = build_jump_steps(
+                        &source,
+                        &destination,
+                        start,
+                        Posture::Upright,
+                        false,
+                        false,
+                        f32::from(b.point_a.2) - f32::from(a.point_a.2),
+                    );
+                    let launch = steps[0].target_3d.unwrap();
+                    assert!(
+                        (launch.x - start.x) * (target.x - start.x)
+                            + (launch.y - start.y) * (target.y - start.y)
+                            > 0.0,
+                        "takeoff must move toward the receiving roof"
+                    );
+                    let landing = steps
+                        .iter()
+                        .rev()
+                        .find(|step| step.anim == OrderType::JumpingLong)
+                        .unwrap()
+                        .target_3d
+                        .unwrap();
+                    assert!((landing.x - target.x).abs() < 1e-4);
+                    assert!((landing.y - target.y - target_z).abs() < 1e-4);
+                    assert!((landing.z - target_z).abs() < 1e-4);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn airborne_jump_retains_takeoff_depth_until_landing_publication() {
         use crate::engine::test_support::actors::TestActor;
         let mut entity = TestActor::pc(Posture::Flying)

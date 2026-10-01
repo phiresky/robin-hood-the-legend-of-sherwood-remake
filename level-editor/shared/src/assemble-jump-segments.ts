@@ -30,7 +30,7 @@ function geometricEdges(a: PlacedJumpSegment, b: PlacedJumpSegment): [Edge, Edge
     return null;
   const axis = [av[0]! / al, av[1]! / al];
   const along = (p: readonly number[]) => (p[0]! - aa[0]) * axis[0]! + (p[1]! - aa[1]) * axis[1]!;
-  const gapAt = (p: readonly number[]) => (p[0]! - aa[0]) * axis[1]! - (p[1]! - aa[1]) * axis[0]!;
+  const gapAt = (p: readonly number[]) => -(p[0]! - aa[0]) * axis[1]! + (p[1]! - aa[1]) * axis[0]!;
   if ([ba, bb].some((p) => gapAt(p) <= 1e-4 || gapAt(p) > Math.min(ar.maxGap, br.maxGap)))
     return null;
   const startB = along(ba),

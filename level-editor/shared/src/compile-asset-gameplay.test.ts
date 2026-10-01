@@ -833,6 +833,8 @@ test("geometric jump rules connect rearranged assets and preserve receiving zone
   low.attachment = high.attachment = { maxGap: 35, maxRise: 110, maxDrop: 110, minOverlap: 10 };
   delete low.join;
   delete high.join;
+  for (const segment of [low, high])
+    [segment.edge.a, segment.edge.b] = [segment.edge.b, segment.edge.a];
   const group = document.groups.find((g) => g.id === "jump-upper")!;
   group.transform.dy = 100;
   group.transform.dx = 1;

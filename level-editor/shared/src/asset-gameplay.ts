@@ -197,7 +197,7 @@ export interface AssetJumpSegment {
   join?: [number, number, number];
   /**
    * Connection limits in map units after placement; no neighbour identity.
-   * Viewed in the map plane, the destination must lie to the right of a → b.
+   * The destination lies along the map-plane normal (-dy, dx) of a → b.
    * Both edges must opt in, face each other and agree on a usable shared span.
    */
   attachment?: {

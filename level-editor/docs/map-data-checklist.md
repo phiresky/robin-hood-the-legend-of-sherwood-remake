@@ -23,7 +23,12 @@ maximum gap, rise, drop and minimum overlap in map units. Export matches facing
 parallel edges at their current placements and trims them to their shared span;
 no original neighbour identity or connection coordinate is required. A rearranged
 two-asset fixture checks export and native routing with character skills and
-helper requirements. Existing exact sockets remain supported. Library migration,
+helper requirements. Native animation translation also checks takeoff toward the
+destination and landing alignment at five positions along each edge, in both
+directions. The edge-facing convention is the map-plane normal `(-dy, dx)`.
+Existing exact sockets remain supported. Many recovered library segments are
+short control lines, so migration requires usable ledges from asset surfaces;
+increasing socket tolerances alone is insufficient. Library migration,
 multiple destinations along one edge and blocked jump trajectories remain open;
 this is not automatic jump generation for every roof mesh.
 
