@@ -1298,3 +1298,80 @@ test("terrain drag previews coalesce and cancellation discards queued work", () 
   assert.deepEqual(seen, [b, null]);
   viewport.dispose();
 });
+
+test("path previews flush once per frame and discard work when editing ends", () => {
+  const { viewport } = fixture();
+  const internal = viewport as unknown as {
+    pendingSplinePreview: NonNullable<Level3D["splines"]>[number] | null;
+    flushSplinePreview(): void;
+  };
+  const path: NonNullable<Level3D["splines"]>[number] = {
+    id: "wall",
+    name: "Wall",
+    kind: "road",
+    closed: false,
+    width: 20,
+    repeatLength: 100,
+    points: [
+      [0, 0, 0],
+      [100, 0, 0],
+    ],
+  };
+  const seen: unknown[] = [];
+  const preview = viewport.previewSpline.bind(viewport);
+  viewport.previewSpline = (value) => {
+    seen.push(value);
+    preview(value);
+  };
+  internal.pendingSplinePreview = path;
+  const next = { ...path, width: 30 };
+  internal.pendingSplinePreview = next;
+  internal.flushSplinePreview();
+  internal.flushSplinePreview();
+  assert.deepEqual(seen, [next]);
+  internal.pendingSplinePreview = path;
+  viewport.previewSpline(null);
+  internal.flushSplinePreview();
+  assert.deepEqual(seen, [next, null]);
+  internal.pendingSplinePreview = path;
+  viewport.setSplineEdit(null);
+  internal.flushSplinePreview();
+  assert.deepEqual(seen, [next, null]);
+  viewport.dispose();
+});
+
+test("shallow views automatically expose game Z while preserving the manual override", () => {
+  const { viewport } = fixture();
+  const camera = new THREE.OrthographicCamera();
+  const gizmo = { dragging: false, showY: false };
+  Object.assign(viewport, { camera, gizmo });
+  const axes = viewport as unknown as { syncGizmoAxes(): void };
+  const angle = (degrees: number) => {
+    camera.position.set(
+      0,
+      Math.sin((degrees * Math.PI) / 180) * 100,
+      Math.cos((degrees * Math.PI) / 180) * 100,
+    );
+    camera.lookAt(0, 0, 0);
+    axes.syncGizmoAxes();
+  };
+  angle(35);
+  assert.equal(gizmo.showY, false);
+  angle(10);
+  assert.equal(gizmo.showY, true);
+  gizmo.dragging = true;
+  angle(35);
+  assert.equal(gizmo.showY, true);
+  gizmo.dragging = false;
+  axes.syncGizmoAxes();
+  assert.equal(gizmo.showY, false);
+  viewport.setGizmoVertical(true);
+  angle(90);
+  assert.equal(gizmo.showY, true);
+  viewport.setGizmoVertical(false);
+  assert.equal(gizmo.showY, false);
+  angle(0);
+  assert.equal(gizmo.showY, true);
+  Object.assign(viewport, { camera: null, gizmo: null });
+  viewport.dispose();
+});

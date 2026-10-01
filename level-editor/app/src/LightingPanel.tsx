@@ -1,12 +1,12 @@
 import { Show } from "solid-js";
-import type { Level3D } from "@rle/shared";
+import { DEFAULT_LIGHTING, type Level3D } from "@rle/shared";
 
-const defaults = { enabled: true, sunAzimuth: 305, sunElevation: 48, shadowOpacity: 1 };
+const defaults = DEFAULT_LIGHTING;
 export default function LightingPanel(props: {
   document: () => Level3D | null;
   commit(document: Level3D): void;
 }) {
-  const settings = () => props.document()?.lighting ?? { ...defaults, enabled: false };
+  const settings = () => props.document()?.lighting ?? defaults;
   function patch(values: Partial<typeof defaults>) {
     const document = props.document();
     if (document) props.commit({ ...document, lighting: { ...settings(), ...values } });

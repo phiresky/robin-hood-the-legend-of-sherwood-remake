@@ -24,7 +24,7 @@ export function riverGeometry(path: LevelSpline, camera: MapCamera, document?: L
       tangent = sample.tangent;
     const normal = new THREE.Vector3(-tangent.y, tangent.x, 0)
       .normalize()
-      .multiplyScalar(sample.width / 2);
+      .multiplyScalar((sample.width * sample.lateralScale) / 2);
     for (let column = 0; column <= columns; column++) {
       const sign = (column / columns) * 2 - 1;
       const x = p.x + sign * normal.x,
@@ -313,6 +313,24 @@ export function wallSectionProfile(
   return { start, end, sections };
 }
 
+type WallDeformation = {
+  curve: ReturnType<typeof splineCurve>;
+  length: number;
+  frames: Map<number, { point: THREE.Vector3; normal: THREE.Vector3 }>;
+  vertices: WeakMap<THREE.BufferGeometry, Map<number, Vertex>>;
+  templates: WeakMap<THREE.BufferGeometry, Map<number, Vertex[]>>;
+};
+function wallDeformation(path: LevelSpline, camera: MapCamera): WallDeformation {
+  const curve = splineCurve(path, camera);
+  return {
+    curve,
+    length: curve.getLength(),
+    frames: new Map(),
+    vertices: new WeakMap(),
+    templates: new WeakMap(),
+  };
+}
+
 /** Subdivide longitudinally before bending; UVs interpolate across every cut. */
 export function wallGeometry(
   source: THREE.BufferGeometry,
@@ -322,6 +340,7 @@ export function wallGeometry(
   bounds: THREE.Box3,
   repeat: number,
   profile?: WallSectionProfile,
+  deformation = wallDeformation(path, camera),
 ) {
   const axis = path.axis === "y" ? 1 : 0,
     cross = 1 - axis;
@@ -329,8 +348,7 @@ export function wallGeometry(
   const start = bounds.min.getComponent(axis) + full * (path.sourceStart ?? 0);
   const end = bounds.min.getComponent(axis) + full * (path.sourceEnd ?? 1);
   if (end - start <= 0.001) throw new Error("Wall source has no length along the selected axis");
-  const curve = splineCurve(path, camera),
-    length = curve.getLength();
+  const { curve, length } = deformation;
   const sourceWidth = bounds.max.getComponent(cross) - bounds.min.getComponent(cross);
   if (sourceWidth <= 0.001) throw new Error("Wall source has no thickness");
   const center = (bounds.max.getComponent(cross) + bounds.min.getComponent(cross)) / 2;
@@ -338,7 +356,14 @@ export function wallGeometry(
     ([key]) => key !== "normal" && key !== "tangent",
   );
   const output: Record<string, number[]> = Object.fromEntries(attributes.map(([key]) => [key, []]));
+  let vertices = deformation.vertices.get(source);
+  if (!vertices) {
+    vertices = new Map();
+    deformation.vertices.set(source, vertices);
+  }
   const read = (index: number): Vertex => {
+    const cached = vertices.get(index);
+    if (cached) return cached;
     const vertex: Vertex = {};
     for (const [key, attribute] of attributes) {
       vertex[key] = Array.from({ length: attribute.itemSize }, (_, k) =>
@@ -349,6 +374,7 @@ export function wallGeometry(
       matrix,
     );
     vertex.position = p.toArray();
+    vertices.set(index, vertex);
     return vertex;
   };
   const push = (vertex: Vertex) => {
@@ -356,8 +382,14 @@ export function wallGeometry(
       along = (p[axis]! - start) / (end - start);
     const distance = (repeat + along) * path.repeatLength;
     const t = Math.min(1, Math.max(0, distance / length));
-    const point = curve.getPointAt(t),
-      tangent = curve.getTangentAt(t);
+    let frame = deformation.frames.get(t);
+    if (!frame) {
+      const point = curve.getPointAt(t),
+        tangent = curve.getTangentAt(t);
+      frame = { point, normal: new THREE.Vector3(-tangent.y, tangent.x, 0).normalize() };
+      deformation.frames.set(t, frame);
+    }
+    const { point, normal } = frame;
     let sectionCenter = center,
       sectionWidth = sourceWidth;
     if (profile) {
@@ -373,7 +405,6 @@ export function wallGeometry(
       (((p[cross]! - sectionCenter) * path.width) / sectionWidth) *
       (axis === 1 ? -1 : 1) *
       (path.flipCrossSection ? -1 : 1);
-    const normal = new THREE.Vector3(-tangent.y, tangent.x, 0).normalize();
     output.position!.push(
       point.x + normal.x * lateral,
       point.y + normal.y * lateral,
@@ -382,24 +413,35 @@ export function wallGeometry(
     for (const [key] of attributes) if (key !== "position") output[key]!.push(...vertex[key]!);
   };
   const count = source.index?.count ?? source.getAttribute("position").count;
-  const bands = 12;
+  const bands = path.curved === false ? 1 : 12;
   const lastFraction = Math.min(1, length / path.repeatLength - repeat);
-  for (let i = 0; i < count; i += 3) {
-    const triangle = [0, 1, 2].map((k) => read(source.index ? source.index.getX(i + k) : i + k));
-    const low = Math.min(...triangle.map((v) => v.position![axis]!));
-    const high = Math.max(...triangle.map((v) => v.position![axis]!));
-    for (let band = 0; band < bands; band++) {
-      const a = start + ((end - start) * band) / bands;
-      const b = start + (end - start) * Math.min((band + 1) / bands, lastFraction);
-      if (b <= a || low > b || high < a) continue;
-      const polygon = clip(clip(triangle, axis, a, true), axis, b, false);
-      for (let j = 1; j + 1 < polygon.length; j++) {
-        push(polygon[0]!);
-        push(polygon[path.flipCrossSection ? j + 1 : j]!);
-        push(polygon[path.flipCrossSection ? j : j + 1]!);
+  let templates = deformation.templates.get(source);
+  if (!templates) {
+    templates = new Map();
+    deformation.templates.set(source, templates);
+  }
+  let prepared = templates.get(lastFraction);
+  if (!prepared) {
+    prepared = [];
+    for (let i = 0; i < count; i += 3) {
+      const triangle = [0, 1, 2].map((k) => read(source.index ? source.index.getX(i + k) : i + k));
+      const low = Math.min(...triangle.map((v) => v.position![axis]!));
+      const high = Math.max(...triangle.map((v) => v.position![axis]!));
+      for (let band = 0; band < bands; band++) {
+        const a = start + ((end - start) * band) / bands;
+        const b = start + (end - start) * Math.min((band + 1) / bands, lastFraction);
+        if (b <= a || low > b || high < a) continue;
+        const polygon = clip(clip(triangle, axis, a, true), axis, b, false);
+        for (let j = 1; j + 1 < polygon.length; j++) {
+          prepared.push(polygon[0]!);
+          prepared.push(polygon[path.flipCrossSection ? j + 1 : j]!);
+          prepared.push(polygon[path.flipCrossSection ? j : j + 1]!);
+        }
       }
     }
+    templates.set(lastFraction, prepared);
   }
+  for (const vertex of prepared) push(vertex);
   const geometry = new THREE.BufferGeometry();
   for (const [key, attribute] of attributes)
     geometry.setAttribute(key, new THREE.Float32BufferAttribute(output[key]!, attribute.itemSize));
@@ -518,6 +560,29 @@ export function wallMesh(
 ): THREE.Group {
   if (path.cornerAsset && !excludedCornerAssetIds.has(path.cornerAsset))
     return towerWall(path, camera, sources);
+  if (path.curved === false && path.points.length > 2) {
+    const result = new THREE.Group();
+    try {
+      for (let i = 0; i < path.points.length - (path.closed ? 0 : 1); i++)
+        result.add(
+          wallMesh(
+            {
+              ...path,
+              closed: false,
+              points: [path.points[i]!, path.points[(i + 1) % path.points.length]!],
+            },
+            camera,
+            sources,
+          ),
+        );
+      return result;
+    } catch (error) {
+      result.traverse((node) => {
+        if (node instanceof THREE.Mesh) node.geometry.dispose();
+      });
+      throw error;
+    }
+  }
   const source = new THREE.Group();
   for (const [key, node] of sources)
     if (key.startsWith("asset:" + path.asset + ":")) source.add(node.clone(true));
@@ -526,7 +591,8 @@ export function wallMesh(
   source.updateWorldMatrix(true, true);
   const bounds = new THREE.Box3().setFromObject(source);
   const profile = path.sourceStraight ? undefined : wallSectionProfile(source, bounds, path);
-  const length = splineCurve(path, camera).getLength();
+  const deformation = wallDeformation(path, camera);
+  const length = deformation.length;
   const repeats = Math.ceil(length / path.repeatLength);
   if (repeats > 512) throw new Error("Wall path would exceed 512 repeats; increase repeat length");
   const result = new THREE.Group();
@@ -554,7 +620,16 @@ export function wallMesh(
           for (let i = 0; i < repeats; i++)
             result.add(
               new THREE.Mesh(
-                wallGeometry(geometry, node.matrixWorld, path, camera, bounds, i, profile),
+                wallGeometry(
+                  geometry,
+                  node.matrixWorld,
+                  path,
+                  camera,
+                  bounds,
+                  i,
+                  profile,
+                  deformation,
+                ),
                 materials[group.materialIndex ?? 0],
               ),
             );

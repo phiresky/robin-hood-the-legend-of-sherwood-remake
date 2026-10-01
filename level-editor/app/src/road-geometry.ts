@@ -54,6 +54,21 @@ function interpolate(a: Vertex, b: Vertex, t: number): Vertex {
     v: a.v + (b.v - a.v) * t,
   };
 }
+function useful(polygon: Vertex[]) {
+  if (polygon.length < 3) return false;
+  const a = polygon[0]!;
+  let area = 0;
+  for (let i = 1; i + 1 < polygon.length; i++) {
+    const b = polygon[i]!,
+      c = polygon[i + 1]!;
+    area += (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+  }
+  return Math.abs(area) > epsilon;
+}
+function overlaps(a: Bounds, b: Bounds) {
+  return a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY;
+}
+
 /** Partition a convex ribbon polygon; outside pieces preserve the road beyond the grid. */
 function partition(polygon: Vertex[], triangle: TerrainTriangle) {
   const points = triangle.points;
@@ -81,7 +96,7 @@ function partition(polygon: Vertex[], triangle: TerrainTriangle) {
         reject.push(cut);
       }
     }
-    if (reject.length >= 3) outside.push(reject);
+    if (useful(reject)) outside.push(reject);
     inside = keep;
   }
   return { inside, outside };
@@ -108,7 +123,7 @@ export function roadGeometry(
   const pairs = sampleSpline(path, camera).map((sample) => {
     const normal = new THREE.Vector3(-sample.tangent.y, sample.tangent.x, 0)
       .normalize()
-      .multiplyScalar(sample.width / 2);
+      .multiplyScalar((sample.width * sample.lateralScale) / 2);
     return [-1, 1].map((sign) => ({
       x: sample.position.x + sign * normal.x,
       y: -(sample.position.y + sign * normal.y) * sine,
@@ -150,18 +165,22 @@ export function roadGeometry(
           )
             candidates.add(item);
         }
-      let remaining = [ribbon];
-      for (const { triangle } of candidates) {
-        const next: Vertex[][] = [];
-        for (const polygon of remaining) {
-          const { inside, outside } = partition(polygon, triangle);
+      let remaining = [{ polygon: ribbon, bounds: box }];
+      for (const { triangle, bounds: triangleBounds } of candidates) {
+        const next: typeof remaining = [];
+        for (const piece of remaining) {
+          if (!overlaps(piece.bounds, triangleBounds)) {
+            next.push(piece);
+            continue;
+          }
+          const { inside, outside } = partition(piece.polygon, triangle);
           emit(inside, triangle);
-          next.push(...outside);
+          for (const polygon of outside) next.push({ polygon, bounds: bounds(polygon) });
         }
         remaining = next;
         if (!remaining.length) break;
       }
-      for (const polygon of remaining) emit(polygon);
+      for (const { polygon } of remaining) emit(polygon);
     }
   }
   const geometry = new THREE.BufferGeometry();

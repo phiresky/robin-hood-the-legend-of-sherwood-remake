@@ -5,6 +5,8 @@ export interface LevelSpline {
   kind: "river" | "road" | "wall";
   points: [number, number, number][];
   closed: boolean;
+  /** False joins path controls with straight segments; omitted retains smooth curves. */
+  curved?: boolean;
   width: number;
   /** Optional widths at control points; interpolated continuously along each section. */
   pointWidths?: number[];

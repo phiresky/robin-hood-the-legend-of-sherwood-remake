@@ -37,8 +37,8 @@ export function roadTerrainPieces(
     const samples = sampleSpline(path, document.camera);
     const pairs = samples.map((s) => {
       const length = Math.hypot(s.tangent.x, s.tangent.y);
-      const dx = length ? ((-s.tangent.y / length) * s.width) / 2 : 0;
-      const dy = length ? ((s.tangent.x / length) * s.width) / 2 : 0;
+      const dx = length ? ((-s.tangent.y / length) * s.width * s.lateralScale) / 2 : 0;
+      const dy = length ? ((s.tangent.x / length) * s.width * s.lateralScale) / 2 : 0;
       return [
         [s.position.x - dx, -(s.position.y - dy) * sin],
         [s.position.x + dx, -(s.position.y + dy) * sin],

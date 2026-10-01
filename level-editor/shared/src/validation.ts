@@ -636,6 +636,8 @@ export function parseLevel3D(value: unknown, context: DocumentContext = {}): Lev
         "invalid spline kind",
       );
       check(typeof spline.closed === "boolean", spline.id, "closed must be boolean");
+      if (spline.curved !== undefined)
+        check(typeof spline.curved === "boolean", spline.id, "curved must be boolean");
       finite(spline.width, "spline.width");
       finite(spline.repeatLength, "spline.repeatLength");
       check(

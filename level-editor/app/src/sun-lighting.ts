@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import type { Level3D } from "@rle/shared";
+import { DEFAULT_LIGHTING, type Level3D } from "@rle/shared";
 
 /** Direct terrain lighting, with shadow overlays for baked ground artwork. */
 export class SunLighting {
@@ -48,11 +48,12 @@ export class SunLighting {
     if (this.receiver) this.root.add(this.receiver);
   }
   sync(settings: Level3D["lighting"], casters: THREE.Object3D[], bounds: THREE.Box3) {
+    settings ??= DEFAULT_LIGHTING;
     this.root.visible = true;
-    this.sun.visible = !!settings?.enabled;
-    if (this.receiver) this.receiver.visible = !!settings?.enabled;
-    this.ambient.intensity = Math.PI * (settings?.enabled ? 0.35 : 1);
-    if (!settings?.enabled || bounds.isEmpty()) return;
+    this.sun.visible = settings.enabled;
+    if (this.receiver) this.receiver.visible = settings.enabled;
+    this.ambient.intensity = Math.PI * (settings.enabled ? 0.35 : 1);
+    if (!settings.enabled || bounds.isEmpty()) return;
     this.sun.shadow.intensity = settings.shadowOpacity;
     for (const root of casters)
       root.traverse((node) => {

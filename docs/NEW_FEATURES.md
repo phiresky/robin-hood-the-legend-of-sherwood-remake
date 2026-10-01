@@ -2105,3 +2105,16 @@ cutouts aligned with terrain instead of rounding each piece separately.
   and river-channel tessellation, and retains surface materials and textures.
   Height edits preserve river surfaces and only redrape road geometry.
   A CPU drag benchmark is available at `level-editor/app/tests/terrain-edit-benchmark.mjs`.
+
+
+- Wall, river, and road paths have a Curved checkbox; disabling it joins controls
+  with straight sections, including the editing spline and closed loops. Existing
+  paths retain their smooth curves.
+  Path dragging coalesces previews per frame, shares repeated wall deformation work,
+  and prunes degenerate road-clipping fragments when rivers reshape the terrain.
+  CPU benchmarks are available in `level-editor/app/tests/path-edit-benchmark.mjs`.
+- Sunlight defaults to enabled at full shadow strength for new maps and maps without
+  saved lighting settings. Explicitly disabled lighting remains disabled.
+
+- The vertical translation gizmo appears automatically below a 20-degree viewing
+  elevation. The manual Z toggle keeps it visible at other angles.

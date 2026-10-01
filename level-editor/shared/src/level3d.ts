@@ -456,3 +456,11 @@ export function partMatrix(cam: MapCamera, doc: Level3D, o: Level3DObject): numb
     own,
   );
 }
+
+/** Lighting used by maps that do not yet store explicit sun settings. */
+export const DEFAULT_LIGHTING: Readonly<NonNullable<Level3D["lighting"]>> = Object.freeze({
+  enabled: true,
+  sunAzimuth: 305,
+  sunElevation: 48,
+  shadowOpacity: 1,
+});

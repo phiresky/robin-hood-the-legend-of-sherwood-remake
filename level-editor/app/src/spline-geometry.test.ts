@@ -580,3 +580,89 @@ test("terrain drags retain river surfaces and road textures through commit", () 
   layer.clear();
   assert.equal(disposed, textures.length);
 });
+
+test("straight wall controls form independent straight sections and round-trip", () => {
+  const source = new THREE.Mesh(new THREE.BoxGeometry(100, 12, 40), new THREE.MeshBasicMaterial());
+  const path: LevelSpline = {
+    ...river,
+    kind: "wall",
+    asset: "wall",
+    curved: false,
+    sourceStraight: true,
+    width: 12,
+    points: [
+      [0, 0, 0],
+      [200, 0, 0],
+      [200, 200, 0],
+    ],
+  };
+  const document: Level3D = {
+    version: 1,
+    map: "test",
+    sceneAssets: [],
+    size: [500, 500],
+    camera,
+    objects: [],
+    groups: [],
+    splines: [path],
+  };
+  const stored = { ...document, splines: [{ ...path, kind: "road" }] };
+  assert.equal(parseLevel3D(JSON.parse(JSON.stringify(stored))).splines![0]!.curved, false);
+  assert.throws(
+    () => parseLevel3D({ ...document, splines: [{ ...path, curved: "yes" }] }),
+    /curved/,
+  );
+  for (const closed of [false, true]) {
+    const wall = wallMesh({ ...path, closed }, camera, new Map([["asset:wall:mesh", source]]));
+    assert.equal(wall.children.length, closed ? 3 : 2);
+    const first = new THREE.Box3().setFromObject(wall.children[0]!);
+    const second = new THREE.Box3().setFromObject(wall.children[1]!);
+    assert.ok(Math.abs(first.min.y + 6) < 1e-5 && Math.abs(first.max.y - 6) < 1e-5);
+    assert.ok(Math.abs(second.min.x - 194) < 1e-5 && Math.abs(second.max.x - 206) < 1e-5);
+    wall.traverse((node) => {
+      if (node instanceof THREE.Mesh) node.geometry.dispose();
+    });
+  }
+  source.geometry.dispose();
+  source.material.dispose();
+});
+
+function projectedArea(geometry: THREE.BufferGeometry) {
+  const p = geometry.getAttribute("position"),
+    index = geometry.index;
+  let area = 0;
+  for (let i = 0; i < (index?.count ?? p.count); i += 3) {
+    const a = index?.getX(i) ?? i,
+      b = index?.getX(i + 1) ?? i + 1,
+      c = index?.getX(i + 2) ?? i + 2;
+    area +=
+      Math.abs(
+        (p.getX(b) - p.getX(a)) * (p.getY(c) - p.getY(a)) -
+          (p.getY(b) - p.getY(a)) * (p.getX(c) - p.getX(a)),
+      ) / 2;
+  }
+  return area;
+}
+
+test("road clipping preserves coverage across coincident river edges and beyond the terrain", () => {
+  const road: LevelSpline = { ...river, kind: "road" };
+  const ribbon = riverGeometry(road, camera);
+  for (const bounds of [
+    [-200, -200, 1000, 1000],
+    [0, 0, 250, 250],
+  ] as [number, number, number, number][]) {
+    const document = {
+      camera,
+      terrain: createTerrainGrid(bounds, 250),
+      splines: [river],
+    } as Level3D;
+    const draped = riverGeometry(road, camera, document);
+    assert.ok(Math.abs(projectedArea(draped) / projectedArea(ribbon) - 1) < 1e-5);
+    assert.ok(
+      draped.getAttribute("position").count < 150000,
+      "degenerate fragments must not proliferate",
+    );
+    draped.dispose();
+  }
+  ribbon.dispose();
+});

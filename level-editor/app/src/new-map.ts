@@ -1,4 +1,4 @@
-import { createTerrainGrid, parseLevel3D } from "@rle/shared";
+import { createTerrainGrid, parseLevel3D, DEFAULT_LIGHTING } from "@rle/shared";
 import { listFiles, writeText } from "./fs.ts";
 import { defaultNewMapOptions, validateNewMapOptions, type NewMapOptions } from "./workspace.ts";
 export { defaultNewMapOptions, type NewMapOptions } from "./workspace.ts";
@@ -29,6 +29,7 @@ export async function createNewMap(
 
   const document = parseLevel3D({
     version: 1,
+    lighting: { ...DEFAULT_LIGHTING },
     map: name,
     size: [...options.size],
     terrain: createTerrainGrid(

@@ -227,7 +227,47 @@ async function run() {
     await pause();
     check(internals.splineMode?.path.id === id, `Clicking spline ${id} did not select it`);
   }
+  async function checkCurvedToggle(id: string) {
+    const checkbox = document.querySelector<HTMLInputElement>('input[aria-label="Curved"]');
+    check(checkbox?.checked, `Curved checkbox missing or off for ${id}`);
+    checkbox!.click();
+    await pause();
+    check(
+      current.splines!.find((path) => path.id === id)!.curved === false,
+      "Curved toggle did not commit immediately",
+    );
+    const lines = internals.splines.controls.children.filter(
+      (child) => child instanceof THREE.Line && child.userData.splinePath === id,
+    ) as THREE.Line[];
+    for (const line of lines) {
+      const positions = line.geometry.getAttribute("position");
+      const a = new THREE.Vector3().fromBufferAttribute(positions, 0);
+      const b = new THREE.Vector3().fromBufferAttribute(positions, positions.count - 1);
+      for (let i = 1; i + 1 < positions.count; i++) {
+        const p = new THREE.Vector3().fromBufferAttribute(positions, i);
+        check(
+          p.distanceTo(a.clone().lerp(b, i / (positions.count - 1))) < 0.0001,
+          `${id} editing spline still curves when disabled`,
+        );
+      }
+    }
+    const restored = parseStoredMap(
+      JSON.parse(JSON.stringify(serializeStoredMap(current, new Map()))),
+      new Map(),
+    );
+    check(
+      restored.splines!.find((path) => path.id === id)!.curved === false,
+      "Straight setting lost on reload",
+    );
+    document.querySelector<HTMLInputElement>('input[aria-label="Curved"]')!.click();
+    await pause();
+    check(
+      current.splines!.find((path) => path.id === id)!.curved === true,
+      "Curved toggle is one update late",
+    );
+  }
   await clickSpline("road");
+  await checkCurvedToggle("road");
   const selectedRoad = () => current.splines!.find((path) => path.id === "road")!;
   const rect = canvas.getBoundingClientRect();
   const project = (object: THREE.Object3D) => {
@@ -315,6 +355,7 @@ async function run() {
   await pause();
   check(!document.querySelector('div[style*="100000"]'), "Canceled marquee must be removed");
   await clickSpline("river");
+  await checkCurvedToggle("river");
   const riverBefore = current.splines!.find((path) => path.id === "river")!;
   const riverHandle = project(handles().find((handle) => handle.userData.splinePoint === 1)!);
   pointer("pointerdown", riverHandle);

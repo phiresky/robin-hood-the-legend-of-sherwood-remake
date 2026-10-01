@@ -561,7 +561,9 @@ export const terrainSplineCurve = splineCurve;
 export function splineFootprint(path: LevelSpline, camera: MapCamera): MultiPolygon {
   const sin = Math.sin((camera.elevation_deg * Math.PI) / 180);
   const pairs = sampleSpline(path, camera).map((s) => {
-    const n = new Vector3(-s.tangent.y, s.tangent.x, 0).normalize().multiplyScalar(s.width / 2);
+    const n = new Vector3(-s.tangent.y, s.tangent.x, 0)
+      .normalize()
+      .multiplyScalar((s.width * s.lateralScale) / 2);
     return [
       [s.position.x - n.x, -(s.position.y - n.y) * sin],
       [s.position.x + n.x, -(s.position.y + n.y) * sin],
@@ -687,7 +689,9 @@ export function terrainGameplay(document: Level3D): GameplayAssetDescriptor | un
   for (const path of rivers) {
     const samples = sampleSpline(path, document.camera);
     const pairs = samples.map((s) => {
-      const n = new Vector3(-s.tangent.y, s.tangent.x, 0).normalize().multiplyScalar(s.width / 2);
+      const n = new Vector3(-s.tangent.y, s.tangent.x, 0)
+        .normalize()
+        .multiplyScalar((s.width * s.lateralScale) / 2);
       return [
         [s.position.x - n.x, -(s.position.y - n.y) * sin, s.position.z * cos],
         [s.position.x + n.x, -(s.position.y + n.y) * sin, s.position.z * cos],

@@ -53,7 +53,11 @@ export function checkTerrainSunShadows() {
       if (litWithoutShadows[i]! - withShadows[i]! > 10) darkened++;
     if (darkened < 50)
       throw new Error(`Editable terrain did not receive sun shadows (${darkened} pixels)`);
-    sun.sync(undefined, [caster], new THREE.Box3().setFromObject(terrain.root));
+    sun.sync(
+      { enabled: false, sunAzimuth: 305, sunElevation: 48, shadowOpacity: 1 },
+      [caster],
+      new THREE.Box3().setFromObject(terrain.root),
+    );
     const disabled = render();
     if (disabled.some((value, i) => value !== without[i]))
       throw new Error("Disabling sun left shadows on terrain");
@@ -129,6 +133,7 @@ function checkViewportSunUpdates() {
     sceneAssets: [],
     objects: [],
     groups: [],
+    lighting: { enabled: false, sunAzimuth: 305, sunElevation: 48, shadowOpacity: 1 },
     size: [400, 400],
     camera: { kind: "oblique-orthographic", elevation_deg: 35 },
     terrain: grid,

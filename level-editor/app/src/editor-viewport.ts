@@ -33,6 +33,7 @@ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import {
+  DEFAULT_LIGHTING,
   sceneToGame,
   sceneToMap,
   groundToScene,
@@ -477,6 +478,16 @@ export class EditorViewport {
   private pendingTerrainPreview: import("@rle/shared").TerrainGrid | null = null;
   private terrainPreview: import("@rle/shared").TerrainGrid | null = null;
   private gizmoVertical = false;
+  private readonly gizmoViewDirection = new THREE.Vector3();
+  private syncGizmoAxes() {
+    if (!this.gizmo || this.gizmo.dragging) return;
+    // Game Z is scene Y. Near ground level, expose its otherwise optional handle.
+    const shallow =
+      this.camera &&
+      Math.abs(this.camera.getWorldDirection(this.gizmoViewDirection).y) <
+        Math.sin((20 * Math.PI) / 180);
+    this.gizmo.showY = this.gizmoVertical || !!shallow;
+  }
   setTerrainEdit(mode: TerrainEditMode | null) {
     this.pendingTerrainPreview = null;
     if (!mode && !this.terrainMode) {
@@ -489,7 +500,7 @@ export class EditorViewport {
     if (mode && !this.terrainMode) this.select(null);
     this.terrainMode = mode;
     this.terrainPreview = null;
-    if (this.gizmo) this.gizmo.showY = this.gizmoVertical;
+    this.syncGizmoAxes();
     this.syncSelection(mode ? null : this.bindings.selection());
   }
   private flushTerrainPreview() {
@@ -644,7 +655,7 @@ export class EditorViewport {
   }
   setGizmoVertical(vertical: boolean) {
     this.gizmoVertical = vertical;
-    if (this.gizmo) this.gizmo.showY = vertical;
+    this.syncGizmoAxes();
   }
 
   private sourceAsset: THREE.Object3D | null = null;
@@ -830,6 +841,7 @@ export class EditorViewport {
     this.missionEdit = null;
     this.missionMarkers.clear();
     this.cancelSplineGesture?.();
+    this.pendingSplinePreview = null;
     this.splineMode = null;
     this.splineTerrainPreview = false;
     this.exportFrame.visible = false;
@@ -973,7 +985,7 @@ export class EditorViewport {
     this.gizmo.setSpace("local");
     this.setCoordinateRotation(this.coordinateRotation);
     this.scene.add(this.gizmoFrame);
-    this.gizmo.showY = false;
+    this.syncGizmoAxes();
     this.scene.add(this.gizmo.getHelper());
     this.gizmo.addEventListener("dragging-changed", (e) => {
       this.dragging = (e as unknown as { value: boolean }).value;
@@ -1031,9 +1043,11 @@ export class EditorViewport {
     this.animate(() => {
       if (!this.renderer || !this.camera) return;
       this.flushTerrainPreview();
+      this.flushSplinePreview();
       if (this.flight) this.stepFlight();
       else this.orbit?.update();
       const camera = this.activeCamera();
+      this.syncGizmoAxes();
       this.workspaceGrid.visible = this.bindings.document()?.size === null;
       if (this.workspaceGrid.visible && this.orbit) {
         const spacing =
@@ -1789,16 +1803,22 @@ export class EditorViewport {
   }
 
   private refreshSunLighting(document = this.bindings.document(), bounds = this.contentBox()) {
-    const settings = document?.lighting;
+    const settings = document?.lighting ?? DEFAULT_LIGHTING;
     this.sunlight.sync(settings, [this.objectsRoot, this.splines.root, this.terrain.root], bounds);
     if (this.renderer) {
-      this.renderer.shadowMap.enabled = !!settings?.enabled;
+      this.renderer.shadowMap.enabled = settings.enabled;
       this.renderer.shadowMap.needsUpdate = true;
     }
   }
 
   private splinePreviewError: string | null = null;
   private splineTerrainPreview = false;
+  private pendingSplinePreview: import("@rle/shared").LevelSpline | null = null;
+  private flushSplinePreview() {
+    const path = this.pendingSplinePreview;
+    this.pendingSplinePreview = null;
+    if (path) this.previewSpline(path);
+  }
   private updateSplinePreview(update: () => void) {
     try {
       update();
@@ -1817,6 +1837,7 @@ export class EditorViewport {
   }
 
   previewSpline(path: import("@rle/shared").LevelSpline | null) {
+    this.pendingSplinePreview = null;
     this.updateSplinePreview(() => {
       const document = this.bindings.document();
       if (document && (path?.kind === "river" || this.splineTerrainPreview)) {
@@ -1837,6 +1858,7 @@ export class EditorViewport {
   }
 
   setSplineEdit(mode: SplineEditMode | null) {
+    this.pendingSplinePreview = null;
     if (mode?.path.id !== this.splineMode?.path.id) this.cancelSplineGesture?.();
     if (this.splineTerrainPreview) this.previewSpline(null);
     if (mode && this.terrainMode) {
@@ -1981,7 +2003,7 @@ export class EditorViewport {
               ? [p[0] + point[0] - start[0], p[1] + point[1] - start[1], p[2]]
               : p,
           );
-          this.previewSpline({ ...gesture.mode.path, points });
+          this.pendingSplinePreview = { ...gesture.mode.path, points };
         }
       },
       { capture: true, signal: this.listeners.signal },
@@ -2163,7 +2185,7 @@ export class EditorViewport {
       this.terrainMode = null;
       this.terrainControls.setMode(null);
       this.terrainPreview = null;
-      if (this.gizmo) this.gizmo.showY = this.gizmoVertical;
+      this.syncGizmoAxes();
       mode.deselect?.();
     }
     for (const [m, mat] of this.tinted) {

@@ -213,7 +213,7 @@ function* mapBakeTiles(
     if (box.isEmpty()) throw new Error("The map has no renderable geometry.");
     sunlight.setGround(ground ?? null);
     sunlight.sync(lighting, [root], box);
-    renderer.shadowMap.enabled = !!lighting?.enabled;
+    renderer.shadowMap.enabled = lighting?.enabled ?? true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     // Every tile sees the same scene and full-map light camera; rebuild once per appearance.
     renderer.shadowMap.autoUpdate = false;

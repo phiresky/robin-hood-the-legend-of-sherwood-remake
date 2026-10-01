@@ -56,3 +56,40 @@ test("point material weights preserve a transition when adding a midpoint", () =
   assert.deepEqual(splineMaterialWeightsAt(three, 0.25), splineMaterialWeightsAt(two, 0.25));
   assert.deepEqual(splineMaterialWeightsAt(three, 0.75), splineMaterialWeightsAt(two, 0.75));
 });
+
+test("straight walls interpolate controls exactly and measure uneven sections by distance", () => {
+  const wall: LevelSpline = {
+    ...path,
+    kind: "wall",
+    curved: false,
+    points: [
+      [0, 0, 0],
+      [30, 0, 0],
+      [30, 100, 0],
+    ],
+  };
+  const curve = splineCurve(wall, camera);
+  const secondLength = 100 / Math.sin((camera.elevation_deg * Math.PI) / 180);
+  assert.ok(Math.abs(curve.getLength() - 30 - secondLength) < 1e-9);
+  assert.ok(curve.getPoint(0.5).distanceTo(curve.getPoint(0).setX(30)) < 1e-9);
+  assert.ok(Math.abs(curve.getPointAt(15 / curve.getLength()).x - 15) < 1e-9);
+  assert.equal(curve.getPointAt(0.8).x, 30);
+  const closed = splineCurve({ ...wall, closed: true }, camera);
+  assert.ok(closed.getPoint(0).distanceTo(closed.getPoint(1)) < 1e-9);
+  assert.ok(Math.abs(closed.getLength() - curve.getLength() - Math.hypot(30, secondLength)) < 1e-9);
+  assert.notEqual(splineCurve({ ...wall, curved: undefined }, camera).getPoint(0.25).y, 0);
+});
+
+test("straight paths sample every control and use matching corner joins for all kinds", () => {
+  for (const kind of ["wall", "road", "river"] as const) {
+    const straight = { ...path, kind, curved: false };
+    const curve = splineCurve(straight, camera);
+    const samples = sampleSpline(straight, camera);
+    assert.ok(samples.some((s) => s.position.distanceTo(curve.getPoint(0.5)) < 1e-9));
+    for (const s of samples) {
+      assert.ok(s.position.distanceTo(curve.getPoint((s.section + s.fraction) / 2)) < 1e-9);
+      assert.ok(s.lateralScale >= 1 && s.lateralScale <= 4);
+    }
+    assert.equal(samples.at(-1)!.distance, curve.getLength());
+  }
+});

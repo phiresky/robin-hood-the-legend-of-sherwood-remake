@@ -29,7 +29,7 @@ test("sun direction, caster exclusions, and borrowed terrain resource ownership"
   assert.equal(lighting.sun.shadow.intensity, settings.shadowOpacity);
   const receiver = lighting.root.children.find((node) => node instanceof THREE.Mesh) as THREE.Mesh;
   assert.equal((receiver.material as THREE.ShadowMaterial).opacity, 1);
-  lighting.sync(undefined, [caster, water], new THREE.Box3());
+  lighting.sync({ ...settings, enabled: false }, [caster, water], new THREE.Box3());
   assert.equal(lighting.sun.visible, false);
   assert.equal(receiver.visible, false);
   assert.equal(lighting.ambient.intensity, Math.PI);
@@ -58,4 +58,15 @@ test("lighting settings round-trip and reject out-of-range solar controls", () =
       () => parseLevel3D({ ...document, lighting: { ...settings, ...invalid } }),
       /lighting/,
     );
+});
+
+test("missing lighting enables full-strength sunlight while explicit off is retained", () => {
+  const lighting = new SunLighting();
+  const bounds = new THREE.Box3(new THREE.Vector3(0, 0, 0), new THREE.Vector3(100, 100, 20));
+  lighting.sync(undefined, [], bounds);
+  assert.equal(lighting.sun.visible, true);
+  assert.equal(lighting.sun.shadow.intensity, 1);
+  lighting.sync({ ...settings, enabled: false }, [], bounds);
+  assert.equal(lighting.sun.visible, false);
+  lighting.dispose();
 });

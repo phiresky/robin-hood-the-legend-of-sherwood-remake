@@ -854,6 +854,15 @@ export default function SplinePanel(props: {
               />{" "}
               Closed loop
             </label>
+            <label class="check">
+              <input
+                type="checkbox"
+                aria-label="Curved"
+                checked={current().curved !== false}
+                onChange={(event) => patch({ curved: event.currentTarget.checked })}
+              />
+              Curved
+            </label>
             <Show when={current().kind === "wall"}>
               <div class="spline-actions">
                 <button disabled={busy()} onClick={() => setPicker("wall")}>

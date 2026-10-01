@@ -106,8 +106,8 @@ function channelCuts(document: Pick<Level3D, "splines" | "camera">, maxHeight: n
       const top = Math.max(maxHeight / cos + 1, p.z),
         outer = inner + (top - bed) / actualSlope;
       const len = Math.hypot(s.tangent.x, s.tangent.y),
-        nx = -s.tangent.y / len,
-        ny = s.tangent.x / len;
+        nx = (-s.tangent.y / len) * s.lateralScale,
+        ny = (s.tangent.x / len) * s.lateralScale;
       const point = (offset: number, z: number): Vec3 => [
         p.x + nx * offset,
         -(p.y + ny * offset) * sin,
