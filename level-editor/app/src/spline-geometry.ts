@@ -2,8 +2,9 @@ import { TextureAreaFilter } from "./texture-area-filter.ts";
 import { terrainMaterial } from "../../shared/src/terrain-materials.ts";
 import { terrainTexture, terrainMaterialTexture } from "./terrain-texture.ts";
 import * as THREE from "three";
-import { excludedCornerAssetIds } from "./spline-corners.ts";
-import { terrainSplineCurve, gameToScene, type LevelSpline, type MapCamera } from "@rle/shared";
+import { excludedCornerAssetIds, wallCorners, wallRuns } from "../../shared/src/wall-path.ts";
+export { wallCorners } from "../../shared/src/wall-path.ts";
+import { terrainSplineCurve, type LevelSpline, type MapCamera } from "@rle/shared";
 import { sampleSpline, splineMaterialWeightsAt } from "../../shared/src/spline-sampling.ts";
 import { roadGeometry, previewRoadGeometry } from "./road-geometry.ts";
 import type { Level3D } from "@rle/shared";
@@ -456,33 +457,6 @@ export function wallGeometry(
   return geometry;
 }
 
-/** Turns are measured in the ground plane, including the seam of closed walls. */
-export function wallCorners(path: LevelSpline, camera: MapCamera) {
-  if (!path.cornerAsset || excludedCornerAssetIds.has(path.cornerAsset)) return [];
-  const points = path.points.map((p) => new THREE.Vector3(...gameToScene(camera, ...p)));
-  return points.flatMap((p, i) => {
-    if ((!path.closed && (i === 0 || i === points.length - 1)) || path.cornerDisabled?.includes(i))
-      return [];
-    const incoming = p.clone().sub(points[(i + points.length - 1) % points.length]!);
-    incoming.z = 0;
-    incoming.normalize();
-    const outgoing = points[(i + 1) % points.length]!.clone().sub(p);
-    outgoing.z = 0;
-    outgoing.normalize();
-    const angle = THREE.MathUtils.radToDeg(incoming.angleTo(outgoing));
-    if (angle < (path.cornerMinAngle ?? 35)) return [];
-    const direction = incoming.add(outgoing).normalize();
-    return [
-      {
-        index: i,
-        position: p,
-        rotation:
-          Math.atan2(direction.y, direction.x) + THREE.MathUtils.degToRad(path.cornerRotation ?? 0),
-      },
-    ];
-  });
-}
-
 function towerWall(
   path: LevelSpline,
   camera: MapCamera,
@@ -500,40 +474,7 @@ function towerWall(
     center = bounds.getCenter(new THREE.Vector3());
   const anchor = new THREE.Vector3(center.x, center.y, bounds.min.z);
   try {
-    // Each tower terminates adjoining spans, avoiding a rounded curtain bulge
-    // underneath a sharp corner. Gentle intermediate controls stay curved.
-    const breaks = corners.map((c) => c.index);
-    const runs: number[][] = [];
-    if (path.closed)
-      for (let j = 0; j < breaks.length; j++) {
-        const run = [breaks[j]!],
-          end = breaks[(j + 1) % breaks.length]!;
-        let i = (breaks[j]! + 1) % path.points.length;
-        while (i !== end) {
-          run.push(i);
-          i = (i + 1) % path.points.length;
-        }
-        run.push(end);
-        runs.push(run);
-      }
-    else {
-      const stops = [0, ...breaks, path.points.length - 1];
-      for (let j = 0; j < stops.length - 1; j++)
-        runs.push(Array.from({ length: stops[j + 1]! - stops[j]! + 1 }, (_, k) => stops[j]! + k));
-    }
-    for (const run of runs)
-      result.add(
-        wallMesh(
-          {
-            ...path,
-            cornerAsset: undefined,
-            closed: false,
-            points: run.map((i) => path.points[i]!),
-          },
-          camera,
-          sources,
-        ),
-      );
+    for (const run of wallRuns(path, camera)) result.add(wallMesh(run, camera, sources));
     for (const corner of corners) {
       const instance = tower.clone(true);
       instance.traverse((node) => {

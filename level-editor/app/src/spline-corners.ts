@@ -11,8 +11,4 @@ export const cornerAssetIds = new Set([
 
 // Retired choices may still occur in older maps. Render those walls with a
 // continuous join instead of reinstating the rejected model on map load.
-export const excludedCornerAssetIds = new Set([
-  "leicester-east-moat-tower", // Large building with interior geometry.
-  "leicester-west-moat-tower", // Large building with interior geometry.
-  "nottingham-northwest-round-tower", // Stretched, incomplete exterior texture.
-]);
+export { excludedCornerAssetIds } from "../../shared/src/wall-path.ts";

@@ -150,14 +150,14 @@
       "model": "3d-assets/lincoln/lincoln-east-gate-north-tower/model.glb",
       "model_sha256": "7f38785c7be127fb71523826c36c37cdba2c363db7c45dfee3f451e772efc912",
       "descriptor": "3d-assets/lincoln/lincoln-east-gate-north-tower/asset.json",
-      "descriptor_sha256": "ea1467725f09dd16712b2fe05240eaa15aa8520e60eacbf64e564d3b42189d1a",
+      "descriptor_sha256": "bf9a64e91976b9e1afad048f019ae97a8df099184484f00ae02081818f861306",
       "id": "lincoln-east-gate-north-tower"
     },
     {
       "model": "3d-assets/lincoln/lincoln-east-gate-south-tower/model.glb",
       "model_sha256": "37ab3dd9bc2964149d95a38c6e96024abe4b34f29af10c729373a33e488ac1ec",
       "descriptor": "3d-assets/lincoln/lincoln-east-gate-south-tower/asset.json",
-      "descriptor_sha256": "c69f0b9ad79777e540af3e08a490dac307b7a621ed84d929c91c144bdc5db304",
+      "descriptor_sha256": "6361f3d7582b5e1f4e3890231771a652d15ed2dd753a27ead225a1e73d77d376",
       "id": "lincoln-east-gate-south-tower"
     },
     {

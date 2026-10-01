@@ -1,4 +1,5 @@
 import { terrainGameplay } from "./authored-terrain.ts";
+import { wallSplineGameplay } from "./wall-spline-gameplay.ts";
 import polygonClipping, { type Polygon } from "polygon-clipping";
 import { assembleSightVolumes } from "./assemble-sight-volumes.ts";
 import { orderSightVolumes } from "./order-sight-volumes.ts";
@@ -209,6 +210,16 @@ function compileAssetGameplayAttempt(
     (placement) => !omitted.has(placement.id),
   );
   const terrain = terrainGameplay(document);
+  const walls = wallSplineGameplay(document, descriptors, !!options.bestEffort);
+  warnings.push(...walls.warnings);
+  for (const descriptor of walls.descriptors)
+    placements.push({
+      id: descriptor.id,
+      descriptor,
+      parts: new Map(),
+      frames: new Map(),
+      background: true,
+    });
   if (terrain)
     placements.push({
       id: "authored-terrain",
@@ -228,11 +239,6 @@ function compileAssetGameplayAttempt(
     for (const id of missing)
       warnings.push(`Asset ${id}: gameplay omitted because no local gameplay definition exists.`);
     placements = placements.filter((placement) => placement.descriptor.gameplay);
-    for (const path of document.splines ?? [])
-      if (path.kind === "wall")
-        warnings.push(
-          `Wall spline ${path.id}: visual geometry exported; collision and navigation are not yet supported.`,
-        );
     if (document.population?.actors.length || document.population?.items.length)
       warnings.push(
         "Mission population omitted from map gameplay; retained in the embedded editor document.",
@@ -240,12 +246,10 @@ function compileAssetGameplayAttempt(
   }
   if (
     !options.bestEffort &&
-    (document.splines?.some((path) => path.kind === "wall") ||
-      document.population?.actors.length ||
-      document.population?.items.length)
+    (document.population?.actors.length || document.population?.items.length)
   )
     throw new Error(
-      "Map compilation does not support wall spline gameplay or embedded mission population; keep NPCs and items in a separate mission",
+      "Map compilation does not support embedded mission population; keep NPCs and items in a separate mission",
     );
   if (document.groups.some((g) => g.states) && !options.bestEffort)
     throw new Error(

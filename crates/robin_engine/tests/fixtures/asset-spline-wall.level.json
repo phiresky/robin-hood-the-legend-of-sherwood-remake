@@ -1,0 +1,1862 @@
+{
+  "title": "Spline courtyard",
+  "map_filename": "editor-spline-courtyard",
+  "spawn_points": [],
+  "walkable_polygon": [
+    [
+      0,
+      0
+    ],
+    [
+      499,
+      0
+    ],
+    [
+      499,
+      499
+    ],
+    [
+      0,
+      499
+    ]
+  ],
+  "volumes": [],
+  "asset_geometry": {
+    "motion_data": {
+      "layers": [
+        [
+          {
+            "is_lift": false,
+            "state_id": 0,
+            "polygon": {
+              "points": [
+                [
+                  0,
+                  0
+                ],
+                [
+                  500,
+                  0
+                ],
+                [
+                  500,
+                  500
+                ],
+                [
+                  0,
+                  500
+                ]
+              ]
+            },
+            "skeleton_segments": [],
+            "flags": 0,
+            "obstacles": [
+              {
+                "state_id": 0,
+                "polygon": {
+                  "points": [
+                    [
+                      400,
+                      194
+                    ],
+                    [
+                      400,
+                      206
+                    ],
+                    [
+                      100,
+                      206
+                    ],
+                    [
+                      100,
+                      194
+                    ]
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        []
+      ],
+      "graph_bytes": []
+    },
+    "sight_obstacles": [
+      {
+        "points": [
+          {
+            "x": 200,
+            "y": 194.26423563648953,
+            "z_bottom": 0,
+            "z_top": 32.76608177155967
+          },
+          {
+            "x": 100,
+            "y": 194.26423563648953,
+            "z_bottom": 0,
+            "z_top": 32.76608177155967
+          },
+          {
+            "x": 100,
+            "y": 205.73576436351044,
+            "z_bottom": 0,
+            "z_top": 32.76608177155967
+          }
+        ],
+        "solid": true,
+        "opaque": true,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "projection_area": null,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 200,
+            "y": 194.26423563648953,
+            "z_bottom": 0,
+            "z_top": 32.76608177155967
+          },
+          {
+            "x": 100,
+            "y": 205.73576436351044,
+            "z_bottom": 0,
+            "z_top": 32.76608177155967
+          },
+          {
+            "x": 200,
+            "y": 205.73576436351044,
+            "z_bottom": 0,
+            "z_top": 32.76608177155967
+          }
+        ],
+        "solid": true,
+        "opaque": true,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "projection_area": null,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 300,
+            "y": 194.26423563648953,
+            "z_bottom": 0,
+            "z_top": 32.76608177155967
+          },
+          {
+            "x": 200,
+            "y": 194.26423563648953,
+            "z_bottom": 0,
+            "z_top": 32.76608177155967
+          },
+          {
+            "x": 200,
+            "y": 205.73576436351044,
+            "z_bottom": 0,
+            "z_top": 32.76608177155967
+          }
+        ],
+        "solid": true,
+        "opaque": true,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "projection_area": null,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 300,
+            "y": 194.26423563648953,
+            "z_bottom": 0,
+            "z_top": 32.76608177155967
+          },
+          {
+            "x": 200,
+            "y": 205.73576436351044,
+            "z_bottom": 0,
+            "z_top": 32.76608177155967
+          },
+          {
+            "x": 300,
+            "y": 205.73576436351044,
+            "z_bottom": 0,
+            "z_top": 32.76608177155967
+          }
+        ],
+        "solid": true,
+        "opaque": true,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "projection_area": null,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 400,
+            "y": 194.26423563648953,
+            "z_bottom": 0,
+            "z_top": 32.76608177155967
+          },
+          {
+            "x": 300,
+            "y": 194.26423563648953,
+            "z_bottom": 0,
+            "z_top": 32.76608177155967
+          },
+          {
+            "x": 300,
+            "y": 205.73576436351044,
+            "z_bottom": 0,
+            "z_top": 32.76608177155967
+          }
+        ],
+        "solid": true,
+        "opaque": true,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "projection_area": null,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 400,
+            "y": 194.26423563648953,
+            "z_bottom": 0,
+            "z_top": 32.76608177155967
+          },
+          {
+            "x": 300,
+            "y": 205.73576436351044,
+            "z_bottom": 0,
+            "z_top": 32.76608177155967
+          },
+          {
+            "x": 400,
+            "y": 205.73576436351044,
+            "z_bottom": 0,
+            "z_top": 32.76608177155967
+          }
+        ],
+        "solid": true,
+        "opaque": true,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "projection_area": null,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 100,
+            "y": 100,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 0,
+            "y": 0,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 100,
+            "y": 0,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 100,
+            "y": 100,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 0,
+            "y": 100,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 0,
+            "y": 0,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 200,
+            "y": 100,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 100,
+            "y": 0,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 200,
+            "y": 0,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 200,
+            "y": 100,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 100,
+            "y": 100,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 100,
+            "y": 0,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 300,
+            "y": 100,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 200,
+            "y": 0,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 300,
+            "y": 0,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 300,
+            "y": 100,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 200,
+            "y": 100,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 200,
+            "y": 0,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 400,
+            "y": 100,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 300,
+            "y": 0,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 400,
+            "y": 0,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 400,
+            "y": 100,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 300,
+            "y": 100,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 300,
+            "y": 0,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 500,
+            "y": 100,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 400,
+            "y": 0,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 500,
+            "y": 0,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 500,
+            "y": 100,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 400,
+            "y": 100,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 400,
+            "y": 0,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 100,
+            "y": 200,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 0,
+            "y": 100,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 100,
+            "y": 100,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 100,
+            "y": 200,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 0,
+            "y": 200,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 0,
+            "y": 100,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 200,
+            "y": 200,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 100,
+            "y": 100,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 200,
+            "y": 100,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 200,
+            "y": 200,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 100,
+            "y": 200,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 100,
+            "y": 100,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 300,
+            "y": 200,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 200,
+            "y": 100,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 300,
+            "y": 100,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 300,
+            "y": 200,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 200,
+            "y": 200,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 200,
+            "y": 100,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 400,
+            "y": 200,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 300,
+            "y": 100,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 400,
+            "y": 100,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 400,
+            "y": 200,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 300,
+            "y": 200,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 300,
+            "y": 100,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 500,
+            "y": 200,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 400,
+            "y": 100,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 500,
+            "y": 100,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 500,
+            "y": 200,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 400,
+            "y": 200,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 400,
+            "y": 100,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 100,
+            "y": 300,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 0,
+            "y": 200,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 100,
+            "y": 200,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 100,
+            "y": 300,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 0,
+            "y": 300,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 0,
+            "y": 200,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 200,
+            "y": 300,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 100,
+            "y": 200,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 200,
+            "y": 200,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 200,
+            "y": 300,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 100,
+            "y": 300,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 100,
+            "y": 200,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 300,
+            "y": 300,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 200,
+            "y": 200,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 300,
+            "y": 200,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 300,
+            "y": 300,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 200,
+            "y": 300,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 200,
+            "y": 200,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 400,
+            "y": 300,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 300,
+            "y": 200,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 400,
+            "y": 200,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 400,
+            "y": 300,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 300,
+            "y": 300,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 300,
+            "y": 200,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 500,
+            "y": 300,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 400,
+            "y": 200,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 500,
+            "y": 200,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 500,
+            "y": 300,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 400,
+            "y": 300,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 400,
+            "y": 200,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 100,
+            "y": 400,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 0,
+            "y": 300,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 100,
+            "y": 300,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 100,
+            "y": 400,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 0,
+            "y": 400,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 0,
+            "y": 300,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 200,
+            "y": 400,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 100,
+            "y": 300,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 200,
+            "y": 300,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 200,
+            "y": 400,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 100,
+            "y": 400,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 100,
+            "y": 300,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 300,
+            "y": 400,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 200,
+            "y": 300,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 300,
+            "y": 300,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 300,
+            "y": 400,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 200,
+            "y": 400,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 200,
+            "y": 300,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 400,
+            "y": 400,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 300,
+            "y": 300,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 400,
+            "y": 300,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 400,
+            "y": 400,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 300,
+            "y": 400,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 300,
+            "y": 300,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 500,
+            "y": 400,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 400,
+            "y": 300,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 500,
+            "y": 300,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 500,
+            "y": 400,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 400,
+            "y": 400,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 400,
+            "y": 300,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 100,
+            "y": 500,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 0,
+            "y": 400,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 100,
+            "y": 400,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 100,
+            "y": 500,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 0,
+            "y": 500,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 0,
+            "y": 400,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 200,
+            "y": 500,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 100,
+            "y": 400,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 200,
+            "y": 400,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 200,
+            "y": 500,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 100,
+            "y": 500,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 100,
+            "y": 400,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 300,
+            "y": 500,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 200,
+            "y": 400,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 300,
+            "y": 400,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 300,
+            "y": 500,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 200,
+            "y": 500,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 200,
+            "y": 400,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 400,
+            "y": 500,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 300,
+            "y": 400,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 400,
+            "y": 400,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 400,
+            "y": 500,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 300,
+            "y": 500,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 300,
+            "y": 400,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 500,
+            "y": 500,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 400,
+            "y": 400,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 500,
+            "y": 400,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 500,
+            "y": 500,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 400,
+            "y": 500,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 400,
+            "y": 400,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 3,
+        "material_indices": []
+      }
+    ],
+    "doors": []
+  }
+}

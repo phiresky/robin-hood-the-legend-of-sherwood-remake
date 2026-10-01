@@ -52,6 +52,22 @@ in progress; unmarked roof meshes do not acquire jumps. The authoring tool
 scene pins and retains rollback snapshots; this publication is backed up in
 `work/map-compile/surface-jump-publication`.
 
+**Spline walls:** calibrated sources now export solid/opaque volumes and authored
+walkable surfaces through their current spline placement. Repeats, trims, width,
+flipping, slopes and corner scales follow the artwork; curved spans are subdivided
+before deformation. The renderer and compiler share corner/run splitting. A
+synthetic export passes native movement, routing-around-ends and ray collision
+checks. Initial library definitions use conservative continuous barrier envelopes
+for 19 prepared strips, with wood fences transparent to sight and masonry opaque.
+These are not inferred walkable tops or detailed openings: those require explicit
+asset-local surfaces/volumes. Six selectable tower sources retain their existing
+physical geometry through calibrated model frames. Custom cross-section
+straightening, source rotation, stateful walls and deformed doors/lifts/masks remain
+unsupported and produce warnings; ordinary placed assets still support those
+features. Model hashes bind calibration to the authored model. All 19 presets pass
+native construction and movement probes; all ten saved maps still compile.
+The publication retains rollback data under `work/map-compile/spline-gameplay-publication`.
+
 Current combined drafts recover all 27 map-source movement transitions.
 York's market assembly completes the movement-state ownership inventory.
 Nottingham has both after assembling its four changing northern facade parts.

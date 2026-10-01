@@ -41,7 +41,7 @@
       "model": "3d-assets/nottingham/nottingham-castle-east-round-tower/model.glb",
       "model_sha256": "93f4bbe1d9106590c222700d8b536d3a50b78aa7346b727fb1b593193f3a6e37",
       "descriptor": "3d-assets/nottingham/nottingham-castle-east-round-tower/asset.json",
-      "descriptor_sha256": "cd836a467c8b76227561a7da6e26fff4d46a366a07fd779498de7ec71a957b1a",
+      "descriptor_sha256": "ad0cf39979ecfe5e52b6311af6bb17940b5e61fd86f2af7ac152056a65b71ce7",
       "id": "nottingham-castle-east-round-tower"
     },
     {
@@ -349,7 +349,7 @@
       "model": "3d-assets/nottingham/nottingham-northeast-round-tower/model.glb",
       "model_sha256": "5706c4823eb6d7d4978e1944b49845cfce7c014dc73a0dd6a2bb44e7f76aac99",
       "descriptor": "3d-assets/nottingham/nottingham-northeast-round-tower/asset.json",
-      "descriptor_sha256": "8e801ddd49c12ee5c543aa8284a095f3dc87226a32f668b56ed2fb152c155e4f",
+      "descriptor_sha256": "c9d50a03bfd5e459f45ac2effaea24657153bd7625bbf8f2ff87dea6dd84203c",
       "id": "nottingham-northeast-round-tower"
     },
     {
@@ -475,7 +475,7 @@
       "model": "3d-assets/nottingham/nottingham-south-gate-west-tower/model.glb",
       "model_sha256": "27cac016842c29dbf793fadbd7e5c97589b04719b27442867ac1ab5457e52dae",
       "descriptor": "3d-assets/nottingham/nottingham-south-gate-west-tower/asset.json",
-      "descriptor_sha256": "0fcbdcc175d7aa0568458570fcfa56f0b60c926c5fb984ac90f9a82a91b256ad",
+      "descriptor_sha256": "1a8b7386daf3541d34c23c07f42f11cd892016474bf26b39c81776af29595663",
       "id": "nottingham-south-gate-west-tower"
     },
     {

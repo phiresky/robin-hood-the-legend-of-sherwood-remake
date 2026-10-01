@@ -9,6 +9,7 @@ import {
 import {
   validateAssetGameplay,
   type AssetWalkableSurface,
+  type AssetGameplay,
   type GameplayAssetDescriptor,
 } from "../../shared/src/asset-gameplay.ts";
 
@@ -19,13 +20,18 @@ export interface SurfaceJumpEdit {
   descriptorSha256: string;
   rules: NonNullable<AssetWalkableSurface["jump"]>;
 }
+export interface GameplayEdit {
+  asset: string;
+  descriptorSha256: string;
+  gameplay: AssetGameplay;
+}
 const hash = (bytes: string) => createHash("sha256").update(bytes).digest("hex");
 const encode = (value: unknown) => JSON.stringify(value) + "\n";
 
-/** Author surface rules without changing models, existing connections or scene placements. */
-export async function configureSurfaceJumps(
+/** Install reviewed gameplay without changing models or scene placements. */
+export async function configureAssetGameplay(
   library: string,
-  edits: SurfaceJumpEdit[],
+  edits: (SurfaceJumpEdit | GameplayEdit)[],
   output: string,
   apply = false,
 ) {
@@ -33,7 +39,9 @@ export async function configureSurfaceJumps(
   output = path.resolve(output);
   if (output === library || output.startsWith(library + path.sep))
     throw new Error("Backup must be outside the library");
-  const unique = new Set(edits.map((edit) => `${edit.asset}/${edit.surface}`));
+  const unique = new Set(
+    edits.map((edit) => `${edit.asset}/${"surface" in edit ? edit.surface : "$gameplay"}`),
+  );
   if (!edits.length || unique.size !== edits.length)
     throw new Error("Surface edits must be nonempty and unique");
   const indexFile = "3d-assets/index.json";
@@ -56,9 +64,18 @@ export async function configureSurfaceJumps(
       throw new Error(`Stale reviewed descriptor: ${asset}`);
     const raw = JSON.parse(before);
     const descriptor: GameplayAssetDescriptor = parseProjectionAssetDescriptor(raw);
-    if (!descriptor.gameplay) throw new Error(`Missing gameplay: ${asset}`);
-    const gameplay = structuredClone(descriptor.gameplay);
+    const replacements = selected.filter((edit) => "gameplay" in edit);
+    if (replacements.length && selected.length !== 1)
+      throw new Error(`Conflicting gameplay edits: ${asset}`);
+    const gameplay = structuredClone(replacements[0]?.gameplay ?? descriptor.gameplay);
+    if (!gameplay) throw new Error(`Missing gameplay: ${asset}`);
+    if (gameplay.spline?.modelSha256) {
+      const model = await fs.readFile(path.join(library, "3d-assets", entry.model));
+      if (createHash("sha256").update(model).digest("hex") !== gameplay.spline.modelSha256)
+        throw new Error(`Stale spline model calibration: ${asset}`);
+    }
     for (const edit of selected) {
+      if (!("surface" in edit)) continue;
       const surface = gameplay.surfaces.find((surface) => surface.id === edit.surface);
       if (!surface) throw new Error(`Missing surface: ${asset}/${edit.surface}`);
       surface.jump = structuredClone(edit.rules);
@@ -113,7 +130,12 @@ export async function configureSurfaceJumps(
       await fs.mkdir(path.dirname(target), { recursive: true });
       await fs.writeFile(target, bytes, { flag: "wx" });
     }
-  const report = { published, surfaces: edits.length, scenes, applied: false };
+  const report = {
+    published,
+    surfaces: edits.filter((edit) => "surface" in edit).length,
+    scenes,
+    applied: false,
+  };
   await fs.writeFile(path.join(output, "report.json"), encode(report));
   if (apply) {
     for (const change of changes)
@@ -141,6 +163,8 @@ export async function configureSurfaceJumps(
   }
   return report;
 }
+
+export const configureSurfaceJumps = configureAssetGameplay;
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   const [library, configuration, output, mode] = process.argv.slice(2);

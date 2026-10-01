@@ -1,6 +1,7 @@
 [
   {
     "id": "spline-derby-upper-curtain",
+    "collision": {"material": 2, "opaque": true},
     "name": "Derby \u00b7 Upper bailey battlements",
     "source": "derby-upper-east-curtain",
     "interval": [-240, 40],
@@ -13,6 +14,7 @@
   },
   {
     "id": "spline-derby-lower-curtain",
+    "collision": {"material": 2, "opaque": true},
     "name": "Derby \u00b7 Lower bailey stone wall",
     "source": "derby-lower-east-curtain",
     "start": 0.21,
@@ -25,6 +27,7 @@
   },
   {
     "id": "spline-derby-yard-fence",
+    "collision": {"material": 1, "opaque": false},
     "name": "Derby \u00b7 Timber yard fence",
     "source": "derby-lower-northwest-yard-fence",
     "feature_height": 30,
@@ -47,6 +50,7 @@
   },
   {
     "id": "spline-leicester-castle",
+    "collision": {"material": 2, "opaque": true},
     "name": "Leicester \u00b7 Castle curtain",
     "source": "leicester-southwest-wall-turret",
     "include_nodes": ["component 112", "component 121"],
@@ -59,6 +63,7 @@
   },
   {
     "id": "spline-leicester-stone-boundary",
+    "collision": {"material": 2, "opaque": true},
     "name": "Leicester \u00b7 Low stone boundary",
     "source": "leicester-mill-path-boundary-wall",
     "start": 0.1,
@@ -68,6 +73,7 @@
   },
   {
     "id": "spline-leicester-rail-fence",
+    "collision": {"material": 1, "opaque": false},
     "name": "Leicester \u00b7 Timber rail fence",
     "source": "leicester-roadside-rail-fence",
     "start": 0.1,
@@ -76,6 +82,7 @@
   },
   {
     "id": "spline-lincoln-east-curtain",
+    "collision": {"material": 2, "opaque": true},
     "name": "Lincoln \u00b7 Crenellated curtain",
     "source": "lincoln-east-curtain-wall-middle",
     "start": 0.06,
@@ -95,6 +102,7 @@
   },
   {
     "id": "spline-lincoln-garden-wall",
+    "collision": {"material": 2, "opaque": true},
     "name": "Lincoln \u00b7 Garden boundary",
     "source": "lincoln-garden-north-wall",
     "start": 0.15,
@@ -103,6 +111,7 @@
   },
   {
     "id": "spline-lincoln-wattle-fence",
+    "collision": {"material": 1, "opaque": false},
     "name": "Lincoln \u00b7 Wattle fence",
     "source": "lincoln-village-field-wattle-fence",
     "feature_height": 38,
@@ -114,6 +123,7 @@
   },
   {
     "id": "spline-nottingham-curtain",
+    "collision": {"material": 2, "opaque": true},
     "name": "Nottingham \u00b7 Town battlements",
     "source": "nottingham-south-curtain-wall-3",
     "feature_height": 252,
@@ -127,6 +137,7 @@
   },
   {
     "id": "spline-nottingham-castle-wall",
+    "collision": {"material": 2, "opaque": true},
     "name": "Nottingham \u00b7 Castle courtyard wall",
     "source": "nottingham-castle-east-courtyard-wall",
     "start": 0.05,
@@ -154,6 +165,7 @@
   },
   {
     "id": "spline-nottingham-field-wall",
+    "collision": {"material": 2, "opaque": true},
     "name": "Nottingham \u00b7 Dry-stone field wall",
     "source": "nottingham-village-south-field-wall",
     "start": 0.2,
@@ -174,6 +186,7 @@
   },
   {
     "id": "spline-york-curtain",
+    "collision": {"material": 2, "opaque": true},
     "name": "York \u00b7 Town curtain",
     "source": "york-group-251",
     "interval": [-110, 1],
@@ -182,6 +195,7 @@
   },
   {
     "id": "spline-york-inner-wall",
+    "collision": {"material": 2, "opaque": true},
     "name": "York \u00b7 Inner bailey wall",
     "source": "york-group-872",
     "interval": [-174, 177],
@@ -191,6 +205,7 @@
   },
   {
     "id": "spline-croisement02-stone-wall",
+    "collision": {"material": 2, "opaque": true},
     "name": "Croisement02 \u00b7 Woodland dry-stone wall",
     "source": "croisement02-group-011",
     "start": 0.15,
@@ -200,6 +215,7 @@
   },
   {
     "id": "spline-croisement02-wattle",
+    "collision": {"material": 1, "opaque": false},
     "name": "Croisement02 \u00b7 Woven field fence",
     "source": "croisement02-group-020",
     "interval": [-130, 120],
@@ -209,6 +225,7 @@
   },
   {
     "id": "spline-sherwood-rail",
+    "collision": {"material": 1, "opaque": false},
     "name": "Sherwood \u00b7 Bridge railing",
     "source": "sherwood-group-121",
     "interval": [-45, 12],
@@ -218,6 +235,7 @@
   },
   {
     "id": "spline-croisement01-bank",
+    "collision": {"material": 0, "opaque": true},
     "name": "Croisement01 \u00b7 Mossy rock bank",
     "source": "croisement01-group-003",
     "start": 0.12,
@@ -230,6 +248,7 @@
   },
   {
     "id": "spline-croisement03-bank",
+    "collision": {"material": 0, "opaque": true},
     "name": "Croisement03 \u00b7 Low stone bank",
     "source": "croisement03-group-087",
     "start": 0.1,

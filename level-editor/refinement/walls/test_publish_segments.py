@@ -20,6 +20,8 @@ class RuntimePublicationTests(unittest.TestCase):
         self.folder=self.stage/'spline-test'
         self.folder.mkdir(parents=True)
         (self.library/'scenes').mkdir()
+        (self.library/'game-data').mkdir()
+        (self.library/'game-data/index.json').write_text(json.dumps({'version': 1, 'files': []}))
         (self.folder/'model.glb').write_bytes(b'authoring model')
         (self.folder/'asset.json').write_text(json.dumps({
             'id':'spline-test','name':'Test strip','source_map':'Derby','model':'model.glb'}))

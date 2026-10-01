@@ -96,7 +96,7 @@ export function compileMap(
   // Namespace map and mission names so installation cannot replace a base-game map.
   const name = `editor-${slug}`;
   const assetGeometry =
-    assets || document.terrain?.cells.length || document.splines?.some((p) => p.kind !== "wall")
+    assets || document.terrain?.cells.length || document.splines?.length
       ? compileAssetGameplay(document, assets ?? new Map(), bounds, options)
       : undefined;
   const volumes = assetGeometry ? [] : compileVolumes(document, bounds);

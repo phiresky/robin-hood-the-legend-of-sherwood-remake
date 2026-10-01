@@ -680,6 +680,26 @@ fn recovered_static_exports_construct_native_geometry() {
         );
         assert!(!engine.fast_grid().level.blocks.is_empty(), "{file}");
         let grid = engine.fast_grid();
+        if let Some(probes) = result["movement_probes"].as_array() {
+            use robin_engine::coordinates::MapPoint;
+            for probe in probes {
+                let point = |name: &str| {
+                    MapPoint::new(
+                        probe[name][0].as_f64().unwrap() as f32,
+                        probe[name][1].as_f64().unwrap() as f32,
+                    )
+                };
+                assert_eq!(
+                    grid.is_reachable_thin(
+                        point("start"),
+                        point("end"),
+                        probe["layer"].as_u64().unwrap() as u16
+                    ),
+                    probe["reachable"].as_bool().unwrap(),
+                    "{file}: movement probe {probe}"
+                );
+            }
+        }
         assert_eq!(
             assets.audio.sound_source_required_ids,
             expected_sounds
@@ -1961,6 +1981,43 @@ fn movement_clearance_opens_navigation_without_removing_sight_geometry() {
     assert!(grid.is_reachable_thin(MapPoint::new(330., 345.), MapPoint::new(360., 345.), 0));
     assert!(!grid.is_reachable_thin(MapPoint::new(330., 341.), MapPoint::new(360., 341.), 0));
     assert!(!assets.environment.static_sight_obstacles.is_empty());
+}
+
+#[test]
+fn authored_spline_wall_blocks_native_sight_and_routes_around_its_ends() {
+    use robin_engine::coordinates::MapPoint;
+    use robin_engine::pathfinder::PathFinder;
+    let mut assets = LevelAssets::new();
+    let engine = construct(
+        include_bytes!("fixtures/asset-spline-wall.level.json"),
+        &mut assets,
+    );
+    let mut grid = engine.fast_grid().clone();
+    let start = MapPoint::new(250., 150.);
+    let goal = MapPoint::new(250., 250.);
+    assert!(!grid.is_reachable_thin(start, goal, 0));
+    assert!(grid.is_reachable_thin(MapPoint::new(70., 150.), MapPoint::new(70., 250.), 0));
+    let graph = &assets.navigation.pathfinder_graph;
+    let mut finder = PathFinder::new();
+    finder.initialize_from_graph(graph, &mut grid);
+    let route = finder
+        .find_path(graph, &grid, 0, 0, 0, start, goal, false)
+        .expect("route around wall ends");
+    assert_eq!(route.last(), Some(&goal));
+    assert!(
+        route.iter().any(|p| p.x < 101. || p.x > 399.),
+        "route must go around an end"
+    );
+    assert!(
+        assets
+            .environment
+            .static_sight_obstacles
+            .iter()
+            .any(|obstacle| {
+                obstacle.is_solid()
+                    && obstacle.is_blocking_ray_3d([250., 150., 20.], [250., 250., 20.])
+            })
+    );
 }
 
 #[test]

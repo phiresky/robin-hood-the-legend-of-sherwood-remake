@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { surfaceJumpCompilerFixture } from "../../shared/test-fixtures/asset-gameplay.ts";
-import { configureSurfaceJumps } from "./configure-surface-jumps.ts";
+import { configureSurfaceJumps, configureAssetGameplay } from "./configure-surface-jumps.ts";
 
 async function fixture() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "surface-jump-publication-"));
@@ -97,6 +97,35 @@ test("failed installation restores descriptors and removes only its temporary fi
     await assert.rejects(fs.stat(f.scene + ".surface-jumps.tmp"), { code: "ENOENT" });
   } finally {
     t.mock.restoreAll();
+    await fs.rm(f.root, { recursive: true, force: true });
+  }
+});
+
+test("spline gameplay replacement is bound to the reviewed model as well as its descriptor", async () => {
+  const f = await fixture();
+  try {
+    const descriptor = JSON.parse(f.before);
+    const model = path.join(path.dirname(f.descriptor), descriptor.model);
+    await fs.writeFile(model, "reviewed model");
+    const gameplay = {
+      ...descriptor.gameplay,
+      spline: {
+        bounds: { min: [0, 0, 0], max: [100, 20, 40] },
+        frames: {},
+        modelSha256: f.hash("reviewed model"),
+      },
+    };
+    const edits = [{ asset: descriptor.id, descriptorSha256: f.hash(f.before), gameplay }];
+    await fs.writeFile(model, "changed model");
+    await assert.rejects(
+      configureAssetGameplay(f.library, edits, path.join(f.root, "stale-model"), true),
+      /Stale spline model/,
+    );
+    assert.equal(await fs.readFile(f.descriptor, "utf8"), f.before);
+    await fs.writeFile(model, "reviewed model");
+    await configureAssetGameplay(f.library, edits, path.join(f.root, "calibrated"), true);
+    assert.deepEqual(JSON.parse(await fs.readFile(f.descriptor, "utf8")).gameplay, gameplay);
+  } finally {
     await fs.rm(f.root, { recursive: true, force: true });
   }
 });

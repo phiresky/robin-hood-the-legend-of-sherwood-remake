@@ -74,8 +74,16 @@ for checking painted features that cannot be detected from the mesh silhouette.
 The gallery compares segments, not complete reconstructions of every original
 level wall. Some projection-only source models retain baked shadows, coarse
 back faces and visible texture repetition. No new texture painting is applied.
-Spline gameplay/collision compilation remains separate from this visual editor
-work; these derived source descriptors do not invent obstacle footprints.
+Prepared strips include conservative continuous barrier volumes measured from
+their own mesh bands. Recipes explicitly choose material and sight opacity;
+wooden fences remain transparent to sight. These envelopes close small rail gaps
+for movement and do not claim accurate openings or walkable tops. The latter need
+authored surfaces and volumes. Calibration binds model bounds and part frames to
+the model hash so export can repeat and bend gameplay with the artwork. Rebuilding
+a strip regenerates its definitions; existing models can be annotated through
+`author_gameplay.py` and `pipeline/src/configure-spline-gameplay.ts`, which stage
+reviewable edits and update saved-scene pins. See `docs/map-compilation.md` for the
+authoring commands and current deformation limits.
 
 Verification:
 

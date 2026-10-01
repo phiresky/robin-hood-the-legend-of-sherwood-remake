@@ -1,5 +1,12 @@
 # Post-port Features
 
+- **Spline-wall gameplay export.** Calibrated assets supply collision volumes and
+  walkable surfaces that follow edited wall paths, repetitions, trims, curved
+  bends, elevations and corner towers. Native tests check movement obstruction,
+  routes around wall ends and ray collision. Prepared wall strips gain explicit
+  barrier definitions; conservative envelopes, unsupported source deformations
+  and omitted advanced features are reported in export warnings.
+
 - **Placement-based jump connections.** Asset jump edges can declare gap, height
   and overlap limits instead of exact connection sockets. Export pairs facing
   parallel edges and clips them to a shared span, allowing new arrangements of

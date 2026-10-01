@@ -1,0 +1,304 @@
+import earcut, { flatten } from "earcut";
+import { Vector3 } from "three";
+import type { Level3D } from "./level3d.ts";
+import type { LevelSpline } from "./splines.ts";
+import type { ProjectionAssetDescriptor } from "./projection-assets.ts";
+import type {
+  AssetGameplay,
+  AssetWalkableSurface,
+  GameplayAssetDescriptor,
+} from "./asset-gameplay.ts";
+import { validateAssetGameplay } from "./asset-gameplay.ts";
+import { gameToScene, type Vec3 } from "./scene.ts";
+import { applyAffineMatrix, sceneToGame } from "./geometry.ts";
+import { splineCurve } from "./spline-sampling.ts";
+import { wallCorners, wallRuns } from "./wall-path.ts";
+import { heightPlane, planeHeight } from "./gameplay-plane.ts";
+
+type Vertex = number[];
+function clip(vertices: Vertex[], axis: number, boundary: number, above: boolean) {
+  const result: Vertex[] = [];
+  for (let i = 0; i < vertices.length; i++) {
+    const a = vertices[i]!,
+      b = vertices[(i + 1) % vertices.length]!;
+    const insideA = above ? a[axis]! >= boundary : a[axis]! <= boundary;
+    const insideB = above ? b[axis]! >= boundary : b[axis]! <= boundary;
+    if (insideA) result.push(a);
+    if (insideA !== insideB) {
+      const t = (boundary - a[axis]!) / (b[axis]! - a[axis]!);
+      result.push(a.map((n, k) => n + (b[k]! - n) * t));
+    }
+  }
+  return result;
+}
+const area = (a: Vertex, b: Vertex, c: Vertex) =>
+  (b[0]! - a[0]!) * (c[1]! - a[1]!) - (b[1]! - a[1]!) * (c[0]! - a[0]!);
+
+/** Compile calibrated asset definitions through the same spline frames as their artwork. */
+export function wallSplineGameplay(
+  document: Level3D,
+  descriptors: ReadonlyMap<string, ProjectionAssetDescriptor>,
+  bestEffort: boolean,
+) {
+  const warnings: string[] = [],
+    result: GameplayAssetDescriptor[] = [];
+  const report = (message: string) => {
+    if (!bestEffort) throw new Error(message);
+    warnings.push(message);
+  };
+  for (const path of document.splines ?? []) {
+    if (path.kind !== "wall") continue;
+    const generated: GameplayAssetDescriptor = {
+      version: 1,
+      kind: "projection-mapped-asset",
+      id: `wall-spline-${path.id}`,
+      name: path.name,
+      source_map: document.map,
+      model: "generated",
+      editor_usage: "map-background",
+      parts: [],
+      gameplay: {
+        version: 1,
+        collision: "none",
+        surfaces: [],
+        doors: [],
+        volumes: [],
+        movementSolids: [],
+        movementBlockers: [],
+        movementClearances: [],
+      },
+    };
+    const out = generated.gameplay!;
+    function append(
+      assetId: string | undefined,
+      run: LevelSpline | undefined,
+      corner?: ReturnType<typeof wallCorners>[number],
+    ) {
+      const descriptor = assetId ? descriptors.get(assetId) : undefined,
+        data = descriptor && (descriptor as GameplayAssetDescriptor).gameplay;
+      if (!descriptor || !data?.spline)
+        throw new Error(
+          `asset ${assetId ?? "(missing)"} needs spline model calibration and local gameplay`,
+        );
+      validateAssetGameplay(data, descriptor);
+      const pinned = document.assetSources?.find((s) => s.id === assetId);
+      if (data.spline.modelSha256 && pinned && pinned.model_sha256 !== data.spline.modelSha256)
+        throw new Error(`asset ${assetId} spline calibration belongs to a different model`);
+      const { bounds, frames } = data.spline;
+      if (run && (!run.sourceStraight || (run.sourceAngle ?? 0) !== 0))
+        throw new Error(
+          "cross-section straightening and source rotation need calibrated deformation support",
+        );
+      if (data.movementTransitions?.length || descriptor.states)
+        throw new Error(`asset ${assetId} has stateful geometry; a static wall source is required`);
+      for (const issue of data.draft?.issues ?? [])
+        warnings.push(`Wall spline ${path.id}, asset ${assetId}: ${issue}`);
+      if (
+        data.masks?.length ||
+        data.lights?.length ||
+        data.sounds?.length ||
+        data.materials?.length
+      )
+        warnings.push(
+          `Wall spline ${path.id}, asset ${assetId}: local masks, lighting, sound and material regions are not deformed; receiving surfaces keep their default materials.`,
+        );
+      if (
+        data.doors.length ||
+        data.lifts?.length ||
+        data.interiors?.length ||
+        data.jumpPairs?.length ||
+        data.jumpSegments?.length
+      )
+        warnings.push(
+          `Wall spline ${path.id}, asset ${assetId}: static surfaces and collision exported; doors, lifts, interiors and saved jump connections require separate placed assets.`,
+        );
+      const source = (node: string, point: Vec3): Vec3 => {
+        const matrix = frames[node];
+        if (!matrix) throw new Error(`asset ${assetId} needs a spline frame for ${node}`);
+        return applyAffineMatrix(matrix, gameToScene(document.camera, ...point));
+      };
+      const axis = run?.axis === "y" ? 1 : 0,
+        cross = 1 - axis;
+      const start =
+        bounds.min[axis] + (bounds.max[axis] - bounds.min[axis]) * (run?.sourceStart ?? 0);
+      const end = bounds.min[axis] + (bounds.max[axis] - bounds.min[axis]) * (run?.sourceEnd ?? 1);
+      const center = (bounds.min[cross]! + bounds.max[cross]!) / 2,
+        width = bounds.max[cross]! - bounds.min[cross]!;
+      const curve = run ? splineCurve(run, document.camera) : undefined,
+        length = curve?.getLength() ?? 0;
+      const repeats = run ? Math.ceil(length / run.repeatLength) : 1;
+      if (run && (end - start <= 0.001 || width <= 0.001 || length <= 0.001 || repeats > 512))
+        throw new Error("invalid or excessive wall repetition");
+      const bands = run?.curved === false ? 1 : 12;
+      const framesByDistance = new Map<number, { point: Vector3; normal: Vector3 }>();
+      const warp = (p: Vec3, repeat: number): Vec3 => {
+        if (corner) {
+          const sx = (path.cornerScale ?? 1) * (path.cornerWidthScale ?? 1),
+            sz = path.cornerScale ?? 1;
+          const x = (p[0] - (bounds.min[0] + bounds.max[0]) / 2) * sx,
+            y = (p[1] - (bounds.min[1] + bounds.max[1]) / 2) * sx;
+          return sceneToGame(document.camera, [
+            corner.position.x + x * Math.cos(corner.rotation) - y * Math.sin(corner.rotation),
+            corner.position.y + x * Math.sin(corner.rotation) + y * Math.cos(corner.rotation),
+            corner.position.z + (p[2] - bounds.min[2]) * sz,
+          ]);
+        }
+        if (!run || !curve) throw new Error("Missing wall deformation");
+        const along = (p[axis] - start) / (end - start),
+          t = Math.min(1, Math.max(0, ((repeat + along) * run.repeatLength) / length));
+        let frame = framesByDistance.get(t);
+        if (!frame) {
+          const tangent = curve.getTangentAt(t);
+          frame = {
+            point: curve.getPointAt(t),
+            normal: new Vector3(-tangent.y, tangent.x, 0).normalize(),
+          };
+          framesByDistance.set(t, frame);
+        }
+        const lateral =
+          (((p[cross]! - center) * run.width) / width) *
+          (axis === 1 ? -1 : 1) *
+          (run.flipCrossSection ? -1 : 1);
+        return sceneToGame(document.camera, [
+          frame.point.x + frame.normal.x * lateral,
+          frame.point.y + frame.normal.y * lateral,
+          frame.point.z + p[2] - bounds.min[2],
+        ]);
+      };
+      const pieces = (vertices: Vertex[], emit: (v: Vertex[], repeat: number) => void) => {
+        const indices = earcut(vertices.flatMap((v) => v.slice(0, 2)));
+        for (let repeat = 0; repeat < repeats; repeat++)
+          for (let t = 0; t < indices.length; t += 3) {
+            const triangle = indices.slice(t, t + 3).map((i) => vertices[i]!);
+            if (!run) {
+              emit(triangle, repeat);
+              continue;
+            }
+            for (let band = 0; band < bands; band++) {
+              const a = start + ((end - start) * band) / bands,
+                b =
+                  start +
+                  (end - start) * Math.min((band + 1) / bands, length / run.repeatLength - repeat);
+              if (b <= a) continue;
+              const polygon = clip(clip(triangle, axis, a, true), axis, b, false);
+              for (let j = 1; j + 1 < polygon.length; j++)
+                if (Math.abs(area(polygon[0]!, polygon[j]!, polygon[j + 1]!)) > 1e-7)
+                  emit([polygon[0]!, polygon[j]!, polygon[j + 1]!], repeat);
+            }
+          }
+      };
+      const templates: NonNullable<AssetGameplay["volumes"]> = [...(data.volumes ?? [])];
+      if (data.collision === "parts")
+        for (const part of descriptor.parts) {
+          if (
+            part.default_hidden ||
+            part.collision === "none" ||
+            part.mission_profile !== undefined ||
+            !part.obstacle_local_game
+          )
+            continue;
+          templates.push({ id: part.node, node: part.node, shape: part.obstacle_local_game });
+        }
+      for (const volume of templates) {
+        const points = volume.shape.points.map((p) => {
+          const a = source(volume.node, [p.x, p.y, p.z_bottom]),
+            b = source(volume.node, [p.x, p.y, p.z_top]);
+          if (Math.hypot(a[0] - b[0], a[1] - b[1]) > 1e-5)
+            throw new Error(`nonvertical volume ${volume.id}`);
+          return [a[0], a[1], a[2], b[2]];
+        });
+        pieces(points, (vertices, repeat) => {
+          const points = vertices.map((p) => {
+            const a = warp([p[0]!, p[1]!, p[2]!], repeat),
+              b = warp([p[0]!, p[1]!, p[3]!], repeat);
+            return { x: a[0], y: a[1], z_bottom: a[2], z_top: b[2] };
+          });
+          if (Math.abs(area(...(points.map((p) => [p.x, p.y]) as [Vertex, Vertex, Vertex]))) < 1e-5)
+            return;
+          const id = `volume-${out.volumes!.length}`;
+          out.volumes!.push({
+            id,
+            node: "$root",
+            shape: {
+              points,
+              solid: volume.shape.solid,
+              opaque: volume.shape.opaque,
+              mouse: volume.shape.mouse,
+              show_shadow_polygon: volume.shape.show_shadow_polygon,
+              default_material: volume.shape.default_material,
+            },
+          });
+          if (data.movementSolids?.includes(volume.id) ?? data.movementBlockers === undefined)
+            out.movementSolids!.push(id);
+        });
+      }
+      const appendSurface = (surface: AssetWalkableSurface, target: AssetWalkableSurface[]) => {
+        const local = surface.polygon.map(([x, y], i): Vec3 => [
+          x,
+          y,
+          typeof surface.height === "number" ? surface.height : surface.height[i]!,
+        ]);
+        const plane = heightPlane(local);
+        const rings = [
+          local,
+          ...(surface.holes ?? []).map((h) =>
+            h.map(([x, y]): Vec3 => [x, y, planeHeight(plane, [x, y])]),
+          ),
+        ];
+        const flat = flatten(rings.map((r) => r.map((p) => source(surface.node, p)))),
+          ids = earcut(flat.vertices, flat.holes, 3);
+        for (let i = 0; i < ids.length; i += 3)
+          pieces(
+            ids.slice(i, i + 3).map((j) => flat.vertices.slice(j * 3, j * 3 + 3)),
+            (vertices, repeat) => {
+              const world = vertices.map((v) => warp([v[0]!, v[1]!, v[2]!], repeat));
+              if (Math.abs(area(world[0]!, world[1]!, world[2]!)) < 1e-5) return;
+              target.push({
+                id: `${target === out.surfaces ? "surface" : target === out.movementBlockers ? "blocker" : "clearance"}-${target.length}`,
+                node: "$root",
+                polygon: world.map((p) => [p[0], p[1]]),
+                height: world.map((p) => p[2]),
+                preserveMovementPrecision: true,
+                ...(surface.projectionMaterials
+                  ? {
+                      projectionMaterials: {
+                        defaultMaterial: surface.projectionMaterials.defaultMaterial,
+                        regions: [],
+                      },
+                    }
+                  : {}),
+              });
+            },
+          );
+      };
+      for (const surface of data.surfaces) appendSurface(surface, out.surfaces);
+      for (const surface of data.movementBlockers ?? [])
+        appendSurface(surface, out.movementBlockers!);
+      for (const surface of data.movementClearances ?? [])
+        appendSurface(surface, out.movementClearances!);
+      validateAssetGameplay(out, generated);
+    }
+    for (const run of wallRuns(path, document.camera)) {
+      const before = structuredClone(out);
+      try {
+        append(path.asset, run);
+      } catch (error) {
+        Object.assign(out, before);
+        report(`Wall spline ${path.id}: ${String(error)}; this span's gameplay is omitted.`);
+      }
+    }
+    for (const corner of wallCorners(path, document.camera)) {
+      const before = structuredClone(out);
+      try {
+        append(path.cornerAsset, undefined, corner);
+      } catch (error) {
+        Object.assign(out, before);
+        report(
+          `Wall spline ${path.id}, corner ${corner.index}: ${String(error)}; corner gameplay is omitted.`,
+        );
+      }
+    }
+    result.push(generated);
+  }
+  return { descriptors: result, warnings: [...new Set(warnings)] };
+}

@@ -113,6 +113,13 @@ export interface AssetMaterialRegion {
 }
 export interface AssetGameplay {
   version: 1;
+  /** Model calibration for deforming gameplay with a spline; authored from the asset model. */
+  spline?: {
+    modelSha256?: string;
+    bounds: { min: import("./scene.ts").Vec3; max: import("./scene.ts").Vec3 };
+    /** Column-major local-part to asset-scene transforms, including gameplay-only frames. */
+    frames: Record<string, number[]>;
+  };
   /** Publish usable definitions while retaining known gaps in every compilation report.
    * Absence does not certify parity; it only means no draft issues were recorded. */
   draft?: { issues: string[] };
@@ -426,6 +433,32 @@ export function validateAssetGameplay(
     p.length === length &&
     p.every((v) => typeof v === "number" && Number.isFinite(v));
   const nodes = new Set(descriptor.parts.map((part) => part.node));
+  if (data.spline !== undefined) {
+    const calibration = data.spline;
+    if (
+      !calibration ||
+      !calibration.bounds ||
+      !point(calibration.bounds.min, 3) ||
+      !point(calibration.bounds.max, 3) ||
+      calibration.bounds.min.some((n, i) => n >= calibration.bounds.max[i]!) ||
+      !calibration.frames ||
+      typeof calibration.frames !== "object" ||
+      Array.isArray(calibration.frames)
+    )
+      fail("invalid spline model calibration");
+    if (calibration.modelSha256 !== undefined && !/^[0-9a-f]{64}$/.test(calibration.modelSha256))
+      fail("invalid spline model hash");
+    for (const [node, matrix] of Object.entries(calibration.frames))
+      if (
+        !nodes.has(node) ||
+        !point(matrix, 16) ||
+        matrix[3] !== 0 ||
+        matrix[7] !== 0 ||
+        matrix[11] !== 0 ||
+        matrix[15] !== 1
+      )
+        fail(`invalid spline frame ${node}`);
+  }
   if (
     data.maskOcclusionNodes !== undefined &&
     (!Array.isArray(data.maskOcclusionNodes) ||

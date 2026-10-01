@@ -265,6 +265,38 @@ versus clear movement queries. Passing this fixture is not a claim of complete
 functional parity for the extracted game maps.
 
 
+## Spline walls
+
+Spline sources use asset-local physical definitions plus `gameplay.spline` model
+calibration (bounds, part transforms and model hash). Export repeats and clips
+volumes and walkable polygons, bends them along the current path, and reconstructs
+navigation and sight geometry. Corner towers use the same run breaks, rotation,
+anchor and scale as the renderer. Raised spans preserve the space underneath.
+
+Prepared strips initially use conservative continuous barriers measured from their
+own models. Recipes declare material and sight opacity; wood fences allow sight
+through. Openings and walkable wall tops must be authored explicitly. Export warns
+about this approximation. It also warns and omits unsupported uncalibrated sources,
+cross-section straightening, source rotation and stateful wall geometry. Local
+doors, lifts, masks, lights, sounds and material regions are not deformed with a
+spline; use ordinary asset placements for those features.
+
+Re-author existing prepared strips and calibrate selectable corners without
+changing models:
+
+```sh
+python3 refinement/walls/author_gameplay.py --output work/spline-gameplay-edits.json \
+  --corners lincoln-east-gate-south-tower nottingham-south-gate-west-tower
+node pipeline/src/configure-spline-gameplay.ts library work/spline-gameplay-edits.json \
+  work/spline-gameplay-review
+```
+
+After reviewing the staged edits, use a new backup directory and `--apply` to
+install definitions and update saved-scene pins. The tool rejects changed
+descriptors/models, preserves scene formatting, and restores files if installation
+fails. New strips built by `refinement/walls/build_segments.py` include these
+definitions automatically.
+
 ## Whole-library checks
 
 Check every saved scene, including custom scenes which reuse assets from other

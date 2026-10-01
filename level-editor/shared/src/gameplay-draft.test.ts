@@ -94,7 +94,7 @@ test("best effort preserves available gameplay and reports unsupported wall spli
   assert.deepEqual(geometry.motion_data, expected.motion_data);
   assert.deepEqual(geometry.doors, expected.doors);
   assert.ok(geometry.warnings?.some((message) => message.includes("Wall spline wall")));
-  assert.throws(() => compileAssetGameplay(document, assets, bounds), /wall spline/);
+  assert.throws(() => compileAssetGameplay(document, assets, bounds), /Wall spline/);
 });
 
 test("best effort omits disconnected doors and jump pairs but rejects malformed geometry", () => {
