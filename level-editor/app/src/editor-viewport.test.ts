@@ -1186,6 +1186,11 @@ test("lit terrain casts and receives shadows after replacement and retirement", 
   publish(raised);
   const replacement = internal.terrain.root.children[0] as THREE.Mesh;
   assert.notEqual(replacement.geometry, original.geometry);
+  assert.equal(
+    replacement.material,
+    original.material,
+    "Height edits retain terrain materials and textures",
+  );
   assert.equal(replacement.receiveShadow, true);
   assert.equal(replacement.castShadow, true);
   assert.equal(receivers().length, 0);
@@ -1262,5 +1267,34 @@ test("elevation overlay follows modeled terrain revisions without reference-map 
   enabled = false;
   viewport.buildOverlays();
   assert.equal(overlay.children.length, 0);
+  viewport.dispose();
+});
+
+test("terrain drag previews coalesce and cancellation discards queued work", () => {
+  const { viewport } = fixture();
+  const internal = viewport as unknown as {
+    terrainControls: { preview(grid: Level3D["terrain"] | null): void };
+    flushTerrainPreview(): void;
+  };
+  const seen: (Level3D["terrain"] | null)[] = [];
+  viewport.previewTerrain = (grid) => {
+    seen.push(grid);
+  };
+  const a = createTerrainGrid([0, 0, 100, 100], 100, 10);
+  const b = createTerrainGrid([0, 0, 100, 100], 100, 20);
+  internal.terrainControls.preview(a);
+  internal.terrainControls.preview(b);
+  assert.equal(seen.length, 0);
+  internal.flushTerrainPreview();
+  internal.flushTerrainPreview();
+  assert.deepEqual(seen, [b]);
+  internal.terrainControls.preview(a);
+  internal.terrainControls.preview(null);
+  internal.flushTerrainPreview();
+  assert.deepEqual(seen, [b, null]);
+  internal.terrainControls.preview(a);
+  viewport.setTerrainEdit(null);
+  internal.flushTerrainPreview();
+  assert.deepEqual(seen, [b, null]);
   viewport.dispose();
 });

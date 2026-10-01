@@ -242,13 +242,30 @@ const terrainCache = new WeakMap<
     spacing: number;
   }
 >();
+const cellTriangleCache = new WeakMap<
+  TerrainCell,
+  {
+    vertices: TerrainVertex[];
+    textured: boolean;
+    triangles: TerrainTriangle[];
+  }
+>();
 function evaluatedTerrain(document: TerrainDocument) {
   const g = document.terrain;
   if (!g) return undefined;
   const old = terrainCache.get(g);
   if (old && old.splines === document.splines && old.camera === document.camera) return old;
-  let triangles = g.cells.flatMap((cell) =>
-    cellTriangles(g, cell).map((indices, i): TerrainTriangle => ({
+  let triangles = g.cells.flatMap((cell) => {
+    const vertices = cell.vertices.map((i) => g.vertices[i]!);
+    const cached = cellTriangleCache.get(cell);
+    if (
+      cached &&
+      cached.textured === !!g.texture &&
+      cached.vertices.length === vertices.length &&
+      vertices.every((v, i) => v === cached.vertices[i])
+    )
+      return cached.triangles;
+    const triangles = cellTriangles(g, cell).map((indices, i): TerrainTriangle => ({
       id: `${cell.id}/${i}`,
       cell,
       indices,
@@ -262,8 +279,10 @@ function evaluatedTerrain(document: TerrainDocument) {
       ...(indices.every((j) => g.vertices[j]!.uv)
         ? { uv: indices.map((j) => g.vertices[j]!.uv!) as [Point, Point, Point] }
         : {}),
-    })),
-  );
+    }));
+    cellTriangleCache.set(cell, { vertices, textured: !!g.texture, triangles });
+    return triangles;
+  });
   if (document.camera && document.splines?.some((p) => p.kind === "river"))
     triangles = evaluateRiverChannels(triangles, {
       camera: document.camera,

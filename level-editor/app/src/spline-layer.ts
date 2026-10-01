@@ -9,7 +9,7 @@ import {
   type MapCamera,
   type Vec3,
 } from "@rle/shared";
-import { riverMesh, splineCurve, wallMesh } from "./spline-geometry.ts";
+import { riverGeometry, riverMesh, splineCurve, wallMesh } from "./spline-geometry.ts";
 import { disposeObjectResources } from "./resources.ts";
 import { terrainHeightAt } from "../../shared/src/authored-terrain.ts";
 
@@ -76,6 +76,9 @@ export class SplineLayer {
     document?: Level3D,
     preview = false,
   ) {
+    const appearanceChanged =
+      this.camera.elevation_deg !== camera.elevation_deg ||
+      this.document?.customMaterials !== document?.customMaterials;
     const terrainChanged =
       this.document?.terrain !== document?.terrain ||
       this.document?.splines !== document?.splines ||
@@ -92,12 +95,20 @@ export class SplineLayer {
       }
     for (const path of paths) {
       const previous = this.views.get(path.id);
-      if (
-        previous?.path === path &&
-        (path.kind === "wall" || previous.preview === preview) &&
-        !(terrainChanged && path.kind !== "wall")
-      )
-        continue;
+      if (previous?.path === path && !appearanceChanged) {
+        if (path.kind === "wall") continue;
+        // A full-quality unchanged texture is also suitable for a drag preview.
+        if (!previous.preview || preview) {
+          if (terrainChanged && path.kind === "road") {
+            const mesh = previous.object as THREE.Mesh;
+            const geometry = riverGeometry(path, camera, document);
+            mesh.geometry.dispose();
+            mesh.geometry = geometry;
+          }
+          // River surfaces depend on their spline, not the ground excavated beneath them.
+          continue;
+        }
+      }
       const object = this.build(path, preview);
       if (previous) this.release(previous.path, previous.object);
       this.views.set(path.id, { path, object, preview });

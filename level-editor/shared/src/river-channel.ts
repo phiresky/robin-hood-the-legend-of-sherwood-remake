@@ -183,6 +183,17 @@ function channelCuts(document: Pick<Level3D, "splines" | "camera">, maxHeight: n
   return cuts;
 }
 
+// Documents are immutable. Keep only the latest evaluation per river-array identity;
+// unchanged triangles can retain their exact channel tessellation across local edits.
+const evaluations = new WeakMap<
+  NonNullable<Level3D["splines"]>,
+  {
+    signature: string;
+    cuts: Cut[];
+    triangles: Map<string, { signature: string; result: TerrainTriangle[] }>;
+  }
+>();
+
 /** Non-destructive lower envelope of the base mesh and all river excavations.
  * Splits at bank/bed contours and plane crossings even on very coarse grids.
  * Overlapping channels use the lower bed, independently of river ordering. */
@@ -196,14 +207,34 @@ export function evaluateRiverChannels(
   )
     return base;
   const maxHeight = base.reduce((max, t) => Math.max(max, ...t.points.map((p) => p[2])), -Infinity);
-  const cuts = channelCuts(document, maxHeight);
+  const signature = JSON.stringify([document.camera, document.splines, maxHeight]);
+  let evaluation = evaluations.get(document.splines);
+  if (!evaluation || evaluation.signature !== signature) {
+    evaluation = { signature, cuts: channelCuts(document, maxHeight), triangles: new Map() };
+    evaluations.set(document.splines, evaluation);
+  }
+  const cuts = evaluation.cuts;
   if (!cuts.length) return base;
   const result: TerrainTriangle[] = [];
+  const current = new Map<string, { signature: string; result: TerrainTriangle[] }>();
   for (const source of base) {
+    const cached = evaluation.triangles.get(source.id);
+    const sourceSignature = JSON.stringify(source);
+    if (cached?.signature === sourceSignature) {
+      current.set(source.id, cached);
+      for (const triangle of cached.result) result.push(triangle);
+      continue;
+    }
+    const start = result.length;
     const sourceBounds = bounds(source.points.map(xy));
+    const nearby = cuts.filter((cut) => overlaps(sourceBounds, cut.bounds));
+    if (!nearby.length) {
+      result.push(source);
+      current.set(source.id, { signature: sourceSignature, result: [source] });
+      continue;
+    }
     let pieces = [channelPiece(source.points.map(xy), plane(source.points))];
-    for (const cut of cuts) {
-      if (!overlaps(sourceBounds, cut.bounds)) continue;
+    for (const cut of nearby) {
       const outside: typeof pieces = [];
       for (const piece of pieces) {
         if (
@@ -276,6 +307,8 @@ export function evaluateRiverChannels(
           ...(materialWeights ? { materialWeights } : {}),
         });
       }
+    current.set(source.id, { signature: sourceSignature, result: result.slice(start) });
   }
+  evaluation.triangles = current;
   return result;
 }

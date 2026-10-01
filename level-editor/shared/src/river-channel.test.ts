@@ -201,3 +201,43 @@ test("ford channel has a shallow bed and traversable banks while other reaches r
   }
   assert.ok(at(result, 100, 5)! < -12, "ordinary river reaches stay deeper");
 });
+
+test("local edits reuse unchanged channel triangles and match a fresh evaluation", () => {
+  const grid = createTerrainGrid([0, 0, 200, 100], 25);
+  const splines = [river];
+  const original = terrainTriangles({ terrain: grid });
+  const first = evaluateRiverChannels(original, { camera, splines });
+  const moved = {
+    ...grid,
+    vertices: grid.vertices.map((v) =>
+      v.position[0] === 100 && v.position[1] === 50
+        ? { ...v, position: [100, 50, -4] as [number, number, number] }
+        : v,
+    ),
+  };
+  const nextBase = terrainTriangles({ terrain: moved });
+  const next = evaluateRiverChannels(nextBase, { camera, splines });
+  assert.ok(
+    next.some((t) => first.includes(t)),
+    "Unchanged channel tessellation is reused",
+  );
+  assert.deepEqual(next, evaluateRiverChannels(nextBase, { camera, splines: [...splines] }));
+  const taller = nextBase.map((t) => ({
+    ...t,
+    points: t.points.map(
+      ([x, y, z]) => [x, y, z + 100] as [number, number, number],
+    ) as TerrainTriangle["points"],
+  }));
+  assert.deepEqual(
+    evaluateRiverChannels(taller, { camera, splines }),
+    evaluateRiverChannels(taller, { camera, splines: [...splines] }),
+  );
+  const repainted = nextBase.map((t) => ({
+    ...t,
+    materials: ["path_dirt", "path_dirt", "path_dirt"] as [string, string, string],
+  }));
+  assert.deepEqual(
+    evaluateRiverChannels(repainted, { camera, splines }),
+    evaluateRiverChannels(repainted, { camera, splines: [...splines] }),
+  );
+});

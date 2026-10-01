@@ -2100,3 +2100,8 @@ cutouts aligned with terrain instead of rounding each piece separately.
 - The level editor’s Elevation lines overlay generates contours every 32 height
   units from modeled terrain, including spline shaping, and refreshes during edits
   and undo/redo. Maps without modeled terrain retain imported elevation lines.
+
+- Terrain dragging coalesces previews per frame, reuses unchanged terrain sections
+  and river-channel tessellation, and retains surface materials and textures.
+  Height edits preserve river surfaces and only redrape road geometry.
+  A CPU drag benchmark is available at `level-editor/app/tests/terrain-edit-benchmark.mjs`.

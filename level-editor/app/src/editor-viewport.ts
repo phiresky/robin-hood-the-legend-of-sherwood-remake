@@ -465,15 +465,20 @@ export class EditorViewport {
   private readonly objectsRoot = new THREE.Group();
   private readonly overlayRoot = new THREE.Group();
   private readonly terrain = new TerrainLayer();
-  private readonly terrainControls = new TerrainControls((region) => this.previewTerrain(region));
+  private readonly terrainControls = new TerrainControls((region) => {
+    this.pendingTerrainPreview = region;
+    if (!region) this.previewTerrain(null);
+  });
   private terrainMode: TerrainEditMode | null = null;
   private terrainSelectionHandler: ((id: string) => void) | null = null;
   setTerrainSelectionHandler(handler: ((id: string) => void) | null) {
     this.terrainSelectionHandler = handler;
   }
+  private pendingTerrainPreview: import("@rle/shared").TerrainGrid | null = null;
   private terrainPreview: import("@rle/shared").TerrainGrid | null = null;
   private gizmoVertical = false;
   setTerrainEdit(mode: TerrainEditMode | null) {
+    this.pendingTerrainPreview = null;
     if (!mode && !this.terrainMode) {
       this.terrainControls.setMode(null);
       return;
@@ -487,15 +492,21 @@ export class EditorViewport {
     if (this.gizmo) this.gizmo.showY = this.gizmoVertical;
     this.syncSelection(mode ? null : this.bindings.selection());
   }
+  private flushTerrainPreview() {
+    if (!this.pendingTerrainPreview) return;
+    const grid = this.pendingTerrainPreview;
+    this.pendingTerrainPreview = null;
+    this.previewTerrain(grid);
+  }
   previewTerrain(grid: import("@rle/shared").TerrainGrid | null) {
     if (this.disposed) return;
     const document = this.bindings.document();
     if (!document) return;
     this.terrainPreview = grid;
-    this.terrainControls.show(grid ?? this.terrainMode?.grid ?? null);
     this.syncViews(
       grid ? followTerrainEdit(document, { ...document, terrain: grid }) : document,
       false,
+      !!grid,
     );
   }
   private readonly splines = new SplineLayer();
@@ -1019,6 +1030,7 @@ export class EditorViewport {
     );
     this.animate(() => {
       if (!this.renderer || !this.camera) return;
+      this.flushTerrainPreview();
       if (this.flight) this.stepFlight();
       else this.orbit?.update();
       const camera = this.activeCamera();

@@ -519,3 +519,64 @@ test("river preview sync builds one surface and restores committed quality even 
   assert.equal((surface().material.map as THREE.DataTexture).image.width, 128);
   layer.clear();
 });
+
+test("terrain drags retain river surfaces and road textures through commit", () => {
+  const straight: LevelSpline = {
+    ...river,
+    points: [
+      [0, 0, 0],
+      [100, 0, 0],
+    ],
+    width: 20,
+  };
+  const paths = [
+    { ...straight, pointMaterials: ["water_still", "water_still"] },
+    {
+      ...straight,
+      points: [
+        [0, 50, 0],
+        [100, 50, 0],
+      ] as [number, number, number][],
+      id: "road",
+      kind: "road" as const,
+      pointMaterials: ["path_dirt", "path_dirt"],
+    },
+  ];
+  const terrain = createTerrainGrid([-50, -50, 200, 150], 50);
+  const document = { camera, terrain, splines: paths } as Level3D;
+  const layer = new SplineLayer();
+  const sources = new Map<string, THREE.Object3D>();
+  layer.sync(paths, camera, sources, document);
+  const meshes = layer.root.children.filter((child) => child instanceof THREE.Mesh) as THREE.Mesh<
+    THREE.BufferGeometry,
+    THREE.MeshBasicMaterial
+  >[];
+  const [water, road] = meshes;
+  const waterGeometry = water!.geometry,
+    roadGeometry = road!.geometry;
+  const textures = meshes.map((mesh) => mesh.material.map);
+  let disposed = 0;
+  for (const texture of textures) texture!.addEventListener("dispose", () => disposed++);
+  const changed = {
+    ...document,
+    terrain: {
+      ...terrain,
+      vertices: terrain.vertices.map((v) => ({
+        ...v,
+        position: [v.position[0], v.position[1], 30] as [number, number, number],
+      })),
+    },
+  };
+  layer.sync(paths, camera, sources, changed, true);
+  assert.equal(water!.parent, layer.root);
+  assert.equal(water!.geometry, waterGeometry);
+  assert.notEqual(road!.geometry, roadGeometry);
+  layer.sync(paths, camera, sources, changed, false);
+  assert.deepEqual(
+    meshes.map((mesh) => mesh.material.map),
+    textures,
+  );
+  assert.equal(disposed, 0);
+  layer.clear();
+  assert.equal(disposed, textures.length);
+});
