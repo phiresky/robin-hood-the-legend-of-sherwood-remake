@@ -340,6 +340,13 @@ def mesh_instances(doc):
     return found
 
 
+def has_pbr_maps(doc):
+    """Multi-map materials must retain their UV layout and independent texture channels."""
+    return any('normalTexture' in m or 'occlusionTexture' in m
+               or 'metallicRoughnessTexture' in m.get('pbrMetallicRoughness', {})
+               for m in doc.get('materials', []))
+
+
 def display_texture(doc, primitive):
     """(texture info, image index, sampler) of the texture a primitive displays, or None.
 
@@ -870,7 +877,7 @@ def write_lossy(doc, binary, records, atlas_bytes, output, drop_normals=True, te
                 require(reencoded is not None or display_texture(doc, source) is None,
                         f'Textured primitive {mesh_index}/{prim_index} was not rebuilt')
                 # Untouched primitive, or keep-layout mode (original UVs and images, re-encoded).
-                textured = reencoded is not None and display_texture(doc, source) is not None
+                textured = reencoded is not None and ('material' in source and (has_pbr_maps(doc) or display_texture(doc, source) is not None))
                 unlit = textured and 'KHR_materials_unlit' in doc['materials'][source['material']].get('extensions', {})
                 drop = drop_normals and unlit and 'NORMAL' in source['attributes']
                 primitive['attributes'] = {name: copy_accessor(index, name) for name, index in source['attributes'].items()
@@ -1078,11 +1085,58 @@ def texel_reuse(objects, records):
     return {name: covered[name] / max(sizes[name], 1) for name in covered}, out_of_range
 
 
+def derive_pbr(asset_id, model_path, lossy_path, args, work, doc, binary, source_bytes):
+    """Compress independent PBR images, preserving geometry, UVs and material parameters.
+
+    Identity matrix and 4:4:4 avoid mixing the independent channels of data maps.
+    Keep their quality higher than colour artwork, especially for normal vectors.
+    """
+    import io
+    from PIL import Image
+    data_images = set()
+    for material in doc.get('materials', []):
+        for info in (material.get('normalTexture'), material.get('occlusionTexture'),
+                     material.get('pbrMetallicRoughness', {}).get('metallicRoughnessTexture')):
+            if info:
+                data_images.add(avif_source(doc['textures'][info['index']]))
+    encoded = {}
+    for index, image in enumerate(doc.get('images', [])):
+        if 'uri' in image:
+            require(not image['uri'].startswith('data:'), 'Data URI images are not supported')
+            payload = (model_path.parent / image['uri']).read_bytes()
+        else:
+            view = doc['bufferViews'][image['bufferView']]
+            start = view.get('byteOffset', 0)
+            payload = binary[view.get('buffer', 0)][start:start + view['byteLength']]
+        png, avif = work / f'pbr-{index}.png', work / f'pbr-{index}.avif'
+        with Image.open(io.BytesIO(payload)) as source:
+            source.convert('RGBA' if 'A' in source.getbands() else 'RGB').save(png)
+        quality = max(90, args.quality) if index in data_images else args.quality
+        command = ['avifenc', '-q', str(quality), '--qalpha', '100', '-s', str(args.speed), '-j', '2']
+        if index in data_images:
+            command += ['--yuv', '444', '--cicp', '1/13/0']
+        subprocess.run(command + [str(png), str(avif)], check=True, capture_output=True)
+        encoded[index] = avif.read_bytes()
+    lossy_path.parent.mkdir(parents=True, exist_ok=True)
+    data, normals = write_lossy(doc, binary, [], b'', lossy_path, drop_normals=False,
+                               reencoded=encoded)
+    report = {'asset_id': asset_id, 'mode': 'PBR texture re-encode',
+              'source_sha256': sha(model_path), 'lossy_sha256': sha(lossy_path),
+              'bytes': {'source_glb': len(source_bytes), 'lossy_glb': len(data)}, 'normals': normals}
+    receipt = {'source': report['source_sha256'], 'output': report['lossy_sha256'],
+               'settings': settings(args), 'tools': tool_versions()}
+    Path(str(lossy_path) + '.receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
+    (work / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
+    return report
+
+
 def derive(asset_id, model_path, lossy_path, args, work):
     import bpy
     bpy.ops.wm.read_homefile(use_empty=True, use_factory_startup=True)
     doc, binary, source_bytes = read_glb(model_path)
     work.mkdir(parents=True)
+    if has_pbr_maps(doc):
+        return derive_pbr(asset_id, model_path, lossy_path, args, work, doc, binary, source_bytes)
     if not any(display_texture(doc, primitive) for mesh in doc['meshes'] for primitive in mesh['primitives']):
         require(not doc.get('images') and not doc.get('textures'), 'Untextured model has unused texture resources')
         lossy_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1376,7 +1430,7 @@ def settings(args):
 
 
 def summary_row(report):
-    if report.get('mode') == 'untextured geometry':
+    if report.get('mode') in ('untextured geometry', 'PBR texture re-encode'):
         return {'asset': report['asset_id'], 'mode': report['mode'],
                 'glb_bytes': [report['bytes']['source_glb'], report['bytes']['lossy_glb']]}
     validation, b, t = report['validation'], report['bytes'], report['textures']
@@ -1431,7 +1485,7 @@ def static_check(root, model, *, quantize=True):
             for primitive in mesh['primitives']:
                 require(primitive.get('mode', 4) == 4, 'non-triangle primitive')
                 require(not primitive.get('targets'), 'morph targets')
-                textured += display_texture(doc, primitive) is not None
+                textured += has_pbr_maps(doc) or display_texture(doc, primitive) is not None
         require(doc['meshes'], 'no meshes')
         if not textured:
             require(not doc.get('images') and not doc.get('textures'), 'Untextured model has unused texture resources')

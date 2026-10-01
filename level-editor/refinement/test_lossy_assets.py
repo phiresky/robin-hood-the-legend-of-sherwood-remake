@@ -150,6 +150,28 @@ class LossyAssetsTest(unittest.TestCase):
             return lossy_assets.refresh_derivatives(self.root, Path(self.temporary.name) / 'work', previews=previews,
                                                     log=lambda message: None, **options)
 
+    def test_pbr_reencoding_preserves_materials_uvs_and_geometry(self):
+        material = {'normalTexture': {'index': 0, 'scale': 0.8},
+                    'occlusionTexture': {'index': 0, 'strength': 0.7},
+                    'pbrMetallicRoughness': {'baseColorTexture': {'index': 0},
+                                           'metallicRoughnessTexture': {'index': 0}}}
+        source = self.root / 'pbr.glb'
+        source.write_bytes(glb(material))
+        self.assertEqual(lossy_assets.static_check(self.root, 'pbr.glb'), [])
+        doc, binary, _ = lossy_assets.read_glb(source)
+        output = self.root / 'pbr.lossy.glb'
+        lossy_assets.write_lossy(doc, binary, [], b'', output, drop_normals=False,
+                                reencoded={0: b'encoded-image'})
+        result, body, _ = lossy_assets.read_glb(output)
+        self.assertEqual(result['materials'], doc['materials'])
+        original = doc['meshes'][0]['primitives'][0]
+        written = result['meshes'][0]['primitives'][0]
+        for name, index in original['attributes'].items():
+            np.testing.assert_array_equal(lossy_assets.accessor_array(doc, binary, index),
+                lossy_assets.accessor_array(result, body, written['attributes'][name]))
+        self.assertEqual(result['textures'][0]['extensions']['EXT_texture_avif']['source'], 0)
+        self.assertEqual(result['images'][0]['mimeType'], 'image/avif')
+
     def test_static_check_accepts_display_textures_and_refuses_others(self):
         model = 'derby/house/model.glb'
         self.assertEqual(lossy_assets.static_check(self.root, model), [])
@@ -159,9 +181,8 @@ class LossyAssetsTest(unittest.TestCase):
         for material in (foliage, background):
             (self.root / model).write_bytes(glb(material))
             self.assertEqual(lossy_assets.static_check(self.root, model), [])
-        for material in (dict(UNLIT, normalTexture={'index': 0}),
-                         {'pbrMetallicRoughness': {'baseColorFactor': [0.5, 0, 0, 1]}, 'emissiveTexture': {'index': 0},
-                          'emissiveFactor': [1, 1, 1]}):
+        for material in ({'pbrMetallicRoughness': {'baseColorFactor': [0.5, 0, 0, 1]}, 'emissiveTexture': {'index': 0},
+                          'emissiveFactor': [1, 1, 1]},):
             (self.root / model).write_bytes(glb(material))
             self.assertTrue(lossy_assets.static_check(self.root, model))
 
@@ -203,7 +224,7 @@ class LossyAssetsTest(unittest.TestCase):
         self.assertFalse((self.root/'derby/house/lossy.glb').exists())
         self.assertFalse((self.root/'derby/house/lossy.glb.receipt.json').exists())
         self.assertNotIn('lossy_model', json.loads((self.root / 'index.json').read_text())['assets'][0])
-        (self.root / 'derby/house/model.glb').write_bytes(glb(dict(UNLIT, occlusionTexture={'index': 0})))
+        (self.root / 'derby/house/model.glb').write_bytes(glb(dict(UNLIT, emissiveTexture={'index': 0}, emissiveFactor=[0.5, 0.5, 0.5])))
         report = self.refresh()
         self.assertIn('house', report['refused'])
         self.assertNotIn('lossy_model', json.loads((self.root / 'index.json').read_text())['assets'][0])

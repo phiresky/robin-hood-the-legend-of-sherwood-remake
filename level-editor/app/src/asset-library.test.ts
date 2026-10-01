@@ -50,7 +50,7 @@ test("type, source and multiword search combine over the shared library", () => 
 });
 
 test("refined-level filter includes reviewed sources regardless of case and combines with other filters", () => {
-  const refined = REFINED_LEVELS.map((source_map) => ({
+  const refined = [...REFINED_LEVELS, "Sketchfab"].map((source_map) => ({
     ...entries[0]!,
     id: source_map.toLowerCase(),
     source_map: source_map.toLowerCase(),

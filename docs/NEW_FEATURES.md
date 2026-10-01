@@ -2130,3 +2130,12 @@ cutouts aligned with terrain instead of rounding each piece separately.
   that index. Terrain mesh updates reuse batch keys and write directly to typed
   buffers without changing sampling detail. Run
   `node level-editor/app/tests/large-terrain-path-benchmark.mjs` for a size-scaling benchmark.
+
+- The local asset library includes Long Wood Bridge from Sketchfab as a textured
+  scenery asset, searchable under Bridge or Sketchfab. Credit: Horus Chen (embedded
+  author), currently Kogeniku; CC BY 4.0. Source:
+  https://sketchfab.com/3d-models/long-wood-bridge-e2b094603d0a44c8bf5a94a899e5c01c.
+  `refinement/import_long_wood_bridge.py` reproduces the import from either verified
+  download, preserving texture payloads and mesh detail while adapting scale and axes.
+
+- The default “All refined levels” asset selection also includes Sketchfab imports. Multi-map PBR assets now receive lossy AVIF derivatives while retaining geometry, UVs, normals, and material parameters; independent normal/roughness channels use higher-quality 4:4:4 encoding. Long Wood Bridge includes a lossy model and lightweight preview.

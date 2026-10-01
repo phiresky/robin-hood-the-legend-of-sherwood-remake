@@ -5,7 +5,10 @@ import type { ProjectionAssetEntry } from "@rle/shared";
 // source level goes through refinement; reconstruction alone does not qualify.
 export const REFINED_LEVELS = ["Derby", "Leicester", "Lincoln", "Nottingham", "Sherwood"] as const;
 export const REFINED_LEVELS_FILTER = "refined-levels";
-const refinedLevels = new Set<string>(REFINED_LEVELS.map((name) => name.toLowerCase()));
+// Imported Sketchfab assets are also included in the default library selection.
+const refinedLevels = new Set<string>(
+  [...REFINED_LEVELS, "Sketchfab"].map((name) => name.toLowerCase()),
+);
 
 export const ASSET_DRAG_TYPE = "application/x-rle-asset";
 
