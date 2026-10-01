@@ -8,7 +8,7 @@ use crate::gfx_types::{GameEvent, Keycode};
 use crate::host::ApplicationContext;
 use crate::ingame_menu::layout::{
     MENU_H, MENU_W, MenuRect, MenuTransform, TruncationMarker, draw_screen_background,
-    render_text_virt_font, truncate_to_pixel_width, wrap_text_font,
+    render_text_virt_font, truncate_to_pixel_width_by, wrap_text_font,
 };
 use crate::ingame_menu::resources::IngameMenuResources;
 use crate::ingame_menu::widget_bridge::{
@@ -42,6 +42,8 @@ const ID_RULE: u32 = 5;
 const ID_SCALE: u32 = 6;
 const ID_KEYBOARD: u32 = 7;
 const ID_COPY_BASE: u32 = 10;
+const ID_CHARACTER_BASE: u32 = 20;
+const ID_REMOVE_BASE: u32 = 40;
 const ID_ASSIGNMENTS: u32 = 8;
 const ID_HERO_SETUP: u32 = 9;
 
@@ -101,7 +103,7 @@ struct MissionChoice {
     mission_name: String,
     label: String,
     custom: Option<CustomMissionLaunch>,
-    roster_slots: usize,
+    usual_team: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -195,6 +197,8 @@ struct MultiplayerMenuState {
     local: bool,
     edit_assignments: bool,
     hero_setup: bool,
+    team_slot: usize,
+    team_focus: Option<u32>,
     frame: FrameWnd,
     input_state: ModalInputState,
     scroll_view: ScrollView,
@@ -254,10 +258,15 @@ impl MultiplayerMenuState {
         let input_state = ModalInputState::new();
         let frame = FrameWnd::interactive();
         Self {
-            coop: Default::default(),
+            coop: robin_engine::coop::CoopRules {
+                team: [b'R', 0, 0, 0, 0],
+                ..Default::default()
+            },
             local: false,
             edit_assignments: false,
             hero_setup: false,
+            team_slot: 0,
+            team_focus: None,
             missions,
             prepared_host_content,
             matchmaking_client,
@@ -402,7 +411,7 @@ impl MultiplayerMenuState {
                     }
                     return Some(MultiplayerMenuTick::Finished(Some(MultiplayerLaunch {
                         local_custom: None,
-                        coop: self.coop,
+                        coop: started.coop,
                         mission_id: started.mission_id,
                         mission_name: application_context
                             .localized_mission_name(started.mission_id, &started.mission_name),
@@ -493,6 +502,9 @@ impl MultiplayerMenuState {
                 // Discovery listings and hosted/joined controls are no longer
                 // actionable. Signed direct invites use a different transport.
                 discard_disconnected_matchmaking_state(&mut self.games, &mut self.mode);
+                self.hero_setup = false;
+                self.edit_assignments = false;
+                self.team_focus = None;
                 self.selected = 0;
                 self.scroll_view.reset();
                 self.prepared_host_content = None;
@@ -502,7 +514,8 @@ impl MultiplayerMenuState {
     }
 
     fn publish_rules(&mut self) {
-        if !self.local
+        if self.coop.validate().is_ok()
+            && !self.local
             && let Some(session) = &self.matchmaking_client
         {
             if let Err(error) = session.set_rules(self.coop) {
@@ -511,110 +524,110 @@ impl MultiplayerMenuState {
         }
     }
 
-    fn roster_slots(&self) -> usize {
-        let mission = match &self.mode {
-            MenuMode::Missions => self.missions.get(self.selected),
-            MenuMode::Hosted { game } => self.missions.iter().find(|m| {
-                m.mission_id == game.mission_id
-                    && (m.mission_id != u32::MAX || m.mission_name == game.mission_name)
-            }),
-            MenuMode::Joined { game, .. } => self
-                .missions
-                .iter()
-                .find(|m| m.mission_id == game.mission_id),
-            _ => None,
-        };
-        mission.map_or(1, |m| m.roster_slots)
-    }
-
     fn update_buttons(&mut self, keyboard_player: bool, resources: &IngameMenuResources) {
-        use robin_engine::coop::CharacterControl;
+        use robin_engine::coop::{CharacterControl, TEAM_CHARACTERS, team_character_name};
         let connected = self.matchmaking_client.is_some();
         let editing = matches!(self.mode, MenuMode::Missions | MenuMode::Hosted { .. });
-        let roster = self.roster_slots();
-        let copies = self.coop.players as usize > roster;
-        let assigned = self.coop.control == CharacterControl::Assigned;
         let (w, h) = resources.button_dimensions();
         let x = MENU_W - w - 10;
         let bottom = MENU_H - h - 10;
+        let valid = self.coop.validate().is_ok();
         let mut buttons = Vec::new();
-        let mut add = |id, label: String, enabled, y| {
-            buttons.push((id, label, enabled, y));
+        let mut add = |id, label: String, enabled, bx, y, bw, bh| {
+            buttons.push((id, label, enabled, bx, y, bw, bh));
         };
-        match &self.mode {
-            MenuMode::Games => {
-                let can_join = self
-                    .games
-                    .get(self.selected)
-                    .is_some_and(|game| connected || game.state == "direct_invite");
-                add(ID_JOIN, "Join game".into(), can_join, 76);
-                add(ID_CREATE, "Host online".into(), connected, 76 + h + 12);
-                add(ID_LOCAL, "Local co-op".into(), true, 76 + 2 * (h + 12));
-            }
-            MenuMode::Missions => add(
-                ID_CREATE,
-                if self.local {
-                    "Play together"
+        if editing && self.hero_setup {
+            let count = self.coop.team_len();
+            self.team_slot = self.team_slot.min(count).min(4);
+            for slot in 0..5 {
+                let y = 90 + slot as i32 * 58;
+                let label = if slot < count {
+                    format!(
+                        "{} {}. {}",
+                        if slot == self.team_slot { ">" } else { "" },
+                        slot + 1,
+                        team_character_name(self.coop.team[slot])
+                    )
+                } else if slot == count {
+                    format!(
+                        "{} {}. Add character",
+                        if slot == self.team_slot { ">" } else { "" },
+                        slot + 1
+                    )
                 } else {
-                    "Create lobby"
-                }
-                .into(),
-                !self.missions.is_empty() && (self.local || connected),
-                bottom - h - 12,
-            ),
-            MenuMode::Hosted { .. } => {
-                add(ID_START, "Start mission".into(), connected, bottom - h - 12);
-            }
-            MenuMode::Joined { .. } => {}
-        }
-        if editing {
-            if self.hero_setup {
-                // Only the extra seats create copies; existing mission heroes
-                // keep their roster slots. Assignment controls refer to players.
-                if !copies {
-                    self.edit_assignments = true;
-                } else if !assigned {
-                    self.edit_assignments = false;
-                }
-                if copies && assigned {
+                    format!("{}. Empty slot", slot + 1)
+                };
+                add(
+                    ID_COPY_BASE + slot as u32,
+                    label,
+                    slot <= count,
+                    40,
+                    y,
+                    260,
+                    28,
+                );
+                if slot < count {
                     add(
-                        ID_ASSIGNMENTS,
-                        if self.edit_assignments {
-                            "Edit: players"
-                        } else {
-                            "Edit: copies"
-                        }
-                        .into(),
-                        true,
-                        76,
+                        ID_REMOVE_BASE + slot as u32,
+                        "Remove".into(),
+                        count > 1,
+                        316,
+                        y,
+                        100,
+                        28,
                     );
                 }
-                let mut y = 76 + h + 12;
-                for slot in 0..self.coop.players as usize {
-                    if self.edit_assignments && assigned {
-                        add(
-                            ID_COPY_BASE + slot as u32,
-                            format!("P{}: hero {}", slot + 1, self.coop.assignments[slot] + 1),
-                            true,
-                            y,
-                        );
-                    } else if !self.edit_assignments && slot >= roster {
-                        add(
-                            ID_COPY_BASE + slot as u32,
-                            format!(
-                                "Copy {}: hero {}",
-                                slot + 1 - roster,
-                                self.coop.duplicate_choices[slot] + 1
-                            ),
-                            true,
-                            y,
-                        );
-                    } else {
-                        continue;
-                    }
-                    y += h + 8;
+            }
+            for (index, &(_, name, _)) in TEAM_CHARACTERS.iter().enumerate() {
+                add(
+                    ID_CHARACTER_BASE + index as u32,
+                    name.into(),
+                    true,
+                    x,
+                    84 + index as i32 * 29,
+                    w,
+                    25,
+                );
+            }
+            add(
+                ID_HERO_SETUP,
+                "Mission / rules".into(),
+                true,
+                28,
+                bottom,
+                190,
+                h,
+            );
+        } else {
+            match &self.mode {
+                MenuMode::Games => {
+                    let can_join = self
+                        .games
+                        .get(self.selected)
+                        .is_some_and(|game| connected || game.state == "direct_invite");
+                    add(ID_JOIN, "Join game".into(), can_join, x, 76, w, h);
+                    add(
+                        ID_CREATE,
+                        "Host online".into(),
+                        connected,
+                        x,
+                        76 + h + 12,
+                        w,
+                        h,
+                    );
+                    add(
+                        ID_LOCAL,
+                        "Local co-op".into(),
+                        true,
+                        x,
+                        76 + 2 * (h + 12),
+                        w,
+                        h,
+                    );
                 }
-            } else {
+                _ => {}
+            }
+            if editing {
                 let mut y = 76;
                 if self.local {
                     add(
@@ -626,43 +639,122 @@ impl MultiplayerMenuState {
                         }
                         .into(),
                         true,
+                        x,
                         y,
+                        w,
+                        h,
                     );
                     y += h + 12;
                 }
                 add(
                     ID_RULE,
                     match self.coop.control {
-                        CharacterControl::Shared => "Shared heroes",
-                        CharacterControl::Exclusive => "One at a time",
-                        CharacterControl::Assigned => "Assigned heroes",
+                        CharacterControl::Shared => "Control: shared",
+                        CharacterControl::Exclusive => "Control: exclusive",
+                        CharacterControl::Assigned => "Control: assigned",
                     }
                     .into(),
                     true,
+                    x,
                     y,
+                    w,
+                    h,
                 );
-                if copies {
-                    add(
-                        ID_SCALE,
-                        format!("Enemy HP: +{}%", self.coop.enemy_health_per_duplicate),
-                        true,
-                        y + h + 12,
-                    );
-                }
-            }
-            if self.hero_setup || copies || assigned {
+                y += h + 12;
+                add(
+                    ID_SCALE,
+                    format!("Enemy HP: +{}%", self.coop.enemy_health_per_duplicate),
+                    true,
+                    x,
+                    y,
+                    w,
+                    h,
+                );
+                y += h + 12;
                 add(
                     ID_HERO_SETUP,
-                    if self.hero_setup {
-                        "Game rules"
-                    } else {
-                        "Hero setup"
-                    }
-                    .into(),
+                    format!("Edit team ({}/5)", self.coop.team_len()),
                     true,
-                    bottom - 2 * (h + 12),
+                    x,
+                    y,
+                    w,
+                    h,
                 );
+                y += h + 12;
+                if self.coop.control == CharacterControl::Assigned {
+                    add(
+                        ID_ASSIGNMENTS,
+                        if self.edit_assignments {
+                            "Choose mission"
+                        } else {
+                            "Assign players"
+                        }
+                        .into(),
+                        true,
+                        x,
+                        y,
+                        w,
+                        h,
+                    );
+                }
+                if self.edit_assignments {
+                    for slot in 0..self.coop.players as usize {
+                        let choice = self.coop.assignments[slot] as usize;
+                        let name = self
+                            .coop
+                            .team
+                            .get(choice)
+                            .copied()
+                            .filter(|&code| code != 0)
+                            .map(team_character_name)
+                            .unwrap_or("Unassigned");
+                        add(
+                            ID_COPY_BASE + slot as u32,
+                            format!("Player {}: slot {} - {}", slot + 1, choice + 1, name),
+                            true,
+                            40,
+                            90 + slot as i32 * 58,
+                            376,
+                            30,
+                        );
+                    }
+                }
             }
+        }
+        match self.mode {
+            MenuMode::Missions => add(
+                ID_CREATE,
+                if self.hero_setup {
+                    if self.local {
+                        "Start local"
+                    } else {
+                        "Create lobby"
+                    }
+                } else {
+                    "Review team"
+                }
+                .into(),
+                valid && !self.missions.is_empty() && (self.local || connected),
+                x,
+                bottom - h - 12,
+                w,
+                h,
+            ),
+            MenuMode::Hosted { .. } => add(
+                ID_START,
+                if self.hero_setup {
+                    "Start mission"
+                } else {
+                    "Review team"
+                }
+                .into(),
+                valid && connected,
+                x,
+                bottom - h - 12,
+                w,
+                h,
+            ),
+            _ => {}
         }
         add(
             ID_BACK,
@@ -673,9 +765,11 @@ impl MultiplayerMenuState {
             }
             .into(),
             true,
+            x,
             bottom,
+            w,
+            h,
         );
-        // Keep unchanged widgets alive so mouse capture and hover survive frames.
         let obsolete: Vec<_> = self
             .frame
             .widgets()
@@ -686,11 +780,11 @@ impl MultiplayerMenuState {
         for id in obsolete {
             self.frame.remove_widget(id);
         }
-        for (id, label, enabled, y) in buttons {
+        for (id, label, enabled, bx, y, bw, bh) in buttons {
             if self.frame.widget(id).is_none() {
                 self.frame
                     .add_widget_absolute(widget_bridge::make_button_enabled(
-                        id, &label, enabled, x, y, w, h,
+                        id, &label, enabled, bx, y, bw, bh,
                     ));
             } else {
                 self.frame.update_widget(id, Some(&label), enabled);
@@ -699,12 +793,85 @@ impl MultiplayerMenuState {
                     .expect("existing menu button")
                     .base_mut()
                     .set_position(robin_engine::coordinates::ScreenBBox::from_coords(
-                        x as f32,
+                        bx as f32,
                         y as f32,
-                        (x + w) as f32,
-                        (y + h) as f32,
+                        (bx + bw) as f32,
+                        (y + bh) as f32,
                     ));
             }
+        }
+    }
+
+    fn move_team_focus(&mut self, key: Keycode) {
+        let mut buttons: Vec<_> = self
+            .frame
+            .widgets()
+            .iter()
+            .filter(|w| w.base().enabled)
+            .collect();
+        buttons.sort_by_key(|widget| {
+            let id = widget.id();
+            let group = if (ID_COPY_BASE..ID_COPY_BASE + 5).contains(&id)
+                || (ID_REMOVE_BASE..ID_REMOVE_BASE + 5).contains(&id)
+            {
+                0
+            } else if (ID_CHARACTER_BASE..ID_CHARACTER_BASE + 10).contains(&id) {
+                1
+            } else {
+                2
+            };
+            let bounds = widget.base().bbox.0.expect("button bounds");
+            (group, bounds.min().y as i32, bounds.min().x as i32)
+        });
+        let Some(current) = buttons.iter().position(|w| Some(w.id()) == self.team_focus) else {
+            self.team_focus = buttons.first().map(|w| w.id());
+            return;
+        };
+        if key == Keycode::Tab {
+            self.team_focus = Some(buttons[(current + 1) % buttons.len()].id());
+            return;
+        }
+        let center = buttons[current]
+            .base()
+            .bbox
+            .0
+            .expect("button bounds")
+            .center();
+        let next = buttons
+            .iter()
+            .filter_map(|w| {
+                let point = w.base().bbox.0.expect("button bounds").center();
+                let dx = point.x - center.x;
+                let dy = point.y - center.y;
+                let (forward, cross) = match key {
+                    Keycode::Up => (-dy, dx),
+                    Keycode::Down => (dy, dx),
+                    Keycode::Left => (-dx, dy),
+                    Keycode::Right => (dx, dy),
+                    _ => return None,
+                };
+                (forward > 1.0).then_some((w.id(), forward + cross.abs() * 3.0))
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1));
+        if let Some((id, _)) = next {
+            self.team_focus = Some(id);
+        }
+    }
+
+    fn draw_buttons(
+        &self,
+        renderer: &mut Renderer,
+        resources: &IngameMenuResources,
+        transform: MenuTransform,
+    ) {
+        for widget in self.frame.widgets() {
+            widget_bridge::draw_widget_button(
+                renderer,
+                resources,
+                transform,
+                widget,
+                (self.hero_setup || self.edit_assignments) && self.team_focus == Some(widget.id()),
+            );
         }
     }
 
@@ -720,10 +887,13 @@ impl MultiplayerMenuState {
         self.selected = self.selected.min(rows_len.saturating_sub(1));
         let mut activated: Option<u32> = None;
         let screen = ScreenFrame::poll(io);
+        let mut players_joined = false;
         if self.local {
+            let before = io.window.local_players.count();
             for event in &screen.events {
                 io.window.local_players.join_event(event);
             }
+            players_joined = io.window.local_players.count() > before;
             let count = io.window.local_players.count().max(1) as u8;
             if self.coop.players != count {
                 self.coop.assignments = [0, 1, 2, 3, 4];
@@ -752,7 +922,7 @@ impl MultiplayerMenuState {
                         button: crate::gfx_types::GamepadButton::South,
                         pressed: true,
                         ..
-                    } => continue,
+                    } if players_joined || (!self.hero_setup && !self.edit_assignments) => continue,
                     // B removes the controller that pressed it. With no
                     // controller left, retain the normal Back behavior.
                     GameEvent::GamepadButton {
@@ -762,6 +932,45 @@ impl MultiplayerMenuState {
                     } if io.window.local_players.leave_event(event) => continue,
                     _ => {}
                 }
+            }
+            if self.hero_setup || self.edit_assignments {
+                let key = self
+                    .input_state
+                    .gamepad_direction(event)
+                    .or_else(|| match event {
+                        GameEvent::KeyDown { keycode, .. } => Some(*keycode),
+                        _ => None,
+                    });
+                if let Some(
+                    key @ (Keycode::Up
+                    | Keycode::Down
+                    | Keycode::Left
+                    | Keycode::Right
+                    | Keycode::Tab),
+                ) = key
+                {
+                    self.move_team_focus(key);
+                }
+                match ScreenKey::from_event(event) {
+                    Some(ScreenKey::Cancel) => {
+                        activated = Some(if self.hero_setup {
+                            ID_HERO_SETUP
+                        } else {
+                            ID_ASSIGNMENTS
+                        })
+                    }
+                    Some(ScreenKey::Quit) => activated = Some(ID_BACK),
+                    Some(ScreenKey::Confirm) => {
+                        activated = self
+                            .team_focus
+                            .filter(|&id| self.frame.widget(id).is_some_and(|w| w.base().enabled))
+                    }
+                    _ => {}
+                }
+                if matches!(event, GameEvent::MouseMove { .. }) {
+                    self.team_focus = None;
+                }
+                continue;
             }
             if let Some(direction) = self.input_state.gamepad_direction(event) {
                 match direction {
@@ -886,10 +1095,18 @@ impl MultiplayerMenuState {
         match id {
             ID_HERO_SETUP => {
                 self.hero_setup = !self.hero_setup;
+                self.edit_assignments = false;
+                self.team_focus = None;
                 return None;
             }
             ID_LOCAL => {
+                self.coop.players = 1;
+                if self.coop.team_len() == 0 {
+                    self.coop.team[0] = b'R';
+                }
                 self.hero_setup = false;
+                self.edit_assignments = false;
+                self.team_focus = None;
                 self.scroll_view.reset();
                 self.local = true;
                 self.mode = MenuMode::Missions;
@@ -933,15 +1150,37 @@ impl MultiplayerMenuState {
             }
             ID_ASSIGNMENTS => {
                 self.edit_assignments = !self.edit_assignments;
+                self.team_focus = None;
+                return None;
+            }
+            id if (ID_CHARACTER_BASE
+                ..ID_CHARACTER_BASE + robin_engine::coop::TEAM_CHARACTERS.len() as u32)
+                .contains(&id) =>
+            {
+                let slot = self.team_slot.min(self.coop.team_len()).min(4);
+                self.coop.team[slot] =
+                    robin_engine::coop::TEAM_CHARACTERS[(id - ID_CHARACTER_BASE) as usize].0;
+                self.publish_rules();
+                return None;
+            }
+            id if (ID_REMOVE_BASE..ID_REMOVE_BASE + 5).contains(&id) => {
+                let slot = (id - ID_REMOVE_BASE) as usize;
+                let count = self.coop.team_len();
+                if count > 1 && slot < count {
+                    self.coop.team[slot..].rotate_left(1);
+                    self.coop.team[4] = 0;
+                    self.coop.assignments = [0, 1, 2, 3, 4];
+                    self.team_slot = self.team_slot.min(count - 2);
+                    self.publish_rules();
+                }
                 return None;
             }
             id if (ID_COPY_BASE..ID_COPY_BASE + 5).contains(&id) => {
                 let slot = (id - ID_COPY_BASE) as usize;
-                if self.edit_assignments {
-                    let count = self.coop.players.max(self.roster_slots() as u8);
-                    if slot >= count as usize {
-                        return None;
-                    }
+                if self.hero_setup {
+                    self.team_slot = slot.min(self.coop.team_len()).min(4);
+                } else if self.edit_assignments {
+                    let count = self.coop.team_len().max(1) as u8;
                     let next = (self.coop.assignments[slot] + 1) % count;
                     let other = self
                         .coop
@@ -950,12 +1189,14 @@ impl MultiplayerMenuState {
                         .position(|&assigned| assigned == next)
                         .expect("assignment permutation");
                     self.coop.assignments.swap(slot, other);
-                } else {
-                    let count = self.roster_slots() as u8;
-                    let choice = &mut self.coop.duplicate_choices[slot];
-                    *choice = (*choice + 1) % count;
+                    self.publish_rules();
                 }
-                self.publish_rules();
+                return None;
+            }
+            ID_CREATE | ID_START if !matches!(self.mode, MenuMode::Games) && !self.hero_setup => {
+                self.hero_setup = true;
+                self.edit_assignments = false;
+                self.team_focus = None;
                 return None;
             }
             ID_BACK => match self.mode {
@@ -968,6 +1209,8 @@ impl MultiplayerMenuState {
                         tracing::warn!("matchmaking leave failed: {err}");
                     }
                     self.hero_setup = false;
+                    self.edit_assignments = false;
+                    self.team_focus = None;
                     self.local = false;
                     io.window.local_players.enabled = false;
                     self.mode = MenuMode::Games;
@@ -1008,6 +1251,10 @@ impl MultiplayerMenuState {
                 }
             }
             ID_CREATE if matches!(self.mode, MenuMode::Games) => {
+                self.coop.players = 1;
+                if self.coop.team_len() == 0 {
+                    self.coop.team[0] = b'R';
+                }
                 if self.missions.is_empty() {
                     self.status = "No missions are available to host".to_string();
                 } else {
@@ -1203,7 +1450,7 @@ impl MultiplayerMenuState {
         });
         self.update_buttons(io.window.local_players.keyboard, resources);
         self.render_menu(renderer, resources, transform, application_context);
-        widget_bridge::draw_frame_buttons(renderer, resources, transform, &self.frame);
+        self.draw_buttons(renderer, resources, transform);
         if let Some(cursor) = io.cursor_renderer() {
             cursor.advance_ui_animation();
         }
@@ -1607,6 +1854,98 @@ async fn preflight_host_content(
 }
 
 impl MultiplayerMenuState {
+    fn selected_mission(&self) -> Option<&MissionChoice> {
+        match &self.mode {
+            MenuMode::Missions => self.missions.get(self.selected),
+            MenuMode::Hosted { game } => self.missions.iter().find(|m| {
+                m.mission_id == game.mission_id
+                    && (m.mission_id != u32::MAX || m.mission_name == game.mission_name)
+            }),
+            MenuMode::Joined { game, .. } => self
+                .missions
+                .iter()
+                .find(|m| m.mission_id == game.mission_id),
+            _ => None,
+        }
+    }
+
+    fn render_team(
+        &self,
+        renderer: &mut Renderer,
+        resources: &IngameMenuResources,
+        transform: MenuTransform,
+    ) {
+        draw_panel(renderer, transform, &LIST_RECT);
+        let Some(font) = resources.menu_text_font_any() else {
+            return;
+        };
+        let heading = if self.hero_setup {
+            format!("Mission team - {}/5 characters", self.coop.team_len())
+        } else {
+            "Player assignments".into()
+        };
+        render_text_virt_font(renderer, font, transform, &heading, 28, 58);
+        let right = if self.hero_setup {
+            format!("Choose for slot {}", self.team_slot + 1)
+        } else {
+            "Game rules".into()
+        };
+        render_text_virt_font(
+            renderer,
+            font,
+            transform,
+            &right,
+            MENU_W - resources.button_dimensions().0 - 10,
+            58,
+        );
+        if self.hero_setup {
+            let usual = self
+                .selected_mission()
+                .and_then(|m| m.usual_team.as_deref());
+            for slot in 0..5 {
+                let code = self.coop.team[slot];
+                let hint = if code == 0 {
+                    if slot == self.coop.team_len() {
+                        "Select this slot, then choose a character."
+                    } else {
+                        "Empty slot"
+                    }
+                } else if usual.is_none() {
+                    "Usual team unknown for this mission."
+                } else if !usual.unwrap().contains(char::from(code)) {
+                    "! Not normally available in this mission"
+                } else if self.coop.team[..slot].contains(&code) {
+                    "Duplicate character"
+                } else {
+                    "Normally available in this mission"
+                };
+                render_text_virt_font(renderer, font, transform, hint, 44, 122 + slot as i32 * 58);
+            }
+        }
+        let mission = self
+            .selected_mission()
+            .map(|m| m.label.as_str())
+            .unwrap_or("Mission");
+        let text = if let Err(error) = self.coop.validate() {
+            error
+        } else if self.hero_setup {
+            format!("{mission}\n{}", self.status)
+        } else {
+            "Click a player to change their slot. Occupied slots swap players.".into()
+        };
+        let wrapped = wrap_text_font(font, &text, LIST_RECT.w, 2);
+        for (line, text) in wrapped.lines.iter().enumerate() {
+            render_text_virt_font(
+                renderer,
+                font,
+                transform,
+                &text.text,
+                28,
+                400 + line as i32 * 13,
+            );
+        }
+    }
+
     fn render_menu(
         &self,
         renderer: &mut Renderer,
@@ -1636,6 +1975,10 @@ impl MultiplayerMenuState {
             render_text_virt_font(renderer, font, transform, title, (MENU_W - tw) / 2, 24);
         }
 
+        if self.hero_setup || self.edit_assignments {
+            self.render_team(renderer, resources, transform);
+            return;
+        }
         draw_panel(renderer, transform, &LIST_RECT);
         let rows_len = match mode {
             MenuMode::Games => games.len().max(1),
@@ -1694,11 +2037,13 @@ impl MultiplayerMenuState {
                 let row_area_x = (LIST_RECT.x + 10) as f32;
                 let row_area_w = (scroll_view.content_width() - 12) as f32;
                 for cell in column_layout.layout_row(&row, row_area_x, row_area_w) {
-                    let fitted = truncate_to_pixel_width(
-                        font,
+                    let fitted = truncate_to_pixel_width_by(
                         cell.text.trim(),
                         cell.span_w as i32,
-                        TruncationMarker::Clip,
+                        TruncationMarker::AsciiEllipsis,
+                        // TrueType drawing retains fractional advances whereas
+                        // legacy menu metrics truncate each glyph's advance.
+                        |text| font.text_width(text) + text.chars().count() as i32,
                     );
                     if fitted.is_empty() {
                         continue;
@@ -1722,6 +2067,31 @@ impl MultiplayerMenuState {
         }
 
         scroll_view.draw_scrollbar(renderer, transform, resources);
+        if matches!(mode, MenuMode::Joined { .. }) {
+            if let Some(font) = resources.menu_text_font_any() {
+                render_text_virt_font(renderer, font, transform, "Host's mission team", 40, 118);
+                let usual = self
+                    .selected_mission()
+                    .and_then(|m| m.usual_team.as_deref());
+                for (slot, &code) in self.coop.team[..self.coop.team_len()].iter().enumerate() {
+                    let name = format!(
+                        "{}. {}",
+                        slot + 1,
+                        robin_engine::coop::team_character_name(code)
+                    );
+                    let y = 146 + slot as i32 * 46;
+                    render_text_virt_font(renderer, font, transform, &name, 40, y);
+                    let warning = match usual {
+                        Some(team) if !team.contains(char::from(code)) => {
+                            "! Not normally available in this mission"
+                        }
+                        None => "Usual team unknown for this mission.",
+                        _ => "",
+                    };
+                    render_text_virt_font(renderer, font, transform, warning, 40, y + 15);
+                }
+            }
+        }
 
         if let Some(font) = resources.menu_text_font_any() {
             let heading = match mode {
@@ -1762,15 +2132,20 @@ impl MultiplayerMenuState {
                     }
                 }
             };
-            let detail = if self.hero_setup {
-                "Click a hero button to cycle through the mission's roster."
-            } else if self.coop.players as usize > self.roster_slots() {
-                "Extra players get hero copies. Enemy HP increases for each copy."
+            let team = self.coop.team[..self.coop.team_len()]
+                .iter()
+                .map(|&code| robin_engine::coop::team_character_name(code))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let detail = if let Err(error) = self.coop.validate() {
+                error
+            } else if matches!(mode, MenuMode::Games) {
+                help.to_owned()
             } else {
-                help
+                format!("Team: {team}. {help}")
             };
             let text = format!("{status}\n{detail}");
-            let wrapped = wrap_text_font(font, &text, LIST_RECT.w, 5);
+            let wrapped = wrap_text_font(font, &text, LIST_RECT.w, 3);
             for (line, text) in wrapped.lines.iter().enumerate() {
                 render_text_virt_font(
                     renderer,
@@ -1796,6 +2171,58 @@ fn visible_list_rows(
         .take(visible_count)
         .enumerate()
         .map(move |(visible_index, row_index)| (visible_index, row_index, format(row_index)))
+}
+
+/// Normal starting availability follows the campaign's prerequisite and rescue
+/// progression. Unknown custom rosters remain explicitly unknown.
+fn usual_mission_team(
+    profiles: &engine_profiles::ProfileManager,
+    filename: &str,
+) -> Option<String> {
+    let mut team = String::from("R");
+    if matches!(
+        filename.to_ascii_lowercase().as_str(),
+        "h01_lin_vl" | "s01_not_vl" | "h07_not_mk"
+    ) {
+        return Some(team);
+    }
+    let mission = profiles
+        .missions
+        .iter()
+        .find(|p| p.mission_filename.eq_ignore_ascii_case(filename))?;
+    let mut completed = std::collections::HashSet::new();
+    let mut pending = mission.missions_required_to_be_done.clone();
+    while let Some(id) = pending.pop() {
+        if !completed.insert(id) {
+            continue;
+        }
+        let prerequisite = profiles.missions.iter().find(|p| p.id == id)?;
+        pending.extend(prerequisite.missions_required_to_be_done.iter().copied());
+    }
+    for (rescue, code) in [
+        ("S01_Not_VL", 'S'),
+        ("S02_Lei_MP", 'W'),
+        ("S03_FoB_MP", 'J'),
+        ("S04_Der_EC", 'T'),
+        ("S05_Yrk_EC", 'M'),
+    ] {
+        if profiles
+            .missions
+            .iter()
+            .any(|p| p.mission_filename.eq_ignore_ascii_case(rescue) && completed.contains(&p.id))
+            && !team.contains(code)
+        {
+            team.push(code);
+        }
+    }
+    if team.contains('S') {
+        team.push_str("ABC");
+    }
+    // Robin is the captive in this rescue mission.
+    if filename.eq_ignore_ascii_case("H09_Not_VL") {
+        team.retain(|code| code != 'R');
+    }
+    Some(team)
 }
 
 fn mission_choices(
@@ -1827,7 +2254,10 @@ fn mission_choices(
                 |number| format!("{number:02} {mission_name}"),
             );
             MissionChoice {
-                roster_slots: usize::from(profile.number_of_beam_mes).clamp(1, 5),
+                usual_team: crate::main_entry::detect_demo_mode_with_context(application_context)
+                    .filter(|(mission, ..)| mission.eq_ignore_ascii_case(&profile.mission_filename))
+                    .map(|(_, _, pcs, _)| pcs.to_owned())
+                    .or_else(|| usual_mission_team(profiles, &profile.mission_filename)),
                 mission_id: profile.id,
                 #[cfg(target_arch = "wasm32")]
                 authoritative_basename: profile.mission_filename.clone(),
@@ -1895,7 +2325,7 @@ fn mission_choices(
                 requires_spellforge: entry.requires_spellforge,
             };
             choices.push(MissionChoice {
-                roster_slots: 5,
+                usual_team: None,
                 mission_id: u32::MAX,
                 #[cfg(target_arch = "wasm32")]
                 authoritative_basename: entry.rhm_basename.clone(),
@@ -2017,6 +2447,41 @@ fn fill_virtual_rect(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn usual_roster_includes_recruited_alternatives_and_flags_early_heroes() {
+        use super::*;
+        let mut profiles = engine_profiles::ProfileManager::default();
+        profiles.missions = vec![
+            engine_profiles::MissionProfile {
+                id: 1,
+                mission_filename: "S01_Not_VL".into(),
+                ..Default::default()
+            },
+            engine_profiles::MissionProfile {
+                id: 2,
+                mission_filename: "S02_Lei_MP".into(),
+                missions_required_to_be_done: vec![1],
+                ..Default::default()
+            },
+            engine_profiles::MissionProfile {
+                id: 3,
+                mission_filename: "H10_Yor_VL".into(),
+                missions_required_to_be_done: vec![2],
+                ..Default::default()
+            },
+        ];
+        assert_eq!(
+            usual_mission_team(&profiles, "S01_Not_VL").as_deref(),
+            Some("R")
+        );
+        let late = usual_mission_team(&profiles, "H10_Yor_VL").unwrap();
+        for code in "RSWABC".chars() {
+            assert!(late.contains(code));
+        }
+        assert!(!late.contains('F'));
+        assert!(usual_mission_team(&profiles, "Unknown custom mission").is_none());
+    }
+
     #[test]
     fn list_rows_only_format_the_visible_window() {
         use super::*;
@@ -2201,5 +2666,348 @@ mod tests {
         assert_eq!(listing.host, key.public().to_string());
         assert_eq!(listing.max_players, 2);
         assert_eq!(listing.state, "direct_invite");
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod visual_tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires game data and an offscreen GPU adapter"]
+    fn capture_multiplayer_team_ui() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap();
+        let data = robin_test_support::original_data::data_directory("");
+        let output = root.join("target/multiplayer-ui");
+        std::fs::create_dir_all(&output).unwrap();
+        let (campaign, profiles, context) =
+            crate::main_entry::rust_init_with_roots(Some(&data), Some(root)).unwrap();
+        let gpu = offscreen_gpu();
+        for (width, height) in [(640, 480), (1024, 768)] {
+            let mut renderer = Renderer::offscreen(gpu.clone(), width, height);
+            let resources = IngameMenuResources::new(
+                &mut renderer,
+                context.shipping().unwrap(),
+                context.preparation_files().unwrap().clone(),
+            )
+            .unwrap();
+            let mut state = MultiplayerMenuState {
+                coop: robin_engine::coop::CoopRules {
+                    team: [b'R', b'T', b'T', b'W', b'M'],
+                    ..Default::default()
+                },
+                local: true,
+                edit_assignments: false,
+                hero_setup: true,
+                team_slot: 4,
+                team_focus: None,
+                frame: FrameWnd::interactive(),
+                input_state: ModalInputState::new(),
+                scroll_view: ScrollView::new(
+                    [
+                        LIST_RECT.x + 4,
+                        LIST_RECT.y + 4,
+                        LIST_RECT.w - 8,
+                        LIST_RECT.h - 8,
+                    ],
+                    ROW_HEIGHT,
+                    &resources,
+                ),
+                selected: 0,
+                mode: MenuMode::Missions,
+                status: "1 player joined. Keyboard on. Press A on a controller to join.".into(),
+                games: Vec::new(),
+                matchmaking_label: String::new(),
+                matchmaking_client: None,
+                prepared_host_content: None,
+                missions: mission_choices(&campaign, &profiles, &context),
+            };
+            state.selected = state
+                .missions
+                .iter()
+                .position(|m| m.label.starts_with("01 "))
+                .unwrap_or(0);
+            for view in [
+                "full-team",
+                "add-slot",
+                "mission-rules",
+                "assignments",
+                "invalid-team",
+                "keyboard-focus",
+                "joined",
+                "browser",
+            ] {
+                state.hero_setup = matches!(
+                    view,
+                    "full-team" | "add-slot" | "invalid-team" | "keyboard-focus"
+                );
+                state.edit_assignments = view == "assignments";
+                state.coop.control = if matches!(view, "assignments" | "invalid-team") {
+                    robin_engine::coop::CharacterControl::Assigned
+                } else {
+                    robin_engine::coop::CharacterControl::Shared
+                };
+                state.coop.players = if matches!(view, "assignments" | "invalid-team") {
+                    5
+                } else {
+                    1
+                };
+                state.coop.team = if matches!(view, "add-slot" | "invalid-team") {
+                    [b'R', 0, 0, 0, 0]
+                } else {
+                    [b'R', b'T', b'T', b'W', b'M']
+                };
+                state.team_slot = if view == "add-slot" { 1 } else { 4 };
+                state.mode = if view == "browser" {
+                    MenuMode::Games
+                } else if view == "joined" {
+                    let mission = &state.missions[state.selected];
+                    MenuMode::Joined {
+                        game: JoinedGame {
+                            coop: state.coop,
+                            game_id: "capture".into(),
+                            mission_id: mission.mission_id,
+                            mission_name: mission.mission_name.clone(),
+                            host_content: None,
+                            connect_addr: "capture".into(),
+                            expected_players: 2,
+                            start_at_epoch_ms: None,
+                        },
+                        listing: None,
+                    }
+                } else {
+                    MenuMode::Missions
+                };
+                state.team_focus = None;
+                state.clamp_selection_to_rows();
+                if !matches!(state.mode, MenuMode::Games) {
+                    state.scroll_view.reveal(state.selected);
+                }
+                state.update_buttons(true, &resources);
+                if view == "keyboard-focus" {
+                    state.move_team_focus(Keycode::Tab);
+                    assert_eq!(state.team_focus, Some(ID_COPY_BASE));
+                    state.move_team_focus(Keycode::Down);
+                    assert_eq!(state.team_focus, Some(ID_COPY_BASE + 1));
+                    state.move_team_focus(Keycode::Right);
+                    assert_eq!(state.team_focus, Some(ID_REMOVE_BASE + 1));
+                }
+                let widgets = state.frame.widgets();
+                for (index, a) in widgets.iter().enumerate() {
+                    let ab = a.base().bbox.0.unwrap();
+                    for b in &widgets[index + 1..] {
+                        let bb = b.base().bbox.0.unwrap();
+                        assert!(
+                            !(ab.min().x < bb.max().x
+                                && ab.max().x > bb.min().x
+                                && ab.min().y < bb.max().y
+                                && ab.max().y > bb.min().y),
+                            "overlapping buttons: {} / {}",
+                            a.id(),
+                            b.id()
+                        );
+                    }
+                }
+                renderer.begin_gpu_frame_clear();
+                renderer.begin_ui_only_frame();
+                let transform = MenuTransform::centered(width as i32, height as i32);
+                if let Some(bg) = resources.menu_bg[2] {
+                    draw_screen_background(&mut renderer, &bg);
+                }
+                state.render_menu(&mut renderer, &resources, transform, &context);
+                state.draw_buttons(&mut renderer, &resources, transform);
+                write_capture_png(
+                    &mut renderer,
+                    &output.join(format!("{view}-{width}x{height}.png")),
+                );
+            }
+        }
+    }
+    #[test]
+    #[ignore = "requires full game data and RUST_MIN_STACK=33554432"]
+    fn selected_team_spawns_exactly_in_a_one_character_mission() {
+        use robin_engine::engine::{Engine, EngineArgs, LevelAssets, LevelLoadArgs, SimConfig};
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap();
+        let data = robin_test_support::original_data::data_directory("");
+        let (campaign, profiles, context) =
+            crate::main_entry::rust_init_with_roots(Some(&data), Some(root)).unwrap();
+        let files = context.preparation_files().unwrap().clone();
+        let mission = campaign
+            .missions
+            .iter()
+            .position(|m| {
+                m.profile(&profiles)
+                    .mission_filename
+                    .eq_ignore_ascii_case("H01_Lin_VL")
+            })
+            .expect("full game's first mission");
+        let mut host = crate::Host::scratch(640.0, 480.0);
+        host.frontend
+            .resources
+            .frame_holder_before_publication_mut()
+            .initialize_sprite_bank_with_files(".", &files)
+            .unwrap();
+        for team in [
+            [b'R', 0, 0, 0, 0],
+            [b'R'; 5],
+            [b'M', b'T', b'R', b'J', b'W'],
+        ] {
+            let mut campaign = campaign.clone();
+            campaign.current_mission_idx = Some(mission);
+            campaign.force_next_mission(mission);
+            let mut assets = LevelAssets::new();
+            assets.profile_manager = profiles.clone();
+            assets.sprite_scriptor = Arc::new(
+                robin_engine::sprite_script::SpriteScriptor::with_resources(Arc::new(
+                    robin_engine::sprite_script::MissionResourceEnvironment::from_files(&files),
+                )),
+            );
+            assets.bank_signature = host.frontend.resources.frame_holder().signature();
+            let name = campaign.missions[mission]
+                .profile(&profiles)
+                .mission_filename
+                .clone();
+            let path = files
+                .resolve_data_path(&format!("Data/Levels/{name}.scb"))
+                .unwrap();
+            let program = robin_engine::script_manager::ScriptProgram::from_scb(
+                robin_assets::scb::parse_file(&path).unwrap(),
+            )
+            .unwrap();
+            assets.scripts.mission_programs = Arc::new(std::collections::BTreeMap::from([(
+                name,
+                Arc::new(program),
+            )]));
+            let mut text =
+                robin_assets::resource_manager::ResourceManager::with_files(files.clone());
+            text.attach_resource_file("Data/Text/Level.res").unwrap();
+            (assets.peasant_firstnames, assets.peasant_surnames) =
+                crate::game_session::load_peasant_name_pool(&mut text).unwrap();
+            assets.fixed_vip_names =
+                crate::game_session::load_fixed_vip_name_map(&mut text).unwrap();
+            let loaded = robin_engine::engine::level_loading::load_mission_for_campaign_with_files(
+                &campaign,
+                &profiles,
+                "Data/Levels",
+                &mut |_| {},
+                &files,
+            )
+            .unwrap();
+            let config = SimConfig {
+                script_enabled: true,
+                coop: robin_engine::coop::CoopRules {
+                    players: 1,
+                    team,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let engine = Engine::new(EngineArgs {
+                campaign,
+                level: LevelLoadArgs {
+                    assets: &mut assets,
+                    level_directory: "Data/Levels",
+                    progress: &mut |_| {},
+                    loaded,
+                    bg_pixel_dims: (4096.0, 4096.0),
+                },
+                ground_mark_sprite: None,
+                titbit_row_frame_counts: Vec::new(),
+                rng_seed: 0,
+                original_rng_replay: None,
+                sim_config: config.clone(),
+            })
+            .unwrap();
+            let party: Vec<_> = engine
+                .pc_ids()
+                .iter()
+                .filter_map(|&id| {
+                    engine
+                        .get_entity(id)
+                        .and_then(robin_engine::element::Entity::pc_data)
+                })
+                .filter(|pc| {
+                    pc.playable
+                        && pc.mission_role == robin_engine::human_control::MissionRole::PlayerParty
+                })
+                .collect();
+            assert_eq!(party.len(), config.coop.team_len());
+            for (slot, pc) in party.iter().enumerate() {
+                assert_eq!(pc.campaign_description_index, Some(slot as u32));
+                let profile = profiles.get_character(pc.profile_index).unwrap();
+                let expected = robin_engine::coop::TEAM_CHARACTERS
+                    .iter()
+                    .find(|entry| entry.0 == team[slot])
+                    .unwrap()
+                    .2;
+                assert!(
+                    profile.profile_name == expected
+                        || (team[slot] == b'R' && pc.kind.is_some_and(|kind| kind.is_robin()))
+                );
+            }
+            let restored =
+                Engine::decode_native_snapshot(&engine.encode_native_snapshot()).unwrap();
+            assert_eq!(
+                robin_engine::replay::state_hash(&engine),
+                robin_engine::replay::state_hash(&restored)
+            );
+        }
+    }
+
+    fn offscreen_gpu() -> crate::window::GpuContext {
+        pollster::block_on(async {
+            let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+            descriptor.backends = wgpu::Backends::from_env().unwrap_or(wgpu::Backends::VULKAN);
+            let instance = Arc::new(wgpu::Instance::new(descriptor));
+            let options = wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+                apply_limit_buckets: false,
+            };
+            let adapter = instance
+                .request_adapter(&options)
+                .await
+                .expect("offscreen adapter");
+            let (device, queue) = adapter
+                .request_device(&wgpu::DeviceDescriptor {
+                    label: Some("multiplayer UI capture"),
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::downlevel_webgl2_defaults()
+                        .using_resolution(adapter.limits()),
+                    experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                    memory_hints: wgpu::MemoryHints::MemoryUsage,
+                    trace: wgpu::Trace::Off,
+                })
+                .await
+                .expect("offscreen device");
+            crate::window::GpuContext {
+                instance,
+                adapter: Arc::new(adapter),
+                device: Arc::new(device),
+                queue: Arc::new(queue),
+                surface_format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            }
+        })
+    }
+
+    fn write_capture_png(renderer: &mut Renderer, path: &std::path::Path) {
+        let (w, h, pixels) = renderer.try_capture_frame_rgba().expect("read UI pixels");
+        let file = std::fs::File::create(path).unwrap();
+        let mut encoder = png::Encoder::new(file, w, h);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().unwrap();
+        writer.write_image_data(&pixels).unwrap();
+        writer.finish().unwrap();
+        eprintln!("Captured {}", path.display());
     }
 }

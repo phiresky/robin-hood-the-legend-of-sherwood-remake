@@ -2019,6 +2019,7 @@ impl EngineInner {
         // master even though target loading requests FrameKind::Animation.
         Self::preload_accessory_sprite_prototypes(assets);
 
+        self.prepare_selected_team(sim, assets, &loaded)?;
         self.spawn_civilians_and_rescue_pcs_stage(sim, assets, &loaded, config)?;
         progress(1.0);
 
@@ -2051,6 +2052,7 @@ impl EngineInner {
             // unchanged.
             loaded.mission.soldiers.extend(legendary_soldiers);
         }
+        self.spawn_extra_team_members(assets, &loaded)?;
         self.finish_mission_identity_stage(&loaded, mission_name, proto_level_name);
         self.initialize_mission_display_depths();
         let names = std::sync::Arc::make_mut(&mut assets.scripts.names);

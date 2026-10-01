@@ -92,7 +92,8 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// Protocol 62 removes inferred corpse-posture and special-strike tracking state.
 /// Protocol 63 adds authenticated co-op chat.
 /// Protocol 64 carries direct movement commands and actor input ownership.
-pub const NET_PROTOCOL_VERSION: u32 = 64;
+/// Protocol 65 carries exact cooperative mission teams.
+pub const NET_PROTOCOL_VERSION: u32 = 65;
 
 /// Maximum bytes in one resumable full-mod transfer chunk. The outer native
 /// transport frame has a larger bound for engine snapshots, so content must

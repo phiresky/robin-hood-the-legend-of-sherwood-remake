@@ -756,6 +756,15 @@ mod native {
                                 return true;
                             }
                         };
+                        let coop = robin_engine::coop::CoopRules {
+                            players: (1 + joiners.len()) as u8,
+                            ..game.coop
+                        };
+                        if let Err(error) = coop.validate() {
+                            let _ = self.events.send(MatchmakingEvent::Error(error));
+                            return true;
+                        }
+                        game.coop = coop;
                         game.state = "started".to_string();
                         game.start_at_epoch_ms = Some(start_at_epoch_ms);
                         game.players = 1 + joiners.len() as u32;

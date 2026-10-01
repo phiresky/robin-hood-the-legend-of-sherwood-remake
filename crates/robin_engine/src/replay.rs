@@ -160,7 +160,8 @@ pub struct ReplayHeader {
 /// Version 54 removes inferred corpse-posture and special-strike tracking state.
 /// Version 55 stores co-op rules, assignments, and hero-copy identities.
 /// Version 56 stores direct movement ownership and per-frame direction commands.
-pub const REPLAY_SCHEMA_VERSION: u32 = 56;
+/// Version 57 stores exact cooperative mission teams.
+pub const REPLAY_SCHEMA_VERSION: u32 = 57;
 
 /// Identity of the next lockstep/history transaction to be admitted.
 ///

@@ -141,12 +141,109 @@ mod authored_roster_tests {
 }
 
 impl EngineInner {
+    pub(super) fn prepare_selected_team(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &mut LevelAssets,
+        loaded: &crate::level_data::LoadedLevel,
+    ) -> Result<(), EngineError> {
+        if let Some(team) = sim.config().coop.team_string() {
+            sim.config()
+                .coop
+                .validate()
+                .map_err(|reason| EngineError::MissionLevelStage {
+                    stage: "co-op team",
+                    reason,
+                })?;
+            if loaded.mission.beam_mes.is_empty() {
+                return Err(EngineError::MissionLevelStage {
+                    stage: "co-op team",
+                    reason: "mission has no character spawn positions".into(),
+                });
+            }
+            let profiles = assets.profile_manager.clone();
+            // Validate against the mission's resource environment, including
+            // town/forest variants, before replacing campaign identities.
+            let mut characters = Vec::new();
+            for code in team.bytes() {
+                let (_, name, profile_name) = crate::coop::TEAM_CHARACTERS
+                    .iter()
+                    .find(|entry| entry.0 == code)
+                    .expect("validated team code");
+                let mut selected = None;
+                let mut failures = Vec::new();
+                for (index, profile) in profiles.characters.iter().enumerate().filter(|(_, p)| {
+                    if code == b'R' {
+                        crate::character_kind::CharacterKind::from_profile(
+                            &p.filename,
+                            &p.profile_name,
+                        ) == Some(crate::character_kind::CharacterKind::RobinHood {
+                            is_town: !self.world.weather.is_forest_level,
+                        })
+                    } else {
+                        p.profile_name == *profile_name
+                    }
+                }) {
+                    let mut sprite = crate::sprite::Sprite::default();
+                    let signature = assets.bank_signature;
+                    match sprite.load_frame_info(
+                        assets.sprite_scriptor_mut(),
+                        crate::sprite_script::FrameKind::Character,
+                        "Data/Characters",
+                        &profile.filename,
+                        &profile.profile_name,
+                        signature,
+                        Some(self.world.weather.ambiance.to_sprite_ambiance()),
+                    ) {
+                        Ok(()) => {
+                            selected = Some((index, profile));
+                            break;
+                        }
+                        Err(error) => failures.push(error.to_string()),
+                    }
+                }
+                let (index, profile) = selected.ok_or_else(|| EngineError::MissionLevelStage {
+                    stage: "co-op team",
+                    reason: format!(
+                        "{name} is unavailable in this content pack: {}",
+                        failures.join("; ")
+                    ),
+                })?;
+                characters.push(crate::campaign::PcDescription {
+                    character_profile_idx: Some(crate::profiles::CharacterProfileIdx(index as u32)),
+                    instanced: false,
+                    status: crate::pc_status::PcStatus::from_profile(
+                        profile,
+                        true,
+                        sim.config().difficulty,
+                    ),
+                });
+            }
+            let campaign = &mut self.mission_domain.campaign;
+            campaign.characters = characters;
+            campaign.gang_indices = (0..team.len()).collect();
+            campaign.reservist_indices.clear();
+            self.mission_domain.campaign.add_all_to_mission_team();
+        }
+        Ok(())
+    }
+
     pub(super) fn spawn_beam_me_pcs_stage(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &mut LevelAssets,
         loaded: &mut crate::level_data::LoadedLevel,
     ) -> Result<(), EngineError> {
+        if let Some(team) = sim.config().coop.team_string() {
+            for (slot, beam) in loaded.mission.beam_mes.iter().enumerate() {
+                if slot < team.len() {
+                    self.spawn_selected_team_member(assets, beam, slot)?;
+                } else {
+                    self.world.entities.push(None);
+                }
+            }
+            return Ok(());
+        }
         let profiles = assets.profile_manager.clone();
         let char_base_dir = "Data/Characters";
         let bank_signature = assets.bank_signature;
@@ -263,6 +360,61 @@ impl EngineInner {
             self.mission_domain.campaign.reset_mission_team();
         }
 
+        Ok(())
+    }
+
+    /// Extra team members are appended after authored entities, preserving script handles.
+    pub(super) fn spawn_extra_team_members(
+        &mut self,
+        assets: &mut LevelAssets,
+        loaded: &crate::level_data::LoadedLevel,
+    ) -> Result<(), EngineError> {
+        let count = self.control.sim_config.coop.team_len();
+        for slot in loaded.mission.beam_mes.len()..count {
+            let beam =
+                loaded
+                    .mission
+                    .beam_mes
+                    .first()
+                    .ok_or_else(|| EngineError::MissionLevelStage {
+                        stage: "co-op team",
+                        reason: "mission has no character spawn positions".into(),
+                    })?;
+            let mut beam = beam.clone();
+            beam.index = slot as u16;
+            beam.script = None;
+            self.spawn_selected_team_member(assets, &beam, slot)?;
+        }
+        Ok(())
+    }
+
+    fn spawn_selected_team_member(
+        &mut self,
+        assets: &mut LevelAssets,
+        beam: &crate::level_data::BeamMe,
+        slot: usize,
+    ) -> Result<(), EngineError> {
+        let mut beam = beam.clone();
+        beam.profile_override = None;
+        beam.robin_role = false;
+        let profiles = assets.profile_manager.clone();
+        let profile_idx = self.mission_domain.campaign.characters[slot]
+            .character_profile_idx
+            .expect("selected team character profile");
+        let (profile_idx, profile) =
+            self.resolve_beam_me_pc_profile(&profiles, &beam, slot, profile_idx, true)?;
+        let spawn = self.build_beam_me_pc_sprite(
+            assets,
+            profile,
+            profile_idx,
+            slot,
+            &beam,
+            slot,
+            "Data/Characters",
+            assets.bank_signature,
+        )?;
+        self.add_beam_me_pc_entity(profile, profile_idx, &beam, slot, spawn)?;
+        self.mission_domain.campaign.characters[slot].instanced = true;
         Ok(())
     }
 

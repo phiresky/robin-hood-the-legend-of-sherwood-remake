@@ -10,7 +10,8 @@ impl EngineInner {
     pub(super) fn initialize_coop_party(&mut self) {
         let rules = self.control.sim_config.coop;
         rules.validate().expect("invalid cooperative mission rules");
-        if rules.players == 1 && rules.control == CharacterControl::Shared {
+        if rules.team_len() == 0 && rules.players == 1 && rules.control == CharacterControl::Shared
+        {
             return;
         }
         let mut party: Vec<_> = self
@@ -50,7 +51,7 @@ impl EngineInner {
             return;
         }
         let mut party = party;
-        while party.len() < rules.players as usize {
+        while rules.team_len() == 0 && party.len() < rules.players as usize {
             let slot = party.len();
             let source = originals
                 .get(usize::from(rules.duplicate_choices[slot]))
@@ -110,6 +111,34 @@ impl EngineInner {
             .copied()
             .filter(|id| party.contains(id))
             .collect();
+        if rules.team_len() > 0 {
+            self.world.pc_ids.sort_by_key(|&id| {
+                self.world
+                    .entities
+                    .get(id)
+                    .and_then(Entity::pc_data)
+                    .and_then(|pc| pc.campaign_description_index)
+                    .unwrap_or(u32::MAX)
+            });
+            party.sort_by_key(|&id| {
+                self.get_entity(id)
+                    .and_then(Entity::pc_data)
+                    .and_then(|pc| pc.campaign_description_index)
+                    .expect("team identity")
+            });
+        }
+        if rules.team_len() > 0 {
+            for slot in 0..rules.team_len() {
+                let origin = rules.team[..slot]
+                    .iter()
+                    .position(|&code| code == rules.team[slot])
+                    .map(|index| party[index]);
+                self.get_entity_mut(party[slot])
+                    .and_then(Entity::pc_data_mut)
+                    .expect("selected party member")
+                    .coop_origin = origin;
+            }
+        }
         // The duplicate is cloned from the mission hero after the normal
         // single-player priority selection has opened that hero's portrait.
         // Co-op selection is seat-owned, so discard that inherited visual
@@ -132,20 +161,24 @@ impl EngineInner {
         let mut assigned_party = Vec::new();
         for index in 0..rules.players as usize {
             self.ensure_seat(PlayerId(index as u8));
-            let assigned = party
-                .get(usize::from(rules.assignments[index]))
-                .copied()
-                .filter(|id| !assigned_party.contains(id))
-                .unwrap_or_else(|| {
-                    tracing::warn!(
-                        index,
-                        "co-op assignment unavailable; using first unassigned hero"
-                    );
-                    *party
-                        .iter()
-                        .find(|id| !assigned_party.contains(id))
-                        .expect("party fills player slots")
-                });
+            let assigned = if rules.control == CharacterControl::Shared && rules.team_len() > 0 {
+                party[index % party.len()]
+            } else {
+                party
+                    .get(usize::from(rules.assignments[index]))
+                    .copied()
+                    .filter(|id| !assigned_party.contains(id))
+                    .unwrap_or_else(|| {
+                        tracing::warn!(
+                            index,
+                            "co-op assignment unavailable; using first unassigned hero"
+                        );
+                        *party
+                            .iter()
+                            .find(|id| !assigned_party.contains(id))
+                            .expect("party fills player slots")
+                    })
+            };
             assigned_party.push(assigned);
             self.players.seats[index].assigned_character = Some(assigned);
             self.players.seats[index].selection = vec![assigned];
@@ -162,6 +195,11 @@ impl EngineInner {
     }
 
     pub(super) fn coop_enemy_health_percent(&self) -> i32 {
+        if self.control.sim_config.coop.team_len() > 0 {
+            return 100
+                + self.control.sim_config.coop.duplicate_count() as i32
+                    * i32::from(self.control.sim_config.coop.enemy_health_per_duplicate);
+        }
         if self.control.sim_config.coop.players <= 1
             || self.control.sim_config.coop.enemy_health_per_duplicate == 0
         {
@@ -253,7 +291,33 @@ impl EngineInner {
     }
 
     pub(super) fn coop_copy_survives(&self, victim: EntityId) -> bool {
-        if self.control.sim_config.coop.players <= 1 {
+        let rules = self.control.sim_config.coop;
+        if rules.team_len() > 0 {
+            let Some(slot) = self
+                .get_entity(victim)
+                .and_then(Entity::pc_data)
+                .and_then(|pc| pc.campaign_description_index)
+            else {
+                return false;
+            };
+            let Some(&code) = rules.team.get(slot as usize).filter(|&&code| code != 0) else {
+                return false;
+            };
+            return self.world.pc_ids.iter().copied().any(|id| {
+                id != victim
+                    && self
+                        .get_entity(id)
+                        .and_then(Entity::pc_data)
+                        .is_some_and(|pc| {
+                            pc.life_points > 0
+                                && pc
+                                    .campaign_description_index
+                                    .and_then(|slot| rules.team.get(slot as usize))
+                                    == Some(&code)
+                        })
+            });
+        }
+        if rules.players <= 1 {
             return false;
         }
         let Some(pc) = self.get_entity(victim).and_then(Entity::pc_data) else {
@@ -308,6 +372,40 @@ mod tests {
         engine.initialize_coop_party();
         engine
     }
+    #[test]
+    fn explicit_team_does_not_grow_to_player_count_and_preserves_slot_order() {
+        let mut engine = party(2, 1);
+        engine.control.sim_config.coop.team = [b'R', b'R', 0, 0, 0];
+        engine.control.sim_config.coop.players = 5;
+        engine.world.pc_ids.reverse();
+        engine.initialize_coop_party();
+        assert_eq!(engine.world.pc_ids.len(), 2);
+        let ids = engine.world.pc_ids.clone();
+        for index in 0..5 {
+            assert_eq!(
+                engine.players.seats[index].assigned_character,
+                Some(ids[index % 2])
+            );
+        }
+        assert_eq!(
+            engine
+                .get_entity(ids[1])
+                .and_then(Entity::pc_data)
+                .unwrap()
+                .coop_origin,
+            Some(ids[0])
+        );
+        assert_eq!(engine.coop_enemy_health_percent(), 125);
+        if let Some(Entity::Pc(pc)) = engine.world.entities.get_mut(ids[0]) {
+            pc.pc.life_points = 0;
+        }
+        assert!(engine.coop_copy_survives(ids[0]));
+        if let Some(Entity::Pc(pc)) = engine.world.entities.get_mut(ids[1]) {
+            pc.pc.life_points = 0;
+        }
+        assert!(!engine.coop_copy_survives(ids[0]));
+    }
+
     #[test]
     fn fills_five_slots_and_keeps_one_hero_alive_until_last_copy_dies() {
         let mut engine = party(1, 5);

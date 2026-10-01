@@ -1,5 +1,14 @@
 # Post-port Features
 
+- **Exact multiplayer teams.** Local and online hosts choose one to five named
+  playable characters independently of player count, including duplicates. A
+  dedicated review screen supports replacing and removing each slot and warns
+  about characters outside normal campaign starting availability. Custom missions
+  with unknown rosters say so explicitly. Shared control can use fewer characters
+  than players; exclusive and assigned control require one per player. The chosen
+  order is preserved at mission start, and extra characters keep authored script
+  handles intact. Duplicate health scaling uses the selected team.
+
 - **Mission failure reports.** Failed menu mission launches automatically queue
   diagnostic reports before displaying the recovery dialog. Desktop reports
   include recent logs and mission, multiplayer role, and datadir context; browser
