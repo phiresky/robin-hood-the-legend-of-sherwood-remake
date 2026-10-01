@@ -44,7 +44,7 @@ export class SplineLayer {
   private browse = false;
   private views = new Map<
     string,
-    { path: LevelSpline; object: THREE.Object3D; preview: boolean }
+    { path: LevelSpline; object: THREE.Object3D; preview: boolean; geometryPreview: boolean }
   >();
   private preview: { path: LevelSpline; object: THREE.Object3D } | null = null;
   private camera: MapCamera = { kind: "oblique-orthographic", elevation_deg: 35 };
@@ -79,9 +79,12 @@ export class SplineLayer {
     const appearanceChanged =
       this.camera.elevation_deg !== camera.elevation_deg ||
       this.document?.customMaterials !== document?.customMaterials;
+    const rivers = document?.splines?.filter((path) => path.kind === "river") ?? [];
+    const oldRivers = this.document?.splines?.filter((path) => path.kind === "river") ?? [];
     const terrainChanged =
       this.document?.terrain !== document?.terrain ||
-      this.document?.splines !== document?.splines ||
+      rivers.length !== oldRivers.length ||
+      rivers.some((river, i) => river !== oldRivers[i]) ||
       this.document?.camera !== document?.camera ||
       this.document?.customMaterials !== document?.customMaterials;
     this.document = document;
@@ -99,11 +102,12 @@ export class SplineLayer {
         if (path.kind === "wall") continue;
         // A full-quality unchanged texture is also suitable for a drag preview.
         if (!previous.preview || preview) {
-          if (terrainChanged && path.kind === "road") {
+          if (path.kind === "road" && (terrainChanged || (previous.geometryPreview && !preview))) {
             const mesh = previous.object as THREE.Mesh;
-            const geometry = riverGeometry(path, camera, document);
+            const geometry = riverGeometry(path, camera, document, preview);
             mesh.geometry.dispose();
             mesh.geometry = geometry;
+            previous.geometryPreview = preview;
           }
           // River surfaces depend on their spline, not the ground excavated beneath them.
           continue;
@@ -111,7 +115,7 @@ export class SplineLayer {
       }
       const object = this.build(path, preview);
       if (previous) this.release(previous.path, previous.object);
-      this.views.set(path.id, { path, object, preview });
+      this.views.set(path.id, { path, object, preview, geometryPreview: preview });
       this.root.add(object);
     }
     this.refreshControls(this.preview?.path ?? this.mode?.path);

@@ -571,7 +571,19 @@ test("terrain drags retain river surfaces and road textures through commit", () 
   assert.equal(water!.parent, layer.root);
   assert.equal(water!.geometry, waterGeometry);
   assert.notEqual(road!.geometry, roadGeometry);
+  const previewGeometry = road!.geometry;
   layer.sync(paths, camera, sources, changed, false);
+  assert.notEqual(
+    road!.geometry,
+    previewGeometry,
+    "Release must restore exact geometry even when the document is unchanged",
+  );
+  const exact = riverGeometry(paths[1]!, camera, changed);
+  assert.deepEqual(
+    road!.geometry.getAttribute("position").array,
+    exact.getAttribute("position").array,
+  );
+  exact.dispose();
   assert.deepEqual(
     meshes.map((mesh) => mesh.material.map),
     textures,
@@ -665,4 +677,25 @@ test("road clipping preserves coverage across coincident river edges and beyond 
     draped.dispose();
   }
   ribbon.dispose();
+});
+
+test("editing one road preserves other roads and their evaluated terrain", () => {
+  const road: LevelSpline = { ...river, id: "road", kind: "road" };
+  const other = { ...road, id: "other" };
+  const document = {
+    camera,
+    terrain: createTerrainGrid([-200, -200, 1000, 1000], 250),
+    splines: [river, road, other],
+  } as Level3D;
+  const layer = new SplineLayer(),
+    sources = new Map<string, THREE.Object3D>();
+  layer.sync(document.splines!, camera, sources, document);
+  const mesh = layer.root.children
+    .filter((child) => child instanceof THREE.Mesh)
+    .at(-1) as THREE.Mesh;
+  const geometry = mesh.geometry;
+  const next = { ...document, splines: [river, { ...road, width: 100 }, other] };
+  layer.sync(next.splines, camera, sources, next);
+  assert.equal(mesh.geometry, geometry);
+  layer.clear();
 });

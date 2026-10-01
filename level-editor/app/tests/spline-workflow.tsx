@@ -329,6 +329,10 @@ async function run() {
   const first = project(handles().find((handle) => handle.userData.splinePoint === 0)!);
   pointer("pointerdown", first);
   pointer("pointermove", { clientX: first.clientX + 20, clientY: first.clientY + 10 });
+  await pause(); // Let the coalesced, terrain-sampled drag preview render before release.
+  const preview = (internals.splines as unknown as { preview: { object: THREE.Mesh } | null })
+    .preview;
+  check(preview?.object.geometry.index, "Road drag must use the sampled preview mesh");
   pointer("pointerup", { clientX: first.clientX + 20, clientY: first.clientY + 10 });
   await pause();
   const after = selectedRoad().points;

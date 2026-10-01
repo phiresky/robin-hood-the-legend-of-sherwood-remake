@@ -95,10 +95,16 @@ export function splineMaterialWeightsAt(
   return weights;
 }
 
-export function sampleSpline(path: LevelSpline, camera: MapCamera) {
+export function sampleSpline(
+  path: LevelSpline,
+  camera: MapCamera,
+  options: { spacing?: number; maxSamples?: number } = {},
+) {
   const curve = splineCurve(path, camera),
     length = curve.getLength();
-  const count = Math.min(4096, Math.max(8, Math.ceil(length / 12)));
+  const spacing = options.spacing ?? 12,
+    maxSamples = options.maxSamples ?? 4096;
+  const count = Math.min(maxSamples, Math.max(8, Math.ceil(length / spacing)));
   const parameters = Array.from({ length: count + 1 }, (_, i) => ({
     parameter: curve.getUtoTmapping(i / count, 0),
     distance: (i / count) * length,
@@ -112,7 +118,7 @@ export function sampleSpline(path: LevelSpline, camera: MapCamera) {
       const start = section / sections,
         end = (section + 1) / sections;
       const segmentLength = curve.getPoint(start).distanceTo(curve.getPoint(end));
-      const steps = Math.max(1, Math.ceil(segmentLength / Math.max(12, length / 4096)));
+      const steps = Math.max(1, Math.ceil(segmentLength / Math.max(spacing, length / maxSamples)));
       for (let i = 0; i < steps; i++)
         parameters.push({
           parameter: (section + i / steps) / sections,

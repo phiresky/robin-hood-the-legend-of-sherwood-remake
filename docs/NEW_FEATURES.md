@@ -2118,3 +2118,9 @@ cutouts aligned with terrain instead of rounding each piece separately.
 
 - The vertical translation gizmo appears automatically below a 20-degree viewing
   elevation. The manual Z toggle keeps it visible at other angles.
+
+- Roads use a bounded terrain-sampling mesh during path and terrain drags, then
+  restore exact ridge/channel conformance on release or cancellation. Road-only
+  edits retain river-cut terrain and other unchanged roads. Attached placements
+  reuse both the committed and preview channel meshes during height following. Exact road clipping
+  avoids fragmenting ribbons against triangles that do not intersect them.

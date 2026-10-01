@@ -144,7 +144,7 @@ export function validateTerrainGrid(value: unknown): asserts value is TerrainGri
       else edges.set(key, { a, b, count: 1 });
     }
   const bins = new Map<string, { a: number; b: number }[]>(),
-    spacing = Math.max(32, g.spacing);
+    spacing = Math.min(64, Math.max(32, g.spacing));
   for (const edge of edges.values())
     if (edge.count === 1) {
       const a = g.vertices[edge.a]!.position,
@@ -240,7 +240,7 @@ const terrainCache = new WeakMap<
     triangles: TerrainTriangle[];
     buckets: Map<string, TerrainTriangle[]>;
     spacing: number;
-  }
+  }[]
 >();
 const cellTriangleCache = new WeakMap<
   TerrainCell,
@@ -253,8 +253,22 @@ const cellTriangleCache = new WeakMap<
 function evaluatedTerrain(document: TerrainDocument) {
   const g = document.terrain;
   if (!g) return undefined;
-  const old = terrainCache.get(g);
-  if (old && old.splines === document.splines && old.camera === document.camera) return old;
+  const recent = terrainCache.get(g) ?? [];
+  for (const old of recent) {
+    if (old.camera !== document.camera) continue;
+    if (old.splines === document.splines) {
+      if (recent[0] !== old) recent.reverse();
+      return old;
+    }
+    const rivers = document.splines?.filter((path) => path.kind === "river") ?? [];
+    const oldRivers = old.splines?.filter((path) => path.kind === "river") ?? [];
+    // Roads and walls do not deform terrain; editing them keeps the channel mesh valid.
+    if (rivers.length === oldRivers.length && rivers.every((river, i) => river === oldRivers[i])) {
+      old.splines = document.splines;
+      if (recent[0] !== old) recent.reverse();
+      return old;
+    }
+  }
   let triangles = g.cells.flatMap((cell) => {
     const vertices = cell.vertices.map((i) => g.vertices[i]!);
     const cached = cellTriangleCache.get(cell);
@@ -289,7 +303,7 @@ function evaluatedTerrain(document: TerrainDocument) {
       splines: document.splines,
     });
   const buckets = new Map<string, TerrainTriangle[]>(),
-    spacing = Math.max(32, g.spacing);
+    spacing = Math.min(64, Math.max(32, g.spacing));
   for (const t of triangles) {
     const xs = t.points.map((p) => p[0]),
       ys = t.points.map((p) => p[1]);
@@ -316,7 +330,9 @@ function evaluatedTerrain(document: TerrainDocument) {
     buckets,
     spacing,
   };
-  terrainCache.set(g, result);
+  // Placement following alternates queries against the committed and preview terrain.
+  // Retain both so every attached object does not rebuild both channel meshes.
+  terrainCache.set(g, [result, ...recent.slice(0, 1)]);
   return result;
 }
 export function terrainTriangles(document: TerrainDocument): TerrainTriangle[] {

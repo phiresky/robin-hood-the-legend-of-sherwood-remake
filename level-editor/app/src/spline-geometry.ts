@@ -5,13 +5,19 @@ import * as THREE from "three";
 import { excludedCornerAssetIds } from "./spline-corners.ts";
 import { terrainSplineCurve, gameToScene, type LevelSpline, type MapCamera } from "@rle/shared";
 import { sampleSpline, splineMaterialWeightsAt } from "../../shared/src/spline-sampling.ts";
-import { roadGeometry } from "./road-geometry.ts";
+import { roadGeometry, previewRoadGeometry } from "./road-geometry.ts";
 import type { Level3D } from "@rle/shared";
 
 export const splineCurve = terrainSplineCurve;
 
-export function riverGeometry(path: LevelSpline, camera: MapCamera, document?: Level3D) {
-  if (document && path.kind === "road") return roadGeometry(path, camera, document);
+export function riverGeometry(
+  path: LevelSpline,
+  camera: MapCamera,
+  document?: Level3D,
+  preview = false,
+) {
+  if (document && path.kind === "road")
+    return (preview ? previewRoadGeometry : roadGeometry)(path, camera, document);
   const samples = sampleSpline(path, camera);
   const count = samples.length - 1;
   const positions: number[] = [],
@@ -81,7 +87,7 @@ export function riverMesh(
     polygonOffsetFactor: -2,
     polygonOffsetUnits: -2,
   });
-  const mesh = new THREE.Mesh(riverGeometry(path, camera, document), material);
+  const mesh = new THREE.Mesh(riverGeometry(path, camera, document, preview), material);
   mesh.renderOrder = 1;
   mesh.userData.noSunShadow = true;
   return mesh;

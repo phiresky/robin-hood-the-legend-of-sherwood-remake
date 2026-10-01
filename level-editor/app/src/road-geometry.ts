@@ -1,7 +1,11 @@
 import * as THREE from "three";
 import type { Level3D, LevelSpline, MapCamera } from "@rle/shared";
 import { sampleSpline } from "../../shared/src/spline-sampling.ts";
-import { terrainTriangles, type TerrainTriangle } from "../../shared/src/authored-terrain.ts";
+import {
+  terrainTriangles,
+  terrainHeightAt,
+  type TerrainTriangle,
+} from "../../shared/src/authored-terrain.ts";
 
 type Vertex = { x: number; y: number; z: number; offset: number; u: number; v: number };
 type Bounds = { minX: number; minY: number; maxX: number; maxY: number };
@@ -30,7 +34,7 @@ function terrainIndex(document: Level3D) {
   const triangles = terrainTriangles(document);
   const cached = indices.get(triangles);
   if (cached) return cached;
-  const spacing = Math.max(16, document.terrain?.spacing ?? 128);
+  const spacing = Math.min(64, Math.max(16, document.terrain?.spacing ?? 128));
   const buckets = new Map<string, IndexedTriangle[]>();
   for (const triangle of triangles) {
     const item = { triangle, bounds: bounds(triangle.points.map((p) => ({ x: p[0], y: p[1] }))) };
@@ -99,7 +103,9 @@ function partition(polygon: Vertex[], triangle: TerrainTriangle) {
     if (useful(reject)) outside.push(reject);
     inside = keep;
   }
-  return { inside, outside };
+  // Extended triangle edges can split a ribbon even when the triangle misses it.
+  // Keep that ribbon intact instead of carrying artificial fragments to later cuts.
+  return useful(inside) ? { inside, outside } : { inside: [], outside: [polygon] };
 }
 function height(triangle: TerrainTriangle, p: Vertex) {
   const [a, b, c] = triangle.points;
@@ -186,6 +192,52 @@ export function roadGeometry(
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+/** Bounded live preview; release/export still use exact terrain-edge clipping. */
+export function previewRoadGeometry(path: LevelSpline, camera: MapCamera, document: Level3D) {
+  const sine = Math.sin((camera.elevation_deg * Math.PI) / 180),
+    cosine = Math.cos((camera.elevation_deg * Math.PI) / 180);
+  const samples = sampleSpline(path, camera, { spacing: 24, maxSamples: 256 });
+  const columns = Math.max(
+    2,
+    Math.min(8, Math.ceil(Math.max(...samples.map((s) => s.width)) / 16)),
+  );
+  const positions: number[] = [],
+    uvs: number[] = [],
+    indices: number[] = [];
+  for (let row = 0; row < samples.length; row++) {
+    const sample = samples[row]!;
+    const normal = new THREE.Vector3(-sample.tangent.y, sample.tangent.x, 0)
+      .normalize()
+      .multiplyScalar((sample.width * sample.lateralScale) / 2);
+    for (let column = 0; column <= columns; column++) {
+      const u = column / columns,
+        side = u * 2 - 1;
+      const x = sample.position.x + normal.x * side,
+        y = sample.position.y + normal.y * side;
+      const height = terrainHeightAt(document, x, -y * sine);
+      positions.push(
+        x,
+        y,
+        height === undefined
+          ? sample.position.z + 0.8
+          : (height + sample.heightOffset) / cosine + 0.8,
+      );
+      uvs.push(u, sample.distance / path.repeatLength);
+      if (row && column < columns) {
+        const b = row * (columns + 1) + column,
+          a = b - columns - 1;
+        indices.push(a, a + 1, b, a + 1, b + 1, b);
+      }
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
   geometry.computeVertexNormals();
   return geometry;
 }

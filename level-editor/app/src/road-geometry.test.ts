@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { roadGeometry } from "./road-geometry.ts";
+import { roadGeometry, previewRoadGeometry } from "./road-geometry.ts";
 import { terrainHeightAt, type TerrainGrid } from "../../shared/src/authored-terrain.ts";
 import type { Level3D, LevelSpline } from "@rle/shared";
 const camera = { kind: "oblique-orthographic", elevation_deg: 35 } as const;
@@ -99,4 +99,33 @@ test("outside terrain roads retain authored heights and total area", () => {
   assert.ok(outside);
   assert.ok(Math.abs(area - 140 * 30) < 0.01, `${area}`);
   geometry.dispose();
+});
+
+test("drag previews sample terrain and offsets with bounded geometry, then restore narrow ridges", () => {
+  const document = fixture();
+  const preview = previewRoadGeometry({ ...path, pointHeightOffsets: [2, 2] }, camera, document);
+  const p = preview.getAttribute("position");
+  for (let i = 0; i < p.count; i++) {
+    const expected = terrainHeightAt(document, p.getX(i), -p.getY(i) * sine)! + 2;
+    assert.ok(Math.abs((p.getZ(i) - 0.8) * cosine - expected) < 0.0001);
+  }
+  const wide = previewRoadGeometry(
+    {
+      ...path,
+      width: 10000,
+      points: [
+        [-10000, 0, 7],
+        [10000, 0, 7],
+      ],
+    },
+    camera,
+    document,
+  );
+  assert.ok(wide.getAttribute("position").count <= 257 * 9);
+  assert.ok(Math.abs((wide.getAttribute("position").getZ(0) - 0.8) * cosine - 7) < 0.0001);
+  const exact = roadGeometry(path, camera, document);
+  assert.ok(Array.from(exact.getAttribute("position").array).every(Number.isFinite));
+  preview.dispose();
+  wide.dispose();
+  exact.dispose();
 });

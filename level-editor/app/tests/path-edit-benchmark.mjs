@@ -64,3 +64,24 @@ wall.traverse((n) => {
 });
 source.geometry.dispose();
 source.material.dispose();
+
+// A moving road over already evaluated terrain isolates terrain-following cost.
+const { roadGeometry, previewRoadGeometry } = await load("app/src/road-geometry.ts");
+for (const build of [roadGeometry, previewRoadGeometry].filter(Boolean)) {
+  const times = [];
+  let vertices;
+  for (let i = 0; i < 15; i++) {
+    const path = {
+      ...river,
+      kind: "road",
+      points: river.points.map(([x, y, z], index) => [x, y + (index === 1 ? i : 0), z]),
+    };
+    const start = performance.now();
+    const geometry = build(path, camera, document);
+    times.push(performance.now() - start);
+    vertices = geometry.getAttribute("position").count;
+    geometry.dispose();
+  }
+  times.sort((a, b) => a - b);
+  console.log(build.name, "median ms", times[7], "vertices", vertices);
+}

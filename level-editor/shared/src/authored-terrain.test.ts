@@ -256,3 +256,34 @@ test("anisotropic map-pixel row spacing survives saves and workspace growth", ()
     assert.throws(() => validateTerrainGrid({ ...terrain, rowSpacing }));
   }
 });
+
+test("road-only edits reuse evaluated terrain while river edits invalidate it", () => {
+  const camera = { kind: "oblique-orthographic" as const, elevation_deg: 35 };
+  const river = {
+    id: "river",
+    kind: "river" as const,
+    width: 40,
+    repeatLength: 100,
+    closed: false,
+    points: [
+      [0, 0, 0],
+      [100, 100, 0],
+    ] as [number, number, number][],
+  };
+  const road = { ...river, id: "road", kind: "road" as const };
+  const document = {
+    camera,
+    terrain: createTerrainGrid([0, 0, 200, 200], 100),
+    splines: [river, road],
+  };
+  const before = terrainTriangles(document);
+  const changed = { ...document, splines: [river, { ...road, width: 80 }] };
+  assert.equal(terrainTriangles(changed), before);
+  const preview = { ...changed, splines: [{ ...river, width: 60 }, road] };
+  const after = terrainTriangles(preview);
+  assert.notEqual(after, before);
+  for (let i = 0; i < 10; i++) {
+    assert.equal(terrainTriangles(document), before);
+    assert.equal(terrainTriangles(preview), after);
+  }
+});
