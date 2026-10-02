@@ -21,6 +21,7 @@ export interface ReviewedMaskRecipe {
     id: string;
     node: string;
     anchor: Vec3;
+    receiverSegment?: [Vec3, Vec3];
     characterHeights?: number[];
     projectileHeights?: number[];
   }[];

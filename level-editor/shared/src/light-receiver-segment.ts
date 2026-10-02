@@ -5,13 +5,15 @@ import type { Vec3 } from "./scene.ts";
 export function lightReceiverIntersection(
   segment: [Vec3, Vec3],
   plane: HeightPlane,
+  label = "Light",
 ): Vec3 | undefined {
   const [a, b] = segment;
   const distance = (point: Vec3) => point[2] - planeHeight(plane, [point[0], point[1] - point[2]]);
   const da = distance(a),
     db = distance(b);
   if (Math.abs(da - db) < 1e-8) {
-    if (Math.abs(da) < 1e-4) throw new Error("Light receiving segment lies in a receiving plane");
+    if (Math.abs(da) < 1e-4)
+      throw new Error(`${label} receiving segment lies in a receiving plane`);
     return undefined;
   }
   const t = da / (da - db);

@@ -42,6 +42,22 @@ test("complete recovered mask rules compile identically without source data", ()
   assert.deepEqual(moved.mask_data, source.mask_data);
 });
 
+test("mask recovery localizes authored receiving segments independently of coverage", () => {
+  const { source, definition } = fixture();
+  const baseline = recoverOcclusionMask(source, definition);
+  definition.receiverSegment = [
+    [345, 345, -8],
+    [345, 345, 8],
+  ];
+  const recovered = recoverOcclusionMask(source, definition);
+  assert.deepEqual(recovered.receiverSegment, [
+    [45, 45, -8],
+    [45, 45, 8],
+  ]);
+  const { receiverSegment: _segment, ...coverage } = recovered;
+  assert.deepEqual(coverage, baseline);
+});
+
 test("character elevation and projectile world XY recover independently", () => {
   const { source, definition, document, assets, hut, bounds } = fixture();
   source.projectile_polyline = [

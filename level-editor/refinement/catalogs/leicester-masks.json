@@ -54,6 +54,7 @@
           "id": "mill-north-cottage-occlusion",
           "node": "building-016",
           "anchor": [2395, 686, 0],
+          "receiverSegment": [[2395, 686, -8], [2395, 686, 8]],
           "characterHeights": [0, 0, 0],
           "projectileHeights": [0, 0, 0, 0],
           "review": "Complete coverage belongs to this cottage mesh among the audited building candidates. Character boundaries receive on ground with no raised projection. No obstacle links or patch references are present; projectile boundaries use the world XY datum."
@@ -69,6 +70,7 @@
           "id": "mill-south-cottage-occlusion",
           "node": "building-047",
           "anchor": [2950, 1169, 0],
+          "receiverSegment": [[2950, 1169, -8], [2950, 1169, 8]],
           "characterHeights": [0, 0, 0, 0],
           "projectileHeights": [0, 0, 0, 0],
           "review": "Complete coverage belongs to this cottage mesh among the audited building candidates. Character boundaries receive on ground with no raised projection. No obstacle links or patch references are present; projectile boundaries use the world XY datum."

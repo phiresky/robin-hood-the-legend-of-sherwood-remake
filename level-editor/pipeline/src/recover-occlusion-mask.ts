@@ -9,6 +9,8 @@ export interface MaskRecoveryDefinition {
   node: string;
   /** Reviewed world-space point on the receiving navigation surface. */
   anchor: Vec3;
+  /** Authored finite world-space receiving reach, localized with the mask. */
+  receiverSegment?: [Vec3, Vec3];
   /** Explicit owner surfaces in placed game coordinates. */
   surfaces: MaskTriangle[];
   /** Per-vertex heights from authoring evidence, not inferred from bitmap bounds. */
@@ -87,6 +89,14 @@ export function recoverOcclusionMask(
     id: definition.id,
     node: definition.node,
     anchor: local(definition.anchor),
+    ...(definition.receiverSegment
+      ? {
+          receiverSegment: [
+            local(definition.receiverSegment[0]),
+            local(definition.receiverSegment[1]),
+          ] as [Vec3, Vec3],
+        }
+      : {}),
     view: (flags & 4) !== 0,
     ...(characterBoundary ? { characterBoundary, characterBoundaryClosed: false } : {}),
     ...(projectileBoundary ? { projectileBoundary, projectileBoundaryClosed: false } : {}),

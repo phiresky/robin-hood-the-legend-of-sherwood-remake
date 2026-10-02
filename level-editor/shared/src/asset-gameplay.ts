@@ -176,6 +176,8 @@ export interface AssetOcclusionMask {
   triangles: import("./compile-mask-geometry.ts").MaskTriangle[];
   /** Local point on the receiving navigation surface; may lie inside a blocker. */
   anchor: [number, number, number];
+  /** Optional finite local segment selecting the receiving layer instead of the exact anchor height. */
+  receiverSegment?: [[number, number, number], [number, number, number]];
   view: boolean;
   /** Local boundary; its projected front envelope controls character masking. */
   characterBoundary?: [number, number, number][];
@@ -494,6 +496,14 @@ export function validateAssetGameplay(
   const maskIds = new Set<string>();
   for (const mask of data.masks ?? []) {
     feature(mask);
+    if (
+      mask.receiverSegment !== undefined &&
+      (!Array.isArray(mask.receiverSegment) ||
+        mask.receiverSegment.length !== 2 ||
+        !mask.receiverSegment.every((p) => point(p, 3)) ||
+        !mask.receiverSegment[0].some((v, i) => v !== mask.receiverSegment![1][i]))
+    )
+      fail(`invalid mask receiving segment ${mask.id}`);
     if (
       !point(mask.anchor, 3) ||
       typeof mask.view !== "boolean" ||

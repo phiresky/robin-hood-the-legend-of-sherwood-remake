@@ -1,5 +1,11 @@
 # Post-port Features
 
+- **Terrain-aware mask attachments.** Asset masks can select a receiving layer
+  through a finite local segment, allowing small terrain-height changes while
+  preserving their pixels and masking boundaries. Ambiguous or unreachable
+  attachments warn and are omitted during best-effort export. Cottage assets
+  include bounded attachments for reuse on uneven editor terrain.
+
 - **Spline-wall gameplay export.** Calibrated assets supply collision volumes and
   walkable surfaces that follow edited wall paths, repetitions, trims, curved
   bends, elevations and corner towers. Native tests check movement obstruction,

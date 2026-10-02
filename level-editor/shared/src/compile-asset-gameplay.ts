@@ -305,6 +305,7 @@ function compileAssetGameplayAttempt(
   const placedMasks: {
     id: string;
     anchor: Vec3;
+    receiverSegment?: [Vec3, Vec3];
     triangles: MaskTriangle[];
     rules: Omit<import("./level.ts").Mask, "layer" | "box_top_left" | "box_size" | "mask_data">;
   }[] = [];
@@ -559,6 +560,14 @@ function compileAssetGameplayAttempt(
       placedMasks.push({
         id: `${placement.id}/${mask.id}`,
         anchor: transform(mask.node, mask.anchor),
+        ...(mask.receiverSegment
+          ? {
+              receiverSegment: [
+                transform(mask.node, mask.receiverSegment[0]),
+                transform(mask.node, mask.receiverSegment[1]),
+              ] as [Vec3, Vec3],
+            }
+          : {}),
         triangles: mask.triangles.map(([a, b, c]) => [
           transform(mask.node, a),
           transform(mask.node, b),
@@ -1516,26 +1525,46 @@ function compileAssetGameplayAttempt(
     // obstacle may cover their anchor without removing the authored receiver.
     const point = project(mask.anchor);
     const heightPoint: Point = [mask.anchor[0], mask.anchor[1] - mask.anchor[2]];
-    const receivers = groups.filter(
-      (group) =>
-        Math.abs(planeHeight(group.plane, heightPoint) - mask.anchor[2]) < 1e-4 &&
+    let segmentError: string | undefined;
+    const receivingPoint = (plane: HeightPlane): Point | undefined => {
+      if (!mask.receiverSegment)
+        return Math.abs(planeHeight(plane, heightPoint) - mask.anchor[2]) < 1e-4
+          ? point
+          : undefined;
+      try {
+        const intersection = lightReceiverIntersection(
+          mask.receiverSegment,
+          plane,
+          `Mask ${mask.id}`,
+        );
+        return intersection ? [intersection[0], intersection[1] - intersection[2]] : undefined;
+      } catch (error) {
+        if (!options.bestEffort || !(error instanceof Error)) throw error;
+        segmentError = error.message;
+        return undefined;
+      }
+    };
+    const receivers = groups.filter((group) => {
+      const p = receivingPoint(group.plane);
+      return (
+        p !== undefined &&
         group.surfaces.some(
-          (surface) =>
-            inside(point, surface.polygon) && !surface.holes.some((hole) => inside(point, hole)),
-        ),
-    );
+          (surface) => inside(p, surface.polygon) && !surface.holes.some((hole) => inside(p, hole)),
+        )
+      );
+    });
     let receivingLayers = new Set(
       areas
-        .filter(
-          (area) =>
-            Math.abs(planeHeight(area.plane, heightPoint) - mask.anchor[2]) < 1e-4 &&
-            inside(point, area.polygon),
-        )
+        .filter((area) => {
+          const p = receivingPoint(area.plane);
+          return p !== undefined && inside(p, area.polygon);
+        })
         .map((area) => area.layer),
     );
-    if (!receivingLayers.size)
-      receivingLayers = new Set(
-        receivers.flatMap((group) =>
+    if (!receivingLayers.size || mask.receiverSegment)
+      receivingLayers = new Set([
+        ...receivingLayers,
+        ...receivers.flatMap((group) =>
           areas
             .filter(
               (area) =>
@@ -1546,11 +1575,11 @@ function compileAssetGameplayAttempt(
             )
             .map((area) => area.layer),
         ),
-      );
-    if (receivingLayers.size !== 1) {
+      ]);
+    if (segmentError || receivingLayers.size !== 1) {
       if (options.bestEffort) {
         warnings.push(
-          `Mask ${mask.id}: omitted because its receiving layer is unavailable or ambiguous (found ${receivingLayers.size}); sprite occlusion is incomplete.`,
+          `Mask ${mask.id}: omitted because ${segmentError ?? `its receiving layer is unavailable or ambiguous (found ${receivingLayers.size})`}; sprite occlusion is incomplete.`,
         );
         maskIndices.set(mask.id, []);
         continue;

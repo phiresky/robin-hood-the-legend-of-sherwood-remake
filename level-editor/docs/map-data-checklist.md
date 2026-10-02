@@ -18,6 +18,22 @@ with it. Global indices and connections are rebuilt after placement.
 with Derby/York. “Partial” identifies a remaining gap. “Planned” describes the
 intended construction, not functionality available today.
 
+**Masks on uneven terrain:** an asset mask may author a finite local
+`receiverSegment` instead of requiring its anchor to match one exact elevation.
+Export intersects that segment with placed receiving surfaces and requires one
+unambiguous navigation layer, including surfaces covered by collision blockers.
+The segment moves with the asset; mask pixels and character/projectile boundaries
+remain attached to its geometry. Stacked layers, out-of-range terrain and
+coplanar segments are rejected or explicitly omitted in best-effort export.
+The north/south mill cottages now author an eight-unit vertical reach above and
+below their anchors. This restores four Wychford mask placements (three to seven
+compiled masks), with all other geometry unchanged. The nine reference maps
+compile identically; all ten exports pass native construction and mask checks.
+Publication backups are in `work/map-compile/mask-receiver-publication`; native
+fixtures are in `work/map-compile/mask-receiver-native-v2`. This does not conform
+building geometry to terrain, repair missing door endpoints or certify rendered
+occlusion on arbitrary slopes. Other masks still need authored attachment rules.
+
 **New-layout jump connections:** assets may author an oriented jump edge plus
 maximum gap, rise, drop and minimum overlap in map units. Export matches facing
 parallel edges at their current placements and trims them to their shared span;

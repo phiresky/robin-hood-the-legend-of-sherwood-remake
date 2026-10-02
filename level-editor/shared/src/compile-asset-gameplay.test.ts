@@ -6,6 +6,7 @@ import { validateAssetGameplay } from "./asset-gameplay.ts";
 import { IDENTITY_TRANSFORM } from "./level3d.ts";
 import {
   assetCompilerFixture,
+  maskAssetCompilerFixture,
   anchoredReceiverCompilerFixture,
   slopedAssetCompilerFixture,
   liftAssetCompilerFixture,
@@ -33,6 +34,70 @@ import {
 } from "../test-fixtures/asset-gameplay.ts";
 
 import { heightPlane, planeHeight } from "./gameplay-plane.ts";
+
+test("mask receiving segments bind slopes without moving their pixels or boundary rules", () => {
+  const { document, assets, hut } = maskAssetCompilerFixture();
+  const gameplay = hut.gameplay!;
+  gameplay.doors = [];
+  gameplay.movementTransitions = [];
+  const baseline = compileAssetGameplay(document, assets, bounds).masks;
+  for (const surface of gameplay.surfaces) surface.height = [0, 9, 9, 0];
+  assert.throws(() => compileAssetGameplay(document, assets, bounds), /receiving anchor/);
+  for (const mask of gameplay.masks!)
+    mask.receiverSegment = [
+      [45, 45, -20],
+      [45, 45, 20],
+    ];
+  const result = compileAssetGameplay(document, assets, bounds);
+  assert.deepEqual(
+    result.masks?.map((mask) => ({ ...mask, layer: 0 })),
+    baseline,
+  );
+  assert.ok(result.masks?.every((mask) => result.motion_data.layers[mask.layer]?.length));
+  // An authored finite reach cannot bind a far-away floor.
+  for (const surface of gameplay.surfaces) surface.height = 30;
+  assert.throws(() => compileAssetGameplay(document, assets, bounds), /receiving anchor/);
+  const partial = compileAssetGameplay(document, assets, bounds, { bestEffort: true });
+  assert.equal(partial.masks, undefined);
+  assert.ok(
+    partial.warnings?.some((warning) => warning.includes("sprite occlusion is incomplete")),
+  );
+});
+
+test("mask receiving segments reject stacked layers and malformed endpoints", () => {
+  const { document, assets, hut } = maskAssetCompilerFixture();
+  const gameplay = hut.gameplay!;
+  gameplay.doors = [];
+  gameplay.movementTransitions = [];
+  for (const mask of gameplay.masks!)
+    mask.receiverSegment = [
+      [45, 45, -20],
+      [45, 45, 20],
+    ];
+  gameplay.surfaces.push({ ...structuredClone(gameplay.surfaces[0]!), id: "upper", height: 10 });
+  assert.throws(() => compileAssetGameplay(document, assets, bounds), /receiving anchor.*found 2/);
+  for (const value of [NaN, Infinity]) {
+    gameplay.masks![0]!.receiverSegment![0][2] = value;
+    assert.throws(() => validateAssetGameplay(gameplay, hut), /invalid mask receiving segment/);
+  }
+  gameplay.masks![0]!.receiverSegment = [
+    [45, 45, 0],
+    [45, 45, 0],
+  ];
+  assert.throws(() => validateAssetGameplay(gameplay, hut), /invalid mask receiving segment/);
+  gameplay.masks![0]!.receiverSegment = [
+    [45, 45, 0],
+    [46, 45, 0],
+  ];
+  assert.throws(
+    () => compileAssetGameplay(document, assets, bounds),
+    /segment lies in a receiving plane/,
+  );
+  const partial = compileAssetGameplay(document, assets, bounds, { bestEffort: true });
+  assert.ok(
+    partial.warnings?.some((warning) => warning.includes("segment lies in a receiving plane")),
+  );
+});
 
 test("preserved boundaries retain crossing obstacle contours without rounding their intersections", () => {
   const { document, assets, hut } = preservedBoundaryCompilerFixture();
