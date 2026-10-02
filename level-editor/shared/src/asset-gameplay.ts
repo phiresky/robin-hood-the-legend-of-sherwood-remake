@@ -66,6 +66,8 @@ export interface AssetDoor {
   /** Optional unblocked local points selecting receiving areas independently of door coordinates. */
   outsideAnchor?: [number, number, number];
   insideAnchor?: [number, number, number];
+  /** Interior entrance approach follows one unblocked surface intersecting this finite local segment. */
+  outsideReceiverSegment?: [[number, number, number], [number, number, number]];
   type: number;
   locked: boolean;
   unlockable: boolean;
@@ -1055,6 +1057,16 @@ export function validateAssetGameplay(
       if (door[key] !== undefined && !point(door[key], 3)) fail(`invalid door ${door.id} ${key}`);
     if (kind === "interior" && door.insideAnchor !== undefined)
       fail(`interior door ${door.id} cannot override its shared room with an inside anchor`);
+    if (
+      door.outsideReceiverSegment !== undefined &&
+      (kind !== "interior" ||
+        door.outsideAnchor !== undefined ||
+        !Array.isArray(door.outsideReceiverSegment) ||
+        door.outsideReceiverSegment.length !== 2 ||
+        !door.outsideReceiverSegment.every((p) => point(p, 3)) ||
+        !door.outsideReceiverSegment[0].some((v, i) => v !== door.outsideReceiverSegment![1][i]))
+    )
+      fail(`invalid interior door receiving segment ${door.id}`);
     for (const key of ["active", "lockedVillains", "lockedCivilians", "allowContinuous"] as const)
       if (door[key] !== undefined && typeof door[key] !== "boolean")
         fail(`invalid door ${door.id} ${key}`);

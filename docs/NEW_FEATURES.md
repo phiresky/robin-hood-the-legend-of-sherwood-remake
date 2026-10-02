@@ -6,6 +6,12 @@
   attachments warn and are omitted during best-effort export. Cottage assets
   include bounded attachments for reuse on uneven editor terrain.
 
+- **Terrain-aware interior entrances.** Assets can author a finite receiving
+  segment for each exterior approach. Compilation moves the approach onto the
+  current unblocked terrain surface and rebuilds its gate connection. Building
+  geometry and lock rules remain authored; unreachable or ambiguous entrances
+  are reported rather than attached to an arbitrary layer.
+
 - **Spline-wall gameplay export.** Calibrated assets supply collision volumes and
   walkable surfaces that follow edited wall paths, repetitions, trims, curved
   bends, elevations and corner towers. Native tests check movement obstruction,

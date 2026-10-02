@@ -1,0 +1,332 @@
+{
+  "title": "Terrain interior fixture",
+  "map_filename": "editor-terrain-interior-fixture",
+  "spawn_points": [],
+  "walkable_polygon": [
+    [
+      0,
+      0
+    ],
+    [
+      1999,
+      0
+    ],
+    [
+      1999,
+      1999
+    ],
+    [
+      0,
+      1999
+    ]
+  ],
+  "volumes": [],
+  "asset_geometry": {
+    "motion_data": {
+      "layers": [
+        [
+          {
+            "is_lift": false,
+            "state_id": 0,
+            "polygon": {
+              "points": [
+                [
+                  410,
+                  300
+                ],
+                [
+                  500,
+                  291
+                ],
+                [
+                  500,
+                  391
+                ],
+                [
+                  410,
+                  400
+                ]
+              ]
+            },
+            "skeleton_segments": [],
+            "flags": 0,
+            "obstacles": []
+          }
+        ],
+        [
+          {
+            "is_lift": false,
+            "state_id": 0,
+            "polygon": {
+              "points": [
+                [
+                  300,
+                  300
+                ],
+                [
+                  390,
+                  291
+                ],
+                [
+                  390,
+                  391
+                ],
+                [
+                  300,
+                  400
+                ]
+              ]
+            },
+            "skeleton_segments": [],
+            "flags": 0,
+            "obstacles": [
+              {
+                "state_id": 0,
+                "polygon": {
+                  "points": [
+                    [
+                      350,
+                      335
+                    ],
+                    [
+                      350,
+                      345
+                    ],
+                    [
+                      340,
+                      346
+                    ],
+                    [
+                      340,
+                      336
+                    ]
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        []
+      ],
+      "graph_bytes": []
+    },
+    "sight_obstacles": [
+      {
+        "points": [
+          {
+            "x": 340,
+            "y": 340,
+            "z_bottom": 0,
+            "z_top": 30
+          },
+          {
+            "x": 350,
+            "y": 340,
+            "z_bottom": 0,
+            "z_top": 30
+          },
+          {
+            "x": 350,
+            "y": 350,
+            "z_bottom": 0,
+            "z_top": 30
+          },
+          {
+            "x": 340,
+            "y": 350,
+            "z_bottom": 0,
+            "z_top": 30
+          }
+        ],
+        "projection_area": null,
+        "solid": true,
+        "opaque": true,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 0,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 410,
+            "y": 300,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 500,
+            "y": 300,
+            "z_bottom": 8.999999999999993,
+            "z_top": 8.999999999999993
+          },
+          {
+            "x": 500,
+            "y": 400,
+            "z_bottom": 8.999999999999993,
+            "z_top": 8.999999999999993
+          },
+          {
+            "x": 410,
+            "y": 400,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 0,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 300,
+            "y": 300,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 390,
+            "y": 300,
+            "z_bottom": 9.000000000000004,
+            "z_top": 9.000000000000004
+          },
+          {
+            "x": 390,
+            "y": 400,
+            "z_bottom": 9.000000000000004,
+            "z_top": 9.000000000000004
+          },
+          {
+            "x": 300,
+            "y": 400,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          1,
+          1
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 0,
+        "material_indices": []
+      }
+    ],
+    "doors": [],
+    "buildings": [
+      {
+        "Building": {
+          "doors": [
+            {
+              "door_type": 1,
+              "active": true,
+              "locked_pc": false,
+              "unlockable": true,
+              "locked_npc_villain": false,
+              "locked_npc_civilian": true,
+              "locked_pc_after_patch": false,
+              "unlockable_after_patch": true,
+              "locked_npc_villain_after_patch": false,
+              "locked_npc_civilian_after_patch": true,
+              "door_sector": {
+                "points": [
+                  [
+                    315,
+                    390
+                  ],
+                  [
+                    325,
+                    390
+                  ],
+                  [
+                    325,
+                    400
+                  ],
+                  [
+                    315,
+                    400
+                  ]
+                ]
+              },
+              "point_out": [
+                320,
+                378
+              ],
+              "sector_out": 1,
+              "layer_out": 1,
+              "point_mid": [
+                320,
+                395
+              ],
+              "point_in": [
+                320,
+                420
+              ],
+              "sector_in": 6,
+              "layer_in": 2
+            },
+            {
+              "door_type": 1,
+              "active": true,
+              "locked_pc": true,
+              "unlockable": true,
+              "locked_npc_villain": false,
+              "locked_npc_civilian": true,
+              "locked_pc_after_patch": true,
+              "unlockable_after_patch": true,
+              "locked_npc_villain_after_patch": false,
+              "locked_npc_civilian_after_patch": true,
+              "door_sector": {
+                "points": [
+                  [
+                    375,
+                    390
+                  ],
+                  [
+                    385,
+                    390
+                  ],
+                  [
+                    385,
+                    400
+                  ],
+                  [
+                    375,
+                    400
+                  ]
+                ]
+              },
+              "point_out": [
+                380,
+                372
+              ],
+              "sector_out": 1,
+              "layer_out": 1,
+              "point_mid": [
+                380,
+                395
+              ],
+              "point_in": [
+                380,
+                420
+              ],
+              "sector_in": 6,
+              "layer_in": 2
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

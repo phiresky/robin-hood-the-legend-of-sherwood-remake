@@ -34,6 +34,22 @@ fixtures are in `work/map-compile/mask-receiver-native-v2`. This does not confor
 building geometry to terrain, repair missing door endpoints or certify rendered
 occlusion on arbitrary slopes. Other masks still need authored attachment rules.
 
+**Interior entrances on uneven terrain:** interior doors may author an
+`outsideReceiverSegment`. Export selects exactly one unblocked receiving surface
+and moves the outside approach point onto it before rebuilding door links. The
+building's midpoint, inside point, clickable contour and lock rules remain
+asset-local. This option cannot be combined with a separate outside anchor or
+used for lifts or ordinary passages. Out-of-range, blocked and ambiguous
+attachments fail explicitly; best-effort export omits only the affected door.
+The north/south mill cottages use an eight-unit vertical reach, restoring six
+Wychford entrances (seven to thirteen total native doors). Native route probes
+reach all six new approach points; a synthetic sloped fixture verifies walking
+both directions, gate links and retained lock flags. All nine reference maps
+compile unchanged, and all ten exports construct successfully. This does not
+generate stairs, adjust building meshes or certify entrance animation rendering.
+Publication snapshots are in `work/map-compile/door-receiver-publication`; the
+native placement probes are in `work/map-compile/door-approach-native`.
+
 **New-layout jump connections:** assets may author an oriented jump edge plus
 maximum gap, rise, drop and minimum overlap in map units. Export matches facing
 parallel edges at their current placements and trims them to their shared span;

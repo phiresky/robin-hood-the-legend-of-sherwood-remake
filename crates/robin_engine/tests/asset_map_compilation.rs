@@ -2378,6 +2378,69 @@ fn compiled_interior_registers_a_shared_building_sector() {
 }
 
 #[test]
+fn terrain_bound_entrances_remain_approachable_and_link_the_building() {
+    use robin_engine::coordinates::MapPoint;
+    use robin_engine::gate::{DoorIndex, find_path_into_door_with_sector_index};
+    use robin_engine::pathfinder::PathFinder;
+    let mut assets = LevelAssets::new();
+    let engine = construct(
+        include_bytes!("fixtures/asset-terrain-interior.level.json"),
+        &mut assets,
+    );
+    let graph = &assets.navigation.pathfinder_graph;
+    let mut grid = engine.fast_grid().clone();
+    let mut finder = PathFinder::new();
+    finder.initialize_from_graph(graph, &mut grid);
+    let view = engine.presentation_view();
+    let doors = view.doors();
+    assert_eq!(doors.len(), 2);
+    assert_eq!(doors[0].sector_in, doors[1].sector_in);
+    for (index, door) in doors.iter().enumerate() {
+        let start = MapPoint::new(door.point_out.x, door.point_out.y - 20.);
+        for (start, end) in [(start, door.point_out), (door.point_out, start)] {
+            let path = finder
+                .find_path(
+                    graph,
+                    &grid,
+                    door.layer_out,
+                    i16::from(door.sector_out) as u16,
+                    0,
+                    start,
+                    end,
+                    false,
+                )
+                .expect("terrain approach has a walkable route");
+            assert_eq!(path.last(), Some(&end));
+            for points in path.windows(2) {
+                assert!(grid.is_reachable_thick(
+                    points[0],
+                    points[1],
+                    door.layer_out,
+                    grid.try_move_box_half_diagonal(0).unwrap()
+                ));
+            }
+        }
+        let path = find_path_into_door_with_sector_index(
+            doors,
+            (start.x, start.y),
+            i16::from(door.sector_out) as u16,
+            door.sector_out_index,
+            DoorIndex::new(index as u32).unwrap(),
+            None,
+            false,
+            &|_| true,
+            &|_| None,
+        );
+        let path = path.expect("entrance geometry is linked into the gate graph");
+        assert_eq!(
+            path.last().unwrap().door_index,
+            DoorIndex::new(index as u32).unwrap()
+        );
+        assert_eq!(door.locked_pc, index == 1);
+    }
+}
+
+#[test]
 fn compiled_interior_connections_follow_independent_asset_placement() {
     for (bytes, expected_rooms, expected_entrances) in [
         (

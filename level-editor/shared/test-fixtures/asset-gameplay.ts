@@ -1221,6 +1221,22 @@ export function interiorAssetCompilerFixture() {
   return fixture;
 }
 
+export function terrainInteriorCompilerFixture() {
+  const fixture = interiorAssetCompilerFixture();
+  const gameplay = fixture.hut.gameplay!;
+  gameplay.doors = [];
+  for (const surface of gameplay.surfaces) surface.height = [0, 9, 9, 0];
+  for (const door of gameplay.interiors![0]!.doors) {
+    const [x, y, z] = door.outside;
+    door.outsideReceiverSegment = [
+      [x, y, z - 10],
+      [x, y, z + 10],
+    ];
+  }
+  fixture.document.map = "Terrain interior fixture";
+  return fixture;
+}
+
 export function joinedInteriorCompilerFixture() {
   const fixture = interiorAssetCompilerFixture();
   const room = fixture.hut.gameplay!.interiors![0]!;

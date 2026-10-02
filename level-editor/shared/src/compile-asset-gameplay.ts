@@ -342,6 +342,7 @@ function compileAssetGameplayAttempt(
     inside: Vec3;
     outsideAnchor: Vec3;
     insideAnchor: Vec3;
+    outsideReceiverSegment?: [Vec3, Vec3];
     middle: Point;
     polygon: Point[];
   }[] = [];
@@ -839,6 +840,14 @@ function compileAssetGameplayAttempt(
         inside: transform(door.node, door.inside),
         outsideAnchor: transform(door.node, door.outsideAnchor ?? door.outside),
         insideAnchor: transform(door.node, door.insideAnchor ?? door.inside),
+        ...(door.outsideReceiverSegment
+          ? {
+              outsideReceiverSegment: [
+                transform(door.node, door.outsideReceiverSegment[0]),
+                transform(door.node, door.outsideReceiverSegment[1]),
+              ] as [Vec3, Vec3],
+            }
+          : {}),
         middle: project(transform(door.node, door.middle)),
         polygon: door.polygon.length
           ? ring(
@@ -1658,6 +1667,47 @@ function compileAssetGameplayAttempt(
   });
   // Runtime construction order is motion, materials, projection planes, then buildings.
   // Motion adds an out-of-map sector; each door also consumes a constructor slot.
+  const resolveDoorOutside = (door: (typeof doors)[number], lift?: string | null) => {
+    const label = `${door.name} outside`;
+    if (door.outsideReceiverSegment) {
+      const matches = areas.flatMap((area) => {
+        if (area.lift) return [];
+        let point: Vec3 | undefined;
+        try {
+          point = lightReceiverIntersection(door.outsideReceiverSegment!, area.plane, label);
+        } catch (error) {
+          if (!(error instanceof Error)) throw error;
+          throw new UnresolvedSurface(error.message);
+        }
+        if (!point) return [];
+        const projected = project(point);
+        if (!inside(projected, area.polygon) || area.blockers.some((b) => inside(projected, b)))
+          return [];
+        return [{ area, point }];
+      });
+      const first = matches[0];
+      if (!first && cropped && outsideAnchor(door.outside))
+        throw new OutsideExportFrame(
+          `${label}: receiving segment has no surface inside the export frame`,
+        );
+      if (
+        !first ||
+        matches.some(
+          ({ area, point }) =>
+            area.sector !== first.area.sector ||
+            point.some((v, i) => Math.abs(v - first.point[i]!) > 1e-4),
+        )
+      )
+        throw new UnresolvedSurface(
+          `${label}: receiving segment must intersect exactly one unblocked surface`,
+        );
+      // The runtime approaches point_out before entering the building. Move that
+      // point onto its receiver as well as selecting the receiver's sector.
+      door.outside = first.point;
+      door.outsideAnchor = first.point;
+    }
+    return resolve(door.outsideAnchor, label, lift);
+  };
   const omittedDoors = new Set<string>();
   if (options.bestEffort || cropped) {
     for (const door of doors.filter((door) => door.lift)) {
@@ -1684,7 +1734,7 @@ function compileAssetGameplayAttempt(
       if (door.lift) continue;
       let reason: string | undefined;
       try {
-        const outside = resolve(door.outsideAnchor, `${door.name} outside`, null);
+        const outside = resolveDoorOutside(door, null);
         if (
           options.bestEffort &&
           !door.interior &&
@@ -1722,11 +1772,7 @@ function compileAssetGameplayAttempt(
   );
   const compiledDoors = doors.map((door) => {
     // Ordinary passages can meet traversal surfaces; lift doors retain their explicit owner.
-    const outside = resolve(
-        door.outsideAnchor,
-        `${door.name} outside`,
-        door.lift ? undefined : null,
-      ),
+    const outside = resolveDoorOutside(door, door.lift ? undefined : null),
       inside = door.interior
         ? interiorAreas.get(door.interior)!
         : resolve(door.insideAnchor, `${door.name} inside`, door.lift ?? null);

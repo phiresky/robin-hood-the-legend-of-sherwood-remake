@@ -12,6 +12,7 @@ import {
   liftAssetCompilerFixture,
   liftLightCompilerFixture,
   interiorAssetCompilerFixture,
+  terrainInteriorCompilerFixture,
   joinedInteriorCompilerFixture,
   soundAssetCompilerFixture,
   movementTransitionCompilerFixture,
@@ -61,6 +62,86 @@ test("mask receiving segments bind slopes without moving their pixels or boundar
   assert.equal(partial.masks, undefined);
   assert.ok(
     partial.warnings?.some((warning) => warning.includes("sprite occlusion is incomplete")),
+  );
+});
+
+test("interior receiving segments move approach points onto sloped terrain", () => {
+  const { document, assets, hut } = interiorAssetCompilerFixture();
+  const gameplay = hut.gameplay!;
+  gameplay.doors = [];
+  for (const surface of gameplay.surfaces) surface.height = [0, 9, 9, 0];
+  assert.throws(() => compileAssetGameplay(document, assets, bounds), /outside must resolve/);
+  for (const door of gameplay.interiors![0]!.doors) {
+    const [x, y, z] = door.outside;
+    door.outsideReceiverSegment = [
+      [x, y, z - 10],
+      [x, y, z + 10],
+    ];
+  }
+  const geometry = compileAssetGameplay(document, assets, bounds);
+  const building = geometry.buildings!.find((b) => "Building" in b)!;
+  assert.ok("Building" in building);
+  assert.deepEqual(
+    building.Building.doors.map((d) => d.point_out),
+    [
+      [320, 378],
+      [380, 372],
+    ],
+  );
+  assert.deepEqual(
+    building.Building.doors.map((d) => d.point_in),
+    [
+      [320, 420],
+      [380, 420],
+    ],
+  );
+  for (const surface of gameplay.surfaces) surface.height = 30;
+  assert.throws(() => compileAssetGameplay(document, assets, bounds), /receiving segment/);
+  const partial = compileAssetGameplay(document, assets, bounds, { bestEffort: true });
+  assert.ok(partial.warnings?.some((w) => w.includes("Door") && w.includes("receiving segment")));
+  assert.ok(!partial.buildings?.some((b) => "Building" in b));
+});
+
+test("interior receiving segments reject blocked, stacked and incompatible attachments", () => {
+  const { document, assets, hut } = terrainInteriorCompilerFixture();
+  const gameplay = hut.gameplay!;
+  const door = gameplay.interiors![0]!.doors[0]!;
+  const segment = structuredClone(door.outsideReceiverSegment!);
+  door.outsideReceiverSegment = [
+    [45, 45, -10],
+    [45, 45, 10],
+  ];
+  assert.throws(
+    () => compileAssetGameplay(document, assets, bounds),
+    /exactly one unblocked surface/,
+  );
+  door.outsideReceiverSegment = segment;
+  gameplay.surfaces.push({ ...structuredClone(gameplay.surfaces[0]!), id: "upper", height: 9 });
+  assert.throws(
+    () => compileAssetGameplay(document, assets, bounds),
+    /exactly one unblocked surface/,
+  );
+  door.outsideAnchor = [...door.outside];
+  assert.throws(
+    () => validateAssetGameplay(gameplay, hut),
+    /invalid interior door receiving segment/,
+  );
+  delete door.outsideAnchor;
+  door.outsideReceiverSegment = [
+    [20, 80, 0],
+    [20, 80, 0],
+  ];
+  assert.throws(
+    () => validateAssetGameplay(gameplay, hut),
+    /invalid interior door receiving segment/,
+  );
+  door.outsideReceiverSegment = [
+    [20, 80, NaN],
+    [20, 80, 10],
+  ];
+  assert.throws(
+    () => validateAssetGameplay(gameplay, hut),
+    /invalid interior door receiving segment/,
   );
 });
 

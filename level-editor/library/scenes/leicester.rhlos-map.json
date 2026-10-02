@@ -173,7 +173,7 @@
       "model": "3d-assets/leicester/leicester-mill-north-cottage/model.glb",
       "model_sha256": "5861c93b88d03c1fce1280d61d43df657a12e61f304a383a9bcd0205996902de",
       "descriptor": "3d-assets/leicester/leicester-mill-north-cottage/asset.json",
-      "descriptor_sha256": "b34c3c6fef8c9a25ee338afe96a274073507e0061a42dcebdf412c151540951b",
+      "descriptor_sha256": "054fba217c0dc7f5c6a2dd0a57efecd504700ff3b92803e9396af45aa2a338f5",
       "id": "leicester-mill-north-cottage"
     },
     {
@@ -208,7 +208,7 @@
       "model": "3d-assets/leicester/leicester-mill-south-cottage/model.glb",
       "model_sha256": "d64f95d585b5abcd664268269a6fd9ed9ac1f48ed1302fff0f613a64c65660bc",
       "descriptor": "3d-assets/leicester/leicester-mill-south-cottage/asset.json",
-      "descriptor_sha256": "b511fec82303a22ff1d20ccd487f315aa3182a436e90052d3b488a34565b776b",
+      "descriptor_sha256": "3a4f6b75379ef6b5c0e444e2db810942a5e454c57ded10032910bde7d7ec1ca4",
       "id": "leicester-mill-south-cottage"
     },
     {
