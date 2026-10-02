@@ -173,12 +173,13 @@ The public asset index retains `gameplay`. Publish descriptor changes and update
 saved asset pins through the normal asset-revision workflow. No map-level copy
 of the asset's gameplay definitions is needed.
 
-**This is not yet full Derby parity.** Missing asset definitions stop export.
-Stateful assets, mission population and splines also stop export until their
-semantics are supported. TODO: automatic connections between different surface
-planes, interior occupants, jumps, patch-dependent masks/geometry and authored
-mission behavior. Lift/interior support is tested with synthetic assets;
-recovered source-map metadata still requires review and publication.
+**This is not yet complete gameplay coverage.** The editor performs best-effort
+export and reports missing definitions or unsupported features as omissions;
+strict compiler checks remain available for authoring and regression tests.
+Supported navigation joins, jumps, state transitions, mission markers and spline
+geometry are compiled from their current definitions. Interior occupants, complete
+visual state coverage and connections not described by asset metadata remain gaps.
+See [the map-data checklist](map-data-checklist.md) for current verification and limits.
 The low-level sandbox helper remains for the small renderer contract fixture;
 the editor button always requests asset gameplay compilation.
 
@@ -296,6 +297,17 @@ install definitions and update saved-scene pins. The tool rejects changed
 descriptors/models, preserves scene formatting, and restores files if installation
 fails. New strips built by `refinement/walls/build_segments.py` include these
 definitions automatically.
+
+Five curtain-wall recipes additionally declare `walkwayHeight` in scene units.
+`pipeline/src/author-wall-walkway.ts` dissolves coplanar mesh caps into compact
+solids, selects that explicit deck, and subtracts higher geometry such as parapets.
+It stores the resulting polygons and support clearances in the asset. Export then
+retains one navigation region through a rising or curved deck while preserving
+each receiving height plane. Coplanar tiles keep ordinary shared-edge joining.
+Clearances apply only to their owning placement, so another wall or building can
+still obstruct the walkway. Undercut openings require separately authored volumes;
+the cap authoring tool extends solids to the model base and reports this limitation.
+Use `--ids` with the Python command above to stage only selected assets.
 
 ## Whole-library checks
 

@@ -69,6 +69,13 @@ const signedArea = (ring: Point[]) =>
     const b = ring[(i + 1) % ring.length]!;
     return sum + a[0] * b[1] - b[0] * a[1];
   }, 0) / 2;
+const narrowMovementRing = (ring: Point[]) =>
+  Math.abs(signedArea(ring)) <=
+  ring.reduce((sum, p, i) => {
+    const q = ring[(i + 1) % ring.length]!;
+    return sum + Math.hypot(q[0] - p[0], q[1] - p[1]);
+  }, 0) /
+    2;
 function ring(points: Point[], label = "Gameplay polygon", minimumArea = 0.5): Point[] {
   // Plane construction in the runtime uses the first three vertices.
   // Remove straight-edge vertices introduced by polygon unions and clipping.
@@ -1110,7 +1117,21 @@ function compileAssetGameplayAttempt(
         ),
       };
     });
+  const navigationPlaneCounts = new Map<string, number>();
+  const clearanceKey = (s: (typeof surfaces)[number]) =>
+    JSON.stringify([s.owner, s.plane, s.polygon, s.holes]);
+  const completeClearances = new Set(movementClearances.map(clearanceKey));
+  for (const group of groups)
+    if (group.navigationRegion)
+      navigationPlaneCounts.set(
+        group.navigationRegion,
+        (navigationPlaneCounts.get(group.navigationRegion) ?? 0) + 1,
+      );
   for (const { layer, plane, lift, navigationRegion, surfaces: group } of groups) {
+    const joinedWall =
+      navigationRegion !== undefined &&
+      (navigationPlaneCounts.get(navigationRegion) ?? 0) > 1 &&
+      group.every((s) => s.owner.startsWith("wall-spline-"));
     // Cropped boundaries become generated polygons: preserved contours can extend
     // beyond the frame and must not authorize movement into the invisible area.
     const preserve =
@@ -1156,7 +1177,16 @@ function compileAssetGameplayAttempt(
       ),
     );
     const wallCuts: Polygon[] = [];
+    // An explicit clearance identical to the whole deck already excludes these
+    // support solids. Avoid subtracting and re-adding their nearly coincident
+    // caps, while retaining all cuts from separately placed objects.
+    const clearedOwner =
+      joinedWall &&
+      group.every((s) => s.owner === group[0]!.owner && completeClearances.has(clearanceKey(s)))
+        ? group[0]!.owner
+        : undefined;
     for (const { owner, footprint, bounds: solidBounds, top, bottom } of solidGeometry) {
+      if (owner === clearedOwner) continue;
       // Most grid triangles are far from most placed solids. Their disjoint
       // world-space bounds exclude intersection before any polygon operations.
       if (
@@ -1204,7 +1234,10 @@ function compileAssetGameplayAttempt(
     }
     // Join neighboring wall triangles before rounding their boundary. Rounding
     // each subtraction separately can turn shared diagonals into walkable slivers.
-    if (wallCuts.length) {
+    if (wallCuts.length && joinedWall) {
+      const joined = unionMovementSurfaces(wallCuts, `Wall cuts on layer ${layer}`, warnings);
+      merged = fixedPolygonBoolean("difference", merged, [joined], 1024);
+    } else if (wallCuts.length) {
       const joined = unionMovementSurfaces(wallCuts, `Wall cuts on layer ${layer}`, warnings);
       // Subpixel cracks from snapped T-junctions cannot represent walkable holes.
       // Remove these before grid rounding can inflate them into narrow islands.
@@ -1213,22 +1246,13 @@ function compileAssetGameplayAttempt(
         regions.map((region) =>
           region.filter((ring, index) => {
             if (!index) return true;
-            const perimeter = ring.reduce(
-              (sum, p, i) =>
-                sum +
-                Math.hypot(
-                  p[0] - ring[(i + 1) % ring.length]![0],
-                  p[1] - ring[(i + 1) % ring.length]![1],
-                ),
-              0,
-            );
-            const retain = Math.abs(signedArea(ring)) > perimeter / 2;
+            const retain = !narrowMovementRing(ring);
             if (!retain) sealedHoles++;
             return retain;
           }),
         );
       const rounded = normalizeGeneratedMotion(
-        seal(joined),
+        seal(fixedPolygonBoolean("intersection", joined, [merged], 1024)),
         `Wall cuts on layer ${layer}`,
         warnings,
       );
@@ -1250,24 +1274,31 @@ function compileAssetGameplayAttempt(
     }
     if (group.some((s) => s.polygon.some(outsideFrame)))
       merged = fixedPolygonBoolean("intersection", merged, [frame]);
+    if (joinedWall) {
+      // A deformed deck spans many small receiving planes. Round its navigation
+      // only after joining those planes, so narrow triangle tips cannot become gaps.
+      for (const polygon of merged)
+        navigationPieces.push({
+          layer,
+          plane,
+          navigationRegion,
+          closeDeformationSeams: true,
+          polygon: ring(polygon[0]!, "Wall navigation piece", 1e-7),
+          blockers: polygon.slice(1).map((h) => ring(h, "Wall navigation hole", 1e-7)),
+        });
+      continue;
+    }
     const normalized = walls.descriptors.length
       ? normalizeGeneratedMotion(merged, `Movement layer ${layer}`, warnings)
       : merged.flatMap((region) =>
           normalizeGeneratedMotion([region], `Movement layer ${layer}`, warnings),
         );
     for (const poly of normalized) {
-      if (wallCuts.length) {
-        const boundary = poly[0]!;
-        const perimeter = boundary.reduce((sum, p, i) => {
-          const next = boundary[(i + 1) % boundary.length]!;
-          return sum + Math.hypot(p[0] - next[0], p[1] - next[1]);
-        }, 0);
-        if (Math.abs(signedArea(boundary)) <= perimeter / 2) {
-          warnings.push(
-            `Movement layer ${layer}: omitted a wall-cut fragment too narrow for integer-grid navigation.`,
-          );
-          continue;
-        }
+      if (wallCuts.length && narrowMovementRing(poly[0]!)) {
+        warnings.push(
+          `Movement layer ${layer}: omitted a wall-cut fragment too narrow for integer-grid navigation.`,
+        );
+        continue;
       }
       const quantized = quantizeGeneratedMotionPolygon(
         poly,
@@ -1284,6 +1315,15 @@ function compileAssetGameplayAttempt(
     }
   }
   const navigationRegions = assembleNavigationRegions(navigationPieces, warnings);
+  for (const region of navigationRegions)
+    if (region.pieces.every((p) => p.navigationRegion?.startsWith("wall-spline-"))) {
+      const count = region.blockers.length;
+      region.blockers = region.blockers.filter((h) => !narrowMovementRing(h));
+      if (region.blockers.length < count)
+        warnings.push(
+          `Joined wall navigation: sealed ${count - region.blockers.length} holes too narrow for integer-grid navigation.`,
+        );
+    }
   allocateLightReceivingLayers(navigationRegions, lights, layers.length - 1, inside);
   const liftLayer = compactNavigationLayers(navigationRegions);
   // Receiving planes can share a navigation region; their provisional layers are not runtime layers.

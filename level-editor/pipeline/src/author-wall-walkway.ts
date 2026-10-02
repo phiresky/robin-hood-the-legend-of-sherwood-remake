@@ -211,6 +211,16 @@ export function authorWallWalkway(
     });
   }
   if (!gameplay.surfaces.length) throw new Error("Walkway has no usable area");
+  // Higher caps have already been removed from these footprints. Keep the
+  // remaining deck clear of its own support solids after curved deformation,
+  // where different triangulations can produce slightly different cap planes.
+  gameplay.movementClearances = gameplay.surfaces.map((surface) => ({
+    id: `${surface.id}-clearance`,
+    node: surface.node,
+    polygon: surface.polygon,
+    holes: surface.holes,
+    height: surface.height,
+  }));
   return gameplay;
 }
 

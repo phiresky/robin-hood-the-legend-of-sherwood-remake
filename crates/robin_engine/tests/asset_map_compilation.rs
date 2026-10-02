@@ -2132,6 +2132,51 @@ fn curved_spline_walkway_routes_around_its_outer_boundary() {
 }
 
 #[test]
+fn rising_spline_walkway_retains_one_route_and_changing_receiving_height() {
+    use robin_engine::coordinates::MapPoint;
+    use robin_engine::pathfinder::PathFinder;
+    use robin_engine::position_interface::SectorHandle;
+    let mut assets = LevelAssets::new();
+    let engine = construct(
+        include_bytes!("fixtures/asset-spline-rising-walkway.level.json"),
+        &mut assets,
+    );
+    let mut grid = engine.fast_grid().clone();
+    let start = MapPoint::new(125.41611, 158.50731);
+    let end = MapPoint::new(394.36096, 232.79567);
+    let graph = &assets.navigation.pathfinder_graph;
+    let mut finder = PathFinder::new();
+    finder.initialize_from_graph(graph, &mut grid);
+    let route = finder
+        .find_path(graph, &grid, 0, 0, 0, start, end, false)
+        .expect("rising wall deck has a connected route");
+    assert_eq!(route.last(), Some(&end));
+    for segment in route.windows(2) {
+        assert!(grid.is_reachable_thick(
+            segment[0],
+            segment[1],
+            0,
+            grid.try_move_box_half_diagonal(0).unwrap()
+        ));
+    }
+    for (point, expected) in [(start, 32.58072), (end, 50.37069)] {
+        let arena = grid.level.sector_number_map[&robin_engine::sector::SectorNumber::new(0)];
+        let sector = SectorHandle::new(0).unwrap().with_arena_index(
+            robin_engine::fast_find_grid::SectorIndex::new(arena as u32).unwrap(),
+        );
+        let index = engine
+            .get_projection_area_index(&assets, sector, 0, point)
+            .expect("walkway has an elevation receiver");
+        let obstacle = &assets.environment.static_sight_obstacles[usize::from(index)];
+        let actual = obstacle.compute_top_z_from_projection(point.x, point.y);
+        assert!(
+            (actual - expected).abs() < 0.5,
+            "{point:?}: height {actual}, expected near {expected}"
+        );
+    }
+}
+
+#[test]
 fn compiler_interchange_rejects_unresolved_asset_references() {
     let mut descriptor: serde_json::Value =
         serde_json::from_slice(include_bytes!("fixtures/asset-compiled.level.json")).unwrap();

@@ -272,6 +272,7 @@ export function wallSplineGameplay(
             out.movementSolids!.push(id);
         });
       }
+      const surfaceSet = `span-${out.surfaces.length}`;
       const appendSurface = (surface: AssetWalkableSurface, target: AssetWalkableSurface[]) => {
         const local = surface.polygon.map(([x, y], i): Vec3 => [
           x,
@@ -287,6 +288,11 @@ export function wallSplineGameplay(
         ];
         const flat = flatten(rings.map((r) => r.map((p) => source(surface.node, p)))),
           ids = earcut(flat.vertices, flat.holes, 3);
+        const varyingHeight =
+          flat.vertices.some((n, i) => i % 3 === 2 && Math.abs(n - flat.vertices[2]!) > 1e-7) ||
+          run?.points.some((p) => Math.abs(p[2] - run.points[0]![2]) > 1e-7);
+        const navigationRegion =
+          surface.navigationRegion ?? (varyingHeight ? surface.id : undefined);
         for (let i = 0; i < ids.length; i += 3)
           pieces(
             ids.slice(i, i + 3).map((j) => flat.vertices.slice(j * 3, j * 3 + 3)),
@@ -299,6 +305,11 @@ export function wallSplineGameplay(
                 polygon: world.map((p) => [p[0], p[1]]),
                 height: world.map((p) => p[2]),
                 preserveMovementPrecision: true,
+                ...(target === out.surfaces && navigationRegion !== undefined
+                  ? {
+                      navigationRegion: `${surfaceSet}/${navigationRegion}`,
+                    }
+                  : {}),
                 ...(surface.projectionMaterials
                   ? {
                       projectionMaterials: {

@@ -4,6 +4,7 @@ import type { HeightPlane } from "./gameplay-plane.ts";
 import { normalizeGeneratedMotion } from "./normalize-generated-motion.ts";
 import { simplifyMotionRing, quantizeGeneratedMotionPolygon } from "./motion-quantization.ts";
 import { preserveMovementBoundary } from "./preserve-movement-boundary.ts";
+import { closeNavigationSeams } from "./close-navigation-seams.ts";
 
 export interface NavigationPiece {
   plane: HeightPlane;
@@ -11,6 +12,7 @@ export interface NavigationPiece {
   lift?: string;
   navigationRegion?: string;
   preserveMovementBoundary?: boolean;
+  closeDeformationSeams?: boolean;
   polygon: Point[];
   blockers: Point[][];
 }
@@ -104,8 +106,9 @@ export function assembleNavigationRegions(
           };
         });
       }
+      const joined = clipping.union(shape(first), ...members.slice(1).map(shape));
       const merged = normalizeGeneratedMotion(
-        clipping.union(shape(first), ...members.slice(1).map(shape)),
+        members.every((m) => m.closeDeformationSeams) ? closeNavigationSeams(joined) : joined,
         "Joined navigation region",
         warnings,
       );

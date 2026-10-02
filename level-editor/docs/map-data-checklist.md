@@ -85,11 +85,20 @@ placements, not every bend, width or connection to another asset.
 All five default-width and double-width flat wall walks pass native routing in
 straight and curved placements. All 19 presets, two extra corner choices and ten
 saved maps pass native construction; the saved maps retain their reviewed static
-geometry. Rising curved wall walks still fragment into separate navigation areas:
-loading them is verified, but traversal across their changing planes remains open.
+geometry. Rising straight and curved placements of all five wall walks also pass
+full-character routing. Each continuous asset surface retains one navigation
+region across its deformed receiving planes. Explicit asset-local deck clearances
+exclude its own support caps after deformation; other placed objects still block
+the deck. Subpixel deformation cracks close before movement-grid rounding without
+joining physically separated decks or filling authored openings. A native fixture
+checks both the route uphill and increasing receiving height. Connections to
+separate stairs/towers and extreme bends or overlapping paths still need checks.
 The five installed definitions have rollback data in
 `work/map-compile/wall-walkway-publication`; route diagnostics are in
 `work/map-compile/wall-walkway-native-v15`.
+The slope-ready definitions are installed with rollback data in
+`work/map-compile/wall-walkway-slopes-publication`; their native route diagnostics
+are in `work/map-compile/wall-walkway-slopes-native-v3`.
 
 Current combined drafts recover all 27 map-source movement transitions.
 York's market assembly completes the movement-state ownership inventory.

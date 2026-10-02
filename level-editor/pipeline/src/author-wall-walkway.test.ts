@@ -5,6 +5,7 @@ import { walkwayFixture } from "../test-fixtures/wall-walkway.ts";
 import { compileMap } from "../../app/src/map-compile.ts";
 import { validateAssetGameplay } from "../../shared/src/asset-gameplay.ts";
 import { readFile } from "node:fs/promises";
+import { wallSplineFixture } from "../../shared/test-fixtures/wall-spline.ts";
 
 test("dissolved wall caps preserve a continuous deck behind raised parapets", () => {
   const { asset } = walkwayFixture(),
@@ -86,7 +87,7 @@ test("repeated wall walkways export the native traversal fixture", async () => {
   assert.deepEqual(compileMap(f.document, f.bounds, f.assets).descriptor, expected);
 });
 
-test("curved walkways climbing a slope compile even when cap fragments collapse on the movement grid", () => {
+test("curved walkways climbing a slope retain connected navigation and the native traversal fixture", async () => {
   const f = walkwayFixture();
   f.document.splines![0]!.curved = true;
   f.document.splines![0]!.points = [
@@ -94,7 +95,62 @@ test("curved walkways climbing a slope compile even when cap fragments collapse 
     [250, 200, 0],
     [400, 300, 20],
   ];
-  const geometry = compileMap(f.document, f.bounds, f.assets).descriptor.asset_geometry!;
-  assert.ok(geometry.motion_data.layers.some((layer) => layer.length > 0));
+  const descriptor = compileMap(f.document, f.bounds, f.assets).descriptor;
+  const geometry = descriptor.asset_geometry!;
+  assert.deepEqual(
+    geometry.motion_data.layers.map((layer) => layer.length),
+    [1, 1, 0],
+  );
   assert.ok(geometry.sight_obstacles.some((s) => s.points.some((p) => p.z_top > 40)));
+  const expected = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/asset-spline-rising-walkway.level.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(descriptor, expected);
+});
+
+test("a walkway's support clearance never removes a separately placed crossing wall", () => {
+  const f = walkwayFixture();
+  const path = f.document.splines![0]!;
+  Object.assign(path, {
+    curved: true,
+    points: [
+      [100, 200, 0],
+      [250, 200, 0],
+      [400, 300, 20],
+    ],
+  });
+  const blocker = wallSplineFixture().asset;
+  blocker.id = "barrier";
+  f.assets.set(blocker.id, blocker);
+  f.document.assetSources!.push({ ...f.document.assetSources![0]!, id: blocker.id });
+  f.document.splines!.push({
+    ...path,
+    id: "crossing",
+    asset: blocker.id,
+    curved: false,
+    width: 20,
+    points: [
+      [250, 100, 20],
+      [250, 300, 20],
+    ],
+  });
+  const geometry = compileMap(f.document, f.bounds, f.assets).descriptor.asset_geometry!;
+  assert.equal(geometry.motion_data.layers[0]!.length, 2);
+});
+
+test("separate coplanar source tiles still join across their shared edge", () => {
+  const f = walkwayFixture();
+  const surface = f.asset.gameplay!.surfaces[0]!;
+  f.asset.gameplay!.surfaces = [
+    { ...surface, id: "left", polygon: surface.polygon.map(([x, y]) => [Math.min(x, 0), y]) },
+    { ...surface, id: "right", polygon: surface.polygon.map(([x, y]) => [Math.max(x, 0), y]) },
+  ];
+  const geometry = compileMap(f.document, f.bounds, f.assets).descriptor.asset_geometry!;
+  assert.equal(geometry.motion_data.layers[1]!.length, 1);
 });

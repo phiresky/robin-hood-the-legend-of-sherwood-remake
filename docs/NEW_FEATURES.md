@@ -2168,3 +2168,7 @@ cutouts aligned with terrain instead of rounding each piece separately.
   joins repeated sections, and keeps parapets outside the walking area. Generated
   maps can route characters around inward area corners, including curved wall
   walks and bent platforms, without a precomputed navigation graph.
+- Rising wall walks keep one continuous navigation region while retaining their
+  individual height planes. Asset-local deck clearances prevent supporting caps
+  from cutting holes in the route after bending; separately placed obstacles
+  continue to block movement.
