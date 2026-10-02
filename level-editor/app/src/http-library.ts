@@ -284,15 +284,20 @@ export async function openHttpLibrary(
 }
 
 export function downloadMap(name: string, document: unknown) {
+  downloadMapFile(
+    name,
+    new Blob([JSON.stringify(document, null, 2) + "\n"], { type: "application/json" }),
+  );
+}
+
+export function downloadMapFile(name: string, file: Blob) {
   const now = Temporal.Now.zonedDateTimeISO();
   const pad = (value: number) => String(value).padStart(2, "0");
   const timestamp = `${now.year}-${pad(now.month)}-${pad(now.day)}T${pad(now.hour)}-${pad(now.minute)}-${pad(now.second)}`;
-  const url = URL.createObjectURL(
-    new Blob([JSON.stringify(document, null, 2) + "\n"], { type: "application/json" }),
-  );
+  const url = URL.createObjectURL(file);
   const link = window.document.createElement("a");
   link.href = url;
   link.download = `${name}_${timestamp}.rhlos-map.json`;
   link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }

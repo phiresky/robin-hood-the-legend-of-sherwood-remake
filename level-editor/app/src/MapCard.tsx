@@ -8,6 +8,7 @@ export default function MapCard(props: {
   label: string;
   library: LibraryRef;
   onOpen: () => void;
+  onDownload: () => void;
   disabled?: boolean;
   onDelete?: () => void;
   onRename?: () => void;
@@ -62,30 +63,48 @@ export default function MapCard(props: {
         </span>
         <span class="map-card-name">{props.label}</span>
       </button>
-      <Show when={props.onDelete || props.onRename}>
-        <div class="map-card-actions">
-          <Show when={props.onRename}>
-            <button
-              aria-label={`Rename ${props.label}`}
-              title="Rename map"
-              disabled={props.disabled}
-              onClick={props.onRename}
-            >
-              ✎
-            </button>
-          </Show>
-          <Show when={props.onDelete}>
-            <button
-              aria-label={`Delete ${props.label}`}
-              title="Delete map"
-              disabled={props.disabled}
-              onClick={props.onDelete}
-            >
-              ×
-            </button>
-          </Show>
-        </div>
-      </Show>
+      <div class="map-card-actions">
+        <button
+          aria-label={`Download ${props.label}`}
+          title="Download latest saved map"
+          disabled={props.disabled}
+          onClick={props.onDownload}
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M12 3v12m-5-5 5 5 5-5M5 16v5h14v-5" />
+          </svg>
+        </button>
+        <Show when={props.onRename}>
+          <button
+            aria-label={`Rename ${props.label}`}
+            title="Rename map"
+            disabled={props.disabled}
+            onClick={props.onRename}
+          >
+            ✎
+          </button>
+        </Show>
+        <Show when={props.onDelete}>
+          <button
+            aria-label={`Delete ${props.label}`}
+            title="Delete map"
+            disabled={props.disabled}
+            onClick={props.onDelete}
+          >
+            ×
+          </button>
+        </Show>
+      </div>
     </article>
   );
 }

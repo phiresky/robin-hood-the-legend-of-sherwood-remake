@@ -8,6 +8,7 @@ import {
   listProjectionAssets,
   prepareProjectionAsset,
   prepareProjectionPlacement,
+  readPinnedAssetDescriptors,
 } from "./projection-library.ts";
 import { disposeObjectResources } from "./resources.ts";
 import { insertProjectionAsset } from "./asset-commands.ts";
@@ -318,7 +319,7 @@ test("palette assets load from the index without reading descriptors", async (t)
   disposeObjectResources([prepared.asset]);
 });
 
-test("changed files reject before model publication; bad model cleanup is owned", async (t) => {
+test("descriptor changes warn, model changes reject, and bad model cleanup is owned", async (t) => {
   const f = fixture();
   t.mock.method(GLTFLoader.prototype, "parseAsync", async () => ({ scene: f.asset }));
   const prepared = await prepareProjectionAsset(f.directory, f.entry, "Leicester");
@@ -334,9 +335,33 @@ test("changed files reject before model publication; bad model cleanup is owned"
     /model changed/,
   );
   f.json(f.entry.descriptor, { ...f.descriptor, name: "Edited" });
+  const warn = t.mock.method(console, "warn", () => {});
+  const updated = await prepareProjectionAsset(
+    f.directory,
+    f.entry,
+    "Leicester",
+    prepared.reference,
+  );
+  assert.equal(updated.descriptor.name, "Edited");
+  assert.match(warn.mock.calls[0].arguments[0], /Asset descriptor changed: house/);
+  const warnings: string[] = [];
+  const descriptors = await readPinnedAssetDescriptors(
+    f.directory,
+    [prepared.reference],
+    [],
+    (message) => warnings.push(message),
+  );
+  assert.equal(descriptors.get("house")!.name, "Edited");
+  assert.match(warnings[0], /Asset descriptor changed: house/);
   await assert.rejects(
-    prepareProjectionAsset(f.directory, f.entry, "Leicester", prepared.reference),
-    /descriptor changed/,
+    readPinnedAssetDescriptors(f.directory, [{ ...prepared.reference, id: "missing" }]),
+    /Missing asset descriptor/,
+  );
+  await assert.rejects(
+    readPinnedAssetDescriptors(f.directory, [
+      { ...prepared.reference, descriptor: "3d-assets/moved.json" },
+    ]),
+    /descriptor path changed/,
   );
   disposeObjectResources([prepared.asset]);
   const bad = fixture();
@@ -393,7 +418,13 @@ test("saved version 2 asset placements reload before document validation", async
   assert.equal(candidate.document.groups[0].transform.dx, 50);
   assert.equal(candidate.document.objects[0]!.obstacle.points[0]!.x, 1);
   assert.deepEqual(candidate.document.assetSources, [prepared.reference]);
-  disposeObjectResources([candidate.asset]);
+  assert.deepEqual(candidate.warnings, []);
+  f.json(f.entry.descriptor, { ...f.descriptor, name: "Updated house" });
+  const updated = await prepareMapCandidate("York", f.directory, null);
+  assert.match(updated.warnings[0], /Asset descriptor changed: house/);
+  assert.equal(updated.sources.get("asset:house:building-000"), f.mesh);
+  assert.equal(updated.document.objects[0]!.obstacle.points[0]!.x, 1);
+  disposeObjectResources([candidate.asset, updated.asset]);
   assert.equal(f.disposed(), 1);
 });
 

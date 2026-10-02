@@ -36,10 +36,12 @@ export async function prepareMapCandidate(
     if (!directory) throw new Error("scenes/ missing");
     const saved = importedDocument ?? (await readJson(directory, `${name}.rhlos-map.json`));
     const expanded = expandStoredMap(saved);
+    const warnings: string[] = [];
     const descriptors = await readPinnedAssetDescriptors(
       library,
       (expanded.assetSources as import("@rle/shared").ExternalAssetSource[] | undefined) ?? [],
       (expanded.sceneAssets as import("@rle/shared").SceneAssetSource[] | undefined) ?? [],
+      (message) => warnings.push(message),
     );
     const document = parseStoredMap(saved, descriptors);
     if (document.map.toLowerCase() !== documentMap.toLowerCase())
@@ -160,7 +162,18 @@ export async function prepareMapCandidate(
         suspects.set(item.index, { delta: item.delta, support: item.support });
     }
     onProgress?.(total, total, "Finalizing map");
-    return { name, document, directory, level, sources, ground, suspects, asset, saved: true };
+    return {
+      name,
+      document,
+      directory,
+      level,
+      sources,
+      ground,
+      suspects,
+      asset,
+      saved: true,
+      warnings,
+    };
   } catch (error) {
     disposeObjectResources([asset]);
     throw error;

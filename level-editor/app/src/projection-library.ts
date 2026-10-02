@@ -166,6 +166,7 @@ export async function readPinnedAssetDescriptors(
   root: FileSystemDirectoryHandle,
   references: ExternalAssetSource[],
   sceneAssets: SceneAssetSource[] = [],
+  onWarning: (message: string) => void = console.warn,
 ): Promise<Map<string, ProjectionAssetDescriptor>> {
   parseExternalAssetSources(references);
   const pinned = [...references, ...sceneAssets.filter((source) => source.descriptor)];
@@ -175,12 +176,11 @@ export async function readPinnedAssetDescriptors(
     pinned.map((reference) => {
       const id = reference.id.replace(/--state-(initial|applied)$/, "");
       const entry = catalog.get(id);
-      if (
-        !entry?.editor ||
-        entry.descriptor_sha256 !== reference.descriptor_sha256 ||
-        entry.descriptor !== reference.descriptor
-      )
-        throw new Error(`Asset descriptor changed: ${reference.id}`);
+      if (!entry?.editor) throw new Error(`Missing asset descriptor: ${reference.id}`);
+      if (entry.descriptor !== reference.descriptor)
+        throw new Error(`Asset descriptor path changed: ${reference.id}`);
+      if (entry.descriptor_sha256 !== reference.descriptor_sha256)
+        onWarning(`Asset descriptor changed: ${reference.id}. Using the current library version.`);
       const descriptor =
         "role" in reference
           ? parseProjectionAssetDescriptor(entry.editor)
@@ -206,7 +206,7 @@ export async function prepareProjectionAsset(
   const descriptorHash = indexed?.descriptor_sha256 ?? expected?.descriptor_sha256;
   if (!descriptorHash) throw new Error(`Missing descriptor pin: ${entry.id}`);
   if (expected && expected.descriptor_sha256 !== descriptorHash)
-    throw new Error(`Asset descriptor changed: ${entry.id}`);
+    console.warn(`Asset descriptor changed: ${entry.id}. Using the current library version.`);
   const original = pinnedDescriptor ?? parseProjectionAssetDescriptor(indexed!.editor);
   const variant =
     !pinnedDescriptor && entry.state_variant

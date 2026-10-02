@@ -54,7 +54,7 @@ import { loadEditableMission, remainingMissionPreview } from "./import-mission.t
 import { PopulationView, type SceneEntities } from "./population-view";
 import type { DatadirIndex } from "./datadir";
 import { missionsForMap } from "./mission-catalog.ts";
-import { downloadMap } from "./http-library.ts";
+import { downloadMap, downloadMapFile } from "./http-library.ts";
 import { MapExportWorker } from "./map-export-client.ts";
 import type { BakeProgress } from "./map-bake-render.ts";
 
@@ -830,7 +830,9 @@ export default function Editor3D(props: EditorProps) {
       viewport.buildOverlays();
       viewport.gameCamera(true);
       setInfo(`${d.groups.length} buildings, ${d.objects.length} parts`);
-      props.onStatus(null);
+      props.onStatus(
+        candidate.warnings.length ? `Warning: ${candidate.warnings.join("\n")}` : null,
+      );
       setMapLoadProgress(null);
     } catch (e) {
       preparedEntities?.dispose();
@@ -994,6 +996,19 @@ export default function Editor3D(props: EditorProps) {
       if (!disposed) props.onError(String(e));
     } finally {
       saving = false;
+    }
+  }
+
+  async function downloadSavedMap(name: string) {
+    try {
+      const library = props.library();
+      if (!library) throw new Error("Connect the library before downloading a saved map.");
+      const directory = await subdir(library.handle, ["scenes"]);
+      if (!directory) throw new Error("scenes/ missing");
+      const file = await (await directory.getFileHandle(`${name}.rhlos-map.json`)).getFile();
+      downloadMapFile(name, file);
+    } catch (error) {
+      props.onError(String(error));
     }
   }
 
@@ -1679,6 +1694,7 @@ export default function Editor3D(props: EditorProps) {
                       label={mapLabel(name)}
                       library={props.library()!}
                       onOpen={() => void openMap(name)}
+                      onDownload={() => void downloadSavedMap(name)}
                       disabled={!!managingMap()}
                       onDelete={
                         props.library()?.deleteMap && !props.library()?.isBuiltIn?.(name)
