@@ -914,11 +914,11 @@ pub(crate) fn detect_demo_mode_with_context(
             .is_some_and(|dd| dd.has_mission(mission))
     };
     if resolve("Data/Levels/Dem_Lei_MP.rhm") || shipping_has_level("Dem_Lei_MP") {
-        // Leicester demo — R=Robin, J=Jean, M=Marianne, T=Tuck, F=Ferris.
+        // Leicester demo — Robin, Little John, Marian, and Tuck.
         Some((
             "Dem_Lei_MP",
             "Leicester",
-            "RJMTF",
+            "RJMT",
             MissionLocation::Leicester,
         ))
     } else if resolve("Data/Levels/Demo_Lin.rhm") || shipping_has_level("Demo_Lin") {

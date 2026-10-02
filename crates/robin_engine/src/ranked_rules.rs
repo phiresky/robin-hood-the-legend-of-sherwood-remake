@@ -102,7 +102,7 @@ pub fn validate_fresh_mission_start(
     match edition {
         OfficialContentEditionV1::Demo => {
             let team = match mission_id {
-                "Dem_Lei_MP" => "RJMTF",
+                "Dem_Lei_MP" => "RJMT",
                 "Demo_Lin" => "RSABC",
                 _ => return Err(FreshStartError::UnknownDemoTeam(mission_id.to_owned())),
             };
@@ -190,7 +190,6 @@ mod tests {
             "Petit Jean",
             "Lady Marianne",
             "Frere Tuck",
-            "Ferris",
         ]
         .into_iter()
         .enumerate()
@@ -213,7 +212,7 @@ mod tests {
         campaign.reset(&profiles, config.difficulty);
         // The launch path selects the demo party and records its restart checkpoint.
         campaign.create_gang_from_pcs_with_file_exists(
-            "RJMTF",
+            "RJMT",
             &profiles,
             config.difficulty,
             |_| false,
