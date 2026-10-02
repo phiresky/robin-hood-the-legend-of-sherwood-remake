@@ -995,10 +995,10 @@ pub(super) struct MissionPreparationSources<'a> {
     pub(super) args: &'a crate::main_entry::MissionRequest,
 }
 
-/// Freeze lobby rules into the simulation input once, before loading PCs.
+/// Resolve lobby rules before publishing Welcome or loading local PCs.
 /// Playback keeps the recorded construction config; device state is never
 /// consulted here.
-fn launch_sim_config(
+pub(super) fn launch_sim_config(
     mut config: engine_api::SimConfig,
     args: &crate::main_entry::MissionRequest,
 ) -> Result<engine_api::SimConfig, MissionError> {
@@ -1951,6 +1951,57 @@ mod tests {
                 timer: PhaseTimer::new("stage fixture"),
             },
         }
+    }
+
+    #[test]
+    #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
+    #[ignore = "requires game data and native multiplayer sockets"]
+    fn online_lobby_team_survives_session_authority() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap();
+        let data = robin_test_support::original_data::data_directory("");
+        let (_, _, context) =
+            crate::main_entry::rust_init_with_roots(Some(&data), Some(root)).unwrap();
+        let mut launch = crate::main_entry::LaunchConfig::default();
+        launch.global_options = context.clone().into();
+        launch.cli.mp_browser_join_links = Some(false);
+        let mut args = crate::main_entry::MissionRequest::from(launch);
+        args.multiplayer.server = true;
+        args.multiplayer.expected_players = Some(2);
+        args.multiplayer.coop.team = [b'R', b'R', 0, 0, 0];
+        let mut host = Host::new(context, 640.0, 480.0).unwrap();
+        let campaign = crate::multiplayer::MultiplayerCampaignSession::default();
+        // Exercise the same entry point as interactive and headless hosting,
+        // starting with the single-player defaults supplied by the campaign.
+        pollster::block_on(super::super::multiplayer::setup_multiplayer_session(
+            &mut host,
+            &args,
+            "H01_Lin_VL",
+            42,
+            engine_api::SimConfig::default(),
+            &campaign,
+        ))
+        .unwrap();
+        let (seed, config) =
+            preparation::session_simulation_start(&host, 0, engine_api::SimConfig::default());
+        assert_eq!(seed, 42);
+        assert_eq!(config.coop.players, 2);
+        assert_eq!(config.coop.team, [b'R', b'R', 0, 0, 0]);
+        let (_channels, incoming, outgoing, _, _) = crate::multiplayer::NetChannels::new();
+        let client_campaign = crate::multiplayer::MultiplayerCampaignSession::default();
+        let client = crate::multiplayer::connect_client_in_campaign(
+            &client_campaign,
+            crate::multiplayer::identity::local_endpoint_id_string().unwrap(),
+            "roster regression".into(),
+            incoming,
+            outgoing,
+        )
+        .unwrap();
+        let welcome = client.session_metadata().expect("client received Welcome");
+        assert_eq!(welcome.sim_config, config);
     }
 
     #[test]

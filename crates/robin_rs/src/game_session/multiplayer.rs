@@ -1256,6 +1256,14 @@ pub(super) async fn setup_multiplayer_session(
     authoritative_sim_config: robin_engine::engine::SimConfig,
     campaign: &crate::multiplayer::MultiplayerCampaignSession,
 ) -> Result<(), MultiplayerSessionError> {
+    // Welcome and the host's installed session must carry the lobby roster.
+    // Level preparation uses these session values as its final authority.
+    let authoritative_sim_config = super::setup::launch_sim_config(authoritative_sim_config, args)
+        .map_err(|error| {
+            MultiplayerSessionError::Setup(SessionSetupFailure::InvalidLaunch(
+                error.to_string().into(),
+            ))
+        })?;
     session_setup::establish(
         host,
         args,

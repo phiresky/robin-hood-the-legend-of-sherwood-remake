@@ -2864,6 +2864,7 @@ mod visual_tests {
             .unwrap();
         for team in [
             [b'R', 0, 0, 0, 0],
+            [b'R', b'R', 0, 0, 0],
             [b'R'; 5],
             [b'M', b'T', b'R', b'J', b'W'],
         ] {
