@@ -11,6 +11,9 @@
   current unblocked terrain surface and rebuilds its gate connection. Building
   geometry and lock rules remain authored; unreachable or ambiguous entrances
   are reported rather than attached to an arbitrary layer.
+  A repeatable asset-authoring command applies explicit attachment recipes,
+  checks local anchors, preserves unrelated features and updates saved-scene
+  pins with rollback snapshots. Twelve library assets include reviewed rules.
 
 - **Spline-wall gameplay export.** Calibrated assets supply collision volumes and
   walkable surfaces that follow edited wall paths, repetitions, trims, curved

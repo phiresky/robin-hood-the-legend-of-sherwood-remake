@@ -27,7 +27,7 @@
       "model": "3d-assets/leicester/leicester-church/model.glb",
       "model_sha256": "bfa179a0b08ad0248e0dac1918b6103bb1fe10c2c5b492a47572b8577d3d6bff",
       "descriptor": "3d-assets/leicester/leicester-church/asset.json",
-      "descriptor_sha256": "6a8afd1231cbce6eef42d3aa4bcae07a310df9217bb1a5f19912c9456c9693a5",
+      "descriptor_sha256": "bd0287771462d0bd8d39eaf0b392a19b65f549409acd71babc9a8b704741eb7f",
       "id": "leicester-church"
     },
     {
@@ -86,7 +86,7 @@
       "model": "3d-assets/leicester/leicester-east-edge-thatched-house/model.glb",
       "model_sha256": "7c410b4d580bfc3c646c845cd41b5a48f7e08642a9f50856cf851c4f0533c6af",
       "descriptor": "3d-assets/leicester/leicester-east-edge-thatched-house/asset.json",
-      "descriptor_sha256": "56b1f55dc1685c4d9c22099612ecf0dd913266a176e2d41ea08ad066142e896f",
+      "descriptor_sha256": "eab25a4dc7d069b8a074011cb36f0c9ac99a02ba828f938c5ec1fd26b79e6be8",
       "id": "leicester-east-edge-thatched-house"
     },
     {
@@ -107,7 +107,7 @@
       "model": "3d-assets/leicester/leicester-east-riverside-house/model.glb",
       "model_sha256": "bc034dff2d90c76aeec7e86bcdfc8e00350a008386b3fc16fd49f75a54e7972b",
       "descriptor": "3d-assets/leicester/leicester-east-riverside-house/asset.json",
-      "descriptor_sha256": "69b1b2cad03c3a50905b28b2afcb31af12eb383f70a7d16a8e3655a3b0095741",
+      "descriptor_sha256": "0acd1706d123d143533c89f2ab443a1aaf94a25f906be40a01a6fb1fb64392f7",
       "id": "leicester-east-riverside-house"
     },
     {
@@ -278,7 +278,7 @@
       "model": "3d-assets/leicester/leicester-north-village-cottage/model.glb",
       "model_sha256": "44c31f284d5c8c923669b2a84c77c6e70453726d0905987fc62407293ad7ca88",
       "descriptor": "3d-assets/leicester/leicester-north-village-cottage/asset.json",
-      "descriptor_sha256": "ed2bd96f52c8ace9a38ee3f7a519fa975225c91d4531d7630ef6658488d3b633",
+      "descriptor_sha256": "de2d38272c333baf63c4a6ba91ee49f74690262fcbbf618856ab9e8783ae0c61",
       "id": "leicester-north-village-cottage"
     },
     {
@@ -313,7 +313,7 @@
       "model": "3d-assets/leicester/leicester-northeast-longhouse/model.glb",
       "model_sha256": "23b1f47bf4922afdb9d8d9a2f3274168033a183a8c5872f4d9402ee2b4dddd17",
       "descriptor": "3d-assets/leicester/leicester-northeast-longhouse/asset.json",
-      "descriptor_sha256": "d7efdf6805acc93f71a0a67df6a15e838797eb329d4ac7ebb0f1a3ab4d9b3380",
+      "descriptor_sha256": "08505dd9c1ecfde8815bc25ed51a232850a64366b9ce801aab41e59223b93376",
       "id": "leicester-northeast-longhouse"
     },
     {
@@ -414,7 +414,7 @@
       "model": "3d-assets/leicester/leicester-south-hall/model.glb",
       "model_sha256": "911e8b958895edb864820bfae9843c0cc85b08e4f11fb806220c7879afd00879",
       "descriptor": "3d-assets/leicester/leicester-south-hall/asset.json",
-      "descriptor_sha256": "206bcb2e7bbe6076ed4fa6d4fbdcf07914bcf617ca3a7e65ee0e2fc715f5120e",
+      "descriptor_sha256": "45a2c8618e2cbbc22d1f0ecdff6f258b7bbd64bc648220156fd43861d0e02194",
       "id": "leicester-south-hall"
     },
     {
@@ -435,7 +435,7 @@
       "model": "3d-assets/leicester/leicester-southeast-cottage/model.glb",
       "model_sha256": "b68847e1ccf1b03c7924d023d6a9ab81005b1a361078b8374f5e976209795ba7",
       "descriptor": "3d-assets/leicester/leicester-southeast-cottage/asset.json",
-      "descriptor_sha256": "5d8571f852c3a833e97de498602a8b397ac23c3b8f4cf05b84e177738d518629",
+      "descriptor_sha256": "8124ac41b37d06ae25fb8423006e523045ad9b3ee6b63ac114384e4202254178",
       "id": "leicester-southeast-cottage"
     },
     {

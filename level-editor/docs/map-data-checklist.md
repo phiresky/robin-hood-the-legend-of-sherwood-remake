@@ -50,6 +50,36 @@ generate stairs, adjust building meshes or certify entrance animation rendering.
 Publication snapshots are in `work/map-compile/door-receiver-publication`; the
 native placement probes are in `work/map-compile/door-approach-native`.
 
+**Repeatable terrain attachment authoring:**
+`pipeline/src/author-terrain-attachments.ts` applies explicit local feature rules
+from `refinement/catalogs/terrain-attachments.json`. Each rule names one mask or
+interior entrance, pins its owning node and reviewed local anchor, and declares separate upward
+and downward reach. The tool refuses changed anchors, conflicting receiver
+definitions, duplicate rules and unknown features. It reads only library assets,
+stages rollback snapshots and republishes saved-scene descriptor pins through the
+existing gameplay publisher. Running it again preserves the authored definitions.
+
+The catalog covers twelve assets, including the two previously updated mill
+cottages. The additional ten assets restore twelve more Wychford entrances and
+ten mask tiles: **25 total native doors and 17 mask tiles** now compile. Native
+character-sized approach routes pass for all twelve restored entrances. The nine
+reference maps compile unchanged, and all ten exports pass native construction
+and mask checks. Evidence is in `work/map-compile/ground-attachment-native`, with
+publication backups in `work/map-compile/ground-attachment-publication`.
+Run from `level-editor/`, using a fresh output directory:
+
+```sh
+pnpm --filter pipeline exec node src/author-terrain-attachments.ts \
+  ../library ../refinement/catalogs/terrain-attachments.json \
+  ../work/map-compile/terrain-attachment-review
+```
+
+Use `--apply` with a separate fresh output directory to install reviewed results.
+Raised entrances and distant shared-room endpoints are deliberately not selected.
+The southeast cottage still contains a distant second entrance in its recovered
+room definition; separating ownership and authoring its intended connection is
+an unresolved reuse issue. Increasing terrain reach would not repair that issue.
+
 **New-layout jump connections:** assets may author an oriented jump edge plus
 maximum gap, rise, drop and minimum overlap in map units. Export matches facing
 parallel edges at their current placements and trims them to their shared span;

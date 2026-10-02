@@ -48,7 +48,7 @@
       "model": "3d-assets/derby/derby-lower-southeast-cottage/model.glb",
       "model_sha256": "f6975b27e53d77c5f7c06ba91d8748607d874ee142432469984a3dab83124985",
       "descriptor": "3d-assets/derby/derby-lower-southeast-cottage/asset.json",
-      "descriptor_sha256": "297e4f1e49da08a5f723f49bb9a936ac6f52ec52adb51acd01496d882b19c4f1",
+      "descriptor_sha256": "a378f1c4476708ab9a7d001cb2bac0eda354d54b0c1395431552bf6152224ce1",
       "id": "derby-lower-southeast-cottage"
     },
     {
@@ -111,7 +111,7 @@
       "model": "3d-assets/derby/derby-lower-southwest-cottage/model.glb",
       "model_sha256": "32aa7237d1e8d946f8e3283e1f46079caa944b557cfb35fea29a0f70a0b85918",
       "descriptor": "3d-assets/derby/derby-lower-southwest-cottage/asset.json",
-      "descriptor_sha256": "05e00927519dfe5545aff468a5cc8654caa908b7a40418acbb5b8b7ca94abd24",
+      "descriptor_sha256": "96af610786516a05b2971e2e4e0aa86127faa4b330cded4884d6222d8cf3fec8",
       "id": "derby-lower-southwest-cottage"
     },
     {
@@ -139,7 +139,7 @@
       "model": "3d-assets/derby/derby-lower-northwest-cottage/model.glb",
       "model_sha256": "7dbc15a728ecf12ef3235163d185f15b685e23857b5e15543690cafe0973c967",
       "descriptor": "3d-assets/derby/derby-lower-northwest-cottage/asset.json",
-      "descriptor_sha256": "f24e621829d0fecf2a0df7b6a4e1c153b8da8d11ae58ed2fc95efbd9236affc8",
+      "descriptor_sha256": "e0cfdd20d12f5a704db4665fdb7434c75dbcf51b7b2b32326cfb0cd8d0327086",
       "id": "derby-lower-northwest-cottage"
     },
     {

@@ -1,0 +1,302 @@
+[
+  {
+    "asset": "derby-lower-southwest-cottage",
+    "rules": [
+      {
+        "kind": "interior-door",
+        "id": "interior-0/door-0",
+        "anchor": [
+          85.69720458984375,
+          -5.666671390079967,
+          0.0004850508920932928
+        ],
+        "below": 8,
+        "above": 8,
+        "node": "building-058"
+      }
+    ]
+  },
+  {
+    "asset": "derby-lower-southeast-cottage",
+    "rules": [
+      {
+        "kind": "interior-door",
+        "id": "interior-0/door-0",
+        "anchor": [
+          -89.908203125,
+          -10.425233745495822,
+          0.00046832656944465617
+        ],
+        "below": 8,
+        "above": 8,
+        "node": "building-061"
+      }
+    ]
+  },
+  {
+    "asset": "derby-lower-northwest-cottage",
+    "rules": [
+      {
+        "kind": "interior-door",
+        "id": "interior-0/door-0",
+        "anchor": [
+          63.201171875,
+          31.472297037535238,
+          0.00039262745172161735
+        ],
+        "below": 8,
+        "above": 8,
+        "node": "building-065"
+      }
+    ]
+  },
+  {
+    "asset": "leicester-north-village-cottage",
+    "rules": [
+      {
+        "kind": "interior-door",
+        "id": "interior-0/door-0",
+        "anchor": [
+          30.593505859375,
+          60.59582579707258,
+          -9.18302002700261e-05
+        ],
+        "below": 8,
+        "above": 8,
+        "node": "building-027"
+      },
+      {
+        "kind": "mask",
+        "id": "north-cottage-character-occlusion",
+        "anchor": [
+          -27.406494140625,
+          34.595825797072614,
+          -9.18302002700261e-05
+        ],
+        "below": 8,
+        "above": 8,
+        "node": "building-024"
+      },
+      {
+        "kind": "mask",
+        "id": "north-cottage-projectile-view-occlusion",
+        "anchor": [
+          -73.406494140625,
+          123.59582579707262,
+          -9.18302002700261e-05
+        ],
+        "below": 8,
+        "above": 8,
+        "node": "building-024"
+      }
+    ]
+  },
+  {
+    "asset": "leicester-east-riverside-house",
+    "rules": [
+      {
+        "kind": "interior-door",
+        "id": "interior-0/door-0",
+        "anchor": [
+          -88.171875,
+          34.732114975332614,
+          -0.0001750584637670038
+        ],
+        "below": 8,
+        "above": 8,
+        "node": "building-066"
+      }
+    ]
+  },
+  {
+    "asset": "leicester-east-edge-thatched-house",
+    "rules": [
+      {
+        "kind": "interior-door",
+        "id": "interior-0/door-0",
+        "anchor": [
+          -32.8505859375,
+          29.6556248128186,
+          -0.00013338456099968348
+        ],
+        "below": 8,
+        "above": 8,
+        "node": "building-000"
+      }
+    ]
+  },
+  {
+    "asset": "leicester-church",
+    "rules": [
+      {
+        "kind": "interior-door",
+        "id": "interior-0/door-0",
+        "anchor": [
+          -138.46728515625,
+          130.3162977762918,
+          1.7713350986971486e-05
+        ],
+        "below": 8,
+        "above": 8,
+        "node": "building-355"
+      }
+    ]
+  },
+  {
+    "asset": "leicester-northeast-longhouse",
+    "rules": [
+      {
+        "kind": "interior-door",
+        "id": "interior-0/door-0",
+        "anchor": [
+          -79.4169921875,
+          51.86559562480733,
+          0.9990059682053313
+        ],
+        "below": 8,
+        "above": 8,
+        "node": "building-003"
+      },
+      {
+        "kind": "mask",
+        "id": "longhouse-view-occlusion",
+        "anchor": [
+          14.5830078125,
+          59.86559562480738,
+          0.9990059682053313
+        ],
+        "below": 8,
+        "above": 8,
+        "node": "building-003"
+      },
+      {
+        "kind": "mask",
+        "id": "longhouse-projectile-occlusion",
+        "anchor": [
+          -158.4169921875,
+          21.8655956248074,
+          0.9990059682053313
+        ],
+        "below": 8,
+        "above": 8,
+        "node": "building-003"
+      }
+    ]
+  },
+  {
+    "asset": "leicester-southeast-cottage",
+    "rules": [
+      {
+        "kind": "interior-door",
+        "id": "interior-0/door-0",
+        "anchor": [
+          -83.908935546875,
+          76.54660518169466,
+          -0.0002912854851589058
+        ],
+        "below": 8,
+        "above": 8,
+        "node": "building-093"
+      },
+      {
+        "kind": "mask",
+        "id": "southeast-cottage-projectile-view-occlusion",
+        "anchor": [
+          -103.908935546875,
+          60.54660518169454,
+          -0.0002912854851589058
+        ],
+        "below": 8,
+        "above": 8,
+        "node": "building-093"
+      }
+    ]
+  },
+  {
+    "asset": "leicester-south-hall",
+    "rules": [
+      {
+        "kind": "mask",
+        "id": "static-occlusion-208",
+        "anchor": [
+          -44.054443359375,
+          191.32459080122052,
+          -0.0002717764773212142
+        ],
+        "below": 8,
+        "above": 8,
+        "node": "building-105"
+      }
+    ]
+  },
+  {
+    "asset": "leicester-mill-north-cottage",
+    "rules": [
+      {
+        "kind": "interior-door",
+        "id": "interior-0/door-0",
+        "anchor": [
+          69.50390625,
+          28.956286198392583,
+          -0.00011994099587787732
+        ],
+        "below": 8,
+        "above": 8,
+        "node": "building-016"
+      },
+      {
+        "kind": "interior-door",
+        "id": "interior-1/door-0",
+        "anchor": [
+          -84.49609375,
+          35.95628619839262,
+          -0.00011994099587787732
+        ],
+        "below": 8,
+        "above": 8,
+        "node": "building-018"
+      },
+      {
+        "kind": "mask",
+        "id": "mill-north-cottage-occlusion",
+        "anchor": [
+          65.50390625,
+          6.956286198392587,
+          -0.00011994099587787732
+        ],
+        "below": 8,
+        "above": 8,
+        "node": "building-016"
+      }
+    ]
+  },
+  {
+    "asset": "leicester-mill-south-cottage",
+    "rules": [
+      {
+        "kind": "interior-door",
+        "id": "interior-0/door-0",
+        "anchor": [
+          -10.23046875,
+          34.214501555627116,
+          0.8103457239009048
+        ],
+        "below": 8,
+        "above": 8,
+        "node": "building-043"
+      },
+      {
+        "kind": "mask",
+        "id": "mill-south-cottage-occlusion",
+        "anchor": [
+          86.76953125,
+          0.214501555627096,
+          0.8103457239009048
+        ],
+        "below": 8,
+        "above": 8,
+        "node": "building-047"
+      }
+    ]
+  }
+]
