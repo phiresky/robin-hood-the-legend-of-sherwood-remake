@@ -71,6 +71,7 @@ import {
   declaredDoorOwners,
   doorOwnershipFootprint,
   recoverDoorStateOwner,
+  unownedInteriorEntrances,
 } from "./recover-door-owner.ts";
 import { quantizeGeneratedMotionPolygon } from "../../shared/src/motion-quantization.ts";
 import { partitionRecoverySurfaces } from "./recovery-surface-partition.ts";
@@ -1333,6 +1334,36 @@ for (const [index, entry] of proto.buildings.entries()) {
       if (explicitOwner && stateOwner && explicitOwner.asset !== stateOwner.asset)
         throw new Error("Declared door owner conflicts with linked state geometry");
       const owner = explicitOwner ?? stateOwner ?? spatialOwner!;
+      if (isInterior && !explicitOwner && doors.length > 1) {
+        const remote = unownedInteriorEntrances(
+          doors.map((door) => {
+            const id = doorIndices.get(door)!;
+            const { height } = endpointBinding(
+              `door-outside/${id}`,
+              door.sector_out,
+              door.layer_out,
+              door.point_out,
+            );
+            return { door: id, point: [door.point_in[0], door.point_in[1] + height], height };
+          }),
+          [...locals].flatMap(([index, owners]) =>
+            owners.length === 1 && owners[0]!.asset === owner.asset
+              ? [proto.sight_obstacles[index]!]
+              : [],
+          ),
+        );
+        if (remote.length) {
+          unresolved.push({
+            kind: "interior-entrance-ownership",
+            building: index,
+            asset: owner.asset,
+            entrances: remote,
+            reason:
+              "Every entrance needs local owning geometry; partition this shared room into explicit asset-owned pieces",
+          });
+          continue;
+        }
+      }
       if (!explicitOwner && !stateOwner && !choose(ranked))
         packet(owner.asset).issues.push(
           "Door ownership resolved from geometry above its landing; review the physical doorway before publication",

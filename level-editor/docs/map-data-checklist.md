@@ -81,6 +81,18 @@ The southeast cottage still contains a distant second entrance in its recovered
 room definition; separating ownership and authoring its intended connection is
 an unresolved reuse issue. Increasing terrain reach would not repair that issue.
 
+Automatic room recovery now checks every entrance against the inferred owner's
+solid doorway geometry above that entrance's landing. It reports
+`interior-entrance-ownership` instead of assigning a distant entrance to the owner
+of the first door. The existing 24-unit inference limit applies to every entrance;
+supporting floors alone are not ownership evidence. Explicit reviewed ownership
+and room partitions remain supported. Existing asset definitions are not changed
+by this guard. An asset-only audit of the nine reference maps flags eleven rooms
+for review, including the southeast cottage's second entrance about 1,462 units
+from its owning geometry. Some other flags are near the inference threshold and
+may need explicit ownership rather than splitting. The audit is recorded in
+`work/map-compile/interior-locality-audit.json`.
+
 **Physical receivers on uneven terrain:** projection receivers may also author
 finite `receiverSegment` bounds. The selected unblocked terrain surface supplies
 their sector/layer association; the asset's physical top plane, material and

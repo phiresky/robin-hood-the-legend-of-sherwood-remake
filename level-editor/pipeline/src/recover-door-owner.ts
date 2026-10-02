@@ -2,6 +2,25 @@ import type { Patch, Point, SightObstacle, Vec3 } from "@rle/shared";
 import { clipHeight, heightPlane } from "../../shared/src/gameplay-plane.ts";
 import polygonClipping from "polygon-clipping";
 import type { GameplayOwnershipCatalog } from "./nonrendering-gameplay-owners.ts";
+import { distanceToPolygon } from "./recovery-elevation.ts";
+
+/** Every inferred room entrance must have nearby doorway geometry belonging to its owner. */
+export function unownedInteriorEntrances(
+  entrances: { door: number; point: Point; height: number }[],
+  obstacles: SightObstacle[],
+): { door: number; distance: number | null }[] {
+  return entrances.flatMap(({ door, point, height }) => {
+    const distances = obstacles
+      .filter((o) => o.solid)
+      .flatMap((obstacle) =>
+        doorOwnershipFootprint(obstacle, height).map((polygon) =>
+          distanceToPolygon(point, polygon),
+        ),
+      );
+    const distance = distances.length ? Math.min(...distances) : null;
+    return distance !== null && distance <= 24 ? [] : [{ door, distance }];
+  });
+}
 
 /** Validate one-time authoring declarations before producing asset-local endpoints. */
 export function declaredDoorOwners<T>(

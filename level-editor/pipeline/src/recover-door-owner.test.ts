@@ -4,8 +4,54 @@ import {
   declaredDoorOwners,
   doorOwnershipFootprint,
   recoverDoorStateOwner,
+  unownedInteriorEntrances,
 } from "./recover-door-owner.ts";
 import type { SightObstacle, Point } from "@rle/shared";
+
+test("inferred rooms cannot assign distant entrances to the first doorway's asset", () => {
+  const obstacle: SightObstacle = {
+    points: [
+      [0, 0],
+      [100, 0],
+      [100, 100],
+      [0, 100],
+    ].map(([x, y]) => ({ x: x!, y: y!, z_bottom: 0, z_top: 100 })),
+    projection_area: null,
+    solid: true,
+    opaque: true,
+    mouse: true,
+    show_shadow_polygon: false,
+    default_material: 0,
+    material_indices: [],
+  };
+  const entrances = [
+    { door: 4, point: [20, 20] as Point, height: 0 },
+    { door: 8, point: [1020, 20] as Point, height: 0 },
+  ];
+  assert.deepEqual(unownedInteriorEntrances(entrances, [obstacle]), [{ door: 8, distance: 920 }]);
+  const annex = { ...obstacle, points: obstacle.points.map((p) => ({ ...p, x: p.x + 1000 })) };
+  assert.deepEqual(unownedInteriorEntrances(entrances, [obstacle, annex]), []);
+  // A floor beneath an unrelated entrance is not evidence of a doorway owner.
+  assert.deepEqual(
+    unownedInteriorEntrances(entrances, [
+      obstacle,
+      { ...annex, points: annex.points.map((p) => ({ ...p, z_top: 0 })) },
+    ]),
+    [{ door: 8, distance: 920 }],
+  );
+  assert.deepEqual(unownedInteriorEntrances(entrances, []), [
+    { door: 4, distance: null },
+    { door: 8, distance: null },
+  ]);
+  assert.deepEqual(
+    unownedInteriorEntrances([{ door: 2, point: [124, 50], height: 0 }], [obstacle]),
+    [],
+  );
+  assert.equal(
+    unownedInteriorEntrances([{ door: 2, point: [125, 50], height: 0 }], [obstacle]).length,
+    1,
+  );
+});
 
 test("declared door ownership requires unique endpoints and one pinned frame", () => {
   const frame = { asset: "gate", node: "arch" };
