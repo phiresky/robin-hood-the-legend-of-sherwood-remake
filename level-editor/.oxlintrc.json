@@ -45,5 +45,6 @@
   "options": {
     "typeAware": true,
     "maxWarnings": 0
-  }
+  },
+  "ignorePatterns": ["app/src/vendor/bc7f/bc7f.js"]
 }

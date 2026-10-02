@@ -13,6 +13,7 @@ import {
   prepareProjectionAsset,
   readPinnedAssetDescriptors,
 } from "./projection-library.ts";
+import { MapTextureCompressor } from "./texture-compression.ts";
 import { SceneAssetLoader } from "./scene-assets.ts";
 import { disposeObjectResources } from "./resources.ts";
 
@@ -24,10 +25,13 @@ export async function prepareMapCandidate(
   onProgress?: (completed: number, total: number, phase: string) => void,
   documentMap = name,
   importedDocument?: unknown,
+  signal?: AbortSignal,
 ) {
   const asset = new THREE.Group();
   const loader = new SceneAssetLoader(library, await listLossyModels(library));
+  let compressor: MapTextureCompressor | undefined;
   try {
+    signal?.throwIfAborted();
     const directory = await subdir(library, ["scenes"]);
     if (!directory) throw new Error("scenes/ missing");
     const saved = importedDocument ?? (await readJson(directory, `${name}.rhlos-map.json`));
@@ -46,15 +50,28 @@ export async function prepareMapCandidate(
     let ground: THREE.Object3D | null = null;
     const total = document.sceneAssets.length + (document.assetSources?.length ?? 0);
     let completed = 0;
-    onProgress?.(completed, total, "Loading assets");
+    let encoding = 0;
+    const report = () =>
+      onProgress?.(
+        completed,
+        total,
+        encoding ? `Loading assets — encoding textures (${encoding} active)` : "Loading assets",
+      );
+    compressor = new MapTextureCompressor((active) => {
+      encoding = active;
+      report();
+    }, signal);
+    report();
     const addSource = (key: string, node: THREE.Object3D) => {
       if (sources.has(key)) throw new Error(`Duplicate scene source node ${key}`);
       sources.set(key, node);
     };
     // Decode in manifest order; shared material variants retain common resources.
     for (const reference of document.sceneAssets) {
+      signal?.throwIfAborted();
       const loaded = await loader.load(reference);
       asset.add(loaded);
+      await compressor.compress(loaded);
       const root = loaded.children.find((node) => node.name === "map") ?? loaded;
       if (reference.role === "ground") {
         if (root.children.length !== 1 || root.children[0]!.name !== "ground")
@@ -64,7 +81,8 @@ export async function prepareMapCandidate(
         for (const group of root.children)
           for (const node of group.children) addSource(node.name, node);
       }
-      onProgress?.(++completed, total, "Loading assets");
+      completed++;
+      report();
     }
     const references = document.assetSources ?? [];
     let next = 0,
@@ -77,6 +95,7 @@ export async function prepareMapCandidate(
       while (!failed && next < references.length) {
         const index = next++;
         try {
+          signal?.throwIfAborted();
           const reference = references[index]!;
           const lossy_model = loader.lossyFor(reference.model);
           const result = await prepareProjectionAsset(
@@ -88,8 +107,10 @@ export async function prepareMapCandidate(
             descriptors.get(reference.id),
           );
           asset.add(result.asset);
+          await compressor!.compress(result.asset);
           prepared[index] = result;
-          onProgress?.(++completed, total, "Loading assets");
+          completed++;
+          report();
         } catch (error) {
           failed = true;
           failure = error;
@@ -144,6 +165,7 @@ export async function prepareMapCandidate(
     disposeObjectResources([asset]);
     throw error;
   } finally {
+    compressor?.dispose();
     loader.dispose();
   }
 }

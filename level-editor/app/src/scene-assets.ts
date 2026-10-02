@@ -179,5 +179,8 @@ export class SceneAssetLoader {
     for (const url of this.urls) URL.revokeObjectURL(url);
     this.urls = [];
     this.resources.clear();
+    this.textures.clear();
+    this.materials.clear();
+    this.finalMaterials.clear();
   }
 }

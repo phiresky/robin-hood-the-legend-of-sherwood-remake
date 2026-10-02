@@ -122,6 +122,7 @@ export default function Editor3D(props: EditorProps) {
   );
   const [patchPreviewRevision, setPatchPreviewRevision] = createSignal(0);
   let openAttempt = 0;
+  let mapLoadAbort: AbortController | undefined;
   let loadedIndex: DatadirIndex | null = null;
   let loadedLibrary: LibraryRef | null = null;
   let transientMapName: string | null = null;
@@ -224,6 +225,7 @@ export default function Editor3D(props: EditorProps) {
     () => props.library(),
     (lib) => {
       session.beginLoad();
+      mapLoadAbort?.abort();
       openAttempt++;
       setMaps([]);
       transientMapName = null;
@@ -575,6 +577,7 @@ export default function Editor3D(props: EditorProps) {
   }
 
   function cancelMapLoad() {
+    mapLoadAbort?.abort();
     openAttempt++;
     session.beginLoad();
     setMapLoadProgress(null);
@@ -591,6 +594,7 @@ export default function Editor3D(props: EditorProps) {
   function closeMap() {
     if (!confirmDiscard()) return;
     cancelAssetDrag();
+    mapLoadAbort?.abort();
     openAttempt++;
     session.close();
     setRevision(null);
@@ -615,6 +619,9 @@ export default function Editor3D(props: EditorProps) {
     const lib = props.library();
     const idx = props.index();
     if (!lib) return;
+    mapLoadAbort?.abort();
+    const loadAbort = new AbortController();
+    mapLoadAbort = loadAbort;
     const attempt = ++openAttempt;
     const generation = session.beginLoad();
     const current = () =>
@@ -724,6 +731,7 @@ export default function Editor3D(props: EditorProps) {
         },
         lib.documentMap?.(name) ?? name,
         importedDocument,
+        loadAbort.signal,
       );
       preparedAsset = candidate.asset;
       if (mission && idx) {
@@ -837,6 +845,7 @@ export default function Editor3D(props: EditorProps) {
   createEffect(
     () => props.index(),
     () => {
+      mapLoadAbort?.abort();
       openAttempt++;
       session.beginLoad();
       viewport.replaceEntities(null);
@@ -1103,6 +1112,7 @@ export default function Editor3D(props: EditorProps) {
   onCleanup(() => {
     cancelAssetDrag();
     disposed = true;
+    mapLoadAbort?.abort();
     session.dispose();
     viewport.dispose();
   });

@@ -5,6 +5,7 @@ import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
 import { checkSharedLibrary } from "./library";
 import Editor3D from "../src/Editor3D";
 import { checkSpriteAtlas } from "./sprite-atlas";
+import { checkTextureCompression } from "./texture-compression";
 import { checkGltfTextures } from "./gltf-textures";
 import { checkHttpLibrary } from "./http-library";
 import "../src/styles.css";
@@ -321,8 +322,10 @@ async function main() {
     return;
   }
   await checkGltfTextures();
+  await checkTextureCompression();
   await checkHttpLibrary();
-  await checkSharedLibrary();
+  // Allow lifecycle/resource checks to run independently of interactive spline fixtures.
+  if (!location.search.includes("resources-only")) await checkSharedLibrary();
   if (location.search.includes("library-only")) {
     assert(
       [...gpu.values()].every((resources) => resources.size === 0),
