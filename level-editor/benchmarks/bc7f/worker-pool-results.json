@@ -1,0 +1,2929 @@
+{
+  "date": "2026-10-02",
+  "method": "Three fresh hardware Chromium profiles per map and worker count, alternating order, local Vite HTTP server, no codec warmup, native memory sampled every ~100ms during loading. RSS and GPU resident counters overlap and must not be summed as unique memory. Peaks are sampled lower bounds.",
+  "summary": [
+    {
+      "map": "York",
+      "workers": 2,
+      "medianLoadSeconds": 7.847599999994039,
+      "loadSeconds": [
+        7.8476,
+        9.1743,
+        7.7763
+      ],
+      "medianPeakRendererMiB": 1015.42578125,
+      "medianPeakGpuResidentMiB": 515.7265625
+    },
+    {
+      "map": "York",
+      "workers": 4,
+      "medianLoadSeconds": 7.549900000005961,
+      "loadSeconds": [
+        7.4757,
+        9.1818,
+        7.5499
+      ],
+      "medianPeakRendererMiB": 1107.76953125,
+      "medianPeakGpuResidentMiB": 522.0859375
+    },
+    {
+      "map": "Wychford",
+      "workers": 2,
+      "medianLoadSeconds": 16.4405,
+      "loadSeconds": [
+        15.8354,
+        16.4405,
+        16.8803
+      ],
+      "medianPeakRendererMiB": 1812.0546875,
+      "medianPeakGpuResidentMiB": 1242.63671875
+    },
+    {
+      "map": "Wychford",
+      "workers": 4,
+      "medianLoadSeconds": 14.31809999999404,
+      "loadSeconds": [
+        13.2058,
+        14.3181,
+        14.6202
+      ],
+      "medianPeakRendererMiB": 2351.4921875,
+      "medianPeakGpuResidentMiB": 1246.3671875
+    },
+    {
+      "map": "York",
+      "pool": "4-small",
+      "workers": 4,
+      "medianLoadSeconds": 7.424400000005961,
+      "loadSeconds": [
+        7.4508,
+        7.4244,
+        7.1851
+      ],
+      "medianPeakRendererMiB": 1093.6484375,
+      "medianPeakGpuResidentMiB": 492.91796875
+    },
+    {
+      "map": "York",
+      "pool": "8-small",
+      "workers": 8,
+      "medianLoadSeconds": 6.762,
+      "loadSeconds": [
+        10.2848,
+        6.762,
+        6.5733
+      ],
+      "medianPeakRendererMiB": 1290.5,
+      "medianPeakGpuResidentMiB": 492.4296875
+    },
+    {
+      "map": "Wychford",
+      "pool": "4-small",
+      "workers": 4,
+      "medianLoadSeconds": 19.71240000000596,
+      "loadSeconds": [
+        23.1115,
+        19.7124,
+        18.4081
+      ],
+      "medianPeakRendererMiB": 1759.2421875,
+      "medianPeakGpuResidentMiB": 1241.8046875
+    },
+    {
+      "map": "Wychford",
+      "pool": "8-small",
+      "workers": 8,
+      "medianLoadSeconds": 20.30869999998808,
+      "loadSeconds": [
+        21.2823,
+        20.3087,
+        18.4303
+      ],
+      "medianPeakRendererMiB": 1911.67578125,
+      "medianPeakGpuResidentMiB": 1254.515625
+    }
+  ],
+  "runs": [
+    {
+      "map": "York",
+      "workers": 2,
+      "trial": 1,
+      "elapsed": 7847.5999999940395,
+      "activePeak": 2,
+      "peak": {
+        "largestRendererRssKiB": 1039796,
+        "processRssSumKiB": 1935092,
+        "gpuResidentKiB": 513168
+      },
+      "atLoad": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 176848,
+            "rssKiB": 230264
+          },
+          {
+            "type": "renderer",
+            "pid": 176994,
+            "rssKiB": 98564
+          },
+          {
+            "type": "renderer",
+            "pid": 176985,
+            "rssKiB": 67488
+          },
+          {
+            "type": "renderer",
+            "pid": 176966,
+            "rssKiB": 733208
+          },
+          {
+            "type": "renderer",
+            "pid": 176958,
+            "rssKiB": 140576
+          },
+          {
+            "type": "GPU",
+            "pid": 176879,
+            "rssKiB": 177832
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 176883,
+            "rssKiB": 84548
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 176896,
+            "rssKiB": 40256
+          }
+        ],
+        "largestRendererRssKiB": 733208,
+        "processRssSumKiB": 1572736,
+        "gpuResidentKiB": 513168
+      },
+      "settled": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 176848,
+            "rssKiB": 211924
+          },
+          {
+            "type": "renderer",
+            "pid": 176994,
+            "rssKiB": 98564
+          },
+          {
+            "type": "renderer",
+            "pid": 176985,
+            "rssKiB": 67488
+          },
+          {
+            "type": "renderer",
+            "pid": 176966,
+            "rssKiB": 722160
+          },
+          {
+            "type": "renderer",
+            "pid": 176958,
+            "rssKiB": 140576
+          },
+          {
+            "type": "GPU",
+            "pid": 176879,
+            "rssKiB": 177496
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 176883,
+            "rssKiB": 84540
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 176896,
+            "rssKiB": 40256
+          }
+        ],
+        "largestRendererRssKiB": 722160,
+        "processRssSumKiB": 1543004,
+        "gpuResidentKiB": 442296
+      },
+      "heap": {
+        "usedSize": 126376384,
+        "totalSize": 168816640,
+        "embedderHeapUsedSize": 24657192,
+        "backingStorageSize": 192336507
+      },
+      "gpu": [
+        {
+          "vendorId": 4098,
+          "deviceId": 5567,
+          "vendorString": "Google Inc. (AMD)",
+          "deviceString": "ANGLE (AMD, AMD Radeon 780M Graphics (radeonsi phoenix ACO), OpenGL ES 3.2 Mesa 26.2.3-arch1.1)",
+          "driverVendor": "Mesa",
+          "driverVersion": "26.2.3"
+        }
+      ]
+    },
+    {
+      "map": "York",
+      "workers": 4,
+      "trial": 1,
+      "elapsed": 7475.700000017881,
+      "activePeak": 4,
+      "peak": {
+        "largestRendererRssKiB": 1149884,
+        "processRssSumKiB": 2056496,
+        "gpuResidentKiB": 516032
+      },
+      "atLoad": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 177984,
+            "rssKiB": 257284
+          },
+          {
+            "type": "renderer",
+            "pid": 178158,
+            "rssKiB": 107108
+          },
+          {
+            "type": "renderer",
+            "pid": 178156,
+            "rssKiB": 72968
+          },
+          {
+            "type": "renderer",
+            "pid": 178136,
+            "rssKiB": 821892
+          },
+          {
+            "type": "renderer",
+            "pid": 178125,
+            "rssKiB": 146380
+          },
+          {
+            "type": "GPU",
+            "pid": 178048,
+            "rssKiB": 182956
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 178061,
+            "rssKiB": 84360
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 178096,
+            "rssKiB": 43604
+          }
+        ],
+        "largestRendererRssKiB": 821892,
+        "processRssSumKiB": 1716552,
+        "gpuResidentKiB": 516032
+      },
+      "settled": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 177984,
+            "rssKiB": 219588
+          },
+          {
+            "type": "renderer",
+            "pid": 178158,
+            "rssKiB": 107108
+          },
+          {
+            "type": "renderer",
+            "pid": 178156,
+            "rssKiB": 72968
+          },
+          {
+            "type": "renderer",
+            "pid": 178136,
+            "rssKiB": 732968
+          },
+          {
+            "type": "renderer",
+            "pid": 178125,
+            "rssKiB": 146380
+          },
+          {
+            "type": "GPU",
+            "pid": 178048,
+            "rssKiB": 183152
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 178061,
+            "rssKiB": 84384
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 178096,
+            "rssKiB": 43604
+          }
+        ],
+        "largestRendererRssKiB": 732968,
+        "processRssSumKiB": 1590152,
+        "gpuResidentKiB": 436992
+      },
+      "heap": {
+        "usedSize": 110705384,
+        "totalSize": 168292352,
+        "embedderHeapUsedSize": 16496288,
+        "backingStorageSize": 192351996
+      },
+      "gpu": [
+        {
+          "vendorId": 4098,
+          "deviceId": 5567,
+          "vendorString": "Google Inc. (AMD)",
+          "deviceString": "ANGLE (AMD, AMD Radeon 780M Graphics (radeonsi phoenix ACO), OpenGL ES 3.2 Mesa 26.2.3-arch1.1)",
+          "driverVendor": "Mesa",
+          "driverVersion": "26.2.3"
+        }
+      ]
+    },
+    {
+      "map": "Wychford",
+      "workers": 2,
+      "trial": 1,
+      "elapsed": 15835.399999976158,
+      "activePeak": 2,
+      "peak": {
+        "largestRendererRssKiB": 1851748,
+        "processRssSumKiB": 2775028,
+        "gpuResidentKiB": 1272460
+      },
+      "atLoad": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 179425,
+            "rssKiB": 202004
+          },
+          {
+            "type": "renderer",
+            "pid": 179547,
+            "rssKiB": 56084
+          },
+          {
+            "type": "renderer",
+            "pid": 179528,
+            "rssKiB": 1297572
+          },
+          {
+            "type": "renderer",
+            "pid": 179517,
+            "rssKiB": 108172
+          },
+          {
+            "type": "GPU",
+            "pid": 179455,
+            "rssKiB": 160168
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 179458,
+            "rssKiB": 68548
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 179497,
+            "rssKiB": 30300
+          }
+        ],
+        "largestRendererRssKiB": 1297572,
+        "processRssSumKiB": 1922848,
+        "gpuResidentKiB": 1270412
+      },
+      "settled": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 179425,
+            "rssKiB": 203852
+          },
+          {
+            "type": "renderer",
+            "pid": 179547,
+            "rssKiB": 55884
+          },
+          {
+            "type": "renderer",
+            "pid": 179528,
+            "rssKiB": 1284408
+          },
+          {
+            "type": "renderer",
+            "pid": 179517,
+            "rssKiB": 108188
+          },
+          {
+            "type": "GPU",
+            "pid": 179455,
+            "rssKiB": 164056
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 179458,
+            "rssKiB": 68296
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 179497,
+            "rssKiB": 30192
+          }
+        ],
+        "largestRendererRssKiB": 1284408,
+        "processRssSumKiB": 1914876,
+        "gpuResidentKiB": 1107188
+      },
+      "heap": {
+        "usedSize": 162889912,
+        "totalSize": 211353600,
+        "embedderHeapUsedSize": 41057656,
+        "backingStorageSize": 877330008
+      },
+      "gpu": [
+        {
+          "vendorId": 4098,
+          "deviceId": 5567,
+          "vendorString": "Google Inc. (AMD)",
+          "deviceString": "ANGLE (AMD, AMD Radeon 780M Graphics (radeonsi phoenix ACO), OpenGL ES 3.2 Mesa 26.2.3-arch1.1)",
+          "driverVendor": "Mesa",
+          "driverVersion": "26.2.3"
+        }
+      ]
+    },
+    {
+      "map": "Wychford",
+      "workers": 4,
+      "trial": 1,
+      "elapsed": 13205.799999982119,
+      "activePeak": 4,
+      "peak": {
+        "largestRendererRssKiB": 2349868,
+        "processRssSumKiB": 3284968,
+        "gpuResidentKiB": 1287376
+      },
+      "atLoad": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 180420,
+            "rssKiB": 217040
+          },
+          {
+            "type": "renderer",
+            "pid": 180542,
+            "rssKiB": 71048
+          },
+          {
+            "type": "renderer",
+            "pid": 180524,
+            "rssKiB": 1358900
+          },
+          {
+            "type": "renderer",
+            "pid": 180512,
+            "rssKiB": 142692
+          },
+          {
+            "type": "GPU",
+            "pid": 180449,
+            "rssKiB": 193684
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 180452,
+            "rssKiB": 84660
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 180491,
+            "rssKiB": 42116
+          }
+        ],
+        "largestRendererRssKiB": 1358900,
+        "processRssSumKiB": 2110140,
+        "gpuResidentKiB": 1287376
+      },
+      "settled": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 180420,
+            "rssKiB": 215540
+          },
+          {
+            "type": "renderer",
+            "pid": 180542,
+            "rssKiB": 71048
+          },
+          {
+            "type": "renderer",
+            "pid": 180524,
+            "rssKiB": 1352752
+          },
+          {
+            "type": "renderer",
+            "pid": 180512,
+            "rssKiB": 142648
+          },
+          {
+            "type": "GPU",
+            "pid": 180449,
+            "rssKiB": 198112
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 180452,
+            "rssKiB": 84600
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 180491,
+            "rssKiB": 42116
+          }
+        ],
+        "largestRendererRssKiB": 1352752,
+        "processRssSumKiB": 2106816,
+        "gpuResidentKiB": 1096276
+      },
+      "heap": {
+        "usedSize": 153726760,
+        "totalSize": 210423808,
+        "embedderHeapUsedSize": 38836776,
+        "backingStorageSize": 874309040
+      },
+      "gpu": [
+        {
+          "vendorId": 4098,
+          "deviceId": 5567,
+          "vendorString": "Google Inc. (AMD)",
+          "deviceString": "ANGLE (AMD, AMD Radeon 780M Graphics (radeonsi phoenix ACO), OpenGL ES 3.2 Mesa 26.2.3-arch1.1)",
+          "driverVendor": "Mesa",
+          "driverVersion": "26.2.3"
+        }
+      ]
+    },
+    {
+      "map": "York",
+      "workers": 4,
+      "trial": 2,
+      "elapsed": 9181.799999982119,
+      "activePeak": 4,
+      "peak": {
+        "largestRendererRssKiB": 1134356,
+        "processRssSumKiB": 2061412,
+        "gpuResidentKiB": 547044
+      },
+      "atLoad": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 181576,
+            "rssKiB": 219464
+          },
+          {
+            "type": "renderer",
+            "pid": 181707,
+            "rssKiB": 103460
+          },
+          {
+            "type": "renderer",
+            "pid": 181705,
+            "rssKiB": 70524
+          },
+          {
+            "type": "renderer",
+            "pid": 181690,
+            "rssKiB": 738552
+          },
+          {
+            "type": "renderer",
+            "pid": 181674,
+            "rssKiB": 144340
+          },
+          {
+            "type": "GPU",
+            "pid": 181605,
+            "rssKiB": 184084
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 181612,
+            "rssKiB": 86280
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 181626,
+            "rssKiB": 41624
+          }
+        ],
+        "largestRendererRssKiB": 738552,
+        "processRssSumKiB": 1588328,
+        "gpuResidentKiB": 547044
+      },
+      "settled": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 181576,
+            "rssKiB": 218968
+          },
+          {
+            "type": "renderer",
+            "pid": 181707,
+            "rssKiB": 103460
+          },
+          {
+            "type": "renderer",
+            "pid": 181705,
+            "rssKiB": 70524
+          },
+          {
+            "type": "renderer",
+            "pid": 181690,
+            "rssKiB": 643008
+          },
+          {
+            "type": "renderer",
+            "pid": 181674,
+            "rssKiB": 144340
+          },
+          {
+            "type": "GPU",
+            "pid": 181605,
+            "rssKiB": 184180
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 181612,
+            "rssKiB": 86280
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 181626,
+            "rssKiB": 41624
+          }
+        ],
+        "largestRendererRssKiB": 643008,
+        "processRssSumKiB": 1492384,
+        "gpuResidentKiB": 438016
+      },
+      "heap": {
+        "usedSize": 109011588,
+        "totalSize": 176680960,
+        "embedderHeapUsedSize": 39950344,
+        "backingStorageSize": 201048592
+      },
+      "gpu": [
+        {
+          "vendorId": 4098,
+          "deviceId": 5567,
+          "vendorString": "Google Inc. (AMD)",
+          "deviceString": "ANGLE (AMD, AMD Radeon 780M Graphics (radeonsi phoenix ACO), OpenGL ES 3.2 Mesa 26.2.3-arch1.1)",
+          "driverVendor": "Mesa",
+          "driverVersion": "26.2.3"
+        }
+      ]
+    },
+    {
+      "map": "York",
+      "workers": 2,
+      "trial": 2,
+      "elapsed": 9174.299999982119,
+      "activePeak": 2,
+      "peak": {
+        "largestRendererRssKiB": 1101304,
+        "processRssSumKiB": 2047908,
+        "gpuResidentKiB": 528104
+      },
+      "atLoad": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 182897,
+            "rssKiB": 220096
+          },
+          {
+            "type": "renderer",
+            "pid": 183040,
+            "rssKiB": 103208
+          },
+          {
+            "type": "renderer",
+            "pid": 183036,
+            "rssKiB": 70752
+          },
+          {
+            "type": "renderer",
+            "pid": 183000,
+            "rssKiB": 765980
+          },
+          {
+            "type": "renderer",
+            "pid": 182989,
+            "rssKiB": 142604
+          },
+          {
+            "type": "GPU",
+            "pid": 182925,
+            "rssKiB": 183580
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 182929,
+            "rssKiB": 87372
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 182940,
+            "rssKiB": 41944
+          }
+        ],
+        "largestRendererRssKiB": 765980,
+        "processRssSumKiB": 1615536,
+        "gpuResidentKiB": 528104
+      },
+      "settled": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 182897,
+            "rssKiB": 219888
+          },
+          {
+            "type": "renderer",
+            "pid": 183040,
+            "rssKiB": 103208
+          },
+          {
+            "type": "renderer",
+            "pid": 183036,
+            "rssKiB": 70752
+          },
+          {
+            "type": "renderer",
+            "pid": 183000,
+            "rssKiB": 762672
+          },
+          {
+            "type": "renderer",
+            "pid": 182989,
+            "rssKiB": 142604
+          },
+          {
+            "type": "GPU",
+            "pid": 182925,
+            "rssKiB": 182712
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 182929,
+            "rssKiB": 87376
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 182940,
+            "rssKiB": 41944
+          }
+        ],
+        "largestRendererRssKiB": 762672,
+        "processRssSumKiB": 1611156,
+        "gpuResidentKiB": 437676
+      },
+      "heap": {
+        "usedSize": 132093548,
+        "totalSize": 175894528,
+        "embedderHeapUsedSize": 39612096,
+        "backingStorageSize": 201026338
+      },
+      "gpu": [
+        {
+          "vendorId": 4098,
+          "deviceId": 5567,
+          "vendorString": "Google Inc. (AMD)",
+          "deviceString": "ANGLE (AMD, AMD Radeon 780M Graphics (radeonsi phoenix ACO), OpenGL ES 3.2 Mesa 26.2.3-arch1.1)",
+          "driverVendor": "Mesa",
+          "driverVersion": "26.2.3"
+        }
+      ]
+    },
+    {
+      "map": "Wychford",
+      "workers": 4,
+      "trial": 2,
+      "elapsed": 14318.09999999404,
+      "activePeak": 4,
+      "peak": {
+        "largestRendererRssKiB": 2437984,
+        "processRssSumKiB": 3378316,
+        "gpuResidentKiB": 1276280
+      },
+      "atLoad": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 184065,
+            "rssKiB": 213584
+          },
+          {
+            "type": "renderer",
+            "pid": 184190,
+            "rssKiB": 71624
+          },
+          {
+            "type": "renderer",
+            "pid": 184170,
+            "rssKiB": 1341228
+          },
+          {
+            "type": "renderer",
+            "pid": 184158,
+            "rssKiB": 143684
+          },
+          {
+            "type": "GPU",
+            "pid": 184094,
+            "rssKiB": 193600
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 184097,
+            "rssKiB": 85068
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 184127,
+            "rssKiB": 41940
+          }
+        ],
+        "largestRendererRssKiB": 1341228,
+        "processRssSumKiB": 2090728,
+        "gpuResidentKiB": 1276280
+      },
+      "settled": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 184065,
+            "rssKiB": 213296
+          },
+          {
+            "type": "renderer",
+            "pid": 184190,
+            "rssKiB": 71624
+          },
+          {
+            "type": "renderer",
+            "pid": 184170,
+            "rssKiB": 1337800
+          },
+          {
+            "type": "renderer",
+            "pid": 184158,
+            "rssKiB": 143684
+          },
+          {
+            "type": "GPU",
+            "pid": 184094,
+            "rssKiB": 198200
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 184097,
+            "rssKiB": 85068
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 184127,
+            "rssKiB": 41940
+          }
+        ],
+        "largestRendererRssKiB": 1337800,
+        "processRssSumKiB": 2091612,
+        "gpuResidentKiB": 1110456
+      },
+      "heap": {
+        "usedSize": 166489784,
+        "totalSize": 211759104,
+        "embedderHeapUsedSize": 38883448,
+        "backingStorageSize": 877314002
+      },
+      "gpu": [
+        {
+          "vendorId": 4098,
+          "deviceId": 5567,
+          "vendorString": "Google Inc. (AMD)",
+          "deviceString": "ANGLE (AMD, AMD Radeon 780M Graphics (radeonsi phoenix ACO), OpenGL ES 3.2 Mesa 26.2.3-arch1.1)",
+          "driverVendor": "Mesa",
+          "driverVersion": "26.2.3"
+        }
+      ]
+    },
+    {
+      "map": "Wychford",
+      "workers": 2,
+      "trial": 2,
+      "elapsed": 16440.5,
+      "activePeak": 2,
+      "peak": {
+        "largestRendererRssKiB": 1855544,
+        "processRssSumKiB": 2795120,
+        "gpuResidentKiB": 1271612
+      },
+      "atLoad": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 185044,
+            "rssKiB": 216252
+          },
+          {
+            "type": "renderer",
+            "pid": 185180,
+            "rssKiB": 71188
+          },
+          {
+            "type": "renderer",
+            "pid": 185161,
+            "rssKiB": 1363272
+          },
+          {
+            "type": "renderer",
+            "pid": 185150,
+            "rssKiB": 142524
+          },
+          {
+            "type": "GPU",
+            "pid": 185073,
+            "rssKiB": 196804
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 185076,
+            "rssKiB": 85124
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 185111,
+            "rssKiB": 41816
+          }
+        ],
+        "largestRendererRssKiB": 1363272,
+        "processRssSumKiB": 2116980,
+        "gpuResidentKiB": 1271612
+      },
+      "settled": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 185044,
+            "rssKiB": 215620
+          },
+          {
+            "type": "renderer",
+            "pid": 185180,
+            "rssKiB": 71188
+          },
+          {
+            "type": "renderer",
+            "pid": 185161,
+            "rssKiB": 1351684
+          },
+          {
+            "type": "renderer",
+            "pid": 185150,
+            "rssKiB": 142524
+          },
+          {
+            "type": "GPU",
+            "pid": 185073,
+            "rssKiB": 201336
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 185076,
+            "rssKiB": 85128
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 185111,
+            "rssKiB": 41816
+          }
+        ],
+        "largestRendererRssKiB": 1351684,
+        "processRssSumKiB": 2109296,
+        "gpuResidentKiB": 1109880
+      },
+      "heap": {
+        "usedSize": 131886168,
+        "totalSize": 209612800,
+        "embedderHeapUsedSize": 38894128,
+        "backingStorageSize": 873436264
+      },
+      "gpu": [
+        {
+          "vendorId": 4098,
+          "deviceId": 5567,
+          "vendorString": "Google Inc. (AMD)",
+          "deviceString": "ANGLE (AMD, AMD Radeon 780M Graphics (radeonsi phoenix ACO), OpenGL ES 3.2 Mesa 26.2.3-arch1.1)",
+          "driverVendor": "Mesa",
+          "driverVersion": "26.2.3"
+        }
+      ]
+    },
+    {
+      "map": "York",
+      "workers": 2,
+      "trial": 3,
+      "elapsed": 7776.300000011921,
+      "activePeak": 2,
+      "peak": {
+        "largestRendererRssKiB": 1018456,
+        "processRssSumKiB": 1901600,
+        "gpuResidentKiB": 531308
+      },
+      "atLoad": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 186062,
+            "rssKiB": 224448
+          },
+          {
+            "type": "renderer",
+            "pid": 186214,
+            "rssKiB": 102564
+          },
+          {
+            "type": "renderer",
+            "pid": 186212,
+            "rssKiB": 70128
+          },
+          {
+            "type": "renderer",
+            "pid": 186192,
+            "rssKiB": 751572
+          },
+          {
+            "type": "renderer",
+            "pid": 186181,
+            "rssKiB": 143492
+          },
+          {
+            "type": "GPU",
+            "pid": 186118,
+            "rssKiB": 182516
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 186121,
+            "rssKiB": 85088
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 186133,
+            "rssKiB": 41488
+          }
+        ],
+        "largestRendererRssKiB": 751572,
+        "processRssSumKiB": 1601296,
+        "gpuResidentKiB": 531308
+      },
+      "settled": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 186062,
+            "rssKiB": 215804
+          },
+          {
+            "type": "renderer",
+            "pid": 186214,
+            "rssKiB": 102564
+          },
+          {
+            "type": "renderer",
+            "pid": 186212,
+            "rssKiB": 70128
+          },
+          {
+            "type": "renderer",
+            "pid": 186192,
+            "rssKiB": 721184
+          },
+          {
+            "type": "renderer",
+            "pid": 186181,
+            "rssKiB": 143492
+          },
+          {
+            "type": "GPU",
+            "pid": 186118,
+            "rssKiB": 182196
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 186121,
+            "rssKiB": 85092
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 186133,
+            "rssKiB": 41488
+          }
+        ],
+        "largestRendererRssKiB": 721184,
+        "processRssSumKiB": 1561948,
+        "gpuResidentKiB": 441776
+      },
+      "heap": {
+        "usedSize": 110973480,
+        "totalSize": 165670912,
+        "embedderHeapUsedSize": 16405824,
+        "backingStorageSize": 192336263
+      },
+      "gpu": [
+        {
+          "vendorId": 4098,
+          "deviceId": 5567,
+          "vendorString": "Google Inc. (AMD)",
+          "deviceString": "ANGLE (AMD, AMD Radeon 780M Graphics (radeonsi phoenix ACO), OpenGL ES 3.2 Mesa 26.2.3-arch1.1)",
+          "driverVendor": "Mesa",
+          "driverVersion": "26.2.3"
+        }
+      ]
+    },
+    {
+      "map": "York",
+      "workers": 4,
+      "trial": 3,
+      "elapsed": 7549.9000000059605,
+      "activePeak": 4,
+      "peak": {
+        "largestRendererRssKiB": 1126852,
+        "processRssSumKiB": 2014180,
+        "gpuResidentKiB": 534616
+      },
+      "atLoad": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 187102,
+            "rssKiB": 225452
+          },
+          {
+            "type": "renderer",
+            "pid": 187226,
+            "rssKiB": 104464
+          },
+          {
+            "type": "renderer",
+            "pid": 187224,
+            "rssKiB": 72036
+          },
+          {
+            "type": "renderer",
+            "pid": 187205,
+            "rssKiB": 745336
+          },
+          {
+            "type": "renderer",
+            "pid": 187194,
+            "rssKiB": 143100
+          },
+          {
+            "type": "GPU",
+            "pid": 187129,
+            "rssKiB": 183712
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 187132,
+            "rssKiB": 84656
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 187171,
+            "rssKiB": 41772
+          }
+        ],
+        "largestRendererRssKiB": 745336,
+        "processRssSumKiB": 1600528,
+        "gpuResidentKiB": 534616
+      },
+      "settled": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 187102,
+            "rssKiB": 224944
+          },
+          {
+            "type": "renderer",
+            "pid": 187226,
+            "rssKiB": 104468
+          },
+          {
+            "type": "renderer",
+            "pid": 187224,
+            "rssKiB": 71620
+          },
+          {
+            "type": "renderer",
+            "pid": 187205,
+            "rssKiB": 744684
+          },
+          {
+            "type": "renderer",
+            "pid": 187194,
+            "rssKiB": 142228
+          },
+          {
+            "type": "GPU",
+            "pid": 187129,
+            "rssKiB": 183828
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 187132,
+            "rssKiB": 84604
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 187171,
+            "rssKiB": 41836
+          }
+        ],
+        "largestRendererRssKiB": 744684,
+        "processRssSumKiB": 1598212,
+        "gpuResidentKiB": 435468
+      },
+      "heap": {
+        "usedSize": 116117916,
+        "totalSize": 176943104,
+        "embedderHeapUsedSize": 40358928,
+        "backingStorageSize": 212987228
+      },
+      "gpu": [
+        {
+          "vendorId": 4098,
+          "deviceId": 5567,
+          "vendorString": "Google Inc. (AMD)",
+          "deviceString": "ANGLE (AMD, AMD Radeon 780M Graphics (radeonsi phoenix ACO), OpenGL ES 3.2 Mesa 26.2.3-arch1.1)",
+          "driverVendor": "Mesa",
+          "driverVersion": "26.2.3"
+        }
+      ]
+    },
+    {
+      "map": "Wychford",
+      "workers": 2,
+      "trial": 3,
+      "elapsed": 16880.29999998212,
+      "activePeak": 2,
+      "peak": {
+        "largestRendererRssKiB": 2005956,
+        "processRssSumKiB": 2833552,
+        "gpuResidentKiB": 1285244
+      },
+      "atLoad": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 188247,
+            "rssKiB": 207208
+          },
+          {
+            "type": "renderer",
+            "pid": 188372,
+            "rssKiB": 69812
+          },
+          {
+            "type": "renderer",
+            "pid": 188352,
+            "rssKiB": 1340920
+          },
+          {
+            "type": "renderer",
+            "pid": 188341,
+            "rssKiB": 140644
+          },
+          {
+            "type": "GPU",
+            "pid": 188277,
+            "rssKiB": 194688
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 188280,
+            "rssKiB": 84336
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 188319,
+            "rssKiB": 41056
+          }
+        ],
+        "largestRendererRssKiB": 1340920,
+        "processRssSumKiB": 2078664,
+        "gpuResidentKiB": 1285244
+      },
+      "settled": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 188247,
+            "rssKiB": 207652
+          },
+          {
+            "type": "renderer",
+            "pid": 188372,
+            "rssKiB": 69812
+          },
+          {
+            "type": "renderer",
+            "pid": 188352,
+            "rssKiB": 1339400
+          },
+          {
+            "type": "renderer",
+            "pid": 188341,
+            "rssKiB": 140644
+          },
+          {
+            "type": "GPU",
+            "pid": 188277,
+            "rssKiB": 198676
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 188280,
+            "rssKiB": 84380
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 188319,
+            "rssKiB": 41056
+          }
+        ],
+        "largestRendererRssKiB": 1339400,
+        "processRssSumKiB": 2081620,
+        "gpuResidentKiB": 1100944
+      },
+      "heap": {
+        "usedSize": 147941748,
+        "totalSize": 213356544,
+        "embedderHeapUsedSize": 38894152,
+        "backingStorageSize": 874289978
+      },
+      "gpu": [
+        {
+          "vendorId": 4098,
+          "deviceId": 5567,
+          "vendorString": "Google Inc. (AMD)",
+          "deviceString": "ANGLE (AMD, AMD Radeon 780M Graphics (radeonsi phoenix ACO), OpenGL ES 3.2 Mesa 26.2.3-arch1.1)",
+          "driverVendor": "Mesa",
+          "driverVersion": "26.2.3"
+        }
+      ]
+    },
+    {
+      "map": "Wychford",
+      "workers": 4,
+      "trial": 3,
+      "elapsed": 14620.199999988079,
+      "activePeak": 4,
+      "peak": {
+        "largestRendererRssKiB": 2407928,
+        "processRssSumKiB": 3373816,
+        "gpuResidentKiB": 1272968
+      },
+      "atLoad": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 189397,
+            "rssKiB": 216404
+          },
+          {
+            "type": "renderer",
+            "pid": 189560,
+            "rssKiB": 71308
+          },
+          {
+            "type": "renderer",
+            "pid": 189555,
+            "rssKiB": 1357160
+          },
+          {
+            "type": "renderer",
+            "pid": 189534,
+            "rssKiB": 141580
+          },
+          {
+            "type": "GPU",
+            "pid": 189439,
+            "rssKiB": 193544
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 189442,
+            "rssKiB": 84352
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 189493,
+            "rssKiB": 41868
+          }
+        ],
+        "largestRendererRssKiB": 1357160,
+        "processRssSumKiB": 2106216,
+        "gpuResidentKiB": 1272968
+      },
+      "settled": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 189397,
+            "rssKiB": 215992
+          },
+          {
+            "type": "renderer",
+            "pid": 189560,
+            "rssKiB": 71308
+          },
+          {
+            "type": "renderer",
+            "pid": 189555,
+            "rssKiB": 1347584
+          },
+          {
+            "type": "renderer",
+            "pid": 189534,
+            "rssKiB": 141584
+          },
+          {
+            "type": "GPU",
+            "pid": 189439,
+            "rssKiB": 198160
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 189442,
+            "rssKiB": 84356
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 189493,
+            "rssKiB": 41868
+          }
+        ],
+        "largestRendererRssKiB": 1347584,
+        "processRssSumKiB": 2100852,
+        "gpuResidentKiB": 1111904
+      },
+      "heap": {
+        "usedSize": 169935324,
+        "totalSize": 212287488,
+        "embedderHeapUsedSize": 38894608,
+        "backingStorageSize": 874248761
+      },
+      "gpu": [
+        {
+          "vendorId": 4098,
+          "deviceId": 5567,
+          "vendorString": "Google Inc. (AMD)",
+          "deviceString": "ANGLE (AMD, AMD Radeon 780M Graphics (radeonsi phoenix ACO), OpenGL ES 3.2 Mesa 26.2.3-arch1.1)",
+          "driverVendor": "Mesa",
+          "driverVersion": "26.2.3"
+        }
+      ]
+    },
+    {
+      "map": "York",
+      "workers": 4,
+      "pool": "4-small",
+      "trial": 1,
+      "elapsed": 7450.799999982119,
+      "activePeak": 4,
+      "peak": {
+        "largestRendererRssKiB": 1131196,
+        "processRssSumKiB": 2027952,
+        "gpuResidentKiB": 496172
+      },
+      "atLoad": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 196413,
+            "rssKiB": 219684
+          },
+          {
+            "type": "renderer",
+            "pid": 196551,
+            "rssKiB": 104808
+          },
+          {
+            "type": "renderer",
+            "pid": 196548,
+            "rssKiB": 72112
+          },
+          {
+            "type": "renderer",
+            "pid": 196532,
+            "rssKiB": 732564
+          },
+          {
+            "type": "renderer",
+            "pid": 196521,
+            "rssKiB": 143284
+          },
+          {
+            "type": "GPU",
+            "pid": 196445,
+            "rssKiB": 178172
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 196449,
+            "rssKiB": 84644
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 196481,
+            "rssKiB": 43644
+          }
+        ],
+        "largestRendererRssKiB": 732564,
+        "processRssSumKiB": 1578912,
+        "gpuResidentKiB": 496172
+      },
+      "settled": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 196413,
+            "rssKiB": 219140
+          },
+          {
+            "type": "renderer",
+            "pid": 196551,
+            "rssKiB": 104808
+          },
+          {
+            "type": "renderer",
+            "pid": 196548,
+            "rssKiB": 72112
+          },
+          {
+            "type": "renderer",
+            "pid": 196532,
+            "rssKiB": 732676
+          },
+          {
+            "type": "renderer",
+            "pid": 196521,
+            "rssKiB": 143284
+          },
+          {
+            "type": "GPU",
+            "pid": 196445,
+            "rssKiB": 177708
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 196449,
+            "rssKiB": 84648
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 196481,
+            "rssKiB": 43644
+          }
+        ],
+        "largestRendererRssKiB": 732676,
+        "processRssSumKiB": 1578020,
+        "gpuResidentKiB": 400176
+      },
+      "heap": {
+        "usedSize": 111086580,
+        "totalSize": 175894528,
+        "embedderHeapUsedSize": 39502584,
+        "backingStorageSize": 201039012
+      },
+      "gpu": [
+        {
+          "vendorId": 4098,
+          "deviceId": 5567,
+          "vendorString": "Google Inc. (AMD)",
+          "deviceString": "ANGLE (AMD, AMD Radeon 780M Graphics (radeonsi phoenix ACO), OpenGL ES 3.2 Mesa 26.2.3-arch1.1)",
+          "driverVendor": "Mesa",
+          "driverVersion": "26.2.3"
+        }
+      ]
+    },
+    {
+      "map": "York",
+      "workers": 4,
+      "pool": "4-small",
+      "trial": 2,
+      "elapsed": 7424.4000000059605,
+      "activePeak": 4,
+      "peak": {
+        "largestRendererRssKiB": 1119896,
+        "processRssSumKiB": 2010240,
+        "gpuResidentKiB": 505412
+      },
+      "atLoad": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 206967,
+            "rssKiB": 219268
+          },
+          {
+            "type": "renderer",
+            "pid": 207110,
+            "rssKiB": 102732
+          },
+          {
+            "type": "renderer",
+            "pid": 207101,
+            "rssKiB": 70608
+          },
+          {
+            "type": "renderer",
+            "pid": 207082,
+            "rssKiB": 750236
+          },
+          {
+            "type": "renderer",
+            "pid": 207065,
+            "rssKiB": 143900
+          },
+          {
+            "type": "GPU",
+            "pid": 206995,
+            "rssKiB": 176216
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 206998,
+            "rssKiB": 85240
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 207037,
+            "rssKiB": 41276
+          }
+        ],
+        "largestRendererRssKiB": 750236,
+        "processRssSumKiB": 1589476,
+        "gpuResidentKiB": 505412
+      },
+      "settled": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 206967,
+            "rssKiB": 218764
+          },
+          {
+            "type": "renderer",
+            "pid": 207110,
+            "rssKiB": 102740
+          },
+          {
+            "type": "renderer",
+            "pid": 207101,
+            "rssKiB": 70184
+          },
+          {
+            "type": "renderer",
+            "pid": 207082,
+            "rssKiB": 743716
+          },
+          {
+            "type": "renderer",
+            "pid": 207065,
+            "rssKiB": 142892
+          },
+          {
+            "type": "GPU",
+            "pid": 206995,
+            "rssKiB": 176528
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 206998,
+            "rssKiB": 85184
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 207037,
+            "rssKiB": 41276
+          }
+        ],
+        "largestRendererRssKiB": 743716,
+        "processRssSumKiB": 1581284,
+        "gpuResidentKiB": 414572
+      },
+      "heap": {
+        "usedSize": 111483464,
+        "totalSize": 175370240,
+        "embedderHeapUsedSize": 40785600,
+        "backingStorageSize": 209110134
+      },
+      "gpu": [
+        {
+          "vendorId": 4098,
+          "deviceId": 5567,
+          "vendorString": "Google Inc. (AMD)",
+          "deviceString": "ANGLE (AMD, AMD Radeon 780M Graphics (radeonsi phoenix ACO), OpenGL ES 3.2 Mesa 26.2.3-arch1.1)",
+          "driverVendor": "Mesa",
+          "driverVersion": "26.2.3"
+        }
+      ]
+    },
+    {
+      "map": "York",
+      "workers": 4,
+      "pool": "4-small",
+      "trial": 3,
+      "elapsed": 7185.100000023842,
+      "activePeak": 4,
+      "peak": {
+        "largestRendererRssKiB": 1076756,
+        "processRssSumKiB": 1946372,
+        "gpuResidentKiB": 504748
+      },
+      "atLoad": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 211240,
+            "rssKiB": 220428
+          },
+          {
+            "type": "renderer",
+            "pid": 211350,
+            "rssKiB": 97996
+          },
+          {
+            "type": "renderer",
+            "pid": 211339,
+            "rssKiB": 68756
+          },
+          {
+            "type": "renderer",
+            "pid": 211327,
+            "rssKiB": 744380
+          },
+          {
+            "type": "renderer",
+            "pid": 211316,
+            "rssKiB": 138820
+          },
+          {
+            "type": "GPU",
+            "pid": 211268,
+            "rssKiB": 177288
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 211272,
+            "rssKiB": 84240
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 211283,
+            "rssKiB": 41708
+          }
+        ],
+        "largestRendererRssKiB": 744380,
+        "processRssSumKiB": 1573616,
+        "gpuResidentKiB": 504748
+      },
+      "settled": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 211240,
+            "rssKiB": 219808
+          },
+          {
+            "type": "renderer",
+            "pid": 211350,
+            "rssKiB": 98000
+          },
+          {
+            "type": "renderer",
+            "pid": 211339,
+            "rssKiB": 68392
+          },
+          {
+            "type": "renderer",
+            "pid": 211327,
+            "rssKiB": 741956
+          },
+          {
+            "type": "renderer",
+            "pid": 211316,
+            "rssKiB": 137900
+          },
+          {
+            "type": "GPU",
+            "pid": 211268,
+            "rssKiB": 176636
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 211272,
+            "rssKiB": 84076
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 211283,
+            "rssKiB": 41708
+          }
+        ],
+        "largestRendererRssKiB": 741956,
+        "processRssSumKiB": 1568476,
+        "gpuResidentKiB": 405440
+      },
+      "heap": {
+        "usedSize": 111208852,
+        "totalSize": 176156672,
+        "embedderHeapUsedSize": 41749384,
+        "backingStorageSize": 214470043
+      },
+      "gpu": [
+        {
+          "vendorId": 4098,
+          "deviceId": 5567,
+          "vendorString": "Google Inc. (AMD)",
+          "deviceString": "ANGLE (AMD, AMD Radeon 780M Graphics (radeonsi phoenix ACO), OpenGL ES 3.2 Mesa 26.2.3-arch1.1)",
+          "driverVendor": "Mesa",
+          "driverVersion": "26.2.3"
+        }
+      ]
+    },
+    {
+      "map": "York",
+      "workers": 8,
+      "pool": "8-small",
+      "trial": 1,
+      "elapsed": 10284.800000011921,
+      "activePeak": 8,
+      "peak": {
+        "largestRendererRssKiB": 1245044,
+        "processRssSumKiB": 2135344,
+        "gpuResidentKiB": 498528
+      },
+      "atLoad": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 197780,
+            "rssKiB": 215920
+          },
+          {
+            "type": "renderer",
+            "pid": 197926,
+            "rssKiB": 103024
+          },
+          {
+            "type": "renderer",
+            "pid": 197915,
+            "rssKiB": 70364
+          },
+          {
+            "type": "renderer",
+            "pid": 197898,
+            "rssKiB": 721644
+          },
+          {
+            "type": "renderer",
+            "pid": 197887,
+            "rssKiB": 143244
+          },
+          {
+            "type": "GPU",
+            "pid": 197808,
+            "rssKiB": 178288
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 197814,
+            "rssKiB": 84916
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 197842,
+            "rssKiB": 41936
+          }
+        ],
+        "largestRendererRssKiB": 721644,
+        "processRssSumKiB": 1559336,
+        "gpuResidentKiB": 498528
+      },
+      "settled": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 197780,
+            "rssKiB": 215240
+          },
+          {
+            "type": "renderer",
+            "pid": 197926,
+            "rssKiB": 103024
+          },
+          {
+            "type": "renderer",
+            "pid": 197915,
+            "rssKiB": 70364
+          },
+          {
+            "type": "renderer",
+            "pid": 197898,
+            "rssKiB": 628112
+          },
+          {
+            "type": "renderer",
+            "pid": 197887,
+            "rssKiB": 143244
+          },
+          {
+            "type": "GPU",
+            "pid": 197808,
+            "rssKiB": 178588
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 197814,
+            "rssKiB": 84916
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 197842,
+            "rssKiB": 41936
+          }
+        ],
+        "largestRendererRssKiB": 628112,
+        "processRssSumKiB": 1465424,
+        "gpuResidentKiB": 411632
+      },
+      "heap": {
+        "usedSize": 110171276,
+        "totalSize": 178778112,
+        "embedderHeapUsedSize": 40493312,
+        "backingStorageSize": 192356860
+      },
+      "gpu": [
+        {
+          "vendorId": 4098,
+          "deviceId": 5567,
+          "vendorString": "Google Inc. (AMD)",
+          "deviceString": "ANGLE (AMD, AMD Radeon 780M Graphics (radeonsi phoenix ACO), OpenGL ES 3.2 Mesa 26.2.3-arch1.1)",
+          "driverVendor": "Mesa",
+          "driverVersion": "26.2.3"
+        }
+      ]
+    },
+    {
+      "map": "York",
+      "workers": 8,
+      "pool": "8-small",
+      "trial": 2,
+      "elapsed": 6762,
+      "activePeak": 8,
+      "peak": {
+        "largestRendererRssKiB": 1405744,
+        "processRssSumKiB": 2364916,
+        "gpuResidentKiB": 504248
+      },
+      "atLoad": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 206019,
+            "rssKiB": 232860
+          },
+          {
+            "type": "renderer",
+            "pid": 206169,
+            "rssKiB": 104476
+          },
+          {
+            "type": "renderer",
+            "pid": 206167,
+            "rssKiB": 71816
+          },
+          {
+            "type": "renderer",
+            "pid": 206152,
+            "rssKiB": 792504
+          },
+          {
+            "type": "renderer",
+            "pid": 206135,
+            "rssKiB": 145764
+          },
+          {
+            "type": "GPU",
+            "pid": 206071,
+            "rssKiB": 178268
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 206075,
+            "rssKiB": 84920
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 206088,
+            "rssKiB": 41580
+          }
+        ],
+        "largestRendererRssKiB": 792504,
+        "processRssSumKiB": 1652188,
+        "gpuResidentKiB": 504248
+      },
+      "settled": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 206019,
+            "rssKiB": 232392
+          },
+          {
+            "type": "renderer",
+            "pid": 206169,
+            "rssKiB": 104484
+          },
+          {
+            "type": "renderer",
+            "pid": 206167,
+            "rssKiB": 71404
+          },
+          {
+            "type": "renderer",
+            "pid": 206152,
+            "rssKiB": 786416
+          },
+          {
+            "type": "renderer",
+            "pid": 206135,
+            "rssKiB": 144744
+          },
+          {
+            "type": "GPU",
+            "pid": 206071,
+            "rssKiB": 178596
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 206075,
+            "rssKiB": 84848
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 206088,
+            "rssKiB": 41644
+          }
+        ],
+        "largestRendererRssKiB": 786416,
+        "processRssSumKiB": 1644528,
+        "gpuResidentKiB": 407516
+      },
+      "heap": {
+        "usedSize": 111655416,
+        "totalSize": 227012608,
+        "embedderHeapUsedSize": 41140136,
+        "backingStorageSize": 228299491
+      },
+      "gpu": [
+        {
+          "vendorId": 4098,
+          "deviceId": 5567,
+          "vendorString": "Google Inc. (AMD)",
+          "deviceString": "ANGLE (AMD, AMD Radeon 780M Graphics (radeonsi phoenix ACO), OpenGL ES 3.2 Mesa 26.2.3-arch1.1)",
+          "driverVendor": "Mesa",
+          "driverVersion": "26.2.3"
+        }
+      ]
+    },
+    {
+      "map": "York",
+      "workers": 8,
+      "pool": "8-small",
+      "trial": 3,
+      "elapsed": 6573.299999982119,
+      "activePeak": 8,
+      "peak": {
+        "largestRendererRssKiB": 1321472,
+        "processRssSumKiB": 2229144,
+        "gpuResidentKiB": 505608
+      },
+      "atLoad": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 212566,
+            "rssKiB": 253256
+          },
+          {
+            "type": "renderer",
+            "pid": 212701,
+            "rssKiB": 101296
+          },
+          {
+            "type": "renderer",
+            "pid": 212690,
+            "rssKiB": 69856
+          },
+          {
+            "type": "renderer",
+            "pid": 212674,
+            "rssKiB": 827576
+          },
+          {
+            "type": "renderer",
+            "pid": 212662,
+            "rssKiB": 141048
+          },
+          {
+            "type": "GPU",
+            "pid": 212598,
+            "rssKiB": 175312
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 212601,
+            "rssKiB": 83840
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 212632,
+            "rssKiB": 41764
+          }
+        ],
+        "largestRendererRssKiB": 827576,
+        "processRssSumKiB": 1693948,
+        "gpuResidentKiB": 505608
+      },
+      "settled": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 212566,
+            "rssKiB": 215228
+          },
+          {
+            "type": "renderer",
+            "pid": 212701,
+            "rssKiB": 101300
+          },
+          {
+            "type": "renderer",
+            "pid": 212690,
+            "rssKiB": 69432
+          },
+          {
+            "type": "renderer",
+            "pid": 212674,
+            "rssKiB": 726880
+          },
+          {
+            "type": "renderer",
+            "pid": 212662,
+            "rssKiB": 140044
+          },
+          {
+            "type": "GPU",
+            "pid": 212598,
+            "rssKiB": 175616
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 212601,
+            "rssKiB": 83696
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 212632,
+            "rssKiB": 41764
+          }
+        ],
+        "largestRendererRssKiB": 726880,
+        "processRssSumKiB": 1553960,
+        "gpuResidentKiB": 416312
+      },
+      "heap": {
+        "usedSize": 116980360,
+        "totalSize": 171700224,
+        "embedderHeapUsedSize": 16313080,
+        "backingStorageSize": 274481048
+      },
+      "gpu": [
+        {
+          "vendorId": 4098,
+          "deviceId": 5567,
+          "vendorString": "Google Inc. (AMD)",
+          "deviceString": "ANGLE (AMD, AMD Radeon 780M Graphics (radeonsi phoenix ACO), OpenGL ES 3.2 Mesa 26.2.3-arch1.1)",
+          "driverVendor": "Mesa",
+          "driverVersion": "26.2.3"
+        }
+      ]
+    },
+    {
+      "map": "Wychford",
+      "workers": 4,
+      "pool": "4-small",
+      "trial": 1,
+      "elapsed": 23111.5,
+      "activePeak": 4,
+      "peak": {
+        "largestRendererRssKiB": 1796680,
+        "processRssSumKiB": 2649436,
+        "gpuResidentKiB": 1271608
+      },
+      "atLoad": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 200708,
+            "rssKiB": 206744
+          },
+          {
+            "type": "renderer",
+            "pid": 200847,
+            "rssKiB": 70180
+          },
+          {
+            "type": "renderer",
+            "pid": 200827,
+            "rssKiB": 1328104
+          },
+          {
+            "type": "renderer",
+            "pid": 200816,
+            "rssKiB": 143392
+          },
+          {
+            "type": "GPU",
+            "pid": 200737,
+            "rssKiB": 208648
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 200754,
+            "rssKiB": 84404
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 200786,
+            "rssKiB": 41420
+          }
+        ],
+        "largestRendererRssKiB": 1328104,
+        "processRssSumKiB": 2082892,
+        "gpuResidentKiB": 1271608
+      },
+      "settled": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 200708,
+            "rssKiB": 206632
+          },
+          {
+            "type": "renderer",
+            "pid": 200847,
+            "rssKiB": 70180
+          },
+          {
+            "type": "renderer",
+            "pid": 200827,
+            "rssKiB": 1342276
+          },
+          {
+            "type": "renderer",
+            "pid": 200816,
+            "rssKiB": 143392
+          },
+          {
+            "type": "GPU",
+            "pid": 200737,
+            "rssKiB": 213008
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 200754,
+            "rssKiB": 84364
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 200786,
+            "rssKiB": 41420
+          }
+        ],
+        "largestRendererRssKiB": 1342276,
+        "processRssSumKiB": 2101272,
+        "gpuResidentKiB": 1096320
+      },
+      "heap": {
+        "usedSize": 160873500,
+        "totalSize": 221671424,
+        "embedderHeapUsedSize": 39091920,
+        "backingStorageSize": 874240210
+      },
+      "gpu": [
+        {
+          "vendorId": 4098,
+          "deviceId": 5567,
+          "vendorString": "Google Inc. (AMD)",
+          "deviceString": "ANGLE (AMD, AMD Radeon 780M Graphics (radeonsi phoenix ACO), OpenGL ES 3.2 Mesa 26.2.3-arch1.1)",
+          "driverVendor": "Mesa",
+          "driverVersion": "26.2.3"
+        }
+      ]
+    },
+    {
+      "map": "Wychford",
+      "workers": 4,
+      "pool": "4-small",
+      "trial": 2,
+      "elapsed": 19712.40000000596,
+      "activePeak": 4,
+      "peak": {
+        "largestRendererRssKiB": 1802192,
+        "processRssSumKiB": 2684168,
+        "gpuResidentKiB": 1293772
+      },
+      "atLoad": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 209834,
+            "rssKiB": 210644
+          },
+          {
+            "type": "renderer",
+            "pid": 209984,
+            "rssKiB": 69688
+          },
+          {
+            "type": "renderer",
+            "pid": 209969,
+            "rssKiB": 1337148
+          },
+          {
+            "type": "renderer",
+            "pid": 209953,
+            "rssKiB": 140184
+          },
+          {
+            "type": "GPU",
+            "pid": 209863,
+            "rssKiB": 208236
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 209866,
+            "rssKiB": 82244
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 209905,
+            "rssKiB": 41292
+          }
+        ],
+        "largestRendererRssKiB": 1337148,
+        "processRssSumKiB": 2089436,
+        "gpuResidentKiB": 1285564
+      },
+      "settled": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 209834,
+            "rssKiB": 208784
+          },
+          {
+            "type": "renderer",
+            "pid": 209984,
+            "rssKiB": 63952
+          },
+          {
+            "type": "renderer",
+            "pid": 209969,
+            "rssKiB": 1328624
+          },
+          {
+            "type": "renderer",
+            "pid": 209953,
+            "rssKiB": 124148
+          },
+          {
+            "type": "GPU",
+            "pid": 209863,
+            "rssKiB": 209820
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 209866,
+            "rssKiB": 82724
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 209905,
+            "rssKiB": 41232
+          }
+        ],
+        "largestRendererRssKiB": 1328624,
+        "processRssSumKiB": 2059284,
+        "gpuResidentKiB": 1097072
+      },
+      "heap": {
+        "usedSize": 195066080,
+        "totalSize": 231788544,
+        "embedderHeapUsedSize": 39092752,
+        "backingStorageSize": 874027867
+      },
+      "gpu": [
+        {
+          "vendorId": 4098,
+          "deviceId": 5567,
+          "vendorString": "Google Inc. (AMD)",
+          "deviceString": "ANGLE (AMD, AMD Radeon 780M Graphics (radeonsi phoenix ACO), OpenGL ES 3.2 Mesa 26.2.3-arch1.1)",
+          "driverVendor": "Mesa",
+          "driverVersion": "26.2.3"
+        }
+      ]
+    },
+    {
+      "map": "Wychford",
+      "workers": 4,
+      "pool": "4-small",
+      "trial": 3,
+      "elapsed": 18408.100000023842,
+      "activePeak": 4,
+      "peak": {
+        "largestRendererRssKiB": 1801464,
+        "processRssSumKiB": 2713428,
+        "gpuResidentKiB": 1266776
+      },
+      "atLoad": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 213557,
+            "rssKiB": 211800
+          },
+          {
+            "type": "renderer",
+            "pid": 213677,
+            "rssKiB": 70824
+          },
+          {
+            "type": "renderer",
+            "pid": 213660,
+            "rssKiB": 1340168
+          },
+          {
+            "type": "renderer",
+            "pid": 213649,
+            "rssKiB": 142228
+          },
+          {
+            "type": "GPU",
+            "pid": 213585,
+            "rssKiB": 197012
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 213588,
+            "rssKiB": 84768
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 213627,
+            "rssKiB": 41920
+          }
+        ],
+        "largestRendererRssKiB": 1340168,
+        "processRssSumKiB": 2088720,
+        "gpuResidentKiB": 1266776
+      },
+      "settled": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 213557,
+            "rssKiB": 211364
+          },
+          {
+            "type": "renderer",
+            "pid": 213677,
+            "rssKiB": 70824
+          },
+          {
+            "type": "renderer",
+            "pid": 213660,
+            "rssKiB": 1337656
+          },
+          {
+            "type": "renderer",
+            "pid": 213649,
+            "rssKiB": 142228
+          },
+          {
+            "type": "GPU",
+            "pid": 213585,
+            "rssKiB": 200732
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 213588,
+            "rssKiB": 84780
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 213627,
+            "rssKiB": 41920
+          }
+        ],
+        "largestRendererRssKiB": 1337656,
+        "processRssSumKiB": 2089504,
+        "gpuResidentKiB": 1106600
+      },
+      "heap": {
+        "usedSize": 150523796,
+        "totalSize": 211107840,
+        "embedderHeapUsedSize": 38818880,
+        "backingStorageSize": 873878467
+      },
+      "gpu": [
+        {
+          "vendorId": 4098,
+          "deviceId": 5567,
+          "vendorString": "Google Inc. (AMD)",
+          "deviceString": "ANGLE (AMD, AMD Radeon 780M Graphics (radeonsi phoenix ACO), OpenGL ES 3.2 Mesa 26.2.3-arch1.1)",
+          "driverVendor": "Mesa",
+          "driverVersion": "26.2.3"
+        }
+      ]
+    },
+    {
+      "map": "Wychford",
+      "workers": 8,
+      "pool": "8-small",
+      "trial": 1,
+      "elapsed": 21282.30000001192,
+      "activePeak": 7,
+      "peak": {
+        "largestRendererRssKiB": 2016572,
+        "processRssSumKiB": 2974360,
+        "gpuResidentKiB": 1264504
+      },
+      "atLoad": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 202489,
+            "rssKiB": 205264
+          },
+          {
+            "type": "renderer",
+            "pid": 202615,
+            "rssKiB": 73240
+          },
+          {
+            "type": "renderer",
+            "pid": 202595,
+            "rssKiB": 1345944
+          },
+          {
+            "type": "renderer",
+            "pid": 202584,
+            "rssKiB": 143468
+          },
+          {
+            "type": "GPU",
+            "pid": 202521,
+            "rssKiB": 209096
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 202524,
+            "rssKiB": 84052
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 202554,
+            "rssKiB": 43740
+          }
+        ],
+        "largestRendererRssKiB": 1345944,
+        "processRssSumKiB": 2104804,
+        "gpuResidentKiB": 1264504
+      },
+      "settled": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 202489,
+            "rssKiB": 204372
+          },
+          {
+            "type": "renderer",
+            "pid": 202615,
+            "rssKiB": 73240
+          },
+          {
+            "type": "renderer",
+            "pid": 202595,
+            "rssKiB": 1342356
+          },
+          {
+            "type": "renderer",
+            "pid": 202584,
+            "rssKiB": 143468
+          },
+          {
+            "type": "GPU",
+            "pid": 202521,
+            "rssKiB": 213924
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 202524,
+            "rssKiB": 83944
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 202554,
+            "rssKiB": 43740
+          }
+        ],
+        "largestRendererRssKiB": 1342356,
+        "processRssSumKiB": 2105044,
+        "gpuResidentKiB": 1094540
+      },
+      "heap": {
+        "usedSize": 171363144,
+        "totalSize": 221138944,
+        "embedderHeapUsedSize": 39095000,
+        "backingStorageSize": 874362539
+      },
+      "gpu": [
+        {
+          "vendorId": 4098,
+          "deviceId": 5567,
+          "vendorString": "Google Inc. (AMD)",
+          "deviceString": "ANGLE (AMD, AMD Radeon 780M Graphics (radeonsi phoenix ACO), OpenGL ES 3.2 Mesa 26.2.3-arch1.1)",
+          "driverVendor": "Mesa",
+          "driverVersion": "26.2.3"
+        }
+      ]
+    },
+    {
+      "map": "Wychford",
+      "workers": 8,
+      "pool": "8-small",
+      "trial": 2,
+      "elapsed": 20308.69999998808,
+      "activePeak": 7,
+      "peak": {
+        "largestRendererRssKiB": 1929728,
+        "processRssSumKiB": 2812460,
+        "gpuResidentKiB": 1284624
+      },
+      "atLoad": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 208374,
+            "rssKiB": 212160
+          },
+          {
+            "type": "renderer",
+            "pid": 208500,
+            "rssKiB": 71360
+          },
+          {
+            "type": "renderer",
+            "pid": 208481,
+            "rssKiB": 1344116
+          },
+          {
+            "type": "renderer",
+            "pid": 208470,
+            "rssKiB": 141732
+          },
+          {
+            "type": "GPU",
+            "pid": 208406,
+            "rssKiB": 209684
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 208409,
+            "rssKiB": 86416
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 208444,
+            "rssKiB": 41888
+          }
+        ],
+        "largestRendererRssKiB": 1344116,
+        "processRssSumKiB": 2107356,
+        "gpuResidentKiB": 1284624
+      },
+      "settled": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 208374,
+            "rssKiB": 211292
+          },
+          {
+            "type": "renderer",
+            "pid": 208500,
+            "rssKiB": 71360
+          },
+          {
+            "type": "renderer",
+            "pid": 208481,
+            "rssKiB": 1342580
+          },
+          {
+            "type": "renderer",
+            "pid": 208470,
+            "rssKiB": 141732
+          },
+          {
+            "type": "GPU",
+            "pid": 208406,
+            "rssKiB": 214084
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 208409,
+            "rssKiB": 86280
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 208444,
+            "rssKiB": 41888
+          }
+        ],
+        "largestRendererRssKiB": 1342580,
+        "processRssSumKiB": 2109216,
+        "gpuResidentKiB": 1099296
+      },
+      "heap": {
+        "usedSize": 159346080,
+        "totalSize": 225308672,
+        "embedderHeapUsedSize": 39085088,
+        "backingStorageSize": 874144444
+      },
+      "gpu": [
+        {
+          "vendorId": 4098,
+          "deviceId": 5567,
+          "vendorString": "Google Inc. (AMD)",
+          "deviceString": "ANGLE (AMD, AMD Radeon 780M Graphics (radeonsi phoenix ACO), OpenGL ES 3.2 Mesa 26.2.3-arch1.1)",
+          "driverVendor": "Mesa",
+          "driverVersion": "26.2.3"
+        }
+      ]
+    },
+    {
+      "map": "Wychford",
+      "workers": 8,
+      "pool": "8-small",
+      "trial": 3,
+      "elapsed": 18430.30000001192,
+      "activePeak": 6,
+      "peak": {
+        "largestRendererRssKiB": 1957556,
+        "processRssSumKiB": 2893412,
+        "gpuResidentKiB": 1290472
+      },
+      "atLoad": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 214631,
+            "rssKiB": 209112
+          },
+          {
+            "type": "renderer",
+            "pid": 214777,
+            "rssKiB": 71324
+          },
+          {
+            "type": "renderer",
+            "pid": 214758,
+            "rssKiB": 1349876
+          },
+          {
+            "type": "renderer",
+            "pid": 214747,
+            "rssKiB": 143472
+          },
+          {
+            "type": "GPU",
+            "pid": 214660,
+            "rssKiB": 197444
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 214663,
+            "rssKiB": 86636
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 214722,
+            "rssKiB": 43204
+          }
+        ],
+        "largestRendererRssKiB": 1349876,
+        "processRssSumKiB": 2101068,
+        "gpuResidentKiB": 1290472
+      },
+      "settled": {
+        "processes": [
+          {
+            "type": "browser",
+            "pid": 214631,
+            "rssKiB": 209248
+          },
+          {
+            "type": "renderer",
+            "pid": 214777,
+            "rssKiB": 71324
+          },
+          {
+            "type": "renderer",
+            "pid": 214758,
+            "rssKiB": 1341960
+          },
+          {
+            "type": "renderer",
+            "pid": 214747,
+            "rssKiB": 143472
+          },
+          {
+            "type": "GPU",
+            "pid": 214660,
+            "rssKiB": 200680
+          },
+          {
+            "type": "network.mojom.NetworkService",
+            "pid": 214663,
+            "rssKiB": 86576
+          },
+          {
+            "type": "storage.mojom.StorageService",
+            "pid": 214722,
+            "rssKiB": 43204
+          }
+        ],
+        "largestRendererRssKiB": 1341960,
+        "processRssSumKiB": 2096464,
+        "gpuResidentKiB": 1097900
+      },
+      "heap": {
+        "usedSize": 160531816,
+        "totalSize": 209670144,
+        "embedderHeapUsedSize": 38836784,
+        "backingStorageSize": 873883750
+      },
+      "gpu": [
+        {
+          "vendorId": 4098,
+          "deviceId": 5567,
+          "vendorString": "Google Inc. (AMD)",
+          "deviceString": "ANGLE (AMD, AMD Radeon 780M Graphics (radeonsi phoenix ACO), OpenGL ES 3.2 Mesa 26.2.3-arch1.1)",
+          "driverVendor": "Mesa",
+          "driverVersion": "26.2.3"
+        }
+      ]
+    }
+  ],
+  "sizeAwarePolicy": "Pools ending in -small reserve one worker for textures above 2048*2048 pixels. Other workers never receive larger images, bounding their lifetime WASM heap growth. The reserved worker may also handle small jobs. These configurations were measured in a second batch after the uniform-worker comparison."
+}

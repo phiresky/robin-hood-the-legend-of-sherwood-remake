@@ -112,3 +112,60 @@ save-during-edit and unmount-during-load. Final tracked GPU resources, listeners
 observers and animation frames were zero. The default full fixture currently
 fails its interactive river assertion (`River control points were not saved`);
 that fixture remains enabled in the default run.
+
+## Two versus four workers
+
+Run `node level-editor/benchmarks/bc7f/worker-pool.mjs` from the repository root.
+This starts its own Vite server and fresh hardware Chromium profiles, changing
+only the served encoder worker limit. It checks that the requested number of
+encoders became active, disables HMR, and leaves application files untouched.
+`BENCH_TRIALS` defaults to three. Detailed ~100 ms memory samples go to the ignored
+`work/bc7f-benchmark/worker-pool` directory. `worker-pool-results.json` retains
+the compact results. No separate codec warmup runs before these measurements.
+
+Three trials per configuration, alternating order, on the same Radeon 780M:
+
+| Map | Workers | Median load | Median peak renderer RSS | Median peak GPU resident |
+| --- | ---: | ---: | ---: | ---: |
+| York | 2 | 7.85 s | 1,015 MiB | 516 MiB |
+| York | 4 | 7.55 s | 1,108 MiB | 522 MiB |
+| Wychford | 2 | 16.44 s | 1,812 MiB | 1,243 MiB |
+| Wychford | 4 | 14.32 s | 2,351 MiB | 1,246 MiB |
+
+Four workers saved about 0.30 seconds (4%) on York and 2.12 seconds (13%) on
+Wychford, at roughly 92 MiB and 539 MiB additional peak renderer RSS respectively.
+York's second trial was effectively tied at 9.18 seconds; three trials on a live
+development machine do not establish a precise speedup. Wychford improved in all
+three pairs. The retained default is two workers because reducing peak memory is
+the primary goal. GPU resident memory was effectively unchanged, as expected for
+the same encoded textures. The extra CPU allocation is mostly temporary; workers
+are terminated when loading finishes. Sampled peaks may miss shorter spikes, and
+RSS/GPU counters must not be added together as unique physical memory.
+
+### One large-texture worker with additional small-texture workers
+
+`BENCH_POOLS=4-small,8-small node level-editor/benchmarks/bc7f/worker-pool.mjs`
+tests the size-aware variant without changing production code. Only worker zero
+may take textures above 2048² pixels; the remaining workers never grow their
+WASM heaps for larger images. The large worker also accepts small jobs when no
+large job is queued. Small jobs can pass queued large jobs. `BENCH_START_TRIAL`
+allows resuming a batch without replacing earlier per-trial artifacts.
+
+Three additional trials per configuration, measured after the uniform pools:
+
+| Map | Pool | Median load | Median peak renderer RSS |
+| --- | --- | ---: | ---: |
+| York | 1 large + 3 small | 7.42 s | 1,094 MiB |
+| York | 1 large + 7 small | 6.76 s | 1,290 MiB |
+| Wychford | 1 large + 3 small | 19.71 s | 1,759 MiB |
+| Wychford | 1 large + 7 small | 20.31 s | 1,912 MiB |
+
+The size limit prevents all workers retaining large-image allocations, but
+serializing Wychford's large atlases slows loading. Four size-aware workers saved
+only about 53 MiB of peak renderer RSS against two unrestricted workers, while
+adding 3.27 seconds to the median load. Eight workers helped York, with about
+275 MiB more peak renderer RSS than the two-worker default. They did not help
+Wychford. These small samples vary substantially (Wychford's four-worker limited
+runs were 23.11, 19.71 and 18.41 seconds), so exact speedups are provisional.
+The production default remains two unrestricted workers; the size-aware policy
+is retained only in the benchmark for further tuning.
