@@ -29,7 +29,7 @@ export async function createNewMap(
 
   const document = parseLevel3D({
     version: 1,
-    lighting: { ...DEFAULT_LIGHTING },
+    lighting: { ...DEFAULT_LIGHTING, enabled: true },
     map: name,
     size: [...options.size],
     terrain: createTerrainGrid(

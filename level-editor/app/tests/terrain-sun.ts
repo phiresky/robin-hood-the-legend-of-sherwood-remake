@@ -11,6 +11,7 @@ export function checkTerrainSunShadows() {
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   const target = new THREE.WebGLRenderTarget(128, 128);
+  target.texture.colorSpace = THREE.SRGBColorSpace;
   const scene = new THREE.Scene();
   const terrain = new TerrainLayer();
   terrain.sync({
@@ -46,6 +47,36 @@ export function checkTerrainSunShadows() {
     const litWithoutShadows = render();
     if (litWithoutShadows.some((value, i) => Math.abs(value - without[i]!) > 1))
       throw new Error("Enabling sun changes unshadowed flat terrain color");
+    sun.sun.shadow.intensity = 1;
+    const opaqueShadows = render();
+    const shadowColor = new THREE.Color(0x000000).toArray().map((v) => Math.round(v * 255));
+    let opaquePixels = 0;
+    for (let i = 0; i < opaqueShadows.length; i += 4)
+      if (shadowColor.every((value, channel) => Math.abs(opaqueShadows[i + channel]! - value) <= 1))
+        opaquePixels++;
+    if (opaquePixels < 50)
+      throw new Error(`Full-strength terrain shadows are not opaque (${opaquePixels} pixels)`);
+    sun.sun.shadow.intensity = 0.4;
+    const partialShadows = render();
+    // Compare against the same black overlay used on built-in ground, including
+    // the render target's color-space conversion and framebuffer blending.
+    terrain.root.traverse((node) => {
+      if (node instanceof THREE.Mesh) {
+        node.userData.terrainSurface = false;
+        node.receiveShadow = false;
+      }
+    });
+    sun.setGround(terrain.root);
+    const overlayShadows = render();
+    terrain.root.traverse((node) => {
+      if (node instanceof THREE.Mesh) {
+        node.userData.terrainSurface = true;
+        node.receiveShadow = true;
+      }
+    });
+    sun.setGround(terrain.root);
+    if (partialShadows.some((value, i) => Math.abs(value - overlayShadows[i]!) > 2))
+      throw new Error("Forty percent terrain shadows differ from neutral black overlay opacity");
     sun.sun.shadow.intensity = 0.7;
     const withShadows = render();
     let darkened = 0;
@@ -76,6 +107,24 @@ export function checkTerrainSunShadows() {
       if (Math.abs(flatUnshadowed[i]! - flatShadowed[i]!) > 1) flatDarkened++;
     if (flatDarkened > 5)
       throw new Error(`Empty flat terrain shadows itself (${flatDarkened} pixels)`);
+    for (const sunElevation of [10, 35, 48, 85]) {
+      sun.sync(
+        { enabled: false, sunAzimuth: 305, sunElevation, shadowOpacity: 0.4 },
+        [terrain.root],
+        new THREE.Box3().setFromObject(terrain.root),
+      );
+      const flatDisabled = render();
+      sun.sync(
+        { enabled: true, sunAzimuth: 305, sunElevation, shadowOpacity: 0.4 },
+        [terrain.root],
+        new THREE.Box3().setFromObject(terrain.root),
+      );
+      const flatEnabled = render();
+      if (flatEnabled.some((value, i) => Math.abs(value - flatDisabled[i]!) > 1))
+        throw new Error(
+          `Enabling default shadows changes flat terrain at elevation ${sunElevation}`,
+        );
+    }
     const ridge = createTerrainGrid([0, 0, 400, 400], 50, 0);
     for (const vertex of ridge.vertices) if (vertex.position[0] === 250) vertex.position[2] = 120;
     terrain.sync({

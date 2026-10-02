@@ -9,7 +9,7 @@ export class SunLighting {
   readonly ambient = new THREE.AmbientLight(0xffffff, Math.PI);
   private receiver: THREE.Object3D | null = null;
   private material = new THREE.ShadowMaterial({
-    color: 0x26303a,
+    color: 0x000000,
     side: THREE.DoubleSide,
     depthWrite: false,
     polygonOffset: true,

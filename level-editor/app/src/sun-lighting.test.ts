@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
-import { parseLevel3D, type Level3D } from "@rle/shared";
+import { DEFAULT_LIGHTING, levelLighting, parseLevel3D, type Level3D } from "@rle/shared";
 import { SunLighting } from "./sun-lighting.ts";
 
 const settings = { enabled: true, sunAzimuth: 90, sunElevation: 45, shadowOpacity: 0.5 };
@@ -29,6 +29,7 @@ test("sun direction, caster exclusions, and borrowed terrain resource ownership"
   assert.equal(lighting.sun.shadow.intensity, settings.shadowOpacity);
   const receiver = lighting.root.children.find((node) => node instanceof THREE.Mesh) as THREE.Mesh;
   assert.equal((receiver.material as THREE.ShadowMaterial).opacity, 1);
+  assert.equal((receiver.material as THREE.ShadowMaterial).color.getHex(), 0);
   lighting.sync({ ...settings, enabled: false }, [caster, water], new THREE.Box3());
   assert.equal(lighting.sun.visible, false);
   assert.equal(receiver.visible, false);
@@ -60,13 +61,21 @@ test("lighting settings round-trip and reject out-of-range solar controls", () =
     );
 });
 
-test("missing lighting enables full-strength sunlight while explicit off is retained", () => {
+test("missing lighting disables sunlight while explicit on is retained", () => {
   const lighting = new SunLighting();
   const bounds = new THREE.Box3(new THREE.Vector3(0, 0, 0), new THREE.Vector3(100, 100, 20));
   lighting.sync(undefined, [], bounds);
-  assert.equal(lighting.sun.visible, true);
-  assert.equal(lighting.sun.shadow.intensity, 1);
-  lighting.sync({ ...settings, enabled: false }, [], bounds);
   assert.equal(lighting.sun.visible, false);
+  assert.equal(DEFAULT_LIGHTING.shadowOpacity, 0.4);
+  lighting.sync({ ...settings, enabled: true }, [], bounds);
+  assert.equal(lighting.sun.visible, true);
   lighting.dispose();
+});
+
+test("only built-in maps default to disabled sunlight, with forty percent neutral shadows", () => {
+  assert.equal(levelLighting({ sourceMap: "Derby" }).enabled, false);
+  assert.deepEqual(levelLighting({}), { ...DEFAULT_LIGHTING, enabled: true });
+  assert.equal(levelLighting({}).shadowOpacity, 0.4);
+  assert.deepEqual(levelLighting({ sourceMap: "Derby", lighting: settings }), settings);
+  assert.equal(levelLighting({ lighting: { ...settings, enabled: false } }).enabled, false);
 });

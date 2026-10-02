@@ -34,7 +34,7 @@ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import {
-  DEFAULT_LIGHTING,
+  levelLighting,
   sceneToGame,
   sceneToMap,
   groundToScene,
@@ -120,14 +120,14 @@ export class EditorViewport {
       document.camera,
       compiled.bounds,
       transitions,
-      !!document.lighting?.enabled,
+      levelLighting(document).enabled,
     );
     const render = () =>
       renderMapBake(
         root,
         document.camera,
         compiled.bounds,
-        document.lighting,
+        levelLighting(document),
         this.ground,
         maskOcclusionObjects(document, assets),
       );
@@ -165,7 +165,7 @@ export class EditorViewport {
       document.camera,
       compiled.bounds,
       transitions,
-      !!document.lighting?.enabled,
+      levelLighting(document).enabled,
     );
     const total = 1 + plans.reduce((sum, plan) => sum + 2 ** plan.patches.length - 1, 0);
     const excluded = maskOcclusionObjects(document, assets);
@@ -175,7 +175,7 @@ export class EditorViewport {
         root,
         document.camera,
         compiled.bounds,
-        document.lighting,
+        levelLighting(document),
         this.ground,
         excluded,
         (tile) =>
@@ -1795,7 +1795,7 @@ export class EditorViewport {
   }
 
   private refreshSunLighting(document = this.bindings.document(), bounds = this.contentBox()) {
-    const settings = document?.lighting ?? DEFAULT_LIGHTING;
+    const settings = levelLighting(document);
     this.sunlight.sync(settings, [this.objectsRoot, this.splines.root, this.terrain.root], bounds);
     if (this.renderer) {
       this.renderer.shadowMap.enabled = settings.enabled;

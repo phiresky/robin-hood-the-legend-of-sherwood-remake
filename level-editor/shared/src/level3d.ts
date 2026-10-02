@@ -459,8 +459,15 @@ export function partMatrix(cam: MapCamera, doc: Level3D, o: Level3DObject): numb
 
 /** Lighting used by maps that do not yet store explicit sun settings. */
 export const DEFAULT_LIGHTING: Readonly<NonNullable<Level3D["lighting"]>> = Object.freeze({
-  enabled: true,
+  enabled: false,
   sunAzimuth: 305,
   sunElevation: 48,
-  shadowOpacity: 1,
+  shadowOpacity: 0.4,
 });
+
+/** Built-in artwork already contains lighting; authored maps start with sunlight. */
+export function levelLighting(
+  document: Pick<Level3D, "lighting" | "sourceMap"> | null | undefined,
+): NonNullable<Level3D["lighting"]> {
+  return document?.lighting ?? { ...DEFAULT_LIGHTING, enabled: !!document && !document.sourceMap };
+}

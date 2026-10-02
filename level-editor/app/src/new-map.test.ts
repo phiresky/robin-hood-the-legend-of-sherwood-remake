@@ -38,6 +38,8 @@ test("new maps persist a sized workspace with continuous editable ground", async
   assert.equal(await createNewMap(root, "  New forest  "), "New forest");
   const doc = parseLevel3D(JSON.parse(String(files.get("New forest.rhlos-map.json"))));
   assert.deepEqual(doc.size, [1920, 1088]);
+  assert.equal(doc.lighting?.enabled, true);
+  assert.equal(doc.lighting?.shadowOpacity, 0.4);
   assert.ok(doc.terrain?.vertices.length);
   assert.ok(doc.terrain?.cells.every((cell) => cell.material === "grass_short"));
   assert.equal(doc.exportBounds, undefined);

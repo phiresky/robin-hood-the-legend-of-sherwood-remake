@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { sceneToMap, type MapCamera } from "@rle/shared";
+import { DEFAULT_LIGHTING, sceneToMap, type MapCamera } from "@rle/shared";
 import { stableOpaqueSort } from "./render-order.ts";
 import { TextureDisplay } from "./texture-display.ts";
 import { SunLighting } from "./sun-lighting.ts";
@@ -213,7 +213,7 @@ function* mapBakeTiles(
     if (box.isEmpty()) throw new Error("The map has no renderable geometry.");
     sunlight.setGround(ground ?? null);
     sunlight.sync(lighting, [root], box);
-    renderer.shadowMap.enabled = lighting?.enabled ?? true;
+    renderer.shadowMap.enabled = lighting?.enabled ?? DEFAULT_LIGHTING.enabled;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     // Every tile sees the same scene and full-map light camera; rebuild once per appearance.
     renderer.shadowMap.autoUpdate = false;

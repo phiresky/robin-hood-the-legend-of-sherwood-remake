@@ -197,8 +197,23 @@ export class TerrainLayer {
                 "#include <map_fragment>",
                 "diffuseColor *= vec4(mix(texture2D(terrainMapA,vTerrainSurfaceUv).rgb,texture2D(terrainImage,vMapUv).rgb,terrainSource.x)*vTerrainWeights.x + mix(texture2D(terrainMapB,vTerrainSurfaceUv).rgb,texture2D(terrainImage,vMapUv).rgb,terrainSource.y)*vTerrainWeights.y + mix(texture2D(terrainMapC,vTerrainSurfaceUv).rgb,texture2D(terrainImage,vMapUv).rgb,terrainSource.z)*vTerrainWeights.z, 1.0);",
               );
+            // Apply shadow strength once to the complete lit color, including ambient light.
+            // Match black overlay blending in output color space, while retaining normal bias.
+            shader.fragmentShader = shader.fragmentShader
+              .replace(
+                "#include <shadowmap_pars_fragment>",
+                "#include <shadowmap_pars_fragment>\n#include <shadowmask_pars_fragment>",
+              )
+              .replace(
+                "#include <lights_fragment_begin>",
+                THREE.ShaderChunk.lights_fragment_begin.replaceAll("&& receiveShadow", "&& false"),
+              )
+              .replace(
+                "#include <colorspace_fragment>",
+                "#include <colorspace_fragment>\ngl_FragColor.rgb *= getShadowMask();",
+              );
           };
-          material.customProgramCacheKey = () => "terrain-blend-v1";
+          material.customProgramCacheKey = () => "terrain-blend-v2";
         }
         this.resources.push(material);
         this.materialCache.set(batch.materialKey, material);
