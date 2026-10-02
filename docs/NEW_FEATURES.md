@@ -1,5 +1,11 @@
 # Post-port Features
 
+- **Terrain-aware ordinary passages.** Each endpoint of an ordinary passage can
+  attach within an authored local segment, following the current terrain while
+  retaining its permissions and transition links. Ambiguous or unreachable
+  endpoints warn during best-effort export; cropped destinations are omitted.
+  Native tests check approaches from both sides and preserved lock rules.
+
 - **Editor-owned interior connections.** The Assets inspector can link rooms in
   separate placed assets. Links survive movement, saving and editable exports.
   Multiple doors in one asset room remain connected automatically; distinct
@@ -21,7 +27,7 @@
   are reported rather than attached to an arbitrary layer.
   A repeatable asset-authoring command applies explicit attachment recipes,
   checks local anchors, preserves unrelated features and updates saved-scene
-  pins with rollback snapshots. Thirteen library assets include reviewed rules.
+  pins with rollback snapshots. Fifteen library assets include reviewed rules.
   Physical projection receivers can also select terrain through bounded local
   segments, retaining their own top planes and materials without adding movement
   boundaries. Native tests cover receiving height and character-sized routes.

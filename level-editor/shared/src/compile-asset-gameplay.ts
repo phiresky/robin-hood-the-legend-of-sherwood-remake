@@ -349,6 +349,7 @@ function compileAssetGameplayAttempt(
     outsideAnchor: Vec3;
     insideAnchor: Vec3;
     outsideReceiverSegment?: [Vec3, Vec3];
+    insideReceiverSegment?: [Vec3, Vec3];
     middle: Point;
     polygon: Point[];
   }[] = [];
@@ -859,6 +860,14 @@ function compileAssetGameplayAttempt(
               outsideReceiverSegment: [
                 transform(door.node, door.outsideReceiverSegment[0]),
                 transform(door.node, door.outsideReceiverSegment[1]),
+              ] as [Vec3, Vec3],
+            }
+          : {}),
+        ...(door.insideReceiverSegment
+          ? {
+              insideReceiverSegment: [
+                transform(door.node, door.insideReceiverSegment[0]),
+                transform(door.node, door.insideReceiverSegment[1]),
               ] as [Vec3, Vec3],
             }
           : {}),
@@ -1747,6 +1756,14 @@ function compileAssetGameplayAttempt(
     }
     return resolve(door.outsideAnchor, label, lift);
   };
+  const resolveDoorInside = (door: (typeof doors)[number], lift?: string | null) => {
+    const label = `${door.name} inside`;
+    if (door.insideReceiverSegment) {
+      door.inside = resolveReceivingSegment(door.insideReceiverSegment, door.inside, label);
+      door.insideAnchor = door.inside;
+    }
+    return resolve(door.insideAnchor, label, lift);
+  };
   const omittedDoors = new Set<string>();
   if (options.bestEffort || cropped) {
     for (const door of doors.filter((door) => door.lift)) {
@@ -1774,11 +1791,8 @@ function compileAssetGameplayAttempt(
       let reason: string | undefined;
       try {
         const outside = resolveDoorOutside(door, null);
-        if (
-          options.bestEffort &&
-          !door.interior &&
-          outside.sector === resolve(door.insideAnchor, `${door.name} inside`, null).sector
-        )
+        const inside = door.interior ? undefined : resolveDoorInside(door, null);
+        if (options.bestEffort && inside && outside.sector === inside.sector)
           reason = "both endpoints share a movement area";
       } catch (error) {
         if (
@@ -1814,7 +1828,7 @@ function compileAssetGameplayAttempt(
     const outside = resolveDoorOutside(door, door.lift ? undefined : null),
       inside = door.interior
         ? interiorAreas.get(door.interior)!
-        : resolve(door.insideAnchor, `${door.name} inside`, door.lift ?? null);
+        : resolveDoorInside(door, door.lift ?? null);
     if (outside.sector === inside.sector) {
       if (
         !door.definition.allowContinuous ||

@@ -132,7 +132,7 @@
       "model": "3d-assets/leicester/leicester-south-stilt-shed/model.glb",
       "model_sha256": "bf68168185cc1ec733ba389a6bc0cd3691a16bc481836ac691d0f2770edde626",
       "descriptor": "3d-assets/leicester/leicester-south-stilt-shed/asset.json",
-      "descriptor_sha256": "d7c11f69604346a4c48515cee076730c3ca30e8609743480d5182be699e25422",
+      "descriptor_sha256": "576fc0ee3db995fa0700028da25a4579b0004048a375f053690ade6f9eec2498",
       "id": "leicester-south-stilt-shed"
     },
     {
@@ -377,7 +377,7 @@
       "model": "3d-assets/leicester/leicester-church-courtyard-wall/model.glb",
       "model_sha256": "b3542e12138888183978a5362f7536d4e4375326a069edb6a2b22a4b937a5668",
       "descriptor": "3d-assets/leicester/leicester-church-courtyard-wall/asset.json",
-      "descriptor_sha256": "e3c42b00e866e0c7b69a84cf41f385b116c08ddad777bda1193e9375b57aa94e",
+      "descriptor_sha256": "0071075172116686119aa55f8443a004c3b71e826600bb20d3744d833f532495",
       "id": "leicester-church-courtyard-wall"
     },
     {

@@ -13,6 +13,7 @@ import {
   liftLightCompilerFixture,
   interiorAssetCompilerFixture,
   terrainInteriorCompilerFixture,
+  terrainPassageCompilerFixture,
   joinedInteriorCompilerFixture,
   soundAssetCompilerFixture,
   movementTransitionCompilerFixture,
@@ -145,6 +146,68 @@ test("interior receiving segments move approach points onto sloped terrain", () 
   const partial = compileAssetGameplay(document, assets, bounds, { bestEffort: true });
   assert.ok(partial.warnings?.some((w) => w.includes("Door") && w.includes("receiving segment")));
   assert.ok(!partial.buildings?.some((b) => "Building" in b));
+});
+
+test("ordinary passages bind both receiving endpoints and preserve lock transitions", () => {
+  const { document, assets, hut } = terrainPassageCompilerFixture();
+  const before = structuredClone(document);
+  const result = compileAssetGameplay(document, assets, bounds);
+  const door = result.doors[0]!;
+  assert.deepEqual(door.point_out, [380, 348]);
+  assert.deepEqual(door.point_in, [420, 344]);
+  assert.equal(door.locked_pc, true);
+  assert.equal(door.locked_pc_after_patch, false);
+  assert.notEqual(door.sector_in, door.sector_out);
+  document.groups[0]!.transform = { dx: 600, dy: 200, dz: 30, rot_deg: 90 };
+  const moved = compileAssetGameplay(document, assets, bounds).doors[0]!;
+  assert.notDeepEqual(moved.point_out, door.point_out);
+  assert.notEqual(moved.sector_in, moved.sector_out);
+  document.groups = before.groups;
+  hut.gameplay!.surfaces[1]!.height = 30;
+  assert.throws(() => compileAssetGameplay(document, assets, bounds), /inside: receiving segment/);
+  const partial = compileAssetGameplay(document, assets, bounds, { bestEffort: true });
+  assert.equal(partial.doors.length, 0);
+  assert.match(partial.warnings!.join("\n"), /inside: receiving segment/);
+});
+
+test("passage receivers reject ambiguous layers and cannot override interior or lift destinations", () => {
+  const { document, assets, hut } = terrainPassageCompilerFixture();
+  const door = hut.gameplay!.doors[0]!;
+  door.insideAnchor = door.inside;
+  assert.throws(() => validateAssetGameplay(hut.gameplay, hut), /inside receiving segment/);
+  delete door.insideAnchor;
+  hut.gameplay!.surfaces.push({
+    ...structuredClone(hut.gameplay!.surfaces[1]!),
+    id: "stacked",
+    height: 7,
+  });
+  assert.throws(
+    () => compileAssetGameplay(document, assets, bounds),
+    /exactly one unblocked surface/,
+  );
+  const interior = interiorAssetCompilerFixture();
+  interior.hut.gameplay!.interiors![0]!.doors[0]!.insideReceiverSegment =
+    door.insideReceiverSegment;
+  assert.throws(
+    () => validateAssetGameplay(interior.hut.gameplay, interior.hut),
+    /interior door inside receiving segment/,
+  );
+  const lift = liftAssetCompilerFixture();
+  lift.hut.gameplay!.lifts![0]!.doors[0]!.insideReceiverSegment = door.insideReceiverSegment;
+  assert.throws(
+    () => validateAssetGameplay(lift.hut.gameplay, lift.hut),
+    /lift door inside receiving segment/,
+  );
+});
+
+test("cropping a passage's destination omits its connection even during strict export", () => {
+  const { document, assets } = terrainPassageCompilerFixture();
+  const result = compileAssetGameplay(document, assets, [0, 0, 400, 400]);
+  assert.equal(result.doors.length, 0);
+  assert.match(
+    result.warnings!.join("\n"),
+    /inside: receiving segment has no surface inside the export frame/,
+  );
 });
 
 test("interior receiving segments reject blocked, stacked and incompatible attachments", () => {

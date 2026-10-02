@@ -6,9 +6,24 @@ import {
   joinedNavigationCompilerFixture,
   partialNavigationCompilerFixture,
   terrainInteriorCompilerFixture,
+  terrainPassageCompilerFixture,
   terrainReceiverCompilerFixture,
 } from "../../shared/test-fixtures/asset-gameplay.ts";
 import { compileMap } from "./map-compile.ts";
+
+test("terrain-bound passage endpoints match the native gate fixture", async () => {
+  const { document, assets } = terrainPassageCompilerFixture();
+  const expected = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/asset-terrain-passage.level.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, expected);
+});
 
 test("terrain-bound physical receivers match the native fixture", async () => {
   const { document, assets } = terrainReceiverCompilerFixture();

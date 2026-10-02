@@ -1,5 +1,47 @@
 [
   {
+    "asset": "leicester-south-stilt-shed",
+    "rules": [
+      {
+        "kind": "passage-outside",
+        "id": "passage-0/door-0",
+        "node": "building-126",
+        "anchor": [47.43603515625, 68.15240320763003, 3.3533591526649054],
+        "below": 8,
+        "above": 8
+      },
+      {
+        "kind": "passage-outside",
+        "id": "passage-1/door-0",
+        "node": "building-126",
+        "anchor": [138.43603515625, -49.84759679237015, 3.3533591526649054],
+        "below": 8,
+        "above": 8
+      },
+      {
+        "kind": "passage-outside",
+        "id": "passage-2/door-0",
+        "node": "building-129",
+        "anchor": [123.43603515625, 29.152403207630016, 3.3533591526649054],
+        "below": 8,
+        "above": 8
+      }
+    ]
+  },
+  {
+    "asset": "leicester-church-courtyard-wall",
+    "rules": [
+      {
+        "kind": "interior-door",
+        "id": "cottage-passage/door-0",
+        "node": "building-365",
+        "anchor": [23.963623046875, -43.014864646372764, -0.00001665963671131232],
+        "below": 8,
+        "above": 8
+      }
+    ]
+  },
+  {
     "asset": "leicester-southwest-edge-bank",
     "rules": [
       {

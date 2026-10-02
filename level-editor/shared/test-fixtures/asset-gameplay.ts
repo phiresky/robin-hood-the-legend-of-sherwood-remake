@@ -1248,6 +1248,32 @@ export function terrainInteriorCompilerFixture() {
   return fixture;
 }
 
+export function terrainPassageCompilerFixture() {
+  const fixture = assetCompilerFixture();
+  const gameplay = fixture.hut.gameplay!;
+  gameplay.surfaces[0]!.height = 2;
+  gameplay.surfaces[1]!.height = 6;
+  const door = gameplay.doors[0]!;
+  door.outsideReceiverSegment = [
+    [80, 50, -8],
+    [80, 50, 8],
+  ];
+  door.insideReceiverSegment = [
+    [120, 50, -8],
+    [120, 50, 8],
+  ];
+  door.locked = true;
+  door.unlockable = true;
+  door.afterTransition = {
+    locked: false,
+    unlockable: true,
+    lockedVillains: false,
+    lockedCivilians: false,
+  };
+  fixture.document.map = "Terrain passage fixture";
+  return fixture;
+}
+
 export function joinedInteriorCompilerFixture() {
   const fixture = interiorAssetCompilerFixture();
   const room = fixture.hut.gameplay!.interiors![0]!;

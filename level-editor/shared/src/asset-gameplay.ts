@@ -66,8 +66,10 @@ export interface AssetDoor {
   /** Optional unblocked local points selecting receiving areas independently of door coordinates. */
   outsideAnchor?: [number, number, number];
   insideAnchor?: [number, number, number];
-  /** Interior entrance approach follows one unblocked surface intersecting this finite local segment. */
+  /** Entrance or ordinary passage approach follows one unblocked surface within this local segment. */
   outsideReceiverSegment?: [[number, number, number], [number, number, number]];
+  /** Ordinary passage destination follows its own finite receiver; virtual rooms and lifts remain authored. */
+  insideReceiverSegment?: [[number, number, number], [number, number, number]];
   type: number;
   locked: boolean;
   unlockable: boolean;
@@ -1069,14 +1071,25 @@ export function validateAssetGameplay(
       fail(`interior door ${door.id} cannot override its shared room with an inside anchor`);
     if (
       door.outsideReceiverSegment !== undefined &&
-      (kind !== "interior" ||
+      ((kind !== "interior" && !(kind === "ordinary" && door.type === 0)) ||
         door.outsideAnchor !== undefined ||
         !Array.isArray(door.outsideReceiverSegment) ||
         door.outsideReceiverSegment.length !== 2 ||
         !door.outsideReceiverSegment.every((p) => point(p, 3)) ||
         !door.outsideReceiverSegment[0].some((v, i) => v !== door.outsideReceiverSegment![1][i]))
     )
-      fail(`invalid interior door receiving segment ${door.id}`);
+      fail(`invalid ${kind} door receiving segment ${door.id}`);
+    if (
+      door.insideReceiverSegment !== undefined &&
+      (kind !== "ordinary" ||
+        door.type !== 0 ||
+        door.insideAnchor !== undefined ||
+        !Array.isArray(door.insideReceiverSegment) ||
+        door.insideReceiverSegment.length !== 2 ||
+        !door.insideReceiverSegment.every((p) => point(p, 3)) ||
+        !door.insideReceiverSegment[0].some((v, i) => v !== door.insideReceiverSegment![1][i]))
+    )
+      fail(`invalid ${kind} door inside receiving segment ${door.id}`);
     for (const key of ["active", "lockedVillains", "lockedCivilians", "allowContinuous"] as const)
       if (door[key] !== undefined && typeof door[key] !== "boolean")
         fail(`invalid door ${door.id} ${key}`);

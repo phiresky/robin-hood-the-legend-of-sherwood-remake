@@ -751,7 +751,7 @@ fn recovered_static_exports_construct_native_geometry() {
             }
         }
         if let Some(probes) = result["route_probes"].as_array() {
-            use robin_engine::coordinates::MapPoint;
+            use robin_engine::coordinates::{MapBBox, MapPoint};
             use robin_engine::pathfinder::PathFinder;
             let mut route_grid = grid.clone();
             let graph = &assets.navigation.pathfinder_graph;
@@ -766,12 +766,15 @@ fn recovered_static_exports_construct_native_geometry() {
                 };
                 let goal = point("end");
                 for point in [point("start"), goal] {
+                    let half = route_grid.try_move_box_half_diagonal(0).unwrap();
+                    let bounds = MapBBox::from_corners(
+                        MapPoint::new(point.x - half.x + 1., point.y - half.y + 1.),
+                        MapPoint::new(point.x + half.x - 1., point.y + half.y - 1.),
+                    );
                     assert!(
-                        route_grid.is_reachable_thick(
-                            point,
-                            point,
+                        route_grid.is_position_authorized(
+                            &bounds,
                             probe["layer"].as_u64().unwrap() as u16,
-                            route_grid.try_move_box_half_diagonal(0).unwrap()
                         ),
                         "{file}: route endpoint does not fit: {point:?}"
                     );
@@ -2526,6 +2529,70 @@ fn compiled_interior_connections_follow_independent_asset_placement() {
             grid.level.door_projection_infos.len(),
             expected_rooms * expected_entrances
         );
+    }
+}
+
+#[test]
+fn terrain_bound_passage_connects_both_approaches_and_retains_lock_rules() {
+    use robin_engine::coordinates::MapPoint;
+    use robin_engine::gate::{DoorIndex, find_path_into_door_with_sector_index};
+    let mut assets = LevelAssets::new();
+    let engine = construct(
+        include_bytes!("fixtures/asset-terrain-passage.level.json"),
+        &mut assets,
+    );
+    let view = engine.presentation_view();
+    let doors = view.doors();
+    assert_eq!(doors.len(), 1);
+    let door = &doors[0];
+    assert_eq!(door.point_out, MapPoint::new(380., 348.));
+    assert_eq!(door.point_in, MapPoint::new(420., 344.));
+    assert!(door.locked_pc);
+    assert!(!door.locked_pc_after_patch);
+    assert_ne!(door.sector_in_index, door.sector_out_index);
+    let grid = engine.fast_grid();
+    for (point, dx, layer, sector, sector_index) in [
+        (
+            door.point_out,
+            -20.,
+            door.layer_out,
+            door.sector_out,
+            door.sector_out_index,
+        ),
+        (
+            door.point_in,
+            20.,
+            door.layer_in,
+            door.sector_in,
+            door.sector_in_index,
+        ),
+    ] {
+        let start = MapPoint::new(point.x + dx, point.y);
+        assert!(grid.is_reachable_thick(
+            start,
+            point,
+            layer,
+            grid.try_move_box_half_diagonal(0).unwrap()
+        ));
+        assert!(grid.is_reachable_thick(
+            point,
+            start,
+            layer,
+            grid.try_move_box_half_diagonal(0).unwrap()
+        ));
+        let route = find_path_into_door_with_sector_index(
+            doors,
+            (start.x, start.y),
+            i16::from(sector) as u16,
+            sector_index,
+            DoorIndex::new(0).unwrap(),
+            None,
+            false,
+            &|_| true,
+            &|_| None,
+        )
+        .expect("passage endpoint is registered in the gate graph");
+        assert_eq!(route.last().unwrap().door_index, DoorIndex::new(0).unwrap());
     }
 }
 

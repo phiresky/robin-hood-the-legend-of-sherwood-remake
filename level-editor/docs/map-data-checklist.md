@@ -99,9 +99,34 @@ interior entrances, 16 rooms, door rules, navigation and collision geometry.
 Publication backups are in `work/map-compile/interior-connection-publication`.
 All ten saved maps reopen, compile and construct in the native engine after
 publication. The other eight reference maps retain identical compiled geometry.
-Wychford still exports 25 doors: the wall's raised entrance is omitted with a
-landing-height warning at its current placement. This ownership correction does
-not invent a terrain attachment or a cross-building connection for that map.
+The courtyard wall now has a reviewed eight-unit terrain attachment around its
+local doorway. Wychford's approximately 1.4-unit landing mismatch resolves without
+changing Leicester's geometry or introducing a cross-building connection.
+
+**Ordinary passages on uneven terrain:** type-0 passages can author independent
+`outsideReceiverSegment` and `insideReceiverSegment` bounds. Compilation updates
+their runtime approach points and receiving areas while retaining lock rules,
+click polygons and transition links. Other traversal door types retain their
+authored endpoints; interior destinations always retain their shared room.
+Ambiguous, blocked or out-of-range receivers are rejected or explicitly omitted
+during best-effort export. Cropping an inside receiver omits the passage even in
+strict export. Recipes use `passage-outside` and `passage-inside` to select ends
+independently.
+
+Three stilt-shed approaches now have eight-unit attachment bounds. The narrow
+ramp's destination also moves slightly inward along its existing plane to fit a
+character footprint. This is asset-local authoring, applied in every placement.
+Together with the courtyard entrance, these changes restore four Wychford doors
+(25 → 29). Leicester changes only that ramp destination; the other eight reference
+maps retain identical compiled geometry. Native diagnostics exercise both sides
+of all three restored passages and the corrected Leicester landing. Publication
+backups are in `work/map-compile/courtyard-door-publication` and
+`work/map-compile/stilt-passage-publication`.
+
+The Derby gatehouse's ground passages still need a proper movement-area partition
+when placed on continuous editor terrain. Moving their endpoints to terrain would
+leave both ends in one area, which cannot represent the closed gate's permissions.
+Those attachments remain unpublished; export still warns about the omitted gates.
 
 Automatic room recovery now checks every entrance against the inferred owner's
 solid doorway geometry above that entrance's landing. It reports

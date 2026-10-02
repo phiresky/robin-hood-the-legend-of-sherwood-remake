@@ -1,0 +1,277 @@
+{
+  "title": "Terrain passage fixture",
+  "map_filename": "editor-terrain-passage-fixture",
+  "spawn_points": [],
+  "walkable_polygon": [
+    [
+      0,
+      0
+    ],
+    [
+      1999,
+      0
+    ],
+    [
+      1999,
+      1999
+    ],
+    [
+      0,
+      1999
+    ]
+  ],
+  "volumes": [],
+  "asset_geometry": {
+    "motion_data": {
+      "layers": [
+        [
+          {
+            "is_lift": false,
+            "state_id": 0,
+            "polygon": {
+              "points": [
+                [
+                  300,
+                  298
+                ],
+                [
+                  390,
+                  298
+                ],
+                [
+                  390,
+                  398
+                ],
+                [
+                  300,
+                  398
+                ]
+              ]
+            },
+            "skeleton_segments": [],
+            "flags": 0,
+            "obstacles": [
+              {
+                "state_id": 0,
+                "polygon": {
+                  "points": [
+                    [
+                      350,
+                      338
+                    ],
+                    [
+                      350,
+                      348
+                    ],
+                    [
+                      340,
+                      348
+                    ],
+                    [
+                      340,
+                      338
+                    ]
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        [
+          {
+            "is_lift": false,
+            "state_id": 0,
+            "polygon": {
+              "points": [
+                [
+                  410,
+                  294
+                ],
+                [
+                  500,
+                  294
+                ],
+                [
+                  500,
+                  394
+                ],
+                [
+                  410,
+                  394
+                ]
+              ]
+            },
+            "skeleton_segments": [],
+            "flags": 0,
+            "obstacles": []
+          }
+        ],
+        []
+      ],
+      "graph_bytes": []
+    },
+    "sight_obstacles": [
+      {
+        "points": [
+          {
+            "x": 340,
+            "y": 340,
+            "z_bottom": 0,
+            "z_top": 30
+          },
+          {
+            "x": 350,
+            "y": 340,
+            "z_bottom": 0,
+            "z_top": 30
+          },
+          {
+            "x": 350,
+            "y": 350,
+            "z_bottom": 0,
+            "z_top": 30
+          },
+          {
+            "x": 340,
+            "y": 350,
+            "z_bottom": 0,
+            "z_top": 30
+          }
+        ],
+        "projection_area": null,
+        "solid": true,
+        "opaque": true,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 0,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 300,
+            "y": 300,
+            "z_bottom": 2,
+            "z_top": 2
+          },
+          {
+            "x": 390,
+            "y": 300,
+            "z_bottom": 2,
+            "z_top": 2
+          },
+          {
+            "x": 390,
+            "y": 400,
+            "z_bottom": 2,
+            "z_top": 2
+          },
+          {
+            "x": 300,
+            "y": 400,
+            "z_bottom": 2,
+            "z_top": 2
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 0,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 410,
+            "y": 300,
+            "z_bottom": 6,
+            "z_top": 6
+          },
+          {
+            "x": 500,
+            "y": 300,
+            "z_bottom": 6,
+            "z_top": 6
+          },
+          {
+            "x": 500,
+            "y": 400,
+            "z_bottom": 6,
+            "z_top": 6
+          },
+          {
+            "x": 410,
+            "y": 400,
+            "z_bottom": 6,
+            "z_top": 6
+          }
+        ],
+        "projection_area": [
+          2,
+          1
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 0,
+        "material_indices": []
+      }
+    ],
+    "doors": [
+      {
+        "door_type": 0,
+        "active": true,
+        "locked_pc": true,
+        "unlockable": true,
+        "locked_npc_villain": false,
+        "locked_npc_civilian": false,
+        "locked_pc_after_patch": false,
+        "unlockable_after_patch": true,
+        "locked_npc_villain_after_patch": false,
+        "locked_npc_civilian_after_patch": false,
+        "door_sector": {
+          "points": [
+            [
+              390,
+              340
+            ],
+            [
+              410,
+              340
+            ],
+            [
+              410,
+              360
+            ],
+            [
+              390,
+              360
+            ]
+          ]
+        },
+        "point_out": [
+          380,
+          348
+        ],
+        "sector_out": 0,
+        "layer_out": 0,
+        "point_mid": [
+          400,
+          350
+        ],
+        "point_in": [
+          420,
+          344
+        ],
+        "sector_in": 2,
+        "layer_in": 1
+      }
+    ]
+  }
+}

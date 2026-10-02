@@ -4,11 +4,39 @@ import {
   interiorAssetCompilerFixture,
   maskAssetCompilerFixture,
   anchoredReceiverCompilerFixture,
+  assetCompilerFixture,
 } from "../../shared/test-fixtures/asset-gameplay.ts";
 import {
   authorTerrainAttachments,
   type TerrainAttachmentRule,
 } from "./author-terrain-attachments.ts";
+
+test("passage recipes author each endpoint independently and retain all door rules", () => {
+  const { hut } = assetCompilerFixture();
+  const door = hut.gameplay!.doors[0]!;
+  const rules: TerrainAttachmentRule[] = (["outside", "inside"] as const).map((end) => ({
+    kind: end === "outside" ? "passage-outside" : "passage-inside",
+    id: door.id,
+    node: door.node,
+    anchor: door[end],
+    below: 8,
+    above: 8,
+  }));
+  const gameplay = authorTerrainAttachments(hut, rules);
+  const { outsideReceiverSegment, insideReceiverSegment, ...rest } = gameplay.doors[0]!;
+  assert.deepEqual(rest, door);
+  assert.deepEqual(outsideReceiverSegment, [
+    [80, 50, -8],
+    [80, 50, 8],
+  ]);
+  assert.deepEqual(insideReceiverSegment, [
+    [120, 50, -8],
+    [120, 50, 8],
+  ]);
+  assert.equal(door.insideReceiverSegment, undefined);
+  door.insideAnchor = door.inside;
+  assert.throws(() => authorTerrainAttachments(hut, rules), /conflicts/);
+});
 
 test("physical receiver recipes retain volumes and pin their owning frame", () => {
   const { hut } = anchoredReceiverCompilerFixture();
