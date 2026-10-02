@@ -25,6 +25,7 @@ import {
 } from "./generate-jump-ledges.ts";
 import { assembleLiftSegments, type PlacedLiftSegment } from "./assemble-lift-segments.ts";
 import { assembleInteriors, type PlacedInterior } from "./assemble-interiors.ts";
+import { interiorEndpointId, validateInteriorConnections } from "./interior-connections.ts";
 import {
   partitionProjectionMaterials,
   type ProjectionMaterialSupport,
@@ -951,7 +952,22 @@ function compileAssetGameplayAttempt(
         });
     }
   }
-  const interiorIdentities = assembleInteriors(placedInteriors);
+  const connections: { from: string; to: string }[] = [];
+  const availableInteriors = new Set(placedInteriors.map((interior) => interior.id));
+  if (document.interiorConnections)
+    validateInteriorConnections(document.interiorConnections, document.objects);
+  for (const connection of document.interiorConnections ?? []) {
+    const from = interiorEndpointId(connection.from),
+      to = interiorEndpointId(connection.to);
+    if (!availableInteriors.has(from) || !availableInteriors.has(to)) {
+      const message = `Interior connection ${connection.id}: endpoint room is missing, hidden or has no compiled gameplay (${from} → ${to})`;
+      if (!options.bestEffort) throw new Error(message);
+      warnings.push(`${message}; connection omitted.`);
+      continue;
+    }
+    connections.push({ from, to });
+  }
+  const interiorIdentities = assembleInteriors(placedInteriors, connections);
   for (const door of doors)
     if (door.interior) door.interior = interiorIdentities.get(door.interior)!;
   // A disconnected passage with no entrance needs no runtime room.

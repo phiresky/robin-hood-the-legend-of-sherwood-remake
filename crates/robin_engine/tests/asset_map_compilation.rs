@@ -2494,6 +2494,11 @@ fn terrain_bound_entrances_remain_approachable_and_link_the_building() {
 fn compiled_interior_connections_follow_independent_asset_placement() {
     for (bytes, expected_rooms, expected_entrances) in [
         (
+            include_bytes!("fixtures/asset-interior-editor-linked.level.json").as_slice(),
+            1,
+            3,
+        ),
+        (
             include_bytes!("fixtures/asset-interior-joined.level.json").as_slice(),
             1,
             2,
@@ -2517,7 +2522,10 @@ fn compiled_interior_connections_follow_independent_asset_placement() {
         for building in buildings {
             assert_eq!(building.gate_indices.len(), expected_entrances);
         }
-        assert_eq!(grid.level.door_projection_infos.len(), 2);
+        assert_eq!(
+            grid.level.door_projection_infos.len(),
+            expected_rooms * expected_entrances
+        );
     }
 }
 

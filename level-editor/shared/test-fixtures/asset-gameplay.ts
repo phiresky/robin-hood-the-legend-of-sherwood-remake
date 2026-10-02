@@ -1304,6 +1304,29 @@ export function joinedInteriorCompilerFixture() {
   return { ...fixture, annex, passage };
 }
 
+export function connectedInteriorCompilerFixture() {
+  const fixture = joinedInteriorCompilerFixture();
+  fixture.hut.gameplay!.interiors![0]!.doors.push(
+    interiorAssetCompilerFixture().hut.gameplay!.interiors![0]!.doors[1]!,
+  );
+  fixture.document.objects = fixture.document.objects.filter((part) => part.group !== "connector");
+  fixture.document.groups = fixture.document.groups.filter((group) => group.id !== "connector");
+  fixture.document.assetSources = fixture.document.assetSources!.filter(
+    (source) => source.id !== "connector",
+  );
+  fixture.assets.delete("connector");
+  delete fixture.hut.gameplay!.interiors![0]!.joins;
+  delete fixture.annex.gameplay!.interiors![0]!.joins;
+  fixture.document.interiorConnections = [
+    {
+      id: "passage",
+      from: { placement: "hut-a", asset: "hut", interior: "room" },
+      to: { placement: "annex", asset: "annex", interior: "room" },
+    },
+  ];
+  return fixture;
+}
+
 export function doorTransitionCompilerFixture() {
   const fixture = interiorAssetCompilerFixture();
   const gameplay = fixture.hut.gameplay!;

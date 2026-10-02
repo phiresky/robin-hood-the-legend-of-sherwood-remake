@@ -151,6 +151,12 @@ export function normalizeGameplayStateViews(
   }
   // Adding or deduplicating frames must not change an editor group's rotation pivot.
   const normalized = { ...document, objects };
+  if (document.interiorConnections)
+    normalized.interiorConnections = document.interiorConnections.map((link) => ({
+      ...link,
+      from: { ...link.from, asset: aliases.get(link.from.asset) ?? link.from.asset },
+      to: { ...link.to, asset: aliases.get(link.to.asset) ?? link.to.asset },
+    }));
   normalized.groups = document.groups.map((group) => ({
     ...group,
     transform: rebaseTransform(

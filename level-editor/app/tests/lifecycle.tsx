@@ -8,6 +8,7 @@ import { checkSpriteAtlas } from "./sprite-atlas";
 import { checkTextureCompression } from "./texture-compression";
 import { checkGltfTextures } from "./gltf-textures";
 import { checkHttpLibrary } from "./http-library";
+import { checkInteriorConnections } from "./interior-connections";
 import "../src/styles.css";
 
 // Browser acceptance fixture: no directory picker, disk writes or game data.
@@ -316,6 +317,12 @@ async function button(label: string) {
 
 async function main() {
   window.confirm = () => true;
+  await checkInteriorConnections();
+  if (location.search.includes("interiors-only")) {
+    result.textContent =
+      "PASS interior room choices, connect/remove, movement and history restoration";
+    return;
+  }
   await checkSpriteAtlas();
   if (location.search.includes("atlas-only")) {
     result.textContent = "PASS sprite atlas WebP cropping, dimensions, and one fetch across poses";

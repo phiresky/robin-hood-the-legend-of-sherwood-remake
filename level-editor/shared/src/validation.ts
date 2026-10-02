@@ -1,3 +1,4 @@
+import { validateInteriorConnections } from "./interior-connections.ts";
 import {
   validateCustomTerrainMaterials,
   terrainMaterial,
@@ -604,6 +605,8 @@ export function parseLevel3D(value: unknown, context: DocumentContext = {}): Lev
   }
   if (d.population !== undefined) validatePopulation(d.population);
   if (d.mission !== undefined) validateMission(d.mission);
+  if (d.interiorConnections !== undefined)
+    validateInteriorConnections(d.interiorConnections, d.objects);
   const splineIds = new Set<string>();
   if (d.terrain !== undefined) {
     validateTerrainGrid(d.terrain);

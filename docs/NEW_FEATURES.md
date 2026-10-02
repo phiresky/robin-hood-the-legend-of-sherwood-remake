@@ -1,5 +1,13 @@
 # Post-port Features
 
+- **Editor-owned interior connections.** The Assets inspector can link rooms in
+  separate placed assets. Links survive movement, saving and editable exports.
+  Multiple doors in one asset room remain connected automatically; distinct
+  authored rooms remain separate. Copying a building preserves its local rooms
+  without copying external links, while copying an entire compound preserves
+  links within that compound. Missing room definitions warn during best-effort
+  export. Compiler fixtures are checked through native room/gate registration.
+
 - **Terrain-aware mask attachments.** Asset masks can select a receiving layer
   through a finite local segment, allowing small terrain-height changes while
   preserving their pixels and masking boundaries. Ambiguous or unreachable

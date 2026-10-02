@@ -1,5 +1,20 @@
 {
   "map": "Leicester",
+  "interiorConnections": [
+    {
+      "id": "interior-link-1",
+      "from": {
+        "placement": "leicester-southeast-cottage",
+        "asset": "leicester-southeast-cottage",
+        "interior": "interior-0"
+      },
+      "to": {
+        "placement": "leicester-church-courtyard-wall",
+        "asset": "leicester-church-courtyard-wall",
+        "interior": "cottage-passage"
+      }
+    }
+  ],
   "size": [
     3136,
     1984
@@ -34,7 +49,7 @@
       "model": "3d-assets/leicester/leicester-church-courtyard-wall/model.glb",
       "model_sha256": "b3542e12138888183978a5362f7536d4e4375326a069edb6a2b22a4b937a5668",
       "descriptor": "3d-assets/leicester/leicester-church-courtyard-wall/asset.json",
-      "descriptor_sha256": "bcad57ab27be0f089478dadec4d72a7e5de225096afb6c6b00bbaa4481e25ab3",
+      "descriptor_sha256": "e3c42b00e866e0c7b69a84cf41f385b116c08ddad777bda1193e9375b57aa94e",
       "id": "leicester-church-courtyard-wall"
     },
     {
@@ -435,7 +450,7 @@
       "model": "3d-assets/leicester/leicester-southeast-cottage/model.glb",
       "model_sha256": "b68847e1ccf1b03c7924d023d6a9ab81005b1a361078b8374f5e976209795ba7",
       "descriptor": "3d-assets/leicester/leicester-southeast-cottage/asset.json",
-      "descriptor_sha256": "8124ac41b37d06ae25fb8423006e523045ad9b3ee6b63ac114384e4202254178",
+      "descriptor_sha256": "5e9d5ad95de60226c6f4f50072fd2c294827581fd38d900ced1d0532f8eab96f",
       "id": "leicester-southeast-cottage"
     },
     {

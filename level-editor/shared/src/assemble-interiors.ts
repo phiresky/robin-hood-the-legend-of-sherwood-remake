@@ -7,7 +7,10 @@ export interface PlacedInterior {
 }
 
 /** Unmatched passage sockets leave independent rooms; ambiguous connections are authoring errors. */
-export function assembleInteriors(interiors: PlacedInterior[]): Map<string, string> {
+export function assembleInteriors(
+  interiors: PlacedInterior[],
+  connections: { from: string; to: string }[] = [],
+): Map<string, string> {
   const parent = interiors.map((_, i) => i);
   const root = (i: number): number => (parent[i] === i ? i : root(parent[i]!));
   const sockets = interiors.flatMap((interior, owner) =>
@@ -33,6 +36,16 @@ export function assembleInteriors(interiors: PlacedInterior[]): Map<string, stri
         b = root(match.owner);
       parent[Math.max(a, b)] = Math.min(a, b);
     }
+  }
+  const indices = new Map(interiors.map((interior, i) => [interior.id, i]));
+  for (const connection of connections) {
+    const from = indices.get(connection.from),
+      to = indices.get(connection.to);
+    if (from === undefined || to === undefined)
+      throw new Error(`Missing connected interior: ${connection.from} → ${connection.to}`);
+    const a = root(from),
+      b = root(to);
+    parent[Math.max(a, b)] = Math.min(a, b);
   }
   return new Map(interiors.map((interior, i) => [interior.id, interiors[root(i)]!.id]));
 }

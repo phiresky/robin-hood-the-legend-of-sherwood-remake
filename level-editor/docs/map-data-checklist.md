@@ -18,6 +18,19 @@ with it. Global indices and connections are rebuilt after placement.
 with Derby/York. “Partial” identifies a remaining gap. “Planned” describes the
 intended construction, not functionality available today.
 
+**Interior connections:** multiple entrances in an asset-local room remain
+connected automatically, including after moving or duplicating the asset. Distinct
+rooms in one asset retain their authored separation. The Assets inspector can
+connect rooms across independent assets using map-owned `interiorConnections`.
+These links use placed asset/room IDs, survive movement and save/reopen, and are
+included in the editable document inside an exported ZIP. Removing a placed asset
+removes its links; duplicating one asset leaves external links with the original.
+Copying a compound group remaps links wholly inside that group. Asset passage
+sockets continue to connect matching placements automatically. Best-effort export
+warns and omits links whose rooms are hidden or lack gameplay definitions. A moved
+cross-asset fixture retains both local doors and its linked third entrance in one
+native room; separate-room, duplication and export round-trip tests also pass.
+
 **Masks on uneven terrain:** an asset mask may author a finite local
 `receiverSegment` instead of requiring its anchor to match one exact elevation.
 Export intersects that segment with placed receiving surfaces and requires one
@@ -77,9 +90,18 @@ pnpm --filter pipeline exec node src/author-terrain-attachments.ts \
 
 Use `--apply` with a separate fresh output directory to install reviewed results.
 Raised entrances and distant shared-room endpoints are deliberately not selected.
-The southeast cottage still contains a distant second entrance in its recovered
-room definition; separating ownership and authoring its intended connection is
-an unresolved reuse issue. Increasing terrain reach would not repair that issue.
+The southeast cottage's distant second entrance now belongs to the church
+courtyard wall, whose geometry contains it. Leicester explicitly connects those
+two asset rooms in the editor document; moving either asset carries only its own
+entrance. Wychford receives the corrected asset definitions without inheriting
+Leicester's map connection. The reviewed transfer preserves Leicester's 24
+interior entrances, 16 rooms, door rules, navigation and collision geometry.
+Publication backups are in `work/map-compile/interior-connection-publication`.
+All ten saved maps reopen, compile and construct in the native engine after
+publication. The other eight reference maps retain identical compiled geometry.
+Wychford still exports 25 doors: the wall's raised entrance is omitted with a
+landing-height warning at its current placement. This ownership correction does
+not invent a terrain attachment or a cross-building connection for that map.
 
 Automatic room recovery now checks every entrance against the inferred owner's
 solid doorway geometry above that entrance's landing. It reports
@@ -431,7 +453,7 @@ sampled Rust queries. Equivalent evidence across all maps remains unfinished.
 | Sight/physical obstacles | Transform asset-local shapes, per-vertex heights and solid/opaque flags. Explicit transition references select initial/applied obstacles. | Static geometry working; sight transitions verified through native initialization, apply and reset; recovered state ownership still incomplete |
 | Projection surfaces / elevation | Generate height planes linked to movement areas; derive receiver-crossing boundaries from all registered planes, independent of sight activation. | Partial: walking crossings verified for rotated copies and initial/applied/reset sight states; ambiguous subpixel boundaries and full-map traversal remain unfinished |
 | Doors, gates and lock rules | Transform local endpoints and optional click polygons; resolve neighbours geometrically and retain initial/alternate actor lock rules. Asset-local transition links either trigger state changes from doors or swap door permissions. | Compiler/native links implemented; recovered ownership and coverage incomplete |
-| Building interiors | Asset-local interior definitions and entrances; matching positioned sockets with opposing directions join independent assets into shared virtual rooms. | Compiler/native tests cover separate, rotated and duplicated assemblies; all recovered room memberships match, including York's shared rooms; definitions remain unpublished; occupants are mission-owned |
+| Building interiors | Asset-local rooms connect their own entrances automatically. Map-owned editor links or matching passage sockets join rooms across assets. | Compiler/native tests cover separate, moved, rotated and duplicated assemblies and editable ZIP round-trips; occupants remain mission-owned |
 | Lifts / special traversal | Asset-local traversal surfaces, type, direction and endpoints; explicit local join sockets combine placed segments into one sector with multiple height planes. | Working in synthetic compiler/runtime tests, including rotated/duplicated compound lifts; recovered metadata not yet published; changing lift surfaces unfinished |
 | Jump zones and paired jump edges | Transform asset-local 3D edges and receiving contours; resolve landing anchors, regenerate crossed destination links and preserve long-jump/helper rules. Explicit local sockets pair edges owned by different assets after placement. | All 173 recovered pairs match reference geometry and flags; native registration verified; publication and traversal fidelity remain unfinished |
 | Surface materials | Transform asset-local material polygons; rebuild ground, obstacle and receiving-surface links independently. Preserve receiving defaults, footprints and overlap priority. | Compiler/native tests pass; all nine recovery drafts include receiving materials; publication and geometry coverage remain unfinished |

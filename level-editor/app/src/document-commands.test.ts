@@ -2,6 +2,28 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { parseLevel3D } from "@rle/shared";
 import { deleteSelection, duplicateSelection, patchGroup, patchPart } from "./document-commands.ts";
+import { connectedInteriorCompilerFixture } from "../../shared/test-fixtures/asset-gameplay.ts";
+
+test("copying an asset leaves its cross-asset links behind; deleting removes only orphaned links", () => {
+  const { document } = connectedInteriorCompilerFixture();
+  const copied = duplicateSelection(document, { kind: "group", id: "hut-a" }).document;
+  assert.deepEqual(copied.interiorConnections, document.interiorConnections);
+  const deleted = deleteSelection(copied, { kind: "group", id: "annex" });
+  assert.deepEqual(deleted.interiorConnections, []);
+  assert.equal(document.interiorConnections!.length, 1);
+  parseLevel3D(deleted);
+});
+
+test("duplicating a compound group remaps its internal editor links to the copy", () => {
+  const { document } = connectedInteriorCompilerFixture();
+  for (const part of document.objects) if (part.group === "annex") part.group = "hut-a";
+  document.interiorConnections![0]!.to.placement = "hut-a";
+  const copied = duplicateSelection(document, { kind: "group", id: "hut-a" }).document;
+  assert.equal(copied.interiorConnections!.length, 2);
+  assert.equal(copied.interiorConnections![1]!.from.placement, "hut-a-copy1");
+  assert.equal(copied.interiorConnections![1]!.to.placement, "hut-a-copy1");
+  parseLevel3D(copied);
+});
 
 function fixture() {
   return parseLevel3D({

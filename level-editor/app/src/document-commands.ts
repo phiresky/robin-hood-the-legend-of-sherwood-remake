@@ -1,5 +1,6 @@
 import {
   parseLevel3D,
+  hasInteriorPlacement,
   type AssetState,
   type Level3D,
   type Level3DGroup,
@@ -79,6 +80,26 @@ export function duplicateSelection(
           },
         ],
         objects: [...document.objects, ...copies],
+        ...(document.interiorConnections
+          ? {
+              interiorConnections: [
+                ...document.interiorConnections,
+                ...document.interiorConnections
+                  .filter(
+                    (link) => link.from.placement === group.id && link.to.placement === group.id,
+                  )
+                  .map((link) => ({
+                    ...link,
+                    id: uniqueId(
+                      link.id,
+                      new Set(document.interiorConnections!.map((link) => link.id)),
+                    ),
+                    from: { ...link.from, placement: id },
+                    to: { ...link.to, placement: id },
+                  })),
+              ],
+            }
+          : {}),
       },
       selection: { kind: "group", id },
     };
@@ -103,22 +124,33 @@ export function duplicateSelection(
 }
 
 export function deleteSelection(document: Level3D, selection: NonNullable<Selection>): Level3D {
+  const cleanConnections = (next: Level3D): Level3D =>
+    document.interiorConnections
+      ? {
+          ...next,
+          interiorConnections: document.interiorConnections.filter(
+            (link) =>
+              hasInteriorPlacement(next.objects, link.from) &&
+              hasInteriorPlacement(next.objects, link.to),
+          ),
+        }
+      : next;
   if (selection.kind === "group") {
     if (!document.groups.some((group) => group.id === selection.id))
       throw new Error(`Unknown group ${selection.id}`);
-    return {
+    return cleanConnections({
       ...document,
       groups: document.groups.filter((group) => group.id !== selection.id),
       objects: document.objects.filter((part) => part.group !== selection.id),
-    };
+    });
   }
   if (stateOwner(document, selection.id)) throw new Error("Delete the complete state group");
   if (!document.objects.some((part) => part.id === selection.id))
     throw new Error(`Unknown part ${selection.id}`);
-  return {
+  return cleanConnections({
     ...document,
     objects: document.objects.filter((part) => part.id !== selection.id),
-  };
+  });
 }
 
 export function stateOwner(document: Level3D, objectId: string): Level3DGroup | undefined {

@@ -23,6 +23,7 @@ import {
   liftLightCompilerFixture,
   interiorAssetCompilerFixture,
   joinedInteriorCompilerFixture,
+  connectedInteriorCompilerFixture,
   clearanceAssetCompilerFixture,
   materialAssetCompilerFixture,
   projectionMaterialCompilerFixture,
@@ -889,4 +890,31 @@ test("joined and separated asset interiors match native fixtures", async () => {
     );
     assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
   }
+});
+
+test("editor-connected rooms match the moved native fixture and remain in the editable zip", async () => {
+  const { document, assets } = connectedInteriorCompilerFixture();
+  document.objects.find((part) => part.group === "annex")!.transform.dx += 100;
+  const compiled = compileMap(document, [0, 0, 1000, 1000], assets);
+  const expected = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/asset-interior-editor-linked.level.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(compiled.descriptor, expected);
+  const files = unzipSync(
+    await packageCompiledMap(compiled, {
+      color: new Uint8Array(1000 * 1000 * 4),
+      depth: new Uint16Array(1000 * 1000),
+    }),
+  );
+  const restored = parseStoredMap(
+    JSON.parse(strFromU8(files[`editor/${compiled.name}.rhlos-map.json`]!)),
+    assets,
+  );
+  assert.deepEqual(restored.interiorConnections, document.interiorConnections);
 });

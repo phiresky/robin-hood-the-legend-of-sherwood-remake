@@ -17,6 +17,7 @@ export * from "./splines.ts";
 
 export * from "./population.ts";
 export * from "./mission.ts";
+export * from "./interior-connections.ts";
 
 export * from "./component-parts.ts";
 

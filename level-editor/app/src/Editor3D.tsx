@@ -4,6 +4,7 @@ import NewMapSettings from "./NewMapSettings";
 import WorkspacePanel from "./WorkspacePanel";
 import { followTerrainEdit, followTerrainTransform } from "./terrain-follow";
 import MissionPanel from "./MissionPanel";
+import InteriorConnectionsPanel from "./InteriorConnectionsPanel";
 // Edit JSON maps assembled from pinned library assets, with game and orbit cameras.
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js";
 import type { JSX } from "@solidjs/web";
@@ -2267,6 +2268,12 @@ export default function Editor3D(props: EditorProps) {
                 </section>
               )}
             </Show>
+            <InteriorConnectionsPanel
+              document={doc}
+              library={() => props.library()?.handle ?? null}
+              commit={pushHistory}
+              onError={props.onError}
+            />
             <section class="object-list">
               <h3>
                 Scene objects <span class="object-count">{doc()?.objects.length ?? 0}</span>

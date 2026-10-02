@@ -82,6 +82,7 @@ export interface Level3D {
   lighting?: { enabled: boolean; sunAzimuth: number; sunElevation: number; shadowOpacity: number };
   population?: import("./population.ts").Population;
   mission?: import("./mission.ts").EditorMission;
+  interiorConnections?: import("./interior-connections.ts").InteriorConnection[];
   customMaterials?: import("./terrain-materials.ts").CustomTerrainMaterial[];
   terrain?: import("./authored-terrain.ts").TerrainGrid;
   splines?: import("./splines.ts").LevelSpline[];
