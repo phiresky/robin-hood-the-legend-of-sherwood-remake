@@ -320,6 +320,56 @@ fn anchored_sloped_receiver_shares_uninterrupted_ground_navigation() {
 }
 
 #[test]
+fn terrain_bound_receiver_retains_physical_height_and_actor_routes() {
+    use robin_engine::coordinates::MapPoint;
+    use robin_engine::fast_find_grid::SectorIndex;
+    use robin_engine::pathfinder::PathFinder;
+    use robin_engine::position_interface::SectorHandle;
+    use robin_engine::sector::SectorNumber;
+    let mut assets = LevelAssets::new();
+    let engine = construct(
+        include_bytes!("fixtures/asset-terrain-receiver.level.json"),
+        &mut assets,
+    );
+    let mut grid = engine.fast_grid().clone();
+    let index = grid.level.sector_number_map[&SectorNumber::new(0)];
+    let sector = SectorHandle::new(0)
+        .unwrap()
+        .with_arena_index(SectorIndex::new(index as u32).unwrap());
+    for (point, expected) in [
+        (MapPoint::new(350., 325.), 25.),
+        (MapPoint::new(250., 325.), 1.),
+    ] {
+        let receiver = engine
+            .get_projection_area_index(&assets, sector, 0, point)
+            .unwrap();
+        let obstacle = &assets.environment.static_sight_obstacles[usize::from(receiver)];
+        assert!(
+            (obstacle.compute_top_z_from_projection(point.x, point.y) - expected).abs() < 0.001
+        );
+    }
+    let graph = &assets.navigation.pathfinder_graph;
+    let mut finder = PathFinder::new();
+    finder.initialize_from_graph(graph, &mut grid);
+    let a = MapPoint::new(250., 325.);
+    let b = MapPoint::new(450., 325.);
+    for (start, end) in [(a, b), (b, a)] {
+        let route = finder
+            .find_path(graph, &grid, 0, 0, 0, start, end, false)
+            .expect("receiver retains continuous walking");
+        assert_eq!(route.last(), Some(&end));
+        for segment in route.windows(2) {
+            assert!(grid.is_reachable_thick(
+                segment[0],
+                segment[1],
+                0,
+                grid.try_move_box_half_diagonal(0).unwrap()
+            ));
+        }
+    }
+}
+
+#[test]
 fn authored_receiving_plane_survives_polygon_vertex_changes() {
     let mut descriptor: serde_json::Value = serde_json::from_slice(include_bytes!(
         "fixtures/asset-projection-material.level.json"

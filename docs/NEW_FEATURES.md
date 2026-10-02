@@ -13,7 +13,10 @@
   are reported rather than attached to an arbitrary layer.
   A repeatable asset-authoring command applies explicit attachment recipes,
   checks local anchors, preserves unrelated features and updates saved-scene
-  pins with rollback snapshots. Twelve library assets include reviewed rules.
+  pins with rollback snapshots. Thirteen library assets include reviewed rules.
+  Physical projection receivers can also select terrain through bounded local
+  segments, retaining their own top planes and materials without adding movement
+  boundaries. Native tests cover receiving height and character-sized routes.
 
 - **Spline-wall gameplay export.** Calibrated assets supply collision volumes and
   walkable surfaces that follow edited wall paths, repetitions, trims, curved

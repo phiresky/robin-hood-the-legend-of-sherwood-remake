@@ -52,14 +52,15 @@ native placement probes are in `work/map-compile/door-approach-native`.
 
 **Repeatable terrain attachment authoring:**
 `pipeline/src/author-terrain-attachments.ts` applies explicit local feature rules
-from `refinement/catalogs/terrain-attachments.json`. Each rule names one mask or
-interior entrance, pins its owning node and reviewed local anchor, and declares separate upward
+from `refinement/catalogs/terrain-attachments.json`. Each rule names one mask,
+interior entrance or physical receiver, pins its owning node and reviewed local
+anchor, and declares separate upward
 and downward reach. The tool refuses changed anchors, conflicting receiver
 definitions, duplicate rules and unknown features. It reads only library assets,
 stages rollback snapshots and republishes saved-scene descriptor pins through the
 existing gameplay publisher. Running it again preserves the authored definitions.
 
-The catalog covers twelve assets, including the two previously updated mill
+The catalog covers twelve entrance/mask assets, including the two previously updated mill
 cottages. The additional ten assets restore twelve more Wychford entrances and
 ten mask tiles: **25 total native doors and 17 mask tiles** now compile. Native
 character-sized approach routes pass for all twelve restored entrances. The nine
@@ -79,6 +80,21 @@ Raised entrances and distant shared-room endpoints are deliberately not selected
 The southeast cottage still contains a distant second entrance in its recovered
 room definition; separating ownership and authoring its intended connection is
 an unresolved reuse issue. Increasing terrain reach would not repair that issue.
+
+**Physical receivers on uneven terrain:** projection receivers may also author
+finite `receiverSegment` bounds. The selected unblocked terrain surface supplies
+their sector/layer association; the asset's physical top plane, material and
+volume remain unchanged. No extra movement boundary is introduced. The same
+segment resolver handles interior approaches, with explicit rejection of blocked,
+stacked, coplanar or out-of-range attachments. A native synthetic fixture checks
+both terrain and asset-top heights plus character-sized routes in both directions.
+The southwest edge bank is the thirteenth catalog asset. Its eight-unit reach
+restores two Wychford projection bindings (2,310 to 2,312) without changing
+movement geometry, doors, masks or physical shapes. The third placement is too
+far above its receiver and remains unbound with a warning. Reference-map compiled
+geometry remains unchanged. Staged/native evidence is in
+`work/map-compile/bank-receiver-review` and `work/map-compile/bank-receiver-native`;
+publication backups are in `work/map-compile/bank-receiver-publication`.
 
 **New-layout jump connections:** assets may author an oriented jump edge plus
 maximum gap, rise, drop and minimum overlap in map units. Export matches facing

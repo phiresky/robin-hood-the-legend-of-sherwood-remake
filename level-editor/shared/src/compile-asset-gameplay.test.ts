@@ -65,6 +65,51 @@ test("mask receiving segments bind slopes without moving their pixels or boundar
   );
 });
 
+test("bounded physical receivers bind terrain without flattening their geometry", () => {
+  const { document, assets, hut } = anchoredReceiverCompilerFixture();
+  const baseline = compileAssetGameplay(document, assets, bounds);
+  const ground = assets.get("marker")!.gameplay!.surfaces[0]!;
+  ground.height = [0, 7, 7, 0];
+  assert.throws(() => compileAssetGameplay(document, assets, bounds), /navigation anchor/);
+  const receiver = hut.gameplay!.projectionReceivers![0]!;
+  receiver.receiverSegment = [
+    [50, 50, -8],
+    [50, 50, 8],
+  ];
+  const result = compileAssetGameplay(document, assets, bounds);
+  assert.deepEqual(result.sight_obstacles[0], baseline.sight_obstacles[0]);
+  assert.equal(result.motion_data.layers.flat().length, 1);
+  document.groups[0]!.transform.dx += 40;
+  const moved = compileAssetGameplay(document, assets, bounds);
+  assert.equal(moved.sight_obstacles[0]!.points.length, result.sight_obstacles[0]!.points.length);
+  for (const [index, point] of moved.sight_obstacles[0]!.points.entries()) {
+    const old = result.sight_obstacles[0]!.points[index]!;
+    assert.ok(Math.abs(point.x - old.x - 40) < 1e-8);
+    for (const key of ["y", "z_bottom", "z_top"] as const)
+      assert.ok(Math.abs(point[key] - old[key]) < 1e-8);
+  }
+  assert.deepEqual(
+    moved.sight_obstacles[0]!.projection_area,
+    result.sight_obstacles[0]!.projection_area,
+  );
+  document.groups[0]!.transform.dx -= 40;
+  ground.height = 20;
+  assert.throws(() => compileAssetGameplay(document, assets, bounds), /receiving segment/);
+  const partial = compileAssetGameplay(document, assets, bounds, { bestEffort: true });
+  assert.equal(partial.sight_obstacles[0]!.projection_area, null);
+  assert.ok(
+    partial.warnings?.some((w) => w.startsWith("Receiver ") && w.includes("receiving segment")),
+  );
+  receiver.receiverSegment = [
+    [50, 50, 0],
+    [50, 50, 0],
+  ];
+  assert.throws(
+    () => validateAssetGameplay(hut.gameplay, hut),
+    /invalid projection receiving segment/,
+  );
+});
+
 test("interior receiving segments move approach points onto sloped terrain", () => {
   const { document, assets, hut } = interiorAssetCompilerFixture();
   const gameplay = hut.gameplay!;

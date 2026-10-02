@@ -1,0 +1,140 @@
+{
+  "title": "Terrain receiver fixture",
+  "map_filename": "editor-terrain-receiver-fixture",
+  "spawn_points": [],
+  "walkable_polygon": [
+    [
+      0,
+      0
+    ],
+    [
+      1999,
+      0
+    ],
+    [
+      1999,
+      1999
+    ],
+    [
+      0,
+      1999
+    ]
+  ],
+  "volumes": [],
+  "asset_geometry": {
+    "motion_data": {
+      "layers": [
+        [
+          {
+            "is_lift": false,
+            "state_id": 0,
+            "polygon": {
+              "points": [
+                [
+                  200,
+                  200
+                ],
+                [
+                  550,
+                  193
+                ],
+                [
+                  550,
+                  543
+                ],
+                [
+                  200,
+                  550
+                ]
+              ]
+            },
+            "skeleton_segments": [],
+            "flags": 0,
+            "obstacles": []
+          }
+        ],
+        []
+      ],
+      "graph_bytes": []
+    },
+    "sight_obstacles": [
+      {
+        "points": [
+          {
+            "x": 300,
+            "y": 300,
+            "z_bottom": -10,
+            "z_top": 0
+          },
+          {
+            "x": 400,
+            "y": 300,
+            "z_bottom": -10,
+            "z_top": 50
+          },
+          {
+            "x": 400,
+            "y": 400,
+            "z_bottom": -10,
+            "z_top": 50
+          },
+          {
+            "x": 300,
+            "y": 400,
+            "z_bottom": -10,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "solid": true,
+        "opaque": true,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 0,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 200,
+            "y": 200,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 550,
+            "y": 200,
+            "z_bottom": 7,
+            "z_top": 7
+          },
+          {
+            "x": 550,
+            "y": 550,
+            "z_bottom": 7,
+            "z_top": 7
+          },
+          {
+            "x": 200,
+            "y": 550,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 0,
+        "material_indices": []
+      }
+    ],
+    "doors": []
+  }
+}

@@ -152,6 +152,8 @@ export interface AssetGameplay {
     volume: string;
     /** Local unblocked navigation anchor; its elevation belongs to the target walking plane. */
     anchor: [number, number, number];
+    /** Optional finite local reach selecting navigation beneath the physical receiver. */
+    receiverSegment?: [[number, number, number], [number, number, number]];
   }[];
   doors: AssetDoor[];
   lifts?: AssetLift[];
@@ -825,6 +827,14 @@ export function validateAssetGameplay(
   const receiverVolumes = new Set<string>();
   for (const receiver of data.projectionReceivers ?? []) {
     feature(receiver);
+    if (
+      receiver.receiverSegment !== undefined &&
+      (!Array.isArray(receiver.receiverSegment) ||
+        receiver.receiverSegment.length !== 2 ||
+        !receiver.receiverSegment.every((p) => point(p, 3)) ||
+        !receiver.receiverSegment[0].some((v, i) => v !== receiver.receiverSegment![1][i]))
+    )
+      fail(`invalid projection receiving segment ${receiver.id}`);
     if (
       !point(receiver.anchor, 3) ||
       disabledParts.has(receiver.volume) ||

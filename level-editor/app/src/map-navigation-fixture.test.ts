@@ -6,8 +6,26 @@ import {
   joinedNavigationCompilerFixture,
   partialNavigationCompilerFixture,
   terrainInteriorCompilerFixture,
+  terrainReceiverCompilerFixture,
 } from "../../shared/test-fixtures/asset-gameplay.ts";
 import { compileMap } from "./map-compile.ts";
+
+test("terrain-bound physical receivers match the native fixture", async () => {
+  const { document, assets } = terrainReceiverCompilerFixture();
+  const expected = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/asset-terrain-receiver.level.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(compileMap(document, [0, 0, 2000, 2000], assets).descriptor)),
+    expected,
+  );
+});
 
 test("terrain-bound interior approaches match the native fixture", async () => {
   const { document, assets } = terrainInteriorCompilerFixture();

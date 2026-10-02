@@ -283,7 +283,12 @@ function compileAssetGameplayAttempt(
     movementContour?: string;
   }[] = [];
   const movementBlockers: typeof surfaces = [];
-  const projectionReceivers: { id: string; anchor: Vec3; shape: SightObstacle }[] = [];
+  const projectionReceivers: {
+    id: string;
+    anchor: Vec3;
+    receiverSegment?: [Vec3, Vec3];
+    shape: SightObstacle;
+  }[] = [];
   const navigationJoins: PlacedNavigationJoin[] = [];
   const movementSolids: { owner: string; shape: SightObstacle }[] = [];
   const movementClearances: typeof surfaces = [];
@@ -541,6 +546,14 @@ function compileAssetGameplayAttempt(
       projectionReceivers.push({
         id: `${placement.id}/${receiver.id}`,
         anchor: transform(receiver.node, receiver.anchor),
+        ...(receiver.receiverSegment
+          ? {
+              receiverSegment: [
+                transform(receiver.node, receiver.receiverSegment[0]),
+                transform(receiver.node, receiver.receiverSegment[1]),
+              ] as [Vec3, Vec3],
+            }
+          : {}),
         shape,
       });
     }
@@ -1486,10 +1499,52 @@ function compileAssetGameplayAttempt(
     }
     return matches[0]!;
   };
+  const resolveReceivingSegment = (
+    segment: [Vec3, Vec3],
+    fallbackAnchor: Vec3,
+    label: string,
+  ): Vec3 => {
+    const matches = areas.flatMap((area) => {
+      if (area.lift) return [];
+      let point: Vec3 | undefined;
+      try {
+        point = lightReceiverIntersection(segment, area.plane, label);
+      } catch (error) {
+        if (!(error instanceof Error)) throw error;
+        throw new UnresolvedSurface(error.message);
+      }
+      if (!point) return [];
+      const projected = project(point);
+      if (!inside(projected, area.polygon) || area.blockers.some((b) => inside(projected, b)))
+        return [];
+      return [{ area, point }];
+    });
+    const first = matches[0];
+    if (!first && cropped && outsideAnchor(fallbackAnchor))
+      throw new OutsideExportFrame(
+        `${label}: receiving segment has no surface inside the export frame`,
+      );
+    if (
+      !first ||
+      matches.some(
+        ({ area, point }) =>
+          area.sector !== first.area.sector ||
+          point.some((v, i) => Math.abs(v - first.point[i]!) > 1e-4),
+      )
+    )
+      throw new UnresolvedSurface(
+        `${label}: receiving segment must intersect exactly one unblocked surface`,
+      );
+    return first.point;
+  };
   const boundReceivers = projectionReceivers.flatMap((receiver) => {
     let area;
     try {
-      area = resolve(receiver.anchor, `${receiver.id} navigation anchor`);
+      const label = `${receiver.id} navigation anchor`;
+      const anchor = receiver.receiverSegment
+        ? resolveReceivingSegment(receiver.receiverSegment, receiver.anchor, label)
+        : receiver.anchor;
+      area = resolve(anchor, label);
     } catch (error) {
       if (
         !(error instanceof UnresolvedSurface) ||
@@ -1670,41 +1725,9 @@ function compileAssetGameplayAttempt(
   const resolveDoorOutside = (door: (typeof doors)[number], lift?: string | null) => {
     const label = `${door.name} outside`;
     if (door.outsideReceiverSegment) {
-      const matches = areas.flatMap((area) => {
-        if (area.lift) return [];
-        let point: Vec3 | undefined;
-        try {
-          point = lightReceiverIntersection(door.outsideReceiverSegment!, area.plane, label);
-        } catch (error) {
-          if (!(error instanceof Error)) throw error;
-          throw new UnresolvedSurface(error.message);
-        }
-        if (!point) return [];
-        const projected = project(point);
-        if (!inside(projected, area.polygon) || area.blockers.some((b) => inside(projected, b)))
-          return [];
-        return [{ area, point }];
-      });
-      const first = matches[0];
-      if (!first && cropped && outsideAnchor(door.outside))
-        throw new OutsideExportFrame(
-          `${label}: receiving segment has no surface inside the export frame`,
-        );
-      if (
-        !first ||
-        matches.some(
-          ({ area, point }) =>
-            area.sector !== first.area.sector ||
-            point.some((v, i) => Math.abs(v - first.point[i]!) > 1e-4),
-        )
-      )
-        throw new UnresolvedSurface(
-          `${label}: receiving segment must intersect exactly one unblocked surface`,
-        );
-      // The runtime approaches point_out before entering the building. Move that
-      // point onto its receiver as well as selecting the receiver's sector.
-      door.outside = first.point;
-      door.outsideAnchor = first.point;
+      // Move the runtime approach point onto the receiver as well as selecting its sector.
+      door.outside = resolveReceivingSegment(door.outsideReceiverSegment, door.outside, label);
+      door.outsideAnchor = door.outside;
     }
     return resolve(door.outsideAnchor, label, lift);
   };

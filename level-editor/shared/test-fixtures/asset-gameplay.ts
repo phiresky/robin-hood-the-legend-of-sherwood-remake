@@ -748,6 +748,17 @@ export function receivingIslandCompilerFixture() {
   return fixture;
 }
 
+export function terrainReceiverCompilerFixture() {
+  const fixture = anchoredReceiverCompilerFixture();
+  fixture.assets.get("marker")!.gameplay!.surfaces[0]!.height = [0, 7, 7, 0];
+  fixture.hut.gameplay!.projectionReceivers![0]!.receiverSegment = [
+    [50, 50, -8],
+    [50, 50, 8],
+  ];
+  fixture.document.map = "Terrain receiver fixture";
+  return fixture;
+}
+
 export function receivingGapCompilerFixture() {
   const fixture = projectionMaterialCompilerFixture();
   const gameplay = fixture.hut.gameplay!;

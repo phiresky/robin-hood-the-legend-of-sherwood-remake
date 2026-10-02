@@ -1,5 +1,18 @@
 [
   {
+    "asset": "leicester-southwest-edge-bank",
+    "rules": [
+      {
+        "kind": "projection-receiver",
+        "id": "building-382-receiver",
+        "node": "building-382",
+        "anchor": [27.954818725585938, -127.78026626093803, 0.00006968073607956627],
+        "below": 8,
+        "above": 8
+      }
+    ]
+  },
+  {
     "asset": "derby-lower-southwest-cottage",
     "rules": [
       {

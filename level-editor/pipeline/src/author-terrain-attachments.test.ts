@@ -3,11 +3,35 @@ import assert from "node:assert/strict";
 import {
   interiorAssetCompilerFixture,
   maskAssetCompilerFixture,
+  anchoredReceiverCompilerFixture,
 } from "../../shared/test-fixtures/asset-gameplay.ts";
 import {
   authorTerrainAttachments,
   type TerrainAttachmentRule,
 } from "./author-terrain-attachments.ts";
+
+test("physical receiver recipes retain volumes and pin their owning frame", () => {
+  const { hut } = anchoredReceiverCompilerFixture();
+  const receiver = hut.gameplay!.projectionReceivers![0]!;
+  const rule: TerrainAttachmentRule = {
+    kind: "projection-receiver",
+    id: receiver.id,
+    node: receiver.node,
+    anchor: receiver.anchor,
+    below: 8,
+    above: 8,
+  };
+  const result = authorTerrainAttachments(hut, [rule]);
+  assert.deepEqual(result.projectionReceivers![0], {
+    ...receiver,
+    receiverSegment: [
+      [50, 50, -8],
+      [50, 50, 8],
+    ],
+  });
+  assert.equal(hut.gameplay!.projectionReceivers![0]!.receiverSegment, undefined);
+  assert.deepEqual(result.surfaces, hut.gameplay!.surfaces);
+});
 
 test("terrain attachment recipes are explicit, repeatable and do not mutate asset definitions", () => {
   const { hut } = interiorAssetCompilerFixture();
