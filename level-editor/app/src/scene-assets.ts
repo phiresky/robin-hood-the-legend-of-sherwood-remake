@@ -1,6 +1,5 @@
 import * as THREE from "three";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { MeshoptDecoder } from "meshoptimizer";
+import { createGltfLoader } from "./gltf-loader.ts";
 import {
   safeLibraryPath,
   selectGlbScene,
@@ -103,7 +102,7 @@ export class SceneAssetLoader {
       if (url.startsWith("blob:")) return url;
       throw new Error(`Scene asset requested an unpinned resource: ${url}`);
     });
-    const loader = new GLTFLoader(manager).setMeshoptDecoder(MeshoptDecoder);
+    const loader = createGltfLoader(manager);
     loader.register((parser) => {
       // GLTFLoader creates geometry-specific material variants in a per-parser
       // cache. Share those variants too, so split meshes retain depth sorting.

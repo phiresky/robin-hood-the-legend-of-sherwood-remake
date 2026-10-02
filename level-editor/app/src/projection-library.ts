@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { MeshoptDecoder } from "meshoptimizer";
+import { createGltfLoader } from "./gltf-loader.ts";
 import {
   assetNodeKey,
   assetVariantId,
@@ -59,7 +59,7 @@ function restoreNodeNames(gltf: Awaited<ReturnType<GLTFLoader["parseAsync"]>>) {
 }
 
 function previewLoader() {
-  return new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+  return createGltfLoader();
 }
 
 /** The projection-model index is separate from the cutout library index. */
@@ -291,7 +291,7 @@ export async function prepareProjectionAsset(
         if (!sharedLoader) loader.dispose();
       }
     } else {
-      const gltf = await new GLTFLoader().parseAsync(
+      const gltf = await createGltfLoader().parseAsync(
         selectGlbScene(displayBytes, entry.model_scene),
         "",
       );

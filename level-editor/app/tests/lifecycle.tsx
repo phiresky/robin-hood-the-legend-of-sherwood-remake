@@ -5,6 +5,7 @@ import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
 import { checkSharedLibrary } from "./library";
 import Editor3D from "../src/Editor3D";
 import { checkSpriteAtlas } from "./sprite-atlas";
+import { checkGltfTextures } from "./gltf-textures";
 import { checkHttpLibrary } from "./http-library";
 import "../src/styles.css";
 
@@ -319,6 +320,7 @@ async function main() {
     result.textContent = "PASS sprite atlas WebP cropping, dimensions, and one fetch across poses";
     return;
   }
+  await checkGltfTextures();
   await checkHttpLibrary();
   await checkSharedLibrary();
   if (location.search.includes("library-only")) {
