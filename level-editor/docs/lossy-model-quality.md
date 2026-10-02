@@ -283,3 +283,50 @@ UV triangles and approximate raster coverage. Raster coverage is deliberately
 omitted for out-of-range UVs because clipping tiled textures would be misleading.
 For one-map browser runs, set `BENCH_MAPS=Wychford BENCH_POOLS=2` when running
 `benchmarks/bc7f/worker-pool.mjs` from the repository root (with its full path).
+
+### Smart UV and packing diagnosis
+
+Read-only Blender 5.2.2 probes rebuilt layouts for the remaining 11 Wychford
+assets with 4096² derivatives. These measure fresh algorithm-5 layouts, not
+occupancy of the older published derivatives. All default layouts requested
+more than 4096 pixels at the configured 95% surface-density coverage; the current
+generator would therefore retain source layouts instead of publishing them.
+
+Padding and fragmentation matter: Leicester's great keep had 5,266
+edge-connected UV components, and removing gutters reduced its requested edge
+from 17,684 to 9,533. Removing gutters is diagnostic only, since baking and mips
+need padding. Several alternative packs also failed the collapsed-triangle guard.
+Changing packing shape alone did not consistently solve the large layouts.
+
+A stronger finding is source-material aspect handling. Smart UV explicitly
+uses `correct_aspect=True` while the objects still reference nonsquare source
+images. The destination atlas is square. A controlled probe substituted a square
+image on every material during the entire production unwrap/scale/pack sequence,
+keeping geometry, source-derived density targets, and all settings unchanged:
+
+| Asset | Default required edge | Square-material required edge | Default / square p95 axis distortion |
+| --- | ---: | ---: | ---: |
+| Leicester watermill | 4,580 | 1,759 | 14.01 / 1.74 |
+| Leicester church side tower | 5,486 | 1,791 | 1.71 / 1.37 |
+| Derby east watchtower | 6,575 | 1,655 | 26.65 / 1.35 |
+
+These are calculated density requirements, before rounding and other output
+guards, not validated replacement texture sizes. The probe implicates the
+material-image aspect context across UV operations; it does not isolate Smart UV
+from scale normalization or packing. Correcting destination aspect handling is
+the next candidate to bake and compare visually before publishing smaller assets.
+No production settings or library assets were changed by this diagnosis.
+
+`wychford-packing-diagnostic.json` records source hashes, settings, packing history,
+and measurements. Reproduce from `level-editor` with a fresh output directory:
+
+```sh
+blender --background --threads 2 --python-exit-code 1 \
+  --python refinement/blender/diagnose_atlas_packing.py -- \
+  --output work/atlas-packing-new
+```
+
+Use `--assets leicester-watermill leicester-church-side-tower derby-east-watchtower`
+to limit the probe. Island counts use mesh-edge connectivity with exact matching
+UV endpoints; raster coverage is approximate. Ideal pixel estimates target the
+entire surface and are not strict lower bounds for the 95% coverage criterion.

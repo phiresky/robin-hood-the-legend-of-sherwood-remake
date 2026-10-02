@@ -1,0 +1,1909 @@
+{
+  "blender_version": "5.2.2 LTS (d13f752e3b9c)",
+  "description": "Read-only layout probes; no textures baked or library assets changed. Required edges meet the configured density on 95% of surface area. Raster coverage uses 1024-square masks. Square-material probe retains source-derived density targets and substitutes square images only during unwrapping/packing.",
+  "packing": [
+    {
+      "model": "3d-assets/leicester/leicester-great-keep/model.glb",
+      "source_sha256": "35111663282fafd6bddcdf2afa47c1b0370bf890c6d90c03b094602989e3fbbf",
+      "settings": {
+        "algorithm_version": 5,
+        "density_coverage": 0.95,
+        "density": 1.0,
+        "nearest_density": 2.0,
+        "pack_shape": "AABB",
+        "multiple": 16,
+        "min_size": 32,
+        "max_size": 4096,
+        "max_atlas_expansion": 4.0,
+        "quality": 80,
+        "reencode_utilization": 0.9,
+        "reuse_ratio": 1.25,
+        "keep_normals": false,
+        "texture_file": false,
+        "no_quantize": false,
+        "normal_bits": 8,
+        "speed": 6,
+        "angle_limit": 66.0,
+        "pack_margin_px": 8.0,
+        "bake_margin": 8
+      },
+      "source_pixels": 106576448,
+      "variants": {
+        "default": {
+          "triangles": 28758,
+          "islands": 5266,
+          "uv_triangle_area_sum": 0.18165041927280773,
+          "island_aabb_area_sum": 0.2548376105321448,
+          "raster_coverage": 0.23346805572509766,
+          "coverage_with_8px_gutter_at_4096": 0.5571718215942383,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 17,
+          "required_edge_by_surface_coverage": {
+            "0.5": 9369.467806169869,
+            "0.9": 13953.037574967977,
+            "0.95": 17683.560162645656,
+            "0.99": 19724.84454118271
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.5751492937223337,
+            "0.9": 3.492181630629605,
+            "0.95": 5.843946310904296,
+            "0.99": 7.215504316083072
+          },
+          "surface_meeting_target_at_4096": 3.779728118010262e-09,
+          "ideal_full_surface_edge_no_waste_or_distortion": 3045.7026882920545,
+          "ideal_full_surface_edge_at_this_occupancy": 7146.103538721676
+        },
+        "aabb_no_gutter": {
+          "triangles": 28758,
+          "islands": 5266,
+          "uv_triangle_area_sum": 0.6250180028583214,
+          "island_aabb_area_sum": 0.8768385807870016,
+          "raster_coverage": 0.6603298187255859,
+          "coverage_with_8px_gutter_at_4096": 0.7852382659912109,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 15,
+          "required_edge_by_surface_coverage": {
+            "0.5": 5051.673720830652,
+            "0.9": 7522.125704251141,
+            "0.95": 9533.21897169676,
+            "0.99": 10475.689586377002
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.5751532275326054,
+            "0.9": 3.492180460580317,
+            "0.95": 5.76746813337681,
+            "0.99": 7.215892375693312
+          },
+          "surface_meeting_target_at_4096": 0.014457422583228434,
+          "ideal_full_surface_edge_no_waste_or_distortion": 3045.7026882920545,
+          "ideal_full_surface_edge_at_this_occupancy": 3852.487544049891
+        },
+        "aabb_8px": {
+          "failure": "Packed atlas collapsed 1 previously textured triangles"
+        },
+        "convex_8px": {
+          "failure": "Packed atlas collapsed 1 previously textured triangles"
+        }
+      },
+      "default_decision": {
+        "edge": 4096,
+        "required": 17683.560162645656,
+        "pack_history": [
+          {
+            "margin_fraction": 0.003,
+            "size": 4096,
+            "required_size": 17683.560162645656
+          }
+        ],
+        "exceeds_cap": true,
+        "expansion_limited": false
+      }
+    },
+    {
+      "model": "3d-assets/derby/derby-south-gatehouse/model.glb",
+      "source_sha256": "0e1ef6a50aa2461936bea16c3603a35b8ac1716508f1b44c5890eb70ba539a56",
+      "settings": {
+        "algorithm_version": 5,
+        "density_coverage": 0.95,
+        "density": 1.0,
+        "nearest_density": 2.0,
+        "pack_shape": "AABB",
+        "multiple": 16,
+        "min_size": 32,
+        "max_size": 4096,
+        "max_atlas_expansion": 4.0,
+        "quality": 80,
+        "reencode_utilization": 0.9,
+        "reuse_ratio": 1.25,
+        "keep_normals": false,
+        "texture_file": false,
+        "no_quantize": false,
+        "normal_bits": 8,
+        "speed": 6,
+        "angle_limit": 66.0,
+        "pack_margin_px": 8.0,
+        "bake_margin": 8
+      },
+      "source_pixels": 26903552,
+      "variants": {
+        "default": {
+          "triangles": 34668,
+          "islands": 1060,
+          "uv_triangle_area_sum": 0.34544575888676043,
+          "island_aabb_area_sum": 0.4945302018662559,
+          "raster_coverage": 0.2620992660522461,
+          "coverage_with_8px_gutter_at_4096": 0.46300506591796875,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 0,
+          "required_edge_by_surface_coverage": {
+            "0.5": 2199.8036296905498,
+            "0.9": 3001.9008319970253,
+            "0.95": 5220.235437291191,
+            "0.99": 8005.784867876423
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.1386194179194815,
+            "0.9": 2.0357924728595886,
+            "0.95": 4.461061534099917,
+            "0.99": 15.022966164490564
+          },
+          "surface_meeting_target_at_4096": 0.9476924071608827,
+          "ideal_full_surface_edge_no_waste_or_distortion": 1191.6054826867608,
+          "ideal_full_surface_edge_at_this_occupancy": 2027.4145559513208
+        },
+        "aabb_no_gutter": {
+          "triangles": 34668,
+          "islands": 1060,
+          "uv_triangle_area_sum": 0.5879952036012672,
+          "island_aabb_area_sum": 0.841756994921355,
+          "raster_coverage": 0.41479015350341797,
+          "coverage_with_8px_gutter_at_4096": 0.5348110198974609,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 0,
+          "required_edge_by_surface_coverage": {
+            "0.5": 1677.474923630885,
+            "0.9": 2404.4206921178575,
+            "0.95": 2608.9426360728735,
+            "0.99": 4197.356422764879
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.1478366844437833,
+            "0.9": 2.071928172164172,
+            "0.95": 2.4677394705505753,
+            "0.99": 7.616771379850842
+          },
+          "surface_meeting_target_at_4096": 0.9866912588843963,
+          "ideal_full_surface_edge_no_waste_or_distortion": 1191.6054826867608,
+          "ideal_full_surface_edge_at_this_occupancy": 1553.9806297331297
+        },
+        "aabb_8px": {
+          "triangles": 34668,
+          "islands": 1060,
+          "uv_triangle_area_sum": 0.430767052286219,
+          "island_aabb_area_sum": 0.6166737606643883,
+          "raster_coverage": 0.3203411102294922,
+          "coverage_with_8px_gutter_at_4096": 0.521784782409668,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 0,
+          "required_edge_by_surface_coverage": {
+            "0.5": 1968.3645633475994,
+            "0.9": 2903.925731530135,
+            "0.95": 3932.368388581152,
+            "0.99": 7169.224539998506
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.1490832706964995,
+            "0.9": 2.0679755007351677,
+            "0.95": 2.830386681229026,
+            "0.99": 15.022962041410205
+          },
+          "surface_meeting_target_at_4096": 0.9513659759548828,
+          "ideal_full_surface_edge_no_waste_or_distortion": 1191.6054826867608,
+          "ideal_full_surface_edge_at_this_occupancy": 1815.5627076369512
+        },
+        "convex_8px": {
+          "triangles": 34668,
+          "islands": 1060,
+          "uv_triangle_area_sum": 0.42418720478029986,
+          "island_aabb_area_sum": 0.6072541616445628,
+          "raster_coverage": 0.3150510787963867,
+          "coverage_with_8px_gutter_at_4096": 0.5190601348876953,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 0,
+          "required_edge_by_surface_coverage": {
+            "0.5": 1997.6444039116918,
+            "0.9": 2928.7151585312636,
+            "0.95": 4710.986150600334,
+            "0.99": 5464.041296502654
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.1792362859288752,
+            "0.9": 2.2782810403225295,
+            "0.95": 5.776188003202928,
+            "0.99": 8.435576339470638
+          },
+          "surface_meeting_target_at_4096": 0.9450478673177239,
+          "ideal_full_surface_edge_no_waste_or_distortion": 1191.6054826867608,
+          "ideal_full_surface_edge_at_this_occupancy": 1829.589716716642
+        }
+      },
+      "default_decision": {
+        "edge": 4096,
+        "required": 5220.235437291191,
+        "pack_history": [
+          {
+            "margin_fraction": 0.003,
+            "size": 4096,
+            "required_size": 5220.235437291191
+          }
+        ],
+        "exceeds_cap": true,
+        "expansion_limited": false
+      }
+    },
+    {
+      "model": "3d-assets/leicester/leicester-watermill/model.glb",
+      "source_sha256": "ba0b9fc1d5047e0bffc876e357408270651414e3d31c8190bee86466a133dc11",
+      "settings": {
+        "algorithm_version": 5,
+        "density_coverage": 0.95,
+        "density": 1.0,
+        "nearest_density": 2.0,
+        "pack_shape": "AABB",
+        "multiple": 16,
+        "min_size": 32,
+        "max_size": 4096,
+        "max_atlas_expansion": 4.0,
+        "quality": 80,
+        "reencode_utilization": 0.9,
+        "reuse_ratio": 1.25,
+        "keep_normals": false,
+        "texture_file": false,
+        "no_quantize": false,
+        "normal_bits": 8,
+        "speed": 6,
+        "angle_limit": 66.0,
+        "pack_margin_px": 8.0,
+        "bake_margin": 8
+      },
+      "source_pixels": 9561344,
+      "variants": {
+        "default": {
+          "triangles": 10204,
+          "islands": 533,
+          "uv_triangle_area_sum": 0.41038774406156053,
+          "island_aabb_area_sum": 0.5264132641303657,
+          "raster_coverage": 0.4381980895996094,
+          "coverage_with_8px_gutter_at_4096": 0.5687246322631836,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 0,
+          "required_edge_by_surface_coverage": {
+            "0.5": 2615.4720605765724,
+            "0.9": 4374.027212350009,
+            "0.95": 4580.200120807745,
+            "0.99": 4924.360936006556
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 5.488995446104864,
+            "0.9": 10.730559938207106,
+            "0.95": 14.010585858821273,
+            "0.99": 17.143530271931798
+          },
+          "surface_meeting_target_at_4096": 0.8649412701039993,
+          "ideal_full_surface_edge_no_waste_or_distortion": 761.9525565616123,
+          "ideal_full_surface_edge_at_this_occupancy": 1189.4076826332957
+        },
+        "aabb_no_gutter": {
+          "triangles": 10204,
+          "islands": 533,
+          "uv_triangle_area_sum": 0.4487020987710488,
+          "island_aabb_area_sum": 0.575559920084733,
+          "raster_coverage": 0.4644327163696289,
+          "coverage_with_8px_gutter_at_4096": 0.5121240615844727,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 0,
+          "required_edge_by_surface_coverage": {
+            "0.5": 2501.314817169178,
+            "0.9": 4183.115676031429,
+            "0.95": 4380.286241710945,
+            "0.99": 4709.426565780639
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 5.488995503232016,
+            "0.9": 10.730571897092839,
+            "0.95": 14.01058607634839,
+            "0.99": 17.14352318559628
+          },
+          "surface_meeting_target_at_4096": 0.8645885932331691,
+          "ideal_full_surface_edge_no_waste_or_distortion": 761.9525565616123,
+          "ideal_full_surface_edge_at_this_occupancy": 1137.4933859964203
+        },
+        "aabb_8px": {
+          "triangles": 10204,
+          "islands": 533,
+          "uv_triangle_area_sum": 0.4355561987244668,
+          "island_aabb_area_sum": 0.5586974116461774,
+          "raster_coverage": 0.46510982513427734,
+          "coverage_with_8px_gutter_at_4096": 0.5902166366577148,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 0,
+          "required_edge_by_surface_coverage": {
+            "0.5": 2538.7806933223196,
+            "0.9": 4245.774334595431,
+            "0.95": 4445.897772021905,
+            "0.99": 4779.9676566691
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 5.488996003104212,
+            "0.9": 10.730563898631662,
+            "0.95": 14.010587682979086,
+            "0.99": 17.143531976140746
+          },
+          "surface_meeting_target_at_4096": 0.864747603845877,
+          "ideal_full_surface_edge_no_waste_or_distortion": 761.9525565616123,
+          "ideal_full_surface_edge_at_this_occupancy": 1154.5316183312327
+        },
+        "convex_8px": {
+          "triangles": 10204,
+          "islands": 533,
+          "uv_triangle_area_sum": 0.4355561987244668,
+          "island_aabb_area_sum": 0.5586974116461774,
+          "raster_coverage": 0.46510982513427734,
+          "coverage_with_8px_gutter_at_4096": 0.5902166366577148,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 0,
+          "required_edge_by_surface_coverage": {
+            "0.5": 2538.7806933223196,
+            "0.9": 4245.774334595431,
+            "0.95": 4445.897772021905,
+            "0.99": 4779.9676566691
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 5.488996003104212,
+            "0.9": 10.730563898631662,
+            "0.95": 14.010587682979086,
+            "0.99": 17.143531976140746
+          },
+          "surface_meeting_target_at_4096": 0.864747603845877,
+          "ideal_full_surface_edge_no_waste_or_distortion": 761.9525565616123,
+          "ideal_full_surface_edge_at_this_occupancy": 1154.5316183312327
+        }
+      },
+      "default_decision": {
+        "edge": 4096,
+        "required": 4580.200120807745,
+        "pack_history": [
+          {
+            "margin_fraction": 0.003,
+            "size": 4096,
+            "required_size": 4580.200120807745
+          }
+        ],
+        "exceeds_cap": true,
+        "expansion_limited": false
+      }
+    },
+    {
+      "model": "3d-assets/leicester/leicester-northwest-tower/model.glb",
+      "source_sha256": "a526c85f97e9b2a4bd1ced01f604de917d0604fd4124a1d4292fbc949325ec59",
+      "settings": {
+        "algorithm_version": 5,
+        "density_coverage": 0.95,
+        "density": 1.0,
+        "nearest_density": 2.0,
+        "pack_shape": "AABB",
+        "multiple": 16,
+        "min_size": 32,
+        "max_size": 4096,
+        "max_atlas_expansion": 4.0,
+        "quality": 80,
+        "reencode_utilization": 0.9,
+        "reuse_ratio": 1.25,
+        "keep_normals": false,
+        "texture_file": false,
+        "no_quantize": false,
+        "normal_bits": 8,
+        "speed": 6,
+        "angle_limit": 66.0,
+        "pack_margin_px": 8.0,
+        "bake_margin": 8
+      },
+      "source_pixels": 13095296,
+      "variants": {
+        "default": {
+          "triangles": 3406,
+          "islands": 431,
+          "uv_triangle_area_sum": 0.39788392614825474,
+          "island_aabb_area_sum": 0.5530109012045579,
+          "raster_coverage": 0.42703819274902344,
+          "coverage_with_8px_gutter_at_4096": 0.5681953430175781,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 0,
+          "required_edge_by_surface_coverage": {
+            "0.5": 1556.9689609729348,
+            "0.9": 2188.3435710245362,
+            "0.95": 4570.910089882462,
+            "0.99": 4731.80678808816
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.2866752491275333,
+            "0.9": 2.5933845059857616,
+            "0.95": 11.041533410083902,
+            "0.99": 11.832467591372088
+          },
+          "surface_meeting_target_at_4096": 0.9451168511644207,
+          "ideal_full_surface_edge_no_waste_or_distortion": 866.3712861976137,
+          "ideal_full_surface_edge_at_this_occupancy": 1373.491110232818
+        },
+        "aabb_no_gutter": {
+          "triangles": 3406,
+          "islands": 431,
+          "uv_triangle_area_sum": 0.634896041797166,
+          "island_aabb_area_sum": 0.8824292761633921,
+          "raster_coverage": 0.6533308029174805,
+          "coverage_with_8px_gutter_at_4096": 0.7142581939697266,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 0,
+          "required_edge_by_surface_coverage": {
+            "0.5": 1277.9260179306893,
+            "0.9": 1754.1796278732843,
+            "0.95": 3674.838120049892,
+            "0.99": 3936.685518742714
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.3060170919735308,
+            "0.9": 2.782494937051556,
+            "0.95": 11.388182186295532,
+            "0.99": 13.068645436868863
+          },
+          "surface_meeting_target_at_4096": 0.9931007514948246,
+          "ideal_full_surface_edge_no_waste_or_distortion": 866.3712861976137,
+          "ideal_full_surface_edge_at_this_occupancy": 1087.3083931453846
+        },
+        "aabb_8px": {
+          "failure": "Packed atlas collapsed 1 previously textured triangles"
+        },
+        "convex_8px": {
+          "failure": "Packed atlas collapsed 2 previously textured triangles"
+        }
+      },
+      "default_decision": {
+        "edge": 4096,
+        "required": 4570.910089882462,
+        "pack_history": [
+          {
+            "margin_fraction": 0.003,
+            "size": 4096,
+            "required_size": 4570.910089882462
+          }
+        ],
+        "exceeds_cap": true,
+        "expansion_limited": false
+      }
+    },
+    {
+      "model": "3d-assets/leicester/leicester-church-side-tower/model.glb",
+      "source_sha256": "1c2a831d839e0bf5132722e7d743a6b419d1ade2b2a87543ecbd65dc861a40c4",
+      "settings": {
+        "algorithm_version": 5,
+        "density_coverage": 0.95,
+        "density": 1.0,
+        "nearest_density": 2.0,
+        "pack_shape": "AABB",
+        "multiple": 16,
+        "min_size": 32,
+        "max_size": 4096,
+        "max_atlas_expansion": 4.0,
+        "quality": 80,
+        "reencode_utilization": 0.9,
+        "reuse_ratio": 1.25,
+        "keep_normals": false,
+        "texture_file": false,
+        "no_quantize": false,
+        "normal_bits": 8,
+        "speed": 6,
+        "angle_limit": 66.0,
+        "pack_margin_px": 8.0,
+        "bake_margin": 8
+      },
+      "source_pixels": 15179392,
+      "variants": {
+        "default": {
+          "triangles": 2253,
+          "islands": 348,
+          "uv_triangle_area_sum": 0.06281918096959621,
+          "island_aabb_area_sum": 0.08015692312833034,
+          "raster_coverage": 0.0726022720336914,
+          "coverage_with_8px_gutter_at_4096": 0.12533950805664062,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 1,
+          "required_edge_by_surface_coverage": {
+            "0.5": 4541.117034493237,
+            "0.9": 5066.792011520304,
+            "0.95": 5485.904065669419,
+            "0.99": 6334.238844255738
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.383453186725934,
+            "0.9": 1.6661818045605241,
+            "0.95": 1.706674755705832,
+            "0.99": 2.473646949362866
+          },
+          "surface_meeting_target_at_4096": 0.11033794647322065,
+          "ideal_full_surface_edge_no_waste_or_distortion": 979.1217746757671,
+          "ideal_full_surface_edge_at_this_occupancy": 3906.524695024832
+        },
+        "aabb_no_gutter": {
+          "triangles": 2253,
+          "islands": 347,
+          "uv_triangle_area_sum": 0.06238464994190176,
+          "island_aabb_area_sum": 0.07960248701409832,
+          "raster_coverage": 0.06707382202148438,
+          "coverage_with_8px_gutter_at_4096": 0.0842580795288086,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 0,
+          "required_edge_by_surface_coverage": {
+            "0.5": 4556.899985900445,
+            "0.9": 5084.149480975337,
+            "0.95": 5445.6390576321855,
+            "0.99": 6343.125661226696
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.3830511001082575,
+            "0.9": 1.6661666361979837,
+            "0.95": 1.7066749035398552,
+            "0.99": 2.473659757350286
+          },
+          "surface_meeting_target_at_4096": 0.07281181241453906,
+          "ideal_full_surface_edge_no_waste_or_distortion": 979.1217746757671,
+          "ideal_full_surface_edge_at_this_occupancy": 3920.1062452143965
+        },
+        "aabb_8px": {
+          "triangles": 2253,
+          "islands": 348,
+          "uv_triangle_area_sum": 0.06104877771499039,
+          "island_aabb_area_sum": 0.07789791561424775,
+          "raster_coverage": 0.07159042358398438,
+          "coverage_with_8px_gutter_at_4096": 0.11917781829833984,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 1,
+          "required_edge_by_surface_coverage": {
+            "0.5": 4606.479723934509,
+            "0.9": 5140.572857436134,
+            "0.95": 5564.9039277514585,
+            "0.99": 6425.416697423784
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.3830594691663525,
+            "0.9": 1.666509799185885,
+            "0.95": 1.706675623631286,
+            "0.99": 2.6146425995550486
+          },
+          "surface_meeting_target_at_4096": 0.04885723898995869,
+          "ideal_full_surface_edge_no_waste_or_distortion": 979.1217746757671,
+          "ideal_full_surface_edge_at_this_occupancy": 3962.764122286617
+        },
+        "convex_8px": {
+          "triangles": 2253,
+          "islands": 348,
+          "uv_triangle_area_sum": 0.06104877771499039,
+          "island_aabb_area_sum": 0.07789791561424775,
+          "raster_coverage": 0.07159042358398438,
+          "coverage_with_8px_gutter_at_4096": 0.11917781829833984,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 1,
+          "required_edge_by_surface_coverage": {
+            "0.5": 4606.479723934509,
+            "0.9": 5140.572857436134,
+            "0.95": 5564.9039277514585,
+            "0.99": 6425.416697423784
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.3830594691663525,
+            "0.9": 1.666509799185885,
+            "0.95": 1.706675623631286,
+            "0.99": 2.6146425995550486
+          },
+          "surface_meeting_target_at_4096": 0.04885723898995869,
+          "ideal_full_surface_edge_no_waste_or_distortion": 979.1217746757671,
+          "ideal_full_surface_edge_at_this_occupancy": 3962.764122286617
+        }
+      },
+      "default_decision": {
+        "edge": 4096,
+        "required": 5485.904065669419,
+        "pack_history": [
+          {
+            "margin_fraction": 0.003,
+            "size": 4096,
+            "required_size": 5485.904065669419
+          }
+        ],
+        "exceeds_cap": true,
+        "expansion_limited": false
+      }
+    },
+    {
+      "model": "3d-assets/derby/derby-east-watchtower/model.glb",
+      "source_sha256": "eee53338bcb1ea01b38da55e63747d46619fd6923ad8c683196d076bf024d64c",
+      "settings": {
+        "algorithm_version": 5,
+        "density_coverage": 0.95,
+        "density": 1.0,
+        "nearest_density": 2.0,
+        "pack_shape": "AABB",
+        "multiple": 16,
+        "min_size": 32,
+        "max_size": 4096,
+        "max_atlas_expansion": 4.0,
+        "quality": 80,
+        "reencode_utilization": 0.9,
+        "reuse_ratio": 1.25,
+        "keep_normals": false,
+        "texture_file": false,
+        "no_quantize": false,
+        "normal_bits": 8,
+        "speed": 6,
+        "angle_limit": 66.0,
+        "pack_margin_px": 8.0,
+        "bake_margin": 8
+      },
+      "source_pixels": 6668288,
+      "variants": {
+        "default": {
+          "triangles": 14718,
+          "islands": 1590,
+          "uv_triangle_area_sum": 0.35956251137868517,
+          "island_aabb_area_sum": 0.4286493049762591,
+          "raster_coverage": 0.3935365676879883,
+          "coverage_with_8px_gutter_at_4096": 0.5733423233032227,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 35,
+          "required_edge_by_surface_coverage": {
+            "0.5": 1577.0726011055376,
+            "0.9": 6377.397864547971,
+            "0.95": 6574.634827169003,
+            "0.99": 6774.577646077406
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.453697699000443,
+            "0.9": 24.55622942404372,
+            "0.95": 26.651926212162515,
+            "0.99": 26.85548418085688
+          },
+          "surface_meeting_target_at_4096": 0.8084311402761954,
+          "ideal_full_surface_edge_no_waste_or_distortion": 781.1530670815648,
+          "ideal_full_surface_edge_at_this_occupancy": 1302.7135779435323
+        },
+        "aabb_no_gutter": {
+          "triangles": 14718,
+          "islands": 1590,
+          "uv_triangle_area_sum": 0.7942370501542715,
+          "island_aabb_area_sum": 0.94684273823373,
+          "raster_coverage": 0.8126459121704102,
+          "coverage_with_8px_gutter_at_4096": 0.8691825866699219,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 14,
+          "required_edge_by_surface_coverage": {
+            "0.5": 1074.6037541961257,
+            "0.9": 4290.988931067707,
+            "0.95": 4423.68210267762,
+            "0.99": 4558.429249653262
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.4536980874908343,
+            "0.9": 24.589402251859973,
+            "0.95": 26.660239400986047,
+            "0.99": 26.85545193570171
+          },
+          "surface_meeting_target_at_4096": 0.8678883454602527,
+          "ideal_full_surface_edge_no_waste_or_distortion": 781.1530670815648,
+          "ideal_full_surface_edge_at_this_occupancy": 876.518468125353
+        },
+        "aabb_8px": {
+          "triangles": 14718,
+          "islands": 1590,
+          "uv_triangle_area_sum": 0.44555156459099443,
+          "island_aabb_area_sum": 0.5311603236269838,
+          "raster_coverage": 0.4873485565185547,
+          "coverage_with_8px_gutter_at_4096": 0.6586189270019531,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 29,
+          "required_edge_by_surface_coverage": {
+            "0.5": 1433.9596332872943,
+            "0.9": 5729.032774810332,
+            "0.95": 5906.221477737195,
+            "0.99": 6084.969154190389
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.453697753181158,
+            "0.9": 24.53483034029972,
+            "0.95": 26.651565643355383,
+            "0.99": 26.855428410354072
+          },
+          "surface_meeting_target_at_4096": 0.8087966717137799,
+          "ideal_full_surface_edge_no_waste_or_distortion": 781.1530670815648,
+          "ideal_full_surface_edge_at_this_occupancy": 1170.2729203951067
+        },
+        "convex_8px": {
+          "triangles": 14718,
+          "islands": 1590,
+          "uv_triangle_area_sum": 0.489678675841841,
+          "island_aabb_area_sum": 0.5837662520203342,
+          "raster_coverage": 0.5203161239624023,
+          "coverage_with_8px_gutter_at_4096": 0.6644468307495117,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 30,
+          "required_edge_by_surface_coverage": {
+            "0.5": 1274.8403621370296,
+            "0.9": 1900.9687613512535,
+            "0.95": 4462.866081792745,
+            "0.99": 5516.653506069769
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.2123423334058074,
+            "0.9": 2.98835000736702,
+            "0.95": 14.284252339287905,
+            "0.99": 26.695489822994748
+          },
+          "surface_meeting_target_at_4096": 0.9472821733159957,
+          "ideal_full_surface_edge_no_waste_or_distortion": 781.1530670815648,
+          "ideal_full_surface_edge_at_this_occupancy": 1116.29902712573
+        }
+      },
+      "default_decision": {
+        "edge": 4096,
+        "required": 6574.634827169003,
+        "pack_history": [
+          {
+            "margin_fraction": 0.003,
+            "size": 4096,
+            "required_size": 6574.634827169003
+          }
+        ],
+        "exceeds_cap": true,
+        "expansion_limited": false
+      }
+    },
+    {
+      "model": "3d-assets/leicester/leicester-west-moat-tower/model.glb",
+      "source_sha256": "567ce09f35fde860f0617b7eb8e91495fb1ee46bc6dbe11ffc20d783cb38bb8d",
+      "settings": {
+        "algorithm_version": 5,
+        "density_coverage": 0.95,
+        "density": 1.0,
+        "nearest_density": 2.0,
+        "pack_shape": "AABB",
+        "multiple": 16,
+        "min_size": 32,
+        "max_size": 4096,
+        "max_atlas_expansion": 4.0,
+        "quality": 80,
+        "reencode_utilization": 0.9,
+        "reuse_ratio": 1.25,
+        "keep_normals": false,
+        "texture_file": false,
+        "no_quantize": false,
+        "normal_bits": 8,
+        "speed": 6,
+        "angle_limit": 66.0,
+        "pack_margin_px": 8.0,
+        "bake_margin": 8
+      },
+      "source_pixels": 20588928,
+      "variants": {
+        "default": {
+          "triangles": 4417,
+          "islands": 867,
+          "uv_triangle_area_sum": 0.3149381883978837,
+          "island_aabb_area_sum": 0.4539346756063236,
+          "raster_coverage": 0.3548727035522461,
+          "coverage_with_8px_gutter_at_4096": 0.5587043762207031,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 0,
+          "required_edge_by_surface_coverage": {
+            "0.5": 2471.0289490537907,
+            "0.9": 4957.752265351134,
+            "0.95": 6462.9122029806085,
+            "0.99": 7251.990961694435
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.3815489973090211,
+            "0.9": 5.7420268647962,
+            "0.95": 9.7578295219927,
+            "0.99": 12.285987219685017
+          },
+          "surface_meeting_target_at_4096": 0.8616405948218169,
+          "ideal_full_surface_edge_no_waste_or_distortion": 1159.5032254956,
+          "ideal_full_surface_edge_at_this_occupancy": 2066.1378732650983
+        },
+        "aabb_no_gutter": {
+          "triangles": 4417,
+          "islands": 867,
+          "uv_triangle_area_sum": 0.6474096730762642,
+          "island_aabb_area_sum": 0.9331409331107208,
+          "raster_coverage": 0.6769819259643555,
+          "coverage_with_8px_gutter_at_4096": 0.763493537902832,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 0,
+          "required_edge_by_surface_coverage": {
+            "0.5": 1733.6998359469485,
+            "0.9": 3457.8788605088816,
+            "0.95": 4507.6646191139735,
+            "0.99": 5058.029017719331
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.403637278331818,
+            "0.9": 5.742040090630732,
+            "0.95": 9.757839988084992,
+            "0.99": 12.286015145320615
+          },
+          "surface_meeting_target_at_4096": 0.9160559940197007,
+          "ideal_full_surface_edge_no_waste_or_distortion": 1159.5032254956,
+          "ideal_full_surface_edge_at_this_occupancy": 1441.0610140688548
+        },
+        "aabb_8px": {
+          "triangles": 4417,
+          "islands": 867,
+          "uv_triangle_area_sum": 0.3810924696258142,
+          "island_aabb_area_sum": 0.5492858865426286,
+          "raster_coverage": 0.42587947845458984,
+          "coverage_with_8px_gutter_at_4096": 0.6245975494384766,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 0,
+          "required_edge_by_surface_coverage": {
+            "0.5": 2257.1339486230204,
+            "0.9": 4506.9574585311475,
+            "0.95": 5875.2433727868465,
+            "0.99": 6592.574723569693
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.4036373629136376,
+            "0.9": 5.742039012608706,
+            "0.95": 9.757843137166118,
+            "0.99": 12.285992429068436
+          },
+          "surface_meeting_target_at_4096": 0.8544042860281202,
+          "ideal_full_surface_edge_no_waste_or_distortion": 1159.5032254956,
+          "ideal_full_surface_edge_at_this_occupancy": 1878.2646178711366
+        },
+        "convex_8px": {
+          "triangles": 4417,
+          "islands": 867,
+          "uv_triangle_area_sum": 0.3810924696258142,
+          "island_aabb_area_sum": 0.5492858865426286,
+          "raster_coverage": 0.42587947845458984,
+          "coverage_with_8px_gutter_at_4096": 0.6245975494384766,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 0,
+          "required_edge_by_surface_coverage": {
+            "0.5": 2257.1339486230204,
+            "0.9": 4506.9574585311475,
+            "0.95": 5875.2433727868465,
+            "0.99": 6592.574723569693
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.4036373629136376,
+            "0.9": 5.742039012608706,
+            "0.95": 9.757843137166118,
+            "0.99": 12.285992429068436
+          },
+          "surface_meeting_target_at_4096": 0.8544042860281202,
+          "ideal_full_surface_edge_no_waste_or_distortion": 1159.5032254956,
+          "ideal_full_surface_edge_at_this_occupancy": 1878.2646178711366
+        }
+      },
+      "default_decision": {
+        "edge": 4096,
+        "required": 6462.9122029806085,
+        "pack_history": [
+          {
+            "margin_fraction": 0.003,
+            "size": 4096,
+            "required_size": 6462.9122029806085
+          }
+        ],
+        "exceeds_cap": true,
+        "expansion_limited": false
+      }
+    },
+    {
+      "model": "3d-assets/leicester/leicester-east-moat-tower/model.glb",
+      "source_sha256": "a8970c8fb4a5cea9e380272c9d861194283e7fc3b5f1bd78b9ed0e57af850527",
+      "settings": {
+        "algorithm_version": 5,
+        "density_coverage": 0.95,
+        "density": 1.0,
+        "nearest_density": 2.0,
+        "pack_shape": "AABB",
+        "multiple": 16,
+        "min_size": 32,
+        "max_size": 4096,
+        "max_atlas_expansion": 4.0,
+        "quality": 80,
+        "reencode_utilization": 0.9,
+        "reuse_ratio": 1.25,
+        "keep_normals": false,
+        "texture_file": false,
+        "no_quantize": false,
+        "normal_bits": 8,
+        "speed": 6,
+        "angle_limit": 66.0,
+        "pack_margin_px": 8.0,
+        "bake_margin": 8
+      },
+      "source_pixels": 20863744,
+      "variants": {
+        "default": {
+          "triangles": 4076,
+          "islands": 553,
+          "uv_triangle_area_sum": 0.35872981245600055,
+          "island_aabb_area_sum": 0.48040608442589827,
+          "raster_coverage": 0.38727474212646484,
+          "coverage_with_8px_gutter_at_4096": 0.5380363464355469,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 2,
+          "required_edge_by_surface_coverage": {
+            "0.5": 2276.7007418587596,
+            "0.9": 3549.970190510593,
+            "0.95": 4482.239777371005,
+            "0.99": 6724.545894056859
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.3924882368878184,
+            "0.9": 3.0707978107306344,
+            "0.95": 5.400814969776421,
+            "0.99": 11.983086573540191
+          },
+          "surface_meeting_target_at_4096": 0.9228600083364205,
+          "ideal_full_surface_edge_no_waste_or_distortion": 1161.9393695330384,
+          "ideal_full_surface_edge_at_this_occupancy": 1939.9910740929668
+        },
+        "aabb_no_gutter": {
+          "failure": "Packed atlas collapsed 1 previously textured triangles"
+        },
+        "aabb_8px": {
+          "failure": "Packed atlas collapsed 1 previously textured triangles"
+        },
+        "convex_8px": {
+          "failure": "Packed atlas collapsed 1 previously textured triangles"
+        }
+      },
+      "default_decision": {
+        "edge": 4096,
+        "required": 4482.239777371005,
+        "pack_history": [
+          {
+            "margin_fraction": 0.003,
+            "size": 4096,
+            "required_size": 4482.239777371005
+          }
+        ],
+        "exceeds_cap": true,
+        "expansion_limited": false
+      }
+    },
+    {
+      "model": "3d-assets/derby/derby-keep-central-gallery/model.glb",
+      "source_sha256": "8e35b1be1767ae67c8ca925135a59c8f47c34eb7ee1de9d1439ec80618e4b08d",
+      "settings": {
+        "algorithm_version": 5,
+        "density_coverage": 0.95,
+        "density": 1.0,
+        "nearest_density": 2.0,
+        "pack_shape": "AABB",
+        "multiple": 16,
+        "min_size": 32,
+        "max_size": 4096,
+        "max_atlas_expansion": 4.0,
+        "quality": 80,
+        "reencode_utilization": 0.9,
+        "reuse_ratio": 1.25,
+        "keep_normals": false,
+        "texture_file": false,
+        "no_quantize": false,
+        "normal_bits": 8,
+        "speed": 6,
+        "angle_limit": 66.0,
+        "pack_margin_px": 8.0,
+        "bake_margin": 8
+      },
+      "source_pixels": 14684672,
+      "variants": {
+        "default": {
+          "triangles": 664,
+          "islands": 146,
+          "uv_triangle_area_sum": 0.5584641353376578,
+          "island_aabb_area_sum": 0.622957829482577,
+          "raster_coverage": 0.579920768737793,
+          "coverage_with_8px_gutter_at_4096": 0.6780929565429688,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 0,
+          "required_edge_by_surface_coverage": {
+            "0.5": 1903.4114492776007,
+            "0.9": 4051.5007545882,
+            "0.95": 4610.857048006223,
+            "0.99": 5338.778368846492
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.965857424826413,
+            "0.9": 8.906734602365134,
+            "0.95": 11.535850846132316,
+            "0.99": 15.465805661058974
+          },
+          "surface_meeting_target_at_4096": 0.9136718052317874,
+          "ideal_full_surface_edge_no_waste_or_distortion": 1014.2570059520349,
+          "ideal_full_surface_edge_at_this_occupancy": 1357.2203798186656
+        },
+        "aabb_no_gutter": {
+          "triangles": 664,
+          "islands": 146,
+          "uv_triangle_area_sum": 0.7957017368420525,
+          "island_aabb_area_sum": 0.887592601295911,
+          "raster_coverage": 0.8076820373535156,
+          "coverage_with_8px_gutter_at_4096": 0.8449420928955078,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 0,
+          "required_edge_by_surface_coverage": {
+            "0.5": 1594.6130706627657,
+            "0.9": 3394.2069992876604,
+            "0.95": 3862.8132779287025,
+            "0.99": 4472.646492705237
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.9658578534901818,
+            "0.9": 8.906732767076864,
+            "0.95": 11.53583717098033,
+            "0.99": 15.465811914310498
+          },
+          "surface_meeting_target_at_4096": 0.9745780935225866,
+          "ideal_full_surface_edge_no_waste_or_distortion": 1014.2570059520349,
+          "ideal_full_surface_edge_at_this_occupancy": 1137.0324603807726
+        },
+        "aabb_8px": {
+          "triangles": 664,
+          "islands": 146,
+          "uv_triangle_area_sum": 0.5924467594739731,
+          "island_aabb_area_sum": 0.6608649448933993,
+          "raster_coverage": 0.615142822265625,
+          "coverage_with_8px_gutter_at_4096": 0.7038736343383789,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 0,
+          "required_edge_by_surface_coverage": {
+            "0.5": 1848.016702754938,
+            "0.9": 3933.5865724692785,
+            "0.95": 4476.666692588859,
+            "0.99": 5183.398917310485
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.9658581050881396,
+            "0.9": 8.906730069181972,
+            "0.95": 11.535854573070209,
+            "0.99": 15.465796793050687
+          },
+          "surface_meeting_target_at_4096": 0.9155066063288564,
+          "ideal_full_surface_edge_no_waste_or_distortion": 1014.2570059520349,
+          "ideal_full_surface_edge_at_this_occupancy": 1317.720650827388
+        },
+        "convex_8px": {
+          "triangles": 664,
+          "islands": 146,
+          "uv_triangle_area_sum": 0.5924467594739731,
+          "island_aabb_area_sum": 0.6608649448933993,
+          "raster_coverage": 0.615142822265625,
+          "coverage_with_8px_gutter_at_4096": 0.7038736343383789,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 0,
+          "required_edge_by_surface_coverage": {
+            "0.5": 1848.016702754938,
+            "0.9": 3933.5865724692785,
+            "0.95": 4476.666692588859,
+            "0.99": 5183.398917310485
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.9658581050881396,
+            "0.9": 8.906730069181972,
+            "0.95": 11.535854573070209,
+            "0.99": 15.465796793050687
+          },
+          "surface_meeting_target_at_4096": 0.9155066063288564,
+          "ideal_full_surface_edge_no_waste_or_distortion": 1014.2570059520349,
+          "ideal_full_surface_edge_at_this_occupancy": 1317.720650827388
+        }
+      },
+      "default_decision": {
+        "edge": 4096,
+        "required": 4610.857048006223,
+        "pack_history": [
+          {
+            "margin_fraction": 0.003,
+            "size": 4096,
+            "required_size": 4610.857048006223
+          }
+        ],
+        "exceeds_cap": true,
+        "expansion_limited": false
+      }
+    },
+    {
+      "model": "3d-assets/derby/derby-keep-west-tower/model.glb",
+      "source_sha256": "275066ae3238a4aafd527350f586138a3f8c550fc5ff23b0511289c11f543534",
+      "settings": {
+        "algorithm_version": 5,
+        "density_coverage": 0.95,
+        "density": 1.0,
+        "nearest_density": 2.0,
+        "pack_shape": "AABB",
+        "multiple": 16,
+        "min_size": 32,
+        "max_size": 4096,
+        "max_atlas_expansion": 4.0,
+        "quality": 80,
+        "reencode_utilization": 0.9,
+        "reuse_ratio": 1.25,
+        "keep_normals": false,
+        "texture_file": false,
+        "no_quantize": false,
+        "normal_bits": 8,
+        "speed": 6,
+        "angle_limit": 66.0,
+        "pack_margin_px": 8.0,
+        "bake_margin": 8
+      },
+      "source_pixels": 51344896,
+      "variants": {
+        "default": {
+          "triangles": 3348,
+          "islands": 446,
+          "uv_triangle_area_sum": 0.4381035560338401,
+          "island_aabb_area_sum": 0.4766963810679,
+          "raster_coverage": 0.4796628952026367,
+          "coverage_with_8px_gutter_at_4096": 0.6540489196777344,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 10,
+          "required_edge_by_surface_coverage": {
+            "0.5": 3989.2254506760496,
+            "0.9": 4950.513865442786,
+            "0.95": 5478.851817587385,
+            "0.99": 12493.307029028232
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.5967703935409525,
+            "0.9": 2.4356303699767166,
+            "0.95": 3.0114243190560135,
+            "0.99": 15.6590825552736
+          },
+          "surface_meeting_target_at_4096": 0.6753346518165051,
+          "ideal_full_surface_edge_no_waste_or_distortion": 2087.7221978620228,
+          "ideal_full_surface_edge_at_this_occupancy": 3154.16435686273
+        },
+        "aabb_no_gutter": {
+          "triangles": 3348,
+          "islands": 446,
+          "uv_triangle_area_sum": 0.8583066071835612,
+          "island_aabb_area_sum": 0.9339153887797689,
+          "raster_coverage": 0.8731307983398438,
+          "coverage_with_8px_gutter_at_4096": 0.9162111282348633,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 10,
+          "required_edge_by_surface_coverage": {
+            "0.5": 2843.2272908143823,
+            "0.9": 3520.269545621126,
+            "0.95": 4225.7096086499705,
+            "0.99": 8926.111027390636
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.5923547228417543,
+            "0.9": 2.435629062648718,
+            "0.95": 3.5095700134439944,
+            "0.99": 15.659721138427088
+          },
+          "surface_meeting_target_at_4096": 0.9483316138156921,
+          "ideal_full_surface_edge_no_waste_or_distortion": 2087.7221978620228,
+          "ideal_full_surface_edge_at_this_occupancy": 2253.4684448409794
+        },
+        "aabb_8px": {
+          "triangles": 3348,
+          "islands": 446,
+          "uv_triangle_area_sum": 0.4753576905639856,
+          "island_aabb_area_sum": 0.5172322355070245,
+          "raster_coverage": 0.5195369720458984,
+          "coverage_with_8px_gutter_at_4096": 0.6609058380126953,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 10,
+          "required_edge_by_surface_coverage": {
+            "0.5": 3829.8960643357623,
+            "0.9": 4752.568933540764,
+            "0.95": 5259.77859578086,
+            "0.99": 11993.83716408526
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.597797415545115,
+            "0.9": 2.4356310619792043,
+            "0.95": 3.0114228635341136,
+            "0.99": 15.659395855655934
+          },
+          "surface_meeting_target_at_4096": 0.7089759284545761,
+          "ideal_full_surface_edge_no_waste_or_distortion": 2087.7221978620228,
+          "ideal_full_surface_edge_at_this_occupancy": 3028.0458484359597
+        },
+        "convex_8px": {
+          "failure": "Packed atlas collapsed 1 previously textured triangles"
+        }
+      },
+      "default_decision": {
+        "edge": 4096,
+        "required": 5478.851817587385,
+        "pack_history": [
+          {
+            "margin_fraction": 0.003,
+            "size": 4096,
+            "required_size": 5478.851817587385
+          }
+        ],
+        "exceeds_cap": true,
+        "expansion_limited": false
+      }
+    },
+    {
+      "model": "3d-assets/derby/derby-great-keep/model.glb",
+      "source_sha256": "2ec310e014d06e401adb0331e4d11aeb578dd2718c7b82fdf653236165b61628",
+      "settings": {
+        "algorithm_version": 5,
+        "density_coverage": 0.95,
+        "density": 1.0,
+        "nearest_density": 2.0,
+        "pack_shape": "AABB",
+        "multiple": 16,
+        "min_size": 32,
+        "max_size": 4096,
+        "max_atlas_expansion": 4.0,
+        "quality": 80,
+        "reencode_utilization": 0.9,
+        "reuse_ratio": 1.25,
+        "keep_normals": false,
+        "texture_file": false,
+        "no_quantize": false,
+        "normal_bits": 8,
+        "speed": 6,
+        "angle_limit": 66.0,
+        "pack_margin_px": 8.0,
+        "bake_margin": 8
+      },
+      "source_pixels": 31524352,
+      "variants": {
+        "default": {
+          "triangles": 15632,
+          "islands": 1275,
+          "uv_triangle_area_sum": 0.339701889470548,
+          "island_aabb_area_sum": 0.3690879284390073,
+          "raster_coverage": 0.38535594940185547,
+          "coverage_with_8px_gutter_at_4096": 0.6075153350830078,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 6,
+          "required_edge_by_surface_coverage": {
+            "0.5": 6487.368528465005,
+            "0.9": 10855.178674640987,
+            "0.95": 14542.67095399909,
+            "0.99": 16931.37616471409
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.6247965064226066,
+            "0.9": 4.549194160072547,
+            "0.95": 8.164866967867988,
+            "0.99": 11.067367969024179
+          },
+          "surface_meeting_target_at_4096": 1.1192065929460625e-09,
+          "ideal_full_surface_edge_no_waste_or_distortion": 2955.6717910596067,
+          "ideal_full_surface_edge_at_this_occupancy": 5071.158975785254
+        },
+        "aabb_no_gutter": {
+          "failure": "Packed atlas collapsed 1 previously textured triangles"
+        },
+        "aabb_8px": {
+          "triangles": 15632,
+          "islands": 1275,
+          "uv_triangle_area_sum": 0.44070940781578843,
+          "island_aabb_area_sum": 0.4788331796219464,
+          "raster_coverage": 0.49363040924072266,
+          "coverage_with_8px_gutter_at_4096": 0.7045860290527344,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 8,
+          "required_edge_by_surface_coverage": {
+            "0.5": 5808.395135338886,
+            "0.9": 9530.37134673715,
+            "0.95": 12767.822529761308,
+            "0.99": 14865.005095415265
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.6897700739596873,
+            "0.9": 4.549194475089644,
+            "0.95": 8.164864571825822,
+            "0.99": 11.067369309653593
+          },
+          "surface_meeting_target_at_4096": 9.017196369466219e-10,
+          "ideal_full_surface_edge_no_waste_or_distortion": 2955.6717910596067,
+          "ideal_full_surface_edge_at_this_occupancy": 4452.255160465463
+        },
+        "convex_8px": {
+          "triangles": 15632,
+          "islands": 1275,
+          "uv_triangle_area_sum": 0.44070940781578843,
+          "island_aabb_area_sum": 0.4788331796219464,
+          "raster_coverage": 0.49363040924072266,
+          "coverage_with_8px_gutter_at_4096": 0.7045860290527344,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 8,
+          "required_edge_by_surface_coverage": {
+            "0.5": 5808.395135338886,
+            "0.9": 9530.37134673715,
+            "0.95": 12767.822529761308,
+            "0.99": 14865.005095415265
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.6897700739596873,
+            "0.9": 4.549194475089644,
+            "0.95": 8.164864571825822,
+            "0.99": 11.067369309653593
+          },
+          "surface_meeting_target_at_4096": 9.017196369466219e-10,
+          "ideal_full_surface_edge_no_waste_or_distortion": 2955.6717910596067,
+          "ideal_full_surface_edge_at_this_occupancy": 4452.255160465463
+        }
+      },
+      "default_decision": {
+        "edge": 4096,
+        "required": 14542.67095399909,
+        "pack_history": [
+          {
+            "margin_fraction": 0.003,
+            "size": 4096,
+            "required_size": 14542.67095399909
+          }
+        ],
+        "exceeds_cap": true,
+        "expansion_limited": false
+      }
+    }
+  ],
+  "square_material_aspect": [
+    {
+      "model": "3d-assets/leicester/leicester-watermill/model.glb",
+      "source_sha256": "ba0b9fc1d5047e0bffc876e357408270651414e3d31c8190bee86466a133dc11",
+      "settings": {
+        "algorithm_version": 5,
+        "density_coverage": 0.95,
+        "density": 1.0,
+        "nearest_density": 2.0,
+        "pack_shape": "AABB",
+        "multiple": 16,
+        "min_size": 32,
+        "max_size": 4096,
+        "max_atlas_expansion": 4.0,
+        "quality": 80,
+        "reencode_utilization": 0.9,
+        "reuse_ratio": 1.25,
+        "keep_normals": false,
+        "texture_file": false,
+        "no_quantize": false,
+        "normal_bits": 8,
+        "speed": 6,
+        "angle_limit": 66.0,
+        "pack_margin_px": 8.0,
+        "bake_margin": 8
+      },
+      "source_pixels": 9561344,
+      "variants": {
+        "default": {
+          "triangles": 10204,
+          "islands": 533,
+          "uv_triangle_area_sum": 0.41038774406156053,
+          "island_aabb_area_sum": 0.5264132641303657,
+          "raster_coverage": 0.4381980895996094,
+          "coverage_with_8px_gutter_at_4096": 0.5687246322631836,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 0,
+          "required_edge_by_surface_coverage": {
+            "0.5": 2615.4720605765724,
+            "0.9": 4374.027212350009,
+            "0.95": 4580.200120807745,
+            "0.99": 4924.360936006556
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 5.488995446104864,
+            "0.9": 10.730559938207106,
+            "0.95": 14.010585858821273,
+            "0.99": 17.143530271931798
+          },
+          "surface_meeting_target_at_4096": 0.8649412701039993,
+          "ideal_full_surface_edge_no_waste_or_distortion": 761.9525565616123,
+          "ideal_full_surface_edge_at_this_occupancy": 1189.4076826332957
+        },
+        "aabb_no_gutter": {
+          "triangles": 10204,
+          "islands": 533,
+          "uv_triangle_area_sum": 0.4487020987710488,
+          "island_aabb_area_sum": 0.575559920084733,
+          "raster_coverage": 0.4644327163696289,
+          "coverage_with_8px_gutter_at_4096": 0.5121240615844727,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 0,
+          "required_edge_by_surface_coverage": {
+            "0.5": 2501.314817169178,
+            "0.9": 4183.115676031429,
+            "0.95": 4380.286241710945,
+            "0.99": 4709.426565780639
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 5.488995503232016,
+            "0.9": 10.730571897092839,
+            "0.95": 14.01058607634839,
+            "0.99": 17.14352318559628
+          },
+          "surface_meeting_target_at_4096": 0.8645885932331691,
+          "ideal_full_surface_edge_no_waste_or_distortion": 761.9525565616123,
+          "ideal_full_surface_edge_at_this_occupancy": 1137.4933859964203
+        },
+        "aabb_8px": {
+          "triangles": 10204,
+          "islands": 533,
+          "uv_triangle_area_sum": 0.4355561987244668,
+          "island_aabb_area_sum": 0.5586974116461774,
+          "raster_coverage": 0.46510982513427734,
+          "coverage_with_8px_gutter_at_4096": 0.5902166366577148,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 0,
+          "required_edge_by_surface_coverage": {
+            "0.5": 2538.7806933223196,
+            "0.9": 4245.774334595431,
+            "0.95": 4445.897772021905,
+            "0.99": 4779.9676566691
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 5.488996003104212,
+            "0.9": 10.730563898631662,
+            "0.95": 14.010587682979086,
+            "0.99": 17.143531976140746
+          },
+          "surface_meeting_target_at_4096": 0.864747603845877,
+          "ideal_full_surface_edge_no_waste_or_distortion": 761.9525565616123,
+          "ideal_full_surface_edge_at_this_occupancy": 1154.5316183312327
+        },
+        "convex_8px": {
+          "triangles": 10204,
+          "islands": 533,
+          "uv_triangle_area_sum": 0.4355561987244668,
+          "island_aabb_area_sum": 0.5586974116461774,
+          "raster_coverage": 0.46510982513427734,
+          "coverage_with_8px_gutter_at_4096": 0.5902166366577148,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 0,
+          "required_edge_by_surface_coverage": {
+            "0.5": 2538.7806933223196,
+            "0.9": 4245.774334595431,
+            "0.95": 4445.897772021905,
+            "0.99": 4779.9676566691
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 5.488996003104212,
+            "0.9": 10.730563898631662,
+            "0.95": 14.010587682979086,
+            "0.99": 17.143531976140746
+          },
+          "surface_meeting_target_at_4096": 0.864747603845877,
+          "ideal_full_surface_edge_no_waste_or_distortion": 761.9525565616123,
+          "ideal_full_surface_edge_at_this_occupancy": 1154.5316183312327
+        },
+        "square_material_aspect": {
+          "triangles": 10204,
+          "islands": 533,
+          "uv_triangle_area_sum": 0.47305024328218864,
+          "island_aabb_area_sum": 0.6035552941810263,
+          "raster_coverage": 0.4941234588623047,
+          "coverage_with_8px_gutter_at_4096": 0.6042909622192383,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 0,
+          "required_edge_by_surface_coverage": {
+            "0.5": 1107.8333307072442,
+            "0.9": 1259.3598380551732,
+            "0.95": 1758.9891514852318,
+            "0.99": 1816.7271526293528
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.0000006723001036,
+            "0.9": 1.2539181992348511,
+            "0.95": 1.7419211192620354,
+            "0.99": 2.1402928662985907
+          },
+          "surface_meeting_target_at_4096": 1.0,
+          "ideal_full_surface_edge_no_waste_or_distortion": 761.9525565616123,
+          "ideal_full_surface_edge_at_this_occupancy": 1107.8329943124197,
+          "pack_history": [
+            {
+              "margin_fraction": 0.003,
+              "size": 1600,
+              "required_size": 1599.4255591065248
+            },
+            {
+              "margin_fraction": 0.005,
+              "size": 1760,
+              "required_size": 1758.9891514852318
+            }
+          ]
+        }
+      },
+      "default_decision": {
+        "edge": 4096,
+        "required": 4580.200120807745,
+        "pack_history": [
+          {
+            "margin_fraction": 0.003,
+            "size": 4096,
+            "required_size": 4580.200120807745
+          }
+        ],
+        "exceeds_cap": true,
+        "expansion_limited": false
+      }
+    },
+    {
+      "model": "3d-assets/leicester/leicester-church-side-tower/model.glb",
+      "source_sha256": "1c2a831d839e0bf5132722e7d743a6b419d1ade2b2a87543ecbd65dc861a40c4",
+      "settings": {
+        "algorithm_version": 5,
+        "density_coverage": 0.95,
+        "density": 1.0,
+        "nearest_density": 2.0,
+        "pack_shape": "AABB",
+        "multiple": 16,
+        "min_size": 32,
+        "max_size": 4096,
+        "max_atlas_expansion": 4.0,
+        "quality": 80,
+        "reencode_utilization": 0.9,
+        "reuse_ratio": 1.25,
+        "keep_normals": false,
+        "texture_file": false,
+        "no_quantize": false,
+        "normal_bits": 8,
+        "speed": 6,
+        "angle_limit": 66.0,
+        "pack_margin_px": 8.0,
+        "bake_margin": 8
+      },
+      "source_pixels": 15179392,
+      "variants": {
+        "default": {
+          "triangles": 2253,
+          "islands": 348,
+          "uv_triangle_area_sum": 0.06281918096959621,
+          "island_aabb_area_sum": 0.08015692312833034,
+          "raster_coverage": 0.0726022720336914,
+          "coverage_with_8px_gutter_at_4096": 0.12533950805664062,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 1,
+          "required_edge_by_surface_coverage": {
+            "0.5": 4541.117034493237,
+            "0.9": 5066.792011520304,
+            "0.95": 5485.904065669419,
+            "0.99": 6334.238844255738
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.383453186725934,
+            "0.9": 1.6661818045605241,
+            "0.95": 1.706674755705832,
+            "0.99": 2.473646949362866
+          },
+          "surface_meeting_target_at_4096": 0.11033794647322065,
+          "ideal_full_surface_edge_no_waste_or_distortion": 979.1217746757671,
+          "ideal_full_surface_edge_at_this_occupancy": 3906.524695024832
+        },
+        "aabb_no_gutter": {
+          "triangles": 2253,
+          "islands": 347,
+          "uv_triangle_area_sum": 0.06238464994190176,
+          "island_aabb_area_sum": 0.07960248701409832,
+          "raster_coverage": 0.06707382202148438,
+          "coverage_with_8px_gutter_at_4096": 0.0842580795288086,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 0,
+          "required_edge_by_surface_coverage": {
+            "0.5": 4556.899985900445,
+            "0.9": 5084.149480975337,
+            "0.95": 5445.6390576321855,
+            "0.99": 6343.125661226696
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.3830511001082575,
+            "0.9": 1.6661666361979837,
+            "0.95": 1.7066749035398552,
+            "0.99": 2.473659757350286
+          },
+          "surface_meeting_target_at_4096": 0.07281181241453906,
+          "ideal_full_surface_edge_no_waste_or_distortion": 979.1217746757671,
+          "ideal_full_surface_edge_at_this_occupancy": 3920.1062452143965
+        },
+        "aabb_8px": {
+          "triangles": 2253,
+          "islands": 348,
+          "uv_triangle_area_sum": 0.06104877771499039,
+          "island_aabb_area_sum": 0.07789791561424775,
+          "raster_coverage": 0.07159042358398438,
+          "coverage_with_8px_gutter_at_4096": 0.11917781829833984,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 1,
+          "required_edge_by_surface_coverage": {
+            "0.5": 4606.479723934509,
+            "0.9": 5140.572857436134,
+            "0.95": 5564.9039277514585,
+            "0.99": 6425.416697423784
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.3830594691663525,
+            "0.9": 1.666509799185885,
+            "0.95": 1.706675623631286,
+            "0.99": 2.6146425995550486
+          },
+          "surface_meeting_target_at_4096": 0.04885723898995869,
+          "ideal_full_surface_edge_no_waste_or_distortion": 979.1217746757671,
+          "ideal_full_surface_edge_at_this_occupancy": 3962.764122286617
+        },
+        "convex_8px": {
+          "triangles": 2253,
+          "islands": 348,
+          "uv_triangle_area_sum": 0.06104877771499039,
+          "island_aabb_area_sum": 0.07789791561424775,
+          "raster_coverage": 0.07159042358398438,
+          "coverage_with_8px_gutter_at_4096": 0.11917781829833984,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 1,
+          "required_edge_by_surface_coverage": {
+            "0.5": 4606.479723934509,
+            "0.9": 5140.572857436134,
+            "0.95": 5564.9039277514585,
+            "0.99": 6425.416697423784
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.3830594691663525,
+            "0.9": 1.666509799185885,
+            "0.95": 1.706675623631286,
+            "0.99": 2.6146425995550486
+          },
+          "surface_meeting_target_at_4096": 0.04885723898995869,
+          "ideal_full_surface_edge_no_waste_or_distortion": 979.1217746757671,
+          "ideal_full_surface_edge_at_this_occupancy": 3962.764122286617
+        },
+        "square_material_aspect": {
+          "triangles": 2253,
+          "islands": 347,
+          "uv_triangle_area_sum": 0.4311064308292938,
+          "island_aabb_area_sum": 0.5489036545917675,
+          "raster_coverage": 0.45520496368408203,
+          "coverage_with_8px_gutter_at_4096": 0.5730581283569336,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 0,
+          "required_edge_by_surface_coverage": {
+            "0.5": 1495.8024687626996,
+            "0.9": 1741.9525214764362,
+            "0.95": 1791.0251642153748,
+            "0.99": 2543.5783179017167
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.0063003611965669,
+            "0.9": 1.3255579633626278,
+            "0.95": 1.37451859276197,
+            "0.99": 2.2172482608321165
+          },
+          "surface_meeting_target_at_4096": 0.9999999998952995,
+          "ideal_full_surface_edge_no_waste_or_distortion": 979.1217746757671,
+          "ideal_full_surface_edge_at_this_occupancy": 1491.2294033303986,
+          "pack_history": [
+            {
+              "margin_fraction": 0.003,
+              "size": 1664,
+              "required_size": 1648.2005546648309
+            },
+            {
+              "margin_fraction": 0.004807692307692308,
+              "size": 1792,
+              "required_size": 1791.0251642153748
+            }
+          ]
+        }
+      },
+      "default_decision": {
+        "edge": 4096,
+        "required": 5485.904065669419,
+        "pack_history": [
+          {
+            "margin_fraction": 0.003,
+            "size": 4096,
+            "required_size": 5485.904065669419
+          }
+        ],
+        "exceeds_cap": true,
+        "expansion_limited": false
+      }
+    },
+    {
+      "model": "3d-assets/derby/derby-east-watchtower/model.glb",
+      "source_sha256": "eee53338bcb1ea01b38da55e63747d46619fd6923ad8c683196d076bf024d64c",
+      "settings": {
+        "algorithm_version": 5,
+        "density_coverage": 0.95,
+        "density": 1.0,
+        "nearest_density": 2.0,
+        "pack_shape": "AABB",
+        "multiple": 16,
+        "min_size": 32,
+        "max_size": 4096,
+        "max_atlas_expansion": 4.0,
+        "quality": 80,
+        "reencode_utilization": 0.9,
+        "reuse_ratio": 1.25,
+        "keep_normals": false,
+        "texture_file": false,
+        "no_quantize": false,
+        "normal_bits": 8,
+        "speed": 6,
+        "angle_limit": 66.0,
+        "pack_margin_px": 8.0,
+        "bake_margin": 8
+      },
+      "source_pixels": 6668288,
+      "variants": {
+        "default": {
+          "triangles": 14718,
+          "islands": 1590,
+          "uv_triangle_area_sum": 0.35956251137868517,
+          "island_aabb_area_sum": 0.4286493049762591,
+          "raster_coverage": 0.3935365676879883,
+          "coverage_with_8px_gutter_at_4096": 0.5733423233032227,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 35,
+          "required_edge_by_surface_coverage": {
+            "0.5": 1577.0726011055376,
+            "0.9": 6377.397864547971,
+            "0.95": 6574.634827169003,
+            "0.99": 6774.577646077406
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.453697699000443,
+            "0.9": 24.55622942404372,
+            "0.95": 26.651926212162515,
+            "0.99": 26.85548418085688
+          },
+          "surface_meeting_target_at_4096": 0.8084311402761954,
+          "ideal_full_surface_edge_no_waste_or_distortion": 781.1530670815648,
+          "ideal_full_surface_edge_at_this_occupancy": 1302.7135779435323
+        },
+        "aabb_no_gutter": {
+          "triangles": 14718,
+          "islands": 1590,
+          "uv_triangle_area_sum": 0.7942370501542715,
+          "island_aabb_area_sum": 0.94684273823373,
+          "raster_coverage": 0.8126459121704102,
+          "coverage_with_8px_gutter_at_4096": 0.8691825866699219,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 14,
+          "required_edge_by_surface_coverage": {
+            "0.5": 1074.6037541961257,
+            "0.9": 4290.988931067707,
+            "0.95": 4423.68210267762,
+            "0.99": 4558.429249653262
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.4536980874908343,
+            "0.9": 24.589402251859973,
+            "0.95": 26.660239400986047,
+            "0.99": 26.85545193570171
+          },
+          "surface_meeting_target_at_4096": 0.8678883454602527,
+          "ideal_full_surface_edge_no_waste_or_distortion": 781.1530670815648,
+          "ideal_full_surface_edge_at_this_occupancy": 876.518468125353
+        },
+        "aabb_8px": {
+          "triangles": 14718,
+          "islands": 1590,
+          "uv_triangle_area_sum": 0.44555156459099443,
+          "island_aabb_area_sum": 0.5311603236269838,
+          "raster_coverage": 0.4873485565185547,
+          "coverage_with_8px_gutter_at_4096": 0.6586189270019531,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 29,
+          "required_edge_by_surface_coverage": {
+            "0.5": 1433.9596332872943,
+            "0.9": 5729.032774810332,
+            "0.95": 5906.221477737195,
+            "0.99": 6084.969154190389
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.453697753181158,
+            "0.9": 24.53483034029972,
+            "0.95": 26.651565643355383,
+            "0.99": 26.855428410354072
+          },
+          "surface_meeting_target_at_4096": 0.8087966717137799,
+          "ideal_full_surface_edge_no_waste_or_distortion": 781.1530670815648,
+          "ideal_full_surface_edge_at_this_occupancy": 1170.2729203951067
+        },
+        "convex_8px": {
+          "triangles": 14718,
+          "islands": 1590,
+          "uv_triangle_area_sum": 0.489678675841841,
+          "island_aabb_area_sum": 0.5837662520203342,
+          "raster_coverage": 0.5203161239624023,
+          "coverage_with_8px_gutter_at_4096": 0.6644468307495117,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 30,
+          "required_edge_by_surface_coverage": {
+            "0.5": 1274.8403621370296,
+            "0.9": 1900.9687613512535,
+            "0.95": 4462.866081792745,
+            "0.99": 5516.653506069769
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.2123423334058074,
+            "0.9": 2.98835000736702,
+            "0.95": 14.284252339287905,
+            "0.99": 26.695489822994748
+          },
+          "surface_meeting_target_at_4096": 0.9472821733159957,
+          "ideal_full_surface_edge_no_waste_or_distortion": 781.1530670815648,
+          "ideal_full_surface_edge_at_this_occupancy": 1116.29902712573
+        },
+        "square_material_aspect": {
+          "triangles": 14718,
+          "islands": 1585,
+          "uv_triangle_area_sum": 0.36099835883417336,
+          "island_aabb_area_sum": 0.4285055250944755,
+          "raster_coverage": 0.3796520233154297,
+          "coverage_with_8px_gutter_at_4096": 0.49535560607910156,
+          "outside_tile": false,
+          "collapsed_uv_triangles": 40,
+          "required_edge_by_surface_coverage": {
+            "0.5": 1304.3488175100597,
+            "0.9": 1573.0948785443447,
+            "0.95": 1655.128767551556,
+            "0.99": 1777.1030102261093
+          },
+          "axis_distortion_by_surface_coverage": {
+            "0.5": 1.0194914032048175,
+            "0.9": 1.2865392203650774,
+            "0.95": 1.3468190578034178,
+            "0.99": 1.4840816929873248
+          },
+          "surface_meeting_target_at_4096": 0.9999999937363238,
+          "ideal_full_surface_edge_no_waste_or_distortion": 781.1530670815648,
+          "ideal_full_surface_edge_at_this_occupancy": 1300.1202674971128,
+          "pack_history": [
+            {
+              "margin_fraction": 0.003,
+              "size": 1312,
+              "required_size": 1299.1107637398825
+            },
+            {
+              "margin_fraction": 0.006097560975609756,
+              "size": 1664,
+              "required_size": 1655.128767551556
+            }
+          ]
+        }
+      },
+      "default_decision": {
+        "edge": 4096,
+        "required": 6574.634827169003,
+        "pack_history": [
+          {
+            "margin_fraction": 0.003,
+            "size": 4096,
+            "required_size": 6574.634827169003
+          }
+        ],
+        "exceeds_cap": true,
+        "expansion_limited": false
+      }
+    }
+  ]
+}
