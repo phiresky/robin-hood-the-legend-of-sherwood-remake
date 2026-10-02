@@ -1214,6 +1214,15 @@ fn validate_character_index(
 }
 
 impl MissionProfile {
+    /// Campaign events and unavailable placeholders have no launchable level.
+    pub fn has_mission_level(&self) -> bool {
+        self.mission_type != MissionType::Pseudo
+            && !self.mission_filename.trim().is_empty()
+            && !self
+                .mission_filename
+                .eq_ignore_ascii_case("Impossible_mission")
+    }
+
     fn read_legacy_cpf(
         reader: &mut LegacyReader<'_>,
         character_count: usize,
@@ -1883,6 +1892,26 @@ impl ProfileManager {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn campaign_placeholders_have_no_launchable_level() {
+        use super::{MissionProfile, MissionType};
+        for (kind, filename, expected) in [
+            (MissionType::Ambush, "Impossible_mission", false),
+            (MissionType::Ambush, "impossible_MISSION", false),
+            (MissionType::Pseudo, "Campaign_event", false),
+            (MissionType::Historical, "", false),
+            (MissionType::Historical, "H01_Lin_VL", true),
+            (MissionType::Hq, "Sherwood", true),
+        ] {
+            let profile = MissionProfile {
+                mission_type: kind,
+                mission_filename: filename.into(),
+                ..Default::default()
+            };
+            assert_eq!(profile.has_mission_level(), expected, "{filename}");
+        }
+    }
+
     use super::*;
 
     fn referenced_profiles() -> ProfileManager {

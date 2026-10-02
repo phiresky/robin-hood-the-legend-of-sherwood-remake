@@ -813,6 +813,15 @@ impl MainMenuContext<'_> {
                     launch.mission_id, launch.mission_name
                 )));
             };
+            if !campaign.missions[idx]
+                .profile(&self.profiles)
+                .has_mission_level()
+            {
+                return Err(LaunchError::campaign(format!(
+                    "{} is a campaign event or unavailable mission and has no playable level",
+                    launch.mission_name
+                )));
+            }
             campaign.reset(
                 &self.profiles,
                 self.application_context.sim_config().difficulty,

@@ -2234,6 +2234,7 @@ fn mission_choices(
     let mut choices = campaign
         .missions
         .iter()
+        .filter(|m| m.profile(profiles).has_mission_level())
         .map(|m| {
             let profile = m.profile(profiles);
             let fallback = if profile.mission_name.trim().is_empty() {
@@ -2672,6 +2673,38 @@ mod tests {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod visual_tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires full game data"]
+    fn multiplayer_catalog_excludes_unavailable_campaign_entries() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap();
+        let data = robin_test_support::original_data::data_directory("");
+        let (campaign, profiles, context) =
+            crate::main_entry::rust_init_with_roots(Some(&data), Some(root)).unwrap();
+        let choices = mission_choices(&campaign, &profiles, &context);
+        let unavailable: Vec<_> = profiles
+            .missions
+            .iter()
+            .filter(|p| {
+                p.mission_filename
+                    .eq_ignore_ascii_case("Impossible_mission")
+            })
+            .collect();
+        assert!(!unavailable.is_empty(), "full-game placeholder fixture");
+        for profile in unavailable {
+            assert!(!choices.iter().any(|choice| choice.mission_id == profile.id));
+        }
+        let first = profiles
+            .missions
+            .iter()
+            .find(|p| p.mission_filename.eq_ignore_ascii_case("H01_Lin_VL"))
+            .unwrap();
+        assert!(choices.iter().any(|choice| choice.mission_id == first.id));
+    }
 
     #[test]
     #[ignore = "requires game data and an offscreen GPU adapter"]
