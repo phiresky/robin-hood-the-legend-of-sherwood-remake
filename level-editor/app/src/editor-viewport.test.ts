@@ -554,7 +554,7 @@ test("slider preserves average scale smoothly through the old silhouette switch 
     container: { clientWidth: 800, clientHeight: 400 },
     orbit: { target: new THREE.Vector3() },
     framingBounds: new THREE.Box3().setFromPoints(points),
-    framingPoints: points,
+    framingCorners: points,
   });
   const extent = (lens: THREE.Camera) =>
     Math.sqrt(

@@ -1,3 +1,4 @@
+import { FramingBounds } from "./framing-bounds.ts";
 import { nearestSplineSection } from "./spline-insertion.ts";
 import { TerrainControls, type TerrainEditMode } from "./terrain-controls.ts";
 import { MissionLayer } from "./mission-layer.ts";
@@ -261,7 +262,7 @@ export class EditorViewport {
   private readonly framingBounds = new THREE.Box3();
   private readonly clippingBounds = new THREE.Box3();
   private clippingBoundsDirty = true;
-  private framingPoints: THREE.Vector3[] = [];
+  private framingCorners = new FramingBounds();
   private framingKey = "";
   private framingDistance = 0;
   private readonly perspectiveCamera = new THREE.PerspectiveCamera(45, 1, 0.1, 200000);
@@ -404,11 +405,10 @@ export class EditorViewport {
       distance = this.framingDistance / camera.zoom;
     } else if (!this.framingBounds.isEmpty()) {
       const inverse = camera.quaternion.clone().invert();
-      const samples: { weight: number; depth: number }[] = [];
       let totalWeight = 0;
       let nearestDepth = -Infinity;
-      const points = this.framingPoints.length
-        ? this.framingPoints
+      const points = this.framingCorners.length
+        ? this.framingCorners
         : [this.framingBounds.min.x, this.framingBounds.max.x].flatMap((x) =>
             [this.framingBounds.min.y, this.framingBounds.max.y].flatMap((y) =>
               [this.framingBounds.min.z, this.framingBounds.max.z].map(
@@ -416,12 +416,16 @@ export class EditorViewport {
               ),
             ),
           );
+      const samples = new Float64Array(points.length * 2);
+      let sampleCount = 0;
+      const point = new THREE.Vector3();
       for (const source of points) {
-        const point = source.clone().sub(camera.position).applyQuaternion(inverse);
+        point.copy(source).sub(camera.position).applyQuaternion(inverse);
         const weight = (point.x / aspect) ** 2 + point.y ** 2;
         if (weight === 0) continue;
         const depth = point.z + targetDepth;
-        samples.push({ weight, depth });
+        samples[sampleCount++] = weight;
+        samples[sampleCount++] = depth;
         totalWeight += weight;
         nearestDepth = Math.max(nearestDepth, depth);
       }
@@ -435,8 +439,8 @@ export class EditorViewport {
         for (let iteration = 0; iteration < 40; iteration++) {
           const candidate = (low + high) / 2;
           let weight = 0;
-          for (const sample of samples)
-            weight += sample.weight * (baseDistance / (candidate - sample.depth)) ** 2;
+          for (let i = 0; i < sampleCount; i += 2)
+            weight += samples[i]! * (baseDistance / (candidate - samples[i + 1]!)) ** 2;
           if (weight > totalWeight) low = candidate;
           else high = candidate;
         }
@@ -778,12 +782,12 @@ export class EditorViewport {
     const renderSize = this.renderer.getSize(new THREE.Vector2());
     const pixelRatio = this.renderer.getPixelRatio();
     const camera = this.activeCamera().clone();
-    if (camera instanceof THREE.OrthographicCamera && this.framingPoints.length) {
+    if (camera instanceof THREE.OrthographicCamera && this.framingCorners.length) {
       camera.updateMatrixWorld();
       const bounds = new THREE.Box2();
       const point = new THREE.Vector3();
       const projected = new THREE.Vector2();
-      for (const source of this.framingPoints) {
+      for (const source of this.framingCorners) {
         point.copy(source).applyMatrix4(camera.matrixWorldInverse);
         bounds.expandByPoint(projected.set(point.x, point.y));
       }
@@ -872,7 +876,7 @@ export class EditorViewport {
     this.groupViews.clear();
     this.sourceNodes.clear();
     this.externalAssetHashes.clear();
-    this.framingPoints = [];
+    this.framingCorners = new FramingBounds();
     this.framingBounds.makeEmpty();
     this.clippingBounds.makeEmpty();
     this.clippingBoundsDirty = true;
@@ -1728,27 +1732,15 @@ export class EditorViewport {
     const bounds = this.contentBox();
     this.refreshSunLighting(d, bounds);
     this.framingBounds.copy(bounds);
-    this.framingPoints = [];
     this.framingKey = "";
-    // Perspective extrema lie at triangle vertices. Empty bounding-box corners
-    // must not influence lens compensation as the viewing angle changes.
-    for (const root of [
+    // Mesh bounds provide conservative thumbnail framing and stable lens fitting
+    // without retaining transformed vertices for every placement.
+    this.framingCorners = new FramingBounds([
       this.objectsRoot,
       this.terrain.root,
       this.splines.root,
       ...(this.groundNode ? [this.groundNode] : []),
-    ]) {
-      root.updateWorldMatrix(true, true);
-      root.traverseVisible((node) => {
-        if (!(node instanceof THREE.Mesh)) return;
-        const positions = node.geometry.getAttribute("position");
-        if (!positions) return;
-        for (let i = 0; i < positions.count; i++)
-          this.framingPoints.push(
-            new THREE.Vector3().fromBufferAttribute(positions, i).applyMatrix4(node.matrixWorld),
-          );
-      });
-    }
+    ]);
     if (!bounds.isEmpty()) bounds.getBoundingSphere(this.projectionBounds);
     if (this.bindings.showObstacles() || this.bindings.showElevation()) this.buildOverlays(d);
   }

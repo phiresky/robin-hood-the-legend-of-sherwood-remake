@@ -46,7 +46,9 @@ export async function openHttpLibrary(
   base = (import.meta.env?.BASE_URL ?? "/") + "library/",
   storage?: FileSystemDirectoryHandle,
 ) {
-  let catalog = await loadHttpAssetCatalog(base);
+  // Only chunk routing is needed between reads; retaining the full catalog here
+  // duplicates every embedded descriptor already owned by the asset browser.
+  let modelShards = (await loadHttpAssetCatalog(base)).model_shards;
   const browser = storage ?? (await navigator.storage.getDirectory());
   const workspace = await browser.getDirectoryHandle("sherwood-level-editor", { create: true });
   const maps = await workspace.getDirectoryHandle("maps", { create: true });
@@ -55,12 +57,13 @@ export async function openHttpLibrary(
     if (path === "3d-assets/index.json") {
       // Maps and their descriptor pins can change while this connection is open.
       // Refresh the manifest too, including the model chunks for the new release.
-      catalog = await loadHttpAssetCatalog(base);
+      const catalog = await loadHttpAssetCatalog(base);
+      modelShards = catalog.model_shards;
       return new File([JSON.stringify(catalog)], "index.json", { type: "application/json" });
     }
-    if (catalog.model_shards?.[path])
+    if (modelShards?.[path])
       return new File(
-        [await loadHttpModelParts(base, catalog.model_shards[path])],
+        [await loadHttpModelParts(base, modelShards[path])],
         path.split("/").at(-1)!,
         { type: "model/gltf-binary" },
       );
