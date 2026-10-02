@@ -101,6 +101,17 @@ takeoff, both travel directions and the configured body envelope; blocked spans
 are removed with warnings. Missing neighbours are normal for generated ledges.
 Explicit jump pairs and exact sockets remain available for authored special cases.
 
+Separate assets can attach ordinary walking surfaces through `navigationRegion`
+and 3D outer-edge `navigationJoins`. Sockets match exact endpoints by default.
+Both owners may set `navigationJoinMinimumOverlap` to a positive map-unit length
+to allow differently sized edges or tangentially shifted placements. Their shared
+span must meet both minimums, face in opposite directions, and coincide in
+projection and height. `navigationJoinHeightTolerance` permits a height step only
+when both owners allow it, and checks the entire shared span. One long edge can
+serve several neighbors on disjoint spans; competing claims to the same span are
+rejected. Moving edges apart leaves separate navigation regions. The runtime still
+checks the character's full footprint before allowing traversal.
+
 For example, a ground-only asset can declare:
 
 ```json

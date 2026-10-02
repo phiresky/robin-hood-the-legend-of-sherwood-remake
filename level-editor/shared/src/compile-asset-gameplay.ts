@@ -691,6 +691,7 @@ function compileAssetGameplayAttempt(
           region: `${placement.id}/${surface.navigationRegion}`,
           owner: placement.id,
           heightTolerance: surface.navigationJoinHeightTolerance,
+          minimumOverlap: surface.navigationJoinMinimumOverlap,
           edge: orientNavigationJoin(points, [
             transform(surface.node, edge[0]),
             transform(surface.node, edge[1]),

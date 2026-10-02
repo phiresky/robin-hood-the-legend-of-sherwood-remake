@@ -1011,6 +1011,42 @@ fn native_pathfinder_crosses_compiled_navigation_seam_with_actor_clearance() {
 }
 
 #[test]
+fn partial_navigation_overlap_supports_actor_routes_without_opening_the_outer_edge() {
+    use robin_engine::coordinates::MapPoint;
+    use robin_engine::pathfinder::PathFinder;
+    let mut assets = LevelAssets::new();
+    let engine = construct(
+        include_bytes!("fixtures/asset-navigation-partial.level.json"),
+        &mut assets,
+    );
+    let graph = &assets.navigation.pathfinder_graph;
+    let mut grid = engine.fast_grid().clone();
+    let mut finder = PathFinder::new();
+    finder.initialize_from_graph(graph, &mut grid);
+    let a = MapPoint::new(380., 320.);
+    let b = MapPoint::new(415., 290.);
+    for (start, end) in [(a, b), (b, a)] {
+        let path = finder
+            .find_path(graph, &grid, 0, 0, 0, start, end, false)
+            .expect("partially overlapping sockets provide a route");
+        assert_eq!(path.last(), Some(&end));
+        for segment in path.windows(2) {
+            assert!(grid.is_reachable_thick(
+                segment[0],
+                segment[1],
+                0,
+                grid.try_move_box_half_diagonal(0).unwrap()
+            ));
+        }
+    }
+    assert!(
+        finder
+            .find_path(graph, &grid, 0, 0, 0, a, MapPoint::new(415., 350.), false)
+            .is_none()
+    );
+}
+
+#[test]
 fn native_routes_follow_rotated_walkways_without_connecting_separate_copies() {
     use robin_engine::coordinates::MapPoint;
     use robin_engine::pathfinder::PathFinder;

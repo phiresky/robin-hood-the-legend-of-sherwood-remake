@@ -109,7 +109,7 @@
       "model": "3d-assets/sherwood/sherwood-central-oak-platform/model.glb",
       "model_sha256": "72700b925935c4c0ce522fcd80bc266be78c30ea3b4f2d9cf31d0a95448293a8",
       "descriptor": "3d-assets/sherwood/sherwood-central-oak-platform/asset.json",
-      "descriptor_sha256": "1b61002d7fd4982f65b620c329f77dcaa91b403182a2d3e0b21914baddbea855",
+      "descriptor_sha256": "71b283b06f5ca50050861bc9c54ca971883fb12f494fedbc651455dad7a62fed",
       "resources": []
     },
     {
@@ -133,7 +133,7 @@
       "model": "3d-assets/sherwood/sherwood-central-suspension-bridge/model.glb",
       "model_sha256": "23fceeefef1e7604a4aee362bb963683fb78fb5b51d63d71362b7b5b76354e7f",
       "descriptor": "3d-assets/sherwood/sherwood-central-suspension-bridge/asset.json",
-      "descriptor_sha256": "16e36caa1ca3cd1add8f2a7d20d0d9e00002c30af4a027a95ea127d2a5a5dff8",
+      "descriptor_sha256": "caee89cb3b15cff9bb8928940d0559ab85d4c179af4f76b0b4c71110f2d4b2b6",
       "resources": []
     },
     {
@@ -157,7 +157,7 @@
       "model": "3d-assets/sherwood/sherwood-central-west-treehouse-platform/model.glb",
       "model_sha256": "f7c8959261504cb458372b9a12a559524ddc4f3aeaf2d1222a1777651df21fcf",
       "descriptor": "3d-assets/sherwood/sherwood-central-west-treehouse-platform/asset.json",
-      "descriptor_sha256": "aa1efaa268c10e8fd3c150aba077b5c6ac3feecf78e03eb1935437bcf4051d65",
+      "descriptor_sha256": "a9c1460c7dae64ef938549c7345349ceeee24ab50c23b443c4e87998eb7d1705",
       "resources": []
     },
     {
@@ -237,7 +237,7 @@
       "model": "3d-assets/sherwood/sherwood-ladder-oak-platform/model.glb",
       "model_sha256": "e23a23d850e92481ce23d9cd19be379a57d70abd6cdb576b02f301913321bdc3",
       "descriptor": "3d-assets/sherwood/sherwood-ladder-oak-platform/asset.json",
-      "descriptor_sha256": "42638520a9b7a61b839cae386643dde4d0729e08a2a80af200e6ff2badebb6a6",
+      "descriptor_sha256": "c2ad9fabafb168bc224ca03cc18e239bdcd7d270a53482851bdfd6dce98cf6fa",
       "resources": []
     },
     {
@@ -261,7 +261,7 @@
       "model": "3d-assets/sherwood/sherwood-long-suspension-bridge/model.glb",
       "model_sha256": "91e00409fff66322759c3012c776ddb0d11a504a01051cac2dbc63571a54f143",
       "descriptor": "3d-assets/sherwood/sherwood-long-suspension-bridge/asset.json",
-      "descriptor_sha256": "639521bbaec4989601d0e500bc22423e1d7aa0ebf8138f22460eab2f8f9fcd84",
+      "descriptor_sha256": "631312ac95913f821f2e535edbcc769a65ca1ef48f111b53482d1f4071fcf209",
       "resources": []
     },
     {
@@ -613,7 +613,7 @@
       "model": "3d-assets/sherwood/sherwood-west-suspension-bridge/model.glb",
       "model_sha256": "71273d86a6d7cbf72b3aad8615b9944a784f8aa2475e3f50210f1c7838269e96",
       "descriptor": "3d-assets/sherwood/sherwood-west-suspension-bridge/asset.json",
-      "descriptor_sha256": "47124ed1f101228b4d30cf8cf3427cb357f418037128d56a12697ff5e7eafb74",
+      "descriptor_sha256": "63c5862986294fda6e60ae48142a1f1eb71a71491b4abbfeaa7901a9f1e2cdfd",
       "resources": []
     },
     {
@@ -621,7 +621,7 @@
       "model": "3d-assets/sherwood/sherwood-west-treehouse/model.glb",
       "model_sha256": "e648c97398bcd7e214de70040be1e5036d0d5c77e32c5515ecb5dcdb4c12d11a",
       "descriptor": "3d-assets/sherwood/sherwood-west-treehouse/asset.json",
-      "descriptor_sha256": "21dad87f0ba826c53d832feebc53fb77fb1d5d732ccf0cb6ce883e4cef522df5",
+      "descriptor_sha256": "312acabb3a55c150c139622d2743aece94061db9108dd967f3a51c6bfa36084b",
       "resources": []
     },
     {

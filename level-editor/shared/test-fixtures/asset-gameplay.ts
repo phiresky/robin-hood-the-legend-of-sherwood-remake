@@ -1121,6 +1121,26 @@ export function multiPlaneRegionCompilerFixture() {
   return fixture;
 }
 
+export function partialNavigationCompilerFixture() {
+  const fixture = joinedNavigationCompilerFixture();
+  fixture.hut.gameplay!.surfaces[0]!.navigationJoinMinimumOverlap = 24;
+  fixture.hut.gameplay!.surfaces[0]!.polygon = fixture.hut.gameplay!.surfaces[0]!.polygon.map(
+    ([x, y]) => [x === 90 ? 70 : x, y],
+  );
+  const upper = fixture.upper.gameplay!.surfaces[0]!;
+  upper.navigationJoinMinimumOverlap = 24;
+  upper.polygon = upper.polygon.map(([x, y]) => [x === 110 ? 130 : x, y === 0 ? 20 : 80]);
+  upper.navigationJoins = [
+    [
+      [100, 20, 40],
+      [100, 80, 40],
+    ],
+  ];
+  fixture.document.groups.find((g) => g.id === "upper")!.transform.dy = 10;
+  fixture.document.map = "Partial walkway connection";
+  return fixture;
+}
+
 export function compoundLiftCompilerFixture() {
   const fixture = liftAssetCompilerFixture();
   const g = fixture.hut.gameplay!;

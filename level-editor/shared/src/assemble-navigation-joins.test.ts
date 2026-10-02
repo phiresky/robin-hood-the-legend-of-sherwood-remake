@@ -105,3 +105,124 @@ test("projected seams require both assets to explicitly allow their height step"
     /overlapping/,
   );
 });
+
+test("opted-in navigation edges connect differently sized neighbors along disjoint shared spans", () => {
+  const a: PlacedNavigationJoin = {
+    owner: "wide",
+    region: "wide/deck",
+    minimumOverlap: 12,
+    edge: [
+      [0, 0, 0],
+      [100, 0, 0],
+    ],
+  };
+  const b: PlacedNavigationJoin = {
+    owner: "left",
+    region: "left/deck",
+    minimumOverlap: 8,
+    edge: [
+      [40, 0, 0],
+      [10, 0, 0],
+    ],
+  };
+  const c: PlacedNavigationJoin = {
+    owner: "right",
+    region: "right/deck",
+    minimumOverlap: 8,
+    edge: [
+      [95, 0, 0],
+      [60, 0, 0],
+    ],
+  };
+  const result = assembleNavigationJoins([a, b, c]);
+  assert.equal(new Set(result.identities.values()).size, 1);
+  assert.deepEqual(result.unmatched, []);
+  assert.equal(
+    assembleNavigationJoins([a, { ...b, minimumOverlap: undefined }]).unmatched.length,
+    2,
+  );
+  assert.equal(assembleNavigationJoins([a, { ...b, minimumOverlap: 31 }]).unmatched.length, 2);
+  assert.equal(
+    assembleNavigationJoins([
+      a,
+      {
+        ...b,
+        edge: [
+          [110, 0, 0],
+          [100, 0, 0],
+        ],
+      },
+    ]).unmatched.length,
+    2,
+  );
+  assert.throws(
+    () =>
+      assembleNavigationJoins([
+        a,
+        b,
+        {
+          ...c,
+          edge: [
+            [70, 0, 0],
+            [30, 0, 0],
+          ],
+        },
+      ]),
+    /ambiguous/,
+  );
+  assert.throws(
+    () => assembleNavigationJoins([a, { ...b, edge: [b.edge[1], b.edge[0]] }]),
+    /overlapping/,
+  );
+});
+
+test("partial navigation joins validate height along the overlap and reject lateral gaps", () => {
+  const a: PlacedNavigationJoin = {
+    owner: "platform",
+    region: "platform/deck",
+    minimumOverlap: 12,
+    heightTolerance: 2,
+    edge: [
+      [0, 0, 0],
+      [100, 0, 0],
+    ],
+  };
+  const b: PlacedNavigationJoin = {
+    owner: "ramp",
+    region: "ramp/deck",
+    minimumOverlap: 12,
+    heightTolerance: 2,
+    edge: [
+      [80, 1, 1],
+      [20, 2, 2],
+    ],
+  };
+  assert.equal(assembleNavigationJoins([a, b]).unmatched.length, 0);
+  assert.equal(assembleNavigationJoins([a, { ...b, heightTolerance: 1 }]).unmatched.length, 2);
+  assert.equal(
+    assembleNavigationJoins([
+      a,
+      {
+        ...b,
+        edge: [
+          [80, 1, 1],
+          [20, 2.1, 2.1],
+        ],
+      },
+    ]).unmatched.length,
+    2,
+  );
+  assert.equal(
+    assembleNavigationJoins([
+      a,
+      {
+        ...b,
+        edge: [
+          [80, 1.1, 1],
+          [20, 2.1, 2],
+        ],
+      },
+    ]).unmatched.length,
+    2,
+  );
+});

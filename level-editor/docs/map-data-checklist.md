@@ -52,6 +52,18 @@ in progress; unmarked roof meshes do not acquire jumps. The authoring tool
 scene pins and retains rollback snapshots; this publication is backed up in
 `work/map-compile/surface-jump-publication`.
 
+**Reusable walkway connections:** navigation sockets now support an explicit
+minimum shared span, so different widths and shifts along a shared edge can join.
+Both assets must opt in; height is checked along the overlap, detached edges stay
+separate, and competing overlapping neighbors are rejected. Native tests exercise
+full-character routes through a partial seam. Seven Sherwood bridge/platform assets
+now permit 12-unit shared spans. Their original combined geometry is unchanged;
+an isolated real bridge/platform pair remains traversable after sliding the bridge
+along the seam and separates after moving it away. The update is installed with
+rollback data in `work/map-compile/navigation-overlap-publication`; native checks
+are in `work/map-compile/navigation-overlap-native-v2`. Other exact sockets retain
+their existing behavior unless explicitly opted in.
+
 **Spline walls:** calibrated sources now export solid/opaque volumes and authored
 walkable surfaces through their current spline placement. Repeats, trims, width,
 flipping, slopes and corner scales follow the artwork; curved spans are subdivided

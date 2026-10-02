@@ -1,0 +1,156 @@
+{
+  "title": "Partial walkway connection",
+  "map_filename": "editor-partial-walkway-connection",
+  "spawn_points": [],
+  "walkable_polygon": [
+    [
+      0,
+      0
+    ],
+    [
+      1999,
+      0
+    ],
+    [
+      1999,
+      1999
+    ],
+    [
+      0,
+      1999
+    ]
+  ],
+  "volumes": [],
+  "asset_geometry": {
+    "motion_data": {
+      "layers": [
+        [
+          {
+            "is_lift": false,
+            "state_id": 0,
+            "polygon": {
+              "points": [
+                [
+                  370,
+                  300
+                ],
+                [
+                  400,
+                  260
+                ],
+                [
+                  400,
+                  290
+                ],
+                [
+                  430,
+                  230
+                ],
+                [
+                  430,
+                  290
+                ],
+                [
+                  400,
+                  350
+                ],
+                [
+                  400,
+                  360
+                ],
+                [
+                  370,
+                  400
+                ]
+              ]
+            },
+            "skeleton_segments": [],
+            "flags": 0,
+            "obstacles": []
+          }
+        ],
+        []
+      ],
+      "graph_bytes": []
+    },
+    "sight_obstacles": [
+      {
+        "points": [
+          {
+            "x": 400,
+            "y": 330,
+            "z_bottom": 40,
+            "z_top": 40
+          },
+          {
+            "x": 430,
+            "y": 330,
+            "z_bottom": 100,
+            "z_top": 100
+          },
+          {
+            "x": 430,
+            "y": 390,
+            "z_bottom": 100,
+            "z_top": 100
+          },
+          {
+            "x": 400,
+            "y": 390,
+            "z_bottom": 40,
+            "z_top": 40
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 0,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 370,
+            "y": 300,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 400,
+            "y": 299.99999999999994,
+            "z_bottom": 39.99999999999994,
+            "z_top": 39.99999999999994
+          },
+          {
+            "x": 400,
+            "y": 399.99999999999994,
+            "z_bottom": 39.99999999999994,
+            "z_top": 39.99999999999994
+          },
+          {
+            "x": 370,
+            "y": 400,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 0,
+        "material_indices": []
+      }
+    ],
+    "doors": []
+  }
+}

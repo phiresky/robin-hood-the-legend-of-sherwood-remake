@@ -2172,3 +2172,7 @@ cutouts aligned with terrain instead of rounding each piece separately.
   individual height planes. Asset-local deck clearances prevent supporting caps
   from cutting holes in the route after bending; separately placed obstacles
   continue to block movement.
+- Asset navigation sockets can opt into a minimum shared edge length, connecting
+  differently sized walkways and placements shifted along a seam. Several neighbors
+  can use disjoint spans; overlapping claims are rejected and detached edges stay separate.
+  Seven Sherwood bridge/platform assets now support this placement rule.
