@@ -47,6 +47,54 @@ UNLIT = {'pbrMetallicRoughness': {'baseColorTexture': {'index': 0}}, 'extensions
 
 
 class LossyAssetsTest(unittest.TestCase):
+    def test_unsafe_box_pack_restarts_with_convex_without_mutating_settings(self):
+        images, layers = Mock(), Mock()
+        obj = SimpleNamespace(material_slots=[], data=SimpleNamespace(uv_layers=layers))
+        args = SimpleNamespace(pack_shape='AABB')
+        with patch.dict(sys.modules, {'bpy': SimpleNamespace(data=SimpleNamespace(images=images))}), \
+                patch.object(lossy_assets, 'unwrap_square', side_effect=[lossy_assets.UnsafeAtlasError('collapsed'),
+                                                                         (4096, 5000, [])]) as unwrap:
+            self.assertEqual(lossy_assets.unwrap([obj], args, None), (4096, 5000, []))
+        self.assertEqual(args.pack_shape, 'AABB')
+        self.assertEqual(unwrap.call_args_list[1].args[1].pack_shape, 'CONVEX')
+        layers.remove.assert_called_once_with(layers.get.return_value)
+        images.remove.assert_called_once_with(images.new.return_value)
+
+    def test_source_crop_preserves_texel_coordinates_and_triangle_indices(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / 'source.glb'
+            source.write_bytes(glb(UNLIT))
+            doc, buffers, _ = lossy_assets.read_glb(source)
+            uv = np.array([[.2, .3], [.3, .3], [.2, .4]], dtype=np.float32)
+            data = bytearray(buffers[0])
+            data[36:60] = uv.tobytes()
+            buffers = [bytes(data)]
+            crops = lossy_assets.source_texture_crops(doc, buffers, {0: [8192, 8192]})
+            self.assertLess(np.prod(crops[0]['size']), 8192**2 / 50)
+            output = Path(directory) / 'cropped.glb'
+            lossy_assets.write_lossy(doc, buffers, None, b'', output,
+                                     reencoded={0: b'encoded'}, source_crops=crops)
+            result, binary, _ = lossy_assets.read_glb(output)
+            prim = result['meshes'][0]['primitives'][0]
+            actual = lossy_assets.accessor_array(result, binary, prim['attributes']['TEXCOORD_0'], dequantize=True)
+            np.testing.assert_allclose(actual * crops[0]['size'] + crops[0]['box'][:2], uv * 8192, atol=.001)
+            np.testing.assert_array_equal(lossy_assets.accessor_array(result, binary, prim['indices']), [0, 1, 2])
+
+    def test_source_crop_preserves_repeat_edges_and_unions_shared_image_users(self):
+        doc = {'meshes': [{'primitives': [{'attributes': {'TEXCOORD_0': 0}},
+                                        {'attributes': {'TEXCOORD_0': 1}}]}]}
+        arrays = [np.array([[.2, .3], [.3, .4]]), np.array([[.6, .5], [.7, .6]])]
+        with patch.object(lossy_assets, 'display_texture', return_value=({}, 0, {})), \
+                patch.object(lossy_assets, 'accessor_array', side_effect=lambda d, b, i, **kw: arrays[i]):
+            crop = lossy_assets.source_texture_crops(doc, [], {0: [8192, 8192]})[0]
+            self.assertLess(crop['box'][0], .2 * 8192)
+            self.assertGreater(crop['box'][2], .7 * 8192)
+            arrays[0][0, 0] = 0
+            crop = lossy_assets.source_texture_crops(doc, [], {0: [8192, 8192]})[0]
+            self.assertEqual([crop['box'][0], crop['box'][2]], [0, 8192])
+            arrays[0][0, 0] = -1
+            self.assertEqual(lossy_assets.source_texture_crops(doc, [], {0: [8192, 8192]}), {})
+
     def test_unwrap_restores_source_images_on_success_and_failure(self):
         source = object()
         square = object()

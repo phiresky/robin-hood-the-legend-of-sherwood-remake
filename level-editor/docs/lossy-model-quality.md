@@ -371,3 +371,72 @@ payload decreased from 666,981,963 to 611,977,707 bytes. Uncompressed textures w
 unchanged. Browser records include single-run timing and native memory snapshots,
 but these are not a repeated timing benchmark; concurrent editor development also
 limits comparisons beyond the texture payload. The other assets were not rebuilt.
+
+### Full library rollout and bounded packing fallback
+
+Regenerated the remaining 1,005 eligible library assets and their previews;
+the three earlier replacements were already current. The 185 entries refused by
+the existing static checks (including non-rendered regions and transformed
+assemblies) were left alone. Sources were snapshotted, and source hashes checked
+again under the publication lock before replacing derivatives. Previous files
+and the index are backed up in `work/library-square-atlas-v6/publication/`.
+
+This pass exposed an overly strict fallback introduced after algorithm 2:
+exceeding the desired atlas density at 4096 caused the generator to restore full
+source textures. The older generator could successfully bake those assets by
+clamping the atlas size. Density is now a best-effort target again: valid atlases
+are capped at `--max-size`, with required and achieved density retained in reports.
+Fifteen regenerated assets reach the cap. This does not bypass collapsed-UV checks.
+
+Unsafe AABB packing now retries from a fresh projection with Blender's CONVEX
+packer. This fixes Leicester's great keep: the automatic retry produced the
+exact bytes of the separately reviewed 4096² convex bake, avoiding a 106.6-million
+pixel source fallback. Repeated padding/chart-rescue failure is classified as an
+unsafe atlas. Eleven small assets still retain source layouts after both packers
+fail; an unsafe-packing fallback larger than the atlas pixel budget is refused.
+
+Source-layout re-encoding also crops unused image borders, remapping UVs without
+resampling. Bounds include all indexed primitives sharing each image. Tiled UVs
+are left alone; axes touching an image edge remain intact to preserve wrapping.
+Crops include padding and align interior boundaries to four pixels. This trims
+one additional spline texture in the current library. Cropping a bounding box
+does not remove unused holes inside it and is not a replacement for atlas packing.
+
+| Measurement across the 1,005 regenerated assets | Before | After |
+| --- | ---: | ---: |
+| Texture pixels | 2,475,971,308 | 965,173,640 |
+| Runtime GLB bytes | 474,731,856 | 442,956,856 |
+
+Pixels count image entries before deduplication and exclude mipmaps; this is
+61% fewer pixels, not a measurement of browser RSS. Individual assets can grow
+when meeting the existing density settings; the totals include those increases.
+Sources, geometry counts, and packing safety were checked throughout. Thirteen
+sampled assets were compared with their sources from eight views, covering capped
+buildings, large reductions, a cropped spline, and small source-layout fallback.
+These comparisons are not exhaustive and do not establish identical quality.
+Mean errors range from 1.62 to 7.89 on a 0–255 channel scale; worst-view p95 is at
+most 27. The final GLB hashes match the sampled comparisons.
+
+The 27 lossy-generator tests and 15 asset-index tests passed. Tests cover source
+image restoration, convex retry, crop texel-coordinate preservation, shared-image
+bounds and repeat edges. `library-square-atlas-measurements.json` records asset
+hashes, sizes, packing decisions and comparison results. Full local reports and
+staged artifacts are under `work/library-square-atlas-v6/`.
+
+All 1,005 replacements were published; none were held back. All regenerated
+receipts match the current source hashes and settings, and complete library
+derivative verification passed. Hardware Chromium checks passed for York and
+Wychford, including the BC7 worker/fallback/sharing/reupload/cancellation checks.
+Estimated loaded texture payload changed as follows (exact BC7 mip buffers plus
+estimated uncompressed mip storage):
+
+| Map | Before full rollout | After |
+| --- | ---: | ---: |
+| Wychford | 611,977,707 bytes | 315,275,968 bytes |
+| York | 215,314,117 bytes | 215,314,117 bytes |
+
+Wychford saves another 48.5% of its loaded texture payload. York's loaded texture
+payload is unchanged; library-wide savings cannot be applied uniformly to each
+map. These figures are not total process memory. The browser records also include
+single-run timings and native memory snapshots, which should not be treated as
+repeated benchmark results; native GPU allocations overlap process RSS.

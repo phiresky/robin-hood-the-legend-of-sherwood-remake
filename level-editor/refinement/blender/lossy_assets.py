@@ -35,10 +35,11 @@ them). Vertices are quantized with KHR_mesh_quantization (`--no-quantize` keeps 
    of the surface meets its weakest-direction target: `--density` texels per map pixel
    (the source artwork scale), capped by the source's strongest direction to retain its detail.
    Packed layouts are fitted uniformly into one tile. Collapsed textured triangles get
-   separate small charts and are repacked. If the required atlas exceeds `--max-size`,
-   or packing remains unsafe, the published layout and resolution are retained and re-encoded.
+   separate small charts and are repacked. `--max-size` caps valid atlases even when the
+   density target cannot be met; reports retain the requested size and achieved density.
+   Unsafe packing falls back to source UVs with unused image borders cropped and UVs adjusted.
    Physical-opacity assets (foliage), tiled textures, and an already-filled single-image atlas
-   also retain their original layouts. A rebaked atlas may not exceed the source image
+   also retain source layouts (cropped where wrapping permits). A rebaked atlas may not exceed the source image
    pixel count by more than `--max-atlas-expansion` (4 by default): even BC7 compression
    cannot offset a larger expansion against uncompressed source textures.
    `--min-size` applies to successfully repacked atlases.
@@ -616,7 +617,20 @@ def unwrap(objects, args, targets):
                     if node.type == 'TEX_IMAGE':
                         replaced.append((node, node.image))
                         node.image = square
-        return unwrap_square(objects, args, targets)
+        try:
+            return unwrap_square(objects, args, targets)
+        except UnsafeAtlasError:
+            if getattr(args, 'pack_shape', None) != 'AABB':
+                raise
+            # Restart projection: another pack of already-collapsed charts cannot recover them.
+            for obj in objects:
+                layer = obj.data.uv_layers.get(NEW_UV)
+                if layer is not None:
+                    obj.data.uv_layers.remove(layer)
+            retry = copy.copy(args)
+            retry.pack_shape = 'CONVEX'
+            print('Retrying unsafe atlas with convex island packing', flush=True)
+            return unwrap_square(objects, retry, targets)
     finally:
         for node, image in replaced:
             node.image = image
@@ -662,11 +676,14 @@ def unwrap_square(objects, args, targets):
         if margin >= .05:
             required = max(required, args.pack_margin_px / (margin * tile_scale))
             size = min(args.max_size, max(size, args.multiple * math.ceil(required / args.multiple)))
-        history.append({'margin_fraction': margin, 'size': size, 'required_size': required})
+        history.append({'margin_fraction': margin, 'size': size, 'required_size': required,
+                        'pack_shape': args.pack_shape})
         if margin * tile_scale * size >= args.pack_margin_px - 1e-9:
             return size, required, history
         margin = min(.05, args.pack_margin_px / (size * tile_scale))
-    raise RuntimeError(f'Pack margin did not converge: {history}')
+    # Repeated chart rescue can prevent padding convergence on tiny props.
+    # Treat this like other unsafe layouts so derivation retains the source UVs.
+    raise UnsafeAtlasError(f'Pack margin did not converge: {history}')
 
 
 def bake(objects, size, need_alpha, args, work):
@@ -865,7 +882,7 @@ class Quantizer:
 
 
 def write_lossy(doc, binary, records, atlas_bytes, output, drop_normals=True, texture_file=False, normal_bits=None,
-                reencoded=None):
+                reencoded=None, source_crops=None):
     """Copy the published document; replace textured primitives' vertices and all textures.
 
     With `drop_normals`, NORMAL is omitted on rebuilt primitives whose material is unlit (their
@@ -913,6 +930,15 @@ def write_lossy(doc, binary, records, atlas_bytes, output, drop_normals=True, te
                 drop = drop_normals and unlit and 'NORMAL' in source['attributes']
                 primitive['attributes'] = {name: copy_accessor(index, name) for name, index in source['attributes'].items()
                                            if not (drop and name == 'NORMAL')}
+                found = display_texture(doc, source) if source_crops else None
+                if found and found[1] in source_crops:
+                    crop = source_crops[found[1]]
+                    name = f'TEXCOORD_{found[0].get("texCoord", 0)}'
+                    values = accessor_array(doc, binary, source['attributes'][name], dequantize=True)
+                    values = (values * crop['source_size'] - crop['box'][:2]) / crop['size']
+                    triangles = accessor_array(doc, binary, source['indices']) if 'indices' in source else np.arange(len(values))
+                    primitive['attributes'][name] = emit(name, values.astype(np.float32),
+                                                        {'componentType': 5126, 'type': 'VEC2'}, triangles)
                 if 'indices' in source:
                     primitive['indices'] = copy_accessor(source['indices'], None)
                 if not textured:
@@ -1161,6 +1187,45 @@ def derive_pbr(asset_id, model_path, lossy_path, args, work, doc, binary, source
     return report
 
 
+def source_texture_crops(doc, binary, sizes, padding=8):
+    """Trim unused source borders without changing texel scale or repeating UVs.
+
+    Keep an entire axis when sampling reaches its edge, preserving wrap behavior.
+    Bounds include every indexed face sharing an image, across meshes/materials.
+    """
+    bounds = {}
+    for mesh in doc['meshes']:
+        for primitive in mesh['primitives']:
+            found = display_texture(doc, primitive)
+            if not found:
+                continue
+            info, image, _ = found
+            uv = accessor_array(doc, binary, primitive['attributes'][f'TEXCOORD_{info.get("texCoord", 0)}'], dequantize=True)
+            if 'indices' in primitive:
+                uv = uv[accessor_array(doc, binary, primitive['indices'])]
+            low, high = uv.min(axis=0), uv.max(axis=0)
+            if image in bounds:
+                low, high = np.minimum(low, bounds[image][0]), np.maximum(high, bounds[image][1])
+            bounds[image] = low, high
+    result = {}
+    for image, (low, high) in bounds.items():
+        if not np.isfinite([low, high]).all() or low.min() < 0 or high.max() > 1:
+            continue
+        size = np.array(sizes[image], dtype=np.int64)
+        start = np.maximum(0, np.floor(low * size).astype(np.int64) - padding)
+        end = np.minimum(size, np.ceil(high * size).astype(np.int64) + padding)
+        # Align retained borders for block compression without resampling pixels.
+        start = (start // 4) * 4
+        end = np.minimum(size, ((end + 3) // 4) * 4)
+        touches_edge = (start == 0) | (end == size)
+        start[touches_edge], end[touches_edge] = 0, size[touches_edge]
+        if np.array_equal(end - start, size):
+            continue
+        result[image] = {'source_size': size.tolist(), 'box': [*start.tolist(), *end.tolist()],
+                         'size': (end - start).tolist()}
+    return result
+
+
 def derive(asset_id, model_path, lossy_path, args, work):
     import bpy
     bpy.ops.wm.read_homefile(use_empty=True, use_factory_startup=True)
@@ -1216,13 +1281,13 @@ def derive(asset_id, model_path, lossy_path, args, work):
                 or max(reuse.values(), default=0) > args.reuse_ratio or out_of_range)
     packing_failure = None
     expansion_limited = False
+    required, history, source_crops = None, [], {}
     if not reencode:
         try:
             size, required, history = unwrap(objects, args, targets)
             new_axes = np.concatenate([face_axes(o, NEW_UV, size, size) for o in objects])
-            # A capped atlas cannot meet the requested surface density. Keep the source
-            # layout instead of silently publishing undersampled or collapsed charts.
-            reencode = required > args.max_size
+            # Density is a target; a valid capped atlas stays within the memory budget.
+            # Report its achieved density instead of expanding back to source images.
             expansion_limited = atlas_expansion_exceeded(
                 size, [image.size for image in images.values()], args.max_atlas_expansion)
             reencode |= expansion_limited
@@ -1237,20 +1302,29 @@ def derive(asset_id, model_path, lossy_path, args, work):
                         if found and doc['materials'][p['material']].get('alphaMode', 'OPAQUE') != 'OPAQUE'
                         for image in [found[1]]}
         encoded_images = {}
+        source_crops = source_texture_crops(doc, binary, {i: list(image.size) for i, image in images.items()},
+                                            padding=args.bake_margin)
+        fallback_pixels = sum(math.prod(source_crops.get(i, {}).get('size', list(image.size)))
+                              for i, image in images.items())
+        if packing_failure and fallback_pixels > args.max_size**2:
+            raise UnsafeAtlasError(f'{packing_failure}; cropped source fallback needs {fallback_pixels} pixels, '
+                                   f'exceeding the {args.max_size}² atlas budget')
         for index, image in images.items():
             source = Image.open(image.filepath_raw)
+            if index in source_crops:
+                source = source.crop(source_crops[index]['box'])
             keep_alpha = index in alpha_images and 'A' in source.getbands()
-            key = (sha(Path(image.filepath_raw)), keep_alpha)
+            key = (sha(Path(image.filepath_raw)), keep_alpha, tuple(source_crops.get(index, {}).get('box', [])))
             if key not in encoded_images:
                 encoded_images[key], avif_command, png = encode_avif(np.asarray(source.convert('RGBA' if keep_alpha else 'RGB')),
                                                                    work, args, name=f'image-{index}')
                 png.unlink()
             reencoded[index] = encoded_images[key]
-            size.append(list(image.size))
+            size.append(list(source.size))
         for index in range(len(doc.get('images', []))):
             require(index in reencoded, f'Image {index} was not decoded')
         atlas_bytes = b''.join(reencoded.values())
-        required, history, new_axes, atlas_png = None, [], source_axes, None
+        new_axes, atlas_png = source_axes, None
     else:
         reencoded = None
         pixels = bake(objects, size, need_alpha, args, work)
@@ -1259,7 +1333,8 @@ def derive(asset_id, model_path, lossy_path, args, work):
     lossy_path.parent.mkdir(parents=True, exist_ok=True)
     lossy_bytes, normals = write_lossy(doc, binary, None if reencode else records, atlas_bytes, lossy_path,
                                        not args.keep_normals, args.texture_file,
-                                       None if args.no_quantize else args.normal_bits, reencoded=reencoded)
+                                       None if args.no_quantize else args.normal_bits, reencoded=reencoded,
+                                       source_crops=source_crops)
 
     # Structural check from the written bytes: same meshes, primitives and triangle counts.
     lossy_doc, lossy_binary, _ = read_glb(lossy_path)
@@ -1302,6 +1377,7 @@ def derive(asset_id, model_path, lossy_path, args, work):
                      'gpu_rgba8_bytes': {'source': sum(i['pixels'] for i in source_images) * 4,
                                          'lossy': lossy_pixels * 4}},
         'atlas_size': {'mode': 're-encode published layout' if reencode else 'smart-uv + normalized island scale',
+                       'source_crops': source_crops,
                        'packing_failure': packing_failure,
                        'expansion_limited': expansion_limited,
                        'texel_reuse': reuse, 'uv_out_of_range': out_of_range,
