@@ -125,7 +125,8 @@ def diagnose(model, work):
               'source_image_sizes': [list(image.size) for image in images.values()],
               'source_pixels': sum(image.size[0] * image.size[1] for image in images.values()), 'variants': {}}
     try:
-        size, required, history = assets.unwrap(objects, args, targets)
+        # Deliberately retain the old source-image aspect context for comparison.
+        size, required, history = assets.unwrap_square(objects, args, targets)
     except (assets.UnsafeAtlasError, RuntimeError) as error:
         result['default_failure'] = str(error)
         return result
@@ -164,7 +165,7 @@ def diagnose(model, work):
     for obj in objects:
         obj.data.uv_layers.remove(obj.data.uv_layers[assets.NEW_UV])
     try:
-        size, required, history = assets.unwrap(objects, args, targets)
+        size, required, history = assets.unwrap_square(objects, args, targets)
         result['variants']['square_material_aspect'] = measure(objects, area, targets)
         result['variants']['square_material_aspect']['pack_history'] = history
     except (assets.UnsafeAtlasError, RuntimeError) as error:

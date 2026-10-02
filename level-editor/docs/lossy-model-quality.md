@@ -330,3 +330,44 @@ Use `--assets leicester-watermill leicester-church-side-tower derby-east-watchto
 to limit the probe. Island counts use mesh-edge connectivity with exact matching
 UV endpoints; raster coverage is approximate. Ideal pixel estimates target the
 entire surface and are not strict lower bounds for the 95% coverage criterion.
+
+### Square destination aspect (algorithm 6)
+
+UV projection, island scaling, and packing now run with square material images.
+Only the selected objects' materials are touched, and their original images are
+restored in a `finally` block before baking or source-layout fallback. Source
+density targets are calculated before this substitution. Receipts advance to
+algorithm 6; density, padding, AVIF quality, and packing safety limits are unchanged.
+The diagnostic retains its source-aspect baseline so it can still compare the
+two configurations.
+
+Rebuilt, visually reviewed, and locally published three Wychford assets, including
+previews and receipts, with backups in `work/wychford-square-atlas/publication/`:
+
+| Asset | Old atlas | New atlas | Old / new mean render error | Old / new worst-view p95 |
+| --- | ---: | ---: | ---: | ---: |
+| Leicester watermill | 4096² | 1760² | 3.11 / 4.55 | 13 / 16.87 |
+| Leicester church side tower | 4096² | 1792² | 4.78 / 4.16 | 22 / 18 |
+| Derby east watchtower | 4096² | 1664² | 1.48 / 2.57 | 4 / 8 |
+
+Errors are measured against the source GLBs over eight views using the same
+camera settings and undenoised renders, on a 0–255 channel scale. The watermill
+and watchtower trade some fine detail for smaller atlases; the church tower's
+error improves. All three meet the density target on at least 95% of surface area.
+This is not a claim of identical quality. Structural and packed-UV checks passed,
+and the exact visually reviewed output bytes were published.
+
+Combined texture pixels fall from 50,331,648 to 9,077,760 (82% less). Combined
+GLB size falls from 2,697,568 to 1,655,408 bytes (39% less); the church tower alone
+grows by 1,472 bytes. Source model hashes remain unchanged. The 24 lossy-generator
+tests, 15 asset-index tests, and complete library derivative-receipt verification
+passed. Detailed measurements are in `wychford-square-atlas-measurements.json`;
+local render comparisons are in `work/wychford-square-atlas/`.
+
+Hardware Chromium loaded the updated Wychford scene and passed the BC7 worker,
+sharing, fallback, reupload, and cancellation checks. Compressed texture mip
+buffers decreased by exactly 55,004,256 bytes; total estimated viewport texture
+payload decreased from 666,981,963 to 611,977,707 bytes. Uncompressed textures were
+unchanged. Browser records include single-run timing and native memory snapshots,
+but these are not a repeated timing benchmark; concurrent editor development also
+limits comparisons beyond the texture payload. The other assets were not rebuilt.

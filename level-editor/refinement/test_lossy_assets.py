@@ -7,7 +7,7 @@ import sys
 import tempfile
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import numpy as np
 
@@ -47,6 +47,33 @@ UNLIT = {'pbrMetallicRoughness': {'baseColorTexture': {'index': 0}}, 'extensions
 
 
 class LossyAssetsTest(unittest.TestCase):
+    def test_unwrap_restores_source_images_on_success_and_failure(self):
+        source = object()
+        square = object()
+        node = SimpleNamespace(type='TEX_IMAGE', image=source)
+        material = Mock(node_tree=SimpleNamespace(nodes=[node]))
+        obj = SimpleNamespace(material_slots=[SimpleNamespace(material=material)])
+        images = Mock()
+        images.new.return_value = square
+        def check_aspect(*_args):
+            self.assertIs(node.image, square)
+            return (32, 30, [])
+        for failure in [False, True]:
+            def operation(*args):
+                result = check_aspect(*args)
+                if failure:
+                    raise lossy_assets.UnsafeAtlasError('test packing failure')
+                return result
+            with patch.dict(sys.modules, {'bpy': SimpleNamespace(data=SimpleNamespace(images=images))}), \
+                    patch.object(lossy_assets, 'unwrap_square', side_effect=operation):
+                if failure:
+                    with self.assertRaises(lossy_assets.UnsafeAtlasError):
+                        lossy_assets.unwrap([obj], None, None)
+                else:
+                    self.assertEqual(lossy_assets.unwrap([obj], None, None), (32, 30, []))
+            self.assertIs(node.image, source)
+            images.remove.assert_called_with(square)
+
     def test_rebaking_small_source_textures_cannot_inflate_atlas_memory(self):
         self.assertTrue(lossy_assets.atlas_expansion_exceeded(4096, [(512, 484), (128, 56)], 4))
         # Projection sources may cover an entire map: they still benefit from rebaking.

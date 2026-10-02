@@ -1,0 +1,1573 @@
+{
+  "assets": [
+    {
+      "id": "leicester-watermill",
+      "model": "leicester/leicester-watermill/model.glb",
+      "lossy": "leicester/leicester-watermill/lossy.glb",
+      "preview": "leicester/leicester-watermill/preview.glb",
+      "source_sha256": "ba0b9fc1d5047e0bffc876e357408270651414e3d31c8190bee86466a133dc11",
+      "old_pixels": 16777216,
+      "new_pixels": 3097600,
+      "size": [
+        1760,
+        1760
+      ],
+      "old_glb_bytes": 935052,
+      "new_glb_bytes": 516300,
+      "validation": {
+        "render_px_per_map_px": 1.8215023072079988,
+        "resolution": [
+          887,
+          1024
+        ],
+        "differences": {
+          "per_view": [
+            {
+              "view": 0,
+              "covered_pixels": 284359,
+              "silhouette_mismatch_pixels": 13,
+              "mean": 5.977399474800875,
+              "mean_rgb": 3.978884764718041,
+              "p95": 16.87058823529412,
+              "max": 90.0,
+              "fraction_over_8": 0.2082824879817414,
+              "fraction_over_24": 0.013711540693278568
+            },
+            {
+              "view": 1,
+              "covered_pixels": 278769,
+              "silhouette_mismatch_pixels": 5,
+              "mean": 5.344109181971524,
+              "mean_rgb": 3.542077425034155,
+              "p95": 15.0,
+              "max": 118.0,
+              "fraction_over_8": 0.17153987710254728,
+              "fraction_over_24": 0.01191667653146512
+            },
+            {
+              "view": 2,
+              "covered_pixels": 221639,
+              "silhouette_mismatch_pixels": 2,
+              "mean": 4.511364452476111,
+              "mean_rgb": 2.9717608923443106,
+              "p95": 13.0,
+              "max": 66.0,
+              "fraction_over_8": 0.1146864947053542,
+              "fraction_over_24": 0.006663989640812312
+            },
+            {
+              "view": 3,
+              "covered_pixels": 220837,
+              "silhouette_mismatch_pixels": 1,
+              "mean": 3.5150077952090832,
+              "mean_rgb": 2.245256547867603,
+              "p95": 9.0,
+              "max": 56.0,
+              "fraction_over_8": 0.051621784393013855,
+              "fraction_over_24": 0.0011773389422968072
+            },
+            {
+              "view": 4,
+              "covered_pixels": 226390,
+              "silhouette_mismatch_pixels": 3,
+              "mean": 3.125972532217092,
+              "mean_rgb": 1.965867334609978,
+              "p95": 7.0,
+              "max": 40.0,
+              "fraction_over_8": 0.033645479040593666,
+              "fraction_over_24": 0.00042404699854233847
+            },
+            {
+              "view": 5,
+              "covered_pixels": 247234,
+              "silhouette_mismatch_pixels": 3,
+              "mean": 3.3899053639268795,
+              "mean_rgb": 2.1417874870838935,
+              "p95": 8.0,
+              "max": 41.0,
+              "fraction_over_8": 0.04312513651035052,
+              "fraction_over_24": 0.00034784859687583423
+            },
+            {
+              "view": 6,
+              "covered_pixels": 250949,
+              "silhouette_mismatch_pixels": 2,
+              "mean": 4.7342248354657475,
+              "mean_rgb": 3.0740192686079983,
+              "p95": 12.0,
+              "max": 60.0,
+              "fraction_over_8": 0.12845637958310255,
+              "fraction_over_24": 0.0029527912045873863
+            },
+            {
+              "view": 7,
+              "covered_pixels": 270322,
+              "silhouette_mismatch_pixels": 3,
+              "mean": 5.781640355996647,
+              "mean_rgb": 3.829455953110967,
+              "p95": 15.0,
+              "max": 70.0,
+              "fraction_over_8": 0.19588490762867988,
+              "fraction_over_24": 0.009677347755639571
+            }
+          ],
+          "overall": {
+            "mean_of_view_means": 4.547452999007994,
+            "max_p95": 16.87058823529412,
+            "max": 118.0
+          },
+          "metric": "Per pixel max |channel| difference (0-255) after compositing both renders over gray 128; statistics over the union of both silhouettes."
+        },
+        "sheet": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/wychford-square-atlas/work/leicester/leicester-watermill/model/compare-sheet.png"
+      },
+      "lossy_sha256": "791a46b793bd48e61811f63cb7f67e22925d08b441286169d60f3d35e8568a39",
+      "old_validation": {
+        "differences": {
+          "per_view": [
+            {
+              "view": 0,
+              "covered_pixels": 284359,
+              "silhouette_mismatch_pixels": 13,
+              "mean": 4.260200179157677,
+              "mean_rgb": 2.913571114779033,
+              "p95": 13.0,
+              "max": 89.0,
+              "fraction_over_8": 0.12087888901001903,
+              "fraction_over_24": 0.009220738573423032
+            },
+            {
+              "view": 1,
+              "covered_pixels": 278769,
+              "silhouette_mismatch_pixels": 5,
+              "mean": 3.7905802534236837,
+              "mean_rgb": 2.5735453513564543,
+              "p95": 12.0,
+              "max": 104.0,
+              "fraction_over_8": 0.10188005122520796,
+              "fraction_over_24": 0.007583339610932349
+            },
+            {
+              "view": 2,
+              "covered_pixels": 221639,
+              "silhouette_mismatch_pixels": 2,
+              "mean": 3.0032394312992094,
+              "mean_rgb": 2.00596494912663,
+              "p95": 10.0,
+              "max": 107.0,
+              "fraction_over_8": 0.06261984578526342,
+              "fraction_over_24": 0.003952373002946232
+            },
+            {
+              "view": 3,
+              "covered_pixels": 220837,
+              "silhouette_mismatch_pixels": 1,
+              "mean": 2.300872820136083,
+              "mean_rgb": 1.4920746058792778,
+              "p95": 6.0,
+              "max": 90.0,
+              "fraction_over_8": 0.024814682322255782,
+              "fraction_over_24": 0.0005252742973324216
+            },
+            {
+              "view": 4,
+              "covered_pixels": 226390,
+              "silhouette_mismatch_pixels": 3,
+              "mean": 2.190252271587552,
+              "mean_rgb": 1.4102294525007022,
+              "p95": 6.0,
+              "max": 70.68627450980392,
+              "fraction_over_8": 0.01805733468792791,
+              "fraction_over_24": 0.00021644065550598525
+            },
+            {
+              "view": 5,
+              "covered_pixels": 247234,
+              "silhouette_mismatch_pixels": 3,
+              "mean": 2.3182074075413515,
+              "mean_rgb": 1.4952188186566764,
+              "p95": 6.0,
+              "max": 59.984313725490196,
+              "fraction_over_8": 0.01967366947911695,
+              "fraction_over_24": 0.0001415662894262116
+            },
+            {
+              "view": 6,
+              "covered_pixels": 250949,
+              "silhouette_mismatch_pixels": 2,
+              "mean": 3.080913433000487,
+              "mean_rgb": 2.03400830056947,
+              "p95": 8.981960784313348,
+              "max": 47.188235294117646,
+              "fraction_over_8": 0.05018549585772408,
+              "fraction_over_24": 0.0010559914564313864
+            },
+            {
+              "view": 7,
+              "covered_pixels": 270322,
+              "silhouette_mismatch_pixels": 3,
+              "mean": 3.9302713786071544,
+              "mean_rgb": 2.662995702099742,
+              "p95": 12.0,
+              "max": 95.0,
+              "fraction_over_8": 0.09669209313337428,
+              "fraction_over_24": 0.006292495616339033
+            }
+          ],
+          "overall": {
+            "mean_of_view_means": 3.10931714684415,
+            "max_p95": 13.0,
+            "max": 107.0
+          },
+          "metric": "Per pixel max |channel| difference (0-255) after compositing both renders over gray 128; statistics over the union of both silhouettes."
+        },
+        "render_scale": 1.8215023072079988,
+        "resolution": [
+          887,
+          1024
+        ]
+      },
+      "surface_fraction_below_target": 0.04507883647113641,
+      "settings": {
+        "algorithm_version": 6,
+        "density_coverage": 0.95,
+        "density": 1.0,
+        "nearest_density": 2.0,
+        "pack_shape": "AABB",
+        "multiple": 16,
+        "min_size": 32,
+        "max_size": 4096,
+        "max_atlas_expansion": 4.0,
+        "quality": 80,
+        "reencode_utilization": 0.9,
+        "reuse_ratio": 1.25,
+        "keep_normals": false,
+        "texture_file": false,
+        "no_quantize": false,
+        "normal_bits": 8,
+        "speed": 6,
+        "angle_limit": 66.0,
+        "pack_margin_px": 8.0,
+        "bake_margin": 8
+      }
+    },
+    {
+      "id": "leicester-church-side-tower",
+      "model": "leicester/leicester-church-side-tower/model.glb",
+      "lossy": "leicester/leicester-church-side-tower/lossy.glb",
+      "preview": "leicester/leicester-church-side-tower/preview.glb",
+      "source_sha256": "1c2a831d839e0bf5132722e7d743a6b419d1ade2b2a87543ecbd65dc861a40c4",
+      "old_pixels": 16777216,
+      "new_pixels": 3211264,
+      "size": [
+        1792,
+        1792
+      ],
+      "old_glb_bytes": 459128,
+      "new_glb_bytes": 460600,
+      "validation": {
+        "render_px_per_map_px": 1.435127017191028,
+        "resolution": [
+          744,
+          1024
+        ],
+        "differences": {
+          "per_view": [
+            {
+              "view": 0,
+              "covered_pixels": 179484,
+              "silhouette_mismatch_pixels": 0,
+              "mean": 6.455932584083086,
+              "mean_rgb": 4.2428469528407,
+              "p95": 18.0,
+              "max": 111.0,
+              "fraction_over_8": 0.22730716944128723,
+              "fraction_over_24": 0.019650776670901027
+            },
+            {
+              "view": 1,
+              "covered_pixels": 213323,
+              "silhouette_mismatch_pixels": 0,
+              "mean": 4.423539926979919,
+              "mean_rgb": 2.8385905518278935,
+              "p95": 13.0,
+              "max": 106.0,
+              "fraction_over_8": 0.11407115032134368,
+              "fraction_over_24": 0.008761361878465988
+            },
+            {
+              "view": 2,
+              "covered_pixels": 227419,
+              "silhouette_mismatch_pixels": 0,
+              "mean": 3.1788587860931137,
+              "mean_rgb": 1.9799395242555222,
+              "p95": 8.0,
+              "max": 91.72941176470589,
+              "fraction_over_8": 0.04869426037402328,
+              "fraction_over_24": 0.003500147305194377
+            },
+            {
+              "view": 3,
+              "covered_pixels": 195603,
+              "silhouette_mismatch_pixels": 0,
+              "mean": 2.7257620352067655,
+              "mean_rgb": 1.684155852696032,
+              "p95": 6.0,
+              "max": 180.0,
+              "fraction_over_8": 0.025633553677602082,
+              "fraction_over_24": 0.0034662045060658577
+            },
+            {
+              "view": 4,
+              "covered_pixels": 152996,
+              "silhouette_mismatch_pixels": 0,
+              "mean": 3.0681395233195894,
+              "mean_rgb": 1.937223853261489,
+              "p95": 7.0,
+              "max": 185.0,
+              "fraction_over_8": 0.02711835603545191,
+              "fraction_over_24": 0.006241993254725613
+            },
+            {
+              "view": 5,
+              "covered_pixels": 222850,
+              "silhouette_mismatch_pixels": 0,
+              "mean": 3.5664714944986295,
+              "mean_rgb": 2.2844686994534555,
+              "p95": 9.0,
+              "max": 177.0,
+              "fraction_over_8": 0.05458380076284496,
+              "fraction_over_24": 0.004186672649764416
+            },
+            {
+              "view": 6,
+              "covered_pixels": 240452,
+              "silhouette_mismatch_pixels": 0,
+              "mean": 4.255009421798098,
+              "mean_rgb": 2.744312677355251,
+              "p95": 12.0,
+              "max": 100.0,
+              "fraction_over_8": 0.09811105750835926,
+              "fraction_over_24": 0.0054189609568645715
+            },
+            {
+              "view": 7,
+              "covered_pixels": 212863,
+              "silhouette_mismatch_pixels": 0,
+              "mean": 5.5901912792477315,
+              "mean_rgb": 3.65090816183314,
+              "p95": 16.0,
+              "max": 109.0,
+              "fraction_over_8": 0.18054335417616024,
+              "fraction_over_24": 0.01373183690918572
+            }
+          ],
+          "overall": {
+            "mean_of_view_means": 4.157988131403367,
+            "max_p95": 18.0,
+            "max": 185.0
+          },
+          "metric": "Per pixel max |channel| difference (0-255) after compositing both renders over gray 128; statistics over the union of both silhouettes."
+        },
+        "sheet": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/wychford-square-atlas/work/leicester/leicester-church-side-tower/model/compare-sheet.png"
+      },
+      "lossy_sha256": "cd6e5e92fd70f8335f9134ea60c07bab1ede8f7c496b6707b645e1d446c85ab1",
+      "old_validation": {
+        "differences": {
+          "per_view": [
+            {
+              "view": 0,
+              "covered_pixels": 179484,
+              "silhouette_mismatch_pixels": 0,
+              "mean": 7.51857918625987,
+              "mean_rgb": 5.019301591213622,
+              "p95": 22.0,
+              "max": 114.0,
+              "fraction_over_8": 0.2837300260747476,
+              "fraction_over_24": 0.03538476967306278
+            },
+            {
+              "view": 1,
+              "covered_pixels": 213323,
+              "silhouette_mismatch_pixels": 0,
+              "mean": 5.114447436930079,
+              "mean_rgb": 3.33875203942936,
+              "p95": 16.0,
+              "max": 110.0,
+              "fraction_over_8": 0.14906034511046629,
+              "fraction_over_24": 0.016805501516479703
+            },
+            {
+              "view": 2,
+              "covered_pixels": 227419,
+              "silhouette_mismatch_pixels": 0,
+              "mean": 3.622090054213657,
+              "mean_rgb": 2.2949793774164857,
+              "p95": 10.0,
+              "max": 97.0,
+              "fraction_over_8": 0.06897840549822135,
+              "fraction_over_24": 0.00606369740435056
+            },
+            {
+              "view": 3,
+              "covered_pixels": 195603,
+              "silhouette_mismatch_pixels": 0,
+              "mean": 3.0790977082131046,
+              "mean_rgb": 1.9332498709621218,
+              "p95": 8.0,
+              "max": 183.0,
+              "fraction_over_8": 0.03839409416011002,
+              "fraction_over_24": 0.004120591197476521
+            },
+            {
+              "view": 4,
+              "covered_pixels": 152996,
+              "silhouette_mismatch_pixels": 0,
+              "mean": 3.4328964386612184,
+              "mean_rgb": 2.1903099777737793,
+              "p95": 8.0,
+              "max": 185.0,
+              "fraction_over_8": 0.04004026249052263,
+              "fraction_over_24": 0.006235457136134278
+            },
+            {
+              "view": 5,
+              "covered_pixels": 222850,
+              "silhouette_mismatch_pixels": 0,
+              "mean": 4.038901820005543,
+              "mean_rgb": 2.6195084533252384,
+              "p95": 10.0,
+              "max": 178.0,
+              "fraction_over_8": 0.0770114426744447,
+              "fraction_over_24": 0.005559793583127665
+            },
+            {
+              "view": 6,
+              "covered_pixels": 240452,
+              "silhouette_mismatch_pixels": 0,
+              "mean": 4.909560360667149,
+              "mean_rgb": 3.217275074209368,
+              "p95": 14.0,
+              "max": 97.0,
+              "fraction_over_8": 0.13185999700563938,
+              "fraction_over_24": 0.01055512118842846
+            },
+            {
+              "view": 7,
+              "covered_pixels": 212863,
+              "silhouette_mismatch_pixels": 0,
+              "mean": 6.517763326186142,
+              "mean_rgb": 4.328416961180868,
+              "p95": 19.0,
+              "max": 112.0,
+              "fraction_over_8": 0.2313741702409531,
+              "fraction_over_24": 0.024936226587053644
+            }
+          ],
+          "overall": {
+            "mean_of_view_means": 4.779167041392095,
+            "max_p95": 22.0,
+            "max": 185.0
+          },
+          "metric": "Per pixel max |channel| difference (0-255) after compositing both renders over gray 128; statistics over the union of both silhouettes."
+        },
+        "render_scale": 1.435127017191028,
+        "resolution": [
+          744,
+          1024
+        ]
+      },
+      "surface_fraction_below_target": 0.04994879520615767,
+      "settings": {
+        "algorithm_version": 6,
+        "density_coverage": 0.95,
+        "density": 1.0,
+        "nearest_density": 2.0,
+        "pack_shape": "AABB",
+        "multiple": 16,
+        "min_size": 32,
+        "max_size": 4096,
+        "max_atlas_expansion": 4.0,
+        "quality": 80,
+        "reencode_utilization": 0.9,
+        "reuse_ratio": 1.25,
+        "keep_normals": false,
+        "texture_file": false,
+        "no_quantize": false,
+        "normal_bits": 8,
+        "speed": 6,
+        "angle_limit": 66.0,
+        "pack_margin_px": 8.0,
+        "bake_margin": 8
+      }
+    },
+    {
+      "id": "derby-east-watchtower",
+      "model": "derby/derby-east-watchtower/model.glb",
+      "lossy": "derby/derby-east-watchtower/lossy.glb",
+      "preview": "derby/derby-east-watchtower/preview.glb",
+      "source_sha256": "eee53338bcb1ea01b38da55e63747d46619fd6923ad8c683196d076bf024d64c",
+      "old_pixels": 16777216,
+      "new_pixels": 2768896,
+      "size": [
+        1664,
+        1664
+      ],
+      "old_glb_bytes": 1303388,
+      "new_glb_bytes": 678508,
+      "validation": {
+        "render_px_per_map_px": 1.048795470940249,
+        "resolution": [
+          516,
+          1024
+        ],
+        "differences": {
+          "per_view": [
+            {
+              "view": 0,
+              "covered_pixels": 132055,
+              "silhouette_mismatch_pixels": 0,
+              "mean": 3.291225150542592,
+              "mean_rgb": 2.1750763187154885,
+              "p95": 8.0,
+              "max": 76.30588235294118,
+              "fraction_over_8": 0.04826019461587975,
+              "fraction_over_24": 0.002203627276513574
+            },
+            {
+              "view": 1,
+              "covered_pixels": 116674,
+              "silhouette_mismatch_pixels": 0,
+              "mean": 2.8062462292286168,
+              "mean_rgb": 1.8638137479537702,
+              "p95": 7.0,
+              "max": 98.0,
+              "fraction_over_8": 0.03447211889538372,
+              "fraction_over_24": 0.0022455731354029175
+            },
+            {
+              "view": 2,
+              "covered_pixels": 135551,
+              "silhouette_mismatch_pixels": 0,
+              "mean": 2.0668532688875803,
+              "mean_rgb": 1.3236471640343939,
+              "p95": 5.0,
+              "max": 75.0,
+              "fraction_over_8": 0.014275069899890079,
+              "fraction_over_24": 0.0012541405080006788
+            },
+            {
+              "view": 3,
+              "covered_pixels": 138051,
+              "silhouette_mismatch_pixels": 0,
+              "mean": 1.8950588451184778,
+              "mean_rgb": 1.1924894479888861,
+              "p95": 4.0,
+              "max": 75.0,
+              "fraction_over_8": 0.010995936284416629,
+              "fraction_over_24": 0.0006229581821211002
+            },
+            {
+              "view": 4,
+              "covered_pixels": 128118,
+              "silhouette_mismatch_pixels": 0,
+              "mean": 2.091893931115586,
+              "mean_rgb": 1.3397510689441015,
+              "p95": 5.0,
+              "max": 62.2470588235294,
+              "fraction_over_8": 0.01639113941834871,
+              "fraction_over_24": 0.001646919246319799
+            },
+            {
+              "view": 5,
+              "covered_pixels": 118908,
+              "silhouette_mismatch_pixels": 0,
+              "mean": 2.4128085183008516,
+              "mean_rgb": 1.57165684856376,
+              "p95": 6.0,
+              "max": 67.0,
+              "fraction_over_8": 0.02263094156827127,
+              "fraction_over_24": 0.0018081205637972214
+            },
+            {
+              "view": 6,
+              "covered_pixels": 138308,
+              "silhouette_mismatch_pixels": 0,
+              "mean": 2.7894575448827763,
+              "mean_rgb": 1.8042210423227045,
+              "p95": 7.0,
+              "max": 63.0,
+              "fraction_over_8": 0.026419296063857477,
+              "fraction_over_24": 0.001185759319779044
+            },
+            {
+              "view": 7,
+              "covered_pixels": 144110,
+              "silhouette_mismatch_pixels": 0,
+              "mean": 3.182111322913733,
+              "mean_rgb": 2.0733508217896373,
+              "p95": 8.0,
+              "max": 60.0,
+              "fraction_over_8": 0.04132260079106238,
+              "fraction_over_24": 0.0013600721670945805
+            }
+          ],
+          "overall": {
+            "mean_of_view_means": 2.566956851373777,
+            "max_p95": 8.0,
+            "max": 98.0
+          },
+          "metric": "Per pixel max |channel| difference (0-255) after compositing both renders over gray 128; statistics over the union of both silhouettes."
+        },
+        "sheet": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/wychford-square-atlas/work/derby/derby-east-watchtower/model/compare-sheet.png"
+      },
+      "lossy_sha256": "cd116ea14632c0cf5b80ab97f69bd5771258d7f81f922004addf55798f7e10f6",
+      "old_validation": {
+        "differences": {
+          "per_view": [
+            {
+              "view": 0,
+              "covered_pixels": 132055,
+              "silhouette_mismatch_pixels": 0,
+              "mean": 1.732246768837405,
+              "mean_rgb": 1.1107269079555135,
+              "p95": 4.0,
+              "max": 125.0,
+              "fraction_over_8": 0.01429707318920147,
+              "fraction_over_24": 0.001756843739351028
+            },
+            {
+              "view": 1,
+              "covered_pixels": 116674,
+              "silhouette_mismatch_pixels": 0,
+              "mean": 1.6875271033383783,
+              "mean_rgb": 1.0905812979150553,
+              "p95": 4.0,
+              "max": 141.0,
+              "fraction_over_8": 0.016207552668118005,
+              "fraction_over_24": 0.0023741364828496494
+            },
+            {
+              "view": 2,
+              "covered_pixels": 135551,
+              "silhouette_mismatch_pixels": 0,
+              "mean": 1.3140316624912614,
+              "mean_rgb": 0.8071873582251053,
+              "p95": 3.0,
+              "max": 146.21176470588233,
+              "fraction_over_8": 0.00936916732447566,
+              "fraction_over_24": 0.0013057815877418832
+            },
+            {
+              "view": 3,
+              "covered_pixels": 138051,
+              "silhouette_mismatch_pixels": 0,
+              "mean": 1.216807570830956,
+              "mean_rgb": 0.7282308522619968,
+              "p95": 2.258823529411771,
+              "max": 86.0,
+              "fraction_over_8": 0.007301649390442663,
+              "fraction_over_24": 0.0009996305713106026
+            },
+            {
+              "view": 4,
+              "covered_pixels": 128118,
+              "silhouette_mismatch_pixels": 0,
+              "mean": 1.2830429300929385,
+              "mean_rgb": 0.7819998659324171,
+              "p95": 3.0,
+              "max": 94.0,
+              "fraction_over_8": 0.01031861252907476,
+              "fraction_over_24": 0.001264459326558329
+            },
+            {
+              "view": 5,
+              "covered_pixels": 118908,
+              "silhouette_mismatch_pixels": 0,
+              "mean": 1.446595456563222,
+              "mean_rgb": 0.9100354071725909,
+              "p95": 4.0,
+              "max": 92.0,
+              "fraction_over_8": 0.01288391024994113,
+              "fraction_over_24": 0.0012278400107646247
+            },
+            {
+              "view": 6,
+              "covered_pixels": 138308,
+              "silhouette_mismatch_pixels": 0,
+              "mean": 1.5047024628748453,
+              "mean_rgb": 0.9398176391764445,
+              "p95": 4.0,
+              "max": 61.0,
+              "fraction_over_8": 0.0108308991526159,
+              "fraction_over_24": 0.0010628452439482893
+            },
+            {
+              "view": 7,
+              "covered_pixels": 144110,
+              "silhouette_mismatch_pixels": 0,
+              "mean": 1.6250704731271457,
+              "mean_rgb": 1.0256226656924654,
+              "p95": 4.0,
+              "max": 141.0,
+              "fraction_over_8": 0.01110956907917563,
+              "fraction_over_24": 0.0011935327180625911
+            }
+          ],
+          "overall": {
+            "mean_of_view_means": 1.4762530535195189,
+            "max_p95": 4.0,
+            "max": 146.21176470588233
+          },
+          "metric": "Per pixel max |channel| difference (0-255) after compositing both renders over gray 128; statistics over the union of both silhouettes."
+        },
+        "render_scale": 1.048795470940249,
+        "resolution": [
+          516,
+          1024
+        ]
+      },
+      "surface_fraction_below_target": 0.0434228843571891,
+      "settings": {
+        "algorithm_version": 6,
+        "density_coverage": 0.95,
+        "density": 1.0,
+        "nearest_density": 2.0,
+        "pack_shape": "AABB",
+        "multiple": 16,
+        "min_size": 32,
+        "max_size": 4096,
+        "max_atlas_expansion": 4.0,
+        "quality": 80,
+        "reencode_utilization": 0.9,
+        "reuse_ratio": 1.25,
+        "keep_normals": false,
+        "texture_file": false,
+        "no_quantize": false,
+        "normal_bits": 8,
+        "speed": 6,
+        "angle_limit": 66.0,
+        "pack_margin_px": 8.0,
+        "bake_margin": 8
+      }
+    }
+  ],
+  "browser": {
+    "before": {
+      "elapsed": 12601,
+      "phases": [
+        {
+          "ms": 8,
+          "phase": "Reading map"
+        },
+        {
+          "ms": 1485,
+          "phase": "Loading assets0 / 96 assets"
+        },
+        {
+          "ms": 1608,
+          "phase": "Loading assets \u2014 encoding textures (2 active)0 / 96 assets"
+        },
+        {
+          "ms": 1773,
+          "phase": "Loading assets \u2014 encoding textures (2 active)2 / 96 assets"
+        },
+        {
+          "ms": 1952,
+          "phase": "Loading assets \u2014 encoding textures (2 active)3 / 96 assets"
+        },
+        {
+          "ms": 2291,
+          "phase": "Loading assets \u2014 encoding textures (2 active)4 / 96 assets"
+        },
+        {
+          "ms": 2477,
+          "phase": "Loading assets \u2014 encoding textures (2 active)5 / 96 assets"
+        },
+        {
+          "ms": 2827,
+          "phase": "Loading assets \u2014 encoding textures (2 active)6 / 96 assets"
+        },
+        {
+          "ms": 3018,
+          "phase": "Loading assets \u2014 encoding textures (2 active)8 / 96 assets"
+        },
+        {
+          "ms": 3220,
+          "phase": "Loading assets \u2014 encoding textures (2 active)9 / 96 assets"
+        },
+        {
+          "ms": 3432,
+          "phase": "Loading assets \u2014 encoding textures (2 active)11 / 96 assets"
+        },
+        {
+          "ms": 3636,
+          "phase": "Loading assets \u2014 encoding textures (2 active)12 / 96 assets"
+        },
+        {
+          "ms": 3883,
+          "phase": "Loading assets \u2014 encoding textures (2 active)14 / 96 assets"
+        },
+        {
+          "ms": 4250,
+          "phase": "Loading assets \u2014 encoding textures (2 active)15 / 96 assets"
+        },
+        {
+          "ms": 4555,
+          "phase": "Loading assets \u2014 encoding textures (2 active)18 / 96 assets"
+        },
+        {
+          "ms": 4659,
+          "phase": "Loading assets \u2014 encoding textures (2 active)23 / 96 assets"
+        },
+        {
+          "ms": 4761,
+          "phase": "Loading assets \u2014 encoding textures (2 active)26 / 96 assets"
+        },
+        {
+          "ms": 4867,
+          "phase": "Loading assets \u2014 encoding textures (2 active)31 / 96 assets"
+        },
+        {
+          "ms": 4979,
+          "phase": "Loading assets \u2014 encoding textures (2 active)46 / 96 assets"
+        },
+        {
+          "ms": 5168,
+          "phase": "Loading assets \u2014 encoding textures (2 active)50 / 96 assets"
+        },
+        {
+          "ms": 5312,
+          "phase": "Loading assets \u2014 encoding textures (2 active)51 / 96 assets"
+        },
+        {
+          "ms": 5413,
+          "phase": "Loading assets \u2014 encoding textures (2 active)53 / 96 assets"
+        },
+        {
+          "ms": 5522,
+          "phase": "Loading assets \u2014 encoding textures (2 active)57 / 96 assets"
+        },
+        {
+          "ms": 5647,
+          "phase": "Loading assets61 / 96 assets"
+        },
+        {
+          "ms": 5774,
+          "phase": "Loading assets \u2014 encoding textures (2 active)63 / 96 assets"
+        },
+        {
+          "ms": 5881,
+          "phase": "Loading assets \u2014 encoding textures (2 active)65 / 96 assets"
+        },
+        {
+          "ms": 5988,
+          "phase": "Loading assets \u2014 encoding textures (2 active)71 / 96 assets"
+        },
+        {
+          "ms": 6106,
+          "phase": "Loading assets \u2014 encoding textures (2 active)76 / 96 assets"
+        },
+        {
+          "ms": 6232,
+          "phase": "Loading assets \u2014 encoding textures (2 active)78 / 96 assets"
+        },
+        {
+          "ms": 6380,
+          "phase": "Loading assets \u2014 encoding textures (2 active)79 / 96 assets"
+        },
+        {
+          "ms": 6482,
+          "phase": "Loading assets \u2014 encoding textures (2 active)82 / 96 assets"
+        },
+        {
+          "ms": 6749,
+          "phase": "Loading assets \u2014 encoding textures (2 active)84 / 96 assets"
+        },
+        {
+          "ms": 7413,
+          "phase": "Loading assets \u2014 encoding textures (2 active)85 / 96 assets"
+        },
+        {
+          "ms": 7659,
+          "phase": "Loading assets \u2014 encoding textures (2 active)86 / 96 assets"
+        },
+        {
+          "ms": 7891,
+          "phase": "Loading assets \u2014 encoding textures (2 active)87 / 96 assets"
+        },
+        {
+          "ms": 8365,
+          "phase": "Loading assets \u2014 encoding textures (2 active)89 / 96 assets"
+        },
+        {
+          "ms": 8466,
+          "phase": "Loading assets \u2014 encoding textures (2 active)90 / 96 assets"
+        },
+        {
+          "ms": 8779,
+          "phase": "Loading assets \u2014 encoding textures (2 active)91 / 96 assets"
+        },
+        {
+          "ms": 9017,
+          "phase": "Loading assets \u2014 encoding textures (2 active)92 / 96 assets"
+        },
+        {
+          "ms": 9396,
+          "phase": "Loading assets \u2014 encoding textures (2 active)93 / 96 assets"
+        },
+        {
+          "ms": 9559,
+          "phase": "Loading assets \u2014 encoding textures (2 active)94 / 96 assets"
+        },
+        {
+          "ms": 9662,
+          "phase": "Loading assets \u2014 encoding textures (1 active)95 / 96 assets"
+        },
+        {
+          "ms": 9864,
+          "phase": "Finalizing map96 / 96 assets"
+        }
+      ],
+      "result": {
+        "heap": {
+          "usedSize": 144744640,
+          "totalSize": 148172800,
+          "embedderHeapUsedSize": 17840432,
+          "backingStorageSize": 615742408
+        },
+        "dom": {
+          "documents": 2,
+          "nodes": 14167,
+          "jsEventListeners": 3997
+        },
+        "summary": {
+          "result": {
+            "type": "object",
+            "value": {
+              "viewports": 1,
+              "nodes": 5962,
+              "geometries": 1831,
+              "materials": 1041,
+              "textures": 295,
+              "sources": 295,
+              "geometryBytes": 50332108,
+              "imageBytes": 1543473072,
+              "gpuTextureBytes": 2057964095.9999976,
+              "userDataBytes": 2131447,
+              "framingCorners": 18984,
+              "renderer": {
+                "memory": {
+                  "geometries": 1599,
+                  "textures": 275
+                },
+                "render": {
+                  "frame": 323,
+                  "calls": 2516,
+                  "triangles": 5686338,
+                  "points": 0,
+                  "lines": 4
+                }
+              },
+              "documentObjects": 408,
+              "images": [
+                {
+                  "name": "lossy atlas",
+                  "width": 4096,
+                  "height": 4096,
+                  "bytes": 67108864
+                },
+                {
+                  "name": "lossy atlas",
+                  "width": 4096,
+                  "height": 4096,
+                  "bytes": 67108864
+                },
+                {
+                  "name": "lossy atlas",
+                  "width": 4096,
+                  "height": 4096,
+                  "bytes": 67108864
+                },
+                {
+                  "name": "lossy atlas",
+                  "width": 4096,
+                  "height": 4096,
+                  "bytes": 67108864
+                },
+                {
+                  "name": "lossy atlas",
+                  "width": 4096,
+                  "height": 4096,
+                  "bytes": 67108864
+                },
+                {
+                  "name": "lossy atlas",
+                  "width": 4096,
+                  "height": 4096,
+                  "bytes": 67108864
+                },
+                {
+                  "name": "lossy atlas",
+                  "width": 4096,
+                  "height": 4096,
+                  "bytes": 67108864
+                },
+                {
+                  "name": "lossy atlas",
+                  "width": 4096,
+                  "height": 4096,
+                  "bytes": 67108864
+                }
+              ],
+              "text": "Editor\nWychford (Example)\nAssets\nPaths\nTerrain\nMission\nView settings\nUndo\nRedo\nSave\nDownload\nExport mod ZIP\nHelp\n\u00d7\n\u2190\nAsset library\nAsset type\nAll types\nBackground\nBridge\nBridge & gate\nBuilding\nProp\nTerrain\nUnfinished physical asset\nVegetation\nWall\nSource level\nAll refined levels\nAll levels\nCroisement01\nCroisement02\nCroisement03\nDerby\nLeicester\nLinc"
+            }
+          }
+        }
+      },
+      "textures": {
+        "textures": 295,
+        "compressed": 88,
+        "compressedBytes": 463757664,
+        "uncompressedBytes": 203224298.66666678
+      },
+      "processMemory": [
+        {
+          "type": "browser",
+          "pid": 479746,
+          "rssKiB": 215748,
+          "drm": []
+        },
+        {
+          "type": "renderer",
+          "pid": 479869,
+          "rssKiB": 100556,
+          "drm": []
+        },
+        {
+          "type": "renderer",
+          "pid": 479867,
+          "rssKiB": 68996,
+          "drm": []
+        },
+        {
+          "type": "renderer",
+          "pid": 479850,
+          "rssKiB": 1095820,
+          "drm": []
+        },
+        {
+          "type": "renderer",
+          "pid": 479839,
+          "rssKiB": 140220,
+          "drm": []
+        },
+        {
+          "type": "GPU",
+          "pid": 479773,
+          "rssKiB": 200992,
+          "drm": [
+            "drm-driver:\tamdgpu\ndrm-client-id:\t2194\ndrm-pdev:\t0000:c1:00.0\ndrm-total-cpu:\t0\ndrm-shared-cpu:\t0\ndrm-resident-cpu:\t0\ndrm-purgeable-cpu:\t0\ndrm-total-gtt:\t185032 KiB\ndrm-shared-gtt:\t0\ndrm-resident-gtt:\t967636 KiB\ndrm-purgeable-gtt:\t768 KiB\ndrm-total-vram:\t795556 KiB\ndrm-shared-vram:\t0\ndrm-resident-vram:\t12952 KiB\ndrm-purgeable-vram:\t0\ndrm-total-gds:\t0\ndrm-shared-gds:\t0\ndrm-resident-gds:\t0\ndrm-purgeable-gds:\t0\ndrm-total-gws:\t0\ndrm-shared-gws:\t0\ndrm-resident-gws:\t0\ndrm-purgeable-gws:\t0\ndrm-total-oa:\t0\ndrm-shared-oa:\t0\ndrm-resident-oa:\t0\ndrm-purgeable-oa:\t0\ndrm-total-doorbell:\t0\ndrm-shared-doorbell:\t0\ndrm-resident-doorbell:\t0\ndrm-purgeable-doorbell:\t0\ndrm-total-mmioremap:\t0\ndrm-shared-mmioremap:\t0\ndrm-resident-mmioremap:\t0\ndrm-purgeable-mmioremap:\t0\ndrm-memory-vram:\t12952 KiB\ndrm-memory-gtt: \t967636 KiB\ndrm-memory-cpu: \t0 KiB\ndrm-engine-gfx:\t414173446 ns\ndrm-engine-compute:\t20356077 ns",
+            "drm-driver:\tamdgpu\ndrm-client-id:\t2195\ndrm-pdev:\t0000:c1:00.0\ndrm-total-cpu:\t0\ndrm-shared-cpu:\t0\ndrm-resident-cpu:\t0\ndrm-purgeable-cpu:\t0\ndrm-total-gtt:\t2 MiB\ndrm-shared-gtt:\t0\ndrm-resident-gtt:\t2 MiB\ndrm-purgeable-gtt:\t0\ndrm-total-vram:\t12 KiB\ndrm-shared-vram:\t0\ndrm-resident-vram:\t12 KiB\ndrm-purgeable-vram:\t0\ndrm-total-gds:\t0\ndrm-shared-gds:\t0\ndrm-resident-gds:\t0\ndrm-purgeable-gds:\t0\ndrm-total-gws:\t0\ndrm-shared-gws:\t0\ndrm-resident-gws:\t0\ndrm-purgeable-gws:\t0\ndrm-total-oa:\t0\ndrm-shared-oa:\t0\ndrm-resident-oa:\t0\ndrm-purgeable-oa:\t0\ndrm-total-doorbell:\t0\ndrm-shared-doorbell:\t0\ndrm-resident-doorbell:\t0\ndrm-purgeable-doorbell:\t0\ndrm-total-mmioremap:\t0\ndrm-shared-mmioremap:\t0\ndrm-resident-mmioremap:\t0\ndrm-purgeable-mmioremap:\t0\ndrm-memory-vram:\t12 KiB\ndrm-memory-gtt: \t2048 KiB\ndrm-memory-cpu: \t0 KiB"
+          ]
+        },
+        {
+          "type": "network.mojom.NetworkService",
+          "pid": 479777,
+          "rssKiB": 86104,
+          "drm": []
+        },
+        {
+          "type": "storage.mojom.StorageService",
+          "pid": 479787,
+          "rssKiB": 41116,
+          "drm": []
+        }
+      ],
+      "gpuInfo": {
+        "gpu": {
+          "devices": [
+            {
+              "vendorId": 4098,
+              "deviceId": 5567,
+              "vendorString": "Google Inc. (AMD)",
+              "deviceString": "ANGLE (AMD, AMD Radeon 780M Graphics (radeonsi phoenix ACO), OpenGL ES 3.2 Mesa 26.2.3-arch1.1)",
+              "driverVendor": "Mesa",
+              "driverVersion": "26.2.3"
+            }
+          ],
+          "auxAttributes": {
+            "amdSwitchable": false,
+            "canSupportThreadedTextureMailbox": false,
+            "directRenderingVersion": "",
+            "displayType": "ANGLE_OPENGL",
+            "glExtensions": "GL_AMD_performance_monitor GL_ANGLE_blob_cache GL_ANGLE_client_arrays GL_ANGLE_clip_cull_distance GL_ANGLE_compressed_texture_etc GL_ANGLE_depth_texture GL_ANGLE_framebuffer_blit GL_ANGLE_framebuffer_multisample GL_ANGLE_get_serialized_context_string GL_ANGLE_get_tex_level_parameter GL_ANGLE_instanced_arrays GL_ANGLE_memory_size GL_ANGLE_program_binary_readiness_query GL_ANGLE_program_cache_control GL_ANGLE_renderability_validation GL_ANGLE_request_extension GL_ANGLE_robust_client_memory GL_ANGLE_shader_pixel_local_storage GL_ANGLE_stencil_texturing GL_ANGLE_texture_compression_dxt3 GL_ANGLE_texture_compression_dxt5 GL_ANGLE_texture_multisample GL_ANGLE_translated_shader_source GL_ARM_rgba8 GL_CHROMIUM_bind_generates_resource GL_CHROMIUM_bind_uniform_location GL_CHROMIUM_copy_texture GL_CHROMIUM_lose_context GL_EXT_blend_func_extended GL_EXT_blend_minmax GL_EXT_clear_texture GL_EXT_clip_control GL_EXT_clip_cull_distance GL_EXT_color_buffer_float GL_EXT_color_buffer_half_float GL_EXT_compressed_ETC1_RGB8_sub_texture GL_EXT_conservative_depth GL_EXT_debug_label GL_EXT_debug_marker GL_EXT_depth_clamp GL_EXT_discard_framebuffer GL_EXT_disjoint_timer_query GL_EXT_draw_buffers GL_EXT_draw_buffers_indexed GL_EXT_float_blend GL_EXT_frag_depth GL_EXT_instanced_arrays GL_EXT_map_buffer_range GL_EXT_memory_object GL_EXT_memory_object_fd GL_EXT_occlusion_query_boolean GL_EXT_polygon_offset_clamp GL_EXT_read_format_bgra GL_EXT_render_snorm GL_EXT_robustness GL_EXT_sRGB GL_EXT_sRGB_write_control GL_EXT_semaphore GL_EXT_semaphore_fd GL_EXT_shadow_samplers GL_EXT_texture_border_clamp GL_EXT_texture_compression_bptc GL_EXT_texture_compression_dxt1 GL_EXT_texture_compression_rgtc GL_EXT_texture_compression_s3tc_srgb GL_EXT_texture_filter_anisotropic GL_EXT_texture_format_BGRA8888 GL_EXT_texture_mirror_clamp_to_edge GL_EXT_texture_norm16 GL_EXT_texture_rg GL_EXT_texture_sRGB_R8 GL_EXT_texture_sRGB_RG8 GL_EXT_texture_sRGB_decode GL_EXT_texture_shadow_lod GL_EXT_texture_storage GL_EXT_texture_type_2_10_10_10_REV GL_EXT_unpack_subimage GL_KHR_blend_equation_advanced GL_KHR_blend_equation_advanced_coherent GL_KHR_debug GL_KHR_parallel_shader_compile GL_KHR_robustness GL_KHR_texture_compression_astc_ldr GL_KHR_texture_compression_astc_sliced_3d GL_MESA_framebuffer_flip_y GL_NV_fence GL_NV_framebuffer_blit GL_NV_pack_subimage GL_NV_pixel_buffer_object GL_NV_read_depth GL_NV_read_stencil GL_NV_shader_noperspective_interpolation GL_OES_EGL_image GL_OES_EGL_image_external GL_OES_EGL_image_external_essl3 GL_OES_EGL_sync GL_OES_compressed_ETC1_RGB8_texture GL_OES_depth24 GL_OES_draw_buffers_indexed GL_OES_element_index_uint GL_OES_fbo_render_mipmap GL_OES_get_program_binary GL_OES_mapbuffer GL_OES_packed_depth_stencil GL_OES_required_internalformat GL_OES_rgb8_rgba8 GL_OES_sample_variables GL_OES_shader_multisample_interpolation GL_OES_standard_derivatives GL_OES_surfaceless_context GL_OES_texture_3D GL_OES_texture_border_clamp GL_OES_texture_float GL_OES_texture_float_linear GL_OES_texture_half_float GL_OES_texture_half_float_linear GL_OES_texture_npot GL_OES_texture_stencil8 GL_OES_texture_storage_multisample_2d_array GL_OES_vertex_array_object ",
+            "glImplementationParts": "(gl=egl-angle,angle=opengl)",
+            "glRenderer": "ANGLE (AMD, AMD Radeon 780M Graphics (radeonsi phoenix ACO), OpenGL ES 3.2 Mesa 26.2.3-arch1.1)",
+            "glResetNotificationStrategy": 33362,
+            "glVendor": "Google Inc. (AMD)",
+            "glVersion": "OpenGL ES 3.0 (ANGLE 2.1.1 git hash: ed04c8113c65)",
+            "glWsExtensions": "EGL_EXT_create_context_robustness EGL_KHR_create_context EGL_KHR_image_base EGL_KHR_gl_colorspace EGL_KHR_gl_texture_2D_image EGL_KHR_gl_texture_cubemap_image EGL_KHR_gl_texture_3D_image EGL_KHR_gl_renderbuffer_image EGL_KHR_get_all_proc_addresses EGL_KHR_fence_sync EGL_KHR_wait_sync EGL_ANGLE_create_context_webgl_compatibility EGL_CHROMIUM_create_context_bind_generates_resource EGL_KHR_swap_buffers_with_damage EGL_EXT_pixel_format_float EGL_KHR_surfaceless_context EGL_ANGLE_display_texture_share_group EGL_ANGLE_display_semaphore_share_group EGL_ANGLE_create_context_client_arrays EGL_ANGLE_program_cache_control EGL_ANGLE_robust_resource_initialization EGL_ANGLE_create_context_extensions_enabled EGL_ANDROID_blob_cache EGL_ANDROID_recordable EGL_ANDROID_native_fence_sync EGL_ANGLE_create_context_backwards_compatible EGL_KHR_no_config_context EGL_KHR_create_context_no_error EGL_EXT_image_dma_buf_import EGL_EXT_image_dma_buf_import_modifiers EGL_KHR_reusable_sync EGL_ANGLE_external_context_and_surface EGL_EXT_buffer_age EGL_ANGLE_context_virtualization EGL_ANGLE_memory_usage_report EGL_ANGLE_create_context_passthrough_shaders ",
+            "glWsVendor": "Google Inc. (AMD)",
+            "glWsVersion": "1.5 (ANGLE 2.1.1 git hash: ed04c8113c65)",
+            "hardwareSupportsVulkan": false,
+            "inProcessGpu": false,
+            "initializationTime": 0.174535,
+            "isAsan": false,
+            "isClangCoverage": false,
+            "jpegDecodeAcceleratorSupported": false,
+            "maxMsaaSamples": "8",
+            "optimus": false,
+            "passthroughCmdDecoder": true,
+            "pixelShaderVersion": "3.00",
+            "processCrashCount": 0,
+            "sandboxed": false,
+            "skiaBackendType": "GaneshGL",
+            "subpixelFontRendering": true,
+            "targetCpuBits": 64,
+            "vertexShaderVersion": "3.00",
+            "visibilityCallbackCallCount": 0
+          },
+          "featureStatus": {
+            "2d_canvas": "enabled",
+            "direct_rendering_display_compositor": "disabled_off_ok",
+            "gpu_compositing": "enabled",
+            "multiple_raster_threads": "enabled_on",
+            "opengl": "enabled_on",
+            "rasterization": "enabled",
+            "raw_draw": "disabled_off_ok",
+            "skia_graphite": "disabled_off",
+            "trees_in_viz": "disabled_off",
+            "video_decode": "enabled",
+            "video_encode": "disabled_software",
+            "vulkan": "disabled_off",
+            "webgl": "enabled",
+            "webgpu": "enabled",
+            "webgpu_on_vk_via_gl_interop": "disabled_off",
+            "webnn": "disabled_off"
+          },
+          "driverBugWorkarounds": [
+            "disable_software_to_accelerated_canvas_upgrade",
+            "enable_webgl_timer_query_extensions",
+            "exit_on_context_lost",
+            "force_cube_map_positive_x_allocation",
+            "force_int_or_srgb_cube_texture_complete",
+            "disabled_extension_GL_KHR_blend_equation_advanced",
+            "disabled_extension_GL_KHR_blend_equation_advanced_coherent"
+          ],
+          "videoDecoding": [],
+          "videoEncoding": []
+        },
+        "modelName": "",
+        "modelVersion": "",
+        "commandLine": "/usr/lib/chromium/chromium --force-device-scale-factor=1.4 --headless --no-sandbox --disable-dev-shm-usage --use-gl=angle --use-angle=gl --disable-software-rasterizer --remote-debugging-port=0 --user-data-dir=/tmp/bc7f-editor-dQFmNZ --noerrdialogs --no-first-run --ozone-platform=headless --ozone-override-screen-size=800,600 --flag-switches-begin --flag-switches-end http://127.0.0.1:5287/"
+      }
+    },
+    "after": {
+      "elapsed": 11580,
+      "phases": [
+        {
+          "ms": 3,
+          "phase": "Reading map"
+        },
+        {
+          "ms": 1398,
+          "phase": "Loading assets0 / 96 assets"
+        },
+        {
+          "ms": 1521,
+          "phase": "Loading assets \u2014 encoding textures (2 active)0 / 96 assets"
+        },
+        {
+          "ms": 1686,
+          "phase": "Loading assets \u2014 encoding textures (2 active)2 / 96 assets"
+        },
+        {
+          "ms": 1972,
+          "phase": "Loading assets \u2014 encoding textures (2 active)3 / 96 assets"
+        },
+        {
+          "ms": 2088,
+          "phase": "Loading assets \u2014 encoding textures (2 active)4 / 96 assets"
+        },
+        {
+          "ms": 2453,
+          "phase": "Loading assets \u2014 encoding textures (2 active)6 / 96 assets"
+        },
+        {
+          "ms": 2800,
+          "phase": "Loading assets \u2014 encoding textures (2 active)7 / 96 assets"
+        },
+        {
+          "ms": 2917,
+          "phase": "Loading assets \u2014 encoding textures (2 active)8 / 96 assets"
+        },
+        {
+          "ms": 3147,
+          "phase": "Loading assets \u2014 encoding textures (2 active)10 / 96 assets"
+        },
+        {
+          "ms": 3357,
+          "phase": "Loading assets \u2014 encoding textures (2 active)12 / 96 assets"
+        },
+        {
+          "ms": 3616,
+          "phase": "Loading assets \u2014 encoding textures (2 active)13 / 96 assets"
+        },
+        {
+          "ms": 3718,
+          "phase": "Loading assets \u2014 encoding textures (2 active)14 / 96 assets"
+        },
+        {
+          "ms": 3891,
+          "phase": "Loading assets \u2014 encoding textures (2 active)15 / 96 assets"
+        },
+        {
+          "ms": 3997,
+          "phase": "Loading assets \u2014 encoding textures (2 active)17 / 96 assets"
+        },
+        {
+          "ms": 4113,
+          "phase": "Loading assets \u2014 encoding textures (2 active)20 / 96 assets"
+        },
+        {
+          "ms": 4229,
+          "phase": "Loading assets \u2014 encoding textures (2 active)25 / 96 assets"
+        },
+        {
+          "ms": 4334,
+          "phase": "Loading assets \u2014 encoding textures (2 active)31 / 96 assets"
+        },
+        {
+          "ms": 4450,
+          "phase": "Loading assets \u2014 encoding textures (2 active)45 / 96 assets"
+        },
+        {
+          "ms": 4672,
+          "phase": "Loading assets \u2014 encoding textures (2 active)51 / 96 assets"
+        },
+        {
+          "ms": 4774,
+          "phase": "Loading assets \u2014 encoding textures (2 active)52 / 96 assets"
+        },
+        {
+          "ms": 4877,
+          "phase": "Loading assets \u2014 encoding textures (2 active)53 / 96 assets"
+        },
+        {
+          "ms": 4997,
+          "phase": "Loading assets \u2014 encoding textures (2 active)56 / 96 assets"
+        },
+        {
+          "ms": 5109,
+          "phase": "Loading assets62 / 96 assets"
+        },
+        {
+          "ms": 5228,
+          "phase": "Loading assets \u2014 encoding textures (2 active)64 / 96 assets"
+        },
+        {
+          "ms": 5329,
+          "phase": "Loading assets \u2014 encoding textures (2 active)66 / 96 assets"
+        },
+        {
+          "ms": 5438,
+          "phase": "Loading assets \u2014 encoding textures (2 active)71 / 96 assets"
+        },
+        {
+          "ms": 5562,
+          "phase": "Loading assets \u2014 encoding textures (2 active)77 / 96 assets"
+        },
+        {
+          "ms": 5680,
+          "phase": "Loading assets \u2014 encoding textures (2 active)78 / 96 assets"
+        },
+        {
+          "ms": 5782,
+          "phase": "Loading assets \u2014 encoding textures (2 active)81 / 96 assets"
+        },
+        {
+          "ms": 6048,
+          "phase": "Loading assets \u2014 encoding textures (2 active)84 / 96 assets"
+        },
+        {
+          "ms": 6257,
+          "phase": "Loading assets \u2014 encoding textures (2 active)85 / 96 assets"
+        },
+        {
+          "ms": 6543,
+          "phase": "Loading assets \u2014 encoding textures (2 active)86 / 96 assets"
+        },
+        {
+          "ms": 6644,
+          "phase": "Loading assets \u2014 encoding textures (2 active)87 / 96 assets"
+        },
+        {
+          "ms": 6809,
+          "phase": "Loading assets \u2014 encoding textures (2 active)88 / 96 assets"
+        },
+        {
+          "ms": 7262,
+          "phase": "Loading assets \u2014 encoding textures (2 active)90 / 96 assets"
+        },
+        {
+          "ms": 7497,
+          "phase": "Loading assets \u2014 encoding textures (2 active)91 / 96 assets"
+        },
+        {
+          "ms": 7912,
+          "phase": "Loading assets \u2014 encoding textures (2 active)92 / 96 assets"
+        },
+        {
+          "ms": 8145,
+          "phase": "Loading assets \u2014 encoding textures (2 active)93 / 96 assets"
+        },
+        {
+          "ms": 8455,
+          "phase": "Loading assets \u2014 encoding textures (2 active)94 / 96 assets"
+        },
+        {
+          "ms": 8557,
+          "phase": "Loading assets \u2014 encoding textures (1 active)95 / 96 assets"
+        },
+        {
+          "ms": 8760,
+          "phase": "Finalizing map96 / 96 assets"
+        }
+      ],
+      "result": {
+        "heap": {
+          "usedSize": 124265856,
+          "totalSize": 126939136,
+          "embedderHeapUsedSize": 17766824,
+          "backingStorageSize": 560751409
+        },
+        "dom": {
+          "documents": 2,
+          "nodes": 13917,
+          "jsEventListeners": 3994
+        },
+        "summary": {
+          "result": {
+            "type": "object",
+            "value": {
+              "viewports": 1,
+              "nodes": 5962,
+              "geometries": 1831,
+              "materials": 1041,
+              "textures": 295,
+              "sources": 295,
+              "geometryBytes": 50294260,
+              "imageBytes": 1378457520,
+              "gpuTextureBytes": 1837943359.9999983,
+              "userDataBytes": 2131447,
+              "framingCorners": 18984,
+              "renderer": {
+                "memory": {
+                  "geometries": 1613,
+                  "textures": 275
+                },
+                "render": {
+                  "frame": 319,
+                  "calls": 2516,
+                  "triangles": 5686338,
+                  "points": 0,
+                  "lines": 4
+                }
+              },
+              "documentObjects": 408,
+              "images": [
+                {
+                  "name": "lossy atlas",
+                  "width": 4096,
+                  "height": 4096,
+                  "bytes": 67108864
+                },
+                {
+                  "name": "lossy atlas",
+                  "width": 4096,
+                  "height": 4096,
+                  "bytes": 67108864
+                },
+                {
+                  "name": "lossy atlas",
+                  "width": 4096,
+                  "height": 4096,
+                  "bytes": 67108864
+                },
+                {
+                  "name": "lossy atlas",
+                  "width": 4096,
+                  "height": 4096,
+                  "bytes": 67108864
+                },
+                {
+                  "name": "lossy atlas",
+                  "width": 4096,
+                  "height": 4096,
+                  "bytes": 67108864
+                },
+                {
+                  "name": "lossy atlas",
+                  "width": 4096,
+                  "height": 4096,
+                  "bytes": 67108864
+                },
+                {
+                  "name": "lossy atlas",
+                  "width": 4096,
+                  "height": 4096,
+                  "bytes": 67108864
+                },
+                {
+                  "name": "lossy atlas",
+                  "width": 4096,
+                  "height": 4096,
+                  "bytes": 67108864
+                }
+              ],
+              "text": "Editor\nWychford (Example)\nAssets\nPaths\nTerrain\nMission\nView settings\nUndo\nRedo\nSave\nDownload\nExport mod ZIP\nHelp\n\u00d7\n\u2190\nAsset library\nAsset type\nAll types\nBackground\nBridge\nBridge & gate\nBuilding\nProp\nTerrain\nUnfinished physical asset\nVegetation\nWall\nSource level\nAll refined levels\nAll levels\nCroisement01\nCroisement02\nCroisement03\nDerby\nLeicester\nLinc"
+            }
+          }
+        }
+      },
+      "textures": {
+        "textures": 295,
+        "compressed": 88,
+        "compressedBytes": 408753408,
+        "uncompressedBytes": 203224298.66666678
+      },
+      "processMemory": [
+        {
+          "type": "browser",
+          "pid": 489628,
+          "rssKiB": 214652,
+          "drm": []
+        },
+        {
+          "type": "renderer",
+          "pid": 489786,
+          "rssKiB": 101624,
+          "drm": []
+        },
+        {
+          "type": "renderer",
+          "pid": 489784,
+          "rssKiB": 69540,
+          "drm": []
+        },
+        {
+          "type": "renderer",
+          "pid": 489766,
+          "rssKiB": 1069876,
+          "drm": []
+        },
+        {
+          "type": "renderer",
+          "pid": 489748,
+          "rssKiB": 139176,
+          "drm": []
+        },
+        {
+          "type": "GPU",
+          "pid": 489655,
+          "rssKiB": 199728,
+          "drm": [
+            "drm-driver:\tamdgpu\ndrm-client-id:\t2202\ndrm-pdev:\t0000:c1:00.0\ndrm-total-cpu:\t0\ndrm-shared-cpu:\t0\ndrm-resident-cpu:\t0\ndrm-purgeable-cpu:\t0\ndrm-total-gtt:\t142720 KiB\ndrm-shared-gtt:\t0\ndrm-resident-gtt:\t886992 KiB\ndrm-purgeable-gtt:\t768 KiB\ndrm-total-vram:\t758832 KiB\ndrm-shared-vram:\t0\ndrm-resident-vram:\t14560 KiB\ndrm-purgeable-vram:\t0\ndrm-total-gds:\t0\ndrm-shared-gds:\t0\ndrm-resident-gds:\t0\ndrm-purgeable-gds:\t0\ndrm-total-gws:\t0\ndrm-shared-gws:\t0\ndrm-resident-gws:\t0\ndrm-purgeable-gws:\t0\ndrm-total-oa:\t0\ndrm-shared-oa:\t0\ndrm-resident-oa:\t0\ndrm-purgeable-oa:\t0\ndrm-total-doorbell:\t0\ndrm-shared-doorbell:\t0\ndrm-resident-doorbell:\t0\ndrm-purgeable-doorbell:\t0\ndrm-total-mmioremap:\t0\ndrm-shared-mmioremap:\t0\ndrm-resident-mmioremap:\t0\ndrm-purgeable-mmioremap:\t0\ndrm-memory-vram:\t14560 KiB\ndrm-memory-gtt: \t886992 KiB\ndrm-memory-cpu: \t0 KiB\ndrm-engine-gfx:\t394392344 ns\ndrm-engine-compute:\t17965883 ns",
+            "drm-driver:\tamdgpu\ndrm-client-id:\t2203\ndrm-pdev:\t0000:c1:00.0\ndrm-total-cpu:\t0\ndrm-shared-cpu:\t0\ndrm-resident-cpu:\t0\ndrm-purgeable-cpu:\t0\ndrm-total-gtt:\t2 MiB\ndrm-shared-gtt:\t0\ndrm-resident-gtt:\t2 MiB\ndrm-purgeable-gtt:\t0\ndrm-total-vram:\t12 KiB\ndrm-shared-vram:\t0\ndrm-resident-vram:\t12 KiB\ndrm-purgeable-vram:\t0\ndrm-total-gds:\t0\ndrm-shared-gds:\t0\ndrm-resident-gds:\t0\ndrm-purgeable-gds:\t0\ndrm-total-gws:\t0\ndrm-shared-gws:\t0\ndrm-resident-gws:\t0\ndrm-purgeable-gws:\t0\ndrm-total-oa:\t0\ndrm-shared-oa:\t0\ndrm-resident-oa:\t0\ndrm-purgeable-oa:\t0\ndrm-total-doorbell:\t0\ndrm-shared-doorbell:\t0\ndrm-resident-doorbell:\t0\ndrm-purgeable-doorbell:\t0\ndrm-total-mmioremap:\t0\ndrm-shared-mmioremap:\t0\ndrm-resident-mmioremap:\t0\ndrm-purgeable-mmioremap:\t0\ndrm-memory-vram:\t12 KiB\ndrm-memory-gtt: \t2048 KiB\ndrm-memory-cpu: \t0 KiB"
+          ]
+        },
+        {
+          "type": "network.mojom.NetworkService",
+          "pid": 489658,
+          "rssKiB": 86336,
+          "drm": []
+        },
+        {
+          "type": "storage.mojom.StorageService",
+          "pid": 489672,
+          "rssKiB": 41120,
+          "drm": []
+        }
+      ],
+      "gpuInfo": {
+        "gpu": {
+          "devices": [
+            {
+              "vendorId": 4098,
+              "deviceId": 5567,
+              "vendorString": "Google Inc. (AMD)",
+              "deviceString": "ANGLE (AMD, AMD Radeon 780M Graphics (radeonsi phoenix ACO), OpenGL ES 3.2 Mesa 26.2.3-arch1.1)",
+              "driverVendor": "Mesa",
+              "driverVersion": "26.2.3"
+            }
+          ],
+          "auxAttributes": {
+            "amdSwitchable": false,
+            "canSupportThreadedTextureMailbox": false,
+            "directRenderingVersion": "",
+            "displayType": "ANGLE_OPENGL",
+            "glExtensions": "GL_AMD_performance_monitor GL_ANGLE_blob_cache GL_ANGLE_client_arrays GL_ANGLE_clip_cull_distance GL_ANGLE_compressed_texture_etc GL_ANGLE_depth_texture GL_ANGLE_framebuffer_blit GL_ANGLE_framebuffer_multisample GL_ANGLE_get_serialized_context_string GL_ANGLE_get_tex_level_parameter GL_ANGLE_instanced_arrays GL_ANGLE_memory_size GL_ANGLE_program_binary_readiness_query GL_ANGLE_program_cache_control GL_ANGLE_renderability_validation GL_ANGLE_request_extension GL_ANGLE_robust_client_memory GL_ANGLE_shader_pixel_local_storage GL_ANGLE_stencil_texturing GL_ANGLE_texture_compression_dxt3 GL_ANGLE_texture_compression_dxt5 GL_ANGLE_texture_multisample GL_ANGLE_translated_shader_source GL_ARM_rgba8 GL_CHROMIUM_bind_generates_resource GL_CHROMIUM_bind_uniform_location GL_CHROMIUM_copy_texture GL_CHROMIUM_lose_context GL_EXT_blend_func_extended GL_EXT_blend_minmax GL_EXT_clear_texture GL_EXT_clip_control GL_EXT_clip_cull_distance GL_EXT_color_buffer_float GL_EXT_color_buffer_half_float GL_EXT_compressed_ETC1_RGB8_sub_texture GL_EXT_conservative_depth GL_EXT_debug_label GL_EXT_debug_marker GL_EXT_depth_clamp GL_EXT_discard_framebuffer GL_EXT_disjoint_timer_query GL_EXT_draw_buffers GL_EXT_draw_buffers_indexed GL_EXT_float_blend GL_EXT_frag_depth GL_EXT_instanced_arrays GL_EXT_map_buffer_range GL_EXT_memory_object GL_EXT_memory_object_fd GL_EXT_occlusion_query_boolean GL_EXT_polygon_offset_clamp GL_EXT_read_format_bgra GL_EXT_render_snorm GL_EXT_robustness GL_EXT_sRGB GL_EXT_sRGB_write_control GL_EXT_semaphore GL_EXT_semaphore_fd GL_EXT_shadow_samplers GL_EXT_texture_border_clamp GL_EXT_texture_compression_bptc GL_EXT_texture_compression_dxt1 GL_EXT_texture_compression_rgtc GL_EXT_texture_compression_s3tc_srgb GL_EXT_texture_filter_anisotropic GL_EXT_texture_format_BGRA8888 GL_EXT_texture_mirror_clamp_to_edge GL_EXT_texture_norm16 GL_EXT_texture_rg GL_EXT_texture_sRGB_R8 GL_EXT_texture_sRGB_RG8 GL_EXT_texture_sRGB_decode GL_EXT_texture_shadow_lod GL_EXT_texture_storage GL_EXT_texture_type_2_10_10_10_REV GL_EXT_unpack_subimage GL_KHR_blend_equation_advanced GL_KHR_blend_equation_advanced_coherent GL_KHR_debug GL_KHR_parallel_shader_compile GL_KHR_robustness GL_KHR_texture_compression_astc_ldr GL_KHR_texture_compression_astc_sliced_3d GL_MESA_framebuffer_flip_y GL_NV_fence GL_NV_framebuffer_blit GL_NV_pack_subimage GL_NV_pixel_buffer_object GL_NV_read_depth GL_NV_read_stencil GL_NV_shader_noperspective_interpolation GL_OES_EGL_image GL_OES_EGL_image_external GL_OES_EGL_image_external_essl3 GL_OES_EGL_sync GL_OES_compressed_ETC1_RGB8_texture GL_OES_depth24 GL_OES_draw_buffers_indexed GL_OES_element_index_uint GL_OES_fbo_render_mipmap GL_OES_get_program_binary GL_OES_mapbuffer GL_OES_packed_depth_stencil GL_OES_required_internalformat GL_OES_rgb8_rgba8 GL_OES_sample_variables GL_OES_shader_multisample_interpolation GL_OES_standard_derivatives GL_OES_surfaceless_context GL_OES_texture_3D GL_OES_texture_border_clamp GL_OES_texture_float GL_OES_texture_float_linear GL_OES_texture_half_float GL_OES_texture_half_float_linear GL_OES_texture_npot GL_OES_texture_stencil8 GL_OES_texture_storage_multisample_2d_array GL_OES_vertex_array_object ",
+            "glImplementationParts": "(gl=egl-angle,angle=opengl)",
+            "glRenderer": "ANGLE (AMD, AMD Radeon 780M Graphics (radeonsi phoenix ACO), OpenGL ES 3.2 Mesa 26.2.3-arch1.1)",
+            "glResetNotificationStrategy": 33362,
+            "glVendor": "Google Inc. (AMD)",
+            "glVersion": "OpenGL ES 3.0 (ANGLE 2.1.1 git hash: ed04c8113c65)",
+            "glWsExtensions": "EGL_EXT_create_context_robustness EGL_KHR_create_context EGL_KHR_image_base EGL_KHR_gl_colorspace EGL_KHR_gl_texture_2D_image EGL_KHR_gl_texture_cubemap_image EGL_KHR_gl_texture_3D_image EGL_KHR_gl_renderbuffer_image EGL_KHR_get_all_proc_addresses EGL_KHR_fence_sync EGL_KHR_wait_sync EGL_ANGLE_create_context_webgl_compatibility EGL_CHROMIUM_create_context_bind_generates_resource EGL_KHR_swap_buffers_with_damage EGL_EXT_pixel_format_float EGL_KHR_surfaceless_context EGL_ANGLE_display_texture_share_group EGL_ANGLE_display_semaphore_share_group EGL_ANGLE_create_context_client_arrays EGL_ANGLE_program_cache_control EGL_ANGLE_robust_resource_initialization EGL_ANGLE_create_context_extensions_enabled EGL_ANDROID_blob_cache EGL_ANDROID_recordable EGL_ANDROID_native_fence_sync EGL_ANGLE_create_context_backwards_compatible EGL_KHR_no_config_context EGL_KHR_create_context_no_error EGL_EXT_image_dma_buf_import EGL_EXT_image_dma_buf_import_modifiers EGL_KHR_reusable_sync EGL_ANGLE_external_context_and_surface EGL_EXT_buffer_age EGL_ANGLE_context_virtualization EGL_ANGLE_memory_usage_report EGL_ANGLE_create_context_passthrough_shaders ",
+            "glWsVendor": "Google Inc. (AMD)",
+            "glWsVersion": "1.5 (ANGLE 2.1.1 git hash: ed04c8113c65)",
+            "hardwareSupportsVulkan": false,
+            "inProcessGpu": false,
+            "initializationTime": 0.096666,
+            "isAsan": false,
+            "isClangCoverage": false,
+            "jpegDecodeAcceleratorSupported": false,
+            "maxMsaaSamples": "8",
+            "optimus": false,
+            "passthroughCmdDecoder": true,
+            "pixelShaderVersion": "3.00",
+            "processCrashCount": 0,
+            "sandboxed": false,
+            "skiaBackendType": "GaneshGL",
+            "subpixelFontRendering": true,
+            "targetCpuBits": 64,
+            "vertexShaderVersion": "3.00",
+            "visibilityCallbackCallCount": 0
+          },
+          "featureStatus": {
+            "2d_canvas": "enabled",
+            "direct_rendering_display_compositor": "disabled_off_ok",
+            "gpu_compositing": "enabled",
+            "multiple_raster_threads": "enabled_on",
+            "opengl": "enabled_on",
+            "rasterization": "enabled",
+            "raw_draw": "disabled_off_ok",
+            "skia_graphite": "disabled_off",
+            "trees_in_viz": "disabled_off",
+            "video_decode": "enabled",
+            "video_encode": "disabled_software",
+            "vulkan": "disabled_off",
+            "webgl": "enabled",
+            "webgpu": "enabled",
+            "webgpu_on_vk_via_gl_interop": "disabled_off",
+            "webnn": "disabled_off"
+          },
+          "driverBugWorkarounds": [
+            "disable_software_to_accelerated_canvas_upgrade",
+            "enable_webgl_timer_query_extensions",
+            "exit_on_context_lost",
+            "force_cube_map_positive_x_allocation",
+            "force_int_or_srgb_cube_texture_complete",
+            "disabled_extension_GL_KHR_blend_equation_advanced",
+            "disabled_extension_GL_KHR_blend_equation_advanced_coherent"
+          ],
+          "videoDecoding": [],
+          "videoEncoding": []
+        },
+        "modelName": "",
+        "modelVersion": "",
+        "commandLine": "/usr/lib/chromium/chromium --force-device-scale-factor=1.4 --headless --no-sandbox --disable-dev-shm-usage --use-gl=angle --use-angle=gl --disable-software-rasterizer --remote-debugging-port=0 --user-data-dir=/tmp/bc7f-editor-EM0pzv --noerrdialogs --no-first-run --ozone-platform=headless --ozone-override-screen-size=800,600 --flag-switches-begin --flag-switches-end http://127.0.0.1:5287/"
+      }
+    }
+  },
+  "browser_notes": "One fresh hardware Chromium profile per phase; texture buffers are exact BC7 sizes plus estimated uncompressed mip sizes. RSS snapshots and timing are observations, not repeated benchmark results. Native GPU allocations overlap process RSS. Concurrent editor work may affect non-texture measurements."
+}

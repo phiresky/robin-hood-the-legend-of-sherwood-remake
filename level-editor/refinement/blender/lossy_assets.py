@@ -604,6 +604,26 @@ def atlas_expansion_exceeded(size, source_sizes, maximum):
 
 
 def unwrap(objects, args, targets):
+    """Use destination aspect throughout UV operations, then restore bake sources."""
+    import bpy
+    square = bpy.data.images.new('Atlas aspect reference', width=64, height=64)
+    replaced = []
+    materials = {slot.material for obj in objects for slot in obj.material_slots if slot.material}
+    try:
+        for material in materials:
+            if material.node_tree:
+                for node in material.node_tree.nodes:
+                    if node.type == 'TEX_IMAGE':
+                        replaced.append((node, node.image))
+                        node.image = square
+        return unwrap_square(objects, args, targets)
+    finally:
+        for node, image in replaced:
+            node.image = image
+        bpy.data.images.remove(square)
+
+
+def unwrap_square(objects, args, targets):
     import bpy
     for obj in objects:
         obj.data.uv_layers.active = obj.data.uv_layers.new(name=NEW_UV)
@@ -1434,7 +1454,7 @@ def main_derive(args):
     require(not failures, f'Failed assets: {failures}')
 
 
-ALGORITHM_VERSION = 5
+ALGORITHM_VERSION = 6
 
 SETTING_KEYS = ('density_coverage', 'density', 'nearest_density', 'pack_shape', 'multiple', 'min_size', 'max_size', 'max_atlas_expansion', 'quality', 'reencode_utilization', 'reuse_ratio', 'keep_normals',
                 'texture_file', 'no_quantize', 'normal_bits', 'speed', 'angle_limit', 'pack_margin_px', 'bake_margin')
