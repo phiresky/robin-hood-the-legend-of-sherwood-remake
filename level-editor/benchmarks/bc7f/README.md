@@ -119,7 +119,7 @@ Run `node level-editor/benchmarks/bc7f/worker-pool.mjs` from the repository root
 This starts its own Vite server and fresh hardware Chromium profiles, changing
 only the served encoder worker limit. It checks that the requested number of
 encoders became active, disables HMR, and leaves application files untouched.
-`BENCH_TRIALS` defaults to three. Detailed ~100 ms memory samples go to the ignored
+`BENCH_TRIALS` defaults to three; `BENCH_MAPS=Wychford` restricts the map list. Detailed ~100 ms memory samples go to the ignored
 `work/bc7f-benchmark/worker-pool` directory. `worker-pool-results.json` retains
 the compact results. No separate codec warmup runs before these measurements.
 

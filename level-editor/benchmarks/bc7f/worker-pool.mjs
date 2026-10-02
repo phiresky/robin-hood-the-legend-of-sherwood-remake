@@ -283,7 +283,7 @@ for (
   trial <= Number(process.env.BENCH_TRIALS ?? 3);
   trial++
 )
-  for (const map of ["York", "Wychford"])
+  for (const map of (process.env.BENCH_MAPS ?? "York,Wychford").split(","))
     for (const pool of trial % 2 ? pools : [...pools].reverse()) {
       results.push(await run(map, pool, trial));
       await fs.writeFile(

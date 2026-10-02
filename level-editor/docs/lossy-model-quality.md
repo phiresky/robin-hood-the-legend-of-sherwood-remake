@@ -210,3 +210,76 @@ A separate opaque-image bug discarded synthesized RGB by interpreting ownership
 alpha as physical transparency during Blender sampling. Opaque source textures
 now use Blender's `NONE` alpha mode; MASK/BLEND images retain physical alpha.
 This was real, but did not explain the source-camera tree damage above.
+
+## Wychford atlas memory audit (2026-10-02)
+
+Wychford references 96 assets from several source maps. Its derivatives were
+80 algorithm-2 and 16 algorithm-3 outputs, including 20 images at 4096². Several
+small props, fences and bridges spent most of their atlas on unused space.
+The east-village footbridge's summed triangle UV area was only 0.2% of its 4096²
+image. Two prop derivatives had collapsed UVs and almost blank 4096² images.
+
+Algorithm 5 adds `--max-atlas-expansion` (default 4): after calculating the
+rebaked atlas size, retain and AVIF-encode the source textures if the atlas would
+contain more than four times their total pixels. This avoids upsampling small
+source sets into oversized atlases. Four times is already the nominal RGBA8/BC7
+storage ratio; larger expansion loses even against uncompressed source images.
+The source UVs and image dimensions are retained in this path. Large shared map
+images still benefit from rebaking a small asset and do not trigger this guard.
+Receipts record the setting/version; reports identify `expansion_limited`.
+Existing packing/opacity safeguards remain in effect. No blanket resolution
+reduction was applied.
+
+Rebuilt and published the 19 Wychford assets whose old derivatives used more
+than four times their source-image pixels, including fresh previews and hash
+receipts. Original model hashes were unchanged. This rollout combines the new
+expansion guard with packing fixes absent from the old derivatives.
+
+| Measurement | Before | After |
+| --- | ---: | ---: |
+| Selected assets' image pixels | 228.7 million | 23.3 million |
+| All 96 assets' image pixels | 581.9 million | 376.5 million |
+| 4096² images | 20 | 11 |
+| Selected runtime GLB bytes | 7.41 MB | 6.92 MB |
+| Estimated live GPU texture payload (with mips) | 1.15 GB | 0.67 GB |
+| Wychford median load | 14.96 s | 12.27 s |
+| Median peak renderer RSS | 1.83 GiB | 1.67 GiB |
+| Median peak GPU resident memory | 1.22 GiB | 0.93 GiB |
+| Renderer RSS two seconds after load | 1.56 GiB | 1.32 GiB |
+| GPU resident memory two seconds after load | 1.05 GiB | 0.77 GiB |
+
+Image totals count glTF image entries, before browser deduplication, and exclude
+mipmaps. Live texture payload sums exact BC7 mip buffers and estimates RGBA8
+mips; those viewport snapshots are separate from the matched timing batch.
+Browser measurements used three fresh hardware Chromium profiles per
+phase on Radeon 780M, two encoding workers, and localhost delivery. Peaks are
+sampled lower bounds (~100 ms intervals); no forced GC was used. Native GPU
+counters and process RSS overlap on this integrated GPU and cannot be summed as
+unique physical memory. These small samples do not predict remote-network loads.
+
+Seven representative assets were compared against their published source from
+eight views. Six had mean max-channel errors between 1.20 and 2.18 (0–255), with
+worst-view p95 between 3 and 10. The repaired bucket had mean 5.65 and worst-view
+p95 20; it replaces a broken blank atlas, and its 240² rebake was visually checked.
+The exact validated GLB bytes match the published derivatives. Blender's unlit
+comparison measures texture/geometry differences, not the editor's custom foliage
+shader; the whole scene was also checked in hardware WebGL.
+
+The 23 lossy-generator tests and 15 asset-index tests passed. All library
+derivative/preview receipt checks passed after publication.
+`wychford-atlas-measurements.json` records asset hashes, per-asset savings,
+validation metrics and browser measurements. Local images, detailed audits,
+publication records and rollback backups are in `work/wychford-atlas-audit/`.
+
+Reproduce the read-only audit from `level-editor`:
+
+```sh
+python3 refinement/audit_lossy_atlases.py library/scenes/Wychford.rhlos-map.json \
+  --output work/atlas-audit.json
+```
+
+The audit reports image dimensions, UV bounds, summed triangle area, collapsed
+UV triangles and approximate raster coverage. Raster coverage is deliberately
+omitted for out-of-range UVs because clipping tiled textures would be misleading.
+For one-map browser runs, set `BENCH_MAPS=Wychford BENCH_POOLS=2` when running
+`benchmarks/bc7f/worker-pool.mjs` from the repository root (with its full path).

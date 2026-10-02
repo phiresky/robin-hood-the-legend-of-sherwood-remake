@@ -1,0 +1,432 @@
+{
+  "date": "2026-10-02",
+  "algorithm_version": 5,
+  "max_atlas_expansion": 4,
+  "assets_rebuilt": 19,
+  "map_image_pixels_before": 581943478,
+  "map_image_pixels_after": 376509548,
+  "selected_image_pixels_before": 228744704,
+  "selected_image_pixels_after": 23310774,
+  "selected_glb_bytes_before": 7408464,
+  "selected_glb_bytes_after": 6915668,
+  "assets": [
+    {
+      "id": "leicester-east-riverside-house",
+      "model": "leicester/leicester-east-riverside-house/model.glb",
+      "lossy": "leicester/leicester-east-riverside-house/lossy.glb",
+      "preview": "leicester/leicester-east-riverside-house/preview.glb",
+      "source_sha256": "bc034dff2d90c76aeec7e86bcdfc8e00350a008386b3fc16fd49f75a54e7972b",
+      "old_pixels": 16777216,
+      "new_pixels": 3172864,
+      "old_glb_bytes": 340320,
+      "new_glb_bytes": 296764,
+      "mode": "re-encode published layout",
+      "expansion_limited": true
+    },
+    {
+      "id": "leicester-northeast-longhouse",
+      "model": "leicester/leicester-northeast-longhouse/model.glb",
+      "lossy": "leicester/leicester-northeast-longhouse/lossy.glb",
+      "preview": "leicester/leicester-northeast-longhouse/preview.glb",
+      "source_sha256": "23b1f47bf4922afdb9d8d9a2f3274168033a183a8c5872f4d9402ee2b4dddd17",
+      "old_pixels": 16777216,
+      "new_pixels": 4119552,
+      "old_glb_bytes": 1452316,
+      "new_glb_bytes": 2609776,
+      "mode": "re-encode published layout",
+      "expansion_limited": true
+    },
+    {
+      "id": "leicester-east-village-footbridge",
+      "model": "leicester/leicester-east-village-footbridge/model.glb",
+      "lossy": "leicester/leicester-east-village-footbridge/lossy.glb",
+      "preview": "leicester/leicester-east-village-footbridge/preview.glb",
+      "source_sha256": "0612d8742eff8b8fff4dd72af8e68becdb88ed282ac8144592bf45bdbcb9a822",
+      "old_pixels": 16777216,
+      "new_pixels": 478208,
+      "old_glb_bytes": 98144,
+      "new_glb_bytes": 131944,
+      "mode": "re-encode published layout",
+      "expansion_limited": true
+    },
+    {
+      "id": "derby-lower-east-cottage",
+      "model": "derby/derby-lower-east-cottage/model.glb",
+      "lossy": "derby/derby-lower-east-cottage/lossy.glb",
+      "preview": "derby/derby-lower-east-cottage/preview.glb",
+      "source_sha256": "997d331d7c763c2d8ffcc27a354c0749a36af884e53247fc8c5d2aaf6808c750",
+      "old_pixels": 14258176,
+      "new_pixels": 3400704,
+      "old_glb_bytes": 491144,
+      "new_glb_bytes": 598928,
+      "mode": "re-encode published layout",
+      "expansion_limited": true
+    },
+    {
+      "id": "derby-lower-west-cottage",
+      "model": "derby/derby-lower-west-cottage/model.glb",
+      "lossy": "derby/derby-lower-west-cottage/lossy.glb",
+      "preview": "derby/derby-lower-west-cottage/preview.glb",
+      "source_sha256": "7d3615a851ace3c8aab726fb21375e3317fb5cb36cfce023d4dd015d9f978bc5",
+      "old_pixels": 16777216,
+      "new_pixels": 3668736,
+      "old_glb_bytes": 349824,
+      "new_glb_bytes": 621900,
+      "mode": "re-encode published layout",
+      "expansion_limited": true
+    },
+    {
+      "id": "derby-lower-east-supplies",
+      "model": "derby/derby-lower-east-supplies/model.glb",
+      "lossy": "derby/derby-lower-east-supplies/lossy.glb",
+      "preview": "derby/derby-lower-east-supplies/preview.glb",
+      "source_sha256": "0c2dc3c15ac37e415f6ddf6d4a1ee815cf760fccadf4f52deacac7f050f70ceb",
+      "old_pixels": 4129024,
+      "new_pixels": 578560,
+      "old_glb_bytes": 237508,
+      "new_glb_bytes": 274288,
+      "mode": "re-encode published layout",
+      "expansion_limited": true
+    },
+    {
+      "id": "derby-lower-courtyard-prop",
+      "model": "derby/derby-lower-courtyard-prop/model.glb",
+      "lossy": "derby/derby-lower-courtyard-prop/lossy.glb",
+      "preview": "derby/derby-lower-courtyard-prop/preview.glb",
+      "source_sha256": "7fcf3c6a575d419ea6214728836ede5b225738591154227d6e1b6c9bca97cdee",
+      "old_pixels": 16777216,
+      "new_pixels": 144512,
+      "old_glb_bytes": 70432,
+      "new_glb_bytes": 136468,
+      "mode": "re-encode published layout",
+      "expansion_limited": true
+    },
+    {
+      "id": "leicester-mill-south-bucket",
+      "model": "leicester/leicester-mill-south-bucket/model.glb",
+      "lossy": "leicester/leicester-mill-south-bucket/lossy.glb",
+      "preview": "leicester/leicester-mill-south-bucket/preview.glb",
+      "source_sha256": "6be0bf106b6e054612ab64743b3fbb86d470b28c78b9b6a9d033b1c5a896f0d2",
+      "old_pixels": 16777216,
+      "new_pixels": 57600,
+      "old_glb_bytes": 12408,
+      "new_glb_bytes": 16372,
+      "mode": "smart-uv + normalized island scale",
+      "expansion_limited": false
+    },
+    {
+      "id": "derby-east-bailey-crate",
+      "model": "derby/derby-east-bailey-crate/model.glb",
+      "lossy": "derby/derby-east-bailey-crate/lossy.glb",
+      "preview": "derby/derby-east-bailey-crate/preview.glb",
+      "source_sha256": "4bbd5e49d64e969be6a7d597b9b1f195fab1b7a50af0905eb0f57273927286ec",
+      "old_pixels": 313600,
+      "new_pixels": 44544,
+      "old_glb_bytes": 36804,
+      "new_glb_bytes": 33888,
+      "mode": "re-encode published layout",
+      "expansion_limited": true
+    },
+    {
+      "id": "derby-lower-east-cottage-barrel",
+      "model": "derby/derby-lower-east-cottage-barrel/model.glb",
+      "lossy": "derby/derby-lower-east-cottage-barrel/lossy.glb",
+      "preview": "derby/derby-lower-east-cottage-barrel/preview.glb",
+      "source_sha256": "d68b768e2b69dd873c6c72874f6f0f4291319c0ce7bdea58b87f3f1d040d7d6d",
+      "old_pixels": 5531904,
+      "new_pixels": 124928,
+      "old_glb_bytes": 85528,
+      "new_glb_bytes": 117972,
+      "mode": "re-encode published layout",
+      "expansion_limited": true
+    },
+    {
+      "id": "leicester-north-village-field-fence",
+      "model": "leicester/leicester-north-village-field-fence/model.glb",
+      "lossy": "leicester/leicester-north-village-field-fence/lossy.glb",
+      "preview": "leicester/leicester-north-village-field-fence/preview.glb",
+      "source_sha256": "7d283393f16cb57b5077705f48fe3a5d52c319cd6d5de22b79a2cd745ec74769",
+      "old_pixels": 8952064,
+      "new_pixels": 507904,
+      "old_glb_bytes": 427084,
+      "new_glb_bytes": 305072,
+      "mode": "re-encode published layout",
+      "expansion_limited": true
+    },
+    {
+      "id": "leicester-south-cottage-garden-fence",
+      "model": "leicester/leicester-south-cottage-garden-fence/model.glb",
+      "lossy": "leicester/leicester-south-cottage-garden-fence/lossy.glb",
+      "preview": "leicester/leicester-south-cottage-garden-fence/preview.glb",
+      "source_sha256": "c2053d04800ce5b8a2309233be9e37313791fad40af6beb46e5b0b8015bbbfc4",
+      "old_pixels": 5914624,
+      "new_pixels": 878592,
+      "old_glb_bytes": 137332,
+      "new_glb_bytes": 170332,
+      "mode": "re-encode published layout",
+      "expansion_limited": true
+    },
+    {
+      "id": "leicester-roadside-rail-fence",
+      "model": "leicester/leicester-roadside-rail-fence/model.glb",
+      "lossy": "leicester/leicester-roadside-rail-fence/lossy.glb",
+      "preview": "leicester/leicester-roadside-rail-fence/preview.glb",
+      "source_sha256": "e69a081afdcdad6c1490dfa3b80ec7f48aa269f3727fdf6fcbb370fd089c7aaa",
+      "old_pixels": 14500864,
+      "new_pixels": 389120,
+      "old_glb_bytes": 172880,
+      "new_glb_bytes": 94400,
+      "mode": "re-encode published layout",
+      "expansion_limited": true
+    },
+    {
+      "id": "leicester-northeast-field-boundary",
+      "model": "leicester/leicester-northeast-field-boundary/model.glb",
+      "lossy": "leicester/leicester-northeast-field-boundary/lossy.glb",
+      "preview": "leicester/leicester-northeast-field-boundary/preview.glb",
+      "source_sha256": "5e1ba173d5890ada3db1e98951cbbd9a82d102ae11b301f7365906494ab14b67",
+      "old_pixels": 16777216,
+      "new_pixels": 1228800,
+      "old_glb_bytes": 45576,
+      "new_glb_bytes": 151460,
+      "mode": "re-encode published layout",
+      "expansion_limited": true
+    },
+    {
+      "id": "derby-lower-northwest-yard-fence",
+      "model": "derby/derby-lower-northwest-yard-fence/model.glb",
+      "lossy": "derby/derby-lower-northwest-yard-fence/lossy.glb",
+      "preview": "derby/derby-lower-northwest-yard-fence/preview.glb",
+      "source_sha256": "cded84764442a0a6c1dbd00c96580cff379bc0aadacb5ef985d13929da02c253",
+      "old_pixels": 1597696,
+      "new_pixels": 97536,
+      "old_glb_bytes": 79032,
+      "new_glb_bytes": 43592,
+      "mode": "re-encode published layout",
+      "expansion_limited": true
+    },
+    {
+      "id": "leicester-moat-bank-tree",
+      "model": "leicester/leicester-moat-bank-tree/model.glb",
+      "lossy": "leicester/leicester-moat-bank-tree/lossy.glb",
+      "preview": "leicester/leicester-moat-bank-tree/preview.glb",
+      "source_sha256": "8f67b11e6a7992cdb296587c4af403eea0475033a25dd1c58789d4cc1b2a0ad3",
+      "old_pixels": 12616704,
+      "new_pixels": 783704,
+      "old_glb_bytes": 1570492,
+      "new_glb_bytes": 385164,
+      "mode": "re-encode published layout",
+      "expansion_limited": false
+    },
+    {
+      "id": "leicester-southeast-cottage-tree",
+      "model": "leicester/leicester-southeast-cottage-tree/model.glb",
+      "lossy": "leicester/leicester-southeast-cottage-tree/lossy.glb",
+      "preview": "leicester/leicester-southeast-cottage-tree/preview.glb",
+      "source_sha256": "78210dd535d03da517ce220908a3f8b1eeb3538b9581b6ccd84fc99259d82a88",
+      "old_pixels": 16777216,
+      "new_pixels": 853470,
+      "old_glb_bytes": 1462888,
+      "new_glb_bytes": 388844,
+      "mode": "re-encode published layout",
+      "expansion_limited": false
+    },
+    {
+      "id": "leicester-west-tower-footbridge",
+      "model": "leicester/leicester-west-tower-footbridge/model.glb",
+      "lossy": "leicester/leicester-west-tower-footbridge/lossy.glb",
+      "preview": "leicester/leicester-west-tower-footbridge/preview.glb",
+      "source_sha256": "996d72edf5a138432e0c7d951efb80171e7301fcddd3b0b6aa6fbb50cf189f6b",
+      "old_pixels": 16777216,
+      "new_pixels": 745216,
+      "old_glb_bytes": 148252,
+      "new_glb_bytes": 184824,
+      "mode": "re-encode published layout",
+      "expansion_limited": true
+    },
+    {
+      "id": "leicester-tower-covered-bridge",
+      "model": "leicester/leicester-tower-covered-bridge/model.glb",
+      "lossy": "leicester/leicester-tower-covered-bridge/lossy.glb",
+      "preview": "leicester/leicester-tower-covered-bridge/preview.glb",
+      "source_sha256": "b6702688efec23418e1da805831feb46700d5fece4c0899890f8fadfad12cc59",
+      "old_pixels": 9935104,
+      "new_pixels": 2036224,
+      "old_glb_bytes": 190500,
+      "new_glb_bytes": 353680,
+      "mode": "re-encode published layout",
+      "expansion_limited": true
+    }
+  ],
+  "visual_validation": [
+    {
+      "asset": "derby-lower-courtyard-prop",
+      "source_sha256": "7fcf3c6a575d419ea6214728836ede5b225738591154227d6e1b6c9bca97cdee",
+      "lossy_sha256": "4d4bc83f39c82bcb4ab8ea728da1fdc44394792cca487d3f2eee2768f828c1eb",
+      "render_scale": 2.0,
+      "metrics": {
+        "mean_of_view_means": 2.00031597223463,
+        "max_p95": 5.0,
+        "max": 16.0
+      }
+    },
+    {
+      "asset": "leicester-northeast-field-boundary",
+      "source_sha256": "5e1ba173d5890ada3db1e98951cbbd9a82d102ae11b301f7365906494ab14b67",
+      "lossy_sha256": "e936eba091fc1ae66d4ac97fddfdad75b48c5501eb8499bac23eba0cd55b19c5",
+      "render_scale": 0.6683633984021389,
+      "metrics": {
+        "mean_of_view_means": 1.1966281977768052,
+        "max_p95": 3.0,
+        "max": 23.0
+      }
+    },
+    {
+      "asset": "leicester-mill-south-bucket",
+      "source_sha256": "6be0bf106b6e054612ab64743b3fbb86d470b28c78b9b6a9d033b1c5a896f0d2",
+      "lossy_sha256": "0b93e9a7d087bd1bbde589929b84bce75854bbc6bf729de1436aa7565c5b0952",
+      "render_scale": 2.0,
+      "metrics": {
+        "mean_of_view_means": 5.653710063491584,
+        "max_p95": 20.0,
+        "max": 84.0
+      }
+    },
+    {
+      "asset": "leicester-west-tower-footbridge",
+      "source_sha256": "996d72edf5a138432e0c7d951efb80171e7301fcddd3b0b6aa6fbb50cf189f6b",
+      "lossy_sha256": "0ea068fcc8091e2c3cfca4dcd8ba175c3dcb75123eb164f27ea6fa5efe6941a5",
+      "render_scale": 1.6049337337065785,
+      "metrics": {
+        "mean_of_view_means": 1.5376176268433925,
+        "max_p95": 4.0,
+        "max": 25.0
+      }
+    },
+    {
+      "asset": "leicester-east-village-footbridge",
+      "source_sha256": "0612d8742eff8b8fff4dd72af8e68becdb88ed282ac8144592bf45bdbcb9a822",
+      "lossy_sha256": "79d61cca0b69ab181ab65850ec4f2b073f622ca261c7e7c30156713147ff4668",
+      "render_scale": 1.8715257914150862,
+      "metrics": {
+        "mean_of_view_means": 1.5711572276160854,
+        "max_p95": 4.0,
+        "max": 11.301960784313735
+      }
+    },
+    {
+      "asset": "leicester-southeast-cottage-tree",
+      "source_sha256": "78210dd535d03da517ce220908a3f8b1eeb3538b9581b6ccd84fc99259d82a88",
+      "lossy_sha256": "99e25cef9716e929ad8ec860249cf913fd79fa6e7474dbe5a14963b79517d85e",
+      "render_scale": 0.965241276627912,
+      "metrics": {
+        "mean_of_view_means": 2.177197493774977,
+        "max_p95": 10.0,
+        "max": 58.0
+      }
+    },
+    {
+      "asset": "leicester-east-riverside-house",
+      "source_sha256": "bc034dff2d90c76aeec7e86bcdfc8e00350a008386b3fc16fd49f75a54e7972b",
+      "lossy_sha256": "d48bdeded67dc1eb95c947b9fb8a626ca10256740c529d5314d870d9bc98220a",
+      "render_scale": 1.6286770271804396,
+      "metrics": {
+        "mean_of_view_means": 2.125089917215969,
+        "max_p95": 6.0,
+        "max": 23.0
+      }
+    }
+  ],
+  "browser": {
+    "before": {
+      "runs": [
+        {
+          "trial": 20,
+          "load_ms": 16465.90000000596,
+          "peak_renderer_rss_mib": 1869.1953125,
+          "peak_gpu_resident_mib": 1251.32421875,
+          "settled_renderer_rss_mib": 1596.875,
+          "settled_gpu_resident_mib": 1075.78125
+        },
+        {
+          "trial": 21,
+          "load_ms": 14310.40000000596,
+          "peak_renderer_rss_mib": 1922.98046875,
+          "peak_gpu_resident_mib": 1257.94921875,
+          "settled_renderer_rss_mib": 1596.8671875,
+          "settled_gpu_resident_mib": 1077.20703125
+        },
+        {
+          "trial": 22,
+          "load_ms": 14960.59999999404,
+          "peak_renderer_rss_mib": 1846.3359375,
+          "peak_gpu_resident_mib": 1249.546875,
+          "settled_renderer_rss_mib": 1594.41015625,
+          "settled_gpu_resident_mib": 1075.57421875
+        }
+      ],
+      "medians": {
+        "load_ms": 14960.59999999404,
+        "peak_renderer_rss_mib": 1869.1953125,
+        "peak_gpu_resident_mib": 1251.32421875,
+        "settled_renderer_rss_mib": 1596.8671875,
+        "settled_gpu_resident_mib": 1075.78125
+      }
+    },
+    "after": {
+      "runs": [
+        {
+          "trial": 24,
+          "load_ms": 12526.90000000596,
+          "peak_renderer_rss_mib": 1646.11328125,
+          "peak_gpu_resident_mib": 950.859375,
+          "settled_renderer_rss_mib": 1351.90625,
+          "settled_gpu_resident_mib": 792.75390625
+        },
+        {
+          "trial": 25,
+          "load_ms": 12274.800000011921,
+          "peak_renderer_rss_mib": 1709.28125,
+          "peak_gpu_resident_mib": 949.32421875,
+          "settled_renderer_rss_mib": 1356.78125,
+          "settled_gpu_resident_mib": 792.859375
+        },
+        {
+          "trial": 26,
+          "load_ms": 11945.09999999404,
+          "peak_renderer_rss_mib": 1773.78125,
+          "peak_gpu_resident_mib": 932.4453125,
+          "settled_renderer_rss_mib": 1357.9921875,
+          "settled_gpu_resident_mib": 799.140625
+        }
+      ],
+      "medians": {
+        "load_ms": 12274.800000011921,
+        "peak_renderer_rss_mib": 1709.28125,
+        "peak_gpu_resident_mib": 949.32421875,
+        "settled_renderer_rss_mib": 1356.78125,
+        "settled_gpu_resident_mib": 792.859375
+      }
+    }
+  },
+  "method": "Three fresh hardware Chromium profiles per phase, Radeon 780M, two encoder workers, localhost AVIF delivery. Native counters sampled approximately every 100ms. Trial 23 excluded because the offline atlas audit overlapped it. Settled counters taken two seconds after loading. No forced GC. GPU resident memory and RSS overlap; do not sum as unique memory. Pixel totals count image entries before browser deduplication and exclude mipmaps.",
+  "liveTexturePayload": {
+    "note": "Unique texture objects traversed in the viewport. BC7 mip data sizes are exact; uncompressed mip sizes use width*height*4*4/3. The earlier before snapshot predates the matched timing batch.",
+    "before": {
+      "textures": 148,
+      "compressed": 91,
+      "compressedBytes": 720136480,
+      "uncompressedBytes": 430107594.66666645
+    },
+    "after": {
+      "textures": 295,
+      "compressed": 88,
+      "compressedBytes": 463757664,
+      "uncompressedBytes": 203224298.66666678
+    }
+  },
+  "encoderBackingStorageBytes": {
+    "before": 870767487,
+    "after": 615620414
+  }
+}

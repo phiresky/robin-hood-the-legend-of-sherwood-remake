@@ -47,6 +47,17 @@ UNLIT = {'pbrMetallicRoughness': {'baseColorTexture': {'index': 0}}, 'extensions
 
 
 class LossyAssetsTest(unittest.TestCase):
+    def test_rebaking_small_source_textures_cannot_inflate_atlas_memory(self):
+        self.assertTrue(lossy_assets.atlas_expansion_exceeded(4096, [(512, 484), (128, 56)], 4))
+        # Projection sources may cover an entire map: they still benefit from rebaking.
+        self.assertFalse(lossy_assets.atlas_expansion_exceeded(688, [(8192, 8192)], 4))
+        # Compare the complete source set, not just its smallest image.
+        self.assertFalse(lossy_assets.atlas_expansion_exceeded(4096, [(2048, 2048)] * 2, 4))
+        self.assertFalse(lossy_assets.atlas_expansion_exceeded(4096, [(2048, 2048)], 4))
+        for maximum in [0, float('nan'), float('inf')]:
+            with self.assertRaises(ValueError):
+                lossy_assets.atlas_expansion_exceeded(4096, [(512, 512)], maximum)
+
     def test_collapsed_charts_are_rescued_without_changing_valid_charts(self):
         source = np.array([[[0., 0.], [1., 0.], [0., 1.]]] * 4)
         source[3] = 0

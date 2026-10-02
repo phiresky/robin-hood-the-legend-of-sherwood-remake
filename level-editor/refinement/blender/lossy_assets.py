@@ -38,7 +38,10 @@ them). Vertices are quantized with KHR_mesh_quantization (`--no-quantize` keeps 
    separate small charts and are repacked. If the required atlas exceeds `--max-size`,
    or packing remains unsafe, the published layout and resolution are retained and re-encoded.
    Physical-opacity assets (foliage), tiled textures, and an already-filled single-image atlas
-   also retain their original layouts. `--min-size` applies to successfully repacked atlases.
+   also retain their original layouts. A rebaked atlas may not exceed the source image
+   pixel count by more than `--max-atlas-expansion` (4 by default): even BC7 compression
+   cannot offset a larger expansion against uncompressed source textures.
+   `--min-size` applies to successfully repacked atlases.
 3. Cycles EMIT bakes the original textures through their original UVs into the atlas (one joined
    temporary object, so dilation cannot overwrite another mesh's texels). Alpha is baked only
    when a source material is MASK/BLEND; opaque assets ship RGB (the published ownership alpha is
@@ -590,6 +593,14 @@ def choose_size(args, targets, weakest, area):
     required = weighted_quantile(targets / np.maximum(weakest, 1e-12), area, args.density_coverage)
     size = max(args.min_size, args.multiple * math.ceil(required / args.multiple))
     return min(size, args.max_size), required
+
+
+def atlas_expansion_exceeded(size, source_sizes, maximum):
+    """Avoid spending more pixels on a rebake than its delivery/runtime benefit can justify."""
+    require(math.isfinite(maximum) and maximum >= 1, 'max atlas expansion must be finite and >= 1')
+    source_pixels = sum(width * height for width, height in source_sizes)
+    require(source_pixels > 0, 'Source textures have no pixels')
+    return size * size > source_pixels * maximum
 
 
 def unwrap(objects, args, targets):
@@ -1184,6 +1195,7 @@ def derive(asset_id, model_path, lossy_path, args, work):
     reencode = (need_alpha or (len(images) == 1 and uv_area.sum() >= args.reencode_utilization)
                 or max(reuse.values(), default=0) > args.reuse_ratio or out_of_range)
     packing_failure = None
+    expansion_limited = False
     if not reencode:
         try:
             size, required, history = unwrap(objects, args, targets)
@@ -1191,6 +1203,9 @@ def derive(asset_id, model_path, lossy_path, args, work):
             # A capped atlas cannot meet the requested surface density. Keep the source
             # layout instead of silently publishing undersampled or collapsed charts.
             reencode = required > args.max_size
+            expansion_limited = atlas_expansion_exceeded(
+                size, [image.size for image in images.values()], args.max_atlas_expansion)
+            reencode |= expansion_limited
         except UnsafeAtlasError as error:
             packing_failure = str(error)
             print(f'RETAIN SOURCE UVS {asset_id}: {error}', flush=True)
@@ -1268,6 +1283,7 @@ def derive(asset_id, model_path, lossy_path, args, work):
                                          'lossy': lossy_pixels * 4}},
         'atlas_size': {'mode': 're-encode published layout' if reencode else 'smart-uv + normalized island scale',
                        'packing_failure': packing_failure,
+                       'expansion_limited': expansion_limited,
                        'texel_reuse': reuse, 'uv_out_of_range': out_of_range,
                        'size': size, 'required': required, 'multiple': args.multiple, 'min': args.min_size,
                        'max': args.max_size, 'clamped': None if required is None else 'max' if required > args.max_size
@@ -1418,9 +1434,9 @@ def main_derive(args):
     require(not failures, f'Failed assets: {failures}')
 
 
-ALGORITHM_VERSION = 4
+ALGORITHM_VERSION = 5
 
-SETTING_KEYS = ('density_coverage', 'density', 'nearest_density', 'pack_shape', 'multiple', 'min_size', 'max_size', 'quality', 'reencode_utilization', 'reuse_ratio', 'keep_normals',
+SETTING_KEYS = ('density_coverage', 'density', 'nearest_density', 'pack_shape', 'multiple', 'min_size', 'max_size', 'max_atlas_expansion', 'quality', 'reencode_utilization', 'reuse_ratio', 'keep_normals',
                 'texture_file', 'no_quantize', 'normal_bits', 'speed', 'angle_limit', 'pack_margin_px', 'bake_margin')
 
 
@@ -1815,6 +1831,8 @@ def add_settings(parser):
     parser.add_argument('--multiple', type=int, default=16)
     parser.add_argument('--min-size', type=int, default=32)
     parser.add_argument('--max-size', type=int, default=4096)
+    parser.add_argument('--max-atlas-expansion', type=float, default=4.0,
+                        help='Retain source textures when a rebake would exceed this multiple of their total pixels')
     parser.add_argument('--quality', type=int, default=80)
     parser.add_argument('--speed', type=int, default=6)
     parser.add_argument('--angle-limit', type=float, default=66.0)
