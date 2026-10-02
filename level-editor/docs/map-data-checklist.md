@@ -123,10 +123,37 @@ of all three restored passages and the corrected Leicester landing. Publication
 backups are in `work/map-compile/courtyard-door-publication` and
 `work/map-compile/stilt-passage-publication`.
 
-The Derby gatehouse's ground passages still need a proper movement-area partition
-when placed on continuous editor terrain. Moving their endpoints to terrain would
-leave both ends in one area, which cannot represent the closed gate's permissions.
-Those attachments remain unpublished; export still warns about the omitted gates.
+**Gate barriers on continuous terrain:** transition blocker surfaces can author
+`terrainReach: { below, above }`. Compilation intersects the resulting local
+vertical volume with receiving terrain planes, retains holes, joins triangle
+fragments before grid rounding and allocates fresh state bits. Floors beyond the
+finite reach remain unaffected. A `waypointReceiverSegment` binds the control to
+one nearby surface, including a point inside the closed barrier; trigger contours
+follow the bound control. Copies retain independent state, including after rotation.
+If a terrain-bound movement/door control cannot resolve, best-effort export retains
+its initial barriers and door permissions with a warning and rebuilds indices.
+It does not export orphaned movement state bits. This fallback currently applies
+to controls without appearance, sight or mask changes.
+
+The Derby south gatehouse now authors an eight-unit reach and a closed-state strip
+across its opening. All three passages prohibit every actor category when closed,
+so a physical barrier preserves that restriction on continuous terrain. The
+compiler does not infer such barriers for doors with actor-specific permissions.
+Wychford retains 29 native doors and now has a working gate transition: native
+probes check all three openings closed, open and reset. Same-area passage records
+still produce omission warnings, but their shared barrier remains. Derby retains
+its door links and alternate permissions alongside the blocker. The other eight
+saved maps compile unchanged; all ten exports pass native construction and all
+57 exported transitions pass apply/reset checks. Synthetic native tests cover a
+slope, an unaffected upper floor and unavailable control attachments. Gate artwork,
+animation and mission activation still need separate authoring.
+
+The pinned gameplay replacement is
+`refinement/catalogs/terrain-gate-gameplay.json`; it is installed through
+`pipeline/src/configure-surface-jumps.ts`, which also updates saved-scene pins.
+Publication backups are in `work/map-compile/terrain-gate-publication`, and native
+movement probes are in `work/map-compile/terrain-gate-probes`. These definitions
+belong to the asset and follow every placement; export reads no source level.
 
 Automatic room recovery now checks every entrance against the inferred owner's
 solid doorway geometry above that entrance's landing. It reports

@@ -1,0 +1,220 @@
+{
+  "title": "Unavailable terrain control fixture",
+  "map_filename": "editor-unavailable-terrain-control-fixture",
+  "spawn_points": [],
+  "walkable_polygon": [
+    [
+      0,
+      0
+    ],
+    [
+      1999,
+      0
+    ],
+    [
+      1999,
+      1999
+    ],
+    [
+      0,
+      1999
+    ]
+  ],
+  "volumes": [],
+  "asset_geometry": {
+    "motion_data": {
+      "layers": [
+        [
+          {
+            "is_lift": false,
+            "state_id": 0,
+            "polygon": {
+              "points": [
+                [
+                  300,
+                  298
+                ],
+                [
+                  500,
+                  294
+                ],
+                [
+                  500,
+                  394
+                ],
+                [
+                  300,
+                  398
+                ]
+              ]
+            },
+            "skeleton_segments": [],
+            "flags": 0,
+            "obstacles": [
+              {
+                "state_id": 0,
+                "polygon": {
+                  "points": [
+                    [
+                      355,
+                      397
+                    ],
+                    [
+                      345,
+                      397
+                    ],
+                    [
+                      345,
+                      297
+                    ],
+                    [
+                      355,
+                      297
+                    ]
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        [
+          {
+            "is_lift": false,
+            "state_id": 0,
+            "polygon": {
+              "points": [
+                [
+                  300,
+                  293
+                ],
+                [
+                  500,
+                  293
+                ],
+                [
+                  500,
+                  393
+                ],
+                [
+                  300,
+                  393
+                ]
+              ]
+            },
+            "skeleton_segments": [],
+            "flags": 0,
+            "obstacles": [
+              {
+                "state_id": 0,
+                "polygon": {
+                  "points": [
+                    [
+                      355,
+                      393
+                    ],
+                    [
+                      345,
+                      393
+                    ],
+                    [
+                      345,
+                      293
+                    ],
+                    [
+                      355,
+                      293
+                    ]
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        []
+      ],
+      "graph_bytes": []
+    },
+    "sight_obstacles": [
+      {
+        "points": [
+          {
+            "x": 300,
+            "y": 300,
+            "z_bottom": 2,
+            "z_top": 2
+          },
+          {
+            "x": 500,
+            "y": 300,
+            "z_bottom": 6,
+            "z_top": 6
+          },
+          {
+            "x": 500,
+            "y": 400,
+            "z_bottom": 6,
+            "z_top": 6
+          },
+          {
+            "x": 300,
+            "y": 400,
+            "z_bottom": 2,
+            "z_top": 2
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 0,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 300,
+            "y": 300,
+            "z_bottom": 7,
+            "z_top": 7
+          },
+          {
+            "x": 500,
+            "y": 300,
+            "z_bottom": 7,
+            "z_top": 7
+          },
+          {
+            "x": 500,
+            "y": 400,
+            "z_bottom": 7,
+            "z_top": 7
+          },
+          {
+            "x": 300,
+            "y": 400,
+            "z_bottom": 7,
+            "z_top": 7
+          }
+        ],
+        "projection_area": [
+          2,
+          1
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 0,
+        "material_indices": []
+      }
+    ],
+    "doors": [],
+    "warnings": [
+      "Transition hut-a/hut/barriers: control omitted; retained its initial movement barriers and door permissions; hut-a/hut/barriers waypoint: receiving segment must intersect exactly one surface"
+    ]
+  }
+}

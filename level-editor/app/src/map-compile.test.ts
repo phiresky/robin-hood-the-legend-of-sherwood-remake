@@ -32,6 +32,8 @@ import {
   receivingIslandCompilerFixture,
   soundAssetCompilerFixture,
   movementTransitionCompilerFixture,
+  terrainTransitionCompilerFixture,
+  unavailableTerrainControlCompilerFixture,
   appearanceOnlyCompilerFixture,
   joinedTransitionCompilerFixture,
   sightTransitionCompilerFixture,
@@ -408,6 +410,37 @@ test("appearance-only export matches native apply/reset without fabricated gamep
   assert.throws(
     () => compileMap(document, [0, 0, 2000, 2000], assets),
     /invalid movement transition/,
+  );
+});
+
+test("terrain transition export matches native slope and upper-floor fixture", async () => {
+  const { document, assets } = terrainTransitionCompilerFixture();
+  const fixture = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/asset-terrain-transition.level.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+});
+
+test("unavailable terrain control exports loadable initial barriers without orphan state bits", async () => {
+  const { document, assets } = unavailableTerrainControlCompilerFixture();
+  const fixture = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/asset-unavailable-terrain-control.level.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(
+    compileMap(document, [0, 0, 2000, 2000], assets, { bestEffort: true }).descriptor,
+    fixture,
   );
 });
 

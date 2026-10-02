@@ -17,6 +17,7 @@ import {
   joinedInteriorCompilerFixture,
   soundAssetCompilerFixture,
   movementTransitionCompilerFixture,
+  terrainTransitionCompilerFixture,
   sightTransitionCompilerFixture,
   lightAssetCompilerFixture,
   jumpAssetCompilerFixture,
@@ -1775,6 +1776,103 @@ test("light receiving planes resolve after elevation and reject absent or nonpla
   assert.throws(() => compileAssetGameplay(document, assets, bounds), /receiving layer/);
   light.polygon[0]![2] += 1;
   assert.throws(() => compileAssetGameplay(document, assets, bounds), /must be planar/);
+});
+
+test("terrain transitions bind blocked control points and move independently of receiving terrain", () => {
+  const { document, assets, hut } = terrainTransitionCompilerFixture();
+  hut.gameplay!.movementTransitions![0]!.applyPolygon = [
+    [40, 40],
+    [60, 40],
+    [60, 60],
+  ];
+  const compiled = compileAssetGameplay(document, assets, bounds);
+  const transition = compiled.movement_transitions![0]!;
+  assert.deepEqual(transition.waypoint, [350, 347]);
+  assert.deepEqual(transition.apply_polygon.points, [
+    [340, 337],
+    [360, 337],
+    [360, 357],
+  ]);
+  assert.deepEqual(hut.gameplay!.movementTransitions![0]!.applyPolygon, [
+    [40, 40],
+    [60, 40],
+    [60, 60],
+  ]);
+  assert.equal(transition.motion_changes.length, 1);
+  const obstacles = compiled.motion_data.layers.flat().flatMap((a) => a.obstacles);
+  assert.deepEqual(
+    obstacles.map((o) => o.state_id),
+    [1, 2],
+  );
+  document.groups[0]!.transform.dx = 20;
+  const moved = compileAssetGameplay(document, assets, bounds);
+  assert.deepEqual(moved.movement_transitions![0]!.waypoint, [370, 347]);
+  assert.equal(moved.motion_data.layers.flat().flatMap((a) => a.obstacles).length, 2);
+  const definition = hut.gameplay!.movementTransitions![0]!;
+  definition.waypointAnchor = [50, 50, 0];
+  assert.throws(() => validateAssetGameplay(hut.gameplay!, hut), /invalid movement transition/);
+  delete definition.waypointAnchor;
+  definition.initial[0]!.terrainReach!.below = -1;
+  assert.throws(
+    () => validateAssetGameplay(hut.gameplay!, hut),
+    /invalid transition terrain reach/,
+  );
+  definition.initial[0]!.terrainReach!.below = 8;
+  assets.get("marker")!.gameplay!.surfaces[0]!.terrainReach = { below: 8, above: 8 };
+  const marker = assets.get("marker")!;
+  assert.throws(
+    () => validateAssetGameplay(marker.gameplay!, marker),
+    /invalid transition terrain reach/,
+  );
+});
+
+test("rotated copies of terrain gates keep independent controls on shared ground", () => {
+  const { document, assets } = terrainTransitionCompilerFixture();
+  const body = document.objects.find((p) => p.group === "hut-a")!;
+  document.objects.push({ ...structuredClone(body), id: "gate-copy-body", group: "gate-copy" });
+  document.groups.push({
+    id: "gate-copy",
+    transform: { ...IDENTITY_TRANSFORM, dx: 700, dy: 600, rot_deg: 180 },
+  });
+  const compiled = compileAssetGameplay(document, assets, bounds);
+  assert.equal(compiled.movement_transitions!.length, 2);
+  assert.notDeepEqual(
+    compiled.movement_transitions![0]!.waypoint,
+    compiled.movement_transitions![1]!.waypoint,
+  );
+  assert.deepEqual(
+    compiled.movement_transitions!.map((t) => t.motion_changes[0]!.changing_obstacle),
+    [0, 1],
+  );
+  assert.deepEqual(
+    compiled.motion_data.layers
+      .flat()
+      .flatMap((a) => a.obstacles.map((o) => o.state_id))
+      .sort((a, b) => a - b),
+    [1, 2, 4, 8],
+  );
+});
+
+test("terrain gate controls reject ambiguous or malformed receiving segments", () => {
+  const { document, assets, hut } = terrainTransitionCompilerFixture();
+  const transition = hut.gameplay!.movementTransitions![0]!;
+  const marker = assets.get("marker")!;
+  marker.gameplay!.surfaces[1]!.height = 7;
+  assert.throws(
+    () => compileAssetGameplay(document, assets, bounds),
+    /waypoint: receiving segment must intersect exactly one surface/,
+  );
+  const partial = compileAssetGameplay(document, assets, bounds, { bestEffort: true });
+  assert.equal(partial.movement_transitions, undefined);
+  const obstacles = partial.motion_data.layers.flat().flatMap((a) => a.obstacles);
+  assert.equal(obstacles.length, 2);
+  assert.ok(obstacles.every((o) => o.state_id === 0));
+  assert.ok(partial.warnings?.some((w) => w.includes("retained its initial movement barriers")));
+  transition.waypointReceiverSegment = [
+    [50, 50, 0],
+    [50, 50, 0],
+  ];
+  assert.throws(() => validateAssetGameplay(hut.gameplay!, hut), /invalid movement transition/);
 });
 
 test("movement transitions receive fresh bindings across separate areas and duplicated assets", () => {

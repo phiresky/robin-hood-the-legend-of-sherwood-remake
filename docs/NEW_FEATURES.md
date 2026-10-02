@@ -1,5 +1,13 @@
 # Post-port Features
 
+- **Terrain-following gate barriers.** Assets can define a state-dependent barrier
+  with finite vertical reach. Export intersects it with current terrain, preserves
+  holes and keeps separate placed gates independently controllable. Controls can
+  attach to nearby terrain; unavailable movement-only controls retain their initial
+  barriers with an export warning. The south gatehouse includes a closed barrier
+  that works on Wychford's continuous terrain. Native checks cover opening/reset,
+  sloped ground and an unaffected floor above.
+
 - **Terrain-aware ordinary passages.** Each endpoint of an ordinary passage can
   attach within an authored local segment, following the current terrain while
   retaining its permissions and transition links. Ambiguous or unreachable

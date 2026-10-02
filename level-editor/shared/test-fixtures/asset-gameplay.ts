@@ -560,6 +560,55 @@ export function movementTransitionCompilerFixture() {
   return fixture;
 }
 
+export function terrainTransitionCompilerFixture() {
+  const fixture = movementTransitionCompilerFixture();
+  const gameplay = fixture.hut.gameplay!;
+  gameplay.surfaces = [];
+  gameplay.doors = [];
+  gameplay.collision = "none";
+  const transition = gameplay.movementTransitions![0]!;
+  transition.waypoint = [50, 50, 0];
+  transition.waypointReceiverSegment = [
+    [50, 50, -8],
+    [50, 50, 8],
+  ];
+  for (const surface of [...transition.initial, ...transition.applied])
+    surface.terrainReach = { below: 8, above: 8 };
+  fixture.assets.get("marker")!.gameplay!.surfaces = [
+    {
+      id: "slope",
+      node: "scenery-marker",
+      polygon: [
+        [0, 0],
+        [200, 0],
+        [200, 100],
+        [0, 100],
+      ],
+      height: [2, 6, 6, 2],
+    },
+    {
+      id: "upper-floor",
+      node: "scenery-marker",
+      polygon: [
+        [0, 0],
+        [200, 0],
+        [200, 100],
+        [0, 100],
+      ],
+      height: 100,
+    },
+  ];
+  fixture.document.map = "Terrain transition fixture";
+  return fixture;
+}
+
+export function unavailableTerrainControlCompilerFixture() {
+  const fixture = terrainTransitionCompilerFixture();
+  fixture.assets.get("marker")!.gameplay!.surfaces[1]!.height = 7;
+  fixture.document.map = "Unavailable terrain control fixture";
+  return fixture;
+}
+
 export function soundAssetCompilerFixture() {
   const fixture = assetCompilerFixture();
   fixture.hut.gameplay!.sounds = [

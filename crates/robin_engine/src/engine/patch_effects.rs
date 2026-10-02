@@ -744,6 +744,60 @@ mod tests {
     }
 
     #[test]
+    fn unavailable_terrain_control_retains_loadable_initial_barriers() {
+        let (engine, _) = load_compiled_transition(
+            include_bytes!("../../tests/fixtures/asset-unavailable-terrain-control.level.json"),
+            (2000., 2000.),
+        );
+        assert!(engine.script_domains.interactables.patches.is_empty());
+        for layer in [0, 1] {
+            assert!(!engine.world.fast_grid.is_reachable_thin(
+                MapPoint::new(325., 350.),
+                MapPoint::new(375., 350.),
+                layer,
+            ));
+            assert!(engine.world.fast_grid.is_reachable_thin(
+                MapPoint::new(425., 350.),
+                MapPoint::new(475., 350.),
+                layer,
+            ));
+        }
+    }
+
+    #[test]
+    fn terrain_bound_gate_changes_slope_routes_without_blocking_the_floor_above() {
+        let (mut engine, assets) = load_compiled_transition(
+            include_bytes!("../../tests/fixtures/asset-terrain-transition.level.json"),
+            (2000., 2000.),
+        );
+        let patch = crate::patch::PatchIndex::new(0).unwrap();
+        let sim = crate::sim_rng::test_context();
+        for (step, applied) in [false, true, false, true, false].into_iter().enumerate() {
+            if step > 0 {
+                if applied {
+                    engine.apply_patch(TickCtx::new(&sim, &assets), patch);
+                } else {
+                    engine.reset_patch(TickCtx::new(&sim, &assets), patch);
+                }
+            }
+            let grid = &engine.world.fast_grid;
+            assert_eq!(
+                grid.is_reachable_thin(MapPoint::new(325., 350.), MapPoint::new(375., 350.), 0),
+                applied,
+            );
+            assert_eq!(
+                grid.is_reachable_thin(MapPoint::new(425., 350.), MapPoint::new(475., 350.), 0),
+                !applied,
+            );
+            assert!(grid.is_reachable_thin(
+                MapPoint::new(325., 250.),
+                MapPoint::new(475., 250.),
+                1
+            ));
+        }
+    }
+
+    #[test]
     fn editor_compiled_movement_transition_changes_live_routes_without_mission_content() {
         check_compiled_transition(
             include_bytes!("../../tests/fixtures/asset-movement-transition.level.json"),
@@ -1352,6 +1406,31 @@ mod tests {
                     .collect::<Vec<_>>()
             };
             for (index, transition) in transitions.iter().enumerate() {
+                let check_routes = |engine: &EngineInner, applied: bool| {
+                    for probe in result["transition_probes"].as_array().into_iter().flatten() {
+                        if probe["id"].as_str() != Some(transition.id.as_str()) {
+                            continue;
+                        }
+                        let point = |key: &str| {
+                            MapPoint::new(
+                                probe[key][0].as_f64().unwrap() as f32,
+                                probe[key][1].as_f64().unwrap() as f32,
+                            )
+                        };
+                        assert_eq!(
+                            engine.world.fast_grid.is_reachable_thin(
+                                point("start"),
+                                point("end"),
+                                probe["layer"].as_u64().unwrap() as u16
+                            ),
+                            probe[if applied { "applied" } else { "initial" }]
+                                .as_bool()
+                                .unwrap(),
+                            "{file}: transition route {probe}, applied={applied}",
+                        );
+                    }
+                };
+                check_routes(&engine, false);
                 let before_rights = rights(&engine);
                 let mut expected_rights = before_rights.clone();
                 let patch = crate::patch::PatchIndex::new(index as u32).unwrap();
@@ -1420,6 +1499,7 @@ mod tests {
                     assert!(!before_sight[sight as usize]);
                 }
                 engine.apply_patch(TickCtx::new(&sim, &assets), patch);
+                check_routes(&engine, true);
                 assert_eq!(
                     mask_states(&engine),
                     expected_masks,
@@ -1466,6 +1546,7 @@ mod tests {
                     }
                 }
                 engine.reset_patch(TickCtx::new(&sim, &assets), patch);
+                check_routes(&engine, false);
                 assert_eq!(
                     mask_states(&engine),
                     before_masks,

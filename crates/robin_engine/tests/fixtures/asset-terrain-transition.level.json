@@ -1,0 +1,242 @@
+{
+  "title": "Terrain transition fixture",
+  "map_filename": "editor-terrain-transition-fixture",
+  "spawn_points": [],
+  "walkable_polygon": [
+    [
+      0,
+      0
+    ],
+    [
+      1999,
+      0
+    ],
+    [
+      1999,
+      1999
+    ],
+    [
+      0,
+      1999
+    ]
+  ],
+  "volumes": [],
+  "asset_geometry": {
+    "motion_data": {
+      "layers": [
+        [
+          {
+            "is_lift": false,
+            "state_id": 0,
+            "polygon": {
+              "points": [
+                [
+                  300,
+                  298
+                ],
+                [
+                  500,
+                  294
+                ],
+                [
+                  500,
+                  394
+                ],
+                [
+                  300,
+                  398
+                ]
+              ]
+            },
+            "skeleton_segments": [],
+            "flags": 0,
+            "obstacles": [
+              {
+                "state_id": 1,
+                "polygon": {
+                  "points": [
+                    [
+                      355,
+                      397
+                    ],
+                    [
+                      345,
+                      397
+                    ],
+                    [
+                      345,
+                      297
+                    ],
+                    [
+                      355,
+                      297
+                    ]
+                  ]
+                }
+              },
+              {
+                "state_id": 2,
+                "polygon": {
+                  "points": [
+                    [
+                      465,
+                      395
+                    ],
+                    [
+                      455,
+                      395
+                    ],
+                    [
+                      455,
+                      295
+                    ],
+                    [
+                      465,
+                      295
+                    ]
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        [
+          {
+            "is_lift": false,
+            "state_id": 0,
+            "polygon": {
+              "points": [
+                [
+                  300,
+                  200
+                ],
+                [
+                  500,
+                  200
+                ],
+                [
+                  500,
+                  300
+                ],
+                [
+                  300,
+                  300
+                ]
+              ]
+            },
+            "skeleton_segments": [],
+            "flags": 0,
+            "obstacles": []
+          }
+        ],
+        []
+      ],
+      "graph_bytes": []
+    },
+    "movement_transitions": [
+      {
+        "id": "hut-a/hut/barriers",
+        "waypoint": [
+          350,
+          347
+        ],
+        "sector": 0,
+        "layer": 0,
+        "active": true,
+        "definitive": false,
+        "apply_polygon": {
+          "points": []
+        },
+        "no_apply_polygon": {
+          "points": []
+        },
+        "motion_changes": [
+          {
+            "layer": 0,
+            "sector": 0,
+            "changing_obstacle": 0
+          }
+        ]
+      }
+    ],
+    "sight_obstacles": [
+      {
+        "points": [
+          {
+            "x": 300,
+            "y": 300,
+            "z_bottom": 2,
+            "z_top": 2
+          },
+          {
+            "x": 500,
+            "y": 300,
+            "z_bottom": 6,
+            "z_top": 6
+          },
+          {
+            "x": 500,
+            "y": 400,
+            "z_bottom": 6,
+            "z_top": 6
+          },
+          {
+            "x": 300,
+            "y": 400,
+            "z_bottom": 2,
+            "z_top": 2
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 0,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 300,
+            "y": 300,
+            "z_bottom": 100,
+            "z_top": 100
+          },
+          {
+            "x": 500,
+            "y": 300,
+            "z_bottom": 100,
+            "z_top": 100
+          },
+          {
+            "x": 500,
+            "y": 400,
+            "z_bottom": 100,
+            "z_top": 100
+          },
+          {
+            "x": 300,
+            "y": 400,
+            "z_bottom": 100,
+            "z_top": 100
+          }
+        ],
+        "projection_area": [
+          3,
+          1
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 0,
+        "material_indices": []
+      }
+    ],
+    "doors": []
+  }
+}

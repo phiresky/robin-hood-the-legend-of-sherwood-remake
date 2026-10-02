@@ -1,0 +1,383 @@
+[
+  {
+    "asset": "derby-south-gatehouse",
+    "descriptorSha256": "d65fe39a64598fa4a986d215cd6ee25310171b2adf282dd5d278ad0e741e95ea",
+    "gameplay": {
+      "version": 1,
+      "collision": "parts",
+      "surfaces": [],
+      "sightOrder": {
+        "building-000": 0,
+        "building-001": 1,
+        "building-003": 3,
+        "building-004": 4,
+        "building-005": 5,
+        "building-006": 6,
+        "building-002": 2,
+        "building-017": 17,
+        "building-018": 18,
+        "building-019": 19,
+        "building-020": 20,
+        "building-021": 21,
+        "building-022": 22,
+        "building-013": 13,
+        "building-014": 14,
+        "building-015": 15,
+        "building-016": 16
+      },
+      "movementTransitions": [
+        {
+          "id": "door-change-5",
+          "node": "building-000",
+          "active": true,
+          "definitive": true,
+          "waypoint": [
+            10.900146484375,
+            15.183195079492664,
+            -0.0004580015036638433
+          ],
+          "applyPolygon": [],
+          "noApplyPolygon": [],
+          "initial": [
+            {
+              "id": "closed-ground-gate",
+              "node": "building-000",
+              "height": -0.0004580015036638433,
+              "terrainReach": {
+                "below": 8,
+                "above": 8
+              },
+              "polygon": [
+                [
+                  -46,
+                  5
+                ],
+                [
+                  40,
+                  -15
+                ],
+                [
+                  44,
+                  -7
+                ],
+                [
+                  -42,
+                  13
+                ]
+              ]
+            }
+          ],
+          "applied": [],
+          "initialSight": [],
+          "appliedSight": [],
+          "doorLinks": {
+            "mode": "swap-rights",
+            "ids": [
+              "passage-1/door-0",
+              "passage-2/door-0",
+              "passage-3/door-0"
+            ]
+          },
+          "waypointReceiverSegment": [
+            [
+              10.900146484375,
+              15.183195079492664,
+              -8.000458001503663
+            ],
+            [
+              10.900146484375,
+              15.183195079492664,
+              7.999541998496336
+            ]
+          ]
+        }
+      ],
+      "movementBlockers": [],
+      "doors": [
+        {
+          "id": "passage-1/door-0",
+          "node": "building-000",
+          "polygon": [],
+          "inside": [
+            -8.099853515625,
+            20.183195079492652,
+            -0.0004580015036638433
+          ],
+          "outside": [
+            -21.099853515625,
+            -7.816804920506964,
+            -0.0004580015036638433
+          ],
+          "middle": [
+            -15.099853515625,
+            6.183195079493104,
+            -0.0004580015036638433
+          ],
+          "type": 0,
+          "active": true,
+          "locked": true,
+          "unlockable": false,
+          "lockedVillains": true,
+          "lockedCivilians": true,
+          "afterTransition": {
+            "locked": false,
+            "unlockable": false,
+            "lockedVillains": false,
+            "lockedCivilians": false
+          },
+          "outsideReceiverSegment": [
+            [
+              -21.099853515625,
+              -7.816804920506964,
+              -8.000458001503663
+            ],
+            [
+              -21.099853515625,
+              -7.816804920506964,
+              7.999541998496336
+            ]
+          ],
+          "insideReceiverSegment": [
+            [
+              -8.099853515625,
+              20.183195079492652,
+              -8.000458001503663
+            ],
+            [
+              -8.099853515625,
+              20.183195079492652,
+              7.999541998496336
+            ]
+          ]
+        },
+        {
+          "id": "passage-2/door-0",
+          "node": "building-000",
+          "polygon": [],
+          "inside": [
+            6.900146484375,
+            16.18319507949308,
+            -0.0004580015036638433
+          ],
+          "outside": [
+            -4.099853515625,
+            -12.816804920506952,
+            -0.0004580015036638433
+          ],
+          "middle": [
+            0.900146484375,
+            1.1831950794925954,
+            -0.0004580015036638433
+          ],
+          "type": 0,
+          "active": true,
+          "locked": true,
+          "unlockable": false,
+          "lockedVillains": true,
+          "lockedCivilians": true,
+          "afterTransition": {
+            "locked": false,
+            "unlockable": false,
+            "lockedVillains": false,
+            "lockedCivilians": false
+          },
+          "outsideReceiverSegment": [
+            [
+              -4.099853515625,
+              -12.816804920506952,
+              -8.000458001503663
+            ],
+            [
+              -4.099853515625,
+              -12.816804920506952,
+              7.999541998496336
+            ]
+          ],
+          "insideReceiverSegment": [
+            [
+              6.900146484375,
+              16.18319507949308,
+              -8.000458001503663
+            ],
+            [
+              6.900146484375,
+              16.18319507949308,
+              7.999541998496336
+            ]
+          ]
+        },
+        {
+          "id": "passage-3/door-0",
+          "node": "building-000",
+          "polygon": [],
+          "inside": [
+            22.900146484375,
+            12.183195079492984,
+            -0.0004580015036638433
+          ],
+          "outside": [
+            10.900146484375,
+            -15.816804920507153,
+            -0.0004580015036638433
+          ],
+          "middle": [
+            15.900146484375,
+            -2.816804920506977,
+            -0.0004580015036638433
+          ],
+          "type": 0,
+          "active": true,
+          "locked": true,
+          "unlockable": false,
+          "lockedVillains": true,
+          "lockedCivilians": true,
+          "afterTransition": {
+            "locked": false,
+            "unlockable": false,
+            "lockedVillains": false,
+            "lockedCivilians": false
+          },
+          "outsideReceiverSegment": [
+            [
+              10.900146484375,
+              -15.816804920507153,
+              -8.000458001503663
+            ],
+            [
+              10.900146484375,
+              -15.816804920507153,
+              7.999541998496336
+            ]
+          ],
+          "insideReceiverSegment": [
+            [
+              22.900146484375,
+              12.183195079492984,
+              -8.000458001503663
+            ],
+            [
+              22.900146484375,
+              12.183195079492984,
+              7.999541998496336
+            ]
+          ]
+        }
+      ],
+      "lifts": [],
+      "interiors": [
+        {
+          "id": "interior-0",
+          "node": "building-003",
+          "doors": [
+            {
+              "id": "interior-0/door-0",
+              "node": "building-003",
+              "polygon": [
+                [
+                  129.900146484375,
+                  -50.81580492050717
+                ],
+                [
+                  115.900146484375,
+                  -58.815804920506835
+                ],
+                [
+                  114.900146484375,
+                  -98.81580492050699
+                ],
+                [
+                  128.900146484375,
+                  -87.81580492050686
+                ]
+              ],
+              "inside": [
+                97.900146484375,
+                -45.815804920507176,
+                150.00054199849635
+              ],
+              "outside": [
+                132.900146484375,
+                -67.81580492050692,
+                150.00054199849635
+              ],
+              "middle": [
+                121.900146484375,
+                -56.81580492050705,
+                150.00054199849635
+              ],
+              "type": 1,
+              "active": true,
+              "locked": false,
+              "unlockable": false,
+              "lockedVillains": false,
+              "lockedCivilians": false,
+              "afterTransition": {
+                "locked": false,
+                "unlockable": false,
+                "lockedVillains": false,
+                "lockedCivilians": false
+              }
+            },
+            {
+              "id": "interior-0/door-1",
+              "node": "building-003",
+              "polygon": [
+                [
+                  -131.099853515625,
+                  3.184195079492802
+                ],
+                [
+                  -141.099853515625,
+                  26.18419507949295
+                ],
+                [
+                  -141.099853515625,
+                  -19.815804920506828
+                ],
+                [
+                  -131.099853515625,
+                  -41.815804920507084
+                ]
+              ],
+              "inside": [
+                -100.099853515625,
+                15.184195079493085,
+                150.00054199849635
+              ],
+              "outside": [
+                -156.099853515625,
+                8.18419507949331,
+                150.00054199849635
+              ],
+              "middle": [
+                -136.099853515625,
+                11.18419507949299,
+                150.00054199849635
+              ],
+              "type": 1,
+              "active": true,
+              "locked": false,
+              "unlockable": false,
+              "lockedVillains": false,
+              "lockedCivilians": false,
+              "afterTransition": {
+                "locked": false,
+                "unlockable": false,
+                "lockedVillains": false,
+                "lockedCivilians": false
+              }
+            }
+          ]
+        }
+      ],
+      "draft": {
+        "issues": [
+          "Incomplete gameplay recovery; full parity is not certified.",
+          "Geometry seeded from asset parts; verify recovered movement clearances and feature coverage before publication",
+          "Review movement contour ownership: footprint intersections can split exclusions shared by adjacent assets",
+          "Door bindings recovered; visual states and effects need separate authoring"
+        ]
+      }
+    }
+  }
+]

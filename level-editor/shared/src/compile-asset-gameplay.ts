@@ -162,13 +162,32 @@ export function compileAssetGameplay(
   options: { bestEffort?: boolean } = {},
 ): CompiledAssetGeometry {
   const omitted = new Set<string>();
+  const fixedTransitions = new Set<string>();
   const omissions: string[] = [];
   for (;;) {
     try {
-      const result = compileAssetGameplayAttempt(document, descriptors, bounds, options, omitted);
+      const result = compileAssetGameplayAttempt(
+        document,
+        descriptors,
+        bounds,
+        options,
+        omitted,
+        fixedTransitions,
+      );
       if (omissions.length) result.warnings = [...omissions, ...(result.warnings ?? [])];
       return result;
     } catch (error) {
+      if (
+        error instanceof UnavailableTerrainControl &&
+        (options.bestEffort || error.cropped) &&
+        !fixedTransitions.has(error.id)
+      ) {
+        fixedTransitions.add(error.id);
+        omissions.push(
+          `Transition ${error.id}: control omitted; retained its initial movement barriers and door permissions; ${error.message}`,
+        );
+        continue;
+      }
       if (
         !(error instanceof UnavailableLiftPlacement) ||
         (!options.bestEffort && !error.cropped) ||
@@ -193,12 +212,23 @@ class UnavailableLiftPlacement extends Error {
   }
 }
 
+class UnavailableTerrainControl extends Error {
+  readonly id: string;
+  readonly cropped: boolean;
+  constructor(id: string, message: string, cropped: boolean) {
+    super(message);
+    this.id = id;
+    this.cropped = cropped;
+  }
+}
+
 function compileAssetGameplayAttempt(
   document: Level3D,
   descriptors: ReadonlyMap<string, ProjectionAssetDescriptor>,
   bounds: [number, number, number, number],
   options: { bestEffort?: boolean },
   omitted: ReadonlySet<string>,
+  fixedTransitions: ReadonlySet<string>,
 ): CompiledAssetGeometry {
   const warnings: string[] = [];
   ({ document, descriptors } = normalizeGameplayStateViews(document, descriptors));
@@ -326,6 +356,7 @@ function compileAssetGameplayAttempt(
     hasAppearance: boolean;
     waypoint: Vec3;
     waypointAnchor: Vec3;
+    waypointReceiverSegment?: [Vec3, Vec3];
     active: boolean;
     definitive: boolean;
     applyPolygon: Point[];
@@ -641,14 +672,17 @@ function compileAssetGameplayAttempt(
         surface,
         transition: `${placement.id}/${t.id}`,
         applied: false,
+        fixed: fixedTransitions.has(`${placement.id}/${t.id}`),
       })),
-      ...t.applied.map((surface) => ({
+      ...(fixedTransitions.has(`${placement.id}/${t.id}`) ? [] : t.applied).map((surface) => ({
         surface,
         transition: `${placement.id}/${t.id}`,
         applied: true,
+        fixed: false,
       })),
     ]);
     for (const t of gameplay.movementTransitions ?? []) {
+      if (fixedTransitions.has(`${placement.id}/${t.id}`)) continue;
       if (t.join)
         transitionJoins.set(`${placement.id}/${t.id}`, {
           key: t.join.key,
@@ -673,6 +707,14 @@ function compileAssetGameplayAttempt(
         hasAppearance: !!t.appearances?.length,
         waypoint: transform(t.node, t.waypoint),
         waypointAnchor: transform(t.node, t.waypointAnchor ?? t.waypoint),
+        ...(t.waypointReceiverSegment
+          ? {
+              waypointReceiverSegment: [
+                transform(t.node, t.waypointReceiverSegment[0]),
+                transform(t.node, t.waypointReceiverSegment[1]),
+              ] as [Vec3, Vec3],
+            }
+          : {}),
         active: t.active,
         definitive: t.definitive,
         applyPolygon: contour(t.applyPolygon),
@@ -842,6 +884,22 @@ function compileAssetGameplayAttempt(
           ...placed,
           transition: change.transition,
           applied: change.applied,
+          fixed: change.fixed,
+          ...(surface.terrainReach
+            ? {
+                terrainVolume: {
+                  ...surface.terrainReach,
+                  plane: heightPlane(points),
+                  polygon: points.map(([x, y]): Point => [x, y]),
+                  holes: (surface.holes ?? []).map((hole) =>
+                    hole.map((p): Point => {
+                      const [x, y] = transform(surface.node, [...p, planeHeight(localPlane, p)]);
+                      return [x, y];
+                    }),
+                  ),
+                },
+              }
+            : {}),
         });
       else target.push(placed);
     }
@@ -1528,6 +1586,7 @@ function compileAssetGameplayAttempt(
     segment: [Vec3, Vec3],
     fallbackAnchor: Vec3,
     label: string,
+    allowBlocked = false,
   ): Vec3 => {
     const matches = areas.flatMap((area) => {
       if (area.lift) return [];
@@ -1540,7 +1599,10 @@ function compileAssetGameplayAttempt(
       }
       if (!point) return [];
       const projected = project(point);
-      if (!inside(projected, area.polygon) || area.blockers.some((b) => inside(projected, b)))
+      if (
+        !inside(projected, area.polygon) ||
+        (!allowBlocked && area.blockers.some((b) => inside(projected, b)))
+      )
         return [];
       return [{ area, point }];
     });
@@ -1558,7 +1620,7 @@ function compileAssetGameplayAttempt(
       )
     )
       throw new UnresolvedSurface(
-        `${label}: receiving segment must intersect exactly one unblocked surface`,
+        `${label}: receiving segment must intersect exactly one ${allowBlocked ? "" : "unblocked "}surface`,
       );
     return first.point;
   };
@@ -1986,13 +2048,47 @@ function compileAssetGameplayAttempt(
             // Door receiving anchors and jump landing anchors require an unblocked position.
             let area;
             try {
-              area = resolve(t.waypointAnchor, `${t.id} waypoint`, undefined, true);
+              const anchor = t.waypointReceiverSegment
+                ? resolveReceivingSegment(
+                    t.waypointReceiverSegment,
+                    t.waypointAnchor,
+                    `${t.id} waypoint`,
+                    true,
+                  )
+                : t.waypointAnchor;
+              area = resolve(anchor, `${t.id} waypoint`, undefined, true);
+              if (t.waypointReceiverSegment) {
+                const before = project(t.waypoint),
+                  after = project(anchor);
+                const shift = ([x, y]: Point): Point => [
+                  x + after[0] - before[0],
+                  y + after[1] - before[1],
+                ];
+                t.applyPolygon = t.applyPolygon.map(shift);
+                t.noApplyPolygon = t.noApplyPolygon.map(shift);
+                t.waypoint = anchor;
+              }
             } catch (error) {
               if (
                 !(error instanceof UnresolvedSurface) ||
                 (!options.bestEffort && !(error instanceof OutsideExportFrame))
               )
                 throw error;
+              if (
+                t.waypointReceiverSegment &&
+                t.changes.length &&
+                !t.hasAppearance &&
+                !t.initialSight.length &&
+                !t.appliedSight.length &&
+                !t.initialMasks.length &&
+                !t.appliedMasks.length &&
+                (!t.doorLinks || t.doorLinks.mode === "swap-rights")
+              )
+                throw new UnavailableTerrainControl(
+                  t.id,
+                  error.message,
+                  error instanceof OutsideExportFrame,
+                );
               warnings.push(`Transition ${t.id}: omitted; ${error.message}`);
               return [];
             }

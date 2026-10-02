@@ -32,6 +32,101 @@ const blocker: PlacedTransitionBlocker = {
     ],
   ],
 };
+test("terrain blockers follow slopes, retain holes and exclude floors beyond their reach", () => {
+  const volume: PlacedTransitionBlocker = {
+    ...blocker,
+    terrainVolume: {
+      polygon: blocker.polygon,
+      holes: blocker.holes,
+      plane: [0, 0, 0],
+      below: 2,
+      above: 8,
+    },
+  };
+  const flat = compileTransitionObstacles(boundary, [], [0, 0, 4], [volume], []);
+  const actual = clipping.union(flat.obstacles.map((o) => [o.polygon.points]));
+  const shifted = [blocker.polygon, ...blocker.holes].map((ring) =>
+    ring.map(([x, y]): [number, number] => [x, y - 4]),
+  );
+  assert.deepEqual(clipping.xor(actual, shifted), []);
+  for (const height of [-3, 9, 100])
+    assert.equal(
+      compileTransitionObstacles(boundary, [], [0, 0, height], [volume], []).pairs.size,
+      0,
+    );
+  // z = x / 10: the volume stops at x=80, even with preserved receiving boundaries.
+  const slope = compileTransitionObstacles(
+    boundary,
+    [],
+    [0.1, 0, 0],
+    [volume],
+    [],
+    undefined,
+    true,
+  );
+  assert.ok(slope.obstacles.length);
+  assert.ok(slope.obstacles.every((o) => o.polygon.points.every(([x]) => x <= 80)));
+});
+
+test("terrain blockers join slope fragments before rounding and retain independent state pairs", () => {
+  const volume: PlacedTransitionBlocker = {
+    ...blocker,
+    terrainVolume: { polygon: blocker.polygon, holes: [], plane: [0, 0, 0], below: 2, above: 8 },
+  };
+  const receivers: NavigationPiece[] = [
+    {
+      plane: [0, 0, 0],
+      layer: 0,
+      polygon: [
+        [0, 0],
+        [50, 0],
+        [50, 100],
+        [0, 100],
+      ],
+      blockers: [],
+    },
+    {
+      plane: [0.1, 0, -5],
+      layer: 0,
+      polygon: [
+        [50, 0],
+        [100, 0],
+        [100, 100],
+        [50, 100],
+      ],
+      blockers: [],
+    },
+  ];
+  const result = compileTransitionObstacles(
+    boundary,
+    [],
+    [0, 0, 0],
+    [volume, { ...volume, applied: true }, { ...volume, transition: "copy" }],
+    [],
+    receivers,
+  );
+  assert.deepEqual(
+    result.obstacles.map((o) => o.state_id),
+    [1, 2, 4],
+  );
+  assert.deepEqual(
+    clipping.xor(
+      [result.obstacles[0]!.polygon.points],
+      [
+        [
+          [10, 10],
+          [50, 10],
+          [90, 6],
+          [90, 86],
+          [50, 90],
+          [10, 90],
+        ],
+      ],
+    ),
+    [],
+  );
+});
+
 test("labelled transition fragments rejoin before rounding and remain scoped to each state", () => {
   const left: PlacedTransitionBlocker = {
     transition: "gate",

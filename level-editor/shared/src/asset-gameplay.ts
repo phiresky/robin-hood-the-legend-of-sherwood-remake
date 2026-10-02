@@ -8,6 +8,8 @@ export interface AssetWalkableSurface {
   polygon: Point[];
   /** Constant height or one height per polygon vertex; the surface must be planar. */
   height: number | number[];
+  /** Transition blockers may follow terrain within these finite vertical offsets from their plane. */
+  terrainReach?: { below: number; above: number };
   /** Generate reusable long-jump ledges and landing bands from this surface after placement. */
   jump?: NonNullable<AssetJumpSegment["attachment"]> & {
     /** Selected polygon edge indices; omit to consider every outer edge. */
@@ -257,6 +259,8 @@ export interface AssetMovementTransition {
   waypoint: [number, number, number];
   /** Local receiving-area anchor when the reference point lies outside its linked surface. */
   waypointAnchor?: [number, number, number];
+  /** Bind the state control to nearby terrain, including positions inside its closed blocker. */
+  waypointReceiverSegment?: [[number, number, number], [number, number, number]];
   active: boolean;
   definitive: boolean;
   initial: AssetWalkableSurface[];
@@ -577,6 +581,14 @@ export function validateAssetGameplay(
     if (
       !point(transition.waypoint, 3) ||
       (transition.waypointAnchor !== undefined && !point(transition.waypointAnchor, 3)) ||
+      (transition.waypointReceiverSegment !== undefined &&
+        (transition.waypointAnchor !== undefined ||
+          !Array.isArray(transition.waypointReceiverSegment) ||
+          transition.waypointReceiverSegment.length !== 2 ||
+          !transition.waypointReceiverSegment.every((p) => point(p, 3)) ||
+          transition.waypointReceiverSegment[0].every(
+            (n, i) => n === transition.waypointReceiverSegment![1][i],
+          ))) ||
       typeof transition.active !== "boolean" ||
       typeof transition.definitive !== "boolean" ||
       !Array.isArray(transition.initial) ||
@@ -898,6 +910,20 @@ export function validateAssetGameplay(
   ]) {
     feature(surface);
     polygon(surface.polygon);
+    if (surface.terrainReach !== undefined) {
+      const reach = surface.terrainReach;
+      if (
+        !reach ||
+        ![reach.below, reach.above].every(Number.isFinite) ||
+        reach.below < 0 ||
+        reach.above < 0 ||
+        reach.below + reach.above <= 0 ||
+        !(data.movementTransitions ?? []).some(
+          (t) => t.initial.includes(surface) || t.applied.includes(surface),
+        )
+      )
+        fail(`invalid transition terrain reach on ${surface.id}`);
+    }
     if (surface.jump !== undefined) {
       const jump = surface.jump;
       if (
