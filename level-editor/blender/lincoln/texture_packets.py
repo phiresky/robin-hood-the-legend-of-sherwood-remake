@@ -21,6 +21,12 @@ Commands (from the repository root):
       --python level-editor/blender/lincoln/texture_packets.py -- bake EXPERIMENT BAKE_NAME [--provider ...]
   python3 level-editor/blender/lincoln/texture_packets.py retry ID SUFFIX_NAME
 
+Use --lane trees before the command for the separately reviewed foliage/scenery
+catalog, workspaces, frozen tooling and texture output directory.
+For read-only texture preparation after old editing baselines were retired,
+--review-gallery can validate the exact approved model/packet against archived
+review evidence instead. It never authorizes geometry edits or repairs a failure.
+
 `audit` records the read-only structural stored-material audit that preparation
 requires. `retry` clones a prepared experiment (same approved inputs) into a
 separate retry directory so a material-specific prompt never overwrites the
@@ -46,9 +52,30 @@ WORKSPACE_MAP = WORK / 'workspace-overrides-v6.json'
 APPROVALS = WORK / 'approvals.json'
 COLLECTOR_EVIDENCE = WORK / 'textures/collector/gallery-packet-evidence'  # fresh collector run over v6 overrides
 TOOLING = WORK / 'tooling/e6b57cb851c7142b'
+REVIEW_GALLERY = None
 AUTHORIZATION = ('User approved running texture generation for all geometry-approved Lincoln assets '
                  '(relayed by the coordinator, 2026-09-25). '
                  'Texture approval is a separate, pending decision.')
+
+
+def configure_lane(lane):
+    global TEXTURES, CATALOG, ASSETS, WORKSPACE_MAP, COLLECTOR_EVIDENCE, TOOLING
+    if lane == 'trees':
+        TEXTURES = WORK / 'trees/textures'
+        CATALOG = WORK / 'trees/gallery-catalog.json'
+        ASSETS = WORK / 'trees/assets'
+        WORKSPACE_MAP = WORK / 'trees/workspace-map.json'
+        COLLECTOR_EVIDENCE = WORK / 'trees/texture-collector/gallery-packet-evidence'
+        TOOLING = WORK / 'tooling-trees/e48c662ac3828db9'
+    elif lane == 'architecture':
+        TEXTURES = WORK / 'textures'
+        CATALOG = WORK / 'grouping/catalog-v4.json'
+        ASSETS = WORK / 'round-6/assets'
+        WORKSPACE_MAP = WORK / 'workspace-overrides-v6.json'
+        COLLECTOR_EVIDENCE = WORK / 'textures/collector/gallery-packet-evidence'
+        TOOLING = WORK / 'tooling/e6b57cb851c7142b'
+    else:
+        raise ValueError('Unknown Lincoln texture lane: ' + lane)
 
 
 def sha(path):
@@ -74,8 +101,10 @@ def require(condition, message):
 
 def catalog_groups():
     catalog = read(CATALOG)
-    terrain = {'id': catalog['terrain']['id'], 'name': catalog['terrain']['name'], 'role': 'terrain', 'parts': []}
-    return {group['id']: group for group in [*catalog['groups'], terrain]}
+    groups = list(catalog['groups'])
+    if CATALOG != WORK / 'trees/gallery-catalog.json' and catalog.get('terrain'):
+        groups.append({'id': catalog['terrain']['id'], 'name': catalog['terrain']['name'], 'role': 'terrain', 'parts': []})
+    return {group['id']: group for group in groups}
 
 
 def workspace_for(asset_id):
@@ -109,7 +138,12 @@ def verify_current(asset_id):
     import build_gallery as collector
     group = catalog_groups()[asset_id]
     workspace = workspace_for(asset_id)
-    status, _, fresh, _ = collector.inspect(workspace, group)
+    if REVIEW_GALLERY is not None:
+        fresh, evidence_path = archived_texture_basis(workspace, asset_id)
+        status = fresh['status']
+    else:
+        status, _, fresh, _ = collector.inspect(workspace, group)
+        evidence_path = COLLECTOR_EVIDENCE / (asset_id + '.json')
     require(status == 'ready-for-user', f'Collector technical status is {status}')
     approval = approval_for(asset_id)
     require(approval.get('decision') == 'approved' and approval.get('scope') == 'geometry',
@@ -120,7 +154,6 @@ def verify_current(asset_id):
             'Geometry approval camera packet is stale')
     require(approval.get('state_bundle_sha256') is None and approval.get('lighting_review_sha256') is None,
             'Stateful or relit approvals need a separate state lane')
-    evidence_path = COLLECTOR_EVIDENCE / (asset_id + '.json')
     evidence = read(evidence_path)
     # The collector evidence may predate the approval record (the round-6 gallery is rebuilt
     # separately); the approval is bound to the fresh hashes above, and the evidence must
@@ -131,6 +164,55 @@ def verify_current(asset_id):
             'Collector evidence packets differ from the current workspace')
     require(not evidence.get('state_packets'), 'State packets require a separate state lane')
     return workspace, approval, fresh, evidence_path
+
+
+def archived_texture_basis(workspace, asset_id):
+    """Validate an unchanged approved handoff for material-only work.
+
+The historic editing baseline can be absent, but the reviewed candidate, every
+camera packet file, source/mask evidence and passing coverage audit must remain
+exact. An independent saved-material audit is still required by normalize().
+"""
+    import build_gallery as collector
+    gallery = Path(REVIEW_GALLERY).resolve(strict=True)
+    rows = [row for row in read(gallery / 'evidence.json')['items'] if row['id'] == asset_id]
+    require(len(rows) == 1, 'Expected one archived review card: ' + asset_id)
+    item = rows[0]
+    require(item['status'] in ('ready-for-user', 'approved'), 'Archived candidate has unresolved validation')
+    require(Path(item['workspace']).resolve() == workspace.resolve(), 'Archived workspace differs')
+    entry = item['reports']['ownership']
+    evidence_path = gallery / entry['file']
+    require(sha(evidence_path) == entry['sha256'], 'Archived ownership report changed')
+    evidence = read(evidence_path)
+    require(evidence['asset_id'] == asset_id, 'Archived asset identity differs')
+    require(sha(workspace / 'model.blend') == evidence['model_sha256'], 'Archived model differs')
+    config = read(workspace / 'workspace.json')
+    require(config['baseline_sha256'] == evidence['baseline_sha256'], 'Historic baseline identity differs')
+    if (workspace / 'baseline.blend').exists():
+        require(sha(workspace / 'baseline.blend') == evidence['baseline_sha256'], 'Historic baseline changed')
+    for folder, expected in evidence['packet_hashes'].items():
+        require(collector.file_hashes(workspace / folder) == expected, 'Archived packet changed: ' + folder)
+    for folder, key in [('input', 'input_files'), ('reference', 'reference_files')]:
+        require(collector.file_hashes(workspace / folder) == config[key], 'Frozen evidence changed: ' + folder)
+    for key in ('candidate', 'validation'):
+        require(sha(workspace / (key + '.json')) == evidence[key + '_sha256'], key + ' report changed')
+    from refinement_workspace import _validated_masks
+    if config.get('mask_reference'):
+        _validated_masks(config)
+    for folder in ('input', 'modified'):
+        frames = read(workspace / folder / 'views.json')
+        require(sha(frames['source_image']) == frames['source_sha256'], 'Source image changed')
+        for path, expected in frames.get('source_mask_evidence', {}).items():
+            require(sha(path) == expected, 'Source mask evidence changed: ' + path)
+    for entry in item['images'].values():
+        require(sha(gallery / entry['file']) == entry['sha256'], 'Archived review image changed')
+        require(sha(entry['source']) == entry['sha256'], 'Displayed image differs from workspace')
+    coverage = read(workspace / 'source-coverage-audit.json')
+    require(collector.source_coverage_audit_matches(coverage, evidence), 'Coverage audit failed or stale')
+    for path, expected in coverage['evidence'].items():
+        path = Path(path)
+        require(sha(path if path.is_absolute() else workspace / path) == expected, 'Coverage evidence changed')
+    return evidence, evidence_path
 
 
 def normalize(asset_id, output):
@@ -383,9 +465,12 @@ def survey():
 
 
 def main():
+    global REVIEW_GALLERY
     in_blender = '--' in sys.argv
     argv = sys.argv[sys.argv.index('--') + 1:] if in_blender else sys.argv[1:]
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('--lane', choices=['architecture', 'trees'], default='architecture')
+    parser.add_argument('--review-gallery', type=Path, help='Exact archived geometry review for material-only preparation')
     sub = parser.add_subparsers(dest='command', required=True)
     sub.add_parser('survey')
     sub.add_parser('audit').add_argument('ids', nargs='+')
@@ -411,6 +496,8 @@ def main():
     command.add_argument('id')
     command.add_argument('name')
     args = parser.parse_args(argv)
+    configure_lane(args.lane)
+    REVIEW_GALLERY = args.review_gallery
     if args.command in ('audit', 'bake') and not in_blender:
         raise SystemExit(args.command + ' must run inside Blender')
     if args.command == 'survey':

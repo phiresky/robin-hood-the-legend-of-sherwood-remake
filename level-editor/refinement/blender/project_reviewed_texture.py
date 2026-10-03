@@ -134,14 +134,18 @@ def apply(manifest_path, image_path, output_dir, *, texels_per_unit=2, map_name=
     from generated_visibility import bounded_faces, far_plane, bounded_origin, visible_sample, background_faces
     finite_faces = bounded_faces(manifest, {obj.name: len(obj.data.polygons) for obj in targets})
     filtered_faces = background_faces(manifest, {obj.name: len(obj.data.polygons) for obj in targets})
+    from physical_opacity import OpacityRegistry
+    opacity = OpacityRegistry()
     vertices, triangles, triangle_owners = [], [], []
     for obj in objects:
         offset = len(vertices)
         vertices.extend(obj.matrix_world @ vertex.co for vertex in obj.data.vertices)
         obj.data.calc_loop_triangles()
+        for triangle in obj.data.loop_triangles:
+            opacity.add(obj, obj.data, triangle)
         triangles.extend(tuple(offset+i for i in tri.vertices) for tri in obj.data.loop_triangles)
         triangle_owners.extend((obj.name,tri.polygon_index) for tri in obj.data.loop_triangles)
-    tree = BVHTree.FromPolygons(vertices, triangles, all_triangles=True)
+    tree = opacity.wrap(BVHTree.FromPolygons(vertices, triangles, all_triangles=True))
     cameras = []
     for view in manifest['views']:
         matrix = Matrix(view['camera_matrix_world'])
@@ -277,6 +281,8 @@ def apply(manifest_path, image_path, output_dir, *, texels_per_unit=2, map_name=
             if mask_manifest:
                 mat['generated_source_mask_manifest'] = mask_manifest
                 mat['generated_source_mask_evidence_sha256'] = hashlib.sha256(json.dumps(manifest['source_mask_evidence'],sort_keys=True).encode()).hexdigest()
+    from fill_physical_foliage import fill as fill_foliage
+    foliage = fill_foliage(targets, sample, manifest.get('texture_receiver_face_indices'), image_hash)
     repaired_count = sum(face['repaired_texels'] for layer in reports for obj in layer['objects'] for face in obj.get('inferred_gap_repairs', []))
     if repair_policy is not None:
         if repaired_count > repair_policy['max_total_texels']:
@@ -304,7 +310,7 @@ def apply(manifest_path, image_path, output_dir, *, texels_per_unit=2, map_name=
               'reconciliation_fade_pixels':manifest.get('texture_reconciliation_fade_pixels',24),
               'reconciliation_gain_mode':manifest.get('texture_reconciliation_gain_mode','rgb'),
               'reconciliation_minimum_gain':manifest.get('texture_reconciliation_minimum_gain',.4),
-              'counts':stats,'layers':reports}
+              'counts':stats,'layers':reports, 'physical_foliage':foliage}
     if repair_policy is not None:report['inferred_gap_repair'] = repair_policy
     if filtered_faces is not None:report['generated_background_face_indices'] = manifest['texture_generated_background_face_indices']
     if finite_faces:

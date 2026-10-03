@@ -354,10 +354,11 @@ def main(argv=None):
     tooling = select_tooling(args.tooling_dir)
     catalog = read(args.catalog)
     require(catalog.get("map") == "lincoln", "Expected Lincoln catalog")
-    catalog = {**catalog, 'groups': [*catalog['groups'], {
-        'id': catalog['terrain']['id'], 'name': catalog['terrain']['name'],
-        'role': 'terrain', 'parts': [],
-    }]}
+    if catalog.get('terrain'):
+        catalog = {**catalog, 'groups': [*catalog['groups'], {
+            'id': catalog['terrain']['id'], 'name': catalog['terrain']['name'],
+            'role': 'terrain', 'parts': [],
+        }]}
     ids = [asset["id"] for asset in catalog["groups"]]
     require(len(ids) == len(set(ids)), "Duplicate catalog asset IDs")
     historical_ids = set()
