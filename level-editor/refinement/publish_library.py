@@ -1,7 +1,8 @@
 """Stage and publish the editor's runtime library as Cloudflare Worker static assets.
 
-Original models, asset descriptors, their external resources, receipts, backups and authoring files
-are never uploaded. The local library is not modified. --stage-only is offline;
+Original models, asset descriptors, external model textures, receipts, backups and authoring files
+are never uploaded. Pinned scenery sprite banks are runtime resources and are included.
+The local library is not modified. --stage-only is offline;
 --dry-run additionally asks Wrangler to validate the deployment without publishing.
 """
 import argparse
@@ -175,6 +176,26 @@ def stage_library(library, output, *, worker_name='robinhood-editor-library'):
         if digest(raw) != entry['descriptor_sha256']:
             raise ValueError(f'Descriptor changed while staging: {descriptor_path}')
         descriptor = json.loads(raw)
+        # Sprite banks remain separate from self-contained geometry derivatives.
+        # Publish only directories explicitly consumed by asset animations.
+        directories = set()
+        for animation in descriptor.get('gameplay', {}).get('animations', []):
+            if 'resourceDirectory' not in animation:
+                continue
+            directory = animation['resourceDirectory']
+            if not isinstance(directory, str) or not directory.endswith('.rhs.d'):
+                raise ValueError(f'Invalid scenery resource directory: {entry["id"]}')
+            directories.add(directory)
+        for directory in sorted(directories):
+            pins = [pin for pin in descriptor.get('resources', [])
+                    if isinstance(pin.get('path'), str)
+                    and pin['path'].startswith(directory + '/')]
+            if not any(pin['path'] == directory + '/manifest.json' for pin in pins):
+                raise ValueError(f'Missing pinned scenery manifest: {entry["id"]}: {directory}')
+            for pin in pins:
+                if not isinstance(pin.get('sha256'), str) or not re.fullmatch(r'[0-9a-f]{64}', pin['sha256']):
+                    raise ValueError(f'Invalid scenery resource hash: {pin["path"]}')
+                copy(pin['path'], pin['sha256'])
         for key in ('id', 'name', 'source_map', 'model_scene'):
             if descriptor.get(key) != entry.get(key):
                 raise ValueError(f'Descriptor changed while staging: {descriptor_path}: {key}')

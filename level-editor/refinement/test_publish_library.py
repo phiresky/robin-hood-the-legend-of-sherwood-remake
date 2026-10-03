@@ -114,6 +114,64 @@ class PublishLibraryTest(unittest.TestCase):
         self.assertEqual(editor['parts'], descriptor['parts'])
         self.assertEqual(editor['gameplay'], descriptor['gameplay'])
 
+    def scenery_bank(self):
+        directory = 'effects/fire.rhs.d'
+        resources = {directory + '/manifest.json': b'{"profiles":[]}',
+                     directory + '/idle/0.png': b'pinned frame',
+                     '3d-assets/house/authoring.png': b'original model texture',
+                     'effects/unused.rhs.d/manifest.json': b'unused bank'}
+        for name, data in resources.items():
+            target = self.library/name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        descriptor = json.loads((self.asset/'asset.json').read_bytes())
+        descriptor['resources'] = [{'path': name, 'sha256': hashlib.sha256(data).hexdigest()}
+                                   for name, data in resources.items()]
+        descriptor['gameplay'] = {'animations': [
+            {'id': 'fire', 'resourceDirectory': directory},
+            {'id': 'other-fire', 'resourceDirectory': directory},
+            {'id': 'shared', 'file': 'installed-bank'}]}
+        (self.asset/'asset.json').write_text(json.dumps(descriptor))
+        return directory, resources, descriptor
+
+    def test_only_declared_pinned_scenery_banks_are_published(self):
+        directory, resources, descriptor = self.scenery_bank()
+        report = self.stage()
+        site = self.root/'deploy/site/editor/library'
+        for name, data in resources.items():
+            if name.startswith(directory + '/'):
+                self.assertEqual((site/name).read_bytes(), data)
+                self.assertEqual(report['payloads'][name]['sha256'], hashlib.sha256(data).hexdigest())
+            else:
+                self.assertNotIn(name, report['payloads'])
+                self.assertFalse((site/name).exists())
+        index = json.loads((site/'3d-assets/index.json').read_bytes())
+        self.assertEqual(index['assets'][0]['editor']['resources'], descriptor['resources'])
+        self.assertEqual(index['assets'][0]['editor']['gameplay'], descriptor['gameplay'])
+
+    def test_changed_scenery_frame_rejected(self):
+        directory, _, _ = self.scenery_bank()
+        (self.library/directory/'idle/0.png').write_bytes(b'changed frame')
+        with self.assertRaisesRegex(ValueError, 'Asset changed while staging'):
+            self.stage()
+
+    def test_scenery_bank_requires_pinned_manifest(self):
+        _, _, descriptor = self.scenery_bank()
+        descriptor['resources'] = descriptor['resources'][1:]
+        (self.asset/'asset.json').write_text(json.dumps(descriptor))
+        with self.assertRaisesRegex(ValueError, 'Missing pinned scenery manifest'):
+            self.stage()
+
+    def test_scenery_symlink_cannot_escape_library(self):
+        directory, _, _ = self.scenery_bank()
+        frame = self.library/directory/'idle/0.png'
+        frame.unlink()
+        outside = self.root/'outside.png'
+        outside.write_bytes(b'pinned frame')
+        frame.symlink_to(outside)
+        with self.assertRaisesRegex(ValueError, 'escapes its root'):
+            self.stage()
+
     def test_indexed_game_data_is_shipped(self):
         game_data = self.library/'game-data'
         files = {'Data/Levels/Mission.rhm.json': b'{"mission":1}',

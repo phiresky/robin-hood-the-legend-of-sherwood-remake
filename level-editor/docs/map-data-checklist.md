@@ -143,6 +143,17 @@ resource pins. A CLI regression compiles generated placements and repackages the
 copied sprite files using only the output directory. Changed hashes, missing
 frames, mismatched centers and duplicate IDs fail before output is created.
 
+Runtime library publication now includes hash-verified resources from each
+animation's explicit `.rhs.d` directory, including its required pinned manifest.
+Unrelated model textures and unused banks remain excluded. The staged catalog
+retains the original resource pins and gameplay definitions. Publication tests
+cover duplicate bank use, changed frame bytes, missing manifest pins and escaping
+symlinks. The generated asset under `work/map-compile/scenery-publication-fDA5SR`
+passes catalog generation and offline staging; an export rebuilt from the staged
+catalog and files retains the animation and all three sprite resources without
+reading original descriptors. This verifies publication transport, not preview,
+live deployment or rendered scenery parity.
+
 To repeat the animation acceptance chain, generate a fresh output directory with
 `SCENERY_TEST_EXPORT_DIR` while running `app/src/scenery-resources.test.ts`.
 Use that same absolute directory for the ignored native tests
