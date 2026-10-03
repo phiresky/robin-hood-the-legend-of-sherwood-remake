@@ -68,6 +68,17 @@ pub(crate) fn dispatch_local_command(
     }
 }
 
+/// A shared confirmation closes on every peer; only its host authors the
+/// resulting campaign command. All peers then apply the same delayed echo.
+pub(super) fn dispatch_confirmed_mission_exit(
+    transport: &HostTransport,
+    frame_cmds: &mut FrameCommands,
+) {
+    if transport.local_seat() == robin_engine::player_command::PlayerId::HOST {
+        dispatch_local_command(transport, frame_cmds, &PlayerCommand::QuitMissionRequested);
+    }
+}
+
 pub(super) fn apply_local_viewport_scroll(host: &mut Host, dir: engine_api::ScrollDirection) {
     const STEP: f32 = 24.0;
     let delta = match dir {

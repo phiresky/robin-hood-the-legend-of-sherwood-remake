@@ -731,11 +731,7 @@ fn dispatch_active_modal_outcome(
             // A leave-mission prompt created after these lanes remains active
             // into the next frame, where the shared modal driver ticks it.
             // Preserve its Yes result just as on the prompt's first frame.
-            dispatch_local_command(
-                &host.transport,
-                post_commands,
-                &PlayerCommand::QuitMissionRequested,
-            );
+            super::dispatch::dispatch_confirmed_mission_exit(&host.transport, post_commands);
         }
     }
 }
@@ -764,8 +760,10 @@ fn drive_leave_mission_prompt(
     }
     if host.effects.take_signal(HostSignal::MissionStatePopup) {
         if mode == ScriptedModalMode::AutoDismiss {
-            let cmd = PlayerCommand::QuitMissionRequested;
-            dispatch_local_command(&host.transport, &mut frame.stage_post_commands(), &cmd);
+            super::dispatch::dispatch_confirmed_mission_exit(
+                &host.transport,
+                &mut frame.stage_post_commands(),
+            );
         } else if let Some(menu_resources) = resources.menu.as_ref() {
             let kind = engine_player_command::ModalKind::MissionState {
                 kind: engine_player_command::MissionStateModalKind::LeaveMissionNow,
@@ -2004,6 +2002,33 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn client_shared_mission_confirmation_waits_without_authoring_host_command() {
+        use super::{ActiveModalOutcome, dispatch_active_modal_outcome};
+        use crate::host::Host;
+        use crate::multiplayer::NetChannels;
+        use robin_engine::player_command::{FrameCommands, PlayerId};
+        for seat in 1..robin_engine::coop::MAX_PLAYERS as u8 {
+            let mut host = Host::scratch(640.0, 480.0);
+            let (channels, _incoming, outgoing, _, _) = NetChannels::new();
+            host.transport = crate::host::HostTransport::test_session(channels, PlayerId(seat));
+            let mut commands = FrameCommands::new();
+            dispatch_active_modal_outcome(
+                ActiveModalOutcome::QuitMissionRequested,
+                &mut host,
+                &mut commands,
+            );
+            assert!(
+                commands.commands.is_empty(),
+                "client must wait for the host echo"
+            );
+            assert!(
+                outgoing.try_recv().is_err(),
+                "client must not send a forbidden mission-exit command"
+            );
+        }
     }
 
     #[test]

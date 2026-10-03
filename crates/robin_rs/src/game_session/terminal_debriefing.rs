@@ -1068,6 +1068,11 @@ pub(super) fn drive_tick_exit_modals(
             context.ui.pending_terminal_debriefing = Some(pending);
             return TerminalDebriefingProgress::Pending;
         }
+        tracing::info!(
+            exit_code = ?pending.exit_code,
+            attempt_sequence = context.manager.engine.campaign().mission_attempt_sequence,
+            "mission completion update applied; opening debriefing"
+        );
         return settle_terminal_debriefing(&mut context, pending);
     }
 
@@ -1097,6 +1102,12 @@ pub(super) fn drive_tick_exit_modals(
     );
     let popup_title =
         crate::ingame_menu::mission_state_text(exit_code).map(|(title, _)| title.to_owned());
+    tracing::info!(
+        ?exit_code,
+        local_seat = ?context.host.transport.local_seat(),
+        previous_attempt_sequence,
+        "waiting for authoritative mission completion update"
+    );
     context.ui.pending_terminal_debriefing = Some(PendingTerminalDebriefing {
         exit_code,
         terminal_mission_id,
@@ -1481,6 +1492,56 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn host_completion_echo_releases_debriefing_without_running_gameplay() {
+        use crate::multiplayer::{NetChannels, NetOutbound};
+        use robin_engine::engine::{Engine, LevelAssets, SimulationFrameInput};
+        use robin_engine::player_command::PlayerId;
+        let mut assets = LevelAssets::new();
+        std::sync::Arc::make_mut(&mut assets.profile_manager)
+            .missions
+            .push(robin_engine::profiles::MissionProfile::default());
+        let mut campaign = robin_engine::campaign::Campaign::default();
+        campaign.missions.push(robin_engine::mission::Mission {
+            profile_idx: Some(0),
+            ..Default::default()
+        });
+        campaign.current_mission_idx = Some(0);
+        let mut engine = Engine::new_for_test(800.0, 600.0, campaign, &mut assets).unwrap();
+        let (net, _incoming, outgoing, _, _) = NetChannels::new();
+        let transport = crate::host::HostTransport::test_session(net, PlayerId::HOST);
+        let mut frame = MissionFrame::new(10);
+        let previous = stage_terminal_campaign_update(
+            false,
+            &transport,
+            &mut frame,
+            GameCode::LevelSucceeded,
+            Default::default(),
+            engine.campaign().mission_attempt_sequence,
+        );
+        assert!(frame.post_commands().is_empty());
+        assert!(!terminal_campaign_update_applied(
+            engine.campaign().mission_attempt_sequence,
+            previous
+        ));
+        let NetOutbound::Input { command, .. } = outgoing.try_recv().unwrap() else {
+            panic!("host must publish its completion command");
+        };
+        let tick = engine.simulation_tick();
+        engine
+            .advance_frame(
+                &assets,
+                SimulationFrameInput::new(vec![command.into()]).with_hourglass(false),
+            )
+            .unwrap();
+        assert_eq!(engine.simulation_tick(), tick);
+        assert!(terminal_campaign_update_applied(
+            engine.campaign().mission_attempt_sequence,
+            previous
+        ));
+        assert!(outgoing.try_recv().is_err());
     }
 
     #[test]

@@ -10,7 +10,7 @@ use super::session_policy::SessionModalScheduler;
 use super::{StepUiGates, drain_steps};
 use crate::multiplayer::current_epoch_ms;
 use robin_engine::game_operation::GameCode;
-use robin_engine::player_command::{PlayerCommand, PlayerInput};
+use robin_engine::player_command::PlayerCommand;
 use serde::{Deserialize, Serialize};
 
 /// Frontend behavior which intentionally differs from interactive play.
@@ -345,15 +345,10 @@ impl HeadlessMission {
                         }
                     )
                 {
-                    if let Some(net) = host.transport.net() {
-                        if let Err(error) = net.send_input(PlayerCommand::QuitMissionRequested) {
-                            tracing::error!(%error, "multiplayer quit request send failed");
-                        }
-                    }
-                    frame.stage_post_commands().push(PlayerInput::new(
-                        host.transport.local_seat(),
-                        PlayerCommand::QuitMissionRequested,
-                    ));
+                    super::dispatch::dispatch_confirmed_mission_exit(
+                        &host.transport,
+                        &mut frame.stage_post_commands(),
+                    );
                 }
                 frame.modal_dismissals.push(command);
                 if replaying && frame.replay_modal_dismissals.is_empty() {
