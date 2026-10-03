@@ -204,8 +204,9 @@ try {
   const initialSurface = surface([990, 30, 60, 40], 0x00ff00, 20);
   const appliedSurface = surface([990, 30, 60, 40], 0xff0000, 10);
   const endpoint = endpointAppearanceCompilerFixture();
-  const transitions = compileMap(endpoint.document, [0, 0, 2000, 2000], endpoint.assets).descriptor
-    .asset_geometry!.movement_transitions!;
+  const stateCompiled = compileMap(endpoint.document, [0, 0, 2000, 2000], endpoint.assets);
+  const transitions = stateCompiled.descriptor.asset_geometry!.movement_transitions!;
+  let stateArchive: Uint8Array | undefined;
   const stateId = transitions[0]!.id;
   const available = new Set(endpoint.document.objects.map((part) => part.node));
   for (const [mesh, id] of [
@@ -305,6 +306,25 @@ try {
     );
   }
   verifyOwnership();
+  if (new URLSearchParams(window.location.search).get("export") === "state") {
+    const base = renderMapBake(snapshot, camera, stateCompiled.bounds);
+    const fullPlans = planAppearanceRegions(
+      snapshot,
+      camera,
+      stateCompiled.bounds,
+      transitions,
+      false,
+    );
+    const fullRegions = bakeAppearanceRegions(
+      snapshot,
+      fullPlans,
+      stateCompiled.bounds[2],
+      base,
+      () => renderMapBake(snapshot, camera, stateCompiled.bounds),
+    );
+    stateArchive = await packageCompiledMap(stateCompiled, base, fullRegions);
+    verifyOwnership();
+  }
   // A depth-pass failure must leave the snapshot usable too.
   const failingNode = snapshot.children[0]!.children[1] as THREE.Mesh;
   const unsupported = new THREE.MeshPhongMaterial();
@@ -384,7 +404,7 @@ try {
     "PNG depth loss",
   );
   // Acceptance runner can retain this real GPU-produced mod for the Rust loader test.
-  (window as unknown as { __bakeZip: number[] }).__bakeZip = [...archive];
+  (window as unknown as { __bakeZip: number[] }).__bakeZip = [...(stateArchive ?? archive)];
   documentResult(
     "PASS map bake: crop, tile seam, hidden geometry, sRGB color, ground depth, mask-owned depth, state apply/reset, automatic appearance regions, bounded sun shadows, resource restoration, ZIP/PNG roundtrip",
   );

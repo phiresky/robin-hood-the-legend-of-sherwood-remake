@@ -199,6 +199,9 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
     if let Ok(root) = std::env::var("BAKED_DEPTH_EXPORT_DIR") {
         verify_browser_baked_depth_pixels(gpu.clone(), std::path::Path::new(&root));
     }
+    if let Ok(root) = std::env::var("BAKED_STATE_EXPORT_DIR") {
+        verify_browser_baked_state_pixels(gpu.clone(), std::path::Path::new(&root));
+    }
     verify_map_appearance_pixels(gpu.clone());
     verify_coop_compositing(gpu.clone());
     verify_map_patch_camera_alignment(gpu.clone(), false);
@@ -567,6 +570,105 @@ fn verify_browser_baked_depth_pixels(gpu: GpuContext, root: &std::path::Path) {
                 renderer.try_capture_frame_rgba().unwrap(),
                 (1, 1, expected),
                 "baked pixel {x},{y} with character ground Y {actor_y}"
+            );
+        }
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+fn verify_browser_baked_state_pixels(gpu: GpuContext, root: &std::path::Path) {
+    let details: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(root.join("details.json")).unwrap()).unwrap();
+    let name = details["map"].as_str().unwrap();
+    let loaded = robin_engine::level_data::LoadedLevel::hackable_from_json(
+        &std::fs::read(root.join(format!("Data/Levels/{name}.level.json"))).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(loaded.proto.patches.len(), 1);
+    let files = robin_engine::sbfile::SbFileSystem::new(std::sync::Arc::new(
+        robin_util::asset_fs::AssetVfs::new(),
+    ));
+    files.set_primary_path(root.to_str().unwrap()).unwrap();
+    let background = crate::level_loading_host::pre_decode_background_map_with_files(
+        name,
+        "Day",
+        "Data/Levels",
+        None,
+        &mut |_| {},
+        &files,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!((background.width, background.height), (2000, 2000));
+    assert_eq!(background.appearance_regions.len(), 1);
+    assert_eq!(background.appearance_regions[0].patches, [0]);
+    let mut renderer =
+        Renderer::with_optional_surface(gpu, None, None, 1, 1, TextureScaleMode::Nearest);
+    renderer.upload_background_texture(
+        u32::from(background.width),
+        u32::from(background.height),
+        &background.pixels,
+    );
+    renderer
+        .upload_occlusion_depth(
+            background.occlusion_depth.as_ref().unwrap(),
+            background.width,
+            background.height,
+        )
+        .unwrap();
+    renderer
+        .install_map_appearance(&background, loaded.proto.patches.len())
+        .unwrap();
+    let sprite = renderer
+        .create_rgba_gpu_image(1, 1, &[255; 4], "state depth probe")
+        .unwrap();
+    let mut patches = [robin_engine::patch::Patch::default()];
+    for (applied, transitioning) in [
+        (false, false),
+        (true, false),
+        (true, true),
+        (false, false),
+        (true, false),
+    ] {
+        patches[0].applied = applied;
+        patches[0].in_transition = transitioning;
+        renderer.sync_map_appearance(&patches);
+        let visible_applied = applied && !transitioning;
+        for x in [1023., 1024.] {
+            renderer.begin_gpu_frame_clear();
+            renderer.render_background_texture(
+                Some(&BBox::from_coords(x, 40., x + 1., 41.)),
+                Some(&BBox::from_coords(0., 0., 1., 1.)),
+            );
+            assert_eq!(
+                renderer.try_capture_frame_rgba().unwrap().2,
+                if visible_applied {
+                    vec![248, 0, 0, 255]
+                } else {
+                    vec![0, 252, 0, 255]
+                }
+            );
+            renderer.begin_gpu_frame_clear();
+            renderer.render_gpu_rect(0, 0, 1, 1, [0, 0, 0, 255]);
+            let checkpoint = renderer.draw_queue_checkpoint();
+            renderer.render_gpu_image(&sprite, None, None, BlendMode::None);
+            renderer.mask_queued_draws_with_depth(
+                checkpoint,
+                &[],
+                Rect::new(0, 0, 1, 1),
+                x,
+                40.,
+                1.,
+                55.,
+            );
+            assert_eq!(
+                renderer.try_capture_frame_rgba().unwrap().2,
+                if visible_applied {
+                    vec![255; 4]
+                } else {
+                    vec![0, 0, 0, 255]
+                },
+                "state depth/color disagreement at {x},40; applied={applied}, transitioning={transitioning}"
             );
         }
     }

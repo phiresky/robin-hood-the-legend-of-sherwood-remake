@@ -231,6 +231,14 @@ checks ground and raised surfaces, a transparent cutout, ownership-filled
 geometry and both sides of a bake tile seam at three character depths. The
 browser fixture also validates nonzero crop rebasing before exporting the ZIP.
 
+To exercise changing assets, run the same browser fixture with
+`TEST_QUERY='?export=state'` and extract its `TEST_BAKE_ZIP` into a separate fresh
+directory. Pass that absolute directory as `BAKED_STATE_EXPORT_DIR` to the GPU
+gate. The native background loader reads its appearance manifest and state images;
+pixel checks verify initial, applied, transitioning and reset color/depth on both
+sides of a bake tile seam. This assigns patch flags directly to isolate exported
+image binding and rendering; gameplay patch callbacks are tested separately.
+
 ## Host hardware queries
 
 ```sh

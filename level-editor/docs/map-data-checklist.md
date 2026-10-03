@@ -33,6 +33,14 @@ native GPU test checked six locations at three character depths, including both
 sides of a tile seam. This closes that fixture's geometry-to-bake-to-ZIP-to-native
 pixel chain. Arbitrary scene geometry, complete entity-mask selection and rendered
 scenery overlays are still not certified by it.
+The `work/map-compile/browser-state-gpu` fixture extends this chain to changing
+appearance: the browser packages initial/applied color and depth, the native
+background loader resolves the appearance manifest, and GPU readback checks both
+sides of the tile seam through initial, applied, transitioning, reset and reapplied
+states. Color and character occlusion switch together in every checked state.
+The browser and native GPU contracts pass. This isolates image binding/rendering
+with directly assigned patch flags; it does not replace gameplay callback tests
+or establish complete changing-asset coverage in the library.
 
 **Animated scenery:** asset gameplay can now define camera-facing sprite animations
 with a local anchor, sprite file/profile and center, activation/display flags and
@@ -722,7 +730,7 @@ sampled Rust queries. Equivalent evidence across all maps remains unfinished.
 | Original map information | Construction from the editor | Status |
 |---|---|---|
 | Background image and minimap | Render placed models/textures; downsample the minimap. | Working |
-| Character occlusion | Bake a 16-bit depth PNG from scene geometry. | Working for static scenes |
+| Character occlusion | Bake a 16-bit depth PNG from scene geometry and paired images for authored appearance states. | Static and changing browser exports pass native GPU fixtures; complete entity-mask and library coverage remain unverified |
 | Projectile/view/obstacle masks and masking polylines | Rasterize asset-local coverage triangles after placement; rebuild masking boundaries, receiving layers and obstacle/state links. A depth PNG alone does **not** replace all these semantics. | Partial: explicit mask authoring, raster compilation, ZIP packaging and native state links tested; recovery/publication and visual/depth state integration remain unfinished |
 | Walkable regions and layers | Transform asset-local surface polygons and heights; join coplanar regions, local multi-plane regions or matching authored boundary edges across assets, then assign fresh sectors/layers. | Partial: flat/sloped surfaces, holes and cross-asset multi-plane joins tested; join recovery/publication and full-map connectivity unfinished |
 | Movement blockers | Transform explicit asset-local movement contours; optionally select permanent part/volume solids and intersect them with walkable surfaces. Sight states stay independent. | Working in synthetic tests; recovered ownership still needs review |
