@@ -87,6 +87,8 @@
   connections retain their existing behavior.
   Surface-level jump rules generate reusable ledges and receiving bands from
   polygons, including holes, and support multiple neighbouring destinations.
+  An optional endpoint-adjustment limit aligns slightly skewed roof edges to
+  level contours while preserving the roof's slope and clipping receiving bands.
   No saved jump zones or neighbour identities are required for these surfaces.
   Eighteen reviewed library surfaces include these rules; the authoring tool
   stages descriptor-bound edits and updates saved-scene pins with rollback backups.

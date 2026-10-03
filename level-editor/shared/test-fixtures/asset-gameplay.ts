@@ -410,6 +410,22 @@ export function obstructedJumpCompilerFixture() {
   return fixture;
 }
 
+export function levelContourJumpCompilerFixture() {
+  const fixture = surfaceJumpCompilerFixture();
+  for (const [asset, surfaceId, baseX, baseZ] of [
+    [fixture.hut, "west", 0, 0],
+    [fixture.upper, "east", 110, 100],
+  ] as const) {
+    const surface = asset.gameplay!.surfaces.find((s) => s.id === surfaceId)!;
+    surface.polygon = surface.polygon.map(([x, y]) => [x + y * 0.02, y]);
+    surface.height = surface.polygon.map(([x]) => baseZ + (x - baseX) * 0.5);
+    surface.jump!.maxLevelAdjustment = 2;
+    surface.jump!.clearance = { radius: 0, height: 40 };
+  }
+  fixture.document.map = "Level contours on skewed roofs fixture";
+  return fixture;
+}
+
 export function inactiveJumpObstacleCompilerFixture() {
   const fixture = obstructedJumpCompilerFixture();
   const gameplay = fixture.assets.get("jump-wall")!.gameplay!;

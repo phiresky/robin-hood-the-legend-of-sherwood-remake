@@ -19,6 +19,8 @@ export interface AssetWalkableSurface {
     inset: number;
     /** Walkable depth behind the takeoff line required for a receiving band. */
     landingDepth: number;
+    /** Maximum horizontal outer-edge endpoint adjustment onto a level contour, before inset. */
+    maxLevelAdjustment?: number;
   };
   /** Retain fractional boundaries through movement assembly; only the final regions snap to the grid. */
   preserveMovementPrecision?: boolean;
@@ -1004,6 +1006,8 @@ export function validateAssetGameplay(
         jump.maxRise < 0 ||
         jump.maxDrop < 0 ||
         jump.minOverlap <= 0 ||
+        (jump.maxLevelAdjustment !== undefined &&
+          (!Number.isFinite(jump.maxLevelAdjustment) || jump.maxLevelAdjustment < 0)) ||
         (jump.edges !== undefined &&
           (!Array.isArray(jump.edges) ||
             new Set(jump.edges).size !== jump.edges.length ||

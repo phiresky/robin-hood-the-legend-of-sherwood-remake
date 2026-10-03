@@ -51,6 +51,7 @@ import {
   nonrenderingVolumeCompilerFixture,
   crossAssetJumpCompilerFixture,
   geometricJumpCompilerFixture,
+  levelContourJumpCompilerFixture,
   obstructedJumpCompilerFixture,
   multiDestinationJumpCompilerFixture,
   detachedJumpCompilerFixture,
@@ -351,6 +352,29 @@ test("obstructed jumps export the clearance checked by native animation", async 
     ),
   );
   assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+});
+
+test("adjusted roof contours export level edges checked by native flight", async () => {
+  const { document, assets } = levelContourJumpCompilerFixture();
+  const compiled = compileMap(document, [0, 0, 2000, 2000], assets).descriptor;
+  assert.equal(compiled.asset_geometry!.jump_line_pairs!.length, 1);
+  const fixture = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/asset-jump-level-contours.level.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(compiled, fixture);
+  for (const asset of assets.values())
+    for (const surface of asset.gameplay?.surfaces ?? [])
+      if (surface.jump) delete surface.jump.maxLevelAdjustment;
+  assert.equal(
+    compileMap(document, [0, 0, 2000, 2000], assets).descriptor.asset_geometry!.jump_line_pairs,
+    undefined,
+  );
 });
 
 test("low jump obstacles export spans cleared by sword-fighting flight too", async () => {

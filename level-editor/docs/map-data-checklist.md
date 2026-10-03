@@ -345,6 +345,22 @@ in progress; unmarked roof meshes do not acquire jumps. The authoring tool
 scene pins and retains rollback snapshots; this publication is backed up in
 `work/map-compile/surface-jump-publication`.
 
+Surface jump rules can also author `maxLevelAdjustment`, a maximum horizontal
+outer-edge endpoint displacement onto the surface's level contour before inset.
+This produces constant-height takeoff lines on slightly skewed roof boundaries
+without flattening the roof or changing its receiving plane. Receiving bands
+are still clipped around the surface boundary and holes; collision clearance and
+integer-grid rechecks still apply. Omission is unchanged unless an asset opts in.
+A skewed-roof export fixture verifies that this option creates a connection that
+would otherwise be omitted; native flight and gate-routing checks cover it.
+A separate recovered roof-surface fixture checks a rotated copy using its solid
+volume. This is not full-building certification: the complete timber building's
+structural volume blocks the tested eaves connection, so its library rules remain
+unchanged pending collision/ownership review. The option is available for authored
+assets; broader roof publication remains unfinished.
+All ten library maps compile unchanged after this addition; diagnostics are in
+`work/map-compile/level-contour-jumps`.
+
 **Reusable walkway connections:** navigation sockets now support an explicit
 minimum shared span, so different widths and shifts along a shared edge can join.
 Both assets must opt in; height is checked along the overlap, detached edges stay

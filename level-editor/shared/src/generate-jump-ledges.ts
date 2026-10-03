@@ -33,7 +33,26 @@ export function generateJumpLedges(
   for (const index of rules.edges ?? polygon.map((_, i) => i)) {
     const edge = [polygon[index]!, polygon[(index + 1) % polygon.length]!] as [Point, Point];
     if (area > 0) edge.reverse();
-    const [a, b] = edge;
+    let [a, b] = edge;
+    if (Math.hypot(b[0] - a[0], b[1] - a[1]) < rules.minOverlap) continue;
+    if (Math.abs(planeHeight(plane, a) - planeHeight(plane, b)) > 1e-4) {
+      const gradientSquared = plane[0] ** 2 + plane[1] ** 2;
+      const halfRise = (planeHeight(plane, b) - planeHeight(plane, a)) / 2;
+      const adjustment = Math.abs(halfRise) / Math.sqrt(gradientSquared);
+      if (adjustment > (rules.maxLevelAdjustment ?? 0)) {
+        warnings.push(
+          `Surface ${id} edge ${index}: sloped takeoff line omitted from automatic jumps.`,
+        );
+        continue;
+      }
+      // Align with the surface's level contour without changing its height plane.
+      const offset: Point = [
+        (plane[0] * halfRise) / gradientSquared,
+        (plane[1] * halfRise) / gradientSquared,
+      ];
+      a = [a[0] + offset[0], a[1] + offset[1]];
+      b = [b[0] - offset[0], b[1] - offset[1]];
+    }
     const dx = b[0] - a[0],
       dy = b[1] - a[1],
       length = Math.hypot(dx, dy);
@@ -43,15 +62,6 @@ export function generateJumpLedges(
       a[0] + dx * t + inward[0] * depth,
       a[1] + dy * t + inward[1] * depth,
     ];
-    if (
-      Math.abs(planeHeight(plane, at(0, rules.inset)) - planeHeight(plane, at(1, rules.inset))) >
-      1e-4
-    ) {
-      warnings.push(
-        `Surface ${id} edge ${index}: sloped takeoff line omitted from automatic jumps.`,
-      );
-      continue;
-    }
     const strip = [
       at(0, rules.inset),
       at(1, rules.inset),

@@ -71,51 +71,96 @@ test("sloping surfaces expose only level takeoff edges and preserve receiving el
   assert.equal(zone.anchor[2], 10);
 });
 
-test("a library rock derives usable jumps to a newly placed copy from its surface alone", async () => {
-  const { surface, obstacle } = JSON.parse(
-    await readFile(new URL("../test-fixtures/rock-jump-source.json", import.meta.url), "utf8"),
-  ) as { surface: AssetWalkableSurface; obstacle: SightObstacle };
-  const points = surface.polygon.map(([x, y], i): Vec3 => {
-    const z = typeof surface.height === "number" ? surface.height : surface.height[i]!;
-    return [x, y - z, z];
-  });
-  const plane = heightPlane(points);
-  const bodyRules = {
+test("authored adjustment derives level contours inside a slightly skewed roof boundary", () => {
+  const skewed: Point[] = [
+    [0, 0],
+    [100, 1],
+    [100, 101],
+    [0, 100],
+  ];
+  const plane = [0, 0.5, 20] as const;
+  const generated = generateJumpLedges("roof", skewed, [], [...plane], {
     ...rules,
-    inset: 8,
-    landingDepth: 12,
-    minOverlap: 16,
-    clearance: { radius: 4, height: 60 },
-  };
-  const first = generateJumpLedges(
-    "rock-a",
-    points.map(([x, y]) => [x, y]),
-    [],
-    plane,
-    bodyRules,
-  );
-  const edge = first.segments[0]!.edge;
-  const dx = edge.b[0] - edge.a[0],
-    dy = edge.b[1] - edge.a[1],
-    length = Math.hypot(dx, dy);
-  const tx = edge.a[0] + edge.b[0] - (dy / length) * 50;
-  const ty = edge.a[1] + edge.b[1] + (dx / length) * 50;
-  const rotated = points.map(([x, y, z]): Vec3 => [-x + tx, -y - 2 * z + ty, z]);
-  const second = generateJumpLedges(
-    "rock-b",
-    rotated.map(([x, y]) => [x, y]),
-    [],
-    heightPlane(rotated),
-    bodyRules,
-  );
-  const other = {
-    ...obstacle,
-    points: obstacle.points.map((p) => ({ ...p, x: -p.x + tx, y: -p.y + ty })),
-  };
-  const result = assembleJumpSegments(
-    [...first.segments, ...second.segments],
-    createJumpClearance([obstacle, other]),
-  );
-  assert.ok(result.pairs.length > 0, JSON.stringify(result.warnings));
-  for (const pair of result.pairs) assert.equal(pair.edges[0]!.a[2], 51);
+    maxLevelAdjustment: 1,
+    edges: [0, 2],
+  });
+  assert.equal(generated.segments.length, 2);
+  assert.deepEqual(generated.warnings, []);
+  for (const segment of generated.segments) {
+    assert.equal(segment.edge.a[2], segment.edge.b[2]);
+    for (const [, y, z] of [segment.edge.a, segment.edge.b])
+      assert.ok(Math.abs(z - (0.5 * (y - z) + 20)) < 1e-6);
+    const band = jumpLandingBand(
+      segment.id,
+      segment.edge,
+      generated.landings.get(segment.edge.zone)!,
+    );
+    assert.ok(
+      band.polygon.every(([x, y]) => x >= 0 && x <= 100 && y >= x / 100 && y <= 100 + x / 100),
+    );
+  }
+  const refused = generateJumpLedges("roof", skewed, [], [...plane], {
+    ...rules,
+    maxLevelAdjustment: 0.1,
+    edges: [0, 2],
+  });
+  assert.equal(refused.segments.length, 0);
+  assert.equal(refused.warnings.length, 2);
 });
+
+for (const source of ["rock", "roof"])
+  test(`a recovered ${source} surface derives jumps to a rotated copy without saved jump records`, async () => {
+    const { surface, obstacle } = JSON.parse(
+      await readFile(
+        new URL(`../test-fixtures/${source}-jump-source.json`, import.meta.url),
+        "utf8",
+      ),
+    ) as { surface: AssetWalkableSurface; obstacle: SightObstacle };
+    const points = surface.polygon.map(([x, y], i): Vec3 => {
+      const z = typeof surface.height === "number" ? surface.height : surface.height[i]!;
+      return [x, y - z, z];
+    });
+    const plane = heightPlane(points);
+    const bodyRules = {
+      ...rules,
+      inset: source === "roof" ? 2 : 8,
+      landingDepth: source === "roof" ? 4 : 12,
+      minOverlap: 16,
+      clearance: { radius: source === "roof" ? 0 : 4, height: 60 },
+      maxLevelAdjustment: 2,
+    };
+    const first = generateJumpLedges(
+      "rock-a",
+      points.map(([x, y]) => [x, y]),
+      [],
+      plane,
+      bodyRules,
+    );
+    const edge = first.segments.at(source === "roof" ? -1 : 0)!.edge;
+    const dx = edge.b[0] - edge.a[0],
+      dy = edge.b[1] - edge.a[1],
+      length = Math.hypot(dx, dy);
+    const tx = edge.a[0] + edge.b[0] - (dy / length) * 50;
+    const ty = edge.a[1] + edge.b[1] + (dx / length) * 50;
+    const rotated = points.map(([x, y, z]): Vec3 => [-x + tx, -y - 2 * z + ty, z]);
+    const second = generateJumpLedges(
+      "rock-b",
+      rotated.map(([x, y]) => [x, y]),
+      [],
+      heightPlane(rotated),
+      bodyRules,
+    );
+    const other = {
+      ...obstacle,
+      points: obstacle.points.map((p) => ({ ...p, x: -p.x + tx, y: -p.y + ty })),
+    };
+    const result = assembleJumpSegments(
+      [...first.segments, ...second.segments],
+      createJumpClearance([obstacle, other]),
+    );
+    assert.ok(result.pairs.length > 0, JSON.stringify(result.warnings));
+    for (const pair of result.pairs) {
+      assert.equal(pair.edges[0]!.a[2], pair.edges[0]!.b[2]);
+      if (source === "rock") assert.equal(pair.edges[0]!.a[2], 51);
+    }
+  });

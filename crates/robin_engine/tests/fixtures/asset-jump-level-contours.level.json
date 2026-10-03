@@ -1,0 +1,311 @@
+{
+  "title": "Level contours on skewed roofs fixture",
+  "map_filename": "editor-level-contours-on-skewed-roofs-fixture",
+  "spawn_points": [],
+  "walkable_polygon": [
+    [
+      0,
+      0
+    ],
+    [
+      1999,
+      0
+    ],
+    [
+      1999,
+      1999
+    ],
+    [
+      0,
+      1999
+    ]
+  ],
+  "volumes": [],
+  "asset_geometry": {
+    "motion_data": {
+      "layers": [
+        [
+          {
+            "is_lift": false,
+            "state_id": 0,
+            "polygon": {
+              "points": [
+                [
+                  300,
+                  300
+                ],
+                [
+                  390,
+                  255
+                ],
+                [
+                  392,
+                  354
+                ],
+                [
+                  302,
+                  399
+                ]
+              ]
+            },
+            "skeleton_segments": [],
+            "flags": 0,
+            "obstacles": [
+              {
+                "state_id": 0,
+                "polygon": {
+                  "points": [
+                    [
+                      350,
+                      315
+                    ],
+                    [
+                      350,
+                      325
+                    ],
+                    [
+                      340,
+                      330
+                    ],
+                    [
+                      340,
+                      320
+                    ]
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        [
+          {
+            "is_lift": false,
+            "state_id": 0,
+            "polygon": {
+              "points": [
+                [
+                  411,
+                  310
+                ],
+                [
+                  501,
+                  265
+                ],
+                [
+                  503,
+                  364
+                ],
+                [
+                  413,
+                  409
+                ]
+              ]
+            },
+            "skeleton_segments": [],
+            "flags": 0,
+            "obstacles": []
+          }
+        ],
+        []
+      ],
+      "graph_bytes": []
+    },
+    "jump_zones": [
+      {
+        "polygon": {
+          "points": [
+            [
+              380,
+              353
+            ],
+            [
+              380,
+              311
+            ],
+            [
+              386,
+              311
+            ],
+            [
+              386,
+              353
+            ]
+          ]
+        },
+        "sector": 0,
+        "layer": 0,
+        "helper_needed": false
+      },
+      {
+        "polygon": {
+          "points": [
+            [
+              423,
+              311
+            ],
+            [
+              423,
+              353
+            ],
+            [
+              417,
+              353
+            ],
+            [
+              417,
+              311
+            ]
+          ]
+        },
+        "sector": 2,
+        "layer": 1,
+        "helper_needed": false
+      }
+    ],
+    "jump_line_pairs": [
+      {
+        "line1": {
+          "point_a": [
+            386,
+            353,
+            43
+          ],
+          "point_b": [
+            386,
+            311,
+            43
+          ],
+          "jump_zone_index": 1
+        },
+        "line2": {
+          "point_a": [
+            417,
+            311,
+            103
+          ],
+          "point_b": [
+            417,
+            353,
+            103
+          ],
+          "jump_zone_index": 0
+        },
+        "jump_long": true
+      }
+    ],
+    "sight_obstacles": [
+      {
+        "points": [
+          {
+            "x": 340,
+            "y": 340,
+            "z_bottom": 0,
+            "z_top": 30
+          },
+          {
+            "x": 350,
+            "y": 340,
+            "z_bottom": 0,
+            "z_top": 30
+          },
+          {
+            "x": 350,
+            "y": 350,
+            "z_bottom": 0,
+            "z_top": 30
+          },
+          {
+            "x": 340,
+            "y": 350,
+            "z_bottom": 0,
+            "z_top": 30
+          }
+        ],
+        "projection_area": null,
+        "solid": true,
+        "opaque": true,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 0,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 300,
+            "y": 300,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 390,
+            "y": 300,
+            "z_bottom": 45,
+            "z_top": 45
+          },
+          {
+            "x": 392,
+            "y": 400,
+            "z_bottom": 46,
+            "z_top": 46
+          },
+          {
+            "x": 302,
+            "y": 400,
+            "z_bottom": 1,
+            "z_top": 1
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 0,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 411,
+            "y": 410,
+            "z_bottom": 100,
+            "z_top": 100
+          },
+          {
+            "x": 501,
+            "y": 410,
+            "z_bottom": 145,
+            "z_top": 145
+          },
+          {
+            "x": 503,
+            "y": 510,
+            "z_bottom": 146,
+            "z_top": 146
+          },
+          {
+            "x": 413,
+            "y": 510,
+            "z_bottom": 101,
+            "z_top": 101
+          }
+        ],
+        "projection_area": [
+          2,
+          1
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 0,
+        "material_indices": []
+      }
+    ],
+    "doors": []
+  }
+}

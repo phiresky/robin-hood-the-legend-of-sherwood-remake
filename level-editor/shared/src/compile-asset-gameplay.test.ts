@@ -1092,6 +1092,14 @@ test("surface rules construct jump edges and landing zones without recovered jum
   assert.equal(generated.jump_line_pairs!.length, 1);
   assert.equal(generated.jump_zones!.length, 2);
   const west = hut.gameplay!.surfaces.find((surface) => surface.id === "west")!;
+  for (const invalid of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+    west.jump!.maxLevelAdjustment = invalid;
+    assert.throws(
+      () => compileAssetGameplay(document, assets, bounds),
+      /invalid surface jump rules/,
+    );
+  }
+  delete west.jump!.maxLevelAdjustment;
   west.jump!.maxGap = 1;
   assert.equal(compileAssetGameplay(document, assets, bounds).jump_line_pairs, undefined);
   west.jump!.edges = [999];
