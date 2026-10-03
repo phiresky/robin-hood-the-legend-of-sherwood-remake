@@ -1367,16 +1367,11 @@ impl MultiplayerMenuState {
                 io,
                 &mut callbacks.save_manager,
                 detailed,
-                true,
+                false,
                 |manager, index| {
                     let save = manager
                         .preflight_exact_slot(index)
                         .map_err(|error| format!("Could not load save: {error:#}"))?;
-                    if save.header.multiplayer_diagnostic {
-                        return Err(
-                            "Diagnostic captures cannot be used to start a campaign.".into()
-                        );
-                    }
                     let slot = manager.slot_name(index).expect("selected slot identity");
                     Ok((slot, save))
                 },

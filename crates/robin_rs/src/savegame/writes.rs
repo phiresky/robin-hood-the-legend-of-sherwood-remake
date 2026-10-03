@@ -329,7 +329,8 @@ impl SaveGameManager {
     }
 
     /// Write a local multiplayer diagnostic. It is deliberately tagged in
-    /// both the payload and slot index and is never suitable as session state.
+    /// both the payload and slot index. Resuming it requires a fresh campaign
+    /// lobby to validate the world and rebind seats before adoption.
     pub fn write_multiplayer_diagnostic_from_engine(
         &mut self,
         host: &mut Host,

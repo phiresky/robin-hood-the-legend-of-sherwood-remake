@@ -101,6 +101,10 @@ impl PreparedLoad {
             .for_cooperative_campaign_resume(rules)
             .map_err(anyhow::Error::msg)?;
         save.header.cooperative_campaign = Some(rules);
+        // Older multiplayer Save/QuickSave actions tagged even intentional saves
+        // as local captures. A fresh lobby adopts the validated world and assigns
+        // new seats; it does not restore the previous session's authority.
+        save.header.multiplayer_diagnostic = false;
         save.header.replay = None;
         self.save = save.into();
         Ok(self)
@@ -150,6 +154,49 @@ mod tests {
         PendingLevelLoad, SaveLoadRequest, operation_outcome_tests::diagnostic_callback_fixture,
     };
     use robin_engine::multiplayer::{MultiplayerSessionId, SnapshotTransitionId};
+
+    #[test]
+    #[ignore = "requires ROBIN_SAVE_COMPAT_FIXTURE pointing to an existing multiplayer save"]
+    fn existing_multiplayer_save_starts_fresh_campaign_lobby() {
+        let path = std::path::PathBuf::from(std::env::var("ROBIN_SAVE_COMPAT_FIXTURE").unwrap());
+        let original = std::fs::read(&path).unwrap();
+        let save = crate::save_file::GameSaveFile::read_from(&path).unwrap();
+        assert!(save.header.multiplayer_diagnostic);
+        let campaign = serde_json::to_value(save.engine.campaign()).unwrap();
+        let frame = save.engine.frame_counter();
+        let directory = tempfile::tempdir().unwrap();
+        let mut manager =
+            crate::savegame::SaveGameManager::new(directory.path().to_str().unwrap().to_owned());
+        let metadata = crate::savegame::SaveGame::new(
+            "Savegame_000".into(),
+            save.header.display_text.clone(),
+            save.header.mission_id,
+        );
+        manager.insert_test_slot(metadata, crate::savegame::SlotState::Published);
+        std::fs::write(directory.path().join("Savegame_000.json"), &original).unwrap();
+        let load = PreparedLoad::preflight(&manager, Some(manager.slot_handle(0).unwrap()))
+            .unwrap()
+            .unwrap();
+        let rules = robin_engine::coop::CoopRules {
+            campaign: true,
+            players: 2,
+            ..Default::default()
+        };
+        let resumed = load.for_campaign_lobby(rules).unwrap();
+        resumed.validate_slot(&manager).unwrap();
+        assert!(!resumed.save().header.multiplayer_diagnostic);
+        assert_eq!(resumed.save().header.cooperative_campaign, Some(rules));
+        assert!(resumed.save().header.replay.is_none());
+        assert_eq!(resumed.save().engine.frame_counter(), frame);
+        assert_eq!(
+            serde_json::to_value(resumed.save().engine.campaign()).unwrap(),
+            campaign
+        );
+        assert_eq!(
+            std::fs::read(directory.path().join("Savegame_000.json")).unwrap(),
+            original
+        );
+    }
 
     #[test]
     fn prepared_local_rejects_stale_foreign_and_decoded_authority_without_rebinding() {

@@ -100,8 +100,9 @@
 - **Cooperative campaigns.** The full-game Multiplayer mission list includes
   Start Campaign for a fresh profile, Continue Campaign using the same latest
   compatible checkpoint as the main-menu Play button, and Load Save for an
-  explicit save selection. This picker excludes diagnostic captures and keeps
-  failed loads in the picker with an acknowledged error message. Compatible
+  explicit save selection. Old multiplayer saves tagged as local diagnostic
+  captures can start a fresh lobby, with new player seats and session authority.
+  Failed loads stay in the picker with an acknowledged error message. Compatible
   single-player saves can be continued in
   co-op without resetting their progress. Story
   progression, recruits, money, Sherwood management and mission selection persist

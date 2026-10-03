@@ -621,7 +621,8 @@ pub struct SaveHeader {
     /// Human-readable label chosen by the player (empty for auto saves).
     pub display_text: String,
     /// Local state capture made during multiplayer for diagnostics only.
-    /// These bytes are never an authoritative session transition source.
+    /// Not a direct live-session transition source. A fresh campaign lobby can
+    /// adopt the world after validation and rebinding its seats.
     pub multiplayer_diagnostic: bool,
     #[serde(default)]
     pub cooperative_campaign: Option<robin_engine::coop::CoopRules>,

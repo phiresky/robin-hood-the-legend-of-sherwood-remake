@@ -819,7 +819,7 @@ pub async fn show_load_picker(
 }
 
 /// Keep the picker open on validation failure, with an acknowledged error notice.
-/// Multiplayer callers hide diagnostic captures, which cannot resume a campaign.
+/// Connected-session callers can hide local captures; fresh lobbies can adopt them.
 pub(crate) async fn show_validated_load_picker<T>(
     io: &mut ModalScreenIo<'_, '_>,
     save_manager: &mut SaveGameManager,
