@@ -12,7 +12,9 @@
   packaged files; missing resources omit only the affected bank. An offline
   standalone-effect authoring helper creates reusable local frames without baking
   sprite artwork into the background; placement, copying and save/reopen are
-  covered by compiler tests. Published effect definitions and preview remain unfinished.
+  covered by compiler tests. Pinned effect-only assets show a verified static sprite
+  thumbnail in the palette, with legacy key colors decoded. Published effect
+  definitions and live map-viewport previews remain unfinished.
   `pipeline/src/author-scenery-animation-assets.ts` generates a fresh asset
   library from local recipes, validates/copies pinned sprite resources and emits
   importable placement/source records. It does not require a source level.

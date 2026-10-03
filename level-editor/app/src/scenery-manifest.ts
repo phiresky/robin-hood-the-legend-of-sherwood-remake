@@ -29,7 +29,7 @@ export async function validateSceneryManifest(
     throw new Error("invalid sprite pixel format");
   const names = new Set<string>();
   const images = new Set<string>();
-  const profiles: { name: string; center_x: number; center_y: number }[] = [];
+  const profiles: { name: string; center_x: number; center_y: number; preview: string }[] = [];
   for (const entry of list(manifest.profiles, "sprite profiles")) {
     const profile = record(entry);
     if (typeof profile.name !== "string" || !profile.name || names.has(profile.name))
@@ -44,7 +44,13 @@ export async function validateSceneryManifest(
       !finite(profile.center_y)
     )
       throw new Error("invalid sprite profile geometry");
-    profiles.push({ name: profile.name, center_x: profile.center_x, center_y: profile.center_y });
+    const result = {
+      name: profile.name,
+      center_x: profile.center_x,
+      center_y: profile.center_y,
+      preview: "",
+    };
+    profiles.push(result);
     const directions = new Map<number, number[]>();
     for (const item of list(profile.rows, "sprite rows")) {
       const row = record(item);
@@ -76,6 +82,7 @@ export async function validateSceneryManifest(
         const path = row.path && row.path !== "." ? `${row.path}/${frame.file}` : frame.file;
         const bytes = files[path];
         if (!safeLibraryPath(path) || !bytes) throw new Error(`missing pinned frame ${path}`);
+        if (!result.preview) result.preview = path;
         if (images.has(path)) continue;
         // Reject impossible runtime dimensions before the PNG decoder allocates its pixel buffer.
         if (bytes.length < 24 || bytes.slice(0, 8).join() !== "137,80,78,71,13,10,26,10")

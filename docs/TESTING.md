@@ -255,6 +255,11 @@ exposes host data or silently running zero tests for a missing feature.
 
 ## Tooling and web checks
 
+The editor browser harness also accepts `TEST_PAGE=scenery-preview.html` when
+pointed at its lifecycle Vite server. It renders real `AssetPreview` cards from
+pinned fixture banks and checks canvas pixels for legacy transparency and RGBA
+color preservation. This covers static palette thumbnails, not in-map animation.
+
 ```sh
 python3 scripts/test_quality_suites.py
 bash scripts/check-quality.sh tooling

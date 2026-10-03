@@ -117,8 +117,18 @@ GLB placement frame and an initial editor placement. Multiple effects may share
 one frame. The frame has no baked artwork or collision: runtime sprite animation
 is exported separately. Tests cover copying, rotation, elevation, deletion and
 save/reopen without changing other geometry or the original effect. This is an
-offline authoring primitive; a visible editor preview and published effect assets
+offline authoring primitive; live map-viewport previews and published effect assets
 are still required before treating standalone effects as a finished library feature.
+
+Effect-only asset cards with pinned banks now show a representative static sprite
+frame, chosen from the first active effect (or the first effect if all are inactive).
+The thumbnail verifies resource hashes, manifest frames and the profile center,
+preserves RGBA colors and removes legacy transparency/shadow keys. It lives only
+on the palette canvas and cannot leak into a map bake. Ordinary model previews
+remain unchanged; effects using unpinned installed banks still have no sprite
+thumbnail. Unit checks and the browser fixture `tests/scenery-preview.html` pass,
+including actual canvas pixels for legacy transparency and RGBA green. This does
+not verify live animation, multi-effect composition or world-view placement.
 
 The command `pipeline/src/author-scenery-animation-assets.ts` writes those assets
 to a fresh library directory. A recipe contains `version: 1` and an `entries`

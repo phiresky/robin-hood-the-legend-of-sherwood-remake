@@ -2,6 +2,9 @@ import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import * as THREE from "three";
 import type { ProjectionAssetEntry } from "@rle/shared";
 import { AssetPreviewCache } from "./asset-preview-cache";
+import { loadSceneryThumbnail } from "./scenery-thumbnail.ts";
+import { libraryFile } from "./projection-library.ts";
+import { decodeSpritePixels } from "./entity-projection.ts";
 
 /** One context for the whole catalog, regardless of how many cards are visible. */
 export class AssetPreviewRenderer {
@@ -46,6 +49,45 @@ export default function AssetPreview(props: {
   async function load(root: FileSystemDirectoryHandle, entry: ProjectionAssetEntry) {
     const current = ++generation;
     try {
+      const thumbnail =
+        entry.editor &&
+        (await loadSceneryThumbnail(
+          entry.editor,
+          async (name) => new Uint8Array(await (await libraryFile(root, name)).arrayBuffer()),
+        ));
+      if (!visible || current !== generation) return;
+      if (thumbnail) {
+        const bitmap = await createImageBitmap(
+          new Blob([new Uint8Array(thumbnail.png)], { type: "image/png" }),
+        );
+        try {
+          if (!visible || current !== generation) return;
+          const image = document.createElement("canvas");
+          image.width = bitmap.width;
+          image.height = bitmap.height;
+          const pixels = image.getContext("2d");
+          const target = canvas.getContext("2d");
+          if (!pixels || !target) throw new Error("Scenery thumbnail canvas is unavailable");
+          pixels.drawImage(bitmap, 0, 0);
+          const rgba = pixels.getImageData(0, 0, image.width, image.height);
+          decodeSpritePixels(rgba.data, thumbnail.legacy);
+          pixels.putImageData(rgba, 0, 0);
+          const scale = Math.min(300 / image.width, 200 / image.height);
+          target.clearRect(0, 0, canvas.width, canvas.height);
+          target.imageSmoothingEnabled = false;
+          target.drawImage(
+            image,
+            (canvas.width - image.width * scale) / 2,
+            (canvas.height - image.height * scale) / 2,
+            image.width * scale,
+            image.height * scale,
+          );
+          setStatus("");
+        } finally {
+          bitmap.close();
+        }
+        return;
+      }
       const loaded = await props.renderer.cache.acquire(root, entry);
       if (!visible || current !== generation) {
         loaded.release();
