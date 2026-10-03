@@ -149,6 +149,14 @@ export function unavailableMaskControlCompilerFixture() {
   valid.id = "available-cover";
   valid.initialMasks = ["available-covered"];
   valid.appliedMasks = ["available-revealed"];
+  valid.doorLinks = { mode: "trigger-transition", ids: ["available-passage"] };
+  const door = structuredClone(gameplay.doors[0]!);
+  door.id = "available-passage";
+  door.outside[1] += 25;
+  door.inside[1] += 25;
+  door.middle[1] += 25;
+  for (const point of door.polygon) point[1] += 25;
+  gameplay.doors.push(door);
   const masks = gameplay.masks!.map((mask) => ({
     ...structuredClone(mask),
     id: `available-${mask.id}`,
@@ -158,6 +166,7 @@ export function unavailableMaskControlCompilerFixture() {
   const unavailable = gameplay.movementTransitions![0]!;
   unavailable.waypoint = [45, 45, 100];
   unavailable.appearances = ["roof"];
+  unavailable.doorLinks = { mode: "trigger-transition", ids: ["passage"] };
   fixture.document.map = "Unavailable mask control fixture";
   return fixture;
 }

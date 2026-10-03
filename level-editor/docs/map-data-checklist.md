@@ -137,8 +137,14 @@ visual variants in their initial appearance, keeping color/depth bake visibility
 consistent with the retained barriers. A regression checks that an independently
 placed, valid copy still changes appearance and keeps its movement controller.
 The native fallback fixture includes a visual binding and loads without orphaned
-patch references. Controls with changing sight or door-triggered callbacks still
-need a valid anchor; freezing those coupled effects remains unfinished.
+patch references. Door-triggered controls also retain their initial state when
+their anchor is unavailable: the door remains traversable with its initial rights,
+and its unavailable callback is removed. A native regression passes through that
+door in both directions, then verifies that another door still triggers its own
+reindexed mask switch. Controls with changing sight still need a valid anchor;
+freezing those coupled effects remains unfinished.
+All ten stored maps compile to unchanged gameplay data after the door fallback
+change (`work/map-compile/door-control-fallback`).
 
 **Unavailable reveal controls:** for the supported fallback controls above, if the
 anchor cannot resolve, best-effort export retains the initial masks, omits its applied masks and

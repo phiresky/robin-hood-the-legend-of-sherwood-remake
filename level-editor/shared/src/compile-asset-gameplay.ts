@@ -2083,8 +2083,7 @@ function compileAssetGameplayAttempt(
               if (
                 (t.changes.length || t.initialMasks.length || t.appliedMasks.length) &&
                 !t.initialSight.length &&
-                !t.appliedSight.length &&
-                (!t.doorLinks || t.doorLinks.mode === "swap-rights")
+                !t.appliedSight.length
               )
                 throw new UnavailableStateControl(
                   t.id,

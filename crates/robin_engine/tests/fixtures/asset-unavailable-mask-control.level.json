@@ -577,7 +577,13 @@
         ],
         "applied_masks": [
           2
-        ]
+        ],
+        "door_links": {
+          "mode": "trigger-transition",
+          "indices": [
+            1
+          ]
+        }
       }
     ],
     "sight_obstacles": [
@@ -662,6 +668,54 @@
         "point_in": [
           420,
           350
+        ],
+        "sector_in": 2,
+        "layer_in": 0
+      },
+      {
+        "door_type": 0,
+        "active": true,
+        "locked_pc": false,
+        "unlockable": false,
+        "locked_npc_villain": false,
+        "locked_npc_civilian": false,
+        "locked_pc_after_patch": false,
+        "unlockable_after_patch": false,
+        "locked_npc_villain_after_patch": false,
+        "locked_npc_civilian_after_patch": false,
+        "door_sector": {
+          "points": [
+            [
+              390,
+              365
+            ],
+            [
+              410,
+              365
+            ],
+            [
+              410,
+              385
+            ],
+            [
+              390,
+              385
+            ]
+          ]
+        },
+        "point_out": [
+          380,
+          375
+        ],
+        "sector_out": 0,
+        "layer_out": 0,
+        "point_mid": [
+          400,
+          375
+        ],
+        "point_in": [
+          420,
+          375
         ],
         "sector_in": 2,
         "layer_in": 0

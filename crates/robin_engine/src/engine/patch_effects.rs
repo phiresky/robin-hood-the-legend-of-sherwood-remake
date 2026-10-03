@@ -776,6 +776,55 @@ mod tests {
         assert_eq!(engine.world.fast_grid.level.masks[0].height, 40);
         let patch = crate::patch::PatchIndex::new(0).unwrap();
         let sim = crate::sim_rng::test_context();
+        assert_eq!(engine.script_domains.interactables.doors.len(), 2);
+        assert_eq!(
+            engine.script_domains.interactables.doors[0].patch_index,
+            None
+        );
+        assert_eq!(
+            engine.script_domains.interactables.doors[1].patch_index,
+            Some(patch)
+        );
+        for index in 0..2 {
+            let door = engine.script_domains.interactables.doors[index].clone();
+            let actor = engine.add_test_entity(
+                crate::engine::test_support::actors::TestActor::pc(
+                    crate::element::Posture::Upright,
+                )
+                .sector(u16::from(door.sector_out))
+                .map_position(door.point_out)
+                .build(),
+            );
+            engine
+                .get_entity_mut(actor)
+                .unwrap()
+                .element_data_mut()
+                .set_layer(door.layer_out);
+            let door_index = crate::gate::DoorIndex::new(index as u32).unwrap();
+            engine.execute_pass_door(TickCtx::new(&sim, &assets), actor, door_index, true);
+            let element = engine.get_entity(actor).unwrap().element_data();
+            assert_eq!(
+                element.sector().map(u16::from),
+                Some(u16::from(door.sector_in))
+            );
+            assert_eq!(element.layer(), door.layer_in);
+            assert_eq!(
+                engine.world.fast_grid.mask_active,
+                [true, index == 0, index == 1]
+            );
+            assert_eq!(
+                engine.script_domains.interactables.patches[0].applied,
+                index == 1
+            );
+            engine.execute_pass_door(TickCtx::new(&sim, &assets), actor, door_index, false);
+            let element = engine.get_entity(actor).unwrap().element_data();
+            assert_eq!(
+                element.sector().map(u16::from),
+                Some(u16::from(door.sector_out))
+            );
+            assert_eq!(element.layer(), door.layer_out);
+        }
+        assert_eq!(engine.world.fast_grid.mask_active, [true, true, false]);
         engine.apply_patch(TickCtx::new(&sim, &assets), patch);
         assert_eq!(engine.world.fast_grid.mask_active, [true, false, true]);
         engine.reset_patch(TickCtx::new(&sim, &assets), patch);

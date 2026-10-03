@@ -134,6 +134,11 @@ test("unavailable mask control keeps the initial mask and reindexes the remainin
   assert.equal(geometry.movement_transitions!.length, 1);
   assert.deepEqual(geometry.movement_transitions![0]!.initial_masks, [1]);
   assert.deepEqual(geometry.movement_transitions![0]!.applied_masks, [2]);
+  assert.equal(geometry.doors!.length, 2);
+  assert.deepEqual(geometry.movement_transitions![0]!.door_links, {
+    mode: "trigger-transition",
+    indices: [1],
+  });
   const fixture = JSON.parse(
     await readFile(
       new URL(
