@@ -873,6 +873,67 @@ mod tests {
     }
 
     #[test]
+    fn generated_jump_approaches_remain_walkable_when_nearby_obstacles_switch() {
+        let (mut engine, assets) = load_compiled_transition(
+            include_bytes!("../../tests/fixtures/asset-jump-changing-approach.level.json"),
+            (2000., 2000.),
+        );
+        let patch = crate::patch::PatchIndex::new(0).unwrap();
+        assert_eq!(engine.script_domains.interactables.patches.len(), 1);
+        assert_eq!(engine.world.fast_grid.level.jump_lines.len(), 4);
+        let original_lines = engine.world.fast_grid.level.jump_lines.clone();
+        let sim = crate::sim_rng::test_context();
+        for (step, applied) in [false, true, false, true, false].into_iter().enumerate() {
+            if step > 0 {
+                if applied {
+                    engine.apply_patch(TickCtx::new(&sim, &assets), patch);
+                } else {
+                    engine.reset_patch(TickCtx::new(&sim, &assets), patch);
+                }
+            }
+            let grid = &engine.world.fast_grid;
+            // This crosses the excluded middle of the original unsplit ledge.
+            assert_eq!(
+                grid.is_reachable_thin(MapPoint::new(383., 335.), MapPoint::new(383., 365.), 0),
+                !applied
+            );
+            let footprint = grid.try_move_box_half_diagonal(0).unwrap();
+            for (line, original) in grid.level.jump_lines.iter().zip(&original_lines) {
+                assert_eq!(line.point_a, original.point_a);
+                assert_eq!(line.point_b, original.point_b);
+                let dx = line.point_b.x - line.point_a.x;
+                let dy = line.point_b.y - line.point_a.y;
+                let length = dx.hypot(dy);
+                let sector =
+                    grid.level.sectors[line.sector_index.unwrap().get() as usize].sector_number;
+                for t in [0.0, 0.25, 0.5, 0.75, 1.0] {
+                    let edge = MapPoint::new(line.point_a.x + dx * t, line.point_a.y + dy * t);
+                    let inside =
+                        MapPoint::new(edge.x + dy / length * 6., edge.y - dx / length * 6.);
+                    for (start, goal) in [(inside, edge), (edge, inside)] {
+                        assert!(grid.is_reachable_thick(start, goal, line.layer, footprint));
+                        let route = engine
+                            .world
+                            .pathfinder
+                            .find_path(
+                                &assets.navigation.pathfinder_graph,
+                                grid,
+                                line.layer,
+                                i16::from(sector) as u16,
+                                0,
+                                start,
+                                goal,
+                                false,
+                            )
+                            .expect("retained jump approach must work in both obstacle states");
+                        assert_eq!(route.last(), Some(&goal));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn editor_compiled_sight_transition_swaps_obstacles_with_navigation() {
         check_compiled_transition(
             include_bytes!("../../tests/fixtures/asset-sight-transition.level.json"),

@@ -1419,6 +1419,8 @@ fn compiled_roof_jump_routes_enforce_character_skills_and_destination_helpers() 
     use robin_engine::gate::{ActorAuthInfo, find_path_gates_with_sector_indices};
 
     for bytes in [
+        include_bytes!("fixtures/asset-jump-movement-blocked.level.json").as_slice(),
+        include_bytes!("fixtures/asset-jump-changing-approach.level.json").as_slice(),
         include_bytes!("fixtures/asset-jump.level.json").as_slice(),
         include_bytes!("fixtures/asset-jump-detached.level.json").as_slice(),
         include_bytes!("fixtures/asset-jump-geometric.level.json").as_slice(),

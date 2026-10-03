@@ -462,6 +462,22 @@ export function movementBlockedJumpCompilerFixture() {
   return fixture;
 }
 
+export function changingJumpApproachCompilerFixture() {
+  const fixture = movementBlockedJumpCompilerFixture();
+  const gameplay = fixture.assets.get("roof-exclusion")!.gameplay!;
+  const blockers = gameplay.movementBlockers!;
+  gameplay.movementBlockers = [];
+  gameplay.movementTransitions = [
+    {
+      ...movementTransitionCompilerFixture().hut.gameplay!.movementTransitions![0]!,
+      initial: [],
+      applied: blockers,
+    },
+  ];
+  fixture.document.map = "Switchable jump approach fixture";
+  return fixture;
+}
+
 export function inactiveJumpObstacleCompilerFixture() {
   const fixture = obstructedJumpCompilerFixture();
   const gameplay = fixture.assets.get("jump-wall")!.gameplay!;

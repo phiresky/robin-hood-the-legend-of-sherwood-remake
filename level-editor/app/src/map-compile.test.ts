@@ -53,6 +53,7 @@ import {
   geometricJumpCompilerFixture,
   levelContourJumpCompilerFixture,
   movementBlockedJumpCompilerFixture,
+  changingJumpApproachCompilerFixture,
   obstructedJumpCompilerFixture,
   multiDestinationJumpCompilerFixture,
   detachedJumpCompilerFixture,
@@ -376,23 +377,29 @@ test("movement-only assets trim generated approaches and reconnect when moved aw
   assert.deepEqual(clear.asset_geometry!.sight_obstacles, blocked.asset_geometry!.sight_obstacles);
 });
 
-test("switchable movement exclusions constrain permanent jump connections in both states", () => {
-  const { document, assets } = movementBlockedJumpCompilerFixture();
-  const compile = () => compileMap(document, [0, 0, 2000, 2000], assets).descriptor.asset_geometry!;
-  const permanent = compile().jump_line_pairs;
+test("switchable movement exclusions constrain permanent jump connections in both states", async () => {
+  const fixed = movementBlockedJumpCompilerFixture();
+  const permanent = compileMap(fixed.document, [0, 0, 2000, 2000], fixed.assets).descriptor
+    .asset_geometry!.jump_line_pairs;
+  const { document, assets } = changingJumpApproachCompilerFixture();
+  const compile = () => compileMap(document, [0, 0, 2000, 2000], assets).descriptor;
+  const compiled = compile();
+  const expected = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/asset-jump-changing-approach.level.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(compiled, expected);
   const gameplay = assets.get("roof-exclusion")!.gameplay!;
-  const blockers = gameplay.movementBlockers!;
-  gameplay.movementBlockers = [];
-  const transition = {
-    ...movementTransitionCompilerFixture().hut.gameplay!.movementTransitions![0]!,
-    initial: [],
-    applied: blockers,
-  };
-  gameplay.movementTransitions = [transition];
-  assert.deepEqual(compile().jump_line_pairs, permanent);
-  transition.initial = blockers;
+  const transition = gameplay.movementTransitions![0]!;
+  assert.deepEqual(compiled.asset_geometry!.jump_line_pairs, permanent);
+  transition.initial = transition.applied;
   transition.applied = [];
-  assert.deepEqual(compile().jump_line_pairs, permanent);
+  assert.deepEqual(compile().asset_geometry!.jump_line_pairs, permanent);
 });
 
 test("adjusted roof contours export level edges checked by native flight", async () => {
