@@ -451,14 +451,28 @@ mod tests {
         let manifest = serde_json::from_slice(&bytes).unwrap();
         let cache = build_hackable_cache(&root, hackable_manifest_hash(&bytes), manifest).unwrap();
         validate_cache_frames("editor-flame", &cache).unwrap();
-        assert_eq!(cache.frames.len(), 1);
+        assert_eq!(cache.frames.len(), 2);
+        assert_ne!(cache.frames[0].rgba_data, cache.frames[1].rgba_data);
         assert_eq!(cache.profiles.len(), 1);
         let profile = &cache.profiles[0];
         assert_eq!(profile.name, "burning");
         assert_eq!(profile.info.center, SpriteAnchor::new(4.0, 6.0));
         assert_eq!(profile.info.size, SpriteSize::new(8.0, 8.0));
-        assert_eq!(profile.info.scripts[0].delays, [2]);
-        assert_eq!(profile.info.scripts[0].frame_ids, [0]);
+        assert_eq!(profile.info.scripts[0].delays, [2, 4]);
+        assert_eq!(profile.info.scripts[0].frame_ids, [0, 1]);
+        // Pass decoded metadata to the separate engine playback acceptance test.
+        std::fs::write(
+            exported.join("decoded-scenery-profiles.json"),
+            serde_json::to_vec(
+                &cache
+                    .profiles
+                    .iter()
+                    .map(|profile| (&profile.name, &profile.info))
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
     }
 
     fn manifest(directions: &[Option<u16>]) -> HackableRhsManifest {

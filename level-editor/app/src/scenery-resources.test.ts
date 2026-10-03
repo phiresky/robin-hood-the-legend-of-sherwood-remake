@@ -46,6 +46,7 @@ function fixture() {
             path: "idle",
             frames: [
               { file: "0.png", delay: 2, distance: 0, offset_x: 0, offset_y: 0, sound_id: 65535 },
+              { file: "1.png", delay: 4, distance: 0, offset_x: 1, offset_y: -1, sound_id: 65535 },
             ],
           },
         ],
@@ -57,6 +58,15 @@ function fixture() {
     [
       `${root}/idle/0.png`,
       encode({ width: 8, height: 8, channels: 4, data: new Uint8Array(256).fill(255) }),
+    ],
+    [
+      `${root}/idle/1.png`,
+      encode({
+        width: 8,
+        height: 8,
+        channels: 4,
+        data: Uint8Array.from({ length: 256 }, (_, i) => (i % 4 === 3 ? 255 : 64)),
+      }),
     ],
   ]);
   hut.resources = [...files].map(([path, bytes]) => ({
@@ -78,7 +88,7 @@ test("pinned scenery manifest and frames survive ZIP packaging exactly", async (
   const resources = await collectSceneryResources(compiled, assets, read, (done) =>
     progress.push(done),
   );
-  assert.deepEqual(progress, [0, 1, 2]);
+  assert.deepEqual(progress, [0, 1, 2, 3]);
   const zip = unzipSync(
     await packageCompiledMap(
       compiled,

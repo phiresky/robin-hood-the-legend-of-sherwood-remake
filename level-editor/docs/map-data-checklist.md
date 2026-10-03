@@ -38,10 +38,21 @@ Export verifies those hashes, referenced frames, profiles and sprite centers, th
 packages the files under `Data/Animations/Day/<bank>.rhs.d/`. Missing or changed
 resources omit the affected bank's animations with warnings; other gameplay stays
 available. Resource reads report progress and honor cancellation. ZIP byte checks
-and a native PNG/profile decoder check pass using the generated fixture under
-`work/map-compile/scenery-resources-v1`. This does not yet verify in-game playback
-or validate every manifest field before export. Animations without an authored
+and a native PNG/profile decoder check pass using the generated two-frame fixture
+under `work/map-compile/scenery-resources-v2`. Its decoded profile and exported
+descriptor also pass the engine's scenery-spawn and static-tick paths: the sprite
+keeps its editor-authored anchor/elevation, follows the expected frame-delay
+sequence, loops, and stops advancing when inactive. This does not yet verify GPU
+rendering/occlusion or validate every manifest field before export. Animations without an authored
 resource directory still use the installed shared sprite bank.
+
+To repeat the animation acceptance chain, generate a fresh output directory with
+`SCENERY_TEST_EXPORT_DIR` while running `app/src/scenery-resources.test.ts`.
+Use that same absolute directory for the ignored native tests
+`editor_exported_scenery_frames_load_with_native_profile_metadata` (`robin_assets`)
+and then `exported_scenery_spawns_and_advances_frames_without_moving_its_anchor`
+(`robin_engine --lib`). The first native test writes decoded profile metadata
+used by the second; neither native test reads source level data.
 
 **Interior connections:** multiple entrances in an asset-local room remain
 connected automatically, including after moving or duplicating the asset. Distinct
