@@ -1160,6 +1160,57 @@ mod tests {
     }
 
     #[test]
+    fn scenery_basename_resolves_day_fallback_and_loads_the_authored_profile() {
+        let info = SpriteInfo {
+            scripts: std::sync::Arc::new(Vec::new()),
+            conversion: std::sync::Arc::new(crate::engine::test_support::unmapped_conversion()),
+            size: SpriteSize::new(24.0, 48.0),
+            center: SpriteAnchor::new(4.0, 6.0),
+        };
+        let profiles = vec![("burning".to_owned(), info)];
+        let resources = MissionResourceEnvironment::default()
+            .with_parsed_rhs([("Animations/Day/torch.rhs", 0, profiles.as_slice())])
+            .unwrap();
+        let mut scriptor = SpriteScriptor::with_resources(std::sync::Arc::new(resources));
+        let path = scriptor
+            .resolve_rhs_path(
+                FrameKind::Animation,
+                "Data/Animations",
+                "torch",
+                Some(Ambiance::Night),
+            )
+            .unwrap();
+        assert_eq!(path, "Data/Animations/Day/torch.rhs");
+        let loaded = scriptor
+            .load(
+                &path,
+                "burning",
+                "torch/burning",
+                FrameKind::Animation,
+                |file| {
+                    assert_eq!(
+                        LegacyReader::new(file).read_u32("bank signature").unwrap(),
+                        0
+                    );
+                    Ok(())
+                },
+            )
+            .unwrap();
+        assert_eq!(loaded.center, SpriteAnchor::new(4.0, 6.0));
+        assert_eq!(loaded.size, SpriteSize::new(24.0, 48.0));
+        assert!(
+            scriptor
+                .resolve_rhs_path(
+                    FrameKind::Animation,
+                    "Data/Animations",
+                    "torch.rhs",
+                    Some(Ambiance::Day),
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
     fn cached_object_master_satisfies_later_animation_lookup() {
         let mut scriptor = SpriteScriptor::new();
         scriptor.insert(

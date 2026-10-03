@@ -305,7 +305,7 @@ export interface AssetSceneryAnimation {
   id: string;
   node: string;
   anchor: [number, number, number];
-  /** Sprite resources must be supplied by the mod or the installed shared resource bank. */
+  /** Sprite basename, with optional .rhs suffix; resources come from a mod or shared bank. */
   file: string;
   profile: string;
   /** Authored sprite center, used to convert the placed anchor into the runtime top-left. */
@@ -813,6 +813,7 @@ export function validateAssetGameplay(
       !point(animation.center, 2) ||
       typeof animation.file !== "string" ||
       !animation.file.trim() ||
+      !animation.file.replace(/\.rhs$/i, "").trim() ||
       typeof animation.profile !== "string" ||
       !animation.profile.trim() ||
       typeof animation.active !== "boolean" ||

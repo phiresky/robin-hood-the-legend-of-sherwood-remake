@@ -22,6 +22,12 @@ const animation: AssetSceneryAnimation = {
 };
 
 test("scenery rotates its local anchor and mask while retaining its billboard center", () => {
+  for (const file of ["torch", "torch.rhs", "torch.RHS"])
+    assert.equal(
+      compileSceneryAnimation({ ...animation, file }, (_node, point) => point).sprite
+        .frame_profile_name,
+      "torch",
+    );
   const result = compileSceneryAnimation(animation, (_node, [x, y, z]) => [
     100 - (y - z),
     200 + x + z + 10,
@@ -29,7 +35,7 @@ test("scenery rotates its local anchor and mask while retaining its billboard ce
   ]);
   assert.deepEqual(result, {
     sprite: {
-      frame_profile_name: "torch.rhs",
+      frame_profile_name: "torch",
       profile_name: "burning",
       position_x: 86,
       position_y: 204,
@@ -54,7 +60,7 @@ test("asset scenery reaches compiled map data and unavailable placement warns in
     compileAssetGameplay(document, assets, [0, 0, 2000, 2000], { bestEffort });
   const original = compile();
   assert.equal(original.animations?.length, 1);
-  assert.equal(original.animations![0]!.sprite.frame_profile_name, animation.file);
+  assert.equal(original.animations![0]!.sprite.frame_profile_name, "torch");
   const copy = structuredClone(document.objects[0]!);
   copy.id = "hut-b-body";
   copy.group = "hut-b";
@@ -80,5 +86,8 @@ test("asset scenery reaches compiled map data and unavailable placement warns in
     ),
   );
   hut.gameplay!.animations[0]!.profile = "";
+  assert.throws(() => validateAssetGameplay(hut.gameplay, hut), /invalid scenery animation/);
+  hut.gameplay!.animations[0]!.profile = "burning";
+  hut.gameplay!.animations[0]!.file = ".rhs";
   assert.throws(() => validateAssetGameplay(hut.gameplay, hut), /invalid scenery animation/);
 });

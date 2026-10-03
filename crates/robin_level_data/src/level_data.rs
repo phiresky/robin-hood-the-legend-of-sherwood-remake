@@ -1310,7 +1310,7 @@ pub struct RawMotionData {
     bitcode::Decode,
 )]
 pub struct RawSpriteRef {
-    /// Sprite file name (e.g. "trap01.rhs").
+    /// Sprite resource basename (e.g. "trap01"); resolution adds the RHS extension.
     pub frame_profile_name: String,
     /// Profile name within the file.
     pub profile_name: String,
@@ -5899,7 +5899,7 @@ mod tests {
         ))
         .unwrap();
         let animation = serde_json::json!({
-            "sprite": {"frame_profile_name": "torch.rhs", "profile_name": "burning",
+            "sprite": {"frame_profile_name": "torch", "profile_name": "burning",
                 "position_x": 230, "position_y": 350, "elevation": 40},
             "blit_type": 1, "active": true, "force_display": false,
             "display_polyline": [[220, 400], [260, 410]]

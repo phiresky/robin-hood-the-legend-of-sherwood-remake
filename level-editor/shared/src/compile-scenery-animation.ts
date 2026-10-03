@@ -16,7 +16,8 @@ export function compileSceneryAnimation(
   const [x, y, z] = transform(animation.node, animation.anchor);
   return {
     sprite: {
-      frame_profile_name: animation.file,
+      // Runtime resolution appends the extension after choosing the ambience directory.
+      frame_profile_name: animation.file.replace(/\.rhs$/i, ""),
       profile_name: animation.profile,
       position_x: signed(x - animation.center[0]),
       position_y: signed(y - z - animation.center[1]),

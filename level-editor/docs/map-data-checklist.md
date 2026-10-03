@@ -25,6 +25,10 @@ the placed part and rebases them to export bounds. The raster center stays in
 camera coordinates. Native descriptors load these into map animations, separately
 from mission soldiers; older exports default to no animations. Invalid runtime
 coordinates omit only the affected animation with a best-effort warning.
+Sprite names accept an optional `.rhs` suffix in assets and export the basename
+required by runtime resolution. A native resource test verifies Night-to-Day
+fallback and selection of the authored profile and sprite center without loose
+file access. This verifies resource lookup, not frame rendering.
 Placement/validation and native descriptor tests pass. This is initial support,
 not completed animation parity: library authoring/recovery, sprite-resource
 packaging and validation, preview, orientation-specific artwork and native
