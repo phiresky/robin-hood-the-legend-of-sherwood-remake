@@ -976,7 +976,8 @@ impl EngineInner {
         // All-selected branch.
         let mut up = false;
         let mut down = false;
-        for &pc_id in &self.players.seats[seat.0 as usize].selection {
+        // A joining seat has no selection until its ordered ConnectSeat runs.
+        for &pc_id in self.hero_selection(seat) {
             if is_climbing_or_in_building(pc_id) {
                 continue;
             }
@@ -1832,6 +1833,25 @@ mod tests {
                     })
                 }),
             "the specialized single-PC Bow path must still launch EquipBow for the target"
+        );
+    }
+}
+
+#[cfg(test)]
+mod admission_tests {
+    #[test]
+    fn joining_seat_has_no_stature_before_connect() {
+        let mut assets = crate::engine::LevelAssets::default();
+        let engine = crate::engine::Engine::new_for_test(
+            640.0,
+            480.0,
+            crate::campaign::Campaign::default(),
+            &mut assets,
+        )
+        .unwrap();
+        assert_eq!(
+            engine.retrieve_stature_for_seat(crate::player_command::PlayerId(1), None),
+            super::Stature::None
         );
     }
 }

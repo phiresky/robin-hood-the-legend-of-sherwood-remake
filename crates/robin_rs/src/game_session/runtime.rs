@@ -1270,6 +1270,17 @@ impl TimelineRuntime {
     /// while rebasing cursor, network inputs and rewind history (the buffered
     /// timeline no longer describes the engine's future) at the exact point
     /// of its sequence where the reset belongs.
+    pub(super) fn restore_bootstrap_replay(
+        &mut self,
+        recording_index: &crate::mission_replays::RecordingIndex,
+        event: crate::main_entry::SaveLoadEvent,
+        engine: &Engine,
+    ) {
+        let mut frame = MissionFrame::new(0);
+        frame.bind_timeline(self.current_frame());
+        self.note_save_load_event(recording_index, event, &mut frame, engine);
+    }
+
     pub(super) fn note_save_load_event(
         &mut self,
         recording_index: &crate::mission_replays::RecordingIndex,
@@ -3106,6 +3117,39 @@ mod tests {
                 robin_engine::replay::state_hash(&seek_initial)
             );
         }
+        // A fresh multiplayer host must resolve the saved timeline before
+        // publishing its first snapshot or accepting frame-stamped inputs.
+        drop(seek_runtime);
+        drop(resumed);
+        drop(service);
+        let (mut startup, _startup_service) =
+            recording(&directory.path().join("startup"), &seek_initial);
+        second_save
+            .clone()
+            .apply_to_with_game(&mut engine, &mut host, &mut game, &assets)
+            .unwrap();
+        startup.restore_bootstrap_replay(
+            &crate::mission_replays::RecordingIndex::disabled(),
+            crate::main_entry::SaveLoadEvent::LoadApplied {
+                snapshot: serde_json::to_vec(&second_save).unwrap(),
+                identity: second_save.replay_identity().unwrap(),
+                is_continue: false,
+            },
+            &engine,
+        );
+        let saved_frame = second_save.header.replay.as_ref().unwrap().timeline_frame;
+        assert!(saved_frame > 0);
+        assert_eq!(startup.frame_number(), saved_frame);
+        let (net, _incoming, outgoing, _, _) = robin_engine::multiplayer::NetChannels::new();
+        net.publish_startup_snapshot(startup.frame_number(), &engine)
+            .unwrap();
+        assert_eq!(net.current_frame(), saved_frame);
+        assert!(
+            matches!(outgoing.try_recv().unwrap(), robin_engine::multiplayer::NetOutbound::InitialSnapshot { frame, .. } if frame == saved_frame)
+        );
+        assert!(
+            matches!(outgoing.try_recv().unwrap(), robin_engine::multiplayer::NetOutbound::ReadyToSim { frame } if frame == saved_frame)
+        );
     }
 
     #[test]

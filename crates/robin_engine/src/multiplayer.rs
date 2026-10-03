@@ -826,6 +826,13 @@ impl NetChannels {
         })
     }
 
+    /// Publish a restored startup boundary before input scheduling is enabled.
+    pub fn publish_startup_snapshot(&self, frame: u32, engine: &Engine) -> Result<(), String> {
+        self.publish_frame(frame);
+        self.publish_initial_snapshot(frame, engine)?;
+        self.send_ready_to_sim(frame)
+    }
+
     /// Announce that this process has loaded the mission, adopted any
     /// required initial snapshot, and is ready for the host-controlled
     /// sim start barrier.

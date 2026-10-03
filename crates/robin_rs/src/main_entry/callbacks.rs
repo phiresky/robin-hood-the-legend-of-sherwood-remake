@@ -338,6 +338,12 @@ impl RustCallbacks {
         })
     }
 
+    /// Consume replay restoration before publishing the startup network frame.
+    /// The remaining receipt still drives first-frame presentation refreshes.
+    pub(crate) fn take_bootstrap_replay_event(&mut self) -> Option<SaveLoadEvent> {
+        self.bootstrap_restore.as_mut()?.event.take()
+    }
+
     pub fn new(
         application_context: ApplicationContext,
     ) -> Result<Self, crate::save_recovery::SaveStoreOpenError> {
@@ -1384,7 +1390,25 @@ mod operation_outcome_tests {
         assert_eq!(engine.frame_counter(), 123);
         assert!(!host.transport.has_snapshot_transition());
         assert!(callbacks.pending_request().is_none());
-        // The first frame consumes recording/UI evidence, not another restore.
+        assert!(matches!(
+            callbacks.take_bootstrap_replay_event(),
+            Some(SaveLoadEvent::LoadApplied { .. })
+        ));
+        assert!(callbacks.take_bootstrap_replay_event().is_none());
+        let (net, _incoming, outgoing, _, cached) = robin_engine::multiplayer::NetChannels::new();
+        // Timeline identity is independent of the engine's tick counter.
+        net.publish_startup_snapshot(133, &engine).unwrap();
+        assert_eq!(net.current_frame(), 133);
+        assert_eq!(cached.lock().unwrap().as_ref().unwrap().0, 133);
+        assert!(matches!(
+            outgoing.try_recv().unwrap(),
+            robin_engine::multiplayer::NetOutbound::InitialSnapshot { frame: 133, .. }
+        ));
+        assert!(matches!(
+            outgoing.try_recv().unwrap(),
+            robin_engine::multiplayer::NetOutbound::ReadyToSim { frame: 133 }
+        ));
+        // The first frame consumes UI evidence, not another restore or rebase.
         engine.test_set_frame_counter(124);
         let outcome = pollster::block_on(perform_pending_save_load(
             &mut host,
@@ -1396,10 +1420,7 @@ mod operation_outcome_tests {
             None,
         ));
         assert!(outcome.restore().is_some());
-        assert!(matches!(
-            outcome.event,
-            Some(SaveLoadEvent::LoadApplied { .. })
-        ));
+        assert!(outcome.event.is_none());
         assert_eq!(engine.frame_counter(), 124);
         let next = pollster::block_on(perform_pending_save_load(
             &mut host,

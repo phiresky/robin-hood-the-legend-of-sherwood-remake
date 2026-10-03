@@ -377,28 +377,8 @@ impl MissionBootstrap {
         args: &crate::main_entry::MissionRequest,
         contract: FrameContract,
         wait_for_multiplayer_start: bool,
+        callbacks: &mut RustCallbacks,
     ) -> Result<MissionRuntime, MissionOutcome> {
-        if args.multiplayer.connect.is_none()
-            && let Some(net) = self.host.transport.net()
-        {
-            if let Err(error) = net
-                .publish_initial_snapshot(0, &self.loaded.engine)
-                .and_then(|()| net.send_ready_to_sim(0))
-            {
-                let (campaign, seed, config) = self.into_campaign_and_simulation();
-                return Err(MissionOutcome::new(
-                    campaign,
-                    seed,
-                    config,
-                    Err(MissionError::save(format!(
-                        "initial snapshot publication failed: {error}"
-                    ))),
-                ));
-            }
-            tracing::info!(
-                "multiplayer: cached and published initial host snapshot after startup restore"
-            );
-        }
         let mission_assets = self
             .game
             .mission_assets()
@@ -449,6 +429,35 @@ impl MissionBootstrap {
                     panic!("runtime opened before Restart save completion")
                 }
             });
+        // Resolve the saved replay timeline before publishing any network
+        // state or admitting input. A restore may resume at a nonzero frame.
+        if let Some(event) = callbacks.take_bootstrap_replay_event() {
+            timeline.restore_bootstrap_replay(
+                self.host.application_context().recording_index(),
+                event,
+                &self.loaded.engine,
+            );
+        }
+        if args.multiplayer.connect.is_none()
+            && let Some(net) = self.host.transport.net()
+        {
+            let frame = timeline.frame_number();
+            if let Err(error) = net.publish_startup_snapshot(frame, &self.loaded.engine) {
+                let (campaign, seed, config) = self.loaded.engine.into_campaign_and_simulation();
+                return Err(MissionOutcome::new(
+                    campaign,
+                    seed,
+                    config,
+                    Err(MissionError::save(format!(
+                        "initial snapshot publication failed: {error}"
+                    ))),
+                ));
+            }
+            tracing::info!(
+                frame,
+                "multiplayer: cached and published initial host snapshot after startup restore"
+            );
+        }
         let manager = robin_engine::engine_manager::EngineManager::new(self.loaded.engine);
         let dynamic_visuals = self
             .host
@@ -502,6 +511,7 @@ impl AudioPreparedBootstrap {
         width: u32,
         height: u32,
         args: &crate::main_entry::MissionRequest,
+        callbacks: &mut RustCallbacks,
     ) -> Result<InteractiveMission, MissionOutcome> {
         let bootstrap = self.0;
         assert_eq!(bootstrap.spec.frontend, MissionFrontendKind::Interactive);
@@ -512,6 +522,7 @@ impl AudioPreparedBootstrap {
                 args,
                 FrameContract::Graphical,
                 wait_for_multiplayer_start,
+                callbacks,
             )?,
             frontend,
             campaign_transition: None,
@@ -522,6 +533,7 @@ impl AudioPreparedBootstrap {
         self,
         args: &crate::main_entry::MissionRequest,
         policy: HeadlessPolicy,
+        callbacks: &mut RustCallbacks,
     ) -> Result<HeadlessMission, MissionOutcome> {
         let mut bootstrap = self.0;
         assert_eq!(bootstrap.spec.frontend, MissionFrontendKind::Headless);
@@ -547,6 +559,7 @@ impl AudioPreparedBootstrap {
                 args,
                 FrameContract::Headless,
                 wait_for_multiplayer_start,
+                callbacks,
             )?,
             policy,
         })
@@ -1417,10 +1430,11 @@ impl HeadlessMissionBuilder {
                 ));
             }
         };
-        let mission = match bootstrap.finish_headless(args, HeadlessPolicy::replay_runner()) {
-            Ok(mission) => mission,
-            Err(outcome) => return HeadlessBuildOutcome::Finished(outcome),
-        };
+        let mission =
+            match bootstrap.finish_headless(args, HeadlessPolicy::replay_runner(), callbacks) {
+                Ok(mission) => mission,
+                Err(outcome) => return HeadlessBuildOutcome::Finished(outcome),
+            };
         HeadlessBuildOutcome::Ready(BuiltHeadlessMission { mission })
     }
 }
@@ -1655,11 +1669,16 @@ impl InteractiveMissionBuilder {
                 Err(error),
             ));
         }
-        let mission =
-            match bootstrap.finish_interactive(frontend, window.width, window.height, args) {
-                Ok(mission) => mission,
-                Err(outcome) => return InteractiveBuildOutcome::Finished(outcome),
-            };
+        let mission = match bootstrap.finish_interactive(
+            frontend,
+            window.width,
+            window.height,
+            args,
+            callbacks,
+        ) {
+            Ok(mission) => mission,
+            Err(outcome) => return InteractiveBuildOutcome::Finished(outcome),
+        };
         timer.step("mission entry + HUD finish + runtime/replay init");
         timer.total();
         InteractiveBuildOutcome::Ready(BuiltInteractiveMission {
