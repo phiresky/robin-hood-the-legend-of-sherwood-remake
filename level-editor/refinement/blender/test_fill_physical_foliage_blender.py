@@ -77,6 +77,23 @@ actual = np.asarray(image_retry.pixels[:], dtype=np.float32).reshape(4, 4, 4)
 assert np.array_equal(actual[..., 3], before[..., 3])
 assert np.array_equal(actual[0], before[0])
 
+# Dense sampling reaches slivers beyond the quarter-pixel offsets.
+obj.data.materials[0] = mat
+
+def sliver_sample(obj, normal, positions, accepted, colors, *, face_index, record_statistics=True):
+    visible = np.mod(positions[:, 0] * 4, 1) > .8
+    colors[visible, :3] = [.1, .7, .2]
+    return visible
+
+dense = fill([obj], sliver_sample, None, 'test-grid', subpixels=True, sample_grid=4)
+assert dense[0]['generated'] == 12 and dense[0]['grid_generated'] == 12, dense
+assert dense[0]['subpixel_generated'] == 0, dense
+image_retry = next(n.image for n in obj.data.materials[0].node_tree.nodes if n.type == 'TEX_IMAGE')
+actual = np.asarray(image_retry.pixels[:], dtype=np.float32).reshape(4, 4, 4)
+assert np.array_equal(actual[..., 3], before[..., 3])
+assert np.array_equal(actual[0], before[0])
+assert np.array_equal(np.asarray(image.pixels[:]).reshape(4, 4, 4), before)
+
 import tempfile
 with tempfile.TemporaryDirectory() as folder:
     path = str(Path(folder) / 'foliage.blend')

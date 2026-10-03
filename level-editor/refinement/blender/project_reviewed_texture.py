@@ -286,7 +286,11 @@ def apply(manifest_path, image_path, output_dir, *, texels_per_unit=2, map_name=
                 mat['generated_source_mask_evidence_sha256'] = hashlib.sha256(json.dumps(manifest['source_mask_evidence'],sort_keys=True).encode()).hexdigest()
     from fill_physical_foliage import fill as fill_foliage
     foliage = fill_foliage(targets, sample, manifest.get('texture_receiver_face_indices'), image_hash,
-                           subpixels=manifest.get('texture_foliage_subpixel_sampling', False))
+                           subpixels=manifest.get('texture_foliage_subpixel_sampling', False),
+                           sample_grid=manifest.get('texture_foliage_sample_grid', 0))
+    # Grid samples include texels absent from the centre-sampled counters.
+    # Report them separately; per-material foliage counts are authoritative.
+    stats['foliage_grid_generated_texels'] = sum(row['grid_generated'] for row in foliage)
     subpixel_fills = sum(row['subpixel_generated'] for row in foliage)
     stats['generated_texels_including_padding'] += subpixel_fills
     stats['unfilled_texels_including_padding'] -= subpixel_fills

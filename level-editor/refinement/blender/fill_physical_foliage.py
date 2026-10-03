@@ -2,8 +2,8 @@
 import numpy as np
 
 
-def triangle_pixels(uv, width, height):
-    points = np.asarray(uv) * [width, height]
+def triangle_pixels(uv, width, height, offset=(0., 0.)):
+    points = np.asarray(uv) * [width, height] - offset
     low = np.maximum(0, np.ceil(points.min(0) - .5).astype(int))
     high = np.minimum([width - 1, height - 1], np.floor(points.max(0) - .5).astype(int))
     if np.any(high < low):
@@ -18,9 +18,11 @@ def triangle_pixels(uv, width, height):
     return y.ravel()[inside], x.ravel()[inside], barycentric[inside]
 
 
-def fill(objects, sample, face_scope, generated_hash, *, subpixels=False):
+def fill(objects, sample, face_scope, generated_hash, *, subpixels=False, sample_grid=0):
     if type(subpixels) is not bool:
         raise ValueError('Foliage subpixel sampling must be an explicit boolean')
+    if type(sample_grid) is not int or sample_grid not in (0, 4, 8):
+        raise ValueError("Foliage sample grid must be 0, 4, or 8")
     reports = []
     for obj in objects:
         mesh = obj.data
@@ -59,6 +61,7 @@ def fill(objects, sample, face_scope, generated_hash, *, subpixels=False):
             written = np.zeros((height, width), bool)
             visible = np.zeros_like(written)
             subpixel_generated = 0
+            grid_generated = 0
             for triangle in mesh.loop_triangles:
                 if triangle.polygon_index not in unknown:
                     continue
@@ -94,6 +97,31 @@ def fill(objects, sample, face_scope, generated_hash, *, subpixels=False):
                         after[rows[selected], cols[selected], :3] = retry_colors[filled, :3]
                         written[rows[selected], cols[selected]] = True
                         subpixel_generated += int(filled.sum())
+            # Sample real surface points within each atlas texel, including
+            # thin triangles that contain no texel centre. All visibility and
+            # source ownership checks still run through the sampling callback.
+            if sample_grid:
+                for triangle in mesh.loop_triangles:
+                    if triangle.polygon_index not in unknown:
+                        continue
+                    triangle_uv = [uv.data[i].uv[:] for i in triangle.loops]
+                    points = np.asarray([obj.matrix_world @ mesh.vertices[i].co for i in triangle.vertices])
+                    normal = (obj.matrix_world.to_3x3().inverted().transposed() @ triangle.normal).normalized()
+                    for y in range(sample_grid):
+                        for x in range(sample_grid):
+                            offset = ((x + .5) / sample_grid - .5, (y + .5) / sample_grid - .5)
+                            rows, cols, weights = triangle_pixels(triangle_uv, width, height, offset)
+                            keep = (before[rows, cols, 3] >= .5) & ~written[rows, cols]
+                            rows, cols, weights = rows[keep], cols[keep], weights[keep]
+                            if not len(rows):
+                                continue
+                            visible[rows, cols] = True
+                            colors = before[rows, cols].copy()
+                            accepted = sample(obj, normal, weights @ points, np.zeros(len(rows), bool), colors,
+                                              face_index=triangle.polygon_index, record_statistics=False)
+                            after[rows[accepted], cols[accepted], :3] = colors[accepted, :3]
+                            written[rows[accepted], cols[accepted]] = True
+                            grid_generated += int(accepted.sum())
             if not np.array_equal(before[..., 3], after[..., 3]) or not np.array_equal(before[~written], after[~written]):
                 raise ValueError('Foliage fill changed protected RGB or physical alpha')
             if written.any():
@@ -114,5 +142,5 @@ def fill(objects, sample, face_scope, generated_hash, *, subpixels=False):
                     raise ValueError('Stored foliage RGB exceeds byte quantization error')
             reports.append(dict(object=obj.name, material=material.name, generated=int(written.sum()),
                                 unfilled=int((visible & ~written).sum()), physical_alpha_changed=0,
-                                protected_rgb_changed=0, subpixel_generated=subpixel_generated))
+                                protected_rgb_changed=0, subpixel_generated=subpixel_generated, grid_generated=grid_generated))
     return reports
