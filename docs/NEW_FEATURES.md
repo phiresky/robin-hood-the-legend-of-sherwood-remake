@@ -13,6 +13,9 @@
   standalone-effect authoring helper creates reusable local frames without baking
   sprite artwork into the background; placement, copying and save/reopen are
   covered by compiler tests. Library publication and preview remain unfinished.
+  `pipeline/src/author-scenery-animation-assets.ts` generates a fresh asset
+  library from local recipes, validates/copies pinned sprite resources and emits
+  importable placement/source records. It does not require a source level.
   Export warns when placement folds a drawing boundary or leaves a vertical
   segment that the actor-ordering code cannot handle reliably, retaining the
   animation in best-effort exports. Repeated quantized vertices are removed.

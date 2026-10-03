@@ -120,6 +120,29 @@ save/reopen without changing other geometry or the original effect. This is an
 offline authoring primitive; a visible editor preview and published effect assets
 are still required before treating standalone effects as a finished library feature.
 
+The command `pipeline/src/author-scenery-animation-assets.ts` writes those assets
+to a fresh library directory. A recipe contains `version: 1` and an `entries`
+array; each entry supplies `id`, `name`, `map`, `origin`, local `animations`
+(without `node`) and optional `resources` path/SHA-256 pins. Pinned animations
+also name their `resourceDirectory`. The command validates the manifest, every
+referenced frame and profile centers before creating output. It copies pinned
+resources and emits descriptors, minimal model/derivative files, receipts and
+`scenery-animation-assets.json` with pinned sources and initial placements.
+It does not read a source level or modify the main library. From `level-editor`:
+
+```sh
+pnpm --filter pipeline exec node src/author-scenery-animation-assets.ts \
+  --recipe /path/to/local-effects.json --library /path/to/pinned-resources \
+  --out /path/to/new-effect-library
+python3 refinement/asset_index.py /path/to/new-effect-library/3d-assets
+```
+
+The output directory must not already exist, and its parent must exist. Omit
+`--library` only when all definitions use installed shared sprite banks without
+resource pins. A CLI regression compiles generated placements and repackages the
+copied sprite files using only the output directory. Changed hashes, missing
+frames, mismatched centers and duplicate IDs fail before output is created.
+
 To repeat the animation acceptance chain, generate a fresh output directory with
 `SCENERY_TEST_EXPORT_DIR` while running `app/src/scenery-resources.test.ts`.
 Use that same absolute directory for the ignored native tests
