@@ -29,6 +29,12 @@ is saved as `route-sampling-astar-report.json`. Pathfinder corridor checks now a
 stop at their first blocking line, preserving cell selection, intersection and
 endpoint-inside rules. A 3,312-query comparison across two layers and three active
 obstacle states matches the preceding collected-query implementation.
+The final early-exit implementation passes all 1,336 routes in **76 seconds** in
+the same debug test setup, versus 3,471 seconds before these optimizations.
+`route-sampling-report.json` records the complete ten-map result. The same exports
+also pass all 57 transition apply/reset checks and 372 directed lift callbacks;
+these validate state restoration and callback membership, not complete actor
+movement through every real-map traversal.
 The audit writes a per-map JSON report and marks it complete only after all maps
 pass. Separate transition fixtures reuse the live pathfinder with the same
 footprint, checking both directions through initially closed/open barriers and
