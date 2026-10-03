@@ -1157,6 +1157,11 @@ pub(super) fn drain_mission_network(
         }
     }
     drain.pause_simulation = admission_pause || host.transport.reconnecting() || clock_pause;
+    if let Some(net) = host.transport.net() {
+        // Publish an adopted snapshot's cursor before permitting its first input.
+        net.publish_frame(timeline.frame_number());
+        net.set_gameplay_input_enabled(!admission_pause && !host.transport.reconnecting());
+    }
 
     if host.transport.net().is_some() && (checkpoint_always || drain.rewrote_sim_state) {
         let frame = timeline.frame_number();

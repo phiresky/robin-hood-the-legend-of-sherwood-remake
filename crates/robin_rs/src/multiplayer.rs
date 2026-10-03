@@ -221,6 +221,9 @@ mod tests {
         server_out_tx
             .send(NetOutbound::ReadyToSim { frame: 0 })
             .unwrap();
+        client_out_tx
+            .send(NetOutbound::ReadyToSim { frame: 0 })
+            .unwrap();
         let mut saw_join = false;
         for _ in 0..16 {
             match server_in_rx.recv_timeout(Duration::from_millis(200)) {

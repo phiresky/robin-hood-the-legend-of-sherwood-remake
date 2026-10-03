@@ -347,11 +347,10 @@ impl PeerSessions {
         })
     }
 
-    #[cfg(test)]
     pub(super) fn ready_frame(&self, seat: u8) -> Option<u32> {
         self.seats
             .get(&seat)
-            .expect("test requires a claimed seat")
+            .expect("readiness requires an authenticated seat")
             .ready_frame
     }
 }

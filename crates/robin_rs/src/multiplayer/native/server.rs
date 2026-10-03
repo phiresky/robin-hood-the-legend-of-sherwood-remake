@@ -1382,6 +1382,17 @@ pub(super) fn apply_authenticated_peer_message(
             command,
         } => {
             validate_peer_command_authority(seat, &command)?;
+            let ready = {
+                let peers = context.peers.lock();
+                peers.readiness.host_frame.is_some() && peers.sessions.ready_frame(seat.0).is_some()
+            };
+            if !ready {
+                tracing::debug!(
+                    ?seat,
+                    "ignoring gameplay input before host and peer snapshot readiness"
+                );
+                return Ok(());
+            }
             let now = context.frame_cursor.load(Ordering::Relaxed);
             let target = now.max(origin_frame).saturating_add(INPUT_DELAY_FRAMES);
             let inp = PlayerInput::new(seat, command);

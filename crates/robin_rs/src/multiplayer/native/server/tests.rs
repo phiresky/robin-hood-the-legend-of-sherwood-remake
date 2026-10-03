@@ -213,23 +213,6 @@ fn current_peer_dispatch_publishes_input_and_ready_but_old_generation_cannot() {
         &context,
         PlayerId(claim.seat),
         claim.generation,
-        super::NetMsg::Input {
-            origin_frame: 10,
-            command: super::PlayerCommand::Noop,
-        },
-    )
-    .unwrap();
-    assert!(
-        matches!(events.try_recv().unwrap(), NetEvent::Input { input, .. } if input.player_id == PlayerId(1))
-    );
-    assert!(matches!(
-        wire.try_recv().unwrap(),
-        super::NetMsg::BroadcastInput { .. }
-    ));
-    super::dispatch_server_peer_message(
-        &context,
-        PlayerId(claim.seat),
-        claim.generation,
         super::NetMsg::ReadyToSim { frame: 12 },
     )
     .unwrap();
@@ -245,6 +228,23 @@ fn current_peer_dispatch_publishes_input_and_ready_but_old_generation_cannot() {
         context.peers.lock().sessions.ready_frame(claim.seat),
         Some(12)
     );
+    super::dispatch_server_peer_message(
+        &context,
+        PlayerId(claim.seat),
+        claim.generation,
+        super::NetMsg::Input {
+            origin_frame: 10,
+            command: super::PlayerCommand::Noop,
+        },
+    )
+    .unwrap();
+    assert!(
+        matches!(events.try_recv().unwrap(), NetEvent::Input { input, .. } if input.player_id == PlayerId(1))
+    );
+    assert!(matches!(
+        wire.try_recv().unwrap(),
+        super::NetMsg::BroadcastInput { .. }
+    ));
 }
 
 #[test]
@@ -1092,4 +1092,58 @@ async fn early_handshake_waits_for_restored_host_frame_before_connect_command() 
     assert!(matches!(events.try_recv().unwrap(), NetEvent::Input {
         server_frame: 133, origin_frame: 133, target_frame: 135, input,
     } if matches!(input.command, robin_engine::player_command::PlayerCommand::ConnectSeat { player_id, .. } if player_id == PlayerId(claim.seat))));
+}
+
+#[test]
+fn gameplay_input_requires_both_host_and_peer_snapshot_readiness() {
+    for (host_frame, peer_frame) in [
+        (None, None),
+        (None, Some(0)),
+        (Some(133), None),
+        (Some(133), Some(133)),
+    ] {
+        let (context, events) = dispatch_test_context();
+        let (sender, _wire) = unbounded_channel();
+        let claim = {
+            let mut peers = context.peers.lock();
+            let claim = peers
+                .sessions
+                .claim_seat(PeerOwner::Native([7; 32]), "early", sender)
+                .unwrap();
+            peers.readiness.host_frame = host_frame;
+            if let Some(frame) = peer_frame {
+                peers
+                    .sessions
+                    .record_ready(claim.seat, claim.generation, frame)
+                    .unwrap();
+            }
+            claim
+        };
+        context
+            .frame_cursor
+            .store(host_frame.unwrap_or(0), super::Ordering::Relaxed);
+        super::dispatch_server_peer_message(
+            &context,
+            PlayerId(claim.seat),
+            claim.generation,
+            super::NetMsg::Input {
+                origin_frame: peer_frame.unwrap_or(0),
+                command: super::PlayerCommand::Noop,
+            },
+        )
+        .unwrap();
+        if host_frame.is_some() && peer_frame.is_some() {
+            assert!(matches!(
+                events.try_recv().unwrap(),
+                NetEvent::Input {
+                    server_frame: 133,
+                    origin_frame: 133,
+                    target_frame: 135,
+                    ..
+                }
+            ));
+        } else {
+            assert!(events.try_recv().is_err());
+        }
+    }
 }

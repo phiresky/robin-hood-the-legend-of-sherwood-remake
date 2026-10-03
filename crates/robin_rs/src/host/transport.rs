@@ -175,6 +175,7 @@ impl HostTransport {
         self.mission_sim_config = Some(config);
         self.speech_timing_locale = speech_locale;
         net.set_modal_player_count(config.coop.players);
+        net.set_gameplay_input_enabled(false);
         self.net = Some(net);
         self.synchronization = TransportSynchronization::Running;
     }
@@ -319,6 +320,40 @@ mod transport_lifecycle_tests {
             Some("en".into()),
         );
         transport
+    }
+
+    #[test]
+    fn installed_transport_blocks_gameplay_until_admitted_at_restored_frame() {
+        let (channels, _incoming, outgoing, _, _) = crate::multiplayer::NetChannels::new();
+        let mut transport = HostTransport::default();
+        transport.install_session(
+            channels,
+            PlayerId(1),
+            "mission".into(),
+            0,
+            engine_api::SimConfig::default(),
+            None,
+        );
+        let net = transport.net().unwrap();
+        net.send_input(engine_player_command::PlayerCommand::Noop)
+            .unwrap();
+        assert!(outgoing.try_recv().is_err());
+        net.send_ready_to_sim(133).unwrap();
+        assert!(matches!(
+            outgoing.try_recv().unwrap(),
+            robin_engine::multiplayer::NetOutbound::ReadyToSim { frame: 133 }
+        ));
+        net.publish_frame(133);
+        net.set_gameplay_input_enabled(true);
+        net.send_input(engine_player_command::PlayerCommand::Noop)
+            .unwrap();
+        assert!(matches!(
+            outgoing.try_recv().unwrap(),
+            robin_engine::multiplayer::NetOutbound::Input {
+                origin_frame: 133,
+                ..
+            }
+        ));
     }
 
     fn transition_id() -> SnapshotTransitionId {

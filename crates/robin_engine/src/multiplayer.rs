@@ -760,6 +760,7 @@ pub struct NetChannels {
     modal_sync: Mutex<ModalSyncState>,
     next_transition_sequence: AtomicU64,
     command_worker_closed: AtomicBool,
+    gameplay_input_enabled: AtomicBool,
 }
 
 impl NetChannels {
@@ -788,6 +789,7 @@ impl NetChannels {
                 modal_sync: Mutex::new(ModalSyncState::default()),
                 next_transition_sequence: AtomicU64::new(0),
                 command_worker_closed: AtomicBool::new(false),
+                gameplay_input_enabled: AtomicBool::new(true),
             },
             in_tx,
             out_rx,
@@ -1157,8 +1159,18 @@ impl NetChannels {
         Ok(sync.visible_requests.drain(..).collect())
     }
 
+    /// Admission controls gameplay input independently of chat and readiness.
+    pub fn set_gameplay_input_enabled(&self, enabled: bool) {
+        self.gameplay_input_enabled
+            .store(enabled, Ordering::Relaxed);
+    }
+
     /// Push a locally-produced [`PlayerCommand`] onto the wire.
     pub fn send_input(&self, cmd: PlayerCommand) -> Result<(), String> {
+        if !self.gameplay_input_enabled.load(Ordering::Relaxed) {
+            tracing::debug!("ignoring local gameplay input while multiplayer admission is pending");
+            return Ok(());
+        }
         let origin_frame = self.frame_cursor.load(Ordering::Relaxed);
         self.send_required(NetOutbound::Input {
             origin_frame,
