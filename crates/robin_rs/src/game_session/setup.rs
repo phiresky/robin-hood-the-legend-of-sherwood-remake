@@ -1241,6 +1241,7 @@ pub(super) fn prepare_mission(
         profiles,
         &files,
         ambiance_mask,
+        authoritative_sim_config.coop,
     ) {
         return Err(MissionLoadError::new(campaign, message));
     }

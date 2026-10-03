@@ -63,6 +63,10 @@
   Eighteen reviewed library surfaces include these rules; the authoring tool
   stages descriptor-bound edits and updates saved-scene pins with rollback backups.
 
+- **Shared multiplayer story confirmation.** Story dialogue, briefing pages,
+  and debriefings stay open until every player in the lobby has acknowledged
+  them. A deliberate host exit tells joining players that the session ended.
+
 - **Exact multiplayer teams.** Local and online hosts choose one to five named
   playable characters independently of player count, including duplicates. A
   dedicated review screen supports replacing and removing each slot and warns

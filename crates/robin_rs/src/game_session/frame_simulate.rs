@@ -911,6 +911,7 @@ impl InteractiveFrameSimulation {
             modal_rendered: modal_rendered_this_frame,
         } = flags;
 
+        frame.restrict_hourglass(!frontend.ui.terminal_flow_active());
         let tick_exit_code = Self::advance_timeline(
             http,
             runtime,
@@ -1842,7 +1843,11 @@ mod tests {
         use robin_engine::engine::{DevState, Engine, ExternalAction, LevelAssets};
         use robin_engine::player_command::{PlayerCommand, PlayerId, PlayerInput};
 
-        for mode in [FrameExecutionMode::Paused, FrameExecutionMode::Rewind] {
+        for (mode, terminal) in [
+            (FrameExecutionMode::Paused, false),
+            (FrameExecutionMode::Rewind, false),
+            (FrameExecutionMode::Live, true),
+        ] {
             let mut assets = LevelAssets::new();
             let mut engine = Engine::new_for_test_with_level_size(
                 1024.0,
@@ -1887,6 +1892,7 @@ mod tests {
                 .push(ExternalAction::ReplaceCampaign { campaign });
             let before_tick = engine.simulation_tick();
             let mut http = crate::http_server::SessionIngress::detached_for_test();
+            frame.restrict_hourglass(!terminal);
             InteractiveFrameSimulation::advance_timeline(
                 &mut http,
                 &mut timeline,
@@ -1901,14 +1907,14 @@ mod tests {
                 mode,
             );
             assert_eq!(engine.simulation_tick(), before_tick);
-            assert_eq!(engine.is_lock_alt(), mode == FrameExecutionMode::Paused);
+            assert_eq!(engine.is_lock_alt(), mode != FrameExecutionMode::Rewind);
             assert_eq!(
                 engine.campaign().ares,
                 3,
                 "post-tick RPC stage still executes during rewind"
             );
             assert!(frame.unapplied_post_external_actions().is_empty());
-            assert_eq!(timeline.frame_number(), 0);
+            assert_eq!(timeline.frame_number(), u32::from(terminal));
         }
     }
 

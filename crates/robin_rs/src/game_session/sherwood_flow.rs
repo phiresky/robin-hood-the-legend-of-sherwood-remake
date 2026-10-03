@@ -29,5 +29,6 @@ pub(super) enum SherwoodCampaignFlow {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SherwoodConfirmationAction {
     ReturnToMap,
+    LeaveWonMission,
     StartMission { men_to_blazon: bool },
 }

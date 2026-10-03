@@ -97,7 +97,7 @@ impl StatureEnable {
     /// enabled + selected and the down-arrow as disabled; the
     /// crouch-down case is symmetric.  The latch takes precedence over
     /// the standard enable/selected state during the transition.
-    pub fn with_focus_latch(mut self, latch: StatureFocusLatch) -> Self {
+    pub fn with_focus_latch(mut self, latch: &StatureFocusLatch) -> Self {
         if latch.focus_standing_up {
             self.up_enabled = true;
             self.selected_up = true;
@@ -137,16 +137,26 @@ impl StatureEnable {
 /// issued and auto-clear the latch the first frame the stature changes.
 /// The observable behaviour: the arrow stays visually pressed until
 /// some PC actually completes its transition.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct StatureFocusLatch {
     pub focus_standing_up: bool,
     pub focus_crouching_down: bool,
     /// Aggregate `Stature` captured at latch time — used to detect
     /// when the transition completes.
     pub stature_at_latch: Option<Stature>,
+    selection: Vec<robin_engine::element::EntityId>,
 }
 
 impl StatureFocusLatch {
+    pub fn sync_selection(&mut self, selection: &[robin_engine::element::EntityId]) {
+        if self.selection != selection {
+            *self = Self {
+                selection: selection.to_vec(),
+                ..Self::default()
+            };
+        }
+    }
+
     /// Record a stand-up intent.
     pub fn latch_stand_up(&mut self, current: Stature) {
         self.focus_standing_up = true;
@@ -292,6 +302,31 @@ pub use crate::hud_sprite::{TooltipPlacement, draw_tooltip};
 #[cfg(test)]
 mod hit_order_tests {
     use super::*;
+
+    #[test]
+    fn changing_selection_clears_pending_posture_latch() {
+        let mut latch = StatureFocusLatch::default();
+        latch.sync_selection(&[robin_engine::element::EntityId::new(
+            1,
+            robin_engine::element::EntityIdKind::Pc,
+        )]);
+        latch.latch_crouch_down(Stature::Up);
+        latch.sync_selection(&[robin_engine::element::EntityId::new(
+            1,
+            robin_engine::element::EntityIdKind::Pc,
+        )]);
+        assert!(latch.focus_crouching_down);
+        latch.sync_selection(&[robin_engine::element::EntityId::new(
+            2,
+            robin_engine::element::EntityIdKind::Pc,
+        )]);
+        assert!(!latch.focus_crouching_down);
+        assert!(
+            StatureEnable::from_stature(Stature::Up)
+                .with_focus_latch(&latch)
+                .down_enabled
+        );
+    }
 
     #[test]
     fn geometric_hits_ignore_enable_state_but_preserve_overlap_priority() {

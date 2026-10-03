@@ -1462,15 +1462,55 @@ fn use_command_on_target_resolves_its_action_filter_before_dead_fallback() {
 }
 
 #[test]
-fn use_command_on_dead_soldier_is_search() {
-    let (mut engine, assets, _host) = fixture();
-    let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
-    let corpse = add_soldier(&mut engine, 60.0, 60.0, 0);
-
-    assert_eq!(
-        determine_use_command(&engine, &assets, pc, corpse),
-        Some(Command::SearchCmd)
-    );
+fn use_command_loots_then_carries_dead_unconscious_and_tied_bodies() {
+    use robin_engine::profiles::{Action, CharacterProfile, SoldierProfile};
+    for posture in [Posture::Dead, Posture::Lying, Posture::Tied] {
+        for money in [20, 0] {
+            let (mut engine, mut assets, _host) = fixture();
+            let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+            let mut profile = CharacterProfile::default();
+            profile.contextual_actions[0] = Action::Search;
+            profile.contextual_actions[1] = Action::FarmerCarry;
+            profiles.characters = vec![profile];
+            profiles.soldiers = vec![SoldierProfile::default()];
+            let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+            let target = engine.test_add_entity(Entity::Soldier(ActorSoldier {
+                element: {
+                    let mut element = ElementData::from_initial_posture(posture);
+                    element.kind = ElementKind::ActorSoldier;
+                    element.active = true;
+                    element
+                },
+                actor: Default::default(),
+                human: HumanData {
+                    unconscious: posture != Posture::Dead,
+                    ..Default::default()
+                },
+                npc: {
+                    let mut npc = NpcData {
+                        life_points: if posture == Posture::Dead { 0 } else { 100 },
+                        ..Default::default()
+                    };
+                    npc.money = money;
+                    npc
+                },
+                soldier: SoldierData {
+                    cached_camp: robin_engine::element_kinds::Camp::Lacklandists,
+                    ..Default::default()
+                },
+            }));
+            let expected = if money > 0 {
+                Command::SearchCmd
+            } else {
+                Command::TakeCorpse
+            };
+            assert_eq!(
+                determine_use_command(&engine, &assets, pc, target),
+                Some(expected),
+                "{posture:?}, money={money}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -1552,4 +1592,113 @@ fn double_click_repeat_on_missing_target_is_noop() {
 
     let cmds = resolve_double_click_repeat(&engine, &assets, ghost, host.transport.local_seat());
     assert!(cmds.is_empty());
+}
+
+#[test]
+fn contest_disguise_can_shoot_archery_targets_but_refuses_npcs() {
+    use robin_engine::campaign::{Campaign, PcDescription};
+    use robin_engine::profiles::{BowProfile, CharacterProfile, CharacterProfileIdx};
+    let mut assets = LevelAssets::new();
+    let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+    profiles.characters.push(CharacterProfile {
+        shooting_weapon_id: 1,
+        ..Default::default()
+    });
+    let mut bow = BowProfile::default();
+    bow.normal_shoot.range = 500;
+    profiles.bows.push(bow);
+    let mut campaign = Campaign::default();
+    let mut description = PcDescription {
+        character_profile_idx: Some(CharacterProfileIdx(0)),
+        ..Default::default()
+    };
+    description.status.num_arrows = 12;
+    campaign.characters.push(description);
+    let mut engine = Engine::new_for_test(800.0, 600.0, campaign, &mut assets).unwrap();
+    let mut host = Host::scratch(800.0, 600.0);
+    let mut element = ElementData::from_initial_posture(Posture::AnonymousArcher);
+    element.kind = ElementKind::ActorPc;
+    element.active = true;
+    let mut conversion =
+        vec![robin_engine::sprite_script::UNMAPPED; robin_engine::sprite_script::NONANIMATION_END];
+    conversion[robin_engine::order::OrderType::ShootingWithBow as usize] = 0;
+    element.sprite = robin_engine::sprite::Sprite::new(
+        std::sync::Arc::new(vec![
+            robin_engine::sprite_script::SpriteScript::default();
+            16
+        ]),
+        std::sync::Arc::new(conversion),
+    );
+    element.set_position_map(MapPoint::new(10.0, 10.0));
+    element.sprite.position_iface.settle_current_position();
+    let pc = engine.test_add_entity(Entity::Pc(robin_engine::element::ActorPc {
+        element,
+        actor: Default::default(),
+        human: Default::default(),
+        pc: robin_engine::element::PcData {
+            playable: true,
+            life_points: 100,
+            ..Default::default()
+        },
+    }));
+    select(&mut engine, &assets, pc);
+    let mut element = ElementData::default();
+    element.kind = ElementKind::Target;
+    element.active = true;
+    element.set_position_map(MapPoint::new(100.0, 10.0));
+    let target = engine.test_add_entity(Entity::Target(ElementTarget {
+        element,
+        fx: FxData::default(),
+        target: TargetData {
+            action_filter: TargetFilter::ARROW,
+            ..Default::default()
+        },
+    }));
+    host.frontend.presentation.draw_order.ids = vec![target];
+    assert_eq!(engine.hero_selection(PlayerId::HOST), &[pc]);
+    assert_eq!(
+        engine.find_focusable_entity(&assets, &[target], MapPoint::new(100.0, 10.0), Focus::Bow),
+        Some(target)
+    );
+    assert!(engine.check_bow_ammo(pc));
+    assert_eq!(
+        engine.can_shoot_with_bow_at(&assets, pc, target).0,
+        engine_api::input::BowTarget::Valid
+    );
+    let commands = resolve_action_left_click(
+        &mut host,
+        &engine,
+        &assets,
+        MapPoint::new(100.0, 10.0),
+        PlayerId::HOST,
+        Action::Bow,
+        NO_MODS,
+    );
+    assert_cmds!(
+        commands,
+        vec![PlayerCommand::LaunchInteraction {
+            actor: pc,
+            target,
+            command: Command::ShootBow,
+            running: false,
+        }]
+    );
+    let soldier = add_soldier(&mut engine, 100.0, 10.0, 100);
+    host.frontend.presentation.draw_order.ids = vec![soldier];
+    let commands = resolve_action_left_click(
+        &mut host,
+        &engine,
+        &assets,
+        MapPoint::new(100.0, 10.0),
+        PlayerId::HOST,
+        Action::Bow,
+        NO_MODS,
+    );
+    assert_cmds!(
+        commands,
+        vec![PlayerCommand::HeroSpeak {
+            pc_id: pc,
+            expression: engine_api::melee::HERO_UNABLE_TO_DO_SOMETHING,
+        }]
+    );
 }

@@ -139,7 +139,7 @@ fn stage_terminal_campaign_update(
     difficulty: robin_engine::player_profile::DifficultyLevel,
     current_attempt_sequence: u64,
 ) -> u64 {
-    if playing_back {
+    if playing_back || transport.local_seat() != engine_player_command::PlayerId::HOST {
         // A multiplayer echo can be a pre-command already applied before this
         // tick. Its debrief is ready now; a post-command (or later echo) still
         // needs the normal attempt-sequence advancement gate.
@@ -1290,8 +1290,11 @@ mod tests {
         let mut ui = MissionUi::new(false);
         ui.terminal_debriefing = Some(state);
         // There is deliberately no transport prepare/reconnecting flag yet.
-        // Retaining the terminal owner itself supplies pre-tick's modal pause.
+        // The terminal owner stops gameplay, but the network clock must keep
+        // carrying the host's delayed campaign and restart commands.
         assert!(ui.terminal_flow_active());
+        assert!(!ui.terminal_pauses_timeline(true));
+        assert!(ui.terminal_pauses_timeline(false));
         assert!(!Game::default().should_run_hourglass(false, false, ui.terminal_flow_active()));
         assert!(
             ui.terminal_debriefing
@@ -1478,6 +1481,36 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn client_terminal_waits_for_host_update_without_sending_a_forbidden_command() {
+        use crate::multiplayer::NetChannels;
+        use robin_engine::player_command::PlayerId;
+        let mut host = Host::scratch(800.0, 600.0);
+        let (net, _incoming, outgoing, _, _) = NetChannels::new();
+        host.transport.install_session(
+            net,
+            PlayerId(1),
+            "Test".into(),
+            0,
+            Default::default(),
+            None,
+        );
+        let mut frame = MissionFrame::new(10);
+        let previous = stage_terminal_campaign_update(
+            false,
+            &host.transport,
+            &mut frame,
+            GameCode::LevelFailed,
+            Default::default(),
+            41,
+        );
+        assert_eq!(previous, 41);
+        assert!(frame.post_commands().is_empty());
+        assert!(outgoing.try_recv().is_err());
+        assert!(!terminal_campaign_update_applied(41, previous));
+        assert!(terminal_campaign_update_applied(42, previous));
     }
 
     #[test]

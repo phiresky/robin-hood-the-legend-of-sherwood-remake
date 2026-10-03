@@ -135,7 +135,12 @@ pub fn update_pc_popup_information(
     let focused_pc = if drag_active || !engine.is_sherwood(&assets.profile_manager) {
         None
     } else {
-        engine.find_focusable_pc(assets, mouse_map, engine_element::Focus::Select)
+        engine.find_focusable_pc_for_seat(
+            host.transport.local_seat(),
+            assets,
+            mouse_map,
+            engine_element::Focus::Select,
+        )
     };
 
     // Host-side mouse hover writes directly into the host-owned
@@ -194,7 +199,8 @@ pub fn choose_mouse_pointer_for_no_action(
 
     // No PC selected — only selectable PCs.
     if num_selected == 0 {
-        let focused = engine.find_focusable_entity(
+        let focused = engine.find_focusable_entity_for_seat(
+            host.transport.local_seat(),
             assets,
             &host.frontend.presentation.draw_order.ids,
             mouse_map,
@@ -275,7 +281,8 @@ fn cursor_for_hovered_entity(
             (
                 entity.is_pc(),
                 entity.is_human(),
-                engine.is_entity_focusable(
+                engine.is_entity_focusable_for_seat(
+                    host.transport.local_seat(),
                     assets,
                     eid,
                     entity,
@@ -284,7 +291,8 @@ fn cursor_for_hovered_entity(
                     selected_pc,
                 ),
                 !is_swordfighting
-                    && engine.is_entity_focusable(
+                    && engine.is_entity_focusable_for_seat(
+                        host.transport.local_seat(),
                         assets,
                         eid,
                         entity,
@@ -292,7 +300,8 @@ fn cursor_for_hovered_entity(
                         Focus::Use,
                         selected_pc,
                     ),
-                engine.is_entity_focusable(
+                engine.is_entity_focusable_for_seat(
+                    host.transport.local_seat(),
                     assets,
                     eid,
                     entity,
@@ -300,7 +309,8 @@ fn cursor_for_hovered_entity(
                     Focus::Sword,
                     selected_pc,
                 ),
-                engine.is_entity_focusable(
+                engine.is_entity_focusable_for_seat(
+                    host.transport.local_seat(),
                     assets,
                     eid,
                     entity,
@@ -695,7 +705,13 @@ fn sector_hover_step(
     if st.is_motion() && st.is_area() {
         // Reset trajectory for motion area navigation.
         effects.reject_trajectory = true;
-        return SectorHoverStep::Cursor(motion_area_cursor(engine, assets, ctx, sector));
+        return SectorHoverStep::Cursor(motion_area_cursor(
+            engine,
+            host.transport.local_seat(),
+            assets,
+            ctx,
+            sector,
+        ));
     }
 
     // Door sector.
@@ -719,6 +735,7 @@ fn sector_hover_step(
 
 fn motion_area_cursor(
     engine: &Engine,
+    local_seat: robin_engine::player_command::PlayerId,
     assets: &LevelAssets,
     ctx: &EnvHoverCtx,
     sector: &engine_fast_find_grid::GridSector,
@@ -732,7 +749,7 @@ fn motion_area_cursor(
             // selected PC having the contextual Climb action. Without it
             // the cursor falls through to CANTGOTHERE (or shift-variant).
             engine_sector::LiftType::Wall => {
-                if engine.all_selected_pcs_can_climb(assets) {
+                if engine.all_selected_pcs_can_climb_for_seat(local_seat, assets) {
                     RHMOUSE_CLIMBING
                 } else {
                     cant_go_cursor(ctx.shift_held)
@@ -1052,10 +1069,20 @@ fn view_cursor(
     // Alt → view cursor.
     if alt_held {
         let focus_id = engine
-            .find_focusable_npc(assets, mouse_map_pt, Focus::View)
+            .find_focusable_npc_for_seat(
+                host.transport.local_seat(),
+                assets,
+                mouse_map_pt,
+                Focus::View,
+            )
             .or_else(|| {
                 if dev.debug.pc_sight {
-                    engine.find_focusable_pc(assets, mouse_map_pt, Focus::Select)
+                    engine.find_focusable_pc_for_seat(
+                        host.transport.local_seat(),
+                        assets,
+                        mouse_map_pt,
+                        Focus::Select,
+                    )
                 } else {
                     None
                 }
@@ -1081,7 +1108,12 @@ fn view_cursor(
     // set, hovering an NPC lets the player pick the follow target;
     // clicking snaps the camera to track it.
     if engine.view_locked() {
-        if let Some(id) = engine.find_focusable_npc(assets, mouse_map_pt, Focus::View) {
+        if let Some(id) = engine.find_focusable_npc_for_seat(
+            host.transport.local_seat(),
+            assets,
+            mouse_map_pt,
+            Focus::View,
+        ) {
             host.frontend.input.feedback.focused_entity_id = Some(id);
         }
         return Some(RHMOUSE_VIEW);
@@ -1208,7 +1240,8 @@ fn cursor_for_bow(
     }
 
     // Check if PC is in building or wall/ladder lift.
-    let in_restricted = engine.is_selected_pc_in_restricted_sector();
+    let in_restricted =
+        engine.is_selected_pc_in_restricted_sector_for_seat(host.transport.local_seat());
 
     let (cursor, opacity, shadow_color) = if !in_restricted {
         bow_aim_cursor(engine, host, assets, pc_id, mouse_map_pt)
@@ -1233,7 +1266,8 @@ fn bow_planning_cursor(
     use robin_engine::resource_ids::*;
     host.frontend.input.feedback.mouse_opacity = 0;
     host.frontend.input.feedback.mouse_shadow_color = 0;
-    if let Some(target_id) = engine.find_focusable_entity(
+    if let Some(target_id) = engine.find_focusable_entity_for_seat(
+        host.transport.local_seat(),
         assets,
         &host.frontend.presentation.draw_order.ids,
         mouse_map_pt,
@@ -1265,7 +1299,8 @@ fn bow_recording_cursor(
     host.frontend.reject_trajectory_hit();
     host.frontend.input.feedback.mouse_opacity = 0;
     host.frontend.input.feedback.mouse_shadow_color = 0;
-    if let Some(target_id) = engine.find_focusable_entity(
+    if let Some(target_id) = engine.find_focusable_entity_for_seat(
+        host.transport.local_seat(),
         assets,
         &host.frontend.presentation.draw_order.ids,
         mouse_map_pt,
@@ -1296,7 +1331,8 @@ fn bow_aim_cursor(
                 .max(MOUSE_OPACITY_DEFAULT);
             let mut shadow_color: u16 = 0;
 
-            if let Some(target_id) = engine.find_focusable_entity(
+            if let Some(target_id) = engine.find_focusable_entity_for_seat(
+                host.transport.local_seat(),
                 assets,
                 &host.frontend.presentation.draw_order.ids,
                 mouse_map_pt,
@@ -1413,7 +1449,8 @@ fn cursor_for_focus_target(
     yes_cursor: i32,
     no_cursor: i32,
 ) -> i32 {
-    let focused = engine.find_focusable_entity(
+    let focused = engine.find_focusable_entity_for_seat(
+        host.transport.local_seat(),
         assets,
         &host.frontend.presentation.draw_order.ids,
         mouse_map_pt,
@@ -1444,8 +1481,11 @@ fn cursor_for_apple(
             .first()
             .copied();
 
-        if shift_held || !engine.is_selected_pc_in_restricted_sector() {
-            if let Some(target_id) = engine.find_focusable_entity(
+        if shift_held
+            || !engine.is_selected_pc_in_restricted_sector_for_seat(host.transport.local_seat())
+        {
+            if let Some(target_id) = engine.find_focusable_entity_for_seat(
+                host.transport.local_seat(),
                 assets,
                 &host.frontend.presentation.draw_order.ids,
                 mouse_map_pt,
@@ -1553,8 +1593,11 @@ fn cursor_for_stone(
             .first()
             .copied();
 
-        if shift_held || !engine.is_selected_pc_in_restricted_sector() {
-            if let Some(target_id) = engine.find_focusable_entity(
+        if shift_held
+            || !engine.is_selected_pc_in_restricted_sector_for_seat(host.transport.local_seat())
+        {
+            if let Some(target_id) = engine.find_focusable_entity_for_seat(
+                host.transport.local_seat(),
                 assets,
                 &host.frontend.presentation.draw_order.ids,
                 mouse_map_pt,
@@ -1639,7 +1682,10 @@ fn cursor_for_stone(
                 }
             } else {
                 let ground_allowed = engine.sim_config().item_gameplay.stone_ground_distraction
-                    && engine.is_mouse_sector_valid_for_ground_target(mouse_map_pt)
+                    && engine.is_mouse_sector_valid_for_ground_target_for_seat(
+                        host.transport.local_seat(),
+                        mouse_map_pt,
+                    )
                     && (shift_held
                         || pc_id.is_some_and(|pid| {
                             engine.is_in_range_for_projectile(
@@ -1697,8 +1743,12 @@ fn cursor_for_purse(
             .first()
             .copied();
 
-        if (shift_held || !engine.is_selected_pc_in_restricted_sector())
-            && engine.is_mouse_sector_valid_for_ground_target(mouse_map_pt)
+        if (shift_held
+            || !engine.is_selected_pc_in_restricted_sector_for_seat(host.transport.local_seat()))
+            && engine.is_mouse_sector_valid_for_ground_target_for_seat(
+                host.transport.local_seat(),
+                mouse_map_pt,
+            )
         {
             let in_range = shift_held
                 || pc_id.is_some_and(|pid| {
@@ -1763,7 +1813,9 @@ fn cursor_for_wasp_nest(
             .first()
             .copied();
 
-        if shift_held || !engine.is_selected_pc_in_restricted_sector() {
+        if shift_held
+            || !engine.is_selected_pc_in_restricted_sector_for_seat(host.transport.local_seat())
+        {
             let in_range = shift_held
                 || pc_id.is_some_and(|pid| {
                     engine.is_in_range_for_projectile(
@@ -1843,7 +1895,8 @@ fn cursor_for_help_to_climb(
             .unwrap_or(Posture::Undefined);
 
         // If not in building/lift AND carrying on shoulders.
-        if !engine.is_selected_pc_in_restricted_sector() && posture == Posture::CarryingOnShoulders
+        if !engine.is_selected_pc_in_restricted_sector_for_seat(host.transport.local_seat())
+            && posture == Posture::CarryingOnShoulders
         {
             choose_mouse_pointer_for_no_action(engine, host, assets, mouse_map_pt, modifiers)
         } else if posture == Posture::HelpingToClimb {
@@ -1885,7 +1938,12 @@ fn cursor_for_shield(
             engine.shield().is_protected
         };
         if choosing_protectee {
-            let focused = engine.find_focusable_pc(assets, mouse_map_pt, Focus::Shield);
+            let focused = engine.find_focusable_pc_for_seat(
+                host.transport.local_seat(),
+                assets,
+                mouse_map_pt,
+                Focus::Shield,
+            );
             if let Some(eid) = focused {
                 host.frontend.input.feedback.focused_entity_id = Some(eid);
                 if is_big {
@@ -1927,8 +1985,12 @@ fn cursor_for_net(
             .hero_selection(host.transport.local_seat())
             .first()
             .copied();
-        if (shift_held || !engine.is_selected_pc_in_restricted_sector())
-            && engine.is_mouse_sector_valid_for_ground_target(mouse_map_pt)
+        if (shift_held
+            || !engine.is_selected_pc_in_restricted_sector_for_seat(host.transport.local_seat()))
+            && engine.is_mouse_sector_valid_for_ground_target_for_seat(
+                host.transport.local_seat(),
+                mouse_map_pt,
+            )
         {
             let in_range = shift_held
                 || pc_id.is_some_and(|pid| {
@@ -2049,7 +2111,10 @@ fn cursor_for_ale(engine: &Engine, host: &mut Host, mouse_map_pt: MapPoint) -> i
     use robin_engine::resource_ids::*;
     {
         // Validate mouse sector (no door, no wall/ladder).
-        if engine.is_mouse_sector_valid_for_ground_target(mouse_map_pt) {
+        if engine.is_mouse_sector_valid_for_ground_target_for_seat(
+            host.transport.local_seat(),
+            mouse_map_pt,
+        ) {
             if item_preview_enabled(
                 engine,
                 host.frontend
@@ -2222,7 +2287,10 @@ mod tests {
                 MapPoint::new(300.0, 300.0)
             };
             assert_eq!(
-                engine.is_mouse_sector_valid_for_ground_target(mouse),
+                engine.is_mouse_sector_valid_for_ground_target_for_seat(
+                    host.transport.local_seat(),
+                    mouse
+                ),
                 valid_ground
             );
             let cursor = cursor_for_stone(

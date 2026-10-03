@@ -925,6 +925,14 @@ impl EngineInner {
     /// `retrieve_stature(None)` every frame instead of going through an
     /// event-driven refresh.
     pub fn retrieve_stature(&self, pc_id: Option<EntityId>) -> Stature {
+        self.retrieve_stature_for_seat(crate::player_command::PlayerId::HOST, pc_id)
+    }
+
+    pub fn retrieve_stature_for_seat(
+        &self,
+        seat: crate::player_command::PlayerId,
+        pc_id: Option<EntityId>,
+    ) -> Stature {
         use crate::element::Posture;
 
         // Engine-level climbing-or-in-building test — NOT the actor-level
@@ -968,7 +976,7 @@ impl EngineInner {
         // All-selected branch.
         let mut up = false;
         let mut down = false;
-        for &pc_id in &self.players.seats[0].selection {
+        for &pc_id in &self.players.seats[seat.0 as usize].selection {
             if is_climbing_or_in_building(pc_id) {
                 continue;
             }

@@ -468,13 +468,24 @@ impl EngineInner {
     ///
     /// An empty selection returns `true` (vacuously).
     pub fn all_selected_pcs_can_climb(&self, assets: &LevelAssets) -> bool {
-        self.players.seats[0].selection.iter().all(|&pc_id| {
-            self.selected_pc_has_contextual_action(
-                assets,
-                Some(pc_id),
-                crate::profiles::Action::Climb,
-            )
-        })
+        self.all_selected_pcs_can_climb_for_seat(crate::player_command::PlayerId::HOST, assets)
+    }
+
+    pub fn all_selected_pcs_can_climb_for_seat(
+        &self,
+        seat: crate::player_command::PlayerId,
+        assets: &LevelAssets,
+    ) -> bool {
+        self.players.seats[seat.0 as usize]
+            .selection
+            .iter()
+            .all(|&pc_id| {
+                self.selected_pc_has_contextual_action(
+                    assets,
+                    Some(pc_id),
+                    crate::profiles::Action::Climb,
+                )
+            })
     }
 
     /// Check whether the selected PC can carry bodies.
@@ -511,6 +522,27 @@ impl EngineInner {
         focus: crate::element::Focus,
         selected_pc_id: Option<EntityId>,
     ) -> bool {
+        self.is_entity_focusable_for_seat(
+            crate::player_command::PlayerId::HOST,
+            assets,
+            entity_id,
+            entity,
+            mouse_map,
+            focus,
+            selected_pc_id,
+        )
+    }
+
+    pub fn is_entity_focusable_for_seat(
+        &self,
+        seat: crate::player_command::PlayerId,
+        assets: &LevelAssets,
+        entity_id: EntityId,
+        entity: &Entity,
+        mouse_map: MapPoint,
+        focus: crate::element::Focus,
+        selected_pc_id: Option<EntityId>,
+    ) -> bool {
         use crate::element::Focus;
 
         // PCs check `is_active` per-focus (SELECT and HEAL allow
@@ -536,7 +568,7 @@ impl EngineInner {
         } else {
             matches!(focus, Focus::Sword | Focus::Interact | Focus::View)
         };
-        if !multi_select_allowed && self.players.seats[0].selection.len() > 1 {
+        if !multi_select_allowed && self.players.seats[seat.0 as usize].selection.len() > 1 {
             return false;
         }
 
@@ -570,7 +602,15 @@ impl EngineInner {
         }
 
         if entity.is_pc() {
-            return self.pc_focusable(assets, entity_id, entity, focus, selected_pc_id, blipped);
+            return self.pc_focusable(
+                seat,
+                assets,
+                entity_id,
+                entity,
+                focus,
+                selected_pc_id,
+                blipped,
+            );
         }
 
         // ── FX targets ──
@@ -631,7 +671,7 @@ impl EngineInner {
             if entity.element_data().optional_layer().is_none() {
                 return false;
             }
-            if self.players.seats[0].selection.len() > 1 {
+            if self.players.seats[seat.0 as usize].selection.len() > 1 {
                 return false;
             }
             return self.selected_pc_has_action(
@@ -646,6 +686,7 @@ impl EngineInner {
 
     fn pc_focusable(
         &self,
+        seat: crate::player_command::PlayerId,
         assets: &LevelAssets,
         entity_id: EntityId,
         entity: &Entity,
@@ -672,7 +713,9 @@ impl EngineInner {
             }
             Focus::Shield | Focus::ShieldPortrait => {
                 entity.is_active()
-                    && !self.players.seats[0].selection.contains(&entity_id)
+                    && !self.players.seats[seat.0 as usize]
+                        .selection
+                        .contains(&entity_id)
                     && !entity.is_dead()
             }
             // Heal-active PC must be alive, below max HP, not in
@@ -889,10 +932,8 @@ impl EngineInner {
                 .map(|a| a.action_state)
                 .is_some_and(|s| s == crate::element::ActionState::MovingFast);
         // Whether the currently-selected PC is Robin (used for VIP looting).
-        let selected_pc_is_robin = self.players.seats[0]
-            .selection
-            .first()
-            .and_then(|&id| self.get_entity(id))
+        let selected_pc_is_robin = selected_pc_id
+            .and_then(|id| self.get_entity(id))
             .and_then(|e| e.pc_data())
             .is_some_and(|pc| pc.robin);
 
@@ -1170,15 +1211,43 @@ impl EngineInner {
         mouse_map: MapPoint,
         focus: crate::element::Focus,
     ) -> Option<EntityId> {
-        if self.players.seats[0].selection.is_empty()
+        self.find_focusable_entity_for_seat(
+            crate::player_command::PlayerId::HOST,
+            assets,
+            draw_order,
+            mouse_map,
+            focus,
+        )
+    }
+
+    pub fn find_focusable_entity_for_seat(
+        &self,
+        seat: crate::player_command::PlayerId,
+        assets: &LevelAssets,
+        draw_order: &[EntityId],
+        mouse_map: MapPoint,
+        focus: crate::element::Focus,
+    ) -> Option<EntityId> {
+        if self.players.seats[seat.0 as usize].selection.is_empty()
             && !matches!(focus, crate::element::Focus::Select)
         {
             return None;
         }
-        let selected_pc = self.players.seats[0].selection.first().copied();
+        let selected_pc = self.players.seats[seat.0 as usize]
+            .selection
+            .first()
+            .copied();
         for &eid in draw_order.iter().rev() {
             if let Some(e) = self.get_entity(eid)
-                && self.is_entity_focusable(assets, eid, e, mouse_map, focus, selected_pc)
+                && self.is_entity_focusable_for_seat(
+                    seat,
+                    assets,
+                    eid,
+                    e,
+                    mouse_map,
+                    focus,
+                    selected_pc,
+                )
             {
                 return Some(eid);
             }
@@ -1193,7 +1262,25 @@ impl EngineInner {
         mouse_map: MapPoint,
         focus: crate::element::Focus,
     ) -> Option<EntityId> {
-        let selected_pc = self.players.seats[0].selection.first().copied();
+        self.find_focusable_npc_for_seat(
+            crate::player_command::PlayerId::HOST,
+            assets,
+            mouse_map,
+            focus,
+        )
+    }
+
+    pub fn find_focusable_npc_for_seat(
+        &self,
+        seat: crate::player_command::PlayerId,
+        assets: &LevelAssets,
+        mouse_map: MapPoint,
+        focus: crate::element::Focus,
+    ) -> Option<EntityId> {
+        let selected_pc = self.players.seats[seat.0 as usize]
+            .selection
+            .first()
+            .copied();
         for nid in self
             .world
             .entities
@@ -1203,7 +1290,15 @@ impl EngineInner {
             .rev()
         {
             if let Some(e) = self.get_entity(nid)
-                && self.is_entity_focusable(assets, nid, e, mouse_map, focus, selected_pc)
+                && self.is_entity_focusable_for_seat(
+                    seat,
+                    assets,
+                    nid,
+                    e,
+                    mouse_map,
+                    focus,
+                    selected_pc,
+                )
             {
                 return Some(nid);
             }
@@ -1218,10 +1313,36 @@ impl EngineInner {
         mouse_map: MapPoint,
         focus: crate::element::Focus,
     ) -> Option<EntityId> {
-        let selected_pc = self.players.seats[0].selection.first().copied();
+        self.find_focusable_pc_for_seat(
+            crate::player_command::PlayerId::HOST,
+            assets,
+            mouse_map,
+            focus,
+        )
+    }
+
+    pub fn find_focusable_pc_for_seat(
+        &self,
+        seat: crate::player_command::PlayerId,
+        assets: &LevelAssets,
+        mouse_map: MapPoint,
+        focus: crate::element::Focus,
+    ) -> Option<EntityId> {
+        let selected_pc = self.players.seats[seat.0 as usize]
+            .selection
+            .first()
+            .copied();
         for &pid in self.world.pc_ids.iter().rev() {
             if let Some(e) = self.get_entity(pid)
-                && self.is_entity_focusable(assets, pid, e, mouse_map, focus, selected_pc)
+                && self.is_entity_focusable_for_seat(
+                    seat,
+                    assets,
+                    pid,
+                    e,
+                    mouse_map,
+                    focus,
+                    selected_pc,
+                )
             {
                 return Some(pid);
             }
@@ -1235,7 +1356,14 @@ impl EngineInner {
     /// wall/ladder lift. Many projectile/bow actions are blocked in
     /// these sectors.
     pub fn is_selected_pc_in_restricted_sector(&self) -> bool {
-        let pc_id = match self.players.seats[0].selection.first() {
+        self.is_selected_pc_in_restricted_sector_for_seat(crate::player_command::PlayerId::HOST)
+    }
+
+    pub fn is_selected_pc_in_restricted_sector_for_seat(
+        &self,
+        seat: crate::player_command::PlayerId,
+    ) -> bool {
+        let pc_id = match self.players.seats[seat.0 as usize].selection.first() {
             Some(&id) => id,
             None => return false,
         };
@@ -1277,7 +1405,18 @@ impl EngineInner {
     /// projectile actions (purse, net, ale).  Returns false if the sector
     /// is a door or a wall/ladder lift.
     pub fn is_mouse_sector_valid_for_ground_target(&self, mouse_map: MapPoint) -> bool {
-        let reference = self.players.seats[0]
+        self.is_mouse_sector_valid_for_ground_target_for_seat(
+            crate::player_command::PlayerId::HOST,
+            mouse_map,
+        )
+    }
+
+    pub fn is_mouse_sector_valid_for_ground_target_for_seat(
+        &self,
+        seat: crate::player_command::PlayerId,
+        mouse_map: MapPoint,
+    ) -> bool {
+        let reference = self.players.seats[seat.0 as usize]
             .selection
             .first()
             .and_then(|&id| self.get_entity(id))
@@ -1343,6 +1482,14 @@ impl EngineInner {
     /// Check if an entity is a VIP (via its profile).
     pub fn is_entity_vip(&self, assets: &LevelAssets, entity: &Entity) -> bool {
         match entity {
+            Entity::Pc(pc) => assets
+                .profile_manager
+                .get_character(pc.pc.profile_index)
+                .map(|profile| profile.vip)
+                .unwrap_or_else(|| {
+                    tracing::warn!(profile = ?pc.pc.profile_index, "PC VIP lookup is missing its character profile");
+                    false
+                }),
             Entity::Soldier(s) => assets
                 .profile_manager
                 .get_soldier(s.soldier.soldier_profile_index)
@@ -3331,6 +3478,117 @@ mod tests {
     use crate::element::{ActionState, Command};
     use crate::order::OrderType;
     use crate::weapons::ShootMode;
+
+    #[test]
+    fn client_context_actions_use_its_selection_independently_of_host() {
+        use crate::element::{Focus, Posture};
+        use crate::engine::test_support::actors::{make_test_pc, make_test_soldier};
+        use crate::player_command::PlayerId;
+        use crate::profiles::{Action, CharacterProfile};
+        let mut engine = EngineInner::new();
+        let mut assets = LevelAssets::new();
+        let mut profile = CharacterProfile::default();
+        profile.contextual_actions[0] = Action::Search;
+        profile.contextual_actions[1] = Action::Tie;
+        std::sync::Arc::make_mut(&mut assets.profile_manager)
+            .characters
+            .push(profile);
+        let host_pc = engine.add_test_entity(make_test_pc(Posture::Upright));
+        let client_pc = engine.add_test_entity(make_test_pc(Posture::Upright));
+        engine.players.seats[0].selection = vec![host_pc, client_pc];
+        engine.players.seats.push(Default::default());
+        engine.players.seats[1].selection = vec![client_pc];
+        let mut soldier = make_test_soldier(Posture::Lying);
+        soldier.element_data_mut().active = true;
+        if let Entity::Soldier(s) = &mut soldier {
+            s.human.unconscious = true;
+            s.npc.life_points = 100;
+            s.npc.money = 20;
+        }
+        let soldier = engine.add_test_entity(soldier);
+        for money in [20, 0] {
+            if let Entity::Soldier(s) = engine.ent_mut(soldier) {
+                s.npc.money = money;
+            }
+            assert!(!engine.is_entity_focusable_for_seat(
+                PlayerId::HOST,
+                &assets,
+                soldier,
+                engine.ent(soldier),
+                MapPoint::ZERO,
+                Focus::Use,
+                Some(host_pc)
+            ));
+            assert!(
+                engine.is_entity_focusable_for_seat(
+                    PlayerId(1),
+                    &assets,
+                    soldier,
+                    engine.ent(soldier),
+                    MapPoint::ZERO,
+                    Focus::Use,
+                    Some(client_pc)
+                ),
+                "loot and tie must use the client's single selection"
+            );
+        }
+    }
+
+    #[test]
+    fn vip_character_profile_enables_beggar_payment_focus_and_cursor() {
+        use crate::element::Posture;
+        use crate::engine::test_support::actors::{make_test_civilian, make_test_pc};
+        use crate::resource_ids::{RHMOUSE_PAY_NO, RHMOUSE_PAY_YES};
+        let mut engine = EngineInner::new();
+        let mut assets = LevelAssets::new();
+        std::sync::Arc::make_mut(&mut assets.profile_manager)
+            .characters
+            .push(crate::profiles::CharacterProfile {
+                vip: true,
+                ..Default::default()
+            });
+        let pc = engine.add_test_entity(make_test_pc(Posture::Upright));
+        let mut civilian = make_test_civilian(Posture::Upright);
+        civilian.element_data_mut().active = true;
+        if let Entity::Civilian(c) = &mut civilian {
+            c.npc.life_points = 100;
+            c.civilian.cached_civilian_type = crate::profiles::CivilianType::Beggar;
+        }
+        let beggar = engine.add_test_entity(civilian);
+        engine
+            .mission_domain
+            .campaign
+            .set_value(crate::campaign::CampaignValue::Ransom, 0);
+        assert!(engine.is_entity_focusable(
+            &assets,
+            beggar,
+            engine.ent(beggar),
+            MapPoint::ZERO,
+            crate::element::Focus::Use,
+            Some(pc)
+        ));
+        assert_eq!(
+            engine.choose_use_cursor(&assets, beggar, Some(pc)),
+            RHMOUSE_PAY_NO
+        );
+        engine
+            .mission_domain
+            .campaign
+            .set_value(crate::campaign::CampaignValue::Ransom, BEGGAR_SALARY);
+        assert_eq!(
+            engine.choose_use_cursor(&assets, beggar, Some(pc)),
+            RHMOUSE_PAY_YES
+        );
+        std::sync::Arc::make_mut(&mut assets.profile_manager).characters[0].vip = false;
+        assert!(!engine.is_entity_focusable(
+            &assets,
+            beggar,
+            engine.ent(beggar),
+            MapPoint::ZERO,
+            crate::element::Focus::Use,
+            Some(pc)
+        ));
+    }
 
     #[test]
     fn out_of_range_bow_aim_does_not_change_bow_height() {

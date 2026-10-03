@@ -520,10 +520,22 @@ pub(super) fn prepare_deterministic_audio(
     profiles: &engine_profiles::ProfileManager,
     files: &std::sync::Arc<engine_sbfile::SbFileSystem>,
     ambiance_mask: u32,
+    coop: robin_engine::coop::CoopRules,
 ) -> Result<(), MissionError> {
     assets.audio.required_exclamation_ids =
         required_mission_exclamation_ids(loaded, campaign, profiles)
             .map_err(|error| error.context("Deterministic speech dependency load failed"))?;
+    robin_engine::audio_durations::include_selected_team_speech(
+        &mut assets.audio.required_exclamation_ids,
+        profiles,
+        coop,
+        loaded
+            .proto
+            .misc
+            .as_ref()
+            .is_some_and(|misc| misc.forest_level),
+    )
+    .map_err(MissionError::audio)?;
     assets.audio.sound_source_required_ids = loaded
         .proto
         .sound_sources

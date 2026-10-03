@@ -351,9 +351,13 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
     };
     let corner_enable = CornerButtonEnable::from_engine(&manager.engine.presentation_view());
     let zoom_enable = ZoomButtonEnable::from_engine(&manager.engine.presentation_view());
-    let stature = manager.engine.retrieve_stature(None);
+    let stature = manager
+        .engine
+        .retrieve_stature_for_seat(host.transport.local_seat(), None);
+    game.stature_focus
+        .sync_selection(manager.engine.hero_selection(host.transport.local_seat()));
     game.stature_focus.maybe_clear(stature);
-    let stature_enable = StatureEnable::from_stature(stature).with_focus_latch(game.stature_focus);
+    let stature_enable = StatureEnable::from_stature(stature).with_focus_latch(&game.stature_focus);
     // Widgets own the complete press/release gesture. Keeping their raw
     // events in this batch also dispatched world actions behind the HUD.
     events.retain(|event| {

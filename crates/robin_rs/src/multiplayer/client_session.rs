@@ -39,6 +39,9 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
+/// An intentional host exit must not trigger the reconnect loop.
+pub(super) const HOST_LEFT_CLOSE_CODE: u32 = 0x5248;
+
 /// Cancellation is a flag set by [`ClientHandle::shutdown`]; waiters poll it.
 const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(20);
 const INITIAL_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
@@ -874,10 +877,20 @@ async fn run_session<T: ClientTransport>(
     let cancel = pin!(wait_for_cancel::<T::Timer>(transport.cancellation()));
     let reader = pin!(reader);
     let writer = pin!(writer);
-    match select(cancel, select(reader, writer)).await {
+    let end = match select(cancel, select(reader, writer)).await {
         Either::Left(((), _)) => SessionEnd::OutgoingClosed,
         Either::Right((Either::Left((end, _)) | Either::Right((end, _)), _)) => end,
+    };
+    if matches!(end, SessionEnd::Drop(_))
+        && matches!(_conn.close_reason(), Some(iroh::endpoint::ConnectionError::ApplicationClosed(ref close))
+            if close.error_code == HOST_LEFT_CLOSE_CODE.into())
+    {
+        return SessionEnd::Fatal(MultiplayerError::HostRejected {
+            stage: "session ended",
+            reason: "The host has left the game.".into(),
+        });
     }
+    end
 }
 
 // ─── In-session messages ─────────────────────────────────────────

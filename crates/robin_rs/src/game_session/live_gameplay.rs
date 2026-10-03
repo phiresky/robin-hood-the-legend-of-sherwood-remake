@@ -225,7 +225,8 @@ fn dispatch_gameplay_action(
             }
         }
         GameAction::CrouchDown => {
-            let pre_command_stature = engine.retrieve_stature(None);
+            let pre_command_stature =
+                engine.retrieve_stature_for_seat(host.transport.local_seat(), None);
             let command = if planning_held {
                 PlayerCommand::QueueQuickAction {
                     action: robin_engine::profiles::Action::NoAction,
@@ -240,7 +241,8 @@ fn dispatch_gameplay_action(
             }
         }
         GameAction::StandUp => {
-            let pre_command_stature = engine.retrieve_stature(None);
+            let pre_command_stature =
+                engine.retrieve_stature_for_seat(host.transport.local_seat(), None);
             let command = if planning_held {
                 PlayerCommand::QueueQuickAction {
                     action: robin_engine::profiles::Action::NoAction,

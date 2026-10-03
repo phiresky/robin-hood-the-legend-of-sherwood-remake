@@ -1830,10 +1830,8 @@ fn read_target_point_2d(
 }
 
 /// Read a target point preserving Z.  `GeoPoint2D`-shaped fields are
-/// lifted with `z = 0.0` (matches the spawn-side behaviour at
-/// engine/archery.rs ThrowPurseDone, which lifts the stored target the
-/// same way).
-fn read_target_point_3d(
+/// lifted with `z = 0.0`. Validation and throw completion use the same point.
+pub(super) fn read_target_point_3d(
     element: &SequenceElement<impl robin_util::state_hash::StateHash>,
     field: crate::sequence::Field,
 ) -> Option<crate::coordinates::WorldPoint3D> {

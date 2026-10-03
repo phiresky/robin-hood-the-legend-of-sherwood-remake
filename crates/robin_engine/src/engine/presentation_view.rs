@@ -158,6 +158,7 @@ impl<'world> PresentationView<'world> {
         fn patches(&self) -> &[crate::patch::Patch];
         fn displayed_pc_ids(&self) -> Vec<EntityId>;
         fn retrieve_stature(&self, pc_id: Option<EntityId>) -> Stature;
+        fn retrieve_stature_for_seat(&self, seat: crate::player_command::PlayerId, pc_id: Option<EntityId>) -> Stature;
         fn collect_pcs_with_action(&self, assets: &LevelAssets, action: Action, out: &mut Vec<EntityId>);
         fn tactical_selection(&self, player_id: crate::player_command::PlayerId) -> &[EntityId];
         fn tactical_pinned_groups(&self, player_id: crate::player_command::PlayerId) -> &[TacticalPinnedGroup];

@@ -23,6 +23,8 @@ fn dispatch_test_context() -> (super::ServerContext, Receiver<NetEvent>) {
     let (incoming_tx, incoming_rx) = channel();
     let (shutdown_tx, _) = tokio::sync::watch::channel(false);
     let context = super::ServerContext {
+        host_left: super::AtomicBool::new(false),
+        connections: super::Mutex::new(std::collections::HashMap::new()),
         _campaign_lease: campaign.reserve_server().unwrap(),
         campaign: Arc::clone(campaign.state()),
         session_dispatch: super::Mutex::new(()),
@@ -947,8 +949,13 @@ fn real_iroh_seat_connects_and_ready_begins_gameplay() {
     recv_matching(&client_in_rx, Duration::from_secs(10), |event| {
         matches!(event, NetEvent::BeginSim { .. })
     });
-    client.shutdown();
     server.shutdown();
+    recv_matching(
+        &client_in_rx,
+        Duration::from_secs(10),
+        |event| matches!(event, NetEvent::Fatal(error) if error.to_string().contains("The host has left the game.")),
+    );
+    client.shutdown();
 }
 
 #[test]

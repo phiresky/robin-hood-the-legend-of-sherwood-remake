@@ -292,7 +292,8 @@ fn click_without_heroes(
     let shift_held = ctx.modifiers.shift;
     let map_pt = ctx.map_pt;
     let tactical_selected = ctx.tactical_selected(engine);
-    if let Some(pc_id) = engine.find_focusable_entity(
+    if let Some(pc_id) = engine.find_focusable_entity_for_seat(
+        host.transport.local_seat(),
         assets,
         &host.frontend.presentation.draw_order.ids,
         map_pt,
@@ -310,7 +311,8 @@ fn click_without_heroes(
         return commands;
     }
     if host.frontend.preferences().control_tactical_units() && !tactical_selected.is_empty() {
-        if let Some(target_id) = engine.find_focusable_entity(
+        if let Some(target_id) = engine.find_focusable_entity_for_seat(
+            host.transport.local_seat(),
             assets,
             &host.frontend.presentation.draw_order.ids,
             map_pt,
@@ -346,8 +348,12 @@ fn click_unselected_pc(
     ctx: &ClickCtx,
 ) -> Option<Vec<PlayerCommand>> {
     let shift_held = ctx.modifiers.shift;
-    if let Some(pc_id) = engine.find_focusable_pc(assets, ctx.map_pt, Focus::Select)
-        && !ctx.selected(engine).contains(&pc_id)
+    if let Some(pc_id) = engine.find_focusable_pc_for_seat(
+        host.transport.local_seat(),
+        assets,
+        ctx.map_pt,
+        Focus::Select,
+    ) && !ctx.selected(engine).contains(&pc_id)
     {
         host.frontend.input.gestures.element_old_click = Some(pc_id);
         if ctx.modifiers.control {
@@ -379,7 +385,8 @@ fn click_use_target(
     let selected = ctx.selected(engine);
     if !is_swordfighting
         && selected.len() == 1
-        && let Some(target_id) = engine.find_focusable_entity(
+        && let Some(target_id) = engine.find_focusable_entity_for_seat(
+            host.transport.local_seat(),
             assets,
             &host.frontend.presentation.draw_order.ids,
             ctx.map_pt,
@@ -460,7 +467,8 @@ fn click_sword_target(
     assets: &LevelAssets,
     ctx: &ClickCtx,
 ) -> Option<Vec<PlayerCommand>> {
-    let target_id = engine.find_focusable_entity(
+    let target_id = engine.find_focusable_entity_for_seat(
+        host.transport.local_seat(),
         assets,
         &host.frontend.presentation.draw_order.ids,
         ctx.map_pt,
@@ -909,7 +917,8 @@ pub fn resolve_action_drag(
         return vec![];
     }
 
-    let target = match engine.find_focusable_entity(
+    let target = match engine.find_focusable_entity_for_seat(
+        host.transport.local_seat(),
         assets,
         &host.frontend.presentation.draw_order.ids,
         map_pt,
@@ -1326,7 +1335,8 @@ pub fn resolve_swordfight(
             // The seek walks (running=false) since this is the single-
             // click path.
             if is_left_button
-                && let Some(target_id) = engine.find_focusable_entity(
+                && let Some(target_id) = engine.find_focusable_entity_for_seat(
+                    host.transport.local_seat(),
                     assets,
                     &host.frontend.presentation.draw_order.ids,
                     map_pt,
@@ -1407,7 +1417,8 @@ pub fn resolve_swordfight(
                 if !is_left_button {
                     continue;
                 }
-                let Some(target_id) = engine.find_focusable_entity(
+                let Some(target_id) = engine.find_focusable_entity_for_seat(
+                    host.transport.local_seat(),
                     assets,
                     &host.frontend.presentation.draw_order.ids,
                     map_pt,
@@ -1714,93 +1725,20 @@ fn determine_use_command(
         return None;
     }
 
-    if engine.sim_config().enable_unbinding && is_tied && entity.is_npc() && !is_dead {
-        let npc_money = match entity {
-            Entity::Soldier(s) => s.npc.money,
-            Entity::Civilian(c) => c.npc.money,
-            _ => unreachable!("NPC human interaction target must be soldier or civilian"),
-        };
-        if npc_money != 0
-            && engine.selected_pc_has_contextual_action(
-                assets,
-                Some(pc_id),
-                engine_profiles::Action::Search,
-            )
-            && (!engine.is_entity_vip(assets, entity)
-                || engine
-                    .get_entity(pc_id)
-                    .and_then(|selected| selected.pc_data())
-                    .is_some_and(|pc| pc.robin))
-        {
-            return Some(Command::SearchCmd);
-        }
-        if engine.selected_pc_has_contextual_action(
-            assets,
-            Some(pc_id),
-            engine_profiles::Action::Tie,
-        ) {
-            return Some(Command::Untie);
-        }
+    // Use the same contextual priority as the cursor: loot before tying,
+    // then revival/carrying. A dead body without loot must remain carryable.
+    // This also keeps tied-body pickup and the optional untie action aligned
+    // with the action shown to the player.
+    use robin_engine::resource_ids::*;
+    match engine.choose_use_cursor(assets, target_id, Some(pc_id)) {
+        RHMOUSE_SEARCH => Some(Command::SearchCmd),
+        RHMOUSE_FINISH_HIM => Some(Command::SwordstrikeDown),
+        RHMOUSE_TIE if is_tied && engine.sim_config().enable_unbinding => Some(Command::Untie),
+        RHMOUSE_TIE => Some(Command::TieCmd),
+        RHMOUSE_WAKE_UP => Some(Command::WakeUp),
+        RHMOUSE_GET_YES if entity.is_human() => Some(Command::TakeCorpse),
+        _ => None,
     }
-
-    if is_dead {
-        return Some(Command::SearchCmd);
-    }
-    if !is_dead && !is_unconscious && posture == Posture::Lying {
-        return Some(Command::SearchCmd);
-    }
-
-    // Wake-Up arm.
-    if is_unconscious
-        && engine.selected_pc_has_contextual_action(
-            assets,
-            Some(pc_id),
-            engine_profiles::Action::Resuscitate,
-        )
-    {
-        let selector_camp = engine
-            .get_entity(pc_id)
-            .unwrap_or_else(|| panic!("selected PC {pc_id:?} disappeared during WakeUp dispatch"))
-            .camp();
-        if entity.is_human() && engine.camps_are_allied(entity.camp(), selector_camp) {
-            return Some(Command::WakeUp);
-        }
-    }
-
-    // Take-Corpse arm before Tie, gated on carry-ability and not-heavy.
-    if (is_unconscious || is_dead)
-        && posture != Posture::Carried
-        && !is_tied
-        && engine.selected_pc_can_carry(assets, Some(pc_id))
-    {
-        let is_heavy = match entity {
-            Entity::Soldier(s) => {
-                assets
-                    .profile_manager
-                    .get_soldier(s.soldier.soldier_profile_index)
-                    .expect("soldier corpse must reference an admitted soldier profile")
-                    .heavy
-            }
-            _ => false,
-        };
-        if !is_heavy {
-            return Some(Command::TakeCorpse);
-        }
-    }
-
-    // Tie arm — gated on the selector having the Tie action.
-    if is_unconscious
-        && !is_tied
-        && posture != Posture::Carried
-        && engine.selected_pc_has_contextual_action(
-            assets,
-            Some(pc_id),
-            engine_profiles::Action::Tie,
-        )
-    {
-        return Some(Command::TieCmd);
-    }
-    None
 }
 
 fn pattern_to_command(pattern: MouseWayPattern) -> Option<Command> {

@@ -824,21 +824,15 @@ fn is_two_button_mode(assets: &LevelAssets, pc: &robin_engine::element::ActorPc)
 /// Get the ammo quantities for a PC's 3 action buttons.
 ///
 /// Returns `[Option<u16>; 3]` — `None` means that action has no ammo display
-/// (e.g. melee actions). Reads from campaign PcStatus via profile matching.
+/// (e.g. melee actions). Reads the actor’s exact campaign PcStatus.
 fn pc_ammo_quantities(
     engine: &PresentationView<'_>,
     assets: &LevelAssets,
     pc: &robin_engine::element::ActorPc,
 ) -> [Option<u16>; 3] {
-    let campaign = engine.campaign();
-
     let profile_idx = pc.pc.profile_index;
 
-    // Find the PcDescription whose character_profile_idx matches
-    let pc_desc = campaign
-        .characters
-        .iter()
-        .find(|desc| desc.character_profile_idx == Some(profile_idx));
+    let pc_desc = engine.pc_description_for_pc_data(&pc.pc);
 
     let (status, profile) = match (pc_desc, assets.profile_manager.get_character(profile_idx)) {
         (Some(desc), Some(prof)) => (&desc.status, prof),
@@ -907,6 +901,54 @@ fn render_ammo_counts_gpu(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn duplicate_hero_portraits_show_independent_inventory() {
+        use robin_engine::{
+            campaign::{Campaign, PcDescription},
+            element::{ActorPc, PcData},
+            profiles::{Action, CharacterProfile, CharacterProfileIdx},
+        };
+        let mut assets = LevelAssets::new();
+        std::sync::Arc::make_mut(&mut assets.profile_manager)
+            .characters
+            .push(CharacterProfile {
+                actions: [Action::Bow, Action::Purse, Action::NoAction],
+                ..Default::default()
+            });
+        let mut campaign = Campaign::default();
+        for (arrows, purses) in [(0, 0), (12, 6)] {
+            let mut desc = PcDescription {
+                character_profile_idx: Some(CharacterProfileIdx(0)),
+                ..Default::default()
+            };
+            desc.status.set_ammo(Action::Bow, arrows);
+            desc.status.set_ammo(Action::Purse, purses);
+            campaign.characters.push(desc);
+        }
+        let engine =
+            robin_engine::engine::Engine::new_for_test(800.0, 600.0, campaign, &mut assets)
+                .unwrap();
+        for (index, expected) in [
+            (0, [Some(0), Some(0), None]),
+            (1, [Some(12), Some(6), None]),
+        ] {
+            let pc = ActorPc {
+                element: Default::default(),
+                actor: Default::default(),
+                human: Default::default(),
+                pc: PcData {
+                    profile_index: CharacterProfileIdx(0),
+                    campaign_description_index: Some(index),
+                    ..Default::default()
+                },
+            };
+            assert_eq!(
+                pc_ammo_quantities(&engine.presentation_view(), &assets, &pc),
+                expected
+            );
+        }
+    }
 
     #[test]
     fn peer_labels_preserve_seat_order_selection_and_single_player_suppression() {

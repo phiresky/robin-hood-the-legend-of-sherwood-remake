@@ -1878,7 +1878,7 @@ fn render_overlay_pass(
     // widgets on the Sherwood lower panel.  Uses `SherwoodHudLayout`
     // for resolution-dependent positioning and the `sherwood_enable`
     // mask to gate widget state.
-    if game.is_sherwood {
+    if game.is_sherwood || engine.mission_won() {
         hud.draw_sherwood_hud_buttons(host, engine, renderer);
     }
 
@@ -2190,6 +2190,13 @@ impl OverlayHudInputs<'_> {
             game,
             ..
         } = *self;
+        let sherwood_enable = if game.is_sherwood {
+            sherwood_enable
+        } else {
+            sherwood_hud::SherwoodButtonEnable::won_mission(
+                engine.mission_won() && game.is_start_mission_effectively_enabled(),
+            )
+        };
         let mp = threaded_input.position();
         let hovered_btn =
             sherwood_layout.hit_test_geometric(mp.x as i32, mp.y as i32, sherwood_enable);
@@ -2329,9 +2336,9 @@ impl OverlayHudInputs<'_> {
         // (keyboard or widget click) — see
         // `input_dispatch_stature_commands` below — and auto-clears
         // when the aggregate stature shifts.
-        let stature = engine.retrieve_stature(None);
+        let stature = engine.retrieve_stature_for_seat(host.local_seat, None);
         let stature_enable =
-            StatureEnable::from_stature(stature).with_focus_latch(game.stature_focus);
+            StatureEnable::from_stature(stature).with_focus_latch(&game.stature_focus);
         let stature_hovered = stature_layout.hit_test(mp.x as i32, mp.y as i32, stature_enable);
         let stature_hover = StatureHoverState {
             hovered: stature_hovered,

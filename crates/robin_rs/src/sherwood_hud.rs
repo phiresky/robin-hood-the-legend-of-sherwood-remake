@@ -61,6 +61,16 @@ pub struct SherwoodButtonEnable {
 }
 
 impl SherwoodButtonEnable {
+    pub fn won_mission(enabled: bool) -> Self {
+        Self {
+            display_campaign_map: false,
+            go_to_exit: false,
+            start_mission: enabled,
+            quit_mission: false,
+            sherwood_trading: false,
+        }
+    }
+
     /// Default state at Sherwood entry, before the player has
     /// committed to a next mission via the map overlay.  GoToExit is
     /// disabled, Start/Quit disabled until `DisplayCampaignMap`
@@ -427,6 +437,27 @@ pub use crate::hud_sprite::{TooltipPlacement, draw_tooltip};
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn won_mission_only_exposes_the_exit_checkmark() {
+        let layout = SherwoodHudLayout::for_resolution(800, 600, &SherwoodButtonSprites::default());
+        let point = (layout.start_mission.x() + 1, layout.start_mission.y() + 1);
+        assert_eq!(
+            layout.hit_test(point.0, point.1, SherwoodButtonEnable::won_mission(true)),
+            Some(SherwoodButton::StartMission)
+        );
+        assert_eq!(
+            layout.hit_test(point.0, point.1, SherwoodButtonEnable::won_mission(false)),
+            None
+        );
+        let enable = SherwoodButtonEnable::won_mission(true);
+        assert!(
+            !enable.quit_mission
+                && !enable.go_to_exit
+                && !enable.display_campaign_map
+                && !enable.sherwood_trading
+        );
+    }
 
     #[test]
     fn layout_fits_screen() {

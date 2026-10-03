@@ -135,7 +135,8 @@ pub fn prepare_ranked_replay_mission(
     )?;
     validated_campaign.validate_checkpoint_simulation_authority(sim_config)?;
     let campaign = validated_campaign.campaign_for_approved_loading();
-    let mut submitted = load_raw_mission_inputs(campaign, profiles, &options, files.clone())?;
+    let mut submitted =
+        load_raw_mission_inputs(campaign, profiles, &options, sim_config.coop, files.clone())?;
     let mission_index = campaign.current_mission_idx.ok_or_else(|| {
         RankedVerifierLoadError::Mission(
             "approved campaign has no current mission for asset binding".into(),
@@ -224,7 +225,8 @@ fn derive_sherwood_metadata(
     clean_campaign.current_mission_idx = Some(sherwood_index);
     clean_campaign.add_all_to_mission_team();
 
-    let mut reference = load_raw_mission_inputs(&clean_campaign, profiles, options, files)?;
+    let mut reference =
+        load_raw_mission_inputs(&clean_campaign, profiles, options, sim_config.coop, files)?;
     let derivation_level = reference.loaded.clone();
     // A fixed verifier-owned seed avoids turning uploader-selected randomness
     // into content authority. Sherwood production-zone registration is
@@ -337,6 +339,7 @@ mod tests {
             &campaign,
             &profiles,
             &robin_engine::engine::GlobalOptions::default(),
+            config.coop,
             files,
         )
         .unwrap();

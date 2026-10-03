@@ -329,12 +329,22 @@ struct ModalOccurrenceState {
     active: Option<ModalInstanceId>,
 }
 
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct ModalVotes {
+    instance: ModalInstanceId,
+    kind: ModalKind,
+    seats: [bool; crate::coop::MAX_PLAYERS],
+    host_result: Option<DialogResult>,
+}
+
 #[derive(Debug, Default)]
 struct ModalSyncState {
     session_id: Option<MultiplayerSessionId>,
     occurrences: Vec<ModalOccurrenceState>,
     inbox: std::collections::VecDeque<NetEvent>,
     visible_requests: std::collections::VecDeque<VisibleModalRequest>,
+    required_players: u8,
+    votes: Vec<ModalVotes>,
 }
 
 /// Browser-only durable seat claim. The IndexedDB-held private key signs a
@@ -994,6 +1004,8 @@ impl NetChannels {
             ));
         }
         state.active = None;
+        sync.votes
+            .retain(|vote| vote.instance != instance || vote.kind != *kind);
         Ok(())
     }
 
@@ -1028,6 +1040,74 @@ impl NetChannels {
             return Ok(event);
         }
         self.try_recv_transport_event()
+    }
+
+    /// The admitted lobby roster must acknowledge story pages before the host closes them.
+    pub fn set_modal_player_count(&self, count: u8) {
+        assert!((1..=crate::coop::MAX_PLAYERS as u8).contains(&count));
+        self.modal_sync
+            .lock()
+            .expect("modal state lock poisoned")
+            .required_players = count;
+    }
+
+    pub fn record_modal_vote(
+        &self,
+        instance: ModalInstanceId,
+        kind: &ModalKind,
+        seat: PlayerId,
+        result: DialogResult,
+    ) -> Result<(), String> {
+        let mut sync = self
+            .modal_sync
+            .lock()
+            .map_err(|_| "modal state lock poisoned")?;
+        let count = sync.required_players.max(1);
+        if seat.0 >= count {
+            return Err(format!(
+                "modal vote from seat {seat:?} outside admitted roster"
+            ));
+        }
+        if !sync
+            .votes
+            .iter()
+            .any(|vote| vote.instance == instance && vote.kind == *kind)
+        {
+            sync.votes.push(ModalVotes {
+                instance,
+                kind: kind.clone(),
+                seats: [false; crate::coop::MAX_PLAYERS],
+                host_result: None,
+            });
+        }
+        let vote = sync
+            .votes
+            .iter_mut()
+            .find(|vote| vote.instance == instance && vote.kind == *kind)
+            .unwrap();
+        vote.seats[seat.0 as usize] = true;
+        if seat == PlayerId::HOST {
+            vote.host_result = Some(result);
+        }
+        Ok(())
+    }
+
+    pub fn unanimous_modal_result(
+        &self,
+        instance: ModalInstanceId,
+        kind: &ModalKind,
+    ) -> Result<Option<DialogResult>, String> {
+        let sync = self
+            .modal_sync
+            .lock()
+            .map_err(|_| "modal state lock poisoned")?;
+        let count = sync.required_players.max(1) as usize;
+        Ok(sync
+            .votes
+            .iter()
+            .find(|vote| vote.instance == instance && vote.kind == *kind)
+            .filter(|vote| vote.seats[..count].iter().all(|ready| *ready))
+            .and_then(|vote| vote.host_result))
     }
 
     pub fn record_visible_modal_request(&self, request: VisibleModalRequest) -> Result<(), String> {

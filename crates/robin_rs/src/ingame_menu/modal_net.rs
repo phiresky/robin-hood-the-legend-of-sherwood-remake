@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 pub enum ModalPublication {
     HostDecisionQueued,
     ClientProposalQueued,
+    HostVoteQueued,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -95,7 +96,7 @@ impl ModalDismissalGate {
                 self.state = DismissalState::Complete;
                 Some(result)
             }
-            Ok(ModalPublication::ClientProposalQueued) => {
+            Ok(ModalPublication::ClientProposalQueued | ModalPublication::HostVoteQueued) => {
                 self.state = DismissalState::AwaitingAuthority;
                 None
             }
@@ -157,7 +158,37 @@ impl<'a> ModalNet<'a> {
     }
 
     /// Publication success is distinct from permission to complete the modal.
+    fn needs_consensus(&self) -> bool {
+        matches!(
+            self.kind,
+            ModalKind::Dialog { .. }
+                | ModalKind::PopupText { .. }
+                | ModalKind::SherwoodReport
+                | ModalKind::Debriefing { .. }
+        )
+    }
+
+    fn publish_consensus_if_ready(&self) -> Result<Option<DialogResult>, String> {
+        let Some(result) = self.net.unanimous_modal_result(self.instance, &self.kind)? else {
+            return Ok(None);
+        };
+        self.net
+            .decide_modal_dismiss(self.instance, self.kind.clone(), result)?;
+        self.net
+            .complete_modal_instance(&self.kind, self.instance)?;
+        Ok(Some(result))
+    }
+
     pub fn publish(&self, result: DialogResult) -> Result<ModalPublication, String> {
+        if self.is_host && self.needs_consensus() {
+            self.net
+                .record_modal_vote(self.instance, &self.kind, PlayerId::HOST, result)?;
+            return Ok(if self.publish_consensus_if_ready()?.is_some() {
+                ModalPublication::HostDecisionQueued
+            } else {
+                ModalPublication::HostVoteQueued
+            });
+        }
         let send = if self.is_host {
             self.net
                 .decide_modal_dismiss(self.instance, self.kind.clone(), result)
@@ -228,6 +259,13 @@ impl<'a> ModalNet<'a> {
                             requested_frame,
                         },
                 } if self.is_host && instance == self.instance && kind == self.kind => {
+                    if self.needs_consensus() {
+                        self.net
+                            .record_modal_vote(instance, &kind, from, result)
+                            .unwrap_or_else(|error| {
+                                panic!("invalid modal acknowledgement: {error}")
+                            });
+                    }
                     self.net
                         .record_visible_modal_request(engine_multiplayer::VisibleModalRequest {
                             from,
@@ -259,6 +297,12 @@ impl<'a> ModalNet<'a> {
             });
         }
         self.net.defer_events(deferred_other);
+        if self.is_host && self.needs_consensus() {
+            return self.publish_consensus_if_ready().unwrap_or_else(|error| {
+                tracing::error!(%error, "modal consensus publication failed; will retry");
+                None
+            });
+        }
         if matched.is_some() {
             self.net
                 .complete_modal_instance(&self.kind, self.instance)
@@ -272,8 +316,8 @@ impl<'a> ModalNet<'a> {
         matched
     }
 
-    /// Requests are presentation only. Accepting one still requires a host
-    /// action which publishes the authoritative decision.
+    /// Drain acknowledgements for presentation. Story pages still require
+    /// every participant, including the host, before publishing a decision.
     pub fn take_visible_requests(&self) -> Vec<(PlayerId, DialogResult)> {
         self.net
             .take_visible_modal_requests(self.instance)
@@ -325,10 +369,11 @@ mod tests {
     #[test]
     fn host_proposal_is_advisory_until_host_ui_decides() {
         let (net, incoming, outgoing) = fixture();
+        net.set_modal_player_count(2);
         let modal = ModalNet::new(&net, kind(), true);
         incoming
             .send(NetEvent::ModalProposal {
-                from: PlayerId(2),
+                from: PlayerId(1),
                 proposal: engine_multiplayer::ModalProposal {
                     instance: modal.instance(),
                     kind: kind(),
@@ -341,7 +386,7 @@ mod tests {
         assert!(outgoing.try_recv().is_err());
         assert_eq!(
             modal.take_visible_requests(),
-            vec![(PlayerId(2), DialogResult::Aborted)]
+            vec![(PlayerId(1), DialogResult::Aborted)]
         );
 
         assert_eq!(
@@ -353,6 +398,42 @@ mod tests {
             NetOutbound::ModalDecision(engine_multiplayer::ModalDecision { kind: observed, result: DialogResult::Completed, .. })
                 if observed == kind()
         ));
+    }
+
+    #[test]
+    fn host_waits_for_every_client_including_late_loading_clients() {
+        let (net, incoming, outgoing) = fixture();
+        net.set_modal_player_count(3);
+        let modal = ModalNet::new(&net, kind(), true);
+        let mut gate = ModalDismissalGate::default();
+        assert_eq!(gate.request(DialogResult::Completed, Some(&modal)), None);
+        assert!(outgoing.try_recv().is_err());
+        for seat in [1, 1, 2] {
+            incoming
+                .send(NetEvent::ModalProposal {
+                    from: PlayerId(seat),
+                    proposal: engine_multiplayer::ModalProposal {
+                        instance: modal.instance(),
+                        kind: kind(),
+                        result: DialogResult::Completed,
+                        requested_frame: 0,
+                    },
+                })
+                .unwrap();
+            assert_eq!(
+                gate.poll(Some(&modal)),
+                (seat == 2).then_some(DialogResult::Completed)
+            );
+            if seat != 2 {
+                assert!(outgoing.try_recv().is_err());
+            }
+        }
+        assert!(matches!(
+            outgoing.try_recv().unwrap(),
+            NetOutbound::ModalDecision(_)
+        ));
+        assert_eq!(gate.poll(Some(&modal)), None);
+        assert!(outgoing.try_recv().is_err());
     }
 
     #[test]

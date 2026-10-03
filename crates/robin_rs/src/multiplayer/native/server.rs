@@ -71,6 +71,8 @@ impl ServerHandle {
         if self.preserve_on_shutdown {
             publish_context_continuation(&self.context);
             self.preserve_on_shutdown = false;
+        } else {
+            self.context.host_left.store(true, Ordering::Release);
         }
         self.cancellation.store(true, Ordering::Release);
         let _ = self.shutdown_tx.send(true);
@@ -314,6 +316,8 @@ pub(super) struct ServerContext {
     pub(super) content: Option<HostedModContent>,
     pub(super) cancellation: Arc<AtomicBool>,
     pub(super) shutdown_tx: tokio::sync::watch::Sender<bool>,
+    pub(super) host_left: AtomicBool,
+    pub(super) connections: Mutex<std::collections::HashMap<u8, iroh::endpoint::Connection>>,
 }
 
 pub(super) fn fail_server(context: &ServerContext, error: MultiplayerError) {
@@ -484,6 +488,8 @@ pub(super) fn start_server_inner(
         host_endpoint_id,
         session_id,
         continued_session: continuation.is_some(),
+        host_left: AtomicBool::new(false),
+        connections: Mutex::new(std::collections::HashMap::new()),
         relay_url: Mutex::new(
             continuation
                 .as_ref()
@@ -662,6 +668,14 @@ pub(super) async fn run_server(
                     MultiplayerError::transport("multiplayer server outgoing pump failed", error),
                 )));
             }
+        }
+    }
+    if context.host_left.load(Ordering::Acquire) {
+        for connection in context.connections.lock().values() {
+            connection.close(
+                crate::multiplayer::client_session::HOST_LEFT_CLOSE_CODE.into(),
+                b"The host has left the game.",
+            );
         }
     }
     endpoint.close().await;
@@ -867,6 +881,10 @@ pub(super) async fn handle_incoming_peer(
     };
     let session_generation = seat_claim.generation;
     let assigned_seat = PlayerId(seat_claim.seat);
+    context
+        .connections
+        .lock()
+        .insert(assigned_seat.0, conn.clone());
 
     // Writer half: drain the peer's queue onto the stream.  Reader
     // half: every Input received gets stamped with the peer's

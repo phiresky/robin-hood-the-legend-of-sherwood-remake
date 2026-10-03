@@ -3770,31 +3770,36 @@ fn enter_swordfight_los_uses_retained_raw_eye_points() {
 fn selected_pc_entering_swordfight_does_not_restore_armed_action_on_quit() {
     use crate::profiles::Action;
 
-    let sim = crate::sim_rng::test_context();
-    let assets = action_test_assets([Action::Bow, Action::Apple, Action::Purse]);
-    let mut engine = make_engine();
-    let pc = engine.add_test_entity(make_pc(wp(0.0, 100.0), None));
-    let opponent = engine.add_test_entity(make_pc(wp(10.0, 100.0), None));
-    engine.players.seats[0].selection.push(pc);
-    {
-        let pc_data = engine.pc_mut(pc);
-        pc_data.current_action = Action::Purse;
-        pc_data.disabled_actions = vec![false; 3];
-        pc_data.disabled_actions_temp = vec![false; 3];
-    }
+    for seat in [0, 1] {
+        let sim = crate::sim_rng::test_context();
+        let assets = action_test_assets([Action::Bow, Action::Apple, Action::Purse]);
+        let mut engine = make_engine();
+        engine.players.seats.push(Default::default());
+        let pc = engine.add_test_entity(make_pc(wp(0.0, 100.0), None));
+        let opponent = engine.add_test_entity(make_pc(wp(10.0, 100.0), None));
+        engine.players.seats[seat].selection.push(pc);
+        engine.players.seats[seat].selected_action = Action::Purse;
+        {
+            let pc_data = engine.pc_mut(pc);
+            pc_data.current_action = Action::Purse;
+            pc_data.disabled_actions = vec![false; 3];
+            pc_data.disabled_actions_temp = vec![false; 3];
+        }
 
-    assert!(engine.enter_swordfight(TickCtx::new(&sim, &assets), pc, opponent, false,));
-    {
+        assert!(engine.enter_swordfight(TickCtx::new(&sim, &assets), pc, opponent, false,));
+        {
+            let pc_data = engine.pc(pc);
+            assert_eq!(pc_data.current_action, Action::NoAction);
+            assert_eq!(pc_data.saved_action, Action::NoAction);
+            assert_eq!(pc_data.disabled_actions_temp, vec![true; 3]);
+        }
+
+        assert_eq!(engine.players.seats[seat].selected_action, Action::NoAction);
+        engine.quit_swordfight(TickCtx::new(&sim, &assets), pc);
         let pc_data = engine.pc(pc);
         assert_eq!(pc_data.current_action, Action::NoAction);
-        assert_eq!(pc_data.saved_action, Action::NoAction);
-        assert_eq!(pc_data.disabled_actions_temp, vec![true; 3]);
+        assert_eq!(pc_data.disabled_actions_temp, vec![false; 3]);
     }
-
-    engine.quit_swordfight(TickCtx::new(&sim, &assets), pc);
-    let pc_data = engine.pc(pc);
-    assert_eq!(pc_data.current_action, Action::NoAction);
-    assert_eq!(pc_data.disabled_actions_temp, vec![false; 3]);
 }
 
 #[test]

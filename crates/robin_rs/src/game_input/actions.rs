@@ -113,8 +113,13 @@ fn click_bow(
         return vec![];
     }
 
-    let Some(target_id) = engine.find_focusable_entity(assets, draw_order, map_pt, Focus::Bow)
-    else {
+    let Some(target_id) = engine.find_focusable_entity_for_seat(
+        context.local_seat,
+        assets,
+        draw_order,
+        map_pt,
+        Focus::Bow,
+    ) else {
         tracing::info!(
             ?pc_id,
             mouse_x = map_pt.x,
@@ -142,9 +147,8 @@ fn click_bow(
         return vec![];
     }
 
-    // 3. Shooter posture guard: AnonymousArcher (archers'
-    //    contest) → hero speech + drop the click.  Only
-    //    applied in the non-record branch.
+    // Contest disguise forbids shooting NPCs, while the contest's
+    // archery targets remain shootable. Deferred orders skip this gate.
     let Some(pc_entity) = engine.get_entity(pc_id) else {
         tracing::warn!(
             ?pc_id,
@@ -154,11 +158,16 @@ fn click_bow(
         return vec![];
     };
     let archer_posture = pc_entity.element_data().posture();
-    if !is_deferred && archer_posture == Posture::AnonymousArcher {
+    if !is_deferred
+        && archer_posture == Posture::AnonymousArcher
+        && engine
+            .get_entity(target_id)
+            .is_some_and(|target| target.is_npc())
+    {
         tracing::info!(
             ?pc_id,
             ?target_id,
-            "Bow click rejected: anonymous archer cannot shoot"
+            "Bow click rejected: anonymous archer cannot shoot NPCs"
         );
         return vec![PlayerCommand::HeroSpeak {
             pc_id,
@@ -219,7 +228,13 @@ fn click_hit(
     // The seek uses the running gait on double-click and
     // passes the no-transitions / seek-stop-NPC flags (handled
     // inside `apply_interaction_with_seek`).
-    if let Some(target_id) = engine.find_focusable_entity(assets, draw_order, map_pt, Focus::Hit) {
+    if let Some(target_id) = engine.find_focusable_entity_for_seat(
+        context.local_seat,
+        assets,
+        draw_order,
+        map_pt,
+        Focus::Hit,
+    ) {
         // Cache the drag target so a follow-up double-click
         // repeats on the same victim.
         cache_click_and_drag_target(host, target_id);
@@ -259,8 +274,13 @@ fn click_apple(
     if !valid_trajectory && !is_deferred {
         return vec![];
     }
-    if let Some(target_id) = engine.find_focusable_entity(assets, draw_order, map_pt, Focus::Apple)
-    {
+    if let Some(target_id) = engine.find_focusable_entity_for_seat(
+        context.local_seat,
+        assets,
+        draw_order,
+        map_pt,
+        Focus::Apple,
+    ) {
         // Drag-target caching — used by the double-click
         // repeat path to replay the hit on a cached victim.
         cache_click_and_drag_target(host, target_id);
@@ -305,8 +325,13 @@ fn click_stone(
     if !valid_trajectory && !is_deferred {
         return vec![];
     }
-    if let Some(target_id) = engine.find_focusable_entity(assets, draw_order, map_pt, Focus::Stone)
-    {
+    if let Some(target_id) = engine.find_focusable_entity_for_seat(
+        context.local_seat,
+        assets,
+        draw_order,
+        map_pt,
+        Focus::Stone,
+    ) {
         cache_click_and_drag_target(host, target_id);
         let mut cmds = vec![PlayerCommand::LaunchInteraction {
             actor: pc_id,
@@ -324,7 +349,7 @@ fn click_stone(
     // stone; only the impact's AI stimulus differs from an ordinary
     // entity-targeted throw.
     if engine.sim_config().item_gameplay.stone_ground_distraction
-        && engine.is_mouse_sector_valid_for_ground_target(map_pt)
+        && engine.is_mouse_sector_valid_for_ground_target_for_seat(context.local_seat, map_pt)
         && (is_deferred
             || (valid_trajectory
                 && engine.is_in_range_for_projectile(assets, pc_id, map_pt, Action::Stone, None)))
@@ -360,7 +385,13 @@ fn click_heal(
     // the recording path additionally closes the macro.  The
     // SEEK_IN_BUILDINGS flag is handled inside
     // `apply_interaction_with_seek`.
-    if let Some(target_id) = engine.find_focusable_entity(assets, draw_order, map_pt, Focus::Heal) {
+    if let Some(target_id) = engine.find_focusable_entity_for_seat(
+        context.local_seat,
+        assets,
+        draw_order,
+        map_pt,
+        Focus::Heal,
+    ) {
         cache_click_and_drag_target(host, target_id);
         let mut cmds = vec![
             PlayerCommand::LaunchInteraction {
@@ -411,9 +442,13 @@ fn click_strangle(
     let draw_order = &host.frontend.presentation.draw_order.ids;
     // Run gait on double-click, no-transitions / seek-stop-NPC
     // flags (handled in `apply_interaction_with_seek`).
-    if let Some(target_id) =
-        engine.find_focusable_entity(assets, draw_order, map_pt, Focus::Strangle)
-    {
+    if let Some(target_id) = engine.find_focusable_entity_for_seat(
+        context.local_seat,
+        assets,
+        draw_order,
+        map_pt,
+        Focus::Strangle,
+    ) {
         cache_click_and_drag_target(host, target_id);
         let mut cmds = vec![PlayerCommand::LaunchInteraction {
             actor: pc_id,
@@ -546,7 +581,9 @@ fn click_shield(
                 danger_point_layer: selected_layer,
             }];
         }
-        if let Some(target_id) = engine.find_focusable_pc(assets, map_pt, Focus::Shield) {
+        if let Some(target_id) =
+            engine.find_focusable_pc_for_seat(local_seat, assets, map_pt, Focus::Shield)
+        {
             return vec![PlayerCommand::SelectPlannedShieldProtected {
                 actor: pc_id,
                 protected_pc: target_id,
@@ -572,7 +609,9 @@ fn click_shield(
         // is launched; returning empty here lets the click be
         // consumed without falling through to the GroupMove
         // tail of `resolve_left_click`.
-        if let Some(target_id) = engine.find_focusable_pc(assets, map_pt, Focus::Shield) {
+        if let Some(target_id) =
+            engine.find_focusable_pc_for_seat(local_seat, assets, map_pt, Focus::Shield)
+        {
             return vec![PlayerCommand::ShieldSelectProtected {
                 actor: pc_id,
                 protected_pc: target_id,
@@ -661,8 +700,13 @@ fn click_lever(
     let draw_order = &host.frontend.presentation.draw_order.ids;
     // Interaction on a focusable lever (FX target or hookable
     // mobile), followed by deselecting the action.
-    if let Some(target_id) = engine.find_focusable_entity(assets, draw_order, map_pt, Focus::Lever)
-    {
+    if let Some(target_id) = engine.find_focusable_entity_for_seat(
+        context.local_seat,
+        assets,
+        draw_order,
+        map_pt,
+        Focus::Lever,
+    ) {
         cache_click_and_drag_target(host, target_id);
         return vec![
             PlayerCommand::LaunchInteraction {
@@ -772,7 +816,7 @@ fn click_ale(
     // Move → DropAle sequence; the engine tick's
     // `Command::DropAle` arm then spawns the bottle and
     // decrements `Action::Ale` ammo.
-    if !engine.is_mouse_sector_valid_for_ground_target(map_pt) {
+    if !engine.is_mouse_sector_valid_for_ground_target_for_seat(context.local_seat, map_pt) {
         return vec![];
     }
     vec![

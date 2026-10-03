@@ -213,6 +213,12 @@ impl MissionUi {
     pub(super) fn terminal_flow_active(&self) -> bool {
         self.terminal_debriefing.is_some() || self.pending_terminal_debriefing.is_some()
     }
+
+    pub(super) fn terminal_pauses_timeline(&self, multiplayer: bool) -> bool {
+        // Shared terminal commands use delayed network frames. Keep that clock
+        // running while the hourglass is stopped, until their echoes arrive.
+        self.terminal_flow_active() && !multiplayer
+    }
 }
 
 /// HUD textures, layouts, enable state, and hover trackers.

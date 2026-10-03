@@ -157,6 +157,46 @@ impl AudioDurations {
     }
 }
 
+/// Include voices for the lobby roster before engine construction replaces the
+/// campaign team. The authored mission's required PCs are not the selected PCs.
+pub fn include_selected_team_speech(
+    ids: &mut std::collections::BTreeSet<u32>,
+    profiles: &ProfileManager,
+    rules: crate::coop::CoopRules,
+    forest_level: bool,
+) -> Result<(), String> {
+    rules.validate()?;
+    for code in rules.team.iter().copied().take_while(|&code| code != 0) {
+        let (_, name, profile_name) = crate::coop::TEAM_CHARACTERS
+            .iter()
+            .find(|entry| entry.0 == code)
+            .expect("validated team code");
+        let mut found = false;
+        for profile in &profiles.characters {
+            let selected = if code == b'R' {
+                crate::character_kind::CharacterKind::from_profile(
+                    &profile.filename,
+                    &profile.profile_name,
+                ) == Some(crate::character_kind::CharacterKind::RobinHood {
+                    is_town: !forest_level,
+                })
+            } else {
+                profile.profile_name == *profile_name
+            };
+            if selected {
+                found = true;
+                if profile.exclamation_id != 0 {
+                    ids.insert(profile.exclamation_id);
+                }
+            }
+        }
+        if !found {
+            return Err(format!("selected speech profile for {name} is absent"));
+        }
+    }
+    Ok(())
+}
+
 pub fn sample_key(name: &str) -> Result<String, String> {
     let normalized = name.replace('\\', "/").to_ascii_lowercase();
     let relative = normalized
@@ -201,6 +241,76 @@ pub fn speech_duration_frames(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lobby_voices_are_available_before_campaign_team_replacement() {
+        let mut profiles = ProfileManager::default();
+        let mut samples_ms = BTreeMap::new();
+        let mut speech_groups = BTreeMap::new();
+        for (index, &(_, _, name)) in crate::coop::TEAM_CHARACTERS.iter().enumerate() {
+            let id = ((index + 1) as u32) << 16;
+            profiles.characters.push(crate::profiles::CharacterProfile {
+                profile_name: name.into(),
+                filename: if index == 0 {
+                    "RobinTown".into()
+                } else {
+                    name.into()
+                },
+                exclamation_id: id,
+                ..Default::default()
+            });
+            let sample = format!("voice{index}.wav");
+            samples_ms.insert(sample.clone(), 1000);
+            speech_groups.insert(id, vec![sample]);
+        }
+        let timing = AudioDurations {
+            version: 1,
+            locale: "en-US".into(),
+            samples_ms,
+            speech_groups,
+        };
+        for &(code, _, _) in crate::coop::TEAM_CHARACTERS {
+            let mut audio = LevelAudioAssets::default();
+            // The mission only requires Robin; the lobby substitutes another PC.
+            audio.required_exclamation_ids.insert(0x10000);
+            include_selected_team_speech(
+                &mut audio.required_exclamation_ids,
+                &profiles,
+                crate::coop::CoopRules {
+                    team: [code, 0, 0, 0, 0],
+                    ..Default::default()
+                },
+                false,
+            )
+            .unwrap();
+            timing.populate(&mut audio, &profiles).unwrap();
+            let index = crate::coop::TEAM_CHARACTERS
+                .iter()
+                .position(|entry| entry.0 == code)
+                .unwrap();
+            assert_eq!(
+                speech_duration_frames(
+                    audio.speech_timing_catalog(),
+                    ((index + 1) as u32) << 16,
+                    -1
+                )
+                .unwrap(),
+                25
+            );
+        }
+        assert!(
+            include_selected_team_speech(
+                &mut Default::default(),
+                &ProfileManager::default(),
+                crate::coop::CoopRules {
+                    team: [b'M', 0, 0, 0, 0],
+                    ..Default::default()
+                },
+                false
+            )
+            .is_err()
+        );
+    }
 
     #[test]
     fn localized_audio_and_missing_english_recordings_do_not_change_simulation_timing() {

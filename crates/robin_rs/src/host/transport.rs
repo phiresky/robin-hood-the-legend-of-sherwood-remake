@@ -174,6 +174,7 @@ impl HostTransport {
         self.mission_seed = Some(seed);
         self.mission_sim_config = Some(config);
         self.speech_timing_locale = speech_locale;
+        net.set_modal_player_count(config.coop.players);
         self.net = Some(net);
         self.synchronization = TransportSynchronization::Running;
     }

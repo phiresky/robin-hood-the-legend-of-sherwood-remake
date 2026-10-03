@@ -275,10 +275,12 @@ fn dispatch_pre_tick_pointer_commands(
     };
 
     if manager.engine.view_locked()
-        && let Some(id) =
-            manager
-                .engine
-                .find_focusable_npc(assets, mouse_map, engine_element::Focus::View)
+        && let Some(id) = manager.engine.find_focusable_npc_for_seat(
+            host.transport.local_seat(),
+            assets,
+            mouse_map,
+            engine_element::Focus::View,
+        )
     {
         set_local_follow_target(host, &manager.engine, Some(id));
     }
@@ -336,7 +338,7 @@ pub(super) fn finalize_pre_tick(
         .active_modal
         .as_ref()
         .is_some_and(|modal| modal.pauses_simulation(host.transport.net().is_some()))
-        || ui.terminal_flow_active()
+        || ui.terminal_pauses_timeline(host.transport.net().is_some())
         || (ui.sherwood_campaign_flow.is_some() && host.transport.net().is_none())
         || ui
             .lost_sherwood_gate

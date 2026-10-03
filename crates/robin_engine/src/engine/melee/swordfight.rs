@@ -1308,7 +1308,30 @@ impl EngineInner {
             .get(initiator)
             .is_some_and(Entity::is_pc)
         {
-            self.set_pc_action_from_message(tcx, 0, initiator, crate::profiles::Action::NoAction);
+            let seats: Vec<_> = self
+                .players
+                .seats
+                .iter()
+                .enumerate()
+                .filter_map(|(seat, state)| state.selection.contains(&initiator).then_some(seat))
+                .collect();
+            if seats.is_empty() {
+                self.set_pc_action_from_message(
+                    tcx,
+                    0,
+                    initiator,
+                    crate::profiles::Action::NoAction,
+                );
+            } else {
+                for seat in seats {
+                    self.set_pc_action_from_message(
+                        tcx,
+                        seat,
+                        initiator,
+                        crate::profiles::Action::NoAction,
+                    );
+                }
+            }
         }
         if let Some(pc) = self
             .world

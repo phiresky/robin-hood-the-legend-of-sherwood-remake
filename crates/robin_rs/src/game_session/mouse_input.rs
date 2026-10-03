@@ -1892,6 +1892,37 @@ pub(super) fn handle_sherwood_hud_buttons(
         // and receive the eventual authoritative mission transition.
         return HandlerAction::Proceed;
     }
+    if !game.is_sherwood {
+        *sherwood_enable = SherwoodButtonEnable::won_mission(
+            engine.mission().mission_won && game.is_start_mission_effectively_enabled(),
+        );
+        for event in events {
+            if let GameEvent::MouseDown(mx, my, 1, _) = *event
+                && sherwood_layout.hit_test(mx, my, *sherwood_enable)
+                    == Some(SherwoodButton::StartMission)
+            {
+                if let Some(resources) = menu_resources.as_ref() {
+                    *sherwood_flow = Some(SherwoodCampaignFlow::Confirmation {
+                        state: ingame_menu::YesNoModalState::new(
+                            event_pump,
+                            renderer,
+                            resources,
+                            resources.menu_text.get(resources::MT_MSG_LEAVE_MISSION_NOW),
+                        ),
+                        action: SherwoodConfirmationAction::LeaveWonMission,
+                    });
+                } else {
+                    dispatch_local_command(
+                        &host.transport,
+                        frame_cmds,
+                        &PlayerCommand::QuitMissionRequested,
+                    );
+                }
+                return HandlerAction::Continue;
+            }
+        }
+        return HandlerAction::Proceed;
+    }
     sherwood_enable.sherwood_trading = game.is_sherwood
         && sherwood_trading_access(host, engine, &assets.profile_manager)
             .validate()
@@ -2286,6 +2317,14 @@ impl SherwoodCtx<'_> {
                         return Ok(HandlerAction::Proceed);
                     }
                     match action {
+                        SherwoodConfirmationAction::LeaveWonMission => {
+                            dispatch_local_command(
+                                &host.transport,
+                                &mut frame.stage_commands(),
+                                &PlayerCommand::QuitMissionRequested,
+                            );
+                            return Ok(HandlerAction::Proceed);
+                        }
                         SherwoodConfirmationAction::ReturnToMap => {
                             dispatch_local_command(
                                 &host.transport,

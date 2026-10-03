@@ -34,6 +34,7 @@ pub(crate) fn load_raw_mission_inputs(
     campaign: &Campaign,
     profiles: &ProfileManager,
     options: &robin_engine::engine::GlobalOptions,
+    coop: robin_engine::coop::CoopRules,
     files: Arc<SbFileSystem>,
 ) -> Result<RawMissionInputs, RankedVerifierLoadError> {
     let mut text = ResourceManager::with_files(files.clone());
@@ -157,6 +158,17 @@ pub(crate) fn load_raw_mission_inputs(
     assets.audio.required_exclamation_ids =
         required_mission_exclamation_ids(&loaded, campaign, profiles)
             .map_err(RankedVerifierLoadError::SpeechClosure)?;
+    robin_engine::audio_durations::include_selected_team_speech(
+        &mut assets.audio.required_exclamation_ids,
+        profiles,
+        coop,
+        loaded
+            .proto
+            .misc
+            .as_ref()
+            .is_some_and(|misc| misc.forest_level),
+    )
+    .map_err(RankedVerifierLoadError::SpeechClosure)?;
     let ambiance_mask = authored_ambiance.to_bitmask();
     assets.audio.sound_source_required_ids = loaded
         .proto

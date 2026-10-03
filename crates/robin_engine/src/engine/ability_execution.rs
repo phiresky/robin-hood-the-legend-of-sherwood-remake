@@ -719,7 +719,7 @@ impl EngineInner {
         &mut self,
         tcx: TickCtx<'_>,
         actor_id: EntityId,
-        target_pos: MapPoint,
+        target_pos: crate::coordinates::WorldPoint3D,
     ) {
         // Spawn the purse projectile.  The trajectory is
         // computed against the current sight obstacles so
@@ -727,11 +727,6 @@ impl EngineInner {
         // same way other ground-targeted throwables do.
         // Launch origin is the thrower's hand point.
         let (throw_pos, layer) = self.projectile_throw_origin(actor_id, "ThrowPurseDone");
-        let target_3d = crate::coordinates::WorldPoint3D {
-            x: target_pos.x,
-            y: target_pos.y,
-            z: 0.0,
-        };
         let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
             fast_find_grid: &self.world.fast_grid,
             sight_obstacles: self.sight_obstacles(tcx.assets),
@@ -740,7 +735,7 @@ impl EngineInner {
         let purse_entity = crate::bow_shot::spawn_purse(
             actor_id,
             throw_pos,
-            target_3d,
+            target_pos,
             layer,
             Some(&obstacle_check),
         );
@@ -2115,14 +2110,13 @@ impl EngineInner {
                     .orders
                     .sequence_manager
                     .get_element(seq_id, elem_idx)
-                    .and_then(|e| e.current_order())
-                    .map(|o| MapPoint {
-                        x: o.target_x,
-                        y: o.target_y,
+                    .and_then(|element| {
+                        super::sequence_validity::read_target_point_3d(
+                            element,
+                            crate::sequence::Field::PurseTarget,
+                        )
                     })
-                    .unwrap_or_else(|| {
-                        panic!("ThrowPurse selected without its required live order")
-                    });
+                    .expect("ThrowPurse selected without its required target");
                 self.apply_ability_throw_purse_done(tcx, entity_id, target_pos)
             }
             AbilityKind::ThrowApple => self.on_throw_projectile_done(
@@ -2224,5 +2218,90 @@ impl EngineInner {
                 .sprite
                 .perform_virgin_increment(sim, crate::sprite::FrameProgression::Default);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::coordinates::WorldPoint3D;
+    use crate::element::{Command, ObjectType};
+    use crate::sequence::{Field, FieldValue, SequenceElement};
+
+    #[test]
+    fn completed_purse_throw_preserves_elevated_sequence_target() {
+        let mut engine = EngineInner::new();
+        let actor = engine.add_test_entity(crate::engine::test_support::actors::make_test_pc(
+            Posture::Upright,
+        ));
+        let mut assets = engine.test_runtime_assets();
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
+        conversion[OrderType::ObjectFlying as usize] = 0;
+        let script = crate::sprite_script::SpriteScript {
+            action_id: OrderType::ObjectFlying as u16,
+            action_done: 1,
+            frame_ids: vec![1, 2],
+            delays: vec![0; 2],
+            distances: vec![0; 2],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 2],
+            sound_ids: vec![0; 2],
+            ..Default::default()
+        };
+        assets.accessory_sprite_prototypes.insert(
+            ObjectType::Purse,
+            crate::sprite::Sprite::new(
+                std::sync::Arc::new(vec![script]),
+                std::sync::Arc::new(conversion),
+            ),
+        );
+        let target = WorldPoint3D::new(120.0, 100.0, 60.0);
+        let mut element = SequenceElement::new_generic(1, Command::ThrowPurse, Some(actor));
+        element.set_property(
+            Field::PurseTarget,
+            FieldValue::Point3D {
+                x: target.x,
+                y: target.y,
+                z: target.z,
+            },
+        );
+        let order =
+            crate::order::Order::test_new(OrderType::ThrowingPurse, target.x, target.y - target.z);
+        let ability_order_id = order.order_id;
+        element.orders.push_back(order);
+        let sequence_id = engine.orders.sequence_manager.insert_element(element);
+        let ability = SelectedAbility {
+            kind: AbilityKind::ThrowPurse,
+            sequence_id,
+            element_index: 0,
+            target: None,
+            order_id: ability_order_id,
+            order_type: OrderType::ThrowingPurse,
+            order_done: true,
+        };
+        let (origin, layer) = engine.projectile_throw_origin(actor, "test");
+        let expected = crate::bow_shot::spawn_purse(actor, origin, target, layer, None);
+        let Entity::Projectile(mut expected) = expected else {
+            unreachable!()
+        };
+        expected.advance_projectile_hourglass();
+        engine.execute_ability_done(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            actor,
+            &ability,
+            false,
+        );
+        let actual = engine
+            .world
+            .entities
+            .occupied()
+            .find_map(|(_, entity)| match entity {
+                Entity::Projectile(p) if p.object.object_type == ObjectType::Purse => Some(p),
+                _ => None,
+            })
+            .expect("throw creates a purse");
+        assert_eq!(
+            actual.projectile.velocity_increment,
+            expected.projectile.velocity_increment
+        );
     }
 }
