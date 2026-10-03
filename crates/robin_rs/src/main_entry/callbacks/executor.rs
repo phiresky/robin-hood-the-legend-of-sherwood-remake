@@ -80,6 +80,7 @@ pub(super) async fn execute(
                     return execute_load(
                         save,
                         load::LoadCompletion::Selected(None),
+                        true,
                         save_manager,
                         OperationWorld {
                             host,
@@ -116,6 +117,7 @@ pub(super) async fn execute(
                     return execute_load(
                         save,
                         load::LoadCompletion::Restart,
+                        true,
                         save_manager,
                         OperationWorld {
                             host,
@@ -200,6 +202,7 @@ pub(super) async fn execute(
                             return execute_load(
                                 save,
                                 load::LoadCompletion::Quick,
+                                true,
                                 save_manager,
                                 OperationWorld {
                                     host,
@@ -439,12 +442,32 @@ fn execute_quick_save(
     OperationOutcome { event, ..outcome }
 }
 
+/// Apply a preflighted startup save before the host publishes its first snapshot.
+pub(super) async fn execute_bootstrap_load(
+    save: PreparedLoad,
+    save_manager: &mut SaveGameManager,
+    world: OperationWorld<'_>,
+) -> OperationOutcome {
+    if let Err(error) = save.validate_slot(save_manager) {
+        return OperationOutcome::load_failed(format!("{error:#}"));
+    }
+    execute_load(
+        save,
+        load::LoadCompletion::Selected(None),
+        false,
+        save_manager,
+        world,
+    )
+    .await
+}
+
 /// Shared stages: validate local identity, publish to peers, route, apply, mirror,
 /// then construct the receipt. Completion policy preserves each caller's UI and
 /// fallback rules; no caller may mark a rejected application as restored.
 async fn execute_load(
     save: PreparedLoad,
     mut completion: load::LoadCompletion,
+    publish_transition: bool,
     save_manager: &mut SaveGameManager,
     world: OperationWorld<'_>,
 ) -> OperationOutcome {
@@ -473,7 +496,7 @@ async fn execute_load(
                 .flatten();
             completion = load::LoadCompletion::Selected(special);
         }
-        if multiplayer && !save.is_committed() {
+        if multiplayer && publish_transition && !save.is_committed() {
             anyhow::ensure!(
                 begin_multiplayer_snapshot_transition(host, save).map_err(anyhow::Error::msg)?,
                 "multiplayer transport disappeared during publication"

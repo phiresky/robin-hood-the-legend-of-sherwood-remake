@@ -15,7 +15,7 @@ use super::setup::{
     DecodingInterfaceResources, LoadedInteractiveResources, LoadedMissionCore,
     MissionEngineResources, MissionInterfaceSetup, MissionLaunchSetup, MissionLoadError,
     MissionProcessResources, TerrainJoinPoint, pre_decode_maps_and_resources, prepare_mission,
-    setup_local_seat_and_multiplayer_snapshot, setup_mission_audio,
+    setup_local_seat, setup_mission_audio,
 };
 use super::{
     MissionError, MissionOutcome, install_cold_save_lua_session, install_pending_lua_session,
@@ -378,6 +378,27 @@ impl MissionBootstrap {
         contract: FrameContract,
         wait_for_multiplayer_start: bool,
     ) -> Result<MissionRuntime, MissionOutcome> {
+        if args.multiplayer.connect.is_none()
+            && let Some(net) = self.host.transport.net()
+        {
+            if let Err(error) = net
+                .publish_initial_snapshot(0, &self.loaded.engine)
+                .and_then(|()| net.send_ready_to_sim(0))
+            {
+                let (campaign, seed, config) = self.into_campaign_and_simulation();
+                return Err(MissionOutcome::new(
+                    campaign,
+                    seed,
+                    config,
+                    Err(MissionError::save(format!(
+                        "initial snapshot publication failed: {error}"
+                    ))),
+                ));
+            }
+            tracing::info!(
+                "multiplayer: cached and published initial host snapshot after startup restore"
+            );
+        }
         let mission_assets = self
             .game
             .mission_assets()
@@ -512,7 +533,7 @@ impl AudioPreparedBootstrap {
             &mut bootstrap.loaded.engine,
             &bootstrap.loaded.assets,
         );
-        setup_local_seat_and_multiplayer_snapshot(
+        setup_local_seat(
             &mut bootstrap.loaded.engine,
             &mut bootstrap.host,
             &bootstrap.loaded.assets,
@@ -1616,6 +1637,24 @@ impl InteractiveMissionBuilder {
             ));
         }
         bootstrap.0.complete_restart_save(callbacks).await;
+        if let Err(error) = crate::main_entry::apply_bootstrap_save_load(
+            &mut bootstrap.0.host,
+            &mut bootstrap.0.game,
+            callbacks,
+            &mut bootstrap.0.loaded.engine,
+            &bootstrap.0.loaded.assets,
+            profiles,
+        )
+        .await
+        {
+            let (campaign, rng_seed, sim_config) = bootstrap.into_campaign_and_simulation();
+            return InteractiveBuildOutcome::Finished(MissionOutcome::new(
+                campaign,
+                rng_seed,
+                sim_config,
+                Err(error),
+            ));
+        }
         let mission =
             match bootstrap.finish_interactive(frontend, window.width, window.height, args) {
                 Ok(mission) => mission,

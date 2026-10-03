@@ -47,9 +47,9 @@ pub use platform::overlay_mods_dir;
 
 pub(crate) use callbacks::{
     AutosaveNotices, OperationOutcome, PendingMultiplayerCampaignExit, RustCallbacks,
-    SaveLoadEvent, current_mission_id, detect_demo_mode_with_context, execute_app_effects,
-    perform_pending_save_load, picture_to_surface, resolve_loading_pak, validate_save_mission,
-    validated_save_reload_target,
+    SaveLoadEvent, apply_bootstrap_save_load, current_mission_id, detect_demo_mode_with_context,
+    execute_app_effects, perform_pending_save_load, picture_to_surface, resolve_loading_pak,
+    validate_save_mission, validated_save_reload_target,
 };
 pub use callbacks::{
     PendingLevelLoad, PostLoadSync, PreparedLoad, SaveBannerKind, SaveLoadRequest,

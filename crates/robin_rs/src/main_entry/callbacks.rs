@@ -49,6 +49,9 @@ pub(crate) struct RustCallbacks {
     /// Pending save/load request queued by the state machine, handled
     /// before the next engine tick in `game_session`.
     pending: Option<OperationRequest>,
+    /// Startup restore already applied before initial snapshot publication.
+    /// Its replay/UI receipt is delivered once at the first frame boundary.
+    bootstrap_restore: Option<OperationOutcome>,
     /// Ordered game-flow effects awaiting the host executor. A FIFO is
     /// required because one transition can request Menu and then Mission
     /// sound in the same frame; neither request may overwrite the other.
@@ -322,6 +325,7 @@ impl RustCallbacks {
 
     pub(crate) fn clear_operation(&mut self) {
         self.pending = None;
+        self.bootstrap_restore = None;
     }
 
     pub(crate) fn take_initial_request(&mut self) -> Option<SaveLoadRequest> {
@@ -373,6 +377,7 @@ impl RustCallbacks {
             autosave: AutosaveCoordinator::default(),
             profile_clock_credits: profile::ProfileClockCredits::default(),
             pending: None,
+            bootstrap_restore: None,
             app_effects: AppEffectQueue::default(),
             leaderboard_background: MissionEndLeaderboardBackground::default(),
             autosave_notices: AutosaveNotices::default(),
@@ -851,6 +856,62 @@ fn begin_multiplayer_snapshot_transition(
     Ok(true)
 }
 
+/// Consume only a preflighted load queued by mission construction. Live menu
+/// requests continue through the synchronized multiplayer transition path.
+pub(crate) async fn apply_bootstrap_save_load(
+    host: &mut crate::host::Host,
+    game: &mut crate::game::Game,
+    callbacks: &mut RustCallbacks,
+    engine: &mut engine_api::Engine,
+    assets: &engine_api::LevelAssets,
+    profiles: &engine_profiles::ProfileManager,
+) -> Result<(), MissionError> {
+    if !matches!(
+        callbacks.pending_request(),
+        Some(SaveLoadRequest::ApplyLoad(_))
+    ) {
+        return Ok(());
+    }
+    callbacks
+        .save_manager
+        .finish_background()
+        .map_err(|e| MissionError::save(format!("{e:#}")))?;
+    let Some(OperationRequest {
+        action: SaveLoadRequest::ApplyLoad(load),
+    }) = callbacks.pending.take()
+    else {
+        unreachable!("checked bootstrap load")
+    };
+    let outcome = executor::execute_bootstrap_load(
+        load,
+        &mut callbacks.save_manager,
+        executor::OperationWorld {
+            host,
+            game,
+            engine,
+            assets,
+            profiles,
+            thumb_ref: None,
+        },
+    )
+    .await;
+    if let Some(error) = &outcome.load_error {
+        return Err(MissionError::save(error.clone()));
+    }
+    if outcome.restore().is_none() {
+        return Err(MissionError::save(
+            "startup save did not restore the prepared mission",
+        ));
+    }
+    assert!(
+        callbacks.bootstrap_restore.is_none(),
+        "startup load receipt already pending"
+    );
+    callbacks.bootstrap_restore = Some(outcome);
+    tracing::info!("Applied startup save before multiplayer snapshot publication");
+    Ok(())
+}
+
 pub(crate) async fn perform_pending_save_load(
     host: &mut crate::host::Host,
     game: &mut crate::game::Game,
@@ -860,6 +921,9 @@ pub(crate) async fn perform_pending_save_load(
     profiles: &engine_profiles::ProfileManager,
     thumbnail: Option<crate::save_file::Thumbnail>,
 ) -> OperationOutcome {
+    if let Some(outcome) = callbacks.bootstrap_restore.take() {
+        return outcome;
+    }
     let Some(OperationRequest { action: request }) = callbacks.pending.take() else {
         return OperationOutcome::NOT_PENDING;
     };
@@ -1285,6 +1349,69 @@ mod operation_outcome_tests {
         )
         .unwrap();
         (callbacks, host, engine, assets, game, profiles)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn startup_load_restores_before_snapshot_without_live_transition_or_second_apply() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut callbacks, mut host, mut engine, assets, mut game, profiles) =
+            diagnostic_callback_fixture(directory.path());
+        engine.test_set_frame_counter(123);
+        let handle = callbacks
+            .save_manager
+            .create_draft("Resume".into(), 17)
+            .unwrap();
+        let index = callbacks.save_manager.resolve_handle(&handle).unwrap();
+        callbacks
+            .save_manager
+            .write_save_from_engine(&mut host, &game, index, &engine, 17, Some(&profiles), None)
+            .unwrap();
+        let load = PreparedLoad::preflight(&callbacks.save_manager, Some(handle))
+            .unwrap()
+            .unwrap();
+        engine.test_set_frame_counter(0);
+        callbacks.queue_operation(SaveLoadRequest::ApplyLoad(load));
+        pollster::block_on(apply_bootstrap_save_load(
+            &mut host,
+            &mut game,
+            &mut callbacks,
+            &mut engine,
+            &assets,
+            &profiles,
+        ))
+        .unwrap();
+        assert_eq!(engine.frame_counter(), 123);
+        assert!(!host.transport.has_snapshot_transition());
+        assert!(callbacks.pending_request().is_none());
+        // The first frame consumes recording/UI evidence, not another restore.
+        engine.test_set_frame_counter(124);
+        let outcome = pollster::block_on(perform_pending_save_load(
+            &mut host,
+            &mut game,
+            &mut callbacks,
+            &mut engine,
+            &assets,
+            &profiles,
+            None,
+        ));
+        assert!(outcome.restore().is_some());
+        assert!(matches!(
+            outcome.event,
+            Some(SaveLoadEvent::LoadApplied { .. })
+        ));
+        assert_eq!(engine.frame_counter(), 124);
+        let next = pollster::block_on(perform_pending_save_load(
+            &mut host,
+            &mut game,
+            &mut callbacks,
+            &mut engine,
+            &assets,
+            &profiles,
+            None,
+        ));
+        assert!(!next.processed());
+        assert!(!host.transport.has_snapshot_transition());
     }
 
     #[cfg(not(target_arch = "wasm32"))]

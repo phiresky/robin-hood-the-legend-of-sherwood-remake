@@ -1548,11 +1548,11 @@ impl ConstructedMission {
     }
 }
 
-/// Install the local deterministic seat and publish the host's authoritative
-/// frame-zero state. This admission setup is shared by interactive and true-
-/// headless missions and deliberately has no renderer, UI, input-device, or
+/// Install the local deterministic seat. Snapshot publication follows startup
+/// save restoration in mission bootstrap. This admission setup is shared by
+/// interactive and true-headless missions and has no renderer, UI, input-device, or
 /// audio dependency.
-pub(super) fn setup_local_seat_and_multiplayer_snapshot(
+pub(super) fn setup_local_seat(
     engine: &mut Engine,
     host: &mut Host,
     assets: &engine_api::LevelAssets,
@@ -1584,17 +1584,6 @@ pub(super) fn setup_local_seat_and_multiplayer_snapshot(
                 .connect_seat(assets, player_id, format!("Player {}", seat + 1))
                 .expect("bootstrap local co-op ConnectSeat admission");
             tracing::info!(?player_id, "bootstrap local co-op seat connected");
-        }
-    }
-    if let Some(net) = host.transport.net() {
-        match net
-            .publish_initial_snapshot(0, engine)
-            .and_then(|()| net.send_ready_to_sim(0))
-        {
-            Ok(()) => tracing::info!("multiplayer: cached and published frame-0 host snapshot"),
-            Err(error) => {
-                tracing::error!(%error, "multiplayer initial snapshot publication failed")
-            }
         }
     }
 }
@@ -1686,7 +1675,7 @@ pub(super) fn setup_input_and_camera(
     // **Headless dedicated server** is a future scope: a `--server`
     // process without a local seat.  Today every `--server` is
     // also a player — keeping that path intact below.
-    setup_local_seat_and_multiplayer_snapshot(engine, host, assets, args);
+    setup_local_seat(engine, host, assets, args);
     let camera_focus = engine
         .pc_ids()
         .first()
