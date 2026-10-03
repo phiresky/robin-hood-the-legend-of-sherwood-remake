@@ -108,6 +108,38 @@ packet.
 
 ## 4. Use masks and patches as ownership authority
 
+Inspect the grayscale occlusion-threshold images for every mask layer before
+refining geometry or assigning mask ownership. They make foreground boundaries,
+overlaps, and changes in occlusion threshold much easier to see alongside the
+source artwork. Generate them with the shared tool (requires NumPy and Pillow):
+
+```sh
+python3 level-editor/refinement/masks_to_depth.py \
+  --level <data>/Data/Levels/<map>.rhp.json \
+  --map-image <data>/Data/Levels/Day/<map>.map.png \
+  --layer 0 --output <work>/<map>.layer-0.occlusion-depth.png --mask-ids
+```
+
+Repeat for each distinct `layer` in the level's `masks` array. `--layer` selects
+the actor gameplay layer whose masks are included, and defaults to zero. The
+exported `<map>.rhp.d/masks/manifest.json` and mask PNGs must accompany the level
+JSON. Local exports for all nine maps and 54 mask layers are available under
+`level-editor/work/map-compile/occlusion-depth-all-layers/`; regenerate if absent
+or if the source changes.
+
+The output is a 16-bit threshold PNG with a JSON report. Optional `--mask-ids`
+adds a separate RGB `.mask-ids.png` preview with yellow labels, preserving the
+depth data. IDs are zero-based **global indices** in the level's `masks` array
+and mask manifest, not the layer-local indices used by patch references. Label
+anchors are on each included mask's coverage; overlapping masks can have
+overlapping labels, so use individual mask PNGs and the report for close review.
+
+These images describe initial character occlusion before mission scripts run.
+They approximate actor-anchor tests using pixel X, combine overlapping thresholds
+by maximum, and leave uncovered pixels black. They are not physical 3D depth,
+do not include projectile tests or later patch states, and do not establish
+asset ownership by themselves. Review revealed states and individual masks too.
+
 For every rendered pixel, determine which source layer, patch, state, and mesh
 component owns it. Keep separate records for:
 

@@ -31,6 +31,7 @@ Per-map pipeline, in order (each map has its own copy under `../blender/<map>/`)
 | Step | Script | Notes |
 |---|---|---|
 | Inventory / grouping | `blender/refinement_inventory.py`, `blender/group_assets.py` | [PROCEDURE §13](PROCEDURE.md#13-reusable-scripts) |
+| Occlusion-depth inspection | `masks_to_depth.py` | Inspect every mask layer; optional `--mask-ids` writes a labeled preview. [PROCEDURE §4](PROCEDURE.md#4-use-masks-and-patches-as-ownership-authority) |
 | Scene import, camera renders | `blender/setup_map.py`, `blender/render_views.py`, `blender/inspect_asset.py` | Derby-era helpers, still imported by map setup |
 | Isolated workers | `blender/refinement_workspace.py`, `blender/run_worker.py` | [refinement-workflow.md](refinement-workflow.md) |
 | Review renders and galleries | `blender/refinement_review.py`, `blender/render_multiview_asset.py`, `blender/build_review_gallery.py` | |
