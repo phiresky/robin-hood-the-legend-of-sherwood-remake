@@ -22,6 +22,19 @@ def fill(workspace,objects,mask):
     cy,cx=np.unravel_index(np.argmax(score),score.shape)
     radius=max(1,min(5,int(distance[cy,cx])//2))
     box=(max(0,cx-radius),max(0,cy-radius),min(w,cx+radius+1),min(h,cy+radius+1))
+    selection=workspace/'inspection/bark-donor-selection.json'
+    if selection.exists():
+        chosen=json.loads(selection.read_text())
+        if chosen['source_sha256']!=sha(workspace/'reference/source.png') or chosen['native_mask']!=mask:
+            raise ValueError('Bark donor source identity changed')
+        if chosen.get('reviewer')!='Codex' or not chosen.get('notes'):
+            raise ValueError('Bark donor needs an explicit visual review')
+        left,top,right,bottom=chosen['source_box']
+        box=(left-x,top-y,right-x,bottom-y)
+        if not (0<=box[0]<box[2]<=w and 0<=box[1]<box[3]<=h):
+            raise ValueError('Bark donor outside its own native wood crop')
+        if np.mean(alpha[box[1]:box[3],box[0]:box[2]])<.5:
+            raise ValueError('Bark donor is not supported by its native wood mask')
     donor_path=workspace/'inspection/bark-donor.png';donor_path.parent.mkdir(exist_ok=True)
     Image.fromarray(rgb).crop(box).save(donor_path)
     donor=bpy.data.images.load(str(donor_path),check_existing=False)

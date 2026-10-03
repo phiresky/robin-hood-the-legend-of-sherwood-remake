@@ -121,3 +121,30 @@ For each revised scenery worker, run `compare_source.py -- --assets <slugs>`
 in Blender before self-review and rebuilding the gallery. Its three panels
 show source artwork, saved geometry at the exact map camera, and an overlay.
 No new user approval is implied by an assistant self-review.
+
+The second pass extends irregular crown ownership to unapproved trees with
+`revise_crown_edges.py -- --masks <ids>` in Blender. It preserves native RGB,
+records the inferred edge separately, and refuses to revise approved trees 01
+and 25. Tree 42 already uses a whole canopy mask and needs no partition revision.
+`haystack_geometry.py`, used by `revise_feedback.py -- --assets
+south-field-haystack`, builds two closed halves of a continuous rounded mound.
+
+For bark, first inspect each tree's own source crop and write
+`inspection/bark-donor-selection.json` with `native_mask`, a map-image-coordinate
+`source_box` (`left, top, right, bottom`), `source_sha256`, reviewer and notes.
+`refresh_tree_bark.py -- --masks <ids>` checks that selection, preserves geometry
+and accepted source RGB, and refreshes saved-material evidence. A brown sample
+alone does not prove ownership: reject foreground kindling, soil and leaf pixels.
+Run `python3 level-editor/blender/croisement02/self_review_packet.py <ids>` to
+assemble current eight-view and source-comparison boards. This command never
+grants readiness; manual observations belong in hash-bound visual-review records.
+
+Second-pass self-review TODOs: correct tree 00's duplicate trunk assignment;
+separate tree 03's obstacle 144 state ownership (patch-006 removes it); remove
+foreground kindling from tree 18's receiver and donor using a new frozen source
+inventory; repair root junctions on 06/15/30/35/39; provide complete review framing
+for 17/19; reconsider cropped/disconnected crown grouping on 20/23/24/40; and
+resolve visible bark ownership or repetitive donor coverage on 05/27/41/46.
+These candidates remain in progress even where silhouette and depth metrics pass.
+Preserve frozen inventories and cameras; corrected ownership needs a new worker,
+and extra inspection views must be explicitly recorded.

@@ -59,7 +59,13 @@ def main():
         review=workspace/'inspection/visual-review.json'
         if review.exists():
             reviewed=json.loads(review.read_text())
-            if reviewed.get('model_sha256')==model_hash:
+            current_review=reviewed.get('model_sha256')==model_hash
+            if reviewed.get('sheet_sha256'):
+                current_review=current_review and reviewed['sheet_sha256']==sha(actual/'sheet.png')
+            if reviewed.get('self_review_packet'):
+                packet=Path(reviewed['self_review_packet'])
+                current_review=current_review and packet.exists() and sha(packet)==reviewed['self_review_packet_sha256']
+            if current_review:
                 item['notes']+=reviewed.get('notes',[])
                 if reviewed.get('ready_for_geometry_review') and technical:
                     item['status']='ready-for-user';item['technical_eligible']=True

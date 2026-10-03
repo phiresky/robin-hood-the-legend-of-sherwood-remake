@@ -17,6 +17,7 @@ from source_projection_bake import bake
 from feedback_geometry import wall,gate,firewood,kindling,wattle
 from audit_candidates import audit
 from render_tree import render_workspace
+from haystack_geometry import haystack
 
 
 def geometry(objects):
@@ -55,6 +56,8 @@ def main():
             notes.append('Visible post heights and sagging weave profile traced from artwork; source domain restores visible weave absent from native actor-occlusion coverage.')
         elif slug=='north-kindling-bundle':
             kindling(objects);notes.append('One leaning bundle across both canonical parts instead of two separate cones.')
+        elif slug=='south-field-haystack':
+            haystack(objects);notes.append('Continuous rounded hay mound replaces the two native planar wedges; rear slope and radial cross sections are inferred from the visible mound and footprint.')
         if slug in ('east-stone-wall-and-gate','southeast-stone-wall-and-gate','east-rail-fence'):
             cfg=json.loads((w/'workspace.json').read_text());path=Path(cfg['source_mask_manifest']);m=json.loads(path.read_text())
             assignment=next(a for a in m['projections']['exterior']['assignments'] if a.get('asset_group')==w.name)
