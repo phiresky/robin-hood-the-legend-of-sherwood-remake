@@ -59,4 +59,13 @@ assert np.max(np.abs(actual[1:, :, :3] - [.1, .7, .2])) <= 1 / 255 + 1e-7
 for entry in ownership.data:
     entry.color = (1, 1, 1, 1)
 assert fill([obj], sample, None, 'unused') == []
-print('PASS: unknown RGB filled; source material, foreign shared image and physical alpha preserved')
+import tempfile
+with tempfile.TemporaryDirectory() as folder:
+    path = str(Path(folder) / 'foliage.blend')
+    bpy.ops.wm.save_as_mainfile(filepath=path)
+    bpy.ops.wm.open_mainfile(filepath=path, load_ui=False)
+    saved = bpy.data.objects['test canopy'].data.materials[0]
+    saved_image = next(n.image for n in saved.node_tree.nodes if n.type == 'TEX_IMAGE')
+    stored = np.asarray(saved_image.pixels[:], dtype=np.float32).reshape(4, 4, 4)
+    assert np.array_equal(stored, actual)
+print('PASS: unknown RGB filled; source material, foreign shared image and physical alpha preserved after saving')
