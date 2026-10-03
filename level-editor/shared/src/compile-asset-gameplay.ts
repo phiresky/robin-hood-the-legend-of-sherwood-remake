@@ -18,7 +18,8 @@ import {
   type PlacedNavigationJoin,
 } from "./assemble-navigation-joins.ts";
 import { assembleJumpSegments, type PlacedJumpSegment } from "./assemble-jump-segments.ts";
-import { createJumpClearance } from "./jump-clearance.ts";
+import { createJumpClearance, mergeIntervals } from "./jump-clearance.ts";
+import { createJumpWalkingClearance, type JumpWalkArea } from "./jump-walking-clearance.ts";
 import {
   generateJumpLedges,
   jumpLandingBand,
@@ -1104,46 +1105,6 @@ function compileAssetGameplayAttempt(
     warnings.push(
       `Navigation region ${join.region}: no matching boundary edge after placement; region remains independent.`,
     );
-  // Airborne jumps do not collision-check each frame. Any volume that can
-  // become active must still constrain the permanently generated jump span.
-  const changingSight = new Set(
-    transitions.flatMap((transition) => [...transition.initialSight, ...transition.appliedSight]),
-  );
-  const assembledJumps = assembleJumpSegments(
-    jumpSegments,
-    jumpSegments.some((segment) => segment.attachment)
-      ? createJumpClearance(
-          sight.map((shape, index) =>
-            changingSight.has(index) && shape.initial_active === false
-              ? { ...shape, initial_active: true }
-              : shape,
-          ),
-        )
-      : undefined,
-  );
-  for (const pair of assembledJumps.pairs) {
-    for (const [side, edge] of pair.edges.entries()) {
-      const band = generatedLandings.get(edge.zone);
-      if (!band) continue;
-      const id = `${pair.id}/landing-${side}`;
-      const zone = jumpLandingBand(id, edge, band);
-      zone.polygon = ring(
-        zone.polygon.map(([x, y]): Point => [quantize(x), quantize(y)]),
-        id,
-      );
-      jumpZones.push(zone);
-      generatedJumpZoneIds.add(id);
-      edge.zone = id;
-    }
-    jumpPairs.push(pair);
-  }
-  warnings.push(...assembledJumps.warnings);
-  for (const segment of assembledJumps.unmatched.filter(
-    (segment) => !generatedLandings.has(segment.edge.zone),
-  ))
-    warnings.push(
-      `Jump ${segment.id}: no matching edge after placement; connection is unavailable.`,
-    );
   lifts = assembledLifts.lifts;
   for (const surface of surfaces)
     if (surface.lift) surface.lift = assembledLifts.identities.get(surface.lift)!;
@@ -1268,6 +1229,7 @@ function compileAssetGameplayAttempt(
     polygon: Point[];
     blockers: Point[][];
   }[] = [];
+  const jumpWalkAreas: JumpWalkArea[] = [];
   let sector = 0;
   const navigationPieces: NavigationPiece[] = [];
   const boundsOf = (points: Point[]): [number, number, number, number] => {
@@ -1548,6 +1510,11 @@ function compileAssetGameplayAttempt(
     // Projection surfaces provide layer-aware elevation and picking.
     for (const piece of pieces) {
       areas.push({ ...piece, sector, layer, blockers: [...piece.blockers, ...changing.initial] });
+      jumpWalkAreas.push({
+        plane: piece.plane,
+        polygon: boundary,
+        blockers: [...blockers, ...changing.obstacles.map((o) => o.polygon.points)],
+      });
       const walkableCoverage =
         piece.preserveMovementBoundary && piece.blockers.length
           ? fixedPolygonBoolean(
@@ -1820,6 +1787,50 @@ function compileAssetGameplayAttempt(
       if (!indices) throw new Error(`Unresolved transition mask ${id}`);
       return indices;
     });
+  // Airborne jumps do not collision-check each frame. Any volume that can
+  // become active must still constrain the permanently generated jump span.
+  const changingSight = new Set(
+    transitions.flatMap((transition) => [...transition.initialSight, ...transition.appliedSight]),
+  );
+  const flightClearance = jumpSegments.some((segment) => segment.attachment)
+    ? createJumpClearance(
+        sight.map((shape, index) =>
+          changingSight.has(index) && shape.initial_active === false
+            ? { ...shape, initial_active: true }
+            : shape,
+        ),
+      )
+    : undefined;
+  const walkingClearance = createJumpWalkingClearance(jumpWalkAreas, generatedLandings);
+  const assembledJumps = assembleJumpSegments(
+    jumpSegments,
+    (edges, long, body) =>
+      mergeIntervals([...flightClearance!(edges, long, body), ...walkingClearance(edges)]),
+    generatedLandings.size ? "obstacles obstruct the flight or walking approach" : undefined,
+  );
+  for (const pair of assembledJumps.pairs) {
+    for (const [side, edge] of pair.edges.entries()) {
+      const band = generatedLandings.get(edge.zone);
+      if (!band) continue;
+      const id = `${pair.id}/landing-${side}`;
+      const zone = jumpLandingBand(id, edge, band);
+      zone.polygon = ring(
+        zone.polygon.map(([x, y]): Point => [quantize(x), quantize(y)]),
+        id,
+      );
+      jumpZones.push(zone);
+      generatedJumpZoneIds.add(id);
+      edge.zone = id;
+    }
+    jumpPairs.push(pair);
+  }
+  warnings.push(...assembledJumps.warnings);
+  for (const segment of assembledJumps.unmatched.filter(
+    (segment) => !generatedLandings.has(segment.edge.zone),
+  ))
+    warnings.push(
+      `Jump ${segment.id}: no matching edge after placement; connection is unavailable.`,
+    );
   // Detached edges have no runtime connection. Retain zones used by any remaining pair.
   if (options.bestEffort || cropped || generatedJumpZoneIds.size) {
     const unavailable = new Set<string>();

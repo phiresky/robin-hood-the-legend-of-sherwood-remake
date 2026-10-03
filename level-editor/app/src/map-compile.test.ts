@@ -52,6 +52,7 @@ import {
   crossAssetJumpCompilerFixture,
   geometricJumpCompilerFixture,
   levelContourJumpCompilerFixture,
+  movementBlockedJumpCompilerFixture,
   obstructedJumpCompilerFixture,
   multiDestinationJumpCompilerFixture,
   detachedJumpCompilerFixture,
@@ -352,6 +353,46 @@ test("obstructed jumps export the clearance checked by native animation", async 
     ),
   );
   assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+});
+
+test("movement-only assets trim generated approaches and reconnect when moved away", async () => {
+  const { document, assets } = movementBlockedJumpCompilerFixture();
+  const compile = () => compileMap(document, [0, 0, 2000, 2000], assets).descriptor;
+  const blocked = compile();
+  const expected = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/asset-jump-movement-blocked.level.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(blocked, expected);
+  assert.equal(blocked.asset_geometry!.jump_line_pairs!.length, 2);
+  document.groups.find((g) => g.id === "roof-exclusion")!.transform.dx += 500;
+  const clear = compile();
+  assert.equal(clear.asset_geometry!.jump_line_pairs!.length, 1);
+  assert.deepEqual(clear.asset_geometry!.sight_obstacles, blocked.asset_geometry!.sight_obstacles);
+});
+
+test("switchable movement exclusions constrain permanent jump connections in both states", () => {
+  const { document, assets } = movementBlockedJumpCompilerFixture();
+  const compile = () => compileMap(document, [0, 0, 2000, 2000], assets).descriptor.asset_geometry!;
+  const permanent = compile().jump_line_pairs;
+  const gameplay = assets.get("roof-exclusion")!.gameplay!;
+  const blockers = gameplay.movementBlockers!;
+  gameplay.movementBlockers = [];
+  const transition = {
+    ...movementTransitionCompilerFixture().hut.gameplay!.movementTransitions![0]!,
+    initial: [],
+    applied: blockers,
+  };
+  gameplay.movementTransitions = [transition];
+  assert.deepEqual(compile().jump_line_pairs, permanent);
+  transition.initial = blockers;
+  transition.applied = [];
+  assert.deepEqual(compile().jump_line_pairs, permanent);
 });
 
 test("adjusted roof contours export level edges checked by native flight", async () => {

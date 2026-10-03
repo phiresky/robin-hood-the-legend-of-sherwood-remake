@@ -1362,6 +1362,7 @@ fn generated_roof_jump_edges_have_character_sized_walkable_approaches() {
     use robin_engine::pathfinder::PathFinder;
 
     for bytes in [
+        include_bytes!("fixtures/asset-jump-movement-blocked.level.json").as_slice(),
         include_bytes!("fixtures/asset-jump-courtyard.level.json").as_slice(),
         include_bytes!("fixtures/asset-jump-level-contours.level.json").as_slice(),
         include_bytes!("fixtures/asset-jump-complete-roofs.level.json").as_slice(),

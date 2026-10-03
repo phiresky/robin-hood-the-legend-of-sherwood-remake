@@ -83,6 +83,7 @@ function matchingEdges(a: PlacedJumpSegment, b: PlacedJumpSegment): [Edge, Edge]
 export function assembleJumpSegments(
   segments: PlacedJumpSegment[],
   clearance?: ReturnType<typeof createJumpClearance>,
+  obstructionLabel = "solid obstacles obstruct the flight",
 ) {
   const consumed = new Set<PlacedJumpSegment>();
   const unmatched: PlacedJumpSegment[] = [];
@@ -183,7 +184,7 @@ export function assembleJumpSegments(
     }
     if (blocked.length)
       warnings.push(
-        `Jump ${segment.id}: solid obstacles obstruct the flight; ${retained} usable span(s) retained.`,
+        `Jump ${segment.id}: ${obstructionLabel}; ${retained} usable span(s) retained.`,
       );
     else if (!retained)
       warnings.push(`Jump ${segment.id}: no usable span remains after movement-grid rounding.`);

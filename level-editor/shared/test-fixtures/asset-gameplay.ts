@@ -426,6 +426,42 @@ export function levelContourJumpCompilerFixture() {
   return fixture;
 }
 
+export function movementBlockedJumpCompilerFixture() {
+  const fixture = surfaceJumpCompilerFixture();
+  const blocker = structuredClone(fixture.hut);
+  blocker.id = "roof-exclusion";
+  blocker.gameplay = {
+    version: 1,
+    collision: "none",
+    surfaces: [],
+    doors: [],
+    movementBlockers: [
+      {
+        id: "roof-exclusion",
+        node: "building-999",
+        height: 0,
+        polygon: [
+          [75, 45],
+          [90, 45],
+          [90, 55],
+          [75, 55],
+        ],
+      },
+    ],
+  };
+  fixture.assets.set(blocker.id, blocker);
+  fixture.document.assetSources!.push({ ...fixture.document.assetSources![0]!, id: blocker.id });
+  fixture.document.objects.push({
+    ...structuredClone(fixture.document.objects[0]!),
+    id: "roof-exclusion-body",
+    group: "roof-exclusion",
+    node: "asset:roof-exclusion:building-999",
+  });
+  fixture.document.groups.push({ id: "roof-exclusion", transform: { ...IDENTITY_TRANSFORM } });
+  fixture.document.map = "Movement-only jump obstruction fixture";
+  return fixture;
+}
+
 export function inactiveJumpObstacleCompilerFixture() {
   const fixture = obstructedJumpCompilerFixture();
   const gameplay = fixture.assets.get("jump-wall")!.gameplay!;

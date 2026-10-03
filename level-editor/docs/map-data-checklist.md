@@ -346,6 +346,17 @@ departure routes at five positions along every edge, including both endpoints.
 The tests check goal authorization and thick movement, separately from flight.
 All ten library maps retain identical geometry, with additional warnings for
 unusable candidate edges (`work/map-compile/jump-walking-clearance`).
+Generated connections also trim their full approach spans against the compiled
+movement areas and movement-only blockers, using the runtime's goal-authorization
+footprint (the stock move box minus one unit). The test covers the entire inward
+landing depth, rather than only a zone anchor or sampled points. Switchable
+movement blockers constrain permanent connections in both states; state-dependent
+jump availability is still unsupported. A separate movable blocker fixture splits
+one connection into two usable spans and restores it when moved away, without
+changing sight geometry. Both retained spans pass native approach/departure checks.
+The complete-house fixture remains unchanged, including its angled roof approach.
+All ten saved maps still compile with identical geometry and warning counts
+(`work/map-compile/jump-movement-exclusions`).
 Nineteen reviewed library surfaces now carry these rules, with descriptor pins
 updated in six saved scenes. All ten scenes still compile and construct native
 geometry. A real rock-surface fixture checks a newly placed
