@@ -41,6 +41,7 @@ import {
   joinedTransitionCompilerFixture,
   sightTransitionCompilerFixture,
   inactiveJumpObstacleCompilerFixture,
+  swordJumpObstacleCompilerFixture,
   lightAssetCompilerFixture,
   jumpAssetCompilerFixture,
   navigationRegionCompilerFixture,
@@ -350,6 +351,24 @@ test("obstructed jumps export the clearance checked by native animation", async 
     ),
   );
   assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+});
+
+test("low jump obstacles export spans cleared by sword-fighting flight too", async () => {
+  const { document, assets } = swordJumpObstacleCompilerFixture();
+  const compiled = compileMap(document, [0, 0, 2000, 2000], assets).descriptor;
+  const fixture = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/asset-jump-sword.level.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(compiled, fixture);
+  assert.ok(
+    compiled.asset_geometry!.warnings!.some((warning) => warning.includes("obstruct the flight")),
+  );
 });
 
 test("new surface-derived courtyard exports native jump destinations", async () => {

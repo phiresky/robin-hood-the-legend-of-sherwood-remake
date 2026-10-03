@@ -419,6 +419,16 @@ export function inactiveJumpObstacleCompilerFixture() {
   return fixture;
 }
 
+export function swordJumpObstacleCompilerFixture() {
+  const fixture = obstructedJumpCompilerFixture();
+  for (const point of fixture.assets.get("jump-wall")!.gameplay!.volumes![0]!.shape.points) {
+    point.z_bottom = 20;
+    point.z_top = 45;
+  }
+  fixture.document.map = "Sword jump obstruction fixture";
+  return fixture;
+}
+
 export function multiDestinationJumpCompilerFixture() {
   const fixture = surfaceJumpCompilerFixture();
   fixture.upper.gameplay!.surfaces.find((surface) => surface.id === "east")!.polygon = [

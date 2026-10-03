@@ -293,8 +293,13 @@ directions. The edge-facing convention is the map-plane normal `(-dy, dx)`.
 Existing exact sockets remain supported. Many recovered library segments are
 short control lines, so migration requires usable ledges from asset surfaces;
 increasing socket tolerances alone is insufficient. Automatic connections between
-level ledges now check the full long-jump flight ribbon against solid volumes in
-both directions, including takeoff. Blocked portions are removed, clear spans are
+level ledges now check both the ordinary long-jump arc and the direct sword-fighting
+flight against solid volumes in both directions, including takeoff. A low obstacle
+may clear the arc while blocking the sword-fighting path, so both constrain the
+exported span. Native fixtures check both styles at five positions along each
+retained edge. All ten library maps compile unchanged after this additional check;
+diagnostics are in `work/map-compile/sword-jump-clearance`.
+Blocked portions are removed, clear spans are
 retained and warnings explain omissions. Integer endpoints keep equal opposing
 vectors and are checked again after rounding. Optional asset-authored body radius
 and height add side clearance and headroom; without them only the foot path is

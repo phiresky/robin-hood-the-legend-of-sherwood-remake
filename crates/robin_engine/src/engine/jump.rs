@@ -1584,6 +1584,7 @@ mod tests {
             include_bytes!("../../tests/fixtures/asset-jump-geometric.level.json").as_slice(),
             include_bytes!("../../tests/fixtures/asset-jump-obstructed.level.json").as_slice(),
             include_bytes!("../../tests/fixtures/asset-jump-inactive.level.json").as_slice(),
+            include_bytes!("../../tests/fixtures/asset-jump-sword.level.json").as_slice(),
             include_bytes!("../../tests/fixtures/asset-jump-courtyard.level.json").as_slice(),
         ] {
             let loaded = crate::level_data::LoadedLevel::hackable_from_json(bytes).unwrap();
@@ -1631,7 +1632,15 @@ mod tests {
                         f32::from(b.point_a.2),
                         f32::from(b.point_b.2),
                     );
-                    for t in [0.0, 0.25, 0.5, 0.75, 1.0] {
+                    for (t, sword) in [0.0, 0.25, 0.5, 0.75, 1.0]
+                        .into_iter()
+                        .flat_map(|t| [false, true].map(move |sword| (t, sword)))
+                    {
+                        let flight = if sword {
+                            OrderType::JumpingLongSword
+                        } else {
+                            OrderType::JumpingLong
+                        };
                         let start = MapPoint::new(
                             f32::from(a.point_a.0)
                                 + t * (f32::from(a.point_b.0) - f32::from(a.point_a.0)),
@@ -1651,7 +1660,7 @@ mod tests {
                             &destination,
                             start,
                             Posture::Upright,
-                            false,
+                            sword,
                             false,
                             f32::from(b.point_a.2) - f32::from(a.point_a.2),
                         );
@@ -1665,7 +1674,7 @@ mod tests {
                         let landing = steps
                             .iter()
                             .rev()
-                            .find(|step| step.anim == OrderType::JumpingLong)
+                            .find(|step| step.anim == flight)
                             .unwrap()
                             .target_3d
                             .unwrap();
@@ -1677,15 +1686,10 @@ mod tests {
                             [start.x, start.y + source_z, source_z],
                             [launch.x, launch.y + source_z, source_z],
                         ];
-                        path.extend(
-                            steps
-                                .iter()
-                                .filter(|step| step.anim == OrderType::JumpingLong)
-                                .map(|step| {
-                                    let p = step.target_3d.unwrap();
-                                    [p.x, p.y, p.z]
-                                }),
-                        );
+                        path.extend(steps.iter().filter(|step| step.anim == flight).map(|step| {
+                            let p = step.target_3d.unwrap();
+                            [p.x, p.y, p.z]
+                        }));
                         for (_, obstacle) in assets
                             .environment
                             .static_sight_obstacles

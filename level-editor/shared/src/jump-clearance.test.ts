@@ -89,6 +89,20 @@ test("a low obstacle is cleared by the arc but an obstacle intersecting its apex
   assert.ok(path.some((p) => p[2] > 20));
 });
 
+test("sword-fighting flight rejects low barriers below the ordinary jump arc", () => {
+  const obstruction = wall(30, 20, 1, 10, -1, 5);
+  const blocked = createJumpClearance([obstruction])(edges, true);
+  assert.ok(blocked.length > 0);
+  const result = assembleJumpSegments(segments(), createJumpClearance([obstruction]));
+  assert.equal(result.pairs.length, 2);
+  assert.ok(result.warnings.some((warning) => warning.includes("obstruct the flight")));
+  for (const pair of result.pairs)
+    assert.deepEqual(
+      createJumpClearance([obstruction])(pair.edges as [JumpEdge, JumpEdge], true),
+      [],
+    );
+});
+
 test("takeoff motion is checked and floor contact is allowed", () => {
   assert.deepEqual(createJumpClearance([wall(5, -100, 1, 300)])(edges, true), [[0, 1]]);
   assert.deepEqual(createJumpClearance([wall(-100, -100, 300, 300, -10, 0)])(edges, true), []);

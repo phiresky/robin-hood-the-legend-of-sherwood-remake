@@ -151,9 +151,10 @@ export function createJumpClearance(obstacles: SightObstacle[]) {
         source.a[2],
       ];
       const path = [source.a, ...longJumpTrajectory(start, destination.b)];
-      for (let i = 0; i + 1 < path.length; i++) {
-        const a = path[i]!,
-          b = path[i + 1]!;
+      // Sword-fighting jumps use one direct airborne target instead of the arc's waypoints.
+      const flights: [Vec3, Vec3][] = path.slice(1).map((point, i) => [path[i]!, point]);
+      flights.push([start, destination.b]);
+      for (const [a, b] of flights) {
         const ribbon: Vertex[] = [
           [...a, 0],
           [...b, 0],

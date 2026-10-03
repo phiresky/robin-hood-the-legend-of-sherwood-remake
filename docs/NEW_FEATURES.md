@@ -78,7 +78,8 @@
   Geometric matching follows the runtime takeoff normal, with an exported fixture
   checked through native animation translation for both travel directions.
   Level ledges now trim blocked flight spans against placed solids in both
-  directions, including takeoff. Optional body radius/height account for headroom
+  directions, including takeoff, the ordinary jump arc and the direct sword-fighting
+  flight. Optional body radius/height account for headroom
   and side clearance. Unsupported automatic jump shapes warn and are omitted;
   explicit authored connections retain their existing behavior.
   Surface-level jump rules generate reusable ledges and receiving bands from
