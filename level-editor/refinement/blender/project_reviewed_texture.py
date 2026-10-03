@@ -159,8 +159,9 @@ def apply(manifest_path, image_path, output_dir, *, texels_per_unit=2, map_name=
 
     visibility_samples={}
 
-    def sample(obj, normal, positions, accepted, colors, *, face_index):
-        stats['protected_texels_including_padding'] += int(accepted.sum())
+    def sample(obj, normal, positions, accepted, colors, *, face_index, record_statistics=True):
+        if record_statistics:
+            stats['protected_texels_including_padding'] += int(accepted.sum())
         remaining = ~accepted.copy()
         best_scores = np.full(len(positions), -np.inf)
         weights = np.zeros(len(positions))
@@ -228,11 +229,13 @@ def apply(manifest_path, image_path, output_dir, *, texels_per_unit=2, map_name=
                 blended[sample_index] += color*weight
                 weights[sample_index] += weight
                 remaining[indices[k]] = False
-                stats['views'][str(view['index'])] += 1
+                if record_statistics:
+                    stats['views'][str(view['index'])] += 1
         filled = weights>0
         colors[filled,:3] = blended[filled]/weights[filled,None]
-        stats['generated_texels_including_padding'] += int((~accepted & ~remaining).sum())
-        stats['unfilled_texels_including_padding'] += int(remaining.sum())
+        if record_statistics:
+            stats['generated_texels_including_padding'] += int((~accepted & ~remaining).sum())
+            stats['unfilled_texels_including_padding'] += int(remaining.sum())
         return filled
 
     reports = []; assigned_objects=set()
@@ -282,7 +285,11 @@ def apply(manifest_path, image_path, output_dir, *, texels_per_unit=2, map_name=
                 mat['generated_source_mask_manifest'] = mask_manifest
                 mat['generated_source_mask_evidence_sha256'] = hashlib.sha256(json.dumps(manifest['source_mask_evidence'],sort_keys=True).encode()).hexdigest()
     from fill_physical_foliage import fill as fill_foliage
-    foliage = fill_foliage(targets, sample, manifest.get('texture_receiver_face_indices'), image_hash)
+    foliage = fill_foliage(targets, sample, manifest.get('texture_receiver_face_indices'), image_hash,
+                           subpixels=manifest.get('texture_foliage_subpixel_sampling', False))
+    subpixel_fills = sum(row['subpixel_generated'] for row in foliage)
+    stats['generated_texels_including_padding'] += subpixel_fills
+    stats['unfilled_texels_including_padding'] -= subpixel_fills
     repaired_count = sum(face['repaired_texels'] for layer in reports for obj in layer['objects'] for face in obj.get('inferred_gap_repairs', []))
     if repair_policy is not None:
         if repaired_count > repair_policy['max_total_texels']:

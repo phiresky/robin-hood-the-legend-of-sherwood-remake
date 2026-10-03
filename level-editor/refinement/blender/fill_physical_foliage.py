@@ -18,7 +18,9 @@ def triangle_pixels(uv, width, height):
     return y.ravel()[inside], x.ravel()[inside], barycentric[inside]
 
 
-def fill(objects, sample, face_scope, generated_hash):
+def fill(objects, sample, face_scope, generated_hash, *, subpixels=False):
+    if type(subpixels) is not bool:
+        raise ValueError('Foliage subpixel sampling must be an explicit boolean')
     reports = []
     for obj in objects:
         mesh = obj.data
@@ -56,6 +58,7 @@ def fill(objects, sample, face_scope, generated_hash):
             after = before.copy()
             written = np.zeros((height, width), bool)
             visible = np.zeros_like(written)
+            subpixel_generated = 0
             for triangle in mesh.loop_triangles:
                 if triangle.polygon_index not in unknown:
                     continue
@@ -73,6 +76,24 @@ def fill(objects, sample, face_scope, generated_hash):
                                   face_index=triangle.polygon_index)
                 after[rows[accepted], cols[accepted], :3] = colors[accepted, :3]
                 written[rows[accepted], cols[accepted]] = True
+                if subpixels:
+                    triangle_uv = np.asarray([uv.data[i].uv[:] for i in triangle.loops]) * [width, height]
+                    inverse = np.linalg.inv(np.stack([triangle_uv[1]-triangle_uv[0], triangle_uv[2]-triangle_uv[0]], axis=1))
+                    for offset in [(-.25, -.25), (.25, -.25), (-.25, .25), (.25, .25)]:
+                        delta = inverse @ np.asarray(offset)
+                        shifted = weights + [-delta.sum(), *delta]
+                        pending = ~written[rows, cols] & (shifted >= -1e-7).all(1)
+                        indices = np.flatnonzero(pending)
+                        if not len(indices):
+                            continue
+                        retry_colors = before[rows[indices], cols[indices]].copy()
+                        filled = sample(obj, normal, shifted[indices] @ points,
+                                        np.zeros(len(indices), bool), retry_colors,
+                                        face_index=triangle.polygon_index, record_statistics=False)
+                        selected = indices[filled]
+                        after[rows[selected], cols[selected], :3] = retry_colors[filled, :3]
+                        written[rows[selected], cols[selected]] = True
+                        subpixel_generated += int(filled.sum())
             if not np.array_equal(before[..., 3], after[..., 3]) or not np.array_equal(before[~written], after[~written]):
                 raise ValueError('Foliage fill changed protected RGB or physical alpha')
             if written.any():
@@ -93,5 +114,5 @@ def fill(objects, sample, face_scope, generated_hash):
                     raise ValueError('Stored foliage RGB exceeds byte quantization error')
             reports.append(dict(object=obj.name, material=material.name, generated=int(written.sum()),
                                 unfilled=int((visible & ~written).sum()), physical_alpha_changed=0,
-                                protected_rgb_changed=0))
+                                protected_rgb_changed=0, subpixel_generated=subpixel_generated))
     return reports

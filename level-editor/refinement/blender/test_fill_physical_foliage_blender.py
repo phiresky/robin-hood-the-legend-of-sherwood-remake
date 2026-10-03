@@ -59,6 +59,24 @@ assert np.max(np.abs(actual[1:, :, :3] - [.1, .7, .2])) <= 1 / 255 + 1e-7
 for entry in ownership.data:
     entry.color = (1, 1, 1, 1)
 assert fill([obj], sample, None, 'unused') == []
+# A pixel centre can be hidden while a quarter-pixel sample is visible.
+# Sampling must remain within that same unknown texel and preserve its alpha.
+for entry in ownership.data:
+    entry.color = (0, 1, 1, 1)
+obj.data.materials[0] = mat
+
+def edge_sample(obj, normal, positions, accepted, colors, *, face_index, record_statistics=True):
+    visible = np.mod(positions[:, 0] * 4, 1) > .6
+    colors[visible, :3] = [.1, .7, .2]
+    return visible
+
+retried = fill([obj], edge_sample, None, 'test-subpixels', subpixels=True)
+assert retried[0]['generated'] == 12 and retried[0]['subpixel_generated'] == 12, retried
+image_retry = next(n.image for n in obj.data.materials[0].node_tree.nodes if n.type == 'TEX_IMAGE')
+actual = np.asarray(image_retry.pixels[:], dtype=np.float32).reshape(4, 4, 4)
+assert np.array_equal(actual[..., 3], before[..., 3])
+assert np.array_equal(actual[0], before[0])
+
 import tempfile
 with tempfile.TemporaryDirectory() as folder:
     path = str(Path(folder) / 'foliage.blend')
