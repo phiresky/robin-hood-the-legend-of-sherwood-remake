@@ -4,8 +4,9 @@
   deterministic Euclidean A* search for visibility routes, avoiding unnecessary
   expansion across distant parts of the same movement area. Visibility checks
   are skipped when an edge cannot improve the known route, and collision-line
-  queries skip geometric intersection tests for empty grid cells. Precomputed
-  navigation graphs retain their existing search path.
+  queries skip geometric intersection tests for empty grid cells. Blocked
+  pathfinder corridors stop at the first collision instead of collecting all
+  candidate lines. Precomputed navigation graphs retain their existing search path.
 
 - **Asset-owned scenery animation definitions.** Map export transforms local
   billboard anchors and display polylines into native map animations, independently

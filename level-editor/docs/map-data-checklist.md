@@ -23,9 +23,12 @@ are under `work/map-compile/route-sampling-HpYhrj`. A native collision flood-fil
 finds connected actor-sized samples within numbered motion sectors, then checks
 forward/reverse pathfinder routes and clearance on every returned segment. The
 baseline passed 1,336 routes using the stock 6×4 half-diagonal, taking 3,471 seconds
-in this debug run. The graph-free visibility fallback now uses Euclidean A* with
-stable index ties and rejects non-improving edges before expensive collision
-queries; collision-line collection skips empty grid cells before geometric tests.
+in this debug run. Euclidean A* with stable index ties, non-improving edge rejection
+and empty-grid-cell skipping pass the same 1,336 routes in 655 seconds. That report
+is saved as `route-sampling-astar-report.json`. Pathfinder corridor checks now also
+stop at their first blocking line, preserving cell selection, intersection and
+endpoint-inside rules. A 3,312-query comparison across two layers and three active
+obstacle states matches the preceding collected-query implementation.
 The audit writes a per-map JSON report and marks it complete only after all maps
 pass. Separate transition fixtures reuse the live pathfinder with the same
 footprint, checking both directions through initially closed/open barriers and

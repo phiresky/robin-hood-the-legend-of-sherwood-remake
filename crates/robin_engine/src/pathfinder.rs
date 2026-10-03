@@ -1555,7 +1555,7 @@ impl PathSearch<'_> {
     ///
     /// Original levels carry a precomputed corner graph in their movement data. Editable
     /// JSON overlays intentionally do not encode that legacy binary slab, so
-    /// derive an equivalent small graph from active obstacle corners at query
+    /// derive a visibility graph from active obstacle corners at query
     /// time. This is also a useful non-fake failure mode for incomplete custom
     /// levels: an unreachable goal returns `None` instead of walking through a
     /// wall or pretending no route exists merely because bytes were omitted.
@@ -2302,14 +2302,13 @@ impl PathSearch<'_> {
             None => return true, // Zero movement
         };
 
-        let line_indices = grid.get_active_motion_lines_for_segments(
-            self.scratch.current_layer,
-            corridor.seg1,
-            corridor.seg2,
-            &corridor.bbox,
-        );
-
         if tracing::enabled!(tracing::Level::TRACE) {
+            let line_indices = grid.get_active_motion_lines_for_segments(
+                self.scratch.current_layer,
+                corridor.seg1,
+                corridor.seg2,
+                &corridor.bbox,
+            );
             let lines: Vec<_> = line_indices
                 .iter()
                 .map(|&idx| {
@@ -2329,27 +2328,7 @@ impl PathSearch<'_> {
             );
         }
 
-        if line_indices.is_empty() {
-            return true;
-        }
-
-        // Check segment intersections
-        for &idx in &line_indices {
-            let line = &grid.level.lines[usize::from(idx)];
-            if line.intersects_segment(corridor.seg1) || line.intersects_segment(corridor.seg2) {
-                return false;
-            }
-        }
-
-        // Check if any line endpoint lies inside the corridor
-        for &idx in &line_indices {
-            let p = grid.level.lines[usize::from(idx)].a;
-            if corridor.point_inside(p) {
-                return false;
-            }
-        }
-
-        true
+        grid.is_path_corridor_clear(self.scratch.current_layer, &corridor)
     }
 
     /// Check if a unit at `point` does not collide with any motion line.

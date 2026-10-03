@@ -2916,11 +2916,26 @@ impl FastFindGrid {
         seg2: geo::Line<f32>,
         bbox: &MapBBox,
     ) -> Vec<LineIndex> {
+        let mut result = Vec::new();
+        self.visit_active_motion_lines_for_segments(layer, seg1, seg2, bbox, |index, _| {
+            result.push(index);
+            true
+        });
+        result
+    }
+
+    fn visit_active_motion_lines_for_segments(
+        &self,
+        layer: u16,
+        seg1: geo::Line<f32>,
+        seg2: geo::Line<f32>,
+        bbox: &MapBBox,
+        mut visit: impl FnMut(LineIndex, &GridLine) -> bool,
+    ) {
         let Some(rect) = bbox.0 else {
-            return Vec::new();
+            return;
         };
 
-        let mut result = Vec::new();
         self.visit_lines_in_cells(
             layer,
             &rect,
@@ -2938,13 +2953,28 @@ impl FastFindGrid {
                 cell_rect.intersects(&seg1) || cell_rect.intersects(&seg2)
             },
             |line_idx, line| {
-                if line.is_motion && self.is_line_active(line_idx) {
-                    result.push(line_idx);
-                }
-                true
+                !(line.is_motion && self.is_line_active(line_idx) && !visit(line_idx, line))
             },
         );
-        result
+    }
+
+    /// Pathfinder corridor query, retaining its segment-selected grid cells.
+    /// A blocked route can stop before collecting lines from distant cells.
+    pub(crate) fn is_path_corridor_clear(&self, layer: u16, corridor: &ThickMoveCorridor) -> bool {
+        let mut clear = true;
+        self.visit_active_motion_lines_for_segments(
+            layer,
+            corridor.seg1,
+            corridor.seg2,
+            &corridor.bbox,
+            |_, line| {
+                clear = !(line.intersects_segment(corridor.seg1)
+                    || line.intersects_segment(corridor.seg2)
+                    || corridor.point_inside(line.a));
+                clear
+            },
+        );
+        clear
     }
 
     // ── Thick movement corridor ──
@@ -3947,6 +3977,73 @@ mod tests {
             ),
             [first, second]
         );
+    }
+
+    #[test]
+    fn streaming_path_corridors_match_collected_queries_across_layers_and_states() {
+        let mut grid = FastFindGrid::new();
+        grid.size_map(8, 8);
+        grid.allocate_layers(2);
+        let mut lines = vec![];
+        for layer in 0..2 {
+            for i in 0..24 {
+                let a = MapPoint::new(((i * 73 + 32) % 512) as f32, ((i * 31) % 512) as f32);
+                let b = match i % 3 {
+                    0 => MapPoint::new(a.x, (a.y + 128.).min(511.)),
+                    1 => MapPoint::new((a.x + 96.).min(511.), a.y),
+                    _ => MapPoint::new(((i * 19) % 512) as f32, ((i * 47) % 512) as f32),
+                };
+                lines.push(grid.add_line(GridLine::new(a, b, i % 5 != 0), layer));
+            }
+        }
+        let points: Vec<_> = (0..24)
+            .map(|i| MapPoint::new(((i * 64) % 512) as f32, ((i * 37) % 512) as f32))
+            .collect();
+        let mut clear_count = 0;
+        let mut blocked_count = 0;
+        for state in 0..3 {
+            for (i, &line) in lines.iter().enumerate() {
+                grid.set_line_active(line, (i + state) % 3 != 0);
+            }
+            for layer in 0..2 {
+                for &source in &points {
+                    for &goal in &points {
+                        let Some(corridor) = FastFindGrid::build_thick_move_corridor(
+                            source,
+                            goal,
+                            MoveBoxHalfDiagonal::new(6., 4.),
+                        ) else {
+                            continue;
+                        };
+                        // The pre-streaming query collects first, then makes two passes.
+                        let candidates = grid.get_active_motion_lines_for_segments(
+                            layer,
+                            corridor.seg1,
+                            corridor.seg2,
+                            &corridor.bbox,
+                        );
+                        let expected = !candidates.iter().any(|&index| {
+                            let line = &grid.level.lines[usize::from(index)];
+                            line.intersects_segment(corridor.seg1)
+                                || line.intersects_segment(corridor.seg2)
+                        }) && !candidates.iter().any(|&index| {
+                            corridor.point_inside(grid.level.lines[usize::from(index)].a)
+                        });
+                        assert_eq!(
+                            grid.is_path_corridor_clear(layer, &corridor),
+                            expected,
+                            "layer={layer}, state={state}, {source:?} -> {goal:?}"
+                        );
+                        if expected {
+                            clear_count += 1;
+                        } else {
+                            blocked_count += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(clear_count > 0 && blocked_count > 0);
     }
 
     #[test]
