@@ -18,6 +18,15 @@ with it. Global indices and connections are rebuilt after placement.
 with Derby/York. “Partial” identifies a remaining gap. “Planned” describes the
 intended construction, not functionality available today.
 
+**Exported depth PNG:** the fixture in `work/map-compile/export-depth-gpu` packages
+a known two-region 16-bit depth image and a pinned sprite through the normal ZIP
+exporter. The native map decoder, GPU upload and character masking pass reproduce
+all 64 expected pixels at three ground depths: fully hidden, half visible and fully
+visible. The offscreen GPU contract passed with this fixture. This verifies the
+depth-file pipeline; it does not establish arbitrary 3D bake accuracy, full entity
+mask selection, or scenery-overlay rendering. Repeat instructions are in
+`docs/TESTING.md` under GPU execution.
+
 **Animated scenery:** asset gameplay can now define camera-facing sprite animations
 with a local anchor, sprite file/profile and center, activation/display flags and
 a local 3D masking polyline. Compilation transforms the anchor and polyline with

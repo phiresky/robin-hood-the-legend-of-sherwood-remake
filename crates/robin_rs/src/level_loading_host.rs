@@ -100,7 +100,7 @@ fn decode_hackable_terrain_png(bytes: &[u8], path: &str) -> Result<Picture, Stri
     })
 }
 
-fn decode_occlusion_depth_png(
+pub(crate) fn decode_occlusion_depth_png(
     bytes: &[u8],
     path: &str,
     expected_width: u16,

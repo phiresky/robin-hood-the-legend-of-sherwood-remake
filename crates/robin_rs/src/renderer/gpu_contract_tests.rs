@@ -193,6 +193,9 @@ fn verify_map_patch_camera_alignment(gpu: GpuContext, oversized_atlas: bool) {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
+    if let Ok(root) = std::env::var("SCENERY_DEPTH_EXPORT_DIR") {
+        verify_exported_depth_pixels(gpu.clone(), std::path::Path::new(&root));
+    }
     verify_map_appearance_pixels(gpu.clone());
     verify_coop_compositing(gpu.clone());
     verify_map_patch_camera_alignment(gpu.clone(), false);
@@ -451,6 +454,65 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
     crate::ingame_menu::resources::verify_menu_gpu_ownership(&mut menu_renderer, &mut menu_peer);
     verify_deferred_menu_surfaces(&mut renderer);
     verify_managed_surface_rectangles(&mut renderer);
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+fn verify_exported_depth_pixels(gpu: GpuContext, root: &std::path::Path) {
+    let loaded = robin_engine::level_data::LoadedLevel::hackable_from_json(
+        &std::fs::read(root.join("Data/Levels/editor-authored-fixture.level.json")).unwrap(),
+    )
+    .unwrap();
+    let raw = &loaded.proto.animations[0];
+    let depth = crate::level_loading_host::decode_occlusion_depth_png(
+        &std::fs::read(root.join("Data/Levels/Day/editor-authored-fixture.occlusion-depth.png"))
+            .unwrap(),
+        "exported depth",
+        600,
+        600,
+    )
+    .unwrap();
+    let (width, height, pixels) = robin_assets::custom_sprites::decode_png_rgba_bytes(
+        &std::fs::read(root.join("Data/Animations/Day/editor-flame.rhs.d/idle/0.png")).unwrap(),
+        "exported sprite",
+    )
+    .unwrap();
+    assert_eq!((width, height), (8, 8));
+    let mut renderer =
+        Renderer::with_optional_surface(gpu, None, None, 8, 8, TextureScaleMode::Nearest);
+    renderer.upload_occlusion_depth(&depth, 600, 600).unwrap();
+    let image = renderer
+        .create_rgba_gpu_image(8, 8, &pixels, "exported depth probe")
+        .unwrap();
+    for ground_y in [0., 300., 600.] {
+        renderer.begin_gpu_frame_clear();
+        renderer.render_gpu_rect(0, 0, 8, 8, [0, 0, 0, 255]);
+        let checkpoint = renderer.draw_queue_checkpoint();
+        renderer.render_gpu_image(&image, None, None, BlendMode::None);
+        renderer.mask_queued_draws_with_depth(
+            checkpoint,
+            &[],
+            Rect::new(0, 0, 8, 8),
+            raw.sprite.position_x as f32,
+            raw.sprite.position_y as f32,
+            1.,
+            ground_y,
+        );
+        let expected: Vec<u8> = (0..64)
+            .flat_map(|index| {
+                let visible = ground_y == 600. || (ground_y == 300. && index % 8 >= 4);
+                if visible {
+                    [255, 255, 255, 255]
+                } else {
+                    [0, 0, 0, 255]
+                }
+            })
+            .collect();
+        assert_eq!(
+            renderer.try_capture_frame_rgba().unwrap(),
+            (8, 8, expected),
+            "exported depth mask at ground Y {ground_y}"
+        );
+    }
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

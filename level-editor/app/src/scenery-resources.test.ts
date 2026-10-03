@@ -257,6 +257,35 @@ test("changed or missing scenery files omit only their animation", async () => {
   }
 });
 
+test(
+  "export a depth PNG and pinned sprite for native GPU verification",
+  {
+    skip: !process.env.SCENERY_DEPTH_EXPORT_DIR,
+  },
+  async () => {
+    const { assets, compiled, read } = fixture();
+    const resources = await collectSceneryResources(compiled, assets, read);
+    const depth = Uint16Array.from({ length: 600 * 600 }, (_, index) =>
+      index % 600 < 310 ? 50000 : 10000,
+    );
+    const zip = unzipSync(
+      await packageCompiledMap(
+        compiled,
+        { color: new Uint8Array(600 * 600 * 4), depth },
+        [],
+        resources,
+      ),
+    );
+    const root = process.env.SCENERY_DEPTH_EXPORT_DIR!;
+    await mkdir(root);
+    for (const [name, bytes] of Object.entries(zip)) {
+      const destination = path.join(root, name);
+      await mkdir(path.dirname(destination), { recursive: true });
+      await writeFile(destination, bytes);
+    }
+  },
+);
+
 test("shared-bank scenery needs no library resource reads", async () => {
   const { assets, hut, compiled } = fixture();
   delete hut.gameplay!.animations![0]!.resourceDirectory;

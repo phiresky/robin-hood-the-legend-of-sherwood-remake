@@ -216,6 +216,14 @@ failure to create an adapter/device fails the gate. This checks multipass
 execution and the renderer's synthetic exact-pixel/readback contract. Original
 game image comparisons remain separate provisioned scenarios.
 
+To include an editor-exported depth PNG in the pixel contract, first generate a
+fresh fixture directory by setting `SCENERY_DEPTH_EXPORT_DIR` while running
+`level-editor/app/src/scenery-resources.test.ts` through the editor's Node test
+runner. Pass the same absolute directory to the GPU gate. It decodes the packaged
+16-bit PNG with the normal map loader and checks masked sprite pixels at three
+ground depths. The fixture uses authored depth steps; it does not test the editor's
+3D baking shader, complete entity-mask selection, or scenery-overlay ordering.
+
 ## Host hardware queries
 
 ```sh
