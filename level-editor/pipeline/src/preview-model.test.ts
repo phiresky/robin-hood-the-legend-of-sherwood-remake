@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { meshoptReadable } from "./meshopt-glb.ts";
 import { Document, NodeIO } from "@gltf-transform/core";
 import { generatePreview, previewFingerprint, previewTextureSize } from "./preview-model.ts";
 
@@ -55,7 +56,7 @@ test("CLI writes a meshopt-compressed preview GLB deterministically; fingerprint
   const bytes = await fs.readFile(path.join(root, "a.glb"));
   assert.equal(bytes.toString("ascii", 0, 4), "glTF");
   const json = JSON.parse(bytes.toString("utf8", 20, 20 + bytes.readUInt32LE(12)));
-  assert.ok(json.extensionsUsed.includes("EXT_meshopt_compression"));
+  assert.ok(json.extensionsUsed.includes("KHR_meshopt_compression"));
   assert.equal((await generatePreview(input)).bytes.length, bytes.length);
   assert.equal(await previewFingerprint(), await previewFingerprint());
 });
@@ -96,7 +97,7 @@ test("previews drop reveal-only nodes and keep covered nodes and empty part node
   const result = await new NodeIO()
     .registerExtensions((await import("@gltf-transform/extensions")).ALL_EXTENSIONS)
     .registerDependencies({ "meshopt.decoder": (await import("meshoptimizer")).MeshoptDecoder })
-    .readBinary(bytes);
+    .readBinary(meshoptReadable(bytes));
   const names = result
     .getRoot()
     .listNodes()

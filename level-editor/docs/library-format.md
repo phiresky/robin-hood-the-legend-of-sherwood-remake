@@ -63,6 +63,19 @@ An optional `lossy_model` (for example `<source-map>/<asset-id>/lossy.glb`) is a
 derived lossy display copy of `model`: same nodes, extras, scenes and materials, one
 re-baked texture atlas (EXT_texture_avif), quantized vertices (KHR_mesh_quantization)
 and no normals on unlit primitives (nothing is lit yet).
+Geometry is then losslessly encoded with `KHR_meshopt_compression` (vertex codec v1)
+when the complete GLB becomes smaller. This step preserves accessor values, index
+order, textures and scene metadata; it does not simplify or requantize geometry.
+Previews also use KHR/v1, after their existing simplification and texture processing.
+The Python GLB reader decodes meshopt before inspecting attributes.
+
+Existing derivatives can be migrated without rebaking with
+`python3 refinement/recompress_library.py --work work/meshopt-migration --apply`
+(from `level-editor/`). Omit `--apply` to stage only. The work directory must be
+fresh; installation checks source hashes under the publication lock and retains
+backups and a restore manifest. Preview receipts retain their generation fingerprint
+so migrating compression does not certify outdated preview-generation settings.
+
 `<lossy_model>.receipt.json` records the SHA-256 of the `model` bytes it was built
 from (`source`) and of itself (`output`). Every asset-index writer uses
 `refinement/asset_index.py::write_asset_index`: it generates entries from directories,

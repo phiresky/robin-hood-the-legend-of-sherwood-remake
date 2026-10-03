@@ -49,7 +49,9 @@ them). Vertices are quantized with KHR_mesh_quantization (`--no-quantize` keeps 
    provenance, not display data).
 4. avifenc (lossy, `--quality`) encodes the atlas; the GLB references it through a required
    EXT_texture_avif (three.js GLTFLoader decodes it natively; no fallback image).
-5. The written GLB is checked structurally (same meshes, primitives and triangle counts); the
+5. Geometry is losslessly meshopt v1 encoded (KHR_meshopt_compression) when this makes
+   the full GLB smaller, preserving index order and vertex precision.
+6. The written GLB is checked structurally (same meshes, primitives and triangle counts); the
    receipts bind it by hash. `--validate` additionally renders the published and the lossy GLB
    (lossy texture decoded with avifdec) from eight oblique orthographic views at
    `--render-scale` pixels per map pixel and reports mean/p95/max colour differences.
@@ -261,10 +263,18 @@ def compare(original_paths, unwrapped_paths, output, labels=('original (per-face
 
 # --- GLB access -------------------------------------------------------------------------------
 
-def read_glb(path):
+def meshopt_bytes(data, mode):
+    result = subprocess.run(['node', str(PIPELINE / 'src/meshopt-glb.ts'), mode],
+                            input=data, capture_output=True)
+    if result.returncode:
+        raise RuntimeError(f'Meshopt {mode} failed: {result.stderr.decode(errors="replace")}')
+    return result.stdout
+
+
+def read_glb(path, *, _decoded=None):
     """(document, buffer byte strings, GLB bytes). External buffers (shared library blobs)
     resolve relative to the GLB, like the loader's resource pins."""
-    data = Path(path).read_bytes()
+    data = Path(path).read_bytes() if _decoded is None else _decoded
     magic, version, length = struct.unpack_from('<4sII', data, 0)
     require(magic == b'glTF' and version == 2 and length == len(data), f'Not a glTF 2 GLB: {path}')
     offset, doc, binary = 12, None, None
@@ -277,6 +287,11 @@ def read_glb(path):
             binary = chunk
         offset += 8 + size
     require(doc is not None, f'GLB without JSON: {path}')
+    if any(name in doc.get('extensionsUsed', []) for name in ('KHR_meshopt_compression', 'EXT_meshopt_compression')):
+        require(_decoded is None, 'Meshopt decode did not remove compression')
+        decoded = meshopt_bytes(data, '--decode')
+        result, buffers, _ = read_glb(path, _decoded=decoded)
+        return result, buffers, data
     buffers = []
     for index, buffer in enumerate(doc.get('buffers', [])):
         if 'uri' in buffer:
@@ -1047,6 +1062,7 @@ def write_lossy(doc, binary, records, atlas_bytes, output, drop_normals=True, te
     chunk += b' ' * ((-len(chunk)) % 4)
     data = (struct.pack('<4sII', b'glTF', 2, 12 + 8 + len(chunk) + 8 + len(body))
             + struct.pack('<II', len(chunk), 0x4E4F534A) + chunk + struct.pack('<II', len(body), 0x004E4942) + body)
+    data = meshopt_bytes(data, '--encode')
     output.write_bytes(data)
     return data, normals
 
@@ -1538,7 +1554,7 @@ SETTING_KEYS = ('density_coverage', 'density', 'nearest_density', 'pack_shape', 
 
 def settings(args):
     """Derivation settings recorded in receipts; a receipt with other settings is out of date."""
-    return {'algorithm_version': ALGORITHM_VERSION, **{key: getattr(args, key) for key in SETTING_KEYS}}
+    return {'algorithm_version': ALGORITHM_VERSION, 'geometry_compression': 'meshopt-v1-if-smaller', **{key: getattr(args, key) for key in SETTING_KEYS}}
 
 
 def summary_row(report):

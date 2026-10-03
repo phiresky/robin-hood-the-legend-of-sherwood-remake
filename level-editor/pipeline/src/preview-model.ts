@@ -15,8 +15,8 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { NodeIO, PropertyType } from "@gltf-transform/core";
-import { ALL_EXTENSIONS } from "@gltf-transform/extensions";
+import { PropertyType } from "@gltf-transform/core";
+import { meshoptIO, readMeshoptDocument, meshoptV1 } from "./meshopt-glb.ts";
 import {
   dequantize,
   meshopt,
@@ -84,6 +84,7 @@ export async function previewFingerprint(): Promise<string> {
       versions,
       sharp: sharp.versions,
       script: digest(await fs.readFile(fileURLToPath(import.meta.url))),
+      codec: digest(await fs.readFile(new URL("./meshopt-glb.ts", import.meta.url))),
     }),
   );
 }
@@ -92,10 +93,8 @@ export async function previewFingerprint(): Promise<string> {
 export async function generatePreview(
   input: string,
 ): Promise<{ bytes: Uint8Array; edge: number | null; texels: number }> {
-  const io = new NodeIO()
-    .registerExtensions(ALL_EXTENSIONS)
-    .registerDependencies({ "meshopt.encoder": MeshoptEncoder });
-  const document = await io.read(input);
+  const io = await meshoptIO();
+  const document = await readMeshoptDocument(io, input);
   // Previews show the covered state. Nodes shown only while a patch is revealed (exported
   // reveal_show_when_applied extras, e.g. revealed-interior copies) are dropped; the editor's
   // PatchDisplay switches them on the full model only.
@@ -149,7 +148,7 @@ export async function generatePreview(
       }),
     );
   await document.transform(...transforms);
-  return { bytes: await io.writeBinary(document), edge, texels };
+  return { bytes: meshoptV1(await io.writeBinary(document)), edge, texels };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
