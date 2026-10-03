@@ -61,6 +61,9 @@ python3 level-editor/blender/croisement02/build_gallery.py
 Completed current workers are skipped. `--redo` explicitly rebuilds a worker.
 `finalize_trees.py` migrates older leaf-patch candidates to correctly oriented,
 separately owned front/back surfaces; fresh candidates already use this form.
+It also preserves inferred rear material slots in the reprojection fallback
+attribute, so refreshing source projection cannot relabel backs as observed.
+`--render` resumes any interrupted inspection renders for corrected models.
 Review images are archived when replaced, and readiness requires a visual-review
 record bound to the saved model hash. Source-only sheets and actual-material
 sheets are deliberately distinct. The shared worker validates outside objects,

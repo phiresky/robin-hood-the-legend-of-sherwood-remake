@@ -26,7 +26,14 @@ def main():
         if args.masks is not None and record['mask'] not in args.masks:continue
         version=record['crown'].get('geometry_version')
         if args.from_version and version!=args.from_version:continue
-        if version=='native-leaf-clusters-v5' and record.get('leaf_fallback_ownership')=='corrected':continue
+        if version=='native-leaf-clusters-v5' and record.get('leaf_fallback_ownership')=='corrected':
+            evidence=workspace/'inspection/actual-materials/evidence.json'
+            coverage=workspace/'inspection/source-coverage/report.json'
+            complete=all(p.exists() and json.loads(p.read_text()).get('model_sha256')==sha(workspace/'model.blend') for p in (evidence,coverage))
+            if args.render and not complete:
+                from render_tree import render_workspace
+                render_workspace(workspace,256)
+            continue
         if version not in ('native-leaf-clusters-v3','native-leaf-clusters-v4','native-leaf-clusters-v5'):continue
         acquire();bpy.ops.wm.open_mainfile(filepath=str(workspace/'model.blend'));bpy.context.preferences.filepaths.save_version=0;validate(workspace)
         objects=[o for o in bpy.data.collections['Croisement02 Working'].all_objects if o.type=='MESH' and o.get('asset_group')==workspace.name]
@@ -60,6 +67,7 @@ def main():
                 old=list(reversed(list(face.loops)))
                 vertices=[bm.verts.new(loop.vert.co+offset) for loop in old]
                 rear=bm.faces.new(vertices);rear.material_index=slot
+                # Reprojection restores this face attribute, not material_index.
                 if fallback is not None:rear[fallback]=slot
                 for loop,source in zip(rear.loops,old):
                     loop[uv].uv=source[uv].uv
