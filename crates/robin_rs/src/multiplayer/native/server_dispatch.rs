@@ -154,6 +154,9 @@ pub(super) async fn run_server_outgoing_pump(
             NetOutbound::ModalProposal { .. } => {
                 tracing::error!("multiplayer host attempted to send a client-only modal proposal");
             }
+            NetOutbound::ModalProgress(progress) => {
+                broadcast_modal_progress(&context, progress)?;
+            }
             NetOutbound::ModalDecision(decision) => {
                 if decision.instance.session_id != context.session_id {
                     tracing::error!(
@@ -289,6 +292,38 @@ fn begin_host_snapshot_transition(
     Ok(())
 }
 
+/// Names come from authenticated connections even before their ConnectSeat
+/// commands execute, so an opening briefing can identify slow-loading peers.
+pub(super) fn broadcast_modal_progress(
+    context: &ServerContext,
+    mut progress: robin_engine::multiplayer::ModalProgress,
+) -> Result<(), MultiplayerError> {
+    if progress.instance.session_id != context.session_id {
+        return Err(MultiplayerError::LocalState(
+            "modal progress belongs to another session".into(),
+        ));
+    }
+    {
+        let peers = context.peers.lock();
+        progress.player_names = (0..peers.sessions.expected_players())
+            .map(|seat| format!("Player {}", seat + 1))
+            .collect();
+        progress.player_names[0] = context.host_nickname.clone();
+        for (seat, _) in peers.sessions.senders() {
+            progress.player_names[*seat as usize] =
+                peers.sessions.nickname(PlayerId(*seat)).to_owned();
+        }
+    }
+    context
+        .incoming_tx
+        .send(NetEvent::ModalProgress(progress.clone()))
+        .map_err(|_| {
+            MultiplayerError::ChannelClosed("host modal progress channel closed".into())
+        })?;
+    broadcast_msg_required(context, NetMsg::ModalProgress(progress))?;
+    Ok(())
+}
+
 pub(super) fn validate_server_gameplay_outbound(
     outgoing: &NetOutbound,
 ) -> Result<(), MultiplayerError> {
@@ -300,6 +335,7 @@ pub(super) fn validate_server_gameplay_outbound(
         | NetOutbound::InitialSnapshot { .. }
         | NetOutbound::ReadyToSim { .. }
         | NetOutbound::ModalDecision { .. }
+        | NetOutbound::ModalProgress(_)
         | NetOutbound::ReconnectForSnapshot { .. }
         | NetOutbound::ReconnectAllForSnapshot { .. }
         | NetOutbound::BeginSnapshotTransition { .. } => Ok(()),

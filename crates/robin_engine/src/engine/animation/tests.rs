@@ -2477,3 +2477,48 @@ fn lying_stuck_under_net_can_mutate_to_wriggle_and_consumes() {
     assert!(matches!(outcome, ExecuteOutcome::Consumed));
     assert_eq!(order.order_type, OrderType::WriggleUnderNet);
 }
+
+#[test]
+fn hero_search_completion_credits_campaign_for_both_postures_once() {
+    use crate::engine::test_support::actors::{make_test_pc, make_test_soldier};
+    for order in [OrderType::Searching, OrderType::SearchingCrouched] {
+        let sim = crate::sim_rng::test_context();
+
+        let mut engine = EngineInner::new();
+        let hero = engine.add_test_entity(make_test_pc(Posture::Upright));
+        let victim = engine.add_test_entity(make_test_soldier(Posture::Lying));
+        let assets = engine.test_runtime_assets();
+        engine.npc_mut(victim).money = 75;
+        let before = engine
+            .mission_domain
+            .campaign
+            .get_value(crate::campaign::CampaignValue::Ransom);
+        apply_pc_target_interaction_side_effect(
+            &mut engine,
+            TickCtx::new(&sim, &assets),
+            order,
+            MotionState::InProgress,
+            Some(victim),
+            hero,
+        );
+        assert_eq!(engine.ent(victim).npc_data().unwrap().money, 75);
+        for _ in 0..2 {
+            apply_pc_target_interaction_side_effect(
+                &mut engine,
+                TickCtx::new(&sim, &assets),
+                order,
+                MotionState::Done,
+                Some(victim),
+                hero,
+            );
+        }
+        assert_eq!(engine.ent(victim).npc_data().unwrap().money, 0);
+        assert_eq!(
+            engine
+                .mission_domain
+                .campaign
+                .get_value(crate::campaign::CampaignValue::Ransom),
+            before + 75
+        );
+    }
+}

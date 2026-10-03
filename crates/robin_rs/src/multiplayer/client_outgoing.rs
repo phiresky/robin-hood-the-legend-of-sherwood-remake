@@ -41,6 +41,7 @@ pub(super) fn prepare(outgoing: NetOutbound) -> Result<NetMsg, ClientProtocolErr
         NetOutbound::StateHash { .. }
         | NetOutbound::InitialSnapshot { .. }
         | NetOutbound::ModalDecision { .. }
+        | NetOutbound::ModalProgress(_)
         | NetOutbound::BeginSnapshotTransition { .. } => {
             return Err(ClientProtocolError::HostOnly);
         }

@@ -1147,3 +1147,40 @@ fn gameplay_input_requires_both_host_and_peer_snapshot_readiness() {
         }
     }
 }
+
+#[test]
+fn story_progress_uses_authenticated_names_before_sim_seat_admission() {
+    use robin_engine::multiplayer::{ModalInstanceId, ModalProgress, NetMsg};
+    use robin_engine::player_command::ModalKind;
+    let (context, events) = dispatch_test_context();
+    let (sender, mut peer_wire) = unbounded_channel();
+    let seat = context
+        .peers
+        .lock()
+        .sessions
+        .claim_seat(PeerOwner::Native([1; 32]), "slow reader", sender)
+        .unwrap();
+    assert!(!context.peers.lock().sessions.is_sim_connected(&seat.seat));
+    super::super::server_dispatch::broadcast_modal_progress(
+        &context,
+        ModalProgress {
+            instance: ModalInstanceId {
+                session_id: context.session_id,
+                opened_frame: 0,
+                occurrence: 0,
+            },
+            kind: ModalKind::Dialog { dialog_id: 1 },
+            accepted: [true, false, false, false, false],
+            player_names: vec!["outdated saved name".into()],
+        },
+    )
+    .unwrap();
+    let NetEvent::ModalProgress(local) = events.try_recv().unwrap() else {
+        panic!("missing host progress")
+    };
+    let NetMsg::ModalProgress(remote) = peer_wire.try_recv().unwrap() else {
+        panic!("missing peer progress")
+    };
+    assert_eq!(local, remote);
+    assert_eq!(remote.player_names, ["host", "slow reader"]);
+}

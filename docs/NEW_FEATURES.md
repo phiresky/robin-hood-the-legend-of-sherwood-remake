@@ -1597,6 +1597,10 @@ A list of which additional features we have added, which ones we might still wan
   command values and malformed/non-contiguous traces fail loudly; the first
   divergent frame is reported field-by-field.
 
+- **Shared story confirmations**. After accepting a story scroll or dialogue,
+  players see the names still waiting to confirm. The host broadcasts
+  acknowledgement progress while retaining authority over dismissal.
+
 - **Basic multiplayer**. Native host/client networking over iroh
   (peer-to-peer QUIC with relay fallback; peers addressed by endpoint id, no
   port forwarding), seat IDs, input delay, rollback for late inputs, mission

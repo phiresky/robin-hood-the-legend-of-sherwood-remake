@@ -938,7 +938,7 @@ impl EngineInner {
                 !blipped
                     && !is_out_of_order
                     && hostile_to_selector
-                    && is_soldier
+                    && entity.is_npc()
                     && !is_vip
                     && !is_rider
             }
@@ -3501,6 +3501,44 @@ mod tests {
     use crate::element::{ActionState, Command};
     use crate::order::OrderType;
     use crate::weapons::ShootMode;
+
+    #[test]
+    fn punch_focus_accepts_hostile_civilians_but_not_allies() {
+        use crate::element::{Camp, Focus, Posture};
+        use crate::engine::test_support::actors::{make_test_civilian, make_test_pc};
+        let mut engine = EngineInner::new();
+        let assets = LevelAssets::new();
+        let hero = engine.add_test_entity(make_test_pc(Posture::Upright));
+        engine.players.seats[0].selection = vec![hero];
+        let mut civilian = make_test_civilian(Posture::Upright);
+        civilian.element_data_mut().active = true;
+        if let Entity::Civilian(c) = &mut civilian {
+            c.npc.life_points = 100;
+            c.civilian.cached_camp = Camp::Lacklandists;
+        }
+        let civilian = engine.add_test_entity(civilian);
+        assert!(engine.is_entity_focusable_for_seat(
+            crate::player_command::PlayerId::HOST,
+            &assets,
+            civilian,
+            engine.ent(civilian),
+            MapPoint::ZERO,
+            Focus::Hit,
+            Some(hero)
+        ));
+        if let Entity::Civilian(c) = engine.ent_mut(civilian) {
+            c.civilian.cached_camp = Camp::Royalists;
+        }
+        assert!(!engine.is_entity_focusable_for_seat(
+            crate::player_command::PlayerId::HOST,
+            &assets,
+            civilian,
+            engine.ent(civilian),
+            MapPoint::ZERO,
+            Focus::Hit,
+            Some(hero)
+        ));
+    }
 
     #[test]
     fn client_context_actions_use_its_selection_independently_of_host() {

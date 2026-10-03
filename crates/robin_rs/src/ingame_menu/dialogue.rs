@@ -493,6 +493,7 @@ pub struct DialogueModalState {
     portrait_fade: PortraitFade,
     entered_dialogue: bool,
     dismissal: super::modal_net::ModalDismissalGate,
+    waiting_message: Option<String>,
 }
 
 impl DialogueModalState {
@@ -535,6 +536,7 @@ impl DialogueModalState {
             portrait_fade,
             entered_dialogue: false,
             dismissal: super::modal_net::ModalDismissalGate::default(),
+            waiting_message: None,
         }
     }
 
@@ -559,6 +561,7 @@ impl DialogueModalState {
         let screen = ScreenFrame::begin(&mut io.screen_io(), &mut self.input_state);
         self.transform = screen.transform;
         if self.dismissal.is_pending() {
+            self.waiting_message = modal_net.map(|net| net.waiting_message());
             self.input_state.end_frame();
             self.render(io, &screen);
             return None;
@@ -741,14 +744,16 @@ impl DialogueModalState {
             io,
             screen,
             (self.virt_x, self.virt_y),
-            &sentence.text,
+            self.waiting_message.as_deref().unwrap_or(&sentence.text),
             &mut self.portrait_fade,
             self.mouth_frame,
         );
 
         let renderer = &mut *io.renderer;
         let resources = &*io.resources;
-        widget_bridge::draw_frame_buttons(renderer, resources, self.transform, &self.frame);
+        if !self.dismissal.is_pending() {
+            widget_bridge::draw_frame_buttons(renderer, resources, self.transform, &self.frame);
+        }
 
         let mouse_pt =
             engine_coordinates::ScreenPoint::new(self.input_state.virt_x, self.input_state.virt_y);
@@ -1242,6 +1247,7 @@ mod tests {
             portrait_fade: PortraitFade::new(0),
             entered_dialogue: false,
             dismissal: super::super::modal_net::ModalDismissalGate::default(),
+            waiting_message: None,
         }
     }
 

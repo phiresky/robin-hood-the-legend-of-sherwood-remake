@@ -157,6 +157,15 @@ impl<'a> ModalNet<'a> {
         self.is_host
     }
 
+    pub fn waiting_message(&self) -> String {
+        let names = self.net.modal_waiting_names(self.instance, &self.kind);
+        if names.is_empty() {
+            "Waiting for the host to continue...".into()
+        } else {
+            format!("Waiting for {}...", names.join(", "))
+        }
+    }
+
     /// Publication success is distinct from permission to complete the modal.
     fn needs_consensus(&self) -> bool {
         matches!(
@@ -186,6 +195,7 @@ impl<'a> ModalNet<'a> {
             return Ok(if self.publish_consensus_if_ready()?.is_some() {
                 ModalPublication::HostDecisionQueued
             } else {
+                self.net.publish_modal_progress(self.instance, &self.kind)?;
                 ModalPublication::HostVoteQueued
             });
         }
@@ -266,6 +276,16 @@ impl<'a> ModalNet<'a> {
                                 panic!("invalid modal acknowledgement: {error}")
                             });
                     }
+                    if self.needs_consensus()
+                        && self
+                            .net
+                            .unanimous_modal_result(self.instance, &self.kind)
+                            .expect("modal state available")
+                            .is_none()
+                    {
+                        self.net.publish_modal_progress(self.instance, &self.kind)
+                            .unwrap_or_else(|error| tracing::error!(%error, "modal progress publication failed"));
+                    }
                     self.net
                         .record_visible_modal_request(engine_multiplayer::VisibleModalRequest {
                             from,
@@ -284,8 +304,21 @@ impl<'a> ModalNet<'a> {
                         "multiplayer client requested a host modal result"
                     );
                 }
+                engine_multiplayer::NetEvent::ModalProgress(progress)
+                    if progress.instance == self.instance && progress.kind == self.kind =>
+                {
+                    if self.is_host {
+                        self.net
+                            .set_modal_player_names(progress.player_names.clone());
+                        continue;
+                    }
+                    self.net
+                        .apply_modal_progress(&progress)
+                        .unwrap_or_else(|error| panic!("invalid modal progress: {error}"));
+                }
                 event @ (engine_multiplayer::NetEvent::ModalProposal { .. }
-                | engine_multiplayer::NetEvent::ModalDecision { .. }) => {
+                | engine_multiplayer::NetEvent::ModalDecision { .. }
+                | engine_multiplayer::NetEvent::ModalProgress(_)) => {
                     deferred_modal.push(event);
                 }
                 other => deferred_other.push(other),
@@ -383,7 +416,10 @@ mod tests {
             })
             .unwrap();
         assert_eq!(modal.poll_remote_dismissal(), None);
-        assert!(outgoing.try_recv().is_err());
+        assert!(matches!(
+            outgoing.try_recv().unwrap(),
+            NetOutbound::ModalProgress(_)
+        ));
         assert_eq!(
             modal.take_visible_requests(),
             vec![(PlayerId(1), DialogResult::Aborted)]
@@ -407,7 +443,10 @@ mod tests {
         let modal = ModalNet::new(&net, kind(), true);
         let mut gate = ModalDismissalGate::default();
         assert_eq!(gate.request(DialogResult::Completed, Some(&modal)), None);
-        assert!(outgoing.try_recv().is_err());
+        assert!(matches!(
+            outgoing.try_recv().unwrap(),
+            NetOutbound::ModalProgress(_)
+        ));
         for seat in [1, 1, 2] {
             incoming
                 .send(NetEvent::ModalProposal {
@@ -425,7 +464,10 @@ mod tests {
                 (seat == 2).then_some(DialogResult::Completed)
             );
             if seat != 2 {
-                assert!(outgoing.try_recv().is_err());
+                assert!(matches!(
+                    outgoing.try_recv().unwrap(),
+                    NetOutbound::ModalProgress(_)
+                ));
             }
         }
         assert!(matches!(
@@ -434,6 +476,47 @@ mod tests {
         ));
         assert_eq!(gate.poll(Some(&modal)), None);
         assert!(outgoing.try_recv().is_err());
+    }
+
+    #[test]
+    fn progress_names_reach_clients_without_dismissing_the_scroll() {
+        let (host, host_in, host_out) = fixture();
+        let (client, client_in, _client_out) = fixture();
+        for net in [&host, &client] {
+            net.set_modal_player_count(3);
+            net.set_modal_player_names(vec!["Alice".into(), "Bob".into(), "Carol".into()]);
+        }
+        let host_modal = ModalNet::new(&host, kind(), true);
+        let client_modal = ModalNet::new(&client, kind(), false);
+        assert_eq!(
+            host_modal.publish(DialogResult::Completed).unwrap(),
+            ModalPublication::HostVoteQueued
+        );
+        let NetOutbound::ModalProgress(progress) = host_out.try_recv().unwrap() else {
+            panic!("missing progress")
+        };
+        client_in.send(NetEvent::ModalProgress(progress)).unwrap();
+        assert_eq!(client_modal.poll_remote_dismissal(), None);
+        assert_eq!(client_modal.waiting_message(), "Waiting for Bob, Carol...");
+        host_in
+            .send(NetEvent::ModalProposal {
+                from: PlayerId(1),
+                proposal: engine_multiplayer::ModalProposal {
+                    instance: host_modal.instance(),
+                    kind: kind(),
+                    result: DialogResult::Completed,
+                    requested_frame: 0,
+                },
+            })
+            .unwrap();
+        assert_eq!(host_modal.poll_remote_dismissal(), None);
+        let NetOutbound::ModalProgress(progress) = host_out.try_recv().unwrap() else {
+            panic!("missing progress")
+        };
+        client_in.send(NetEvent::ModalProgress(progress)).unwrap();
+        assert_eq!(client_modal.poll_remote_dismissal(), None);
+        assert_eq!(client_modal.waiting_message(), "Waiting for Carol...");
+        assert_eq!(host_modal.waiting_message(), "Waiting for Carol...");
     }
 
     #[test]

@@ -1037,6 +1037,34 @@ impl EngineInner {
         }
     }
 
+    /// Credit a completed hero search to the shared campaign purse once.
+    pub(in crate::engine) fn complete_pc_search(
+        &mut self,
+        assets: &LevelAssets,
+        hero: EntityId,
+        victim: EntityId,
+    ) {
+        let victim = self
+            .world
+            .entities
+            .get_mut(victim)
+            .expect("search victim disappeared");
+        let pos = victim.element_data().position();
+        let layer = victim.element_data().layer();
+        let money = std::mem::take(
+            &mut victim
+                .npc_data_mut()
+                .expect("search victim must be an NPC")
+                .money,
+        );
+        if money == 0 {
+            return;
+        }
+        self.add_campaign_value(assets, crate::campaign::CampaignValue::Ransom, money as i32);
+        self.spawn_take_counter(pos, layer, money as u16);
+        self.hero_speaking(assets, hero, crate::engine::melee::HERO_FIND_MONEY);
+    }
+
     pub(in crate::engine) fn execute_pickpockets(&mut self, effect: (EntityId, EntityId)) {
         // SEARCHING DONE — NPC-on-NPC pickpocket money transfer:
         // thief.money += victim.money; victim.money = 0.

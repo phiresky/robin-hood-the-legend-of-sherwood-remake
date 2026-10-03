@@ -347,6 +347,7 @@ struct ModalSyncState {
     visible_requests: std::collections::VecDeque<VisibleModalRequest>,
     required_players: u8,
     votes: Vec<ModalVotes>,
+    player_names: Vec<String>,
 }
 
 /// Browser-only durable seat claim. The IndexedDB-held private key signs a
@@ -461,7 +462,8 @@ pub struct StateHashReport {
 }
 
 /// Client → server: a visible request for the host to choose this result.
-/// A proposal is never a vote and never changes local modal state.
+/// Shared story modals count it as an acknowledgement; only a host decision
+/// dismisses the modal.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct ModalProposal {
     pub instance: ModalInstanceId,
@@ -479,6 +481,15 @@ pub struct ModalDecision {
     pub kind: ModalKind,
     pub result: DialogResult,
     pub decision_frame: u32,
+}
+
+/// Presentation-only progress for a shared modal occurrence.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
+pub struct ModalProgress {
+    pub instance: ModalInstanceId,
+    pub kind: ModalKind,
+    pub accepted: [bool; crate::coop::MAX_PLAYERS],
+    pub player_names: Vec<String>,
 }
 
 /// One on-the-wire message.  Encoded as a bitcode binary blob inside
@@ -584,6 +595,8 @@ pub enum NetMsg {
     ChatSend { text: String },
     /// Sender identity is supplied by the authenticated server.
     Chat { nickname: String, text: String },
+    /// Host-authored acknowledgement progress; never dismisses a modal.
+    ModalProgress(ModalProgress),
 }
 
 /// Typed payload of [`NetEvent::Fatal`].
@@ -681,6 +694,7 @@ pub enum NetEvent {
     },
     /// The host chose the result for one exact modal occurrence.
     ModalDecision(ModalDecision),
+    ModalProgress(ModalProgress),
     PrepareSnapshotTransition {
         id: SnapshotTransitionId,
         payload: SnapshotTransitionPayload,
@@ -723,6 +737,7 @@ pub enum NetOutbound {
     },
     ModalProposal(ModalProposal),
     ModalDecision(ModalDecision),
+    ModalProgress(ModalProgress),
     /// The retained rollback horizon cannot incorporate an input from this
     /// seat. A client drops its whole live QUIC session and re-handshakes; the
     /// host drops the named peer so that peer follows the same reconnect path.
@@ -1025,7 +1040,9 @@ impl NetChannels {
     pub fn defer_modal_event(&self, event: NetEvent) -> Result<(), String> {
         if !matches!(
             event,
-            NetEvent::ModalProposal { .. } | NetEvent::ModalDecision { .. }
+            NetEvent::ModalProposal { .. }
+                | NetEvent::ModalDecision { .. }
+                | NetEvent::ModalProgress(_)
         ) {
             return Err("attempted to route a non-modal event into the modal inbox".to_string());
         }
@@ -1099,6 +1116,71 @@ impl NetChannels {
         vote.seats[seat.0 as usize] = true;
         if seat == PlayerId::HOST {
             vote.host_result = Some(result);
+        }
+        Ok(())
+    }
+
+    pub fn set_modal_player_names(&self, names: Vec<String>) {
+        self.modal_sync
+            .lock()
+            .expect("modal state lock poisoned")
+            .player_names = names;
+    }
+
+    pub fn modal_waiting_names(&self, instance: ModalInstanceId, kind: &ModalKind) -> Vec<String> {
+        let sync = self.modal_sync.lock().expect("modal state lock poisoned");
+        let vote = sync
+            .votes
+            .iter()
+            .find(|vote| vote.instance == instance && vote.kind == *kind);
+        (0..sync.required_players.max(1) as usize)
+            .filter(|&i| !vote.is_some_and(|vote| vote.seats[i]))
+            .map(|i| {
+                sync.player_names
+                    .get(i)
+                    .filter(|name| !name.is_empty())
+                    .cloned()
+                    .unwrap_or_else(|| format!("Player {}", i + 1))
+            })
+            .collect()
+    }
+
+    pub fn publish_modal_progress(
+        &self,
+        instance: ModalInstanceId,
+        kind: &ModalKind,
+    ) -> Result<(), String> {
+        let sync = self
+            .modal_sync
+            .lock()
+            .map_err(|_| "modal state lock poisoned")?;
+        let accepted = sync
+            .votes
+            .iter()
+            .find(|vote| vote.instance == instance && vote.kind == *kind)
+            .map(|vote| vote.seats)
+            .unwrap_or([false; crate::coop::MAX_PLAYERS]);
+        self.outgoing
+            .send(NetOutbound::ModalProgress(ModalProgress {
+                instance,
+                kind: kind.clone(),
+                accepted,
+                player_names: sync.player_names.clone(),
+            }))
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn apply_modal_progress(&self, progress: &ModalProgress) -> Result<(), String> {
+        self.set_modal_player_names(progress.player_names.clone());
+        for (seat, accepted) in progress.accepted.iter().enumerate() {
+            if *accepted {
+                self.record_modal_vote(
+                    progress.instance,
+                    &progress.kind,
+                    PlayerId(seat as u8),
+                    DialogResult::Completed,
+                )?;
+            }
         }
         Ok(())
     }

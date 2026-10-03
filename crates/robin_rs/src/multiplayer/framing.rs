@@ -139,6 +139,7 @@ pub(crate) const fn net_frame_class(message: &NetMsg) -> NetFrameClass {
         | NetMsg::BeginSim { .. }
         | NetMsg::ModalProposal { .. }
         | NetMsg::ModalDecision { .. }
+        | NetMsg::ModalProgress(_)
         | NetMsg::ReconnectRequired { .. }
         | NetMsg::SnapshotTransitionReady { .. }
         | NetMsg::CommitSnapshotTransition { .. } => NetFrameClass::Control,

@@ -194,6 +194,7 @@ pub struct PopupScrollModalState {
     /// starts don't phase-stack).
     noise_tracker: widget_bridge::NoisyTracker,
     dismissal: super::modal_net::ModalDismissalGate,
+    waiting_message: Option<String>,
 }
 
 impl PopupScrollModalState {
@@ -265,6 +266,7 @@ impl PopupScrollModalState {
             text_remaining: String::new(),
             noise_tracker: widget_bridge::NoisyTracker::new(),
             dismissal: super::modal_net::ModalDismissalGate::default(),
+            waiting_message: None,
         };
         state.rebuild_page_widgets();
         state
@@ -313,6 +315,15 @@ impl PopupScrollModalState {
             dismissed = true;
         }
 
+        self.waiting_message = if self.dismissal.is_pending() {
+            Some(
+                modal_net
+                    .map(|net| net.waiting_message())
+                    .unwrap_or_else(|| "Waiting to continue...".into()),
+            )
+        } else {
+            None
+        };
         self.render(io, &screen);
 
         if let Some(result) = remote_result {
@@ -432,7 +443,7 @@ impl PopupScrollModalState {
                 renderer,
                 font,
                 self.transform,
-                &self.page_body,
+                self.waiting_message.as_deref().unwrap_or(&self.page_body),
                 MenuRect {
                     x: self.virt_x + BODY_LEFT,
                     y: self.body_y,
@@ -445,7 +456,9 @@ impl PopupScrollModalState {
             None => self.page_body.clone(),
         };
 
-        widget_bridge::draw_frame_buttons(renderer, resources, self.transform, &self.frame);
+        if !self.dismissal.is_pending() {
+            widget_bridge::draw_frame_buttons(renderer, resources, self.transform, &self.frame);
+        }
 
         let mouse_pt =
             engine_coordinates::ScreenPoint::new(self.input_state.virt_x, self.input_state.virt_y);

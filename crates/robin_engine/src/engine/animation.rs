@@ -898,11 +898,29 @@ pub(super) fn apply_pc_target_interaction_side_effect(
     let Some(target) = antagonist else {
         return;
     };
+    if matches!(
+        anim_type,
+        OrderType::Searching | OrderType::SearchingCrouched
+    ) && engine.get_entity(target).is_some_and(Entity::is_npc)
+    {
+        set_actor_states(
+            engine,
+            entity_id,
+            if anim_type == OrderType::SearchingCrouched {
+                Posture::Crouched
+            } else {
+                Posture::Upright
+            },
+            ActionState::Waiting,
+        );
+        engine.complete_pc_search(tcx.assets, entity_id, target);
+        return;
+    }
     let activation = match anim_type {
         OrderType::HittingTarget => Command::ActivateSword,
         OrderType::HandlingTarget | OrderType::TakingTarget => Command::ActivateHandle,
         OrderType::UsingLever => Command::ActivateLever,
-        OrderType::Searching => Command::ActivateSearch,
+        OrderType::Searching | OrderType::SearchingCrouched => Command::ActivateSearch,
         _ => return,
     };
     engine.execute_pc_target_activations(tcx, (entity_id, target, activation));

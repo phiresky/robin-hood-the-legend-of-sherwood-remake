@@ -611,7 +611,9 @@ impl NetDrain<'_> {
                     .commit_snapshot_transition(id)
                     .map_err(SessionProtocolFailure::TransitionCommit)?;
             }
-            event @ (NetEvent::ModalProposal { .. } | NetEvent::ModalDecision { .. }) => {
+            event @ (NetEvent::ModalProposal { .. }
+            | NetEvent::ModalDecision { .. }
+            | NetEvent::ModalProgress(_)) => {
                 self.host
                     .transport
                     .net()
