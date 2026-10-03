@@ -137,8 +137,20 @@ visual variants in their initial appearance, keeping color/depth bake visibility
 consistent with the retained barriers. A regression checks that an independently
 placed, valid copy still changes appearance and keeps its movement controller.
 The native fallback fixture includes a visual binding and loads without orphaned
-patch references. Controls with changing sight or masks still need a valid anchor;
-freezing those coupled effects remains unfinished.
+patch references. Controls with changing sight or door-triggered callbacks still
+need a valid anchor; freezing those coupled effects remains unfinished.
+
+**Unavailable reveal controls:** for the supported fallback controls above, if the
+anchor cannot resolve, best-effort export retains the initial masks, omits its applied masks and
+rebuilds all remaining mask indices. Initial visual variants remain selected.
+This also applies to fixed-height anchors, so a moved building cannot accidentally
+export both mask states as active when its control loses its landing. A synthetic
+fixture loads in Rust and checks that a separate mask switch still applies and
+resets while the retained initial coverage stays active. Wychford's west tower
+loses two incorrectly active revealed-state masks (17 → 15 exported mask tiles);
+the other nine maps compile identically. Its raised control still needs a valid
+walkable approach before it can operate. Diagnostic exports are in
+`work/map-compile/state-control-fallback`.
 
 The Derby south gatehouse now authors an eight-unit reach and a closed-state strip
 across its opening. All three passages prohibit every actor category when closed,

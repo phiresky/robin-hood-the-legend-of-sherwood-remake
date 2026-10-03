@@ -1,0 +1,675 @@
+{
+  "title": "Unavailable mask control fixture",
+  "map_filename": "editor-unavailable-mask-control-fixture",
+  "spawn_points": [],
+  "walkable_polygon": [
+    [
+      0,
+      0
+    ],
+    [
+      1999,
+      0
+    ],
+    [
+      1999,
+      1999
+    ],
+    [
+      0,
+      1999
+    ]
+  ],
+  "volumes": [],
+  "asset_geometry": {
+    "motion_data": {
+      "layers": [
+        [
+          {
+            "is_lift": false,
+            "state_id": 0,
+            "polygon": {
+              "points": [
+                [
+                  300,
+                  300
+                ],
+                [
+                  390,
+                  300
+                ],
+                [
+                  390,
+                  400
+                ],
+                [
+                  300,
+                  400
+                ]
+              ]
+            },
+            "skeleton_segments": [],
+            "flags": 0,
+            "obstacles": [
+              {
+                "state_id": 0,
+                "polygon": {
+                  "points": [
+                    [
+                      350,
+                      340
+                    ],
+                    [
+                      350,
+                      350
+                    ],
+                    [
+                      340,
+                      350
+                    ],
+                    [
+                      340,
+                      340
+                    ]
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "is_lift": false,
+            "state_id": 0,
+            "polygon": {
+              "points": [
+                [
+                  410,
+                  300
+                ],
+                [
+                  500,
+                  300
+                ],
+                [
+                  500,
+                  400
+                ],
+                [
+                  410,
+                  400
+                ]
+              ]
+            },
+            "skeleton_segments": [],
+            "flags": 0,
+            "obstacles": []
+          }
+        ],
+        []
+      ],
+      "graph_bytes": []
+    },
+    "masks": [
+      {
+        "mask_type": 23,
+        "character_polyline": [
+          [
+            340,
+            350
+          ],
+          [
+            350,
+            350
+          ]
+        ],
+        "projectile_polyline": [],
+        "obstacle_indices": [
+          0
+        ],
+        "layer": 0,
+        "box_top_left": [
+          340,
+          310
+        ],
+        "box_size": [
+          10,
+          40
+        ],
+        "mask_data": [
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192
+        ]
+      },
+      {
+        "mask_type": 23,
+        "character_polyline": [
+          [
+            340,
+            350
+          ],
+          [
+            350,
+            350
+          ]
+        ],
+        "projectile_polyline": [],
+        "obstacle_indices": [
+          0
+        ],
+        "layer": 0,
+        "box_top_left": [
+          340,
+          310
+        ],
+        "box_size": [
+          10,
+          40
+        ],
+        "mask_data": [
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192
+        ]
+      },
+      {
+        "mask_type": 23,
+        "character_polyline": [
+          [
+            340,
+            350
+          ],
+          [
+            350,
+            350
+          ]
+        ],
+        "projectile_polyline": [],
+        "obstacle_indices": [
+          0
+        ],
+        "layer": 0,
+        "box_top_left": [
+          340,
+          340
+        ],
+        "box_size": [
+          10,
+          10
+        ],
+        "mask_data": [
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192,
+          3,
+          2,
+          255,
+          192
+        ]
+      }
+    ],
+    "movement_transitions": [
+      {
+        "id": "hut-a/hut/available-cover",
+        "waypoint": [
+          345,
+          345
+        ],
+        "sector": 0,
+        "layer": 0,
+        "active": true,
+        "definitive": false,
+        "apply_polygon": {
+          "points": []
+        },
+        "no_apply_polygon": {
+          "points": []
+        },
+        "motion_changes": [],
+        "initial_masks": [
+          1
+        ],
+        "applied_masks": [
+          2
+        ]
+      }
+    ],
+    "sight_obstacles": [
+      {
+        "points": [
+          {
+            "x": 340,
+            "y": 340,
+            "z_bottom": 0,
+            "z_top": 30
+          },
+          {
+            "x": 350,
+            "y": 340,
+            "z_bottom": 0,
+            "z_top": 30
+          },
+          {
+            "x": 350,
+            "y": 350,
+            "z_bottom": 0,
+            "z_top": 30
+          },
+          {
+            "x": 340,
+            "y": 350,
+            "z_bottom": 0,
+            "z_top": 30
+          }
+        ],
+        "projection_area": null,
+        "solid": true,
+        "opaque": true,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 0,
+        "material_indices": []
+      }
+    ],
+    "doors": [
+      {
+        "door_type": 0,
+        "active": true,
+        "locked_pc": false,
+        "unlockable": false,
+        "locked_npc_villain": false,
+        "locked_npc_civilian": false,
+        "locked_pc_after_patch": false,
+        "unlockable_after_patch": false,
+        "locked_npc_villain_after_patch": false,
+        "locked_npc_civilian_after_patch": false,
+        "door_sector": {
+          "points": [
+            [
+              390,
+              340
+            ],
+            [
+              410,
+              340
+            ],
+            [
+              410,
+              360
+            ],
+            [
+              390,
+              360
+            ]
+          ]
+        },
+        "point_out": [
+          380,
+          350
+        ],
+        "sector_out": 0,
+        "layer_out": 0,
+        "point_mid": [
+          400,
+          350
+        ],
+        "point_in": [
+          420,
+          350
+        ],
+        "sector_in": 2,
+        "layer_in": 0
+      }
+    ],
+    "warnings": [
+      "Transition hut-a/hut/cover-state: control omitted; retained its initial movement barriers, masks and door permissions; hut-a/hut/cover-state waypoint must resolve to exactly one walkable surface (found 0); world point [345,345.00000000000006,100], projected [345,245]; containing areas (0, showing up to 8) []",
+      "Appearance roof on hut-a-body: transition omitted; exported in its initial visual state."
+    ]
+  }
+}

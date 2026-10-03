@@ -18,6 +18,7 @@ import {
   preservedStateBoundaryCompilerFixture,
   preservedContoursCompilerFixture,
   maskAssetCompilerFixture,
+  unavailableMaskControlCompilerFixture,
   slopedAssetCompilerFixture,
   liftAssetCompilerFixture,
   liftLightCompilerFixture,
@@ -122,6 +123,27 @@ test("merged platform export preserves the opening checked by native receiving q
     ),
   );
   assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+});
+
+test("unavailable mask control keeps the initial mask and reindexes the remaining switch", async () => {
+  const { document, assets } = unavailableMaskControlCompilerFixture();
+  assert.throws(() => compileMap(document, [0, 0, 2000, 2000], assets), /waypoint must resolve/);
+  const compiled = compileMap(document, [0, 0, 2000, 2000], assets, { bestEffort: true });
+  const geometry = compiled.descriptor.asset_geometry!;
+  assert.equal(geometry.masks!.length, 3);
+  assert.equal(geometry.movement_transitions!.length, 1);
+  assert.deepEqual(geometry.movement_transitions![0]!.initial_masks, [1]);
+  assert.deepEqual(geometry.movement_transitions![0]!.applied_masks, [2]);
+  const fixture = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/asset-unavailable-mask-control.level.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(compiled.descriptor, fixture);
 });
 
 test("asset mask geometry exports the native state fixture and survives ZIP packaging", async () => {

@@ -765,6 +765,24 @@ mod tests {
     }
 
     #[test]
+    fn unavailable_mask_control_keeps_initial_coverage_and_other_switches_independent() {
+        let (mut engine, assets) = load_compiled_transition(
+            include_bytes!("../../tests/fixtures/asset-unavailable-mask-control.level.json"),
+            (2000., 2000.),
+        );
+        assert_eq!(engine.script_domains.interactables.patches.len(), 1);
+        assert_eq!(engine.world.fast_grid.level.masks.len(), 3);
+        assert_eq!(engine.world.fast_grid.mask_active, [true, true, false]);
+        assert_eq!(engine.world.fast_grid.level.masks[0].height, 40);
+        let patch = crate::patch::PatchIndex::new(0).unwrap();
+        let sim = crate::sim_rng::test_context();
+        engine.apply_patch(TickCtx::new(&sim, &assets), patch);
+        assert_eq!(engine.world.fast_grid.mask_active, [true, false, true]);
+        engine.reset_patch(TickCtx::new(&sim, &assets), patch);
+        assert_eq!(engine.world.fast_grid.mask_active, [true, true, false]);
+    }
+
+    #[test]
     fn terrain_bound_gate_changes_slope_routes_without_blocking_the_floor_above() {
         let (mut engine, assets) = load_compiled_transition(
             include_bytes!("../../tests/fixtures/asset-terrain-transition.level.json"),

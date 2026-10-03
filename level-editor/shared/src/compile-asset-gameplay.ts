@@ -178,13 +178,13 @@ export function compileAssetGameplay(
       return result;
     } catch (error) {
       if (
-        error instanceof UnavailableTerrainControl &&
+        error instanceof UnavailableStateControl &&
         (options.bestEffort || error.cropped) &&
         !fixedTransitions.has(error.id)
       ) {
         fixedTransitions.add(error.id);
         omissions.push(
-          `Transition ${error.id}: control omitted; retained its initial movement barriers and door permissions; ${error.message}`,
+          `Transition ${error.id}: control omitted; retained its initial movement barriers, masks and door permissions; ${error.message}`,
         );
         continue;
       }
@@ -212,7 +212,7 @@ class UnavailableLiftPlacement extends Error {
   }
 }
 
-class UnavailableTerrainControl extends Error {
+class UnavailableStateControl extends Error {
   readonly id: string;
   readonly cropped: boolean;
   constructor(id: string, message: string, cropped: boolean) {
@@ -593,7 +593,13 @@ function compileAssetGameplayAttempt(
     for (const id of gameplay.movementSolids ?? [])
       if (!partSight.has(id))
         throw new Error(`Permanent movement solid ${placement.id}/${id} is hidden or missing`);
+    const unavailableAppliedMasks = new Set(
+      (gameplay.movementTransitions ?? []).flatMap((t) =>
+        fixedTransitions.has(`${placement.id}/${t.id}`) ? (t.appliedMasks ?? []) : [],
+      ),
+    );
     for (const mask of gameplay.masks ?? []) {
+      if (unavailableAppliedMasks.has(mask.id)) continue;
       const boundary = (points: Vec3[] | undefined, projected: boolean, closed = true) =>
         points
           ? maskBoundaryPolyline(
@@ -2075,15 +2081,12 @@ function compileAssetGameplayAttempt(
               )
                 throw error;
               if (
-                t.waypointReceiverSegment &&
-                t.changes.length &&
+                (t.changes.length || t.initialMasks.length || t.appliedMasks.length) &&
                 !t.initialSight.length &&
                 !t.appliedSight.length &&
-                !t.initialMasks.length &&
-                !t.appliedMasks.length &&
                 (!t.doorLinks || t.doorLinks.mode === "swap-rights")
               )
-                throw new UnavailableTerrainControl(
+                throw new UnavailableStateControl(
                   t.id,
                   error.message,
                   error instanceof OutsideExportFrame,

@@ -142,6 +142,26 @@ export function navigationRegionCompilerFixture() {
   return fixture;
 }
 
+export function unavailableMaskControlCompilerFixture() {
+  const fixture = maskAssetCompilerFixture();
+  const gameplay = fixture.hut.gameplay!;
+  const valid = structuredClone(gameplay.movementTransitions![0]!);
+  valid.id = "available-cover";
+  valid.initialMasks = ["available-covered"];
+  valid.appliedMasks = ["available-revealed"];
+  const masks = gameplay.masks!.map((mask) => ({
+    ...structuredClone(mask),
+    id: `available-${mask.id}`,
+  }));
+  gameplay.masks!.push(...masks);
+  gameplay.movementTransitions!.push(valid);
+  const unavailable = gameplay.movementTransitions![0]!;
+  unavailable.waypoint = [45, 45, 100];
+  unavailable.appearances = ["roof"];
+  fixture.document.map = "Unavailable mask control fixture";
+  return fixture;
+}
+
 export function nonrenderingVolumeCompilerFixture() {
   const fixture = assetCompilerFixture();
   const obstacle = fixture.hut.parts[0]?.obstacle_local_game;
