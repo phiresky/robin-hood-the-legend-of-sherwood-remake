@@ -15,6 +15,8 @@ def main():
     for group in catalog['groups']:
         tree='wood_mask' in group
         workspace=OUT/('forest-v4-round-1' if tree else 'scenery-round-1')/'assets'/group['id']
+        replacement=OUT/'scenery-round-2/assets'/group['id']
+        if (replacement/'inspection/feedback-revision-1.json').exists():workspace=replacement
         report_path=workspace/'inspection/refinement.json'
         if not report_path.exists():
             missing.append(dict(id=group['id'],name=group['name'],status='in progress',reason='Worker geometry/review packet is still being built.'));continue
@@ -65,7 +67,28 @@ def main():
         if not ownership.exists():
             reports=[p for p in (workspace/'projection').glob('*/ownership.json') if p.parent.name!='input']
             if reports:ownership=max(reports,key=lambda p:p.stat().st_mtime)
+        comparison=workspace/'inspection/source-comparison'
+        if (comparison/'report.json').exists():
+            check=json.loads((comparison/'report.json').read_text())
+            if check['model_sha256']==model_hash and check['comparison_sha256']==sha(comparison/'comparison.png'):
+                item['source_comparison']=str(comparison/'comparison.png');item['source_comparison_label']='Original source / exact-camera geometry / overlay'
+        feedback_ownership=workspace/'inspection/feedback-source-ownership.json'
+        if feedback_ownership.exists():ownership=feedback_ownership
         if ownership.exists():item['ownership']=str(ownership)
+        feedback_path=OUT/'user-feedback.json'
+        decisions=[r for r in json.loads(feedback_path.read_text())['records'] if r['asset_id']==group['id']] if feedback_path.exists() else []
+        if decisions:
+            decision=decisions[-1];item['notes'].append('User review: '+decision['exact_user_text'])
+            current=decision['model_sha256']==model_hash
+            correction=workspace/'inspection/feedback-revision-1.json'
+            if not current and correction.exists():
+                corrected=json.loads(correction.read_text())
+                current=(corrected['before_model_sha256']==decision['model_sha256'] and corrected['model_sha256']==model_hash and corrected['before_geometry_sha256']==corrected['geometry_sha256'])
+            if decision['decision']=='approved' and current:
+                item['user_approval']='approved geometry: '+decision['exact_user_text']
+            elif decision['model_sha256']==model_hash:
+                item['status']='refinement-in-progress';item['technical_eligible']=False
+        item['notes']=list(dict.fromkeys(item['notes']))
         items.append(item)
     missing.extend([
         dict(id='croisement02-terrain-integration',name='Terrain integration',status='pending',reason='Full-scene gap audit, foreground-domain removal and terrain texture completion remain required before publication.'),

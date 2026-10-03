@@ -85,8 +85,39 @@ or prove every mission state. Mask-only undergrowth/grass, four unassigned wood
 masks, terrain foreground removal and full-scene gap checks remain integration
 work. Their absence is shown in the gallery, not hidden by the native-part count.
 
-There is no recorded user geometry approval, AI texture synthesis or publication.
+User decisions are archived by `record_feedback.py` against the exact gallery
+revision, model and image hashes in `user-reviews/`. Rebuilding the gallery keeps
+approved geometry hidden and keeps feedback attached to its original revision.
+A source-projection correction may retain geometry approval only when its saved
+vertex/face/transform signature is unchanged. There is no texture approval, AI
+texture synthesis or publication.
 Follow the [shared review gate](../../refinement/PROCEDURE.md#7-review-and-approval-gate)
 before synthesis or publication. Unknown bark completion here is a deterministic
 same-tree donor applied only to unobserved samples; accepted source RGB is checked
 unchanged by the shared baker and per-texel provenance is retained.
+
+## Self-review before handoff
+
+Compare each revised asset with its source crop and native masks, then inspect
+all eight solid, source-only and actual-material views. Use `compare_source.py`
+for exact-camera scenery comparisons. In particular, check wall crest profiles,
+gate posts and braces, pile continuity and depth, visible-source texture
+coverage, and artificial crown cuts. Passing hashes and bounds is insufficient.
+Keep a candidate in progress until these visual checks pass; bind the review
+to the saved model and actual sheet hashes. Gray source-visible faces are a
+projection defect to investigate, not automatically unobserved surfaces.
+
+The first feedback pass is reproducible with `record_feedback.py <pasted-text>`,
+`prepare_kindling_revision.py`, `prepare_wattle_revision.py`, then
+`revise_feedback.py -- --assets <slugs>` and `revise_tree25.py` in Blender.
+`--redo` archives the preceding correction receipt before another correction.
+The kindling and wattle workers live in `scenery-round-2`: corrected authored
+source domains require a new frozen inventory. The native actor-occlusion mask
+for the wattle fence omits some visibly painted weave, so its supplemental
+coverage is explicitly traced from the source artwork. Tree 25 retains the
+shared native canopy authority and a separately recorded inferred crown edge.
+
+For each revised scenery worker, run `compare_source.py -- --assets <slugs>`
+in Blender before self-review and rebuilding the gallery. Its three panels
+show source artwork, saved geometry at the exact map camera, and an overlay.
+No new user approval is implied by an assistant self-review.

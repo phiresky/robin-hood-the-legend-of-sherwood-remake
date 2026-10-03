@@ -15,11 +15,11 @@ def audit(workspace,objects):
     report=json.loads((workspace/'inspection/refinement.json').read_text())
     if 'mask' not in report:return None
     row=next(r for r in json.loads((OUT/'forest-v4-sources/manifest.json').read_text()) if r['mask']==report['mask'])
-    packet=json.loads(Path(row['packet']).read_text());expected=np.zeros((1152,1792),dtype=bool)
+    packet_path=Path(report.get('source_packet',row['packet']));packet=json.loads(packet_path.read_text());expected=np.zeros((1152,1792),dtype=bool)
     def paste(alpha,x,y):
         h,w=alpha.shape;left,top=max(0,x),max(0,y);right,bottom=min(1792,x+w),min(1152,y+h)
         if right>left and bottom>top:expected[top:bottom,left:right]|=alpha[top-y:bottom-y,left-x:right-x]
-    x,y,_,_=packet['native_bbox'];paste(np.asarray(Image.open(Path(row['packet']).parent/'complete-source.png'))[:,:,3]>127,x,y)
+    x,y,_,_=packet['native_bbox'];paste(np.asarray(Image.open(packet_path.parent/'complete-source.png'))[:,:,3]>127,x,y)
     native=next(r for r in json.loads((OUT/'baseline/masks/manifest.json').read_text())['masks'] if r['index']==report['mask'])
     paste(np.asarray(Image.open(OUT/'baseline/masks'/native['png']).convert('L'))>0,*native['box_top_left'])
     yy,xx=np.nonzero(expected);left=max(0,int(xx.min())-10);right=min(1792,int(xx.max())+11);top=max(0,int(yy.min())-10);bottom=min(1152,int(yy.max())+11)
@@ -42,7 +42,7 @@ def audit(workspace,objects):
     source=Image.open(OUT/'animation-references/composite-frame-0.png').convert('RGB').crop((left,top,right,bottom));source.save(destination/'source.png')
     overlay=np.asarray(source).copy();overlay[missing]=[255,40,40];overlay[extra]=[0,220,255];Image.fromarray(overlay).save(destination/'difference.png')
     Image.fromarray(expected.astype('uint8')*255).save(destination/'expected.png')
-    result=dict(model_sha256=sha(workspace/'model.blend'),source_packet_sha256=sha(row['packet']),source_crop=[left,top,right,bottom],expected_pixels=int(expected.sum()),rendered_pixels=int(actual.sum()),missing_pixels=int(missing.sum()),extra_pixels=int(extra.sum()),intersection_over_union=float(intersection.sum()/np.count_nonzero(expected|actual)),legend='Red: native coverage missed. Cyan: rendered coverage outside assigned native masks. Crossed foliage edges and mask-derived wood thickness can differ.',status='measurement; requires visual review')
+    result=dict(model_sha256=sha(workspace/'model.blend'),source_packet_sha256=sha(packet_path),source_crop=[left,top,right,bottom],expected_pixels=int(expected.sum()),rendered_pixels=int(actual.sum()),missing_pixels=int(missing.sum()),extra_pixels=int(extra.sum()),intersection_over_union=float(intersection.sum()/np.count_nonzero(expected|actual)),legend='Red: native coverage missed. Cyan: rendered coverage outside assigned native masks. Crossed foliage edges and mask-derived wood thickness can differ.',status='measurement; requires visual review')
     (destination/'report.json').write_text(json.dumps(result,indent=2)+'\n')
     for obj in copies+[camera]:bpy.data.objects.remove(obj,do_unlink=True)
     bpy.data.cameras.remove(data);bpy.data.scenes.remove(scene)
