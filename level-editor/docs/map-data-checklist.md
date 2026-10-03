@@ -132,8 +132,13 @@ one nearby surface, including a point inside the closed barrier; trigger contour
 follow the bound control. Copies retain independent state, including after rotation.
 If a terrain-bound movement/door control cannot resolve, best-effort export retains
 its initial barriers and door permissions with a warning and rebuilds indices.
-It does not export orphaned movement state bits. This fallback currently applies
-to controls without appearance, sight or mask changes.
+It does not export orphaned movement state bits. The fallback also freezes authored
+visual variants in their initial appearance, keeping color/depth bake visibility
+consistent with the retained barriers. A regression checks that an independently
+placed, valid copy still changes appearance and keeps its movement controller.
+The native fallback fixture includes a visual binding and loads without orphaned
+patch references. Controls with changing sight or masks still need a valid anchor;
+freezing those coupled effects remains unfinished.
 
 The Derby south gatehouse now authors an eight-unit reach and a closed-state strip
 across its opening. All three passages prohibit every actor category when closed,

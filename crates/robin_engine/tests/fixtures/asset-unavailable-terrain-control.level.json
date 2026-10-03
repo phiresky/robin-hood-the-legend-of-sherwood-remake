@@ -214,7 +214,8 @@
     ],
     "doors": [],
     "warnings": [
-      "Transition hut-a/hut/barriers: control omitted; retained its initial movement barriers and door permissions; hut-a/hut/barriers waypoint: receiving segment must intersect exactly one surface"
+      "Transition hut-a/hut/barriers: control omitted; retained its initial movement barriers and door permissions; hut-a/hut/barriers waypoint: receiving segment must intersect exactly one surface",
+      "Appearance gate-cover on hut-a-body: transition omitted; exported in its initial visual state."
     ]
   }
 }

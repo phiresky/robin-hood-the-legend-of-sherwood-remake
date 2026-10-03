@@ -604,6 +604,7 @@ export function terrainTransitionCompilerFixture() {
 
 export function unavailableTerrainControlCompilerFixture() {
   const fixture = terrainTransitionCompilerFixture();
+  fixture.hut.gameplay!.movementTransitions![0]!.appearances = ["gate-cover"];
   fixture.assets.get("marker")!.gameplay!.surfaces[1]!.height = 7;
   fixture.document.map = "Unavailable terrain control fixture";
   return fixture;

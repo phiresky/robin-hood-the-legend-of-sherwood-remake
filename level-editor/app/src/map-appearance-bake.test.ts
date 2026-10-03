@@ -6,6 +6,7 @@ import {
   movementTransitionCompilerFixture,
   joinedTransitionCompilerFixture,
   endpointAppearanceCompilerFixture,
+  unavailableTerrainControlCompilerFixture,
 } from "../../shared/test-fixtures/asset-gameplay.ts";
 import { validateAssetGameplay } from "../../shared/src/asset-gameplay.ts";
 import {
@@ -15,10 +16,50 @@ import {
   bakeAppearanceRegionsAsync,
 } from "./map-appearance-bake.ts";
 import { compileMap, type BakeBounds } from "./map-compile.ts";
-import { contentBakeBounds } from "./map-bake-render.ts";
+import { bakeScene, contentBakeBounds } from "./map-bake-render.ts";
 import { PatchDisplay, applyPlacementPatches } from "./patch-display.ts";
 
 const camera = movementTransitionCompilerFixture().document.camera;
+
+test("an unavailable terrain gate freezes its visuals and barriers without orphan state bindings", () => {
+  const { document, assets } = unavailableTerrainControlCompilerFixture();
+  const compiled = compileMap(document, [0, 0, 2000, 2000], assets, { bestEffort: true });
+  const geometry = compiled.descriptor.asset_geometry!;
+  assert.equal(geometry.movement_transitions, undefined);
+  const obstacles = geometry.motion_data.layers.flat().flatMap((area) => area.obstacles);
+  assert.equal(obstacles.length, 2);
+  assert.ok(obstacles.every((obstacle) => obstacle.state_id === 0));
+  assert.ok(geometry.warnings?.some((warning) => warning.includes("initial visual state")));
+  const root = new THREE.Group();
+  root.userData.map_bake_object_id = "hut-a-body";
+  const closed = mesh(10, 10, "gate-cover"),
+    open = mesh(40, 10, "gate-cover");
+  closed.userData = { reveal_hide_when_applied: ["gate-cover"] };
+  root.add(closed, open);
+  const display = new PatchDisplay();
+  // An applied viewport preview must not leak into the fallback export.
+  display.set("gate-cover", true);
+  display.apply(root);
+  assert.equal(closed.visible, false);
+  assert.equal(open.visible, true);
+  const snapshot = bakeScene([root]);
+  const warnings: string[] = [];
+  bindBakeAppearances(snapshot, document, assets, [], (message) => warnings.push(message));
+  display.clear();
+  display.apply(snapshot);
+  assert.deepEqual(
+    snapshot.children[0]!.children.map((node) => node.visible),
+    [true, false],
+  );
+  assert.equal(closed.visible, false);
+  assert.equal(open.visible, true);
+  assert.deepEqual(planAppearanceRegions(snapshot, camera, [0, 0, 2000, 2000], [], false), []);
+  assert.ok(warnings.some((warning) => warning.includes("initial visual state")));
+  for (const node of [closed, open]) {
+    node.geometry.dispose();
+    if (!Array.isArray(node.material)) node.material.dispose();
+  }
+});
 
 test("async appearance rendering resets state after cancellation between frames", async () => {
   const root = new THREE.Group();
@@ -41,6 +82,52 @@ test("async appearance rendering resets state after cancellation between frames"
     /cancelled rendering/,
   );
   assert.equal(child.visible, true);
+});
+
+test("one detached gate does not freeze a valid copy's appearance or movement state", () => {
+  const { document, assets } = unavailableTerrainControlCompilerFixture();
+  const original = document.objects[0]!;
+  document.objects.push({ ...structuredClone(original), id: "valid-body", group: "valid" });
+  document.groups.push({
+    ...structuredClone(document.groups[0]!),
+    id: "valid",
+    transform: { ...document.groups[0]!.transform, dz: -4 },
+  });
+  const geometry = compileMap(document, [0, 0, 2000, 2000], assets, { bestEffort: true }).descriptor
+    .asset_geometry!;
+  const transitions = geometry.movement_transitions!;
+  assert.equal(transitions.length, 1);
+  assert.equal(transitions[0]!.id, "valid/hut/barriers");
+  assert.equal(transitions[0]!.has_appearance, true);
+  assert.equal(transitions[0]!.motion_changes.length, 1);
+  const root = new THREE.Group();
+  for (const id of ["hut-a-body", "valid-body"]) {
+    const wrapper = new THREE.Group();
+    wrapper.userData.map_bake_object_id = id;
+    const closed = new THREE.Group(),
+      open = new THREE.Group();
+    closed.userData.reveal_hide_when_applied = ["gate-cover"];
+    open.userData.reveal_show_when_applied = ["gate-cover"];
+    wrapper.add(closed, open);
+    root.add(wrapper);
+  }
+  const display = new PatchDisplay();
+  display.apply(root);
+  const warnings: string[] = [];
+  bindBakeAppearances(root, document, assets, transitions, (message) => warnings.push(message));
+  for (const applied of [false, true, false]) {
+    display.set(transitions[0]!.id, applied);
+    display.apply(root);
+    assert.deepEqual(
+      root.children[0]!.children.map((node) => node.visible),
+      [true, false],
+    );
+    assert.deepEqual(
+      root.children[1]!.children.map((node) => node.visible),
+      [!applied, applied],
+    );
+  }
+  assert.ok(warnings.length);
 });
 
 test("best effort freezes missing appearance controls while preserving available combinations", () => {

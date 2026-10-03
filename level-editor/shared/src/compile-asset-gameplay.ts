@@ -2077,7 +2077,6 @@ function compileAssetGameplayAttempt(
               if (
                 t.waypointReceiverSegment &&
                 t.changes.length &&
-                !t.hasAppearance &&
                 !t.initialSight.length &&
                 !t.appliedSight.length &&
                 !t.initialMasks.length &&
