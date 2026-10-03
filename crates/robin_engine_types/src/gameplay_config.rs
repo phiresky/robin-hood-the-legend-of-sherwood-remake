@@ -171,8 +171,8 @@ impl Default for ItemPreviewConfig {
     Default,
 )]
 pub enum CampaignPresentationMode {
-    ClassicMap = 0,
     #[default]
+    ClassicMap = 0,
     ProgressTree = 1,
     SherwoodMuseum = 2,
 }
@@ -403,7 +403,7 @@ impl Default for GameplayConfig {
             item_gameplay: ItemGameplayConfig::default(),
             item_previews: ItemPreviewConfig::default(),
             noise_distraction_feedback: true,
-            campaign_presentation: CampaignPresentationMode::ProgressTree,
+            campaign_presentation: CampaignPresentationMode::ClassicMap,
             clean_hands_npc_kills_invalidate: false,
             show_detailed_xp: false,
             show_speedrun_tracker: false,
@@ -450,7 +450,7 @@ impl GameplayConfig {
             item_gameplay: ItemGameplayConfig::classic(),
             item_previews: ItemPreviewConfig::classic(),
             noise_distraction_feedback: false,
-            campaign_presentation: CampaignPresentationMode::ProgressTree,
+            campaign_presentation: CampaignPresentationMode::ClassicMap,
             clean_hands_npc_kills_invalidate: false,
             show_detailed_xp: false,
             show_speedrun_tracker: false,
@@ -528,7 +528,7 @@ mod tests {
         assert!(config.touch_camera_gestures);
         assert_eq!(
             config.campaign_presentation,
-            super::CampaignPresentationMode::ProgressTree
+            super::CampaignPresentationMode::ClassicMap
         );
         assert!(config.enable_timed_missions);
         assert!(config.enable_dynamic_ambience);

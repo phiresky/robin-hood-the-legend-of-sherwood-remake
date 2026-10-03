@@ -1099,7 +1099,7 @@ mod tests {
         apply_option_toggle(&mut config, 5);
         assert_eq!(
             config.campaign_presentation,
-            robin_engine::gameplay_config::CampaignPresentationMode::SherwoodMuseum
+            robin_engine::gameplay_config::CampaignPresentationMode::ProgressTree
         );
 
         let achievement_settings = (
