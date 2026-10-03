@@ -80,8 +80,10 @@
   Level ledges now trim blocked flight spans against placed solids in both
   directions, including takeoff, the ordinary jump arc and the direct sword-fighting
   flight. Optional body radius/height account for headroom
-  and side clearance. Unsupported automatic jump shapes warn and are omitted;
-  explicit authored connections retain their existing behavior.
+  and side clearance. Clearance includes fixed-step airborne motion between
+  animation targets and short-flight overshoot before the final landing snap.
+  Unsupported automatic jump shapes warn and are omitted; explicit authored
+  connections retain their existing behavior.
   Surface-level jump rules generate reusable ledges and receiving bands from
   polygons, including holes, and support multiple neighbouring destinations.
   No saved jump zones or neighbour identities are required for these surfaces.

@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createJumpClearance, longJumpTrajectory, type JumpEdge } from "./jump-clearance.ts";
+import {
+  createJumpClearance,
+  integratedLongJumpTrajectory,
+  longJumpTrajectory,
+  type JumpEdge,
+} from "./jump-clearance.ts";
 import { assembleJumpSegments, type PlacedJumpSegment } from "./assemble-jump-segments.ts";
 import type { SightObstacle } from "./level.ts";
 
@@ -103,9 +108,49 @@ test("sword-fighting flight rejects low barriers below the ordinary jump arc", (
     );
 });
 
+test("airborne order integration checks the space between the arc and direct flight", () => {
+  const start: [number, number, number] = [15, 0, 0];
+  const path = integratedLongJumpTrajectory(start, longJumpTrajectory(start, [60, 0, 0]).slice(1));
+  assert.deepEqual(path, [
+    start,
+    [23.8948974609375, 0, 13.299652099609375],
+    [31.237524032592773, 0, 16.475473403930664],
+    [52.06294250488281, 0, 4.546437740325928],
+    [60, 0, 0],
+  ]);
+  // At x=29 the ideal arc is above z=20 and sword flight stays at zero.
+  const obstruction = wall(29, 20, 0.1, 10, 15, 18);
+  assert.ok(createJumpClearance([obstruction])(edges, true).length > 0);
+  const result = assembleJumpSegments(segments(), createJumpClearance([obstruction]));
+  assert.equal(result.pairs.length, 2);
+  for (const pair of result.pairs)
+    assert.deepEqual(
+      createJumpClearance([obstruction])(pair.edges as [JumpEdge, JumpEdge], true),
+      [],
+    );
+});
+
 test("takeoff motion is checked and floor contact is allowed", () => {
   assert.deepEqual(createJumpClearance([wall(5, -100, 1, 300)])(edges, true), [[0, 1]]);
   assert.deepEqual(createJumpClearance([wall(-100, -100, 300, 300, -10, 0)])(edges, true), []);
+});
+
+test("short sword flights check the fixed-step overshoot beyond the landing", () => {
+  const close: [JumpEdge, JumpEdge] = [
+    edges[0],
+    {
+      zone: "right",
+      a: [20, 0, 0],
+      b: [20, 100, 0],
+    },
+  ];
+  // The five-unit flight still advances eight units before snapping to the ledge.
+  assert.deepEqual(integratedLongJumpTrajectory([15, 0, 0], [[20, 0, 0]]), [
+    [15, 0, 0],
+    [23, 0, 0],
+    [20, 0, 0],
+  ]);
+  assert.deepEqual(createJumpClearance([wall(22, -10, 1, 120, -1, 1)])(close, true), [[0, 1]]);
 });
 
 test("authored body height and radius protect headroom and edge clearance", () => {

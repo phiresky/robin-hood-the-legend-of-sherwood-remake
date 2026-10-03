@@ -55,6 +55,25 @@ function clip(vertices: Vertex[], plane: (point: Vertex) => number): Vertex[] {
   return output;
 }
 
+/** Airborne orders retain their actual endpoint until the final landing snap. */
+export function integratedLongJumpTrajectory(start: Vec3, targets: Vec3[]): Vec3[] {
+  const f = Math.fround;
+  let position = start.map(f) as Vec3;
+  const path = [position];
+  for (const target of targets) {
+    const delta = target.map((n, axis) => f(n - position[axis]!));
+    const distance = f(Math.sqrt(f(f(f(delta[0]! ** 2) + f(delta[1]! ** 2)) + f(delta[2]! ** 2))));
+    if (!(distance > 0)) throw new Error("Jump flight has a zero-length airborne order");
+    const increment = delta.map((n) => f(n * f(8 / distance)));
+    const frames = Math.trunc(Math.max(1, f(f(distance * 0.125) - 1)));
+    for (let frame = 0; frame < frames; frame++)
+      position = position.map((n, axis) => f(n + increment[axis]!)) as Vec3;
+    path.push(position);
+  }
+  if (targets.length) path.push(targets.at(-1)!);
+  return path;
+}
+
 export function mergeIntervals(intervals: Interval[]): Interval[] {
   const result: Interval[] = [];
   for (const [a, b] of [...intervals].sort((a, b) => a[0] - b[0])) {
@@ -150,9 +169,16 @@ export function createJumpClearance(obstacles: SightObstacle[]) {
         source.a[1] + (15 * dx) / length,
         source.a[2],
       ];
-      const path = [source.a, ...longJumpTrajectory(start, destination.b)];
+      const targets = longJumpTrajectory(start, destination.b).slice(1);
+      const paths = [
+        [source.a, start, ...targets],
+        integratedLongJumpTrajectory(start, targets),
+        integratedLongJumpTrajectory(start, [destination.b]),
+      ];
       // Sword-fighting jumps use one direct airborne target instead of the arc's waypoints.
-      const flights: [Vec3, Vec3][] = path.slice(1).map((point, i) => [path[i]!, point]);
+      const flights: [Vec3, Vec3][] = paths.flatMap((path) =>
+        path.slice(1).map((point, i): [Vec3, Vec3] => [path[i]!, point]),
+      );
       flights.push([start, destination.b]);
       for (const [a, b] of flights) {
         const ribbon: Vertex[] = [

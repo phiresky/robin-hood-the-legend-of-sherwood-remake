@@ -299,6 +299,17 @@ may clear the arc while blocking the sword-fighting path, so both constrain the
 exported span. Native fixtures check both styles at five positions along each
 retained edge. All ten library maps compile unchanged after this additional check;
 diagnostics are in `work/map-compile/sword-jump-clearance`.
+Clearance also follows the runtime's fixed eight-unit airborne steps and integer
+frame countdowns. Intermediate orders retain their actual endpoint rather than
+snapping to each arc waypoint; the final order snaps to the landing. Both the
+resulting curved flight and sword-flight overshoot are checked in addition to
+the ideal paths. A thin floating-obstacle regression catches a collision between
+the ideal arc and direct path, and a short-gap regression catches an overshoot
+beyond the receiving edge. Native checks compare integration endpoints and test
+actual per-frame movement for both styles across the exported fixtures. All ten
+library maps compile unchanged; diagnostics are in
+`work/map-compile/integrated-jump-clearance`. These checks do not yet certify
+every sprite-driven takeoff displacement or shoulder-assisted departure.
 Blocked portions are removed, clear spans are
 retained and warnings explain omissions. Integer endpoints keep equal opposing
 vectors and are checked again after rounding. Optional asset-authored body radius

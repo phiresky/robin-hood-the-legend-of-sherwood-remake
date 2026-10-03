@@ -1579,6 +1579,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn airborne_order_endpoints_match_editor_clearance_integration() {
+        use crate::engine::test_support::actors::TestActor;
+        let start = WorldPoint3D::new(15.0, 0.0, 0.0);
+        let destination = WorldPoint3D::new(60.0, 0.0, 0.0);
+        let mut actor = TestActor::pc(Posture::Flying).build();
+        actor.element_data_mut().set_position(start);
+        let mut endpoints = Vec::new();
+        for target in compute_trajectory_jump(start, destination) {
+            start_airborne_jump_motion(&mut actor, OrderType::JumpingLong, target);
+            while actor.actor_data().unwrap().wait_time > 0 {
+                advance_airborne_flight(&mut actor);
+            }
+            let p = actor.element_data().position();
+            endpoints.push([p.x, p.y, p.z]);
+        }
+        // The same endpoints are checked by the compiler's clearance regression.
+        assert_eq!(
+            endpoints,
+            vec![
+                [23.894897, 0.0, 13.299652],
+                [31.237524, 0.0, 16.475473],
+                [52.062943, 0.0, 4.5464377],
+            ]
+        );
+    }
+
+    #[test]
     fn editor_geometric_jump_launches_toward_the_landing_edge() {
         for bytes in [
             include_bytes!("../../tests/fixtures/asset-jump-geometric.level.json").as_slice(),
@@ -1690,6 +1717,25 @@ mod tests {
                             let p = step.target_3d.unwrap();
                             [p.x, p.y, p.z]
                         }));
+                        let mut actor =
+                            crate::engine::test_support::actors::TestActor::pc(Posture::Flying)
+                                .build();
+                        actor.element_data_mut().set_position(WorldPoint3D::new(
+                            launch.x,
+                            launch.y + source_z,
+                            source_z,
+                        ));
+                        let mut integrated = vec![path[1]];
+                        for step in steps.iter().filter(|step| step.anim == flight) {
+                            start_airborne_jump_motion(&mut actor, flight, step.target_3d.unwrap());
+                            while actor.actor_data().unwrap().wait_time > 0 {
+                                advance_airborne_flight(&mut actor);
+                                let p = actor.element_data().position();
+                                integrated.push([p.x, p.y, p.z]);
+                            }
+                        }
+                        integrated.push([landing.x, landing.y, landing.z]);
+                        let paths = [path, integrated];
                         for (_, obstacle) in assets
                             .environment
                             .static_sight_obstacles
@@ -1703,7 +1749,7 @@ mod tests {
                                         .is_active(*index)
                             })
                         {
-                            for segment in path.windows(2) {
+                            for segment in paths.iter().flat_map(|path| path.windows(2)) {
                                 assert!(
                                     !obstacle.is_blocking_ray_3d(segment[0], segment[1]),
                                     "compiled flight intersects a solid obstacle at t={t}"
