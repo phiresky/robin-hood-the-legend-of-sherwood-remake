@@ -15,7 +15,7 @@ export interface AssetWalkableSurface {
   jump?: NonNullable<AssetJumpSegment["attachment"]> & {
     /** Selected polygon edge indices; omit to consider every outer edge. */
     edges?: number[];
-    /** Distance from the outer boundary to the takeoff line, in map units. */
+    /** Minimum distance from the boundary to the takeoff line; walking clearance may increase it. */
     inset: number;
     /** Walkable depth behind the takeoff line required for a receiving band. */
     landingDepth: number;

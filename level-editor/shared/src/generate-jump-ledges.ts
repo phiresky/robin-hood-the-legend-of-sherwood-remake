@@ -58,24 +58,32 @@ export function generateJumpLedges(
       length = Math.hypot(dx, dy);
     if (length < rules.minOverlap) continue;
     const inward: Point = [dy / length, -dx / length];
+    // Graph-free maps use a 6-by-4 half-size human movement box. Reserve its
+    // normal and tangential extents, plus one unit for final grid rounding.
+    const normalClearance = 6 * Math.abs(inward[0]) + 4 * Math.abs(inward[1]);
+    const alongClearance = (6 * Math.abs(dx) + 4 * Math.abs(dy)) / length + 1;
+    const inset = Math.max(rules.inset, normalClearance + 1);
     const at = (t: number, depth: number): Point => [
       a[0] + dx * t + inward[0] * depth,
       a[1] + dy * t + inward[1] * depth,
     ];
     const strip = [
-      at(0, rules.inset),
-      at(1, rules.inset),
-      at(1, rules.inset + rules.landingDepth),
-      at(0, rules.inset + rules.landingDepth),
+      at(0, inset - normalClearance),
+      at(1, inset - normalClearance),
+      at(1, inset + Math.max(rules.landingDepth, normalClearance)),
+      at(0, inset + Math.max(rules.landingDepth, normalClearance)),
     ];
     const outside = polygonClipping.difference([strip], [polygon, ...holes]);
     const along = (p: Point) => ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (length * length);
     const forbidden: Interval[] = outside.map((region) => {
       const values = region.flat().map(along);
-      return [Math.max(0, Math.min(...values)), Math.min(1, Math.max(...values))];
+      return [
+        Math.max(0, Math.min(...values) - alongClearance / length),
+        Math.min(1, Math.max(...values) + alongClearance / length),
+      ];
     });
     // Keep endpoints away from outer corners and integer-grid uncertainty.
-    const margin = Math.max(1, rules.clearance?.radius ?? 0) / length;
+    const margin = Math.max(alongClearance, rules.clearance?.radius ?? 0) / length;
     const blocked = mergeIntervals([[0, margin], ...forbidden, [1 - margin, 1]]);
     let start = 0,
       serial = 0;
@@ -86,13 +94,15 @@ export function generateJumpLedges(
           id: zone,
           long: true,
           attachment: rules,
-          surfaceInset: rules.inset,
-          edge: { zone, a: toWorld(at(start, rules.inset)), b: toWorld(at(low, rules.inset)) },
+          surfaceInset: inset,
+          edge: { zone, a: toWorld(at(start, inset)), b: toWorld(at(low, inset)) },
         });
         landings.set(zone, { plane, depth: rules.landingDepth });
       }
       start = Math.max(start, high);
     }
+    if (!serial)
+      warnings.push(`Surface ${id} edge ${index}: no character-sized receiving span remains.`);
   }
   return { segments, landings, warnings };
 }

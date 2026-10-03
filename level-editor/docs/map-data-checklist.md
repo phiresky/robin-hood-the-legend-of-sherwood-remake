@@ -336,9 +336,19 @@ cuts bands around holes and concave boundaries, and can connect one ledge to sev
 destinations. Each retained span gets its own receiving anchor and zone. A new
 two-destination courtyard verifies native routing, animation and collision without
 any authored jump segments/zones. Rotated and elevated copies are also covered.
+Generated takeoff lines also reserve the runtime's stock 6-by-4 half-size human
+movement box. The authored inset is a minimum: compilation increases it as needed,
+leaves a one-unit rounding margin and trims spans around corners and holes.
+Edges without a character-sized receiving span warn and are omitted. Native
+walking tests previously rejected takeoff goals that passed flight checks; the
+updated courtyard, skewed-roof and complete-house fixtures now pass approach and
+departure routes at five positions along every edge, including both endpoints.
+The tests check goal authorization and thick movement, separately from flight.
+All ten library maps retain identical geometry, with additional warnings for
+unusable candidate edges (`work/map-compile/jump-walking-clearance`).
 Nineteen reviewed library surfaces now carry these rules, with descriptor pins
 updated in six saved scenes. All ten scenes still compile and construct native
-geometry without new warnings. A real rock-surface fixture checks a newly placed
+geometry. A real rock-surface fixture checks a newly placed
 rotated neighbour without saved jump records. Further library adoption remains
 in progress; unmarked roof meshes do not acquire jumps. The authoring tool
 `pipeline/src/configure-surface-jumps.ts` stages descriptor-bound edits, updates
@@ -355,7 +365,7 @@ A skewed-roof export fixture verifies that this option creates a connection that
 would otherwise be omitted; native flight and gate-routing checks cover it.
 A separate recovered roof-surface fixture checks a rotated copy using its solid
 volume. The Bridge Square central timber house now publishes a reviewed eaves
-rule with a four-unit inset and landing depth, a two-unit contour adjustment limit
+rule with a four-unit minimum inset and landing depth, a two-unit contour adjustment limit
 and sixty-unit headroom. It checks the foot path without lateral body expansion.
 A complete-building fixture retains all eight solid volumes across its moved and
 180-degree-rotated instances, generates a new connection, retains it after two
@@ -367,8 +377,9 @@ has no ground for its entrances, which are omitted with warnings.
 `refinement/catalogs/roof-surface-jumps.json` records the descriptor-bound rule;
 publication updates York's scene pin and retains backups in
 `work/map-compile/roof-surface-publication`. Broader roof publication remains unfinished.
-All ten library maps compile unchanged after contour support and this publication;
-the latest diagnostics are in `work/map-compile/roof-surface-native`.
+All ten library maps compiled unchanged after contour support and this publication
+(`work/map-compile/roof-surface-native`); the walking-clearance diagnostics above
+include the subsequent candidate-edge warnings.
 
 **Reusable walkway connections:** navigation sockets now support an explicit
 minimum shared span, so different widths and shifts along a shared edge can join.

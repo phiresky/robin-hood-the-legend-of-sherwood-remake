@@ -31,9 +31,31 @@ test("surface ledges face outward, with receiving bands entirely inside the surf
     assert.equal(zone.anchor[2], 20);
     assert.ok(zone.polygon.every(([x, y]) => x >= 0 && x <= 100 && y >= 0 && y <= 100));
     assert.ok(!segment.join);
+    for (const point of [segment.edge.a, segment.edge.b]) {
+      const x = point[0],
+        y = point[1] - point[2];
+      assert.ok(x - 6 >= 0 && x + 6 <= 100 && y - 4 >= 0 && y + 4 <= 100);
+    }
   }
-  assert.deepEqual(generated.segments[1]!.edge.a, [95, 119, 20]);
-  assert.deepEqual(generated.segments[1]!.edge.b, [95, 21, 20]);
+  assert.deepEqual(generated.segments[1]!.edge.a, [93, 115, 20]);
+  assert.deepEqual(generated.segments[1]!.edge.b, [93, 25, 20]);
+});
+
+test("a ledge without room for a character warns and omits the unusable connection", () => {
+  const generated = generateJumpLedges(
+    "narrow",
+    [
+      [0, 0],
+      [10, 0],
+      [10, 100],
+      [0, 100],
+    ],
+    [],
+    [0, 0, 0],
+    { ...rules, edges: [1] },
+  );
+  assert.equal(generated.segments.length, 0);
+  assert.match(generated.warnings[0]!, /no character-sized receiving span/);
 });
 
 test("holes cut receiving bands into independent usable spans", () => {
@@ -52,8 +74,8 @@ test("holes cut receiving bands into independent usable spans", () => {
   assert.deepEqual(
     edges.map((edge) => [edge.a[1], edge.b[1]]),
     [
-      [99, 60],
-      [40, 1],
+      [95, 65],
+      [35, 5],
     ],
   );
 });

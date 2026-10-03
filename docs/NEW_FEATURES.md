@@ -87,6 +87,9 @@
   connections retain their existing behavior.
   Surface-level jump rules generate reusable ledges and receiving bands from
   polygons, including holes, and support multiple neighbouring destinations.
+  Generated ledges reserve character-sized walking clearance, increasing the
+  minimum inset and trimming corners and holes so takeoff goals are reachable.
+  Unusable candidate edges are omitted with warnings.
   An optional endpoint-adjustment limit aligns slightly skewed roof edges to
   level contours while preserving the roof's slope and clipping receiving bands.
   No saved jump zones or neighbour identities are required for these surfaces.

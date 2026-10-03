@@ -1357,6 +1357,62 @@ fn detached_jump_assets_preserve_complete_pair_registrations() {
 }
 
 #[test]
+fn generated_roof_jump_edges_have_character_sized_walkable_approaches() {
+    use robin_engine::coordinates::MapPoint;
+    use robin_engine::pathfinder::PathFinder;
+
+    for bytes in [
+        include_bytes!("fixtures/asset-jump-courtyard.level.json").as_slice(),
+        include_bytes!("fixtures/asset-jump-level-contours.level.json").as_slice(),
+        include_bytes!("fixtures/asset-jump-complete-roofs.level.json").as_slice(),
+    ] {
+        let mut assets = LevelAssets::new();
+        let engine = construct(bytes, &mut assets);
+        let mut grid = engine.fast_grid().clone();
+        let graph = &assets.navigation.pathfinder_graph;
+        let mut finder = PathFinder::new();
+        finder.initialize_from_graph(graph, &mut grid);
+        let footprint = grid.try_move_box_half_diagonal(0).unwrap();
+        assert!(!grid.level.jump_lines.is_empty());
+        for line in &grid.level.jump_lines {
+            let dx = line.point_b.x - line.point_a.x;
+            let dy = line.point_b.y - line.point_a.y;
+            let length = dx.hypot(dy);
+            let sector =
+                grid.level.sectors[line.sector_index.unwrap().get() as usize].sector_number;
+            for t in [0.0, 0.25, 0.5, 0.75, 1.0] {
+                let edge = MapPoint::new(line.point_a.x + dx * t, line.point_a.y + dy * t);
+                let inside = MapPoint::new(edge.x + dy / length * 4.0, edge.y - dx / length * 4.0);
+                for (start, goal) in [(inside, edge), (edge, inside)] {
+                    assert!(
+                        grid.is_reachable_thick(start, goal, line.layer, footprint),
+                        "jump approach is too narrow for a character at {edge:?}"
+                    );
+                    let route = finder
+                        .find_path(
+                            graph, &grid, line.layer, i16::from(sector) as u16,
+                            0, start, goal, false,
+                        )
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "no walking approach from {start:?} to {goal:?} on layer {} sector {sector:?}",
+                                line.layer
+                            )
+                        });
+                    assert_eq!(route.last(), Some(&goal));
+                    for segment in route.windows(2) {
+                        assert!(
+                            grid.is_reachable_thick(segment[0], segment[1], line.layer, footprint),
+                            "jump approach is too narrow for a character at {edge:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn compiled_roof_jump_routes_enforce_character_skills_and_destination_helpers() {
     use robin_engine::element::{ElementKind, Posture};
     use robin_engine::gate::{ActorAuthInfo, find_path_gates_with_sector_indices};
