@@ -6,6 +6,7 @@ import {
   assetCompilerFixture,
   jumpAssetCompilerFixture,
   liftAssetCompilerFixture,
+  compoundLiftCompilerFixture,
   maskAssetCompilerFixture,
   interiorAssetCompilerFixture,
   lightAssetCompilerFixture,
@@ -119,20 +120,30 @@ test("best effort omits disconnected doors and jump pairs but rejects malformed 
   );
 });
 
-test("best effort rebuilds indices after omitting a disconnected lift placement", () => {
+test("best effort omits a disconnected lift but retains the asset collision and landings", () => {
   const { document, assets, hut } = liftAssetCompilerFixture();
   hut.gameplay!.lifts![0]!.doors[0]!.outside = [1900, 1900, 0];
   const original = structuredClone(hut);
   assert.throws(() => compileAssetGameplay(document, assets, bounds), /outside must resolve/);
   const geometry = compileAssetGameplay(document, assets, bounds, { bestEffort: true });
   assert.equal(geometry.lifts, undefined);
-  assert.equal(geometry.sight_obstacles.length, 0);
-  assert.ok(geometry.motion_data.layers.every((layer) => layer.length === 0));
+  assert.ok(geometry.sight_obstacles.some((obstacle) => obstacle.solid));
+  assert.ok(geometry.motion_data.layers.some((layer) => layer.length > 0));
   assert.equal(
-    geometry.warnings?.filter((warning) => warning.startsWith("Placement hut-a/hut:")).length,
+    geometry.warnings?.filter((warning) => warning.startsWith("Lift hut-a/hut/stairs:")).length,
     1,
   );
   assert.deepEqual(hut, original);
+});
+
+test("disconnected compound lift removes all joined traversal pieces without dropping their owners", () => {
+  const { document, assets, hut } = compoundLiftCompilerFixture();
+  hut.gameplay!.lifts![0]!.doors[0]!.outside = [1900, 1900, 0];
+  const geometry = compileAssetGameplay(document, assets, bounds, { bestEffort: true });
+  assert.equal(geometry.lifts, undefined);
+  assert.ok(geometry.sight_obstacles.some((obstacle) => obstacle.solid));
+  assert.ok(geometry.motion_data.layers.some((layer) => layer.length > 0));
+  assert.equal(geometry.warnings?.filter((warning) => warning.startsWith("Lift ")).length, 1);
 });
 
 test("best effort omits unavailable masks and their empty transitions without dangling references", () => {

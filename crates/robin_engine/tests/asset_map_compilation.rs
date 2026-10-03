@@ -2345,6 +2345,39 @@ fn sloped_asset_surface_constructs_elevation_and_navigation_holes() {
 }
 
 #[test]
+fn disconnected_lift_preserves_collision_and_independent_traversal() {
+    use robin_engine::coordinates::{MapPoint, WorldPoint3D};
+    use robin_engine::sight_obstacle::{ObstacleList, SIGHTOBSTACLE_SOLID, is_reachable_impact_3d};
+    let mut assets = LevelAssets::new();
+    let engine = construct(
+        include_bytes!("fixtures/asset-disconnected-lift.level.json"),
+        &mut assets,
+    );
+    let grid = engine.fast_grid();
+    assert!(!grid.is_reachable_thin(MapPoint::new(330., 345.), MapPoint::new(370., 345.), 0));
+    assert!(grid.is_reachable_thin(MapPoint::new(310., 320.), MapPoint::new(380., 320.), 0));
+    assert!(
+        is_reachable_impact_3d(
+            WorldPoint3D::new(345., 345., 100.),
+            WorldPoint3D::new(345., 345., 1.),
+            SIGHTOBSTACLE_SOLID,
+            ObstacleList::from_slice_all_active(&assets.environment.static_sight_obstacles),
+            None,
+            None,
+        )
+        .is_some()
+    );
+    let lifts: Vec<_> = grid
+        .level
+        .sectors
+        .iter()
+        .filter(|sector| sector.sector_type.is_lift())
+        .collect();
+    assert_eq!(lifts.len(), 1);
+    assert_eq!(lifts[0].gate_indices.len(), 2);
+}
+
+#[test]
 fn compiled_lift_registers_traversal_sector_and_both_door_links() {
     let mut assets = LevelAssets::new();
     let engine = construct(

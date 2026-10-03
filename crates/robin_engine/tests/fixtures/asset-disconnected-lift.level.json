@@ -1,0 +1,422 @@
+{
+  "title": "Disconnected lift fixture",
+  "map_filename": "editor-disconnected-lift-fixture",
+  "spawn_points": [],
+  "walkable_polygon": [
+    [
+      0,
+      0
+    ],
+    [
+      1999,
+      0
+    ],
+    [
+      1999,
+      1999
+    ],
+    [
+      0,
+      1999
+    ]
+  ],
+  "volumes": [],
+  "asset_geometry": {
+    "motion_data": {
+      "layers": [
+        [
+          {
+            "is_lift": false,
+            "state_id": 0,
+            "polygon": {
+              "points": [
+                [
+                  300,
+                  300
+                ],
+                [
+                  390,
+                  300
+                ],
+                [
+                  390,
+                  400
+                ],
+                [
+                  300,
+                  400
+                ]
+              ]
+            },
+            "skeleton_segments": [],
+            "flags": 0,
+            "obstacles": [
+              {
+                "state_id": 0,
+                "polygon": {
+                  "points": [
+                    [
+                      350,
+                      340
+                    ],
+                    [
+                      350,
+                      350
+                    ],
+                    [
+                      340,
+                      350
+                    ],
+                    [
+                      340,
+                      340
+                    ]
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "is_lift": false,
+            "state_id": 0,
+            "polygon": {
+              "points": [
+                [
+                  600,
+                  300
+                ],
+                [
+                  690,
+                  300
+                ],
+                [
+                  690,
+                  400
+                ],
+                [
+                  600,
+                  400
+                ]
+              ]
+            },
+            "skeleton_segments": [],
+            "flags": 0,
+            "obstacles": []
+          }
+        ],
+        [
+          {
+            "is_lift": false,
+            "state_id": 0,
+            "polygon": {
+              "points": [
+                [
+                  410,
+                  200
+                ],
+                [
+                  500,
+                  200
+                ],
+                [
+                  500,
+                  300
+                ],
+                [
+                  410,
+                  300
+                ]
+              ]
+            },
+            "skeleton_segments": [],
+            "flags": 0,
+            "obstacles": []
+          },
+          {
+            "is_lift": false,
+            "state_id": 0,
+            "polygon": {
+              "points": [
+                [
+                  710,
+                  200
+                ],
+                [
+                  800,
+                  200
+                ],
+                [
+                  800,
+                  300
+                ],
+                [
+                  710,
+                  300
+                ]
+              ]
+            },
+            "skeleton_segments": [],
+            "flags": 0,
+            "obstacles": []
+          }
+        ],
+        [
+          {
+            "is_lift": true,
+            "state_id": 0,
+            "polygon": {
+              "points": [
+                [
+                  690,
+                  300
+                ],
+                [
+                  710,
+                  200
+                ],
+                [
+                  710,
+                  300
+                ],
+                [
+                  690,
+                  400
+                ]
+              ]
+            },
+            "skeleton_segments": [],
+            "flags": 0,
+            "obstacles": []
+          }
+        ]
+      ],
+      "graph_bytes": []
+    },
+    "sight_obstacles": [
+      {
+        "points": [
+          {
+            "x": 340,
+            "y": 340,
+            "z_bottom": 0,
+            "z_top": 30
+          },
+          {
+            "x": 350,
+            "y": 340,
+            "z_bottom": 0,
+            "z_top": 30
+          },
+          {
+            "x": 350,
+            "y": 350,
+            "z_bottom": 0,
+            "z_top": 30
+          },
+          {
+            "x": 340,
+            "y": 350,
+            "z_bottom": 0,
+            "z_top": 30
+          }
+        ],
+        "projection_area": null,
+        "solid": true,
+        "opaque": true,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 0,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 410,
+            "y": 300,
+            "z_bottom": 100,
+            "z_top": 100
+          },
+          {
+            "x": 500,
+            "y": 300,
+            "z_bottom": 100,
+            "z_top": 100
+          },
+          {
+            "x": 500,
+            "y": 400,
+            "z_bottom": 100,
+            "z_top": 100
+          },
+          {
+            "x": 410,
+            "y": 400,
+            "z_bottom": 100,
+            "z_top": 100
+          }
+        ],
+        "projection_area": [
+          3,
+          1
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 0,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 710,
+            "y": 300,
+            "z_bottom": 100,
+            "z_top": 100
+          },
+          {
+            "x": 800,
+            "y": 300,
+            "z_bottom": 100,
+            "z_top": 100
+          },
+          {
+            "x": 800,
+            "y": 400,
+            "z_bottom": 100,
+            "z_top": 100
+          },
+          {
+            "x": 710,
+            "y": 400,
+            "z_bottom": 100,
+            "z_top": 100
+          }
+        ],
+        "projection_area": [
+          4,
+          1
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 0,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 690,
+            "y": 300,
+            "z_bottom": 0,
+            "z_top": 0
+          },
+          {
+            "x": 710,
+            "y": 300,
+            "z_bottom": 100,
+            "z_top": 100
+          },
+          {
+            "x": 710,
+            "y": 400,
+            "z_bottom": 100,
+            "z_top": 100
+          },
+          {
+            "x": 690,
+            "y": 400,
+            "z_bottom": 0,
+            "z_top": 0
+          }
+        ],
+        "projection_area": [
+          5,
+          2
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 0,
+        "material_indices": []
+      }
+    ],
+    "doors": [],
+    "lifts": [
+      {
+        "motion_area_index": 5,
+        "lift_type": 1,
+        "direction": 4,
+        "doors": [
+          {
+            "door_type": 5,
+            "active": true,
+            "locked_pc": false,
+            "unlockable": false,
+            "locked_npc_villain": false,
+            "locked_npc_civilian": false,
+            "locked_pc_after_patch": false,
+            "unlockable_after_patch": false,
+            "locked_npc_villain_after_patch": false,
+            "locked_npc_civilian_after_patch": false,
+            "door_sector": {
+              "points": []
+            },
+            "point_out": [
+              680,
+              350
+            ],
+            "sector_out": 2,
+            "layer_out": 0,
+            "point_mid": [
+              690,
+              350
+            ],
+            "point_in": [
+              692,
+              340
+            ],
+            "sector_in": 5,
+            "layer_in": 2
+          },
+          {
+            "door_type": 4,
+            "active": true,
+            "locked_pc": false,
+            "unlockable": false,
+            "locked_npc_villain": false,
+            "locked_npc_civilian": false,
+            "locked_pc_after_patch": false,
+            "unlockable_after_patch": false,
+            "locked_npc_villain_after_patch": false,
+            "locked_npc_civilian_after_patch": false,
+            "door_sector": {
+              "points": []
+            },
+            "point_out": [
+              720,
+              250
+            ],
+            "sector_out": 4,
+            "layer_out": 1,
+            "point_mid": [
+              710,
+              250
+            ],
+            "point_in": [
+              708,
+              260
+            ],
+            "sector_in": 5,
+            "layer_in": 2
+          }
+        ]
+      }
+    ],
+    "warnings": [
+      "Lift hut-a/hut/stairs: traversal omitted because its assembly cannot connect after placement; retained asset collision and independent gameplay; hut-a/hut/stairs-low outside must resolve to exactly one unblocked walkable surface (found 0); world point [2200,2200,0], projected [2200,2200]; containing areas (0, showing up to 8) []"
+    ]
+  }
+}

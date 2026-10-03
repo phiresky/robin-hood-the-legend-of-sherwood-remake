@@ -1161,6 +1161,28 @@ export function liftAssetCompilerFixture() {
   return fixture;
 }
 
+export function disconnectedLiftCompilerFixture() {
+  const fixture = liftAssetCompilerFixture();
+  const gameplay = fixture.hut.gameplay!;
+  const surfaces = structuredClone(gameplay.surfaces);
+  for (const surface of surfaces) {
+    surface.id = `available-${surface.id}`;
+    for (const point of surface.polygon) point[0] += 300;
+  }
+  gameplay.surfaces.push(...surfaces);
+  const lift = structuredClone(gameplay.lifts![0]!);
+  lift.id = "available-stairs";
+  lift.surface = `available-${lift.surface}`;
+  for (const door of lift.doors) {
+    door.id = `available-${door.id}`;
+    for (const point of [door.outside, door.inside, door.middle, ...door.polygon]) point[0] += 300;
+  }
+  gameplay.lifts!.push(lift);
+  gameplay.lifts![0]!.doors[0]!.outside = [1900, 1900, 0];
+  fixture.document.map = "Disconnected lift fixture";
+  return fixture;
+}
+
 export function liftLightCompilerFixture() {
   const fixture = liftAssetCompilerFixture();
   const surface = fixture.hut.gameplay!.surfaces.find(

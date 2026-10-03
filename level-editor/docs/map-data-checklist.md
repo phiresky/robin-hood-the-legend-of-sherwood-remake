@@ -31,6 +31,19 @@ warns and omits links whose rooms are hidden or lack gameplay definitions. A mov
 cross-asset fixture retains both local doors and its linked third entrance in one
 native room; separate-room, duplication and export round-trip tests also pass.
 
+**Disconnected stairs and lifts:** best-effort export omits only the unavailable
+traversal assembly and its walking surfaces. The owning assets retain physical
+collision, ordinary landings and independent gameplay, including other valid
+lifts. Joined traversal pieces are omitted together. Native regression checks
+retain movement/projectile blocking and both gate links on an independent stair.
+Wychford now retains 31 previously omitted church-side-tower obstacle volumes;
+its independent second stair also survives (two compiled lifts instead of one).
+The other nine maps compile unchanged; all ten pass native construction and
+existing route probes. Native checks also pass 372 directed lift callbacks and
+apply/reset all 57 exported state transitions. Diagnostics:
+`work/map-compile/lift-collision-fallback`. This does not invent a missing landing
+or make the disconnected stair usable.
+
 **Masks on uneven terrain:** an asset mask may author a finite local
 `receiverSegment` instead of requiring its anchor to match one exact elevation.
 Export intersects that segment with placed receiving surfaces and requires one

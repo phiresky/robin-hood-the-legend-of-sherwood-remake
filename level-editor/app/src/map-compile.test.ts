@@ -21,6 +21,7 @@ import {
   unavailableMaskControlCompilerFixture,
   slopedAssetCompilerFixture,
   liftAssetCompilerFixture,
+  disconnectedLiftCompilerFixture,
   liftLightCompilerFixture,
   interiorAssetCompilerFixture,
   joinedInteriorCompilerFixture,
@@ -124,6 +125,22 @@ test("merged platform export preserves the opening checked by native receiving q
     ),
   );
   assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+});
+
+test("disconnected lift retains collision, landings and another lift in the same asset", async () => {
+  const { document, assets } = disconnectedLiftCompilerFixture();
+  const compiled = compileMap(document, [0, 0, 2000, 2000], assets, { bestEffort: true });
+  assert.equal(compiled.descriptor.asset_geometry!.lifts!.length, 1);
+  const fixture = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/asset-disconnected-lift.level.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(compiled.descriptor, fixture);
 });
 
 test("unavailable sight control preserves inactive receiving geometry", async () => {

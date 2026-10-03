@@ -191,23 +191,25 @@ export function compileAssetGameplay(
       if (
         !(error instanceof UnavailableLiftPlacement) ||
         (!options.bestEffort && !error.cropped) ||
-        omitted.has(error.placement)
+        error.lifts.every((id) => omitted.has(id))
       )
         throw error;
-      omitted.add(error.placement);
+      for (const id of error.lifts) omitted.add(id);
       omissions.push(
-        `Placement ${error.placement}: gameplay omitted because its lift assembly cannot connect after placement; ${error.message}`,
+        `Lift ${error.placement}: traversal omitted because its assembly cannot connect after placement; retained asset collision and independent gameplay; ${error.message}`,
       );
     }
   }
 }
 
 class UnavailableLiftPlacement extends Error {
+  readonly lifts: string[];
   readonly placement: string;
   readonly cropped: boolean;
-  constructor(placement: string, message: string, cropped = false) {
+  constructor(placement: string, message: string, cropped: boolean, lifts: string[]) {
     super(message);
     this.placement = placement;
+    this.lifts = lifts;
     this.cropped = cropped;
   }
 }
@@ -244,9 +246,7 @@ function compileAssetGameplayAttempt(
       return { ...part, obstacle: definition.obstacle_local_game };
     }),
   };
-  let placements = instances(document, descriptors).filter(
-    (placement) => !omitted.has(placement.id),
-  );
+  let placements = instances(document, descriptors);
   const terrain = terrainGameplay(document);
   const walls = wallSplineGameplay(document, descriptors, !!options.bestEffort);
   warnings.push(...walls.warnings);
@@ -399,9 +399,21 @@ function compileAssetGameplayAttempt(
     return result;
   };
   for (const placement of placements) {
-    const gameplay = placement.descriptor.gameplay!;
+    const authored = placement.descriptor.gameplay!;
+    validateAssetGameplay(authored, placement.descriptor);
+    const unavailableSurfaces = new Set(
+      (authored.lifts ?? [])
+        .filter((lift) => omitted.has(`${placement.id}/${lift.id}`))
+        .map((lift) => lift.surface),
+    );
+    const gameplay = unavailableSurfaces.size
+      ? {
+          ...authored,
+          lifts: authored.lifts?.filter((lift) => !omitted.has(`${placement.id}/${lift.id}`)),
+          surfaces: authored.surfaces.filter((surface) => !unavailableSurfaces.has(surface.id)),
+        }
+      : authored;
     const queryOrder = new Map(Object.entries(gameplay.sightOrder ?? {}));
-    validateAssetGameplay(gameplay, placement.descriptor);
     if (gameplay.draft && !warnedDraftAssets.has(placement.descriptor.id)) {
       warnedDraftAssets.add(placement.descriptor.id);
       for (const issue of gameplay.draft.issues)
@@ -1861,9 +1873,10 @@ function compileAssetGameplayAttempt(
         if (!owner) throw error;
         if (!options.bestEffort && !(error instanceof OutsideExportFrame)) throw error;
         throw new UnavailableLiftPlacement(
-          owner.id,
+          door.lift!,
           error.message,
           error instanceof OutsideExportFrame,
+          [...assembledLifts.identities].filter(([, id]) => id === door.lift).map(([id]) => id),
         );
       }
     }
