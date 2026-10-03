@@ -215,6 +215,8 @@ function base(v: unknown, path: string) {
 }
 function obstacle(v: unknown, path: string) {
   const o = object(v, path);
+  if (o.initial_active !== undefined)
+    check(typeof o.initial_active === "boolean", `${path}.initial_active`, "expected boolean");
   array(o.points, `${path}.points`).forEach((p, i) => {
     object(p, path);
     for (const k of ["x", "y", "z_bottom", "z_top"]) finite(p[k], `${path}.points[${i}].${k}`);

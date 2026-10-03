@@ -19,6 +19,8 @@ export interface ObstaclePoint {
 }
 
 export interface SightObstacle {
+  /** Physical activity at load; receiving planes and materials remain available. */
+  initial_active?: boolean;
   points: ObstaclePoint[];
   /** Ordered world-space anchors, independent of a thin receiver's clipped polygon. */
   projection_plane?: [[number, number, number], [number, number, number], [number, number, number]];

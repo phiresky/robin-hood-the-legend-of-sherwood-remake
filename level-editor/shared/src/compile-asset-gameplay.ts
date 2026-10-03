@@ -572,6 +572,21 @@ function compileAssetGameplayAttempt(
       if (order !== undefined) sightOrders.set(sight.length - 1, order);
       if (movementSolid(volume.id)) movementSolids.push({ owner: placement.id, shape });
     }
+    for (const transition of gameplay.movementTransitions ?? []) {
+      if (!fixedTransitions.has(`${placement.id}/${transition.id}`)) continue;
+      for (const id of transition.initialSight ?? []) {
+        const shape = partSight.get(id);
+        if (!shape)
+          throw new Error(`${placement.id}/${transition.id}: missing initial sight obstacle ${id}`);
+        shape.initial_active = true;
+      }
+      for (const id of transition.appliedSight ?? []) {
+        const shape = partSight.get(id);
+        if (!shape)
+          throw new Error(`${placement.id}/${transition.id}: missing applied sight obstacle ${id}`);
+        shape.initial_active = false;
+      }
+    }
     for (const receiver of gameplay.projectionReceivers ?? []) {
       const shape = partSight.get(receiver.volume);
       if (!shape) throw new Error(`${receiver.id}: missing projection volume ${receiver.volume}`);
@@ -2081,9 +2096,11 @@ function compileAssetGameplayAttempt(
               )
                 throw error;
               if (
-                (t.changes.length || t.initialMasks.length || t.appliedMasks.length) &&
-                !t.initialSight.length &&
-                !t.appliedSight.length
+                t.changes.length ||
+                t.initialMasks.length ||
+                t.appliedMasks.length ||
+                t.initialSight.length ||
+                t.appliedSight.length
               )
                 throw new UnavailableStateControl(
                   t.id,

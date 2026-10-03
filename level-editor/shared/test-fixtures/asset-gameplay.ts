@@ -762,6 +762,13 @@ export function projectionVolumeCompilerFixture() {
   return fixture;
 }
 
+export function unavailableProjectionControlCompilerFixture() {
+  const fixture = projectionVolumeCompilerFixture();
+  fixture.hut.gameplay!.movementTransitions![0]!.waypoint = [50, 50, 100];
+  fixture.document.map = "Unavailable projection control fixture";
+  return fixture;
+}
+
 export function anchoredReceiverCompilerFixture() {
   const fixture = assetCompilerFixture();
   const gameplay = fixture.hut.gameplay!;

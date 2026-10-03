@@ -1,5 +1,5 @@
-//! Frozen v11 layout: runtime preparation must never change serialized field order.
-//! v11 retains named mission records for Spellforge lookups.
+//! Frozen v12 layout: runtime preparation must never change serialized field order.
+//! v12 retains initial sight-obstacle activity in loaded levels.
 use super::*;
 
 #[test]
@@ -31,7 +31,7 @@ fn aggregate_budget_rejects_small_parts_forming_an_oversized_bank() {
     assert!(bank.validate_resident_budget().is_err());
 }
 #[derive(Default, Debug, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
-struct FrozenMissionV11 {
+struct FrozenMissionV12 {
     pub levels: BTreeMap<String, LoadedLevel>,
     pub scripts: BTreeMap<String, ScbFile>,
     pub rhs_files: BTreeMap<String, RhsData>,
@@ -46,7 +46,7 @@ struct FrozenMissionV11 {
 }
 
 #[test]
-fn v11_payload_matches_frozen_wire_and_preparation_is_consuming() {
+fn v12_payload_matches_frozen_wire_and_preparation_is_consuming() {
     let mut payload = ShippingMissionPayload::default();
     let mut level = LoadedLevel::empty();
     level
@@ -81,12 +81,12 @@ fn v11_payload_matches_frozen_wire_and_preparation_is_consuming() {
         .audio_durations_ms
         .insert("sounds/example.wav".into(), 193);
     let mission = ShippingMission::from_payload(payload);
-    let frozen: FrozenMissionV11 =
+    let frozen: FrozenMissionV12 =
         serde_json::from_value(serde_json::to_value(&mission).unwrap()).unwrap();
     let encoded = encode_mission_native(&mission);
     assert_eq!(&encoded[..8], &SHIPPING_MISSION_MAGIC);
-    assert_eq!(&encoded[..8], b"RHMISN11");
-    assert_eq!(&encoded[8..12], &11u32.to_le_bytes());
+    assert_eq!(&encoded[..8], b"RHMISN12");
+    assert_eq!(&encoded[8..12], &12u32.to_le_bytes());
     assert_eq!(&encoded[12..], bitcode::encode(&frozen));
     let compressed = zstd_compress_with_window(&encoded, 30).unwrap();
     let decoded = decode_mission_compressed(&compressed).unwrap();

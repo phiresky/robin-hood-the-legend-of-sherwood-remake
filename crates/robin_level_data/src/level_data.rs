@@ -1561,6 +1561,9 @@ pub struct RawObstaclePoint {
     bitcode::Decode,
 )]
 pub struct RawSightObstacle {
+    /// Initial physical activity; receiving planes and materials remain available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_active: Option<bool>,
     pub points: Vec<RawObstaclePoint>,
     /// Ordered world-space plane anchors for a thin receiving surface. Polygon
     /// clipping must not change the anchors used for float32 height evaluation.
@@ -2705,6 +2708,7 @@ impl LoadedLevel {
                 continue;
             }
             level.proto.sight_obstacles.push(RawSightObstacle {
+                initial_active: None,
                 projection_plane: None,
                 points: volume
                     .footprint
@@ -5137,6 +5141,7 @@ fn read_one_sight_obstacle(reader: &mut ChunkReader) -> Result<RawSightObstacle,
     }
 
     Ok(RawSightObstacle {
+        initial_active: None,
         points,
         projection_plane: None,
         projection_area,

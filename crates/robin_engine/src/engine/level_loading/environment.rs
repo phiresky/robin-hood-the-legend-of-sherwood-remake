@@ -559,7 +559,12 @@ impl EngineInner {
             .collect();
         let n = static_obstacles.len();
         self.world.dynamic_sight_obstacles.clear();
-        self.world.static_sight_obstacle_active = vec![true; n];
+        self.world.static_sight_obstacle_active = loaded
+            .proto
+            .sight_obstacles
+            .iter()
+            .map(|obstacle| obstacle.initial_active.unwrap_or(true))
+            .collect();
         assets.environment.static_sight_obstacles = std::sync::Arc::new(static_obstacles);
         tracing::info!("Loaded {} sight obstacles for AI line-of-sight", n);
     }

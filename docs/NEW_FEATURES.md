@@ -1,5 +1,10 @@
 # Post-port Features
 
+- **Initial obstacle activity in map exports.** Unavailable sight-changing controls
+  retain their initial state while preserving receiving-plane and material data.
+  Obstacle `initial_active` defaults to true when absent. Packed datadirs advance
+  to version 21 and mission payloads to version 12; regenerate older packed data.
+
 - **Combat blocks mission victory.** The saved gameplay flag
   `prevent_victory_in_combat` defaults on. Script-reported victory waits until
   every PC has left combat; disabling the flag restores unrestricted victory.

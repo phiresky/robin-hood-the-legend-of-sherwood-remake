@@ -141,10 +141,16 @@ patch references. Door-triggered controls also retain their initial state when
 their anchor is unavailable: the door remains traversable with its initial rights,
 and its unavailable callback is removed. A native regression passes through that
 door in both directions, then verifies that another door still triggers its own
-reindexed mask switch. Controls with changing sight still need a valid anchor;
-freezing those coupled effects remains unfinished.
+reindexed mask switch. Controls with changing sight also freeze in their initial
+state: applied-state volumes export with `initial_active: false`, retaining their
+receiving planes and material references. Native regression checks verify that an
+inactive platform remains a height/material receiver without blocking sight or
+projectiles. Existing levels without this field retain their default activity.
 All ten stored maps compile to unchanged gameplay data after the door fallback
 change (`work/map-compile/door-control-fallback`).
+The sight fallback also leaves all ten exports unchanged
+(`work/map-compile/sight-control-fallback`). Packed datadirs require version 21
+and mission payloads version 12 to retain the new initial obstacle activity.
 
 **Unavailable reveal controls:** for the supported fallback controls above, if the
 anchor cannot resolve, best-effort export retains the initial masks, omits its applied masks and

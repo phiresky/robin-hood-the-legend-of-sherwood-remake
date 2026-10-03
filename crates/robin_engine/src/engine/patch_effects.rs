@@ -943,6 +943,58 @@ mod tests {
     }
 
     #[test]
+    fn unavailable_projection_control_keeps_receiving_geometry_without_physical_collision() {
+        use crate::coordinates::WorldPoint3D;
+        use crate::sight_obstacle::{
+            SIGHTOBSTACLE_OPAQUE, SIGHTOBSTACLE_SOLID, is_reachable_impact_3d,
+        };
+        let (engine, assets) = load_compiled_transition(
+            include_bytes!("../../tests/fixtures/asset-unavailable-projection-control.level.json"),
+            (2000., 2000.),
+        );
+        assert!(engine.script_domains.interactables.patches.is_empty());
+        assert!(!engine.world.static_sight_obstacle_active[0]);
+        let receiver = &assets.environment.static_sight_obstacles[0];
+        assert!(receiver.projection_area_ref().is_some());
+        let point = MapPoint::new(350., 330.);
+        let sector_index =
+            engine.world.fast_grid.level.sector_number_map[&crate::sector::SectorNumber::new(1)];
+        let sector = crate::position_interface::SectorHandle::new(1)
+            .unwrap()
+            .with_arena_index(
+                crate::fast_find_grid::SectorIndex::new(sector_index as u32).unwrap(),
+            );
+        assert_eq!(
+            engine.get_projection_area_index(&assets, sector, 1, point),
+            crate::sight_obstacle::SightObstacleIndex::new(0)
+        );
+        assert_eq!(
+            receiver.compute_top_z_from_projection(point.x, point.y),
+            20.
+        );
+        assert_eq!(
+            assets
+                .environment
+                .material_sectors
+                .material_at_with_obstacle(Some(receiver), point),
+            crate::element::GameMaterial::from_u32(2)
+        );
+        for filter in [SIGHTOBSTACLE_SOLID, SIGHTOBSTACLE_OPAQUE] {
+            assert!(
+                is_reachable_impact_3d(
+                    WorldPoint3D::new(350., 350., 100.),
+                    WorldPoint3D::new(350., 350., 1.),
+                    filter,
+                    engine.sight_obstacles(&assets),
+                    None,
+                    None,
+                )
+                .is_none()
+            );
+        }
+    }
+
+    #[test]
     fn editor_projection_volume_preserves_physical_state_and_receiving_geometry() {
         use crate::coordinates::WorldPoint3D;
         use crate::sight_obstacle::{

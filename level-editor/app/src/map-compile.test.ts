@@ -29,6 +29,7 @@ import {
   materialAssetCompilerFixture,
   projectionMaterialCompilerFixture,
   projectionVolumeCompilerFixture,
+  unavailableProjectionControlCompilerFixture,
   receivingGapCompilerFixture,
   receivingIslandCompilerFixture,
   soundAssetCompilerFixture,
@@ -123,6 +124,39 @@ test("merged platform export preserves the opening checked by native receiving q
     ),
   );
   assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+});
+
+test("unavailable sight control preserves inactive receiving geometry", async () => {
+  const { document, assets } = unavailableProjectionControlCompilerFixture();
+  assert.throws(() => compileMap(document, [0, 0, 2000, 2000], assets), /waypoint must resolve/);
+  const compiled = compileMap(document, [0, 0, 2000, 2000], assets, { bestEffort: true });
+  const geometry = compiled.descriptor.asset_geometry!;
+  assert.equal(geometry.movement_transitions?.length ?? 0, 0);
+  const receiver = geometry.sight_obstacles.find((obstacle) => obstacle.initial_active === false)!;
+  assert.ok(receiver.projection_area);
+  assert.ok(receiver.material_indices.length);
+  const fixture = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/asset-unavailable-projection-control.level.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(compiled.descriptor, fixture);
+});
+
+test("unavailable sight and movement control retains the closed obstacle only", () => {
+  const { document, assets, hut } = sightTransitionCompilerFixture();
+  hut.gameplay!.movementTransitions![0]!.waypoint[2] = 100;
+  const geometry = compileMap(document, [0, 0, 2000, 2000], assets, { bestEffort: true }).descriptor
+    .asset_geometry!;
+  assert.equal(geometry.movement_transitions?.length ?? 0, 0);
+  assert.deepEqual(
+    geometry.sight_obstacles.map((obstacle) => obstacle.initial_active ?? true),
+    [true, false],
+  );
 });
 
 test("unavailable mask control keeps the initial mask and reindexes the remaining switch", async () => {
