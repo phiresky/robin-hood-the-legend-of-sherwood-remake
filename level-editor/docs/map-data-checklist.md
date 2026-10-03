@@ -245,7 +245,13 @@ retained and warnings explain omissions. Integer endpoints keep equal opposing
 vectors and are checked again after rounding. Optional asset-authored body radius
 and height add side clearance and headroom; without them only the foot path is
 checked. A moved-wall fixture verifies restored overlap and native collision-free
-animation. Checks conservatively include all obstacle states. Sloped ledges and
+animation. Checks conservatively include every potentially active obstacle state,
+but exclude permanently inactive volumes. Volumes referenced by a surviving switch
+still constrain jumps even if authored initially inactive: airborne animation does
+not collision-check each frame. An unavailable control frozen with its applied
+volume inactive restores the full jump span. Compiler and native trajectory tests
+cover this distinction. State-dependent jump availability remains unimplemented.
+Sloped ledges and
 climbing-style automatic connections are omitted with warnings; explicitly authored
 connections remain supported. Walkable surfaces may now declare compact `jump`
 rules; the compiler derives ledges and landing bands from their placed polygons,

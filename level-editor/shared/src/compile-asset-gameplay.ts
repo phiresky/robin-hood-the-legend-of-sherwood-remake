@@ -1094,9 +1094,22 @@ function compileAssetGameplayAttempt(
     warnings.push(
       `Navigation region ${join.region}: no matching boundary edge after placement; region remains independent.`,
     );
+  // Airborne jumps do not collision-check each frame. Any volume that can
+  // become active must still constrain the permanently generated jump span.
+  const changingSight = new Set(
+    transitions.flatMap((transition) => [...transition.initialSight, ...transition.appliedSight]),
+  );
   const assembledJumps = assembleJumpSegments(
     jumpSegments,
-    jumpSegments.some((segment) => segment.attachment) ? createJumpClearance(sight) : undefined,
+    jumpSegments.some((segment) => segment.attachment)
+      ? createJumpClearance(
+          sight.map((shape, index) =>
+            changingSight.has(index) && shape.initial_active === false
+              ? { ...shape, initial_active: true }
+              : shape,
+          ),
+        )
+      : undefined,
   );
   for (const pair of assembledJumps.pairs) {
     for (const [side, edge] of pair.edges.entries()) {

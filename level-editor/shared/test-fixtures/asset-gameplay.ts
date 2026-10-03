@@ -410,6 +410,15 @@ export function obstructedJumpCompilerFixture() {
   return fixture;
 }
 
+export function inactiveJumpObstacleCompilerFixture() {
+  const fixture = obstructedJumpCompilerFixture();
+  const gameplay = fixture.assets.get("jump-wall")!.gameplay!;
+  gameplay.movementSolids = [];
+  gameplay.volumes![0]!.shape.initial_active = false;
+  fixture.document.map = "Inactive jump obstruction fixture";
+  return fixture;
+}
+
 export function multiDestinationJumpCompilerFixture() {
   const fixture = surfaceJumpCompilerFixture();
   fixture.upper.gameplay!.surfaces.find((surface) => surface.id === "east")!.polygon = [

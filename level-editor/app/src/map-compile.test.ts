@@ -40,6 +40,7 @@ import {
   appearanceOnlyCompilerFixture,
   joinedTransitionCompilerFixture,
   sightTransitionCompilerFixture,
+  inactiveJumpObstacleCompilerFixture,
   lightAssetCompilerFixture,
   jumpAssetCompilerFixture,
   navigationRegionCompilerFixture,
@@ -141,6 +142,62 @@ test("disconnected lift retains collision, landings and another lift in the same
     ),
   );
   assert.deepEqual(compiled.descriptor, fixture);
+});
+
+test("permanently inactive obstacles retain full jump spans", async () => {
+  const { document, assets } = inactiveJumpObstacleCompilerFixture();
+  const compiled = compileMap(document, [0, 0, 2000, 2000], assets);
+  const clear = geometricJumpCompilerFixture();
+  const expected = compileMap(clear.document, [0, 0, 2000, 2000], clear.assets);
+  assert.deepEqual(
+    compiled.descriptor.asset_geometry!.jump_line_pairs,
+    expected.descriptor.asset_geometry!.jump_line_pairs,
+  );
+  const fixture = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/asset-jump-inactive.level.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(compiled.descriptor, fixture);
+});
+
+test("switchable inactive obstacles still constrain jumps that cannot change with the switch", () => {
+  const { document, assets } = inactiveJumpObstacleCompilerFixture();
+  assets.get("jump-wall")!.gameplay!.movementTransitions = [
+    {
+      id: "jump-wall-state",
+      node: "building-999",
+      waypoint: [20, 50, 0],
+      active: true,
+      definitive: false,
+      initial: [],
+      applied: [],
+      initialSight: [],
+      appliedSight: ["jump-obstruction"],
+      applyPolygon: [],
+      noApplyPolygon: [],
+    },
+  ];
+  const compiled = compileMap(document, [0, 0, 2000, 2000], assets);
+  const obstructed = obstructedJumpCompilerFixture();
+  const expected = compileMap(obstructed.document, [0, 0, 2000, 2000], obstructed.assets);
+  assert.deepEqual(
+    compiled.descriptor.asset_geometry!.jump_line_pairs,
+    expected.descriptor.asset_geometry!.jump_line_pairs,
+  );
+  assets.get("jump-wall")!.gameplay!.movementTransitions![0]!.waypoint[2] = 100;
+  const frozen = compileMap(document, [0, 0, 2000, 2000], assets, { bestEffort: true });
+  const clear = geometricJumpCompilerFixture();
+  assert.deepEqual(
+    frozen.descriptor.asset_geometry!.jump_line_pairs,
+    compileMap(clear.document, [0, 0, 2000, 2000], clear.assets).descriptor.asset_geometry!
+      .jump_line_pairs,
+  );
+  assert.equal(frozen.descriptor.asset_geometry!.movement_transitions?.length ?? 0, 0);
 });
 
 test("unavailable sight control preserves inactive receiving geometry", async () => {

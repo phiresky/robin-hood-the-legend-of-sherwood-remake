@@ -68,7 +68,7 @@ export function mergeIntervals(intervals: Interval[]): Interval[] {
 /** Precompute solid prisms once, then intersect the full flight ribbon, not sampled rays. */
 export function createJumpClearance(obstacles: SightObstacle[]) {
   const prisms = obstacles
-    .filter((shape) => shape.solid)
+    .filter((shape) => shape.solid && shape.initial_active !== false)
     .flatMap((shape) => {
       const indices = earcut(shape.points.flatMap((p) => [p.x, p.y]));
       const result: { planes: Plane[]; bounds: [number, number, number, number] }[] = [];

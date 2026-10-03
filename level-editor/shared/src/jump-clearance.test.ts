@@ -58,6 +58,15 @@ test("flight clearance intersects the whole span, including thin off-centre obst
   );
 });
 
+test("inactive physical volumes do not remove usable jump spans", () => {
+  const blocker = wall(30, -100, 1, 300);
+  assert.equal(assembleJumpSegments(segments(), createJumpClearance([blocker])).pairs.length, 0);
+  blocker.initial_active = false;
+  const result = assembleJumpSegments(segments(), createJumpClearance([blocker]));
+  assert.equal(result.pairs.length, 1);
+  assert.deepEqual(result.pairs[0]!.edges, edges);
+});
+
 test("full walls omit the connection and non-solid or distant volumes do not", () => {
   const full = wall(30, -100, 1, 300);
   const result = assembleJumpSegments(segments(), createJumpClearance([full]));

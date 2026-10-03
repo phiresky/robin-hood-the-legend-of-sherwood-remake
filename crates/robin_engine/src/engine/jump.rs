@@ -1583,6 +1583,7 @@ mod tests {
         for bytes in [
             include_bytes!("../../tests/fixtures/asset-jump-geometric.level.json").as_slice(),
             include_bytes!("../../tests/fixtures/asset-jump-obstructed.level.json").as_slice(),
+            include_bytes!("../../tests/fixtures/asset-jump-inactive.level.json").as_slice(),
             include_bytes!("../../tests/fixtures/asset-jump-courtyard.level.json").as_slice(),
         ] {
             let loaded = crate::level_data::LoadedLevel::hackable_from_json(bytes).unwrap();
@@ -1595,7 +1596,7 @@ mod tests {
                 .unwrap();
             campaign.current_mission_idx = Some(index);
             assets.profile_manager = std::sync::Arc::new(profiles);
-            let _engine = crate::engine::Engine::new(crate::engine::EngineArgs {
+            let engine = crate::engine::Engine::new(crate::engine::EngineArgs {
                 campaign,
                 level: crate::engine::LevelLoadArgs {
                     assets: &mut assets,
@@ -1685,11 +1686,18 @@ mod tests {
                                     [p.x, p.y, p.z]
                                 }),
                         );
-                        for obstacle in assets
+                        for (_, obstacle) in assets
                             .environment
                             .static_sight_obstacles
                             .iter()
-                            .filter(|obstacle| obstacle.is_solid())
+                            .enumerate()
+                            .filter(|(index, obstacle)| {
+                                obstacle.is_solid()
+                                    && engine
+                                        .presentation_view()
+                                        .sight_obstacles(&assets)
+                                        .is_active(*index)
+                            })
                         {
                             for segment in path.windows(2) {
                                 assert!(
