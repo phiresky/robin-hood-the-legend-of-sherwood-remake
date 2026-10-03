@@ -127,9 +127,9 @@ test("an omitted animation cannot require a missing profile from a valid placed 
   assert.equal(compiled.descriptor.asset_geometry!.animations!.length, 1);
 });
 
-test("separate placed assets share identical pinned banks but reject conflicting frame contents", async () => {
-  for (const conflict of [false, true]) {
-    const { document, assets, hut, read } = fixture();
+test("separate placed assets share identical banks and namespace different frame contents", async () => {
+  for (const conflict of ["same", "different", "broken", "shared"] as const) {
+    const { document, assets, hut, read, files } = fixture();
     const copy = structuredClone(hut);
     copy.id = "second-flame";
     const root = "sprites/second.rhs.d";
@@ -138,7 +138,20 @@ test("separate placed assets share identical pinned banks but reject conflicting
       ...pin,
       path: pin.path.replace("sprites/flame.rhs.d", root),
     }));
-    if (conflict) copy.resources[1]!.sha256 = "0".repeat(64);
+    for (const pin of copy.resources)
+      files.set(pin.path, files.get(pin.path.replace(root, "sprites/flame.rhs.d"))!);
+    if (conflict === "different") {
+      const bytes = encode({
+        width: 8,
+        height: 8,
+        channels: 4,
+        data: new Uint8Array(256).fill(128),
+      });
+      files.set(`${root}/idle/0.png`, bytes);
+      copy.resources[1]!.sha256 = createHash("sha256").update(bytes).digest("hex");
+    }
+    if (conflict === "broken") copy.resources[1]!.sha256 = "0".repeat(64);
+    if (conflict === "shared") delete copy.gameplay!.animations![0]!.resourceDirectory;
     assets.set(copy.id, copy);
     document.assetSources!.push({ ...document.assetSources![0]!, id: copy.id });
     document.objects.push({
@@ -150,12 +163,48 @@ test("separate placed assets share identical pinned banks but reject conflicting
     document.groups.push({ id: "second", transform: { dx: 200, dy: 0, dz: 0, rot_deg: 0 } });
     const compiled = compileMap(document, [0, 0, 900, 900], assets);
     const resources = await collectSceneryResources(compiled, assets, read);
-    assert.equal(Object.keys(resources).length, conflict ? 0 : 3);
-    assert.equal(compiled.descriptor.asset_geometry!.animations!.length, conflict ? 0 : 2);
+    assert.equal(Object.keys(resources).length, conflict === "different" ? 6 : 3);
+    const animations = compiled.descriptor.asset_geometry!.animations!;
+    assert.equal(animations.length, conflict === "broken" ? 1 : 2);
     assert.equal(
-      compiled.warnings.some((warning) => warning.includes("disagree on the pinned")),
-      conflict,
+      compiled.warnings.some((warning) => warning.includes("Scenery bank")),
+      conflict === "broken",
     );
+    for (const animation of animations) {
+      const bank = animation.sprite.frame_profile_name;
+      if (conflict === "shared" && bank === "editor-flame") continue;
+      assert.ok(resources[`Data/Animations/Day/${bank}.rhs.d/manifest.json`]);
+      if (conflict !== "same") assert.match(bank, /^editor-fx-[0-9a-f]{64}$/);
+    }
+    if (conflict === "different" || conflict === "shared")
+      assert.notEqual(
+        animations[0]!.sprite.frame_profile_name,
+        animations[1]!.sprite.frame_profile_name,
+      );
+    if (conflict === "different") {
+      const [a, b] = animations.map(
+        (animation) =>
+          resources[`Data/Animations/Day/${animation.sprite.frame_profile_name}.rhs.d/idle/0.png`],
+      );
+      assert.notDeepEqual(a, b);
+      if (process.env.SCENERY_CONFLICT_EXPORT_DIR) {
+        const root = process.env.SCENERY_CONFLICT_EXPORT_DIR;
+        const zip = unzipSync(
+          await packageCompiledMap(
+            compiled,
+            { color: new Uint8Array(900 * 900 * 4), depth: new Uint16Array(900 * 900) },
+            [],
+            resources,
+          ),
+        );
+        await mkdir(root);
+        for (const [name, bytes] of Object.entries(zip)) {
+          const destination = path.join(root, name);
+          await mkdir(path.dirname(destination), { recursive: true });
+          await writeFile(destination, bytes);
+        }
+      }
+    }
   }
 });
 

@@ -475,6 +475,52 @@ mod tests {
         .unwrap();
     }
 
+    #[test]
+    #[ignore = "requires SCENERY_CONFLICT_EXPORT_DIR from editor packaging tests"]
+    fn editor_conflicting_scenery_banks_decode_as_distinct_resources() {
+        let root = std::path::PathBuf::from(std::env::var("SCENERY_CONFLICT_EXPORT_DIR").unwrap());
+        let descriptor: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(root.join("Data/Levels/editor-authored-fixture.level.json")).unwrap(),
+        )
+        .unwrap();
+        let animations = descriptor["asset_geometry"]["animations"]
+            .as_array()
+            .unwrap();
+        assert_eq!(animations.len(), 2);
+        let mut banks = Vec::new();
+        let mut pixels = Vec::new();
+        for animation in animations {
+            let bank = animation["sprite"]["frame_profile_name"].as_str().unwrap();
+            assert!(bank.starts_with("editor-fx-"));
+            let directory = root.join(format!("Data/Animations/Day/{bank}.rhs.d"));
+            let bytes = std::fs::read(directory.join("manifest.json")).unwrap();
+            let cache = build_hackable_cache(
+                &directory,
+                hackable_manifest_hash(&bytes),
+                serde_json::from_slice(&bytes).unwrap(),
+            )
+            .unwrap();
+            validate_cache_frames(bank, &cache).unwrap();
+            assert_eq!(cache.frames.len(), 2);
+            pixels.push(cache.frames[0].rgba_data.clone());
+            banks.push((
+                format!("Animations/Day/{bank}.rhs"),
+                cache
+                    .profiles
+                    .iter()
+                    .map(|profile| (profile.name.clone(), profile.info.clone()))
+                    .collect::<Vec<_>>(),
+            ));
+        }
+        assert_ne!(banks[0].0, banks[1].0);
+        assert_ne!(pixels[0], pixels[1]);
+        std::fs::write(
+            root.join("decoded-scenery-banks.json"),
+            serde_json::to_vec(&banks).unwrap(),
+        )
+        .unwrap();
+    }
+
     fn manifest(directions: &[Option<u16>]) -> HackableRhsManifest {
         serde_json::from_value(serde_json::json!({
             "pixel_format": "rgba", "profiles": [{

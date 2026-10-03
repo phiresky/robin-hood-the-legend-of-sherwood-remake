@@ -53,11 +53,18 @@ resource directory still use the installed shared sprite bank.
 Resource collection follows the asset/animation identities actually emitted by
 compilation. Hidden or unplaced assets and individually omitted animations cannot
 invalidate another placed animation's bank. Identical pinned banks in separate
-asset folders share packaged files; conflicting frame hashes still warn and omit
-the ambiguous bank. These bindings remain editor export metadata and are not
+asset folders share packaged files. Different pinned contents with the same bank
+name receive distinct content-based export names; their compiled sprite references
+are rewritten together. Pinned banks also receive separate names when sharing a
+name with an installed, unpinned bank. Invalid resources omit only their bank,
+preserving valid alternatives. These bindings remain editor export metadata and are not
 written into the native level descriptor. Regression tests cover these cases;
 `work/map-compile/scenery-placed-resources` retains byte-identical runtime files
 to the native-tested animation export.
+The two-bank export regression is under `work/map-compile/scenery-bank-conflicts`.
+The native decoder verifies distinct pixels in both packaged banks, and the
+runtime spawns both effects with separate cached profiles at their exported
+positions. This checks resource identity and spawning, not rendered occlusion.
 
 One-time animation recovery uses `pipeline/src/recover-scenery-animation.ts`.
 It requires an explicit owning part and a reviewed 3D anchor whose projected

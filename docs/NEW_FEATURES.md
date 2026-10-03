@@ -6,7 +6,11 @@
   an optional asset resource directory packages pinned manifests and frame images
   into the mod. Export verifies hashes, frame references and sprite centers, and
   warns when unavailable resources force an animation to be omitted. Shared-bank
-  references remain supported. Library authoring and preview remain unfinished.
+  references remain supported. Independently authored banks with the same name
+  and different pinned contents receive distinct export names, preserving both
+  effects and keeping installed shared banks separate. Identical contents share
+  packaged files; missing resources omit only the affected bank. Library authoring
+  and preview remain unfinished.
 
 - **Bounded shadow regions for map appearance switches.** Export includes each
   asset's possible shadow footprint using the scene's sun direction and lowest

@@ -99,3 +99,52 @@ fn animation_position_uses_top_left_center_and_authored_elevation() {
         raw.position_y as f32
     );
 }
+
+#[test]
+#[ignore = "requires SCENERY_CONFLICT_EXPORT_DIR and native conflicting-bank decoding test"]
+fn exported_conflicting_scenery_uses_separate_runtime_profiles() {
+    use super::{EngineInner, LevelAssets, spawn_proto_animation_fx_entities};
+    use crate::sprite_script::{MissionResourceEnvironment, SpriteInfo, SpriteScriptor};
+    use std::sync::Arc;
+    let root = std::path::PathBuf::from(std::env::var("SCENERY_CONFLICT_EXPORT_DIR").unwrap());
+    let loaded = crate::level_data::LoadedLevel::hackable_from_json(
+        &std::fs::read(root.join("Data/Levels/editor-authored-fixture.level.json")).unwrap(),
+    )
+    .unwrap();
+    let banks: Vec<(String, Vec<(String, SpriteInfo)>)> =
+        serde_json::from_slice(&std::fs::read(root.join("decoded-scenery-banks.json")).unwrap())
+            .unwrap();
+    let resources = MissionResourceEnvironment::default()
+        .with_parsed_rhs(
+            banks
+                .iter()
+                .map(|(path, profiles)| (path.as_str(), 0, profiles.as_slice())),
+        )
+        .unwrap();
+    let mut assets = LevelAssets::new();
+    assets.sprite_scriptor = Arc::new(SpriteScriptor::with_resources(Arc::new(resources)));
+    let mut engine = EngineInner::new();
+    spawn_proto_animation_fx_entities(&mut engine, &mut assets, &loaded.proto.animations);
+    let sprites: Vec<_> = engine
+        .world
+        .entities
+        .occupied()
+        .map(|(_, entity)| entity.sprite())
+        .collect();
+    assert_eq!(sprites.len(), 2);
+    assert_ne!(sprites[0].profile_cache_key, sprites[1].profile_cache_key);
+    for raw in &loaded.proto.animations {
+        let sprite = sprites
+            .iter()
+            .find(|sprite| sprite.frame_profile_name == raw.sprite.frame_profile_name)
+            .unwrap();
+        assert_eq!(
+            sprite.position_iface.map_position(),
+            MapPoint::new(
+                raw.sprite.position_x as f32 + 4.,
+                raw.sprite.position_y as f32 + 6.
+            )
+        );
+        assert_eq!(sprite.current_scripts()[0].delays, [2, 4]);
+    }
+}

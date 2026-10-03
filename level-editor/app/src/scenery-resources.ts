@@ -5,6 +5,12 @@ import { validateSceneryManifest } from "./scenery-manifest.ts";
 
 export type SceneryResources = Record<string, Uint8Array>;
 
+async function sha256(bytes: Uint8Array): Promise<string> {
+  return [...new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array(bytes)))]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 /** Resource inputs are pinned library files, never runtime level data. */
 export async function collectSceneryResources(
   compiled: CompiledMap,
@@ -21,35 +27,48 @@ export async function collectSceneryResources(
     const animation = asset?.gameplay?.animations?.find((entry) => entry.id === animationId);
     if (!asset || !animation)
       throw new Error(`Compiled scenery source is unavailable: ${assetId}/${animationId}`);
-    return { asset, animation };
+    const bank = animation.file.replace(/\.rhs$/i, "");
+    const directory = animation.resourceDirectory;
+    const pins = new Map(
+      (asset.resources ?? [])
+        .filter((pin) => directory && pin.path.startsWith(`${directory}/`))
+        .map((pin) => [pin.path.slice(directory!.length + 1), pin.sha256]),
+    );
+    const identity = directory
+      ? JSON.stringify([...pins].sort(([a], [b]) => a.localeCompare(b, "en")))
+      : "shared";
+    return { animation, bank, directory, pins, identity };
   });
+  if (sources.length !== animations.length)
+    throw new Error("Compiled scenery bindings do not match emitted animations");
+  const variants = new Map<string, Set<string>>();
+  const reserved = new Set(sources.map((source) => source.bank.toLowerCase()));
+  for (const source of sources) {
+    const key = source.bank.toLowerCase();
+    if (!variants.has(key)) variants.set(key, new Set());
+    variants.get(key)!.add(JSON.stringify([source.bank, source.identity]));
+  }
+  const aliases = new Map<string, string>();
+  for (const source of sources) {
+    if (!source.directory || variants.get(source.bank.toLowerCase())!.size < 2) continue;
+    const key = JSON.stringify([source.bank, source.identity]);
+    let alias = aliases.get(key);
+    if (!alias) {
+      const base = `editor-fx-${await sha256(new TextEncoder().encode(key))}`;
+      alias = base;
+      for (let suffix = 1; reserved.has(alias.toLowerCase()); suffix++) alias = `${base}-${suffix}`;
+      aliases.set(key, alias);
+      reserved.add(alias.toLowerCase());
+    }
+    source.bank = alias;
+  }
   const warn = (bank: string, reason: string) => {
     failed.add(bank);
     compiled.warnings.push(`Scenery bank ${bank} omitted: ${reason}`);
   };
-  for (const { asset, animation } of sources) {
-    const bank = animation.file.replace(/\.rhs$/i, "");
-    if (!animations.some((placed) => placed.sprite.frame_profile_name === bank)) continue;
-    const directory = animation.resourceDirectory;
+  for (const { bank, directory, pins } of sources) {
     if (!directory) continue;
-    const pins = new Map(
-      (asset.resources ?? [])
-        .filter((pin) => pin.path.startsWith(`${directory}/`))
-        .map((pin) => [pin.path.slice(directory.length + 1), pin.sha256]),
-    );
-    const previous = banks.get(bank);
-    if (
-      previous &&
-      (previous.pins.size !== pins.size ||
-        [...pins].some(([path, hash]) => previous.pins.get(path) !== hash))
-    )
-      warn(bank, "placed assets disagree on the pinned sprite resources.");
-    else if (!previous) banks.set(bank, { directory, pins });
-    for (const other of banks.keys())
-      if (other !== bank && other.toLowerCase() === bank.toLowerCase()) {
-        warn(bank, "sprite bank name differs only by case from another placed bank.");
-        warn(other, "sprite bank name differs only by case from another placed bank.");
-      }
+    if (!banks.has(bank)) banks.set(bank, { directory, pins });
   }
   let completed = 0;
   const total = [...banks.values()].reduce((sum, bank) => sum + bank.pins.size, 0);
@@ -68,11 +87,7 @@ export async function collectSceneryResources(
       for (const [relative, expected] of pins) {
         if (!safeLibraryPath(relative)) throw new Error(`invalid frame path ${relative}`);
         const bytes = await read(`${directory}/${relative}`);
-        const hash = [
-          ...new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array(bytes))),
-        ]
-          .map((byte) => byte.toString(16).padStart(2, "0"))
-          .join("");
+        const hash = await sha256(bytes);
         if (hash !== expected) throw new Error(`resource changed: ${relative}`);
         pending[relative] = bytes;
         reportingProgress = true;
@@ -88,8 +103,8 @@ export async function collectSceneryResources(
           reportingProgress = false;
         },
       );
-      for (const { animation } of sources) {
-        if (animation.file.replace(/\.rhs$/i, "") !== bank) continue;
+      for (const { animation, bank: sourceBank } of sources) {
+        if (sourceBank !== bank) continue;
         const profile = manifest.profiles.find((profile) => profile.name === animation.profile);
         if (
           !profile ||
@@ -105,9 +120,15 @@ export async function collectSceneryResources(
       warn(bank, error instanceof Error ? error.message : String(error));
     }
   }
-  if (failed.size && compiled.descriptor.asset_geometry)
+  for (const [index, source] of sources.entries())
+    animations[index]!.sprite.frame_profile_name = source.bank;
+  if (failed.size && compiled.descriptor.asset_geometry) {
     compiled.descriptor.asset_geometry.animations = animations.filter(
-      (animation) => !failed.has(animation.sprite.frame_profile_name),
+      (_, index) => !failed.has(sources[index]!.bank),
     );
+    compiled.scenerySources = compiled.scenerySources.filter(
+      (_, index) => !failed.has(sources[index]!.bank),
+    );
+  }
   return files;
 }
