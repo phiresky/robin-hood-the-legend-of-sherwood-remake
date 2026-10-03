@@ -927,6 +927,9 @@ fn real_iroh_seat_connects_and_ready_begins_gameplay() {
     recv_matching(&client_in_rx, Duration::from_secs(10), |event| {
         matches!(event, NetEvent::AssignedLocalSeat(PlayerId(1)))
     });
+    server_out_tx
+        .send(NetOutbound::ReadyToSim { frame: 0 })
+        .unwrap();
     recv_matching(&server_in_rx, Duration::from_secs(10), |event| {
         matches!(
             event,
@@ -1061,4 +1064,32 @@ fn five_player_coop_routes_chat_and_peer_latency() {
         client.shutdown();
     }
     server.shutdown();
+}
+
+#[tokio::test]
+async fn early_handshake_waits_for_restored_host_frame_before_connect_command() {
+    let (context, events) = dispatch_test_context();
+    context.frame_cursor.store(0, super::Ordering::Relaxed);
+    let (sender, _wire) = unbounded_channel();
+    let claim = context
+        .peers
+        .lock()
+        .sessions
+        .claim_seat(PeerOwner::Native([6; 32]), "early", sender)
+        .unwrap();
+    super::connect_all_provisional_seats(&context);
+    assert!(!context.peers.lock().sessions.is_sim_connected(&claim.seat));
+    assert!(events.try_recv().is_err());
+    context.frame_cursor.store(133, super::Ordering::Relaxed);
+    let (outgoing, receiver) = unbounded_channel();
+    outgoing
+        .send(NetOutbound::ReadyToSim { frame: 133 })
+        .unwrap();
+    drop(outgoing);
+    super::server_dispatch::run_server_outgoing_pump(Arc::new(context), receiver)
+        .await
+        .unwrap();
+    assert!(matches!(events.try_recv().unwrap(), NetEvent::Input {
+        server_frame: 133, origin_frame: 133, target_frame: 135, input,
+    } if matches!(input.command, robin_engine::player_command::PlayerCommand::ConnectSeat { player_id, .. } if player_id == PlayerId(claim.seat))));
 }

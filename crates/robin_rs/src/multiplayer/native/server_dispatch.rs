@@ -148,6 +148,7 @@ pub(super) async fn run_server_outgoing_pump(
                     p.readiness.host_frame = Some(frame);
                     maybe_begin_sim_locked(&mut p)
                 }?;
+                super::connect_all_provisional_seats(&context);
                 announce_begin_sim(&context, begin);
             }
             NetOutbound::ModalProposal { .. } => {

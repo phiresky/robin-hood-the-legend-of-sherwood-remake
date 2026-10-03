@@ -476,16 +476,13 @@ impl EngineInner {
         seat: crate::player_command::PlayerId,
         assets: &LevelAssets,
     ) -> bool {
-        self.players.seats[seat.0 as usize]
-            .selection
-            .iter()
-            .all(|&pc_id| {
-                self.selected_pc_has_contextual_action(
-                    assets,
-                    Some(pc_id),
-                    crate::profiles::Action::Climb,
-                )
-            })
+        self.hero_selection(seat).iter().all(|&pc_id| {
+            self.selected_pc_has_contextual_action(
+                assets,
+                Some(pc_id),
+                crate::profiles::Action::Climb,
+            )
+        })
     }
 
     /// Check whether the selected PC can carry bodies.
@@ -568,7 +565,7 @@ impl EngineInner {
         } else {
             matches!(focus, Focus::Sword | Focus::Interact | Focus::View)
         };
-        if !multi_select_allowed && self.players.seats[seat.0 as usize].selection.len() > 1 {
+        if !multi_select_allowed && self.hero_selection(seat).len() > 1 {
             return false;
         }
 
@@ -671,7 +668,7 @@ impl EngineInner {
             if entity.element_data().optional_layer().is_none() {
                 return false;
             }
-            if self.players.seats[seat.0 as usize].selection.len() > 1 {
+            if self.hero_selection(seat).len() > 1 {
                 return false;
             }
             return self.selected_pc_has_action(
@@ -713,9 +710,7 @@ impl EngineInner {
             }
             Focus::Shield | Focus::ShieldPortrait => {
                 entity.is_active()
-                    && !self.players.seats[seat.0 as usize]
-                        .selection
-                        .contains(&entity_id)
+                    && !self.hero_selection(seat).contains(&entity_id)
                     && !entity.is_dead()
             }
             // Heal-active PC must be alive, below max HP, not in
@@ -1228,15 +1223,10 @@ impl EngineInner {
         mouse_map: MapPoint,
         focus: crate::element::Focus,
     ) -> Option<EntityId> {
-        if self.players.seats[seat.0 as usize].selection.is_empty()
-            && !matches!(focus, crate::element::Focus::Select)
-        {
+        if self.hero_selection(seat).is_empty() && !matches!(focus, crate::element::Focus::Select) {
             return None;
         }
-        let selected_pc = self.players.seats[seat.0 as usize]
-            .selection
-            .first()
-            .copied();
+        let selected_pc = self.hero_selection(seat).first().copied();
         for &eid in draw_order.iter().rev() {
             if let Some(e) = self.get_entity(eid)
                 && self.is_entity_focusable_for_seat(
@@ -1277,10 +1267,7 @@ impl EngineInner {
         mouse_map: MapPoint,
         focus: crate::element::Focus,
     ) -> Option<EntityId> {
-        let selected_pc = self.players.seats[seat.0 as usize]
-            .selection
-            .first()
-            .copied();
+        let selected_pc = self.hero_selection(seat).first().copied();
         for nid in self
             .world
             .entities
@@ -1328,10 +1315,7 @@ impl EngineInner {
         mouse_map: MapPoint,
         focus: crate::element::Focus,
     ) -> Option<EntityId> {
-        let selected_pc = self.players.seats[seat.0 as usize]
-            .selection
-            .first()
-            .copied();
+        let selected_pc = self.hero_selection(seat).first().copied();
         for &pid in self.world.pc_ids.iter().rev() {
             if let Some(e) = self.get_entity(pid)
                 && self.is_entity_focusable_for_seat(
@@ -1363,7 +1347,7 @@ impl EngineInner {
         &self,
         seat: crate::player_command::PlayerId,
     ) -> bool {
-        let pc_id = match self.players.seats[seat.0 as usize].selection.first() {
+        let pc_id = match self.hero_selection(seat).first() {
             Some(&id) => id,
             None => return false,
         };
@@ -1416,8 +1400,8 @@ impl EngineInner {
         seat: crate::player_command::PlayerId,
         mouse_map: MapPoint,
     ) -> bool {
-        let reference = self.players.seats[seat.0 as usize]
-            .selection
+        let reference = self
+            .hero_selection(seat)
             .first()
             .and_then(|&id| self.get_entity(id))
             .map(|e| e.element_data().position_map())
@@ -3474,6 +3458,45 @@ fn resolve_leaning_target(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn joining_seat_input_queries_match_an_empty_selection_without_creating_a_seat() {
+        let (engine, assets) = crate::test_support::fresh_engine_sized(640.0, 480.0);
+        let seat = crate::player_command::PlayerId(1);
+        let point = crate::coordinates::MapPoint::new(0.0, 0.0);
+        let before = crate::replay::state_hash(&engine);
+        assert!(engine.all_selected_pcs_can_climb_for_seat(seat, &assets));
+        for focus in [
+            crate::element::Focus::Select,
+            crate::element::Focus::Interact,
+            crate::element::Focus::Sword,
+        ] {
+            assert!(
+                engine
+                    .find_focusable_entity_for_seat(seat, &assets, &[], point, focus)
+                    .is_none()
+            );
+            assert!(
+                engine
+                    .find_focusable_pc_for_seat(seat, &assets, point, focus)
+                    .is_none()
+            );
+            assert!(
+                engine
+                    .find_focusable_npc_for_seat(seat, &assets, point, focus)
+                    .is_none()
+            );
+        }
+        assert!(!engine.is_selected_pc_in_restricted_sector_for_seat(seat));
+        assert_eq!(
+            engine.is_mouse_sector_valid_for_ground_target_for_seat(seat, point),
+            engine.is_mouse_sector_valid_for_ground_target_for_seat(
+                crate::player_command::PlayerId::HOST,
+                point
+            )
+        );
+        assert_eq!(crate::replay::state_hash(&engine), before);
+    }
+
     use super::*;
     use crate::element::{ActionState, Command};
     use crate::order::OrderType;

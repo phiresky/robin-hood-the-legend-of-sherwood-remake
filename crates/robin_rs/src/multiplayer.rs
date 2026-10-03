@@ -163,7 +163,7 @@ mod tests {
     fn server_client_input_roundtrip() {
         // Server side.
         let (server_in_tx, server_in_rx) = channel::<NetEvent>();
-        let (_server_out_tx, server_out_rx) = channel::<NetOutbound>();
+        let (server_out_tx, server_out_rx) = channel::<NetOutbound>();
         let server_cursor = new_frame_cursor();
         let server_snapshot = std::sync::Arc::new(std::sync::Mutex::new(None));
         let expected_config = robin_engine::engine::SimConfig {
@@ -218,6 +218,9 @@ mod tests {
         };
         assert_eq!(assigned, PlayerId(1));
 
+        server_out_tx
+            .send(NetOutbound::ReadyToSim { frame: 0 })
+            .unwrap();
         let mut saw_join = false;
         for _ in 0..16 {
             match server_in_rx.recv_timeout(Duration::from_millis(200)) {

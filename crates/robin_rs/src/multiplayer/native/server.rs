@@ -772,7 +772,15 @@ pub(super) fn finish_seat_connections(context: &ServerContext, seats: &[u8]) {
 }
 
 pub(super) fn connect_all_provisional_seats(context: &ServerContext) {
-    let seats = context.peers.lock().sessions.admit_provisional_sessions();
+    let seats = {
+        let mut peers = context.peers.lock();
+        // Authentication can finish while the host is still loading a save.
+        // Seat commands must use the restored timeline, never the default cursor.
+        if peers.readiness.host_frame.is_none() {
+            return;
+        }
+        peers.sessions.admit_provisional_sessions()
+    };
     let connected_seats = seats.iter().map(|(seat, _)| *seat).collect::<Vec<_>>();
     publish_connect_seats(context, seats);
     finish_seat_connections(context, &connected_seats);
