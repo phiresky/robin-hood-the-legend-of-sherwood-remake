@@ -1,0 +1,227 @@
+{
+  "title": "Rotated scenery boundary fixture",
+  "map_filename": "editor-rotated-scenery-boundary-fixture",
+  "spawn_points": [],
+  "walkable_polygon": [
+    [
+      0,
+      0
+    ],
+    [
+      1999,
+      0
+    ],
+    [
+      1999,
+      1999
+    ],
+    [
+      0,
+      1999
+    ]
+  ],
+  "volumes": [],
+  "asset_geometry": {
+    "motion_data": {
+      "layers": [
+        [
+          {
+            "is_lift": false,
+            "state_id": 0,
+            "polygon": {
+              "points": [
+                [
+                  490,
+                  590
+                ],
+                [
+                  580,
+                  590
+                ],
+                [
+                  580,
+                  690
+                ],
+                [
+                  490,
+                  690
+                ]
+              ]
+            },
+            "skeleton_segments": [],
+            "flags": 0,
+            "obstacles": []
+          },
+          {
+            "is_lift": false,
+            "state_id": 0,
+            "polygon": {
+              "points": [
+                [
+                  600,
+                  590
+                ],
+                [
+                  690,
+                  590
+                ],
+                [
+                  690,
+                  690
+                ],
+                [
+                  600,
+                  690
+                ]
+              ]
+            },
+            "skeleton_segments": [],
+            "flags": 0,
+            "obstacles": [
+              {
+                "state_id": 0,
+                "polygon": {
+                  "points": [
+                    [
+                      650,
+                      640
+                    ],
+                    [
+                      650,
+                      650
+                    ],
+                    [
+                      640,
+                      650
+                    ],
+                    [
+                      640,
+                      640
+                    ]
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        []
+      ],
+      "graph_bytes": []
+    },
+    "animations": [
+      {
+        "sprite": {
+          "frame_profile_name": "torch",
+          "profile_name": "burning",
+          "position_x": 676,
+          "position_y": 634,
+          "elevation": 20
+        },
+        "blit_type": 1,
+        "active": true,
+        "force_display": false,
+        "display_polyline": [
+          [
+            670,
+            630
+          ],
+          [
+            680,
+            635
+          ],
+          [
+            690,
+            650
+          ]
+        ]
+      }
+    ],
+    "sight_obstacles": [
+      {
+        "points": [
+          {
+            "x": 650,
+            "y": 650,
+            "z_bottom": 0,
+            "z_top": 30
+          },
+          {
+            "x": 640,
+            "y": 650,
+            "z_bottom": 0,
+            "z_top": 30
+          },
+          {
+            "x": 640,
+            "y": 640,
+            "z_bottom": 0,
+            "z_top": 30
+          },
+          {
+            "x": 650,
+            "y": 640,
+            "z_bottom": 0,
+            "z_top": 30
+          }
+        ],
+        "projection_area": null,
+        "solid": true,
+        "opaque": true,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 0,
+        "material_indices": []
+      }
+    ],
+    "doors": [
+      {
+        "door_type": 0,
+        "active": true,
+        "locked_pc": false,
+        "unlockable": false,
+        "locked_npc_villain": false,
+        "locked_npc_civilian": false,
+        "locked_pc_after_patch": false,
+        "unlockable_after_patch": false,
+        "locked_npc_villain_after_patch": false,
+        "locked_npc_civilian_after_patch": false,
+        "door_sector": {
+          "points": [
+            [
+              600,
+              650
+            ],
+            [
+              580,
+              650
+            ],
+            [
+              580,
+              630
+            ],
+            [
+              600,
+              630
+            ]
+          ]
+        },
+        "point_out": [
+          610,
+          640
+        ],
+        "sector_out": 1,
+        "layer_out": 0,
+        "point_mid": [
+          590,
+          640
+        ],
+        "point_in": [
+          570,
+          640
+        ],
+        "sector_in": 0,
+        "layer_in": 0
+      }
+    ]
+  }
+}

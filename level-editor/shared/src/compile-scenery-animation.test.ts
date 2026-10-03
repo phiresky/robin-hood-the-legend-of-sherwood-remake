@@ -91,3 +91,29 @@ test("asset scenery reaches compiled map data and unavailable placement warns in
   hut.gameplay!.animations[0]!.file = ".rhs";
   assert.throws(() => validateAssetGameplay(hut.gameplay, hut), /invalid scenery animation/);
 });
+
+test("reversed placement preserves left-to-right scenery ordering boundaries", () => {
+  const bent = {
+    ...animation,
+    displayPolyline: [
+      [0, 20, 20],
+      [10, 35, 20],
+      [20, 40, 20],
+    ] as [number, number, number][],
+  };
+  const compiled = compileSceneryAnimation(bent, (_node, [x, y, z]) => [
+    100 - x,
+    200 - (y - z) + z,
+    z,
+  ]);
+  assert.deepEqual(compiled.display_polyline, [
+    [80, 180],
+    [90, 185],
+    [100, 200],
+  ]);
+  assert.deepEqual(bent.displayPolyline, [
+    [0, 20, 20],
+    [10, 35, 20],
+    [20, 40, 20],
+  ]);
+});

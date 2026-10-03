@@ -13,6 +13,7 @@ import {
 } from "./map-bake-render.ts";
 import {
   assetCompilerFixture,
+  rotatedSceneryCompilerFixture,
   anchoredReceiverCompilerFixture,
   preservedBoundaryCompilerFixture,
   preservedStateBoundaryCompilerFixture,
@@ -61,6 +62,20 @@ import {
   doorAnchorCompilerFixture,
 } from "../../shared/test-fixtures/asset-gameplay.ts";
 import { readFile } from "node:fs/promises";
+
+test("rotated scenery exports the boundary checked by native display ordering", async () => {
+  const { document, assets } = rotatedSceneryCompilerFixture();
+  const expected = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/asset-scenery-rotated.level.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, expected);
+});
 
 test("joined asset switches match the native multi-part apply/reset fixture", async () => {
   const { document, assets } = joinedTransitionCompilerFixture();

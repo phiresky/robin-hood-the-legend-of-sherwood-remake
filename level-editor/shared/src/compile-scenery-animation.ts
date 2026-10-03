@@ -1,5 +1,6 @@
 import type { AssetSceneryAnimation, CompiledAssetGeometry } from "./asset-gameplay.ts";
 import type { Vec3 } from "./scene.ts";
+import type { Point } from "./level.ts";
 
 /** Transform the billboard's anchor, keeping its raster center in camera coordinates. */
 export function compileSceneryAnimation(
@@ -14,6 +15,20 @@ export function compileSceneryAnimation(
   };
   const signed = (value: number) => quantize(value, -32768, 32767);
   const [x, y, z] = transform(animation.node, animation.anchor);
+  const displayPolyline = animation.displayPolyline.map((point): Point => {
+    const [px, py, pz] = transform(animation.node, point);
+    return [signed(px), signed(py - pz)];
+  });
+  // The runtime brackets actors between consecutive left-to-right vertices.
+  // Placement can reverse that order without changing the boundary itself.
+  if (
+    displayPolyline.length > 1 &&
+    displayPolyline[0]![0] > displayPolyline.at(-1)![0] &&
+    displayPolyline.every(
+      (point, index) => index === 0 || point[0] <= displayPolyline[index - 1]![0],
+    )
+  )
+    displayPolyline.reverse();
   return {
     sprite: {
       // Runtime resolution appends the extension after choosing the ambience directory.
@@ -26,9 +41,6 @@ export function compileSceneryAnimation(
     blit_type: Number(animation.shadow),
     active: animation.active,
     force_display: animation.forceDisplay,
-    display_polyline: animation.displayPolyline.map((point) => {
-      const [px, py, pz] = transform(animation.node, point);
-      return [signed(px), signed(py - pz)];
-    }),
+    display_polyline: displayPolyline,
   };
 }

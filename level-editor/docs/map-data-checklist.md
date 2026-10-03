@@ -65,6 +65,11 @@ The two-bank export regression is under `work/map-compile/scenery-bank-conflicts
 The native decoder verifies distinct pixels in both packaged banks, and the
 runtime spawns both effects with separate cached profiles at their exported
 positions. This checks resource identity and spawning, not rendered occlusion.
+Placement also restores left-to-right vertex order when a display polyline is
+reversed by rotation, preserving the same boundary shape. A 180-degree rotated
+three-point fixture checks native front/behind ordering along both segments and
+beyond both endpoints. Folded and vertical projected boundaries, orientation-specific
+artwork and GPU occlusion remain unverified; this is not general visual parity.
 
 One-time animation recovery uses `pipeline/src/recover-scenery-animation.ts`.
 It requires an explicit owning part and a reviewed 3D anchor whose projected

@@ -1007,6 +1007,61 @@ mod display_order_tests {
     }
 
     #[test]
+    fn rotated_editor_scenery_keeps_native_front_and_behind_ordering() {
+        let loaded = crate::level_data::LoadedLevel::hackable_from_json(include_bytes!(
+            "../../tests/fixtures/asset-scenery-rotated.level.json"
+        ))
+        .unwrap();
+        assert_eq!(loaded.proto.animations.len(), 1);
+        let raw = &loaded.proto.animations[0];
+        let polyline: Vec<_> = raw
+            .display_polyline
+            .iter()
+            .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
+            .collect();
+        assert_eq!(polyline.len(), 3);
+        assert!(polyline.windows(2).all(|pair| pair[0].x < pair[1].x));
+        let a = polyline[0];
+        let b = polyline[1];
+        let c = polyline[2];
+        for boundary in [
+            MapPoint::new(a.x - 10., a.y),
+            a,
+            MapPoint::new((a.x + b.x) * 0.5, (a.y + b.y) * 0.5),
+            b,
+            MapPoint::new((b.x + c.x) * 0.5, (b.y + c.y) * 0.5),
+            c,
+            MapPoint::new(c.x + 10., c.y),
+        ] {
+            let mut engine = EngineInner::new();
+            let animation = engine.add_test_entity(fx_entity(
+                WorldPoint3D::new(
+                    raw.sprite.position_x as f32 + 4.,
+                    raw.sprite.position_y as f32 + 6. + raw.sprite.elevation as f32,
+                    raw.sprite.elevation as f32,
+                ),
+                polyline.clone(),
+                None,
+            ));
+            let front = engine.add_test_entity(fx_entity(
+                WorldPoint3D::new(boundary.x, boundary.y + 10. + 1., 1.),
+                Vec::new(),
+                None,
+            ));
+            let behind = engine.add_test_entity(fx_entity(
+                WorldPoint3D::new(boundary.x, boundary.y - 10. + 1., 1.),
+                Vec::new(),
+                None,
+            ));
+            assert_eq!(
+                engine.compute_display_order().ids,
+                [behind, animation, front],
+                "incorrect ordering at {boundary:?}"
+            );
+        }
+    }
+
+    #[test]
     fn mission_initialization_publishes_position_depth_without_rebinding_references() {
         let mut engine = EngineInner::new();
         let id = engine.add_test_entity(fx_entity(

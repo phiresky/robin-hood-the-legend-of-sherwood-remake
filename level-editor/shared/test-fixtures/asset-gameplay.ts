@@ -2,6 +2,31 @@ import type { GameplayAssetDescriptor } from "../src/asset-gameplay.ts";
 import { IDENTITY_TRANSFORM, type Level3D, type Level3DObject } from "../src/level3d.ts";
 import type { MaskTriangle } from "../src/compile-mask-geometry.ts";
 
+export function rotatedSceneryCompilerFixture() {
+  const fixture = assetCompilerFixture();
+  fixture.hut.gameplay!.animations = [
+    {
+      id: "flame",
+      node: "building-999",
+      file: "torch",
+      profile: "burning",
+      anchor: [10, 30, 20],
+      center: [4, 6],
+      active: true,
+      forceDisplay: false,
+      shadow: true,
+      displayPolyline: [
+        [0, 20, 20],
+        [10, 35, 20],
+        [20, 40, 20],
+      ],
+    },
+  ];
+  fixture.document.groups[0]!.transform = { dx: 900, dy: 900, dz: 0, rot_deg: 180 };
+  fixture.document.map = "Rotated scenery boundary fixture";
+  return fixture;
+}
+
 export function preservedBoundaryCompilerFixture() {
   const fixture = assetCompilerFixture();
   const g = fixture.hut.gameplay!;
