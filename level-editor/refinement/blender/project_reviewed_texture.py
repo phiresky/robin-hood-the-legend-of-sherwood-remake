@@ -287,9 +287,11 @@ def apply(manifest_path, image_path, output_dir, *, texels_per_unit=2, map_name=
     from fill_physical_foliage import fill as fill_foliage
     foliage = fill_foliage(targets, sample, manifest.get('texture_receiver_face_indices'), image_hash,
                            subpixels=manifest.get('texture_foliage_subpixel_sampling', False),
-                           sample_grid=manifest.get('texture_foliage_sample_grid', 0))
+                           sample_grid=manifest.get('texture_foliage_sample_grid', 0),
+                           edge_fill_radius=manifest.get('texture_foliage_edge_fill_radius', 0))
     # Grid samples include texels absent from the centre-sampled counters.
     # Report them separately; per-material foliage counts are authoritative.
+    stats['foliage_extrapolated_texels'] = sum(row['extrapolated'] for row in foliage)
     stats['foliage_grid_generated_texels'] = sum(row['grid_generated'] for row in foliage)
     subpixel_fills = sum(row['subpixel_generated'] for row in foliage)
     stats['generated_texels_including_padding'] += subpixel_fills

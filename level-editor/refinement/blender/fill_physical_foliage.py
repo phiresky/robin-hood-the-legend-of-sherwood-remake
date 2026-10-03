@@ -18,11 +18,41 @@ def triangle_pixels(uv, width, height, offset=(0., 0.)):
     return y.ravel()[inside], x.ravel()[inside], barycentric[inside]
 
 
-def fill(objects, sample, face_scope, generated_hash, *, subpixels=False, sample_grid=0):
+def fill_atlas_edges(colors, generated, eligible, radius):
+    """Extrapolate only from original generated texels in this unknown atlas."""
+    if type(radius) is not int or radius not in (0, 1, 2):
+        raise ValueError('Foliage edge fill radius must be 0, 1, or 2')
+    result = colors.copy()
+    repaired = np.zeros(generated.shape, bool)
+    height, width = generated.shape
+    offsets = sorted((x*x+y*y, y, x) for y in range(-radius, radius+1)
+                     for x in range(-radius, radius+1) if 0 < x*x+y*y <= radius*radius)
+    for _, dy, dx in offsets:
+        rows, cols = np.where(eligible & ~generated & ~repaired)
+        sy, sx = rows+dy, cols+dx
+        inside = (sy >= 0) & (sy < height) & (sx >= 0) & (sx < width)
+        rows, cols, sy, sx = rows[inside], cols[inside], sy[inside], sx[inside]
+        take = generated[sy, sx]
+        result[rows[take], cols[take], :3] = colors[sy[take], sx[take], :3]
+        repaired[rows[take], cols[take]] = True
+    if repaired.sum() > eligible.sum() * .2:
+        raise ValueError('Foliage edge fill exceeds 20% of the physical atlas')
+    return result, repaired
+
+
+def fill(objects, sample, face_scope, generated_hash, *, subpixels=False, sample_grid=0, edge_fill_radius=0):
     if type(subpixels) is not bool:
         raise ValueError('Foliage subpixel sampling must be an explicit boolean')
     if type(sample_grid) is not int or sample_grid not in (0, 4, 8):
         raise ValueError("Foliage sample grid must be 0, 4, or 8")
+    radii = edge_fill_radius if isinstance(edge_fill_radius, dict) else None
+    values = radii.values() if radii is not None else [edge_fill_radius]
+    if any(type(value) is not int or value not in (0, 1, 2) for value in values):
+        raise ValueError('Foliage edge fill radius must be 0, 1, or 2')
+    if radii is not None:
+        names = {m.name for obj in objects for m in obj.data.materials if m and m.get('foliage_physical_opacity')}
+        if not radii or not set(radii) <= names:
+            raise ValueError('Foliage edge fill names absent or non-foliage materials')
     reports = []
     for obj in objects:
         mesh = obj.data
@@ -122,6 +152,11 @@ def fill(objects, sample, face_scope, generated_hash, *, subpixels=False, sample
                             after[rows[accepted], cols[accepted], :3] = colors[accepted, :3]
                             written[rows[accepted], cols[accepted]] = True
                             grid_generated += int(accepted.sum())
+            extrapolated = np.zeros_like(written)
+            radius = radii.get(material.name, 0) if radii is not None else edge_fill_radius
+            if radius:
+                after, extrapolated = fill_atlas_edges(after, written, visible & (before[..., 3] >= .5), radius)
+                written |= extrapolated
             if not np.array_equal(before[..., 3], after[..., 3]) or not np.array_equal(before[~written], after[~written]):
                 raise ValueError('Foliage fill changed protected RGB or physical alpha')
             if written.any():
@@ -140,7 +175,10 @@ def fill(objects, sample, face_scope, generated_hash, *, subpixels=False, sample
                     raise ValueError('Stored foliage texture changed protected RGB or alpha')
                 if np.max(np.abs(actual[written, :3] - after[written, :3])) > 1 / 255 + 1e-7:
                     raise ValueError('Stored foliage RGB exceeds byte quantization error')
-            reports.append(dict(object=obj.name, material=material.name, generated=int(written.sum()),
+            reports.append(dict(object=obj.name, material=material.name, generated=int((written & ~extrapolated).sum()),
+                                extrapolated=int(extrapolated.sum()), edge_fill_radius=radius,
                                 unfilled=int((visible & ~written).sum()), physical_alpha_changed=0,
                                 protected_rgb_changed=0, subpixel_generated=subpixel_generated, grid_generated=grid_generated))
+    if radii is not None and set(radii) - {row['material'] for row in reports}:
+        raise ValueError('Foliage edge fill includes protected or excluded materials')
     return reports

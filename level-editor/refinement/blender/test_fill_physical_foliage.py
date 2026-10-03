@@ -1,6 +1,6 @@
 import unittest
 import numpy as np
-from fill_physical_foliage import triangle_pixels
+from fill_physical_foliage import triangle_pixels, fill_atlas_edges
 
 
 class FoliageAtlasTests(unittest.TestCase):
@@ -31,6 +31,29 @@ class FoliageAtlasTests(unittest.TestCase):
                     np.column_stack([cols + .5, rows + .5]) + offset)
                 samples += len(rows)
         self.assertGreater(samples, 0)
+
+    def test_edge_fill_is_bounded_and_never_propagates_or_changes_alpha(self):
+        colors = np.zeros((1, 20, 4), dtype=np.float32)
+        colors[..., 3] = .7
+        colors[0, 8, :3] = [.1, .7, .2]
+        generated = np.zeros((1, 20), bool); generated[0, 8] = True
+        eligible = np.ones((1, 20), bool); eligible[0, 7] = False
+        result, repaired = fill_atlas_edges(colors, generated, eligible, 2)
+        self.assertEqual(np.flatnonzero(repaired).tolist(), [6, 9, 10])
+        np.testing.assert_array_equal(result[..., 3], colors[..., 3])
+        np.testing.assert_array_equal(result[~repaired], colors[~repaired])
+        np.testing.assert_array_equal(result[0, 10], colors[0, 8])
+        self.assertFalse(repaired[0, 11])
+
+    def test_edge_fill_rejects_large_repairs_and_has_no_source_donors(self):
+        colors = np.ones((3, 3, 4), dtype=np.float32)
+        eligible = np.ones((3, 3), bool)
+        generated = np.zeros((3, 3), bool)
+        _, repaired = fill_atlas_edges(colors, generated, eligible, 2)
+        self.assertFalse(repaired.any())
+        generated[1, 1] = True
+        with self.assertRaisesRegex(ValueError, '20%'):
+            fill_atlas_edges(colors, generated, eligible, 2)
 
     def test_degenerate_uv_fails(self):
         with self.assertRaisesRegex(ValueError, 'Degenerate'):

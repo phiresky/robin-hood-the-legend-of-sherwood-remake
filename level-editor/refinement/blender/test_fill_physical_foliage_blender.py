@@ -94,6 +94,28 @@ assert np.array_equal(actual[..., 3], before[..., 3])
 assert np.array_equal(actual[0], before[0])
 assert np.array_equal(np.asarray(image.pixels[:]).reshape(4, 4, 4), before)
 
+# Repair a single occluded texel from generated neighbours, retaining alpha.
+obj.data.materials[0] = mat
+
+def hole_sample(obj, normal, positions, accepted, colors, *, face_index):
+    visible = ~((positions[:, 0] > .8) & (positions[:, 1] > .8))
+    colors[visible, :3] = [.1, .7, .2]
+    return visible
+
+edges = fill([obj], hole_sample, None, 'test-edges', edge_fill_radius={mat.name: 1})
+assert edges[0]['generated'] == 11 and edges[0]['extrapolated'] == 1, edges
+image_retry = next(n.image for n in obj.data.materials[0].node_tree.nodes if n.type == 'TEX_IMAGE')
+actual = np.asarray(image_retry.pixels[:], dtype=np.float32).reshape(4, 4, 4)
+assert np.array_equal(actual[..., 3], before[..., 3])
+assert np.array_equal(actual[0], before[0])
+assert np.array_equal(np.asarray(image.pixels[:]).reshape(4, 4, 4), before)
+
+try:
+    fill([obj], hole_sample, None, 'invalid', edge_fill_radius={'absent material': 1})
+    raise AssertionError('Foreign material policy accepted')
+except ValueError as error:
+    assert 'absent' in str(error)
+
 import tempfile
 with tempfile.TemporaryDirectory() as folder:
     path = str(Path(folder) / 'foliage.blend')
