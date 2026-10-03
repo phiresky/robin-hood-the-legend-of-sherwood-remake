@@ -98,6 +98,9 @@ pub struct SimConfig {
     /// Authoritative opt-out for runtime ambience gameplay effects.
     #[serde(default = "default_enabled")]
     pub enable_dynamic_ambience: bool,
+    /// Defer script-reported victory while any PC has active combat opponents.
+    #[serde(default = "enabled_by_default")]
+    pub prevent_victory_in_combat: bool,
 }
 
 const fn default_enabled() -> bool {
@@ -150,6 +153,7 @@ pub enum RankedSimulationConfigField {
     SherwoodTrading,
     EnableTimedMissions,
     EnableDynamicAmbience,
+    PreventVictoryInCombat,
 }
 
 impl RankedSimulationConfigField {
@@ -181,6 +185,7 @@ impl RankedSimulationConfigField {
             Self::SherwoodTrading => "sim_config.sherwood_trading",
             Self::EnableTimedMissions => "sim_config.enable_timed_missions",
             Self::EnableDynamicAmbience => "sim_config.enable_dynamic_ambience",
+            Self::PreventVictoryInCombat => "sim_config.prevent_victory_in_combat",
         }
     }
 }
@@ -378,6 +383,7 @@ profile_gameplay_projection! {
     sherwood_trading,
     enable_timed_missions,
     enable_dynamic_ambience,
+    prevent_victory_in_combat,
     diplomacy,
     npc_faction_wars,
     more_combat_gestures,
@@ -422,6 +428,7 @@ impl SimConfig {
             sherwood_trading: true,
             enable_timed_missions: true,
             enable_dynamic_ambience: true,
+            prevent_victory_in_combat: true,
         }
     }
 
@@ -443,6 +450,7 @@ impl SimConfig {
         config.sherwood_trading = false;
         config.enable_timed_missions = false;
         config.enable_dynamic_ambience = false;
+        config.prevent_victory_in_combat = false;
         config
     }
 
@@ -472,6 +480,7 @@ impl SimConfig {
             sherwood_trading,
             enable_timed_missions,
             enable_dynamic_ambience,
+            prevent_victory_in_combat,
         } = self;
         let Self {
             coop: expected_coop,
@@ -498,6 +507,7 @@ impl SimConfig {
             sherwood_trading: expected_sherwood_trading,
             enable_timed_missions: expected_enable_timed_missions,
             enable_dynamic_ambience: expected_enable_dynamic_ambience,
+            prevent_victory_in_combat: expected_prevent_victory_in_combat,
         } = expected;
 
         [
@@ -543,6 +553,8 @@ impl SimConfig {
                 .then_some(RankedSimulationConfigField::EnableTimedMissions),
             (enable_dynamic_ambience != expected_enable_dynamic_ambience)
                 .then_some(RankedSimulationConfigField::EnableDynamicAmbience),
+            (prevent_victory_in_combat != expected_prevent_victory_in_combat)
+                .then_some(RankedSimulationConfigField::PreventVictoryInCombat),
         ]
         .into_iter()
         .flatten()
@@ -578,6 +590,7 @@ impl SimConfig {
             sherwood_trading: true,
             enable_timed_missions: true,
             enable_dynamic_ambience: true,
+            prevent_victory_in_combat: true,
         }
     }
 
@@ -706,6 +719,39 @@ mod tests {
     use super::{RankedSimulationConfigField, SimConfig};
     use crate::gameplay_config::ItemGameplayConfig;
     use crate::player_profile::DifficultyLevel;
+
+    #[test]
+    fn combat_victory_configuration_defaults_projection_and_ranked_policy() {
+        let mut config = SimConfig::default();
+        assert!(config.prevent_victory_in_combat);
+        let mut profile = crate::gameplay_config::GameplayConfig::default();
+        assert!(profile.prevent_victory_in_combat);
+        assert!(crate::gameplay_config::GameplayConfig::migrated().prevent_victory_in_combat);
+        profile.prevent_victory_in_combat = false;
+        config.apply_profile_gameplay(&profile);
+        assert!(!config.prevent_victory_in_combat);
+        assert!(
+            !SimConfig::original_parity_ranked(DifficultyLevel::Medium).prevent_victory_in_combat
+        );
+        let standard = SimConfig::standard_ranked(DifficultyLevel::Medium);
+        let changed = SimConfig {
+            prevent_victory_in_combat: false,
+            ..standard
+        };
+        assert_eq!(
+            changed.first_ranked_difference(standard),
+            Some(RankedSimulationConfigField::PreventVictoryInCombat)
+        );
+        let mut json = serde_json::to_value(standard).unwrap();
+        json.as_object_mut()
+            .unwrap()
+            .remove("prevent_victory_in_combat");
+        assert!(
+            serde_json::from_value::<SimConfig>(json)
+                .unwrap()
+                .prevent_victory_in_combat
+        );
+    }
 
     #[test]
     fn profile_gameplay_projection_round_trips_without_touching_launch_or_ui_settings() {

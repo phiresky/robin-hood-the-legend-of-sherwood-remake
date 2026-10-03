@@ -340,6 +340,9 @@ pub struct GameplayConfig {
     /// ambience-filtered gameplay sound sources.
     #[serde(default = "crate::serde_defaults::enabled")]
     pub enable_dynamic_ambience: bool,
+    /// Require PCs to leave combat before script-reported mission victory.
+    #[serde(default = "crate::serde_defaults::enabled")]
+    pub prevent_victory_in_combat: bool,
 
     /// Show mission/player provenance, relative age, and the expanded
     /// selected-save panel in save/load pickers. Disabling this is strictly a
@@ -412,6 +415,7 @@ impl Default for GameplayConfig {
             show_achievement_debrief: true,
             enable_timed_missions: true,
             enable_dynamic_ambience: true,
+            prevent_victory_in_combat: true,
             more_combat_gestures: true,
             gesture_quality_damage: true,
             show_combat_gesture_guide: false,
@@ -458,6 +462,7 @@ impl GameplayConfig {
             show_achievement_debrief: false,
             enable_timed_missions: true,
             enable_dynamic_ambience: true,
+            prevent_victory_in_combat: true,
             more_combat_gestures: false,
             gesture_quality_damage: false,
             show_combat_gesture_guide: false,

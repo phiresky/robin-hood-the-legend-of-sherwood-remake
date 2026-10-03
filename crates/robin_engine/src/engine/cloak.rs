@@ -266,6 +266,7 @@ pub(crate) fn preserve_original_gameplay_behavior(
     config.more_combat_gestures = false;
     config.gesture_quality_damage = false;
     config.fog_of_war = false;
+    config.prevent_victory_in_combat = false;
     config.difficulty = config.difficulty.original_parity_preset();
     config
 }
@@ -337,6 +338,7 @@ mod tests {
         assert!(!normalized_default.more_combat_gestures);
         assert!(!normalized_default.gesture_quality_damage);
         assert!(!normalized_default.fog_of_war);
+        assert!(!normalized_default.prevent_victory_in_combat);
 
         let legendary = super::super::SimConfig {
             difficulty: crate::player_profile::DifficultyLevel::Legendary,

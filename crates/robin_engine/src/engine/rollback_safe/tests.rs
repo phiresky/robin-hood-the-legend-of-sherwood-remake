@@ -585,6 +585,7 @@ fn installing_original_parity_replay_forces_classic_item_rules() {
         crate::gameplay_config::ItemGameplayConfig::classic()
     );
     assert!(!engine.sim_config().noise_distraction_feedback);
+    assert!(!engine.sim_config().prevent_victory_in_combat);
 
     engine
         .advance_frame(
@@ -604,6 +605,7 @@ fn installing_original_parity_replay_forces_classic_item_rules() {
         crate::gameplay_config::ItemGameplayConfig::classic()
     );
     assert!(!engine.sim_config().noise_distraction_feedback);
+    assert!(!engine.sim_config().prevent_victory_in_combat);
 }
 
 #[test]

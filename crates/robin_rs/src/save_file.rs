@@ -558,7 +558,8 @@ pub const SAVE_MAGIC: &str = "RHSG";
 
 /// Current save format version. Bump on incompatible serialized-field changes.
 /// See `docs/SAVE_FORMAT.md` for the version history.
-pub const SAVE_FORMAT_VERSION: u32 = 97;
+/// Version 98 adds the deterministic combat gate for mission victory.
+pub const SAVE_FORMAT_VERSION: u32 = 98;
 
 /// Human-facing provenance captured when a save is written.
 ///

@@ -4,6 +4,21 @@ use super::*;
 use crate::engine::TickCtx;
 
 impl EngineInner {
+    fn victory_blocked_by_pc_combat(&self) -> bool {
+        self.control.sim_config.prevent_victory_in_combat
+            && self.world.pc_ids.iter().any(|&id| {
+                let Entity::Pc(pc) = self
+                    .world
+                    .entities
+                    .get(id)
+                    .expect("mission PC must exist in the entity registry")
+                else {
+                    panic!("mission PC registry contains a non-PC entity");
+                };
+                !pc.human.opponents.is_empty()
+            })
+    }
+
     /// Run mission gates, the once-per-second script, clock advancement, and
     /// reinforcement arrivals. Returning a code short-circuits every later
     /// phase exactly where the monolithic implementation did.
@@ -121,7 +136,9 @@ impl EngineInner {
                     match victory_result {
                         Ok(1) => {
                             // Mission won!
-                            if !self.mission_domain.state.mission_won {
+                            if !self.mission_domain.state.mission_won
+                                && !self.victory_blocked_by_pc_combat()
+                            {
                                 // Don't show the "leave mission" message for
                                 // ambush or tactical missions (they end immediately).
                                 let show_window = !matches!(
@@ -758,5 +775,97 @@ mod direct_message_tests {
             Message::new(MessageType::Simple(SimpleMessage::LockAlt)),
         );
         assert!(engine.players.seats[0].is_lock_alt);
+    }
+}
+
+#[cfg(test)]
+mod combat_victory_tests {
+    use super::*;
+    use crate::element::Posture;
+    use crate::engine::test_support::{
+        actors::{make_test_pc, make_test_soldier},
+        asm::*,
+    };
+
+    fn fixture(result: i32) -> (EngineInner, LevelAssets, EntityId, EntityId) {
+        let mut class = empty_startup_class("combat_victory.scs".into());
+        class.functions.push(crate::scb::Function {
+            name: "CheckVictoryCondition".into(),
+            address: 0,
+            num_parameters: 1,
+            size_of_return_value: 4,
+            size_of_parameters: 4,
+            size_of_volatile: 0,
+            size_of_temporary: 4,
+        });
+        class.quads = vec![
+            q_begin_function(0, 4),
+            q_aff0_iconstant(0xc000, result),
+            q_return_val(0xc000),
+            q_end_function(),
+        ];
+        let mut engine = EngineInner::new();
+        engine.control.sim_config.ignore_default_loose = true;
+        engine.scripts.mission = Some(
+            crate::engine::types::MissionScript::from_scb(crate::scb::ScbFile {
+                version: crate::scb::SCB_VERSION,
+                classes: vec![class],
+            })
+            .unwrap(),
+        );
+        let assets = LevelAssets::new();
+        engine.attach_script_bindings(&assets);
+        engine.add_test_entity(make_test_pc(Posture::Upright));
+        let pc = engine.add_test_entity(make_test_pc(Posture::Upright));
+        let enemy = engine.add_test_entity(make_test_soldier(Posture::Upright));
+        engine.human_mut(pc).opponents.push(enemy);
+        (engine, assets, pc, enemy)
+    }
+
+    fn check(engine: &mut EngineInner, assets: &LevelAssets) -> Option<GameCode> {
+        engine.control.frame_counter = 0;
+        let sim = crate::sim_rng::test_context();
+        engine.hourglass_phase_mission_and_messages(
+            TickCtx::new(&sim, assets),
+            &mut CameraDisplayState::default(),
+            false,
+            false,
+        )
+    }
+
+    #[test]
+    fn combat_victory_waits_for_last_pc_then_accepts_script_result() {
+        let (mut engine, assets, pc, _) = fixture(1);
+        check(&mut engine, &assets);
+        assert!(!engine.mission_domain.state.mission_won);
+        engine.human_mut(pc).opponents.clear();
+        check(&mut engine, &assets);
+        assert!(engine.mission_domain.state.mission_won);
+    }
+
+    #[test]
+    fn combat_victory_opt_out_accepts_victory_during_combat() {
+        let (mut engine, assets, _, _) = fixture(1);
+        engine.control.sim_config.prevent_victory_in_combat = false;
+        check(&mut engine, &assets);
+        assert!(engine.mission_domain.state.mission_won);
+    }
+
+    #[test]
+    fn combat_victory_gate_does_not_block_defeat() {
+        let (mut engine, assets, _, _) = fixture(2);
+        assert_eq!(check(&mut engine, &assets), Some(GameCode::LevelFailed));
+        assert!(!engine.mission_domain.state.mission_won);
+    }
+
+    #[test]
+    fn combat_victory_ignores_npc_only_fights() {
+        let (mut engine, assets, pc, enemy) = fixture(1);
+        engine.human_mut(pc).opponents.clear();
+        let other = engine.add_test_entity(make_test_soldier(Posture::Upright));
+        engine.human_mut(enemy).opponents.push(other);
+        engine.human_mut(other).opponents.push(enemy);
+        check(&mut engine, &assets);
+        assert!(engine.mission_domain.state.mission_won);
     }
 }

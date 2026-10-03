@@ -93,7 +93,8 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// Protocol 63 adds authenticated co-op chat.
 /// Protocol 64 carries direct movement commands and actor input ownership.
 /// Protocol 65 carries exact cooperative mission teams.
-pub const NET_PROTOCOL_VERSION: u32 = 65;
+/// Protocol 66 adds the combat gate to deterministic simulation configuration.
+pub const NET_PROTOCOL_VERSION: u32 = 66;
 
 /// Maximum bytes in one resumable full-mod transfer chunk. The outer native
 /// transport frame has a larger bound for engine snapshots, so content must

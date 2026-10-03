@@ -1,5 +1,11 @@
 # Post-port Features
 
+- **Combat blocks mission victory.** The saved gameplay flag
+  `prevent_victory_in_combat` defaults on. Script-reported victory waits until
+  every PC has left combat; disabling the flag restores unrestricted victory.
+  The Gameplay option “Block Victory During Combat (Next Launch)” applies at
+  mission launch and is forced off for parity replay.
+
 - **Terrain-following gate barriers.** Assets can define a state-dependent barrier
   with finite vertical reach. Export intersects it with current terrain, preserves
   holes and keeps separate placed gates independently controllable. Controls can

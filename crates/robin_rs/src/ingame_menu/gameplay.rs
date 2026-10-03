@@ -532,6 +532,9 @@ pub(crate) fn apply_setting(config: &mut GameplayConfig, setting: GameplaySettin
         Setting::ShowProductionForecast => {
             config.show_production_forecast = !config.show_production_forecast
         }
+        Setting::PreventVictoryInCombat => {
+            config.prevent_victory_in_combat = !config.prevent_victory_in_combat
+        }
         Setting::ReversibleBackgroundPatches => {
             config.reversible_background_patches = !config.reversible_background_patches
         }
@@ -662,6 +665,7 @@ impl GameplaySetting {
             Setting::EnableUnbinding => config.enable_unbinding,
             Setting::ShowProductionForecast => config.show_production_forecast,
             Setting::ReversibleBackgroundPatches => config.reversible_background_patches,
+            Setting::PreventVictoryInCombat => config.prevent_victory_in_combat,
             Setting::ReusableCloaks => config.reusable_cloaks,
             Setting::CampaignPresentation => {
                 config.campaign_presentation
@@ -797,7 +801,7 @@ mod tests {
         assert_eq!(standalone_visible_option_range(0), 0..12);
         assert_eq!(standalone_visible_option_range(1), 12..24);
         assert_eq!(standalone_visible_option_range(2), 24..36);
-        assert_eq!(standalone_visible_option_range(3), 36..47);
+        assert_eq!(standalone_visible_option_range(3), 36..48);
 
         let covered: Vec<_> = (0..standalone_page_count())
             .flat_map(standalone_visible_option_range)
@@ -990,6 +994,7 @@ mod tests {
                 "Allow Spellforge Missions (Next Launch)",
                 "Reversible Background Patches (Next Launch)",
                 "WASD direct movement",
+                "Block Victory During Combat (Next Launch)",
             ]
         );
         let text = LocalizedGameplayText::for_locale("en-US");

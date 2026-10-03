@@ -76,4 +76,5 @@ settings! {
     EnableSpellforgeMissions,
     ReversibleBackgroundPatches,
     KeyboardDirectControl,
+    PreventVictoryInCombat,
 }

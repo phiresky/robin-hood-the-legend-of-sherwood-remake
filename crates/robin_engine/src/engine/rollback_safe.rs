@@ -842,6 +842,11 @@ impl Engine {
             .control
             .mission_start_sim_config
             .noise_distraction_feedback = false;
+        self.inner.control.sim_config.prevent_victory_in_combat = false;
+        self.inner
+            .control
+            .mission_start_sim_config
+            .prevent_victory_in_combat = false;
         self.inner.control.rng.replace_original_replay(draws);
     }
 

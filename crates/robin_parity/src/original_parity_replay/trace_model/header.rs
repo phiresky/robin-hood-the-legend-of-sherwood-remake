@@ -227,6 +227,7 @@ impl TraceSimConfig {
             gesture_quality_damage: false,
             // Shared-vision fog is also a post-port gameplay rule.
             fog_of_war: false,
+            prevent_victory_in_combat: false,
             reversible_background_patches: false,
             script_enabled: self.script_enabled,
             highlander: self.highlander,
