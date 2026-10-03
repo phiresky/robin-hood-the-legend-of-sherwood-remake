@@ -126,10 +126,37 @@ fn snapshots_are_pure_and_recording_boundaries_are_explicit() {
     }
     let after = std::fs::read(&chunk_path).unwrap();
     assert_eq!(before, after, "post-seal saves must preserve replay bytes");
-    let persisted = GameSaveFile::read_from(&root.path().join("save.json")).unwrap();
+    let mut manager = SaveGameManager::new(root.path().to_str().unwrap().into());
+    manager.insert_test_slot(
+        SaveGame::new("save".into(), "Saved mission".into(), 17),
+        crate::savegame::SlotState::Published,
+    );
+    let load =
+        crate::main_entry::PreparedLoad::preflight(&manager, Some(manager.slot_handle(0).unwrap()))
+            .unwrap()
+            .unwrap()
+            .for_campaign_lobby()
+            .unwrap();
+    let persisted = load.save().clone();
+    assert_eq!(persisted.replay_identity().unwrap(), payload_identity);
+    assert_eq!(persisted.header.replay, save.header.replay);
 
-    // Loading a pre-completion save explicitly opens a continuation and enables
-    // recording and save boundaries again.
+    recording.install_capture_recorder(None);
+    drop(recorder);
+    // A fresh process starts its own archive, then adopts the saved history.
+    // This must retain the original inputs and restore by marker, not snapshot.
+    let fresh_archive = MissionArchive::create(&root.path().join("fresh-session")).unwrap();
+    let fresh_recorder = ReplayRecorder::with_writer(
+        fresh_archive.writer().unwrap(),
+        "Mission_17".into(),
+        game.mission_assets().unwrap().clone(),
+        0,
+        Default::default(),
+        engine.campaign(),
+    )
+    .unwrap();
+    let recorder = SharedReplayRecorder::archived(fresh_recorder, fresh_archive);
+    recording.install_capture_recorder(Some(recorder.clone()));
     let boundary = recorder.restore(&persisted, &recording).unwrap();
     recorder.write_load_back(boundary.ordinal, boundary.marker_ordinal.unwrap(), false);
     recorder
@@ -149,6 +176,12 @@ fn snapshots_are_pure_and_recording_boundaries_are_explicit() {
     let reopened = MissionArchive::open(&root.path().join("replay")).unwrap();
     let (_, replay, _) = reopened.assembled_replay().unwrap();
     assert_eq!(replay.frame_count(), 4);
+    let file = robin_engine::replay::ReplayFile::from(&replay);
+    assert_eq!(file.load_backs.len(), 1);
+    assert!(file.load_backs.values().all(|load| load.snapshot.is_none()));
+    replay.ranked_submission_verdict().unwrap();
+    crate::replay_format::encode_compact(&replay, robin_replay_format::ENGINE_VERSION_HASH)
+        .unwrap();
     let save_file::ReplaySaveIdentity::Payload(digest) = resumed.replay_identity().unwrap() else {
         panic!("published saves require a payload identity");
     };
@@ -997,4 +1030,67 @@ fn manual_remove_apis_refuse_autosaves() {
     assert!(mgr.remove(0).is_err());
     assert!(mgr.remove_by_filename("Autosave_1_0000").is_err());
     assert_eq!(mgr.count(), 1);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn unavailable_history_keeps_a_local_unranked_continuation() {
+    use crate::replay_archive::MissionArchive;
+    use crate::replay_recording::SharedReplayRecorder;
+    use robin_engine::replay::ReplayRecorder;
+
+    let root = tempfile::tempdir().unwrap();
+    let (engine, _, profiles, host) = fresh_save_session("Unavailable history");
+    let game = game_for_save(&profiles, 17);
+    let archive = MissionArchive::create(&root.path().join("local")).unwrap();
+    let recorder = ReplayRecorder::with_writer(
+        archive.writer().unwrap(),
+        "Mission_17".into(),
+        game.mission_assets().unwrap().clone(),
+        0,
+        Default::default(),
+        engine.campaign(),
+    )
+    .unwrap();
+    let recorder = SharedReplayRecorder::archived(recorder, archive);
+    let recording = host.application_context().replay_recording();
+    recording.install_capture_recorder(Some(recorder.clone()));
+    let mut save = GameSaveFile::capture_with_game(
+        &engine,
+        &host,
+        &game,
+        17,
+        game.mission_assets().unwrap().clone(),
+        "snapshot".into(),
+        required_save_provenance(&host, &engine, 17, Some(&profiles)).unwrap(),
+    )
+    .unwrap();
+    recording.attach_save_boundary(&mut save).unwrap();
+    save.header.replay.as_mut().unwrap().mission_directory =
+        root.path().join("missing").to_str().unwrap().into();
+    let link = save.header.replay.clone();
+    let boundary = recorder.restore(&save, &recording).unwrap();
+    assert_eq!(boundary.marker_ordinal, None);
+    assert_eq!(save.header.replay, link);
+    recorder.write_load_snapshot(
+        boundary.ordinal,
+        serde_json::to_vec(&save).unwrap(),
+        boundary.timeline_frame,
+        false,
+    );
+    recorder
+        .commit_restore_boundary(
+            boundary.timeline_frame,
+            robin_engine::replay::state_hash(&save.engine),
+            &crate::mission_replays::RecordingIndex::disabled(),
+        )
+        .unwrap();
+    let replay = crate::replay_archive::load_directory(&root.path().join("local")).unwrap();
+    assert!(replay.ranked_submission_verdict().is_err());
+    assert!(
+        robin_engine::replay::ReplayFile::from(&replay)
+            .load_backs
+            .values()
+            .any(|load| load.snapshot.is_some())
+    );
 }

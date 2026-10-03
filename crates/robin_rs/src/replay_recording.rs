@@ -159,26 +159,42 @@ impl SharedReplayRecorder {
         current.sync_current()?;
         let other = link
             .filter(|link| std::path::Path::new(&link.mission_directory) != current.directory());
-        let opened = other
-            .map(|link| MissionArchive::open(std::path::Path::new(&link.mission_directory)))
-            .transpose()?;
-        let archive = opened.as_ref().unwrap_or(current);
-        let (prefix, data, root) = archive.assembled_replay()?;
-        ensure!(
-            data.header().mission_assets == save.header.mission_assets,
-            "loaded replay requires different mission assets"
-        );
+        // Validate the source before switching archives. An unavailable or
+        // incompatible history must leave the original archive untouched and
+        // keep a playable, explicitly unranked local continuation.
+        let source = (|| -> Result<_> {
+            let opened = other
+                .map(|link| MissionArchive::open(std::path::Path::new(&link.mission_directory)))
+                .transpose()?;
+            let archive = opened.as_ref().unwrap_or(current);
+            let (prefix, data, root) = archive.assembled_replay()?;
+            ensure!(
+                data.header().mission_assets == save.header.mission_assets,
+                "loaded replay requires different mission assets"
+            );
+            Ok((opened, prefix, data, root))
+        })();
+        let (opened, prefix, data, root, link) = match source {
+            Ok((opened, prefix, data, root)) => (opened, prefix, data, root, link),
+            Err(error) if link.is_some() => {
+                tracing::warn!(%error, "loaded save replay history cannot be continued; preserving source and recording an unranked embedded restore");
+                let (prefix, data, root) = current.assembled_replay()?;
+                (None, prefix, data, root, None)
+            }
+            Err(error) => return Err(error),
+        };
         let (timeline, target) = if let Some(link) = link {
             let ReplaySaveIdentity::Payload(digest) = save.replay_identity()? else {
                 unreachable!()
             };
-            archive.validate_link(link, &data, digest)?;
+            opened
+                .as_ref()
+                .unwrap_or(current)
+                .validate_link(link, &data, digest)?;
             (link.timeline_frame, Some(link.marker))
         } else {
-            // A foreign payload is replayable, but cannot supply missing input
-            // history. The ordinary StateLoad evidence keeps it unranked.
             tracing::warn!(
-                "loaded save has no replay history reference; recording an embedded restore"
+                "loaded save has no usable replay history reference; recording an embedded restore"
             );
             (recording.timeline, None)
         };

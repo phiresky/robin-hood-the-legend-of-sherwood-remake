@@ -89,23 +89,24 @@ impl PreparedLoad {
         }
     }
 
-    /// Rebind only a preflighted campaign to the new lobby, retaining its
-    /// selected local slot and recording the derived world as the load marker.
-    pub(crate) fn for_campaign_lobby(
-        mut self,
-        rules: robin_engine::coop::CoopRules,
-    ) -> anyhow::Result<Self> {
+    /// Admit a preflighted save to a fresh lobby without changing its world,
+    /// gameplay rules, or replay provenance.
+    pub(crate) fn for_campaign_lobby(mut self) -> anyhow::Result<Self> {
         let mut save = (*self.save).clone();
-        save.engine = save
-            .engine
-            .for_cooperative_campaign_resume(rules)
+        save.engine
+            .sim_config()
+            .coop
+            .validate()
             .map_err(anyhow::Error::msg)?;
-        save.header.cooperative_campaign = Some(rules);
-        // Older multiplayer Save/QuickSave actions tagged even intentional saves
-        // as local captures. A fresh lobby adopts the validated world and assigns
-        // new seats; it does not restore the previous session's authority.
+        // Lobby setup must not rewrite the saved simulation. Connection changes
+        // belong to the recorded seat command stream, preserving replay identity.
+        save.header.cooperative_campaign = save
+            .engine
+            .sim_config()
+            .coop
+            .campaign
+            .then_some(save.engine.sim_config().coop);
         save.header.multiplayer_diagnostic = false;
-        save.header.replay = None;
         self.save = save.into();
         Ok(self)
     }
@@ -164,6 +165,9 @@ mod tests {
         assert!(save.header.multiplayer_diagnostic);
         let campaign = serde_json::to_value(save.engine.campaign()).unwrap();
         let frame = save.engine.frame_counter();
+        let identity = save.replay_identity().unwrap();
+        let replay_link = save.header.replay.clone();
+        let saved_rules = save.engine.sim_config().coop;
         let directory = tempfile::tempdir().unwrap();
         let mut manager =
             crate::savegame::SaveGameManager::new(directory.path().to_str().unwrap().to_owned());
@@ -177,16 +181,12 @@ mod tests {
         let load = PreparedLoad::preflight(&manager, Some(manager.slot_handle(0).unwrap()))
             .unwrap()
             .unwrap();
-        let rules = robin_engine::coop::CoopRules {
-            campaign: true,
-            players: 2,
-            ..Default::default()
-        };
-        let resumed = load.for_campaign_lobby(rules).unwrap();
+        let resumed = load.for_campaign_lobby().unwrap();
         resumed.validate_slot(&manager).unwrap();
         assert!(!resumed.save().header.multiplayer_diagnostic);
-        assert_eq!(resumed.save().header.cooperative_campaign, Some(rules));
-        assert!(resumed.save().header.replay.is_none());
+        assert_eq!(resumed.save().engine.sim_config().coop, saved_rules);
+        assert_eq!(resumed.save().replay_identity().unwrap(), identity);
+        assert_eq!(resumed.save().header.replay, replay_link);
         assert_eq!(resumed.save().engine.frame_counter(), frame);
         assert_eq!(
             serde_json::to_value(resumed.save().engine.campaign()).unwrap(),

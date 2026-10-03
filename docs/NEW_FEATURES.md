@@ -123,9 +123,12 @@
   unavailable to the story team, missing slots copy an available teammate instead.
   Temporary copies never become permanent recruits. Host Save and QuickSave write
   resumable campaign saves; joining players retain local diagnostic captures.
-  Resuming preserves the saved world and reassigns the new lobby's seats. If more
-  players join than surviving heroes, use shared control until the next mission
-  fills the missing slots.
+  Resuming preserves the saved world and gameplay rules. The lobby displays
+  the saved control mode, enemy-health scaling and team in disabled controls;
+  player joins do not rewrite these settings. Compatible save-linked recordings
+  continue the original input history using save markers, without embedding a
+  snapshot in leaderboard submissions. Missing or incompatible replay history
+  produces a playable local recording and a clear submission-unavailable reason.
 - **Shared Robin supplies.** Robin copies share one stock of arrows, purses,
   food and other consumables in both campaign and single-mission multiplayer.
   Pickups fill one character's capacity, spending updates every copy's action

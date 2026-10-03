@@ -451,10 +451,12 @@ impl MultiplayerMenuState {
                     MenuMode::Hosted { game, .. } if game.id == updated.id => {
                         let previous_players = game.players;
                         *game = updated.clone();
-                        if previous_players != game.players {
-                            self.coop.assignments = [0, 1, 2, 3, 4];
+                        if self.campaign_save.is_none() {
+                            if previous_players != game.players {
+                                self.coop.assignments = [0, 1, 2, 3, 4];
+                            }
+                            self.coop.players = game.players as u8;
                         }
-                        self.coop.players = game.players as u8;
                         if game.players != previous_players {
                             self.status = format!(
                                 "{} player{} in game",
@@ -532,10 +534,22 @@ impl MultiplayerMenuState {
             if mission.campaign_save.is_some() {
                 rules = saved_rules;
             }
-            rules.campaign = true;
-            rules.team = [0; 5];
+            if mission.campaign_save.is_none() {
+                rules.campaign = true;
+                rules.team = [0; 5];
+            }
         }
         rules
+    }
+
+    fn saved_rules_locked(&self) -> bool {
+        match self.mode {
+            MenuMode::Missions => self
+                .selected_mission()
+                .is_some_and(|m| m.campaign_save.is_some()),
+            MenuMode::Hosted { .. } => self.campaign_save.is_some(),
+            _ => false,
+        }
     }
 
     fn publish_rules(&mut self) {
@@ -556,7 +570,13 @@ impl MultiplayerMenuState {
         let (w, h) = resources.button_dimensions();
         let x = MENU_W - w - 10;
         let bottom = MENU_H - h - 10;
-        let valid = self.selected_rules().validate().is_ok();
+        let rules = self.selected_rules();
+        let locked = self.saved_rules_locked();
+        if locked {
+            self.hero_setup = false;
+            self.edit_assignments = false;
+        }
+        let valid = rules.validate().is_ok();
         let mut buttons = Vec::new();
         let mut add = |id, label: String, enabled, bx, y, bw, bh| {
             buttons.push((id, label, enabled, bx, y, bw, bh));
@@ -673,13 +693,13 @@ impl MultiplayerMenuState {
                 }
                 add(
                     ID_RULE,
-                    match self.coop.control {
+                    match rules.control {
                         CharacterControl::Shared => "Control: shared",
                         CharacterControl::Exclusive => "Control: exclusive",
                         CharacterControl::Assigned => "Control: assigned",
                     }
                     .into(),
-                    true,
+                    !locked,
                     x,
                     y,
                     w,
@@ -688,8 +708,8 @@ impl MultiplayerMenuState {
                 y += h + 12;
                 add(
                     ID_SCALE,
-                    format!("Enemy HP: +{}%", self.coop.enemy_health_per_duplicate),
-                    true,
+                    format!("Enemy HP: +{}%", rules.enemy_health_per_duplicate),
+                    !locked,
                     x,
                     y,
                     w,
@@ -698,7 +718,12 @@ impl MultiplayerMenuState {
                 y += h + 12;
                 add(
                     ID_HERO_SETUP,
-                    if self.coop.campaign
+                    if locked {
+                        rules.team_string().map_or_else(
+                            || "Saved story team".into(),
+                            |team| format!("Saved team: {team}"),
+                        )
+                    } else if self.coop.campaign
                         || self
                             .selected_mission()
                             .is_some_and(|m| m.campaign_rules.is_some())
@@ -707,7 +732,8 @@ impl MultiplayerMenuState {
                     } else {
                         format!("Edit team ({}/5)", self.coop.team_len())
                     },
-                    !self.coop.campaign
+                    !locked
+                        && !self.coop.campaign
                         && !self
                             .selected_mission()
                             .is_some_and(|m| m.campaign_rules.is_some()),
@@ -787,7 +813,7 @@ impl MultiplayerMenuState {
             ),
             MenuMode::Hosted { .. } => add(
                 ID_START,
-                if self.hero_setup || self.coop.campaign {
+                if self.hero_setup || self.coop.campaign || locked {
                     "Start mission"
                 } else {
                     "Review team"
@@ -940,10 +966,12 @@ impl MultiplayerMenuState {
             }
             players_joined = io.window.local_players.count() > before;
             let count = io.window.local_players.count().max(1) as u8;
-            if self.coop.players != count {
-                self.coop.assignments = [0, 1, 2, 3, 4];
+            if !self.saved_rules_locked() {
+                if self.coop.players != count {
+                    self.coop.assignments = [0, 1, 2, 3, 4];
+                }
+                self.coop.players = count;
             }
-            self.coop.players = count;
             self.status = format!(
                 "{} player(s) joined. Keyboard {}. Press {} on a controller to join.",
                 io.window.local_players.count(),
@@ -1137,6 +1165,12 @@ impl MultiplayerMenuState {
         application_context: &ApplicationContext,
         io: &mut ModalScreenIo<'_, '_>,
     ) -> Option<MultiplayerMenuTick> {
+        if self.saved_rules_locked()
+            && (matches!(id, ID_RULE | ID_SCALE | ID_HERO_SETUP | ID_ASSIGNMENTS)
+                || id >= ID_COPY_BASE)
+        {
+            return None;
+        }
         match id {
             ID_HERO_SETUP
                 if !self.coop.campaign
@@ -1383,6 +1417,7 @@ impl MultiplayerMenuState {
             let mut choice = self.missions[self.selected].clone();
             choice.load_save = false;
             choice.campaign_save = Some(slot);
+            choice.campaign_rules = Some(save.engine.sim_config().coop);
             choice.mission_id = save.header.mission_id;
             choice.mission_name = save.header.provenance.mission_name.clone();
             choice.label = format!("Load: {}", save.header.display_text);
@@ -1421,7 +1456,9 @@ impl MultiplayerMenuState {
                 }
                 if let Some(mission) = self.missions.get(self.selected) {
                     io.window.local_players.enabled = true;
-                    self.coop.players = player_count as u8;
+                    if mission.campaign_save.is_none() {
+                        self.coop.players = player_count as u8;
+                    }
                     return Some(MultiplayerMenuTick::Finished(Some(MultiplayerLaunch {
                         campaign_save: mission.campaign_save.clone(),
                         coop: self.coop,
@@ -1993,6 +2030,14 @@ async fn preflight_host_content(
 
 impl MultiplayerMenuState {
     fn selected_mission(&self) -> Option<&MissionChoice> {
+        if matches!(self.mode, MenuMode::Hosted { .. })
+            && let Some(slot) = &self.campaign_save
+        {
+            return self
+                .missions
+                .iter()
+                .find(|m| m.campaign_save.as_ref() == Some(slot));
+        }
         match &self.mode {
             MenuMode::Missions => self.missions.get(self.selected),
             MenuMode::Hosted { game } => self.missions.iter().find(|m| {
@@ -2238,7 +2283,10 @@ impl MultiplayerMenuState {
                 _ => "Your lobby",
             };
             render_text_virt_font(renderer, font, transform, heading, LIST_RECT.x, 58);
-            let sidebar = if matches!(mode, MenuMode::Games) {
+            let rules = self.selected_rules();
+            let sidebar = if self.saved_rules_locked() {
+                "Saved rules (locked)"
+            } else if matches!(mode, MenuMode::Games) {
                 "Play together"
             } else if matches!(mode, MenuMode::Joined { .. }) {
                 "Waiting for host"
@@ -2258,7 +2306,7 @@ impl MultiplayerMenuState {
             let help = if matches!(mode, MenuMode::Games) {
                 "Join an online game, host your own, or play locally on one screen."
             } else {
-                match self.coop.control {
+                match rules.control {
                     robin_engine::coop::CharacterControl::Shared => {
                         "Everyone can select and control any hero."
                     }
@@ -2270,13 +2318,15 @@ impl MultiplayerMenuState {
                     }
                 }
             };
-            let team = self.coop.team[..self.coop.team_len()]
+            let team = rules.team[..rules.team_len()]
                 .iter()
                 .map(|&code| robin_engine::coop::team_character_name(code))
                 .collect::<Vec<_>>()
                 .join(", ");
             let detail = if let Err(error) = self.selected_rules().validate() {
                 error
+            } else if self.saved_rules_locked() {
+                format!("Saved gameplay rules are locked. {help}")
             } else if matches!(mode, MenuMode::Games) {
                 help.to_owned()
             } else {
@@ -2420,10 +2470,25 @@ fn add_campaign_choices(
     } else {
         "Start Campaign"
     };
-    let rules = robin_engine::coop::CoopRules {
-        campaign: true,
-        ..Default::default()
-    };
+    let rules = sources
+        .saves
+        .and_then(|saves| {
+            let (slot, _) = resume.as_ref()?;
+            let index = saves
+                .find_by_filename(slot.as_str())
+                .expect("resume slot exists");
+            match saves.preflight_exact_slot(index) {
+                Ok(save) => Some(save.engine.sim_config().coop),
+                Err(error) => {
+                    tracing::warn!(%error, "Cannot read checkpoint rules for campaign menu");
+                    None
+                }
+            }
+        })
+        .unwrap_or(robin_engine::coop::CoopRules {
+            campaign: true,
+            ..Default::default()
+        });
     let campaign_choice = MissionChoice {
         load_save: false,
         campaign_rules: Some(rules),
@@ -3050,6 +3115,7 @@ mod visual_tests {
                 "keyboard-focus",
                 "joined",
                 "browser",
+                "saved-rules",
             ] {
                 state.hero_setup = matches!(
                     view,
@@ -3098,6 +3164,20 @@ mod visual_tests {
                 } else {
                     MenuMode::Missions
                 };
+                if view == "saved-rules" {
+                    let saved = robin_engine::coop::CoopRules {
+                        players: 2,
+                        team: [b'R', b'R', 0, 0, 0],
+                        control: robin_engine::coop::CharacterControl::Exclusive,
+                        enemy_health_per_duplicate: 25,
+                        ..Default::default()
+                    };
+                    let mission = &mut state.missions[state.selected];
+                    mission.campaign_save =
+                        Some(crate::savegame::SlotName::new("Savegame_002").unwrap());
+                    mission.campaign_rules = Some(saved);
+                    assert_eq!(state.selected_rules(), saved);
+                }
                 state.team_focus = None;
                 state.clamp_selection_to_rows();
                 if !matches!(state.mode, MenuMode::Games) {
@@ -3113,6 +3193,17 @@ mod visual_tests {
                     assert_eq!(state.team_focus, Some(ID_REMOVE_BASE + 1));
                 }
                 let widgets = state.frame.widgets();
+                if view == "saved-rules" {
+                    for (id, text) in [
+                        (ID_RULE, "Control: exclusive"),
+                        (ID_SCALE, "Enemy HP: +25%"),
+                        (ID_HERO_SETUP, "Saved team: RR"),
+                    ] {
+                        let widget = widgets.iter().find(|widget| widget.id() == id).unwrap();
+                        assert!(!widget.base().enabled);
+                        assert_eq!(widget.base().text, text);
+                    }
+                }
                 for (index, a) in widgets.iter().enumerate() {
                     let ab = a.base().bbox.0.unwrap();
                     for b in &widgets[index + 1..] {

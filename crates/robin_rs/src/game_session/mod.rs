@@ -537,12 +537,8 @@ async fn run_session_body(
                 };
             }
         };
-        let load = if session_args.multiplayer.coop.campaign {
-            let mut rules = session_args.multiplayer.coop;
-            if let Some(players) = session_args.multiplayer.expected_players {
-                rules.players = players as u8;
-            }
-            match load.for_campaign_lobby(rules) {
+        let load = if session_args.multiplayer.expected_players.is_some() {
+            match load.for_campaign_lobby() {
                 Ok(load) => load,
                 Err(error) => {
                     return SessionOutcome {

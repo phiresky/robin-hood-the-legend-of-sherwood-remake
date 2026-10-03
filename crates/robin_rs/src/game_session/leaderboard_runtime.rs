@@ -38,8 +38,8 @@ pub(crate) fn installed_content_edition(
 
 /// Encode the recording, select its board from published metadata and build
 /// the browse/upload bundle together with the exact replay bytes to upload.
-/// The bundle always offers the upload; callers withhold it where policy
-/// requires (for example unsuccessful mission-end attempts).
+/// Runs restored without complete input history retain leaderboard browsing
+/// but have no upload artifact or submission action.
 pub(crate) async fn prepare_recorded_submission(
     replay: &robin_engine::replay::ReplayData,
     preferences: &LeaderboardPreferences,
@@ -56,11 +56,21 @@ async fn prepare(
     edition: OfficialContentEditionV1,
 ) -> Result<(MissionEndRunBundle, Arc<[u8]>), RankedError> {
     let header = replay.header();
-    let bytes: Arc<[u8]> =
-        crate::replay_format::encode_compact(replay, robin_replay_format::ENGINE_VERSION_HASH)
-            .map_err(|error| RankedError::evidence(error.to_string()))?
-            .into();
-    let artifact = canonical_replay_artifact(&bytes, &header.mission_id)?;
+    let unavailable = replay_submission_unavailable_reason(replay)?;
+    // Check reconstructibility before the bounded ranked codec: a local save
+    // snapshot may be much larger than a ranked command collection.
+    let (artifact, bytes): (_, Arc<[u8]>) = if unavailable.is_none() {
+        let bytes: Arc<[u8]> =
+            crate::replay_format::encode_compact(replay, robin_replay_format::ENGINE_VERSION_HASH)
+                .map_err(|error| RankedError::evidence(error.to_string()))?
+                .into();
+        (
+            Some(canonical_replay_artifact(&bytes, &header.mission_id)?),
+            bytes,
+        )
+    } else {
+        (None, Arc::from([]))
+    };
     let api = LeaderboardApi::from_preferences(preferences)?;
     let metadata = crate::leaderboard_service::decode_metadata(api.metadata()?.take().await)?;
     let board = board::select_board(&metadata, edition, &header.mission_id, header.sim_config)?;
@@ -82,7 +92,7 @@ async fn prepare(
         multiplayer: transcript.max_concurrent_players > 1,
         tick_duration: metadata.tick_duration,
         boards,
-        eligible_submission: Some(MissionEndSubmissionInput {
+        eligible_submission: artifact.map(|artifact| MissionEndSubmissionInput {
             board_id: board.board_id.clone(),
             mission_id: header.mission_id.clone(),
             requested_metrics: board.metrics.clone(),
@@ -91,10 +101,21 @@ async fn prepare(
             replay: artifact,
             replay_session_id,
         }),
-        submission_unavailable_reason: None,
+        submission_unavailable_reason: unavailable,
     };
     bundle.validate()?;
     Ok((bundle, bytes))
+}
+
+fn replay_submission_unavailable_reason(
+    replay: &robin_engine::replay::ReplayData,
+) -> Result<Option<String>, RankedError> {
+    let rankability = replay
+        .rankability()
+        .map_err(|error| RankedError::evidence(error.to_string()))?;
+    Ok(rankability.taints().iter().any(|taint|
+        taint.kind == robin_engine::replay_rankability::InputTaintKind::StateLoad
+    ).then(|| "This save's complete replay history is unavailable. The local replay can be watched, but this run cannot be submitted.".to_owned()))
 }
 
 /// One tab per supported metric of `board`, filtered to this recording's
@@ -202,5 +223,42 @@ impl MissionEndPreparation {
             .expect("upload task initialized")
             .poll(|| "Replay upload preparation stopped unexpectedly".to_owned())
             .map(|result| result.map_err(RankedError::unavailable))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use robin_engine::replay::{ReplayData, ReplayFile, ReplayLoadBack, ReplaySaveSnapshot};
+
+    #[test]
+    fn oversized_local_restore_is_explained_before_ranked_encoding() {
+        let replay = crate::leaderboard::test_fixtures::single_frame_replay(bitcode::encode(
+            &Campaign::default(),
+        ));
+        assert!(
+            replay_submission_unavailable_reason(&replay)
+                .unwrap()
+                .is_none()
+        );
+        let mut file = ReplayFile::from(&replay);
+        file.load_backs.insert(
+            0,
+            ReplayLoadBack {
+                snapshot: Some(ReplaySaveSnapshot {
+                    payload: vec![0; 4_077_629],
+                    timeline_frame: 0,
+                }),
+                to_frame: 0,
+                is_continue: false,
+            },
+        );
+        let replay = ReplayData::try_from(file).unwrap();
+        assert!(
+            replay_submission_unavailable_reason(&replay)
+                .unwrap()
+                .unwrap()
+                .contains("complete replay history is unavailable")
+        );
     }
 }
