@@ -1,5 +1,11 @@
 # Post-port Features
 
+- **Asset-owned scenery animation definitions.** Map export transforms local
+  billboard anchors and display polylines into native map animations, independently
+  of mission characters. Definitions name a sprite/profile and its raster center;
+  resources currently need an installed shared bank or separately supplied mod.
+  Library authoring, preview and automatic resource packaging remain unfinished.
+
 - **Bounded shadow regions for map appearance switches.** Export includes each
   asset's possible shadow footprint using the scene's sun direction and lowest
   geometry. Independent switches no longer require full-map state combinations;

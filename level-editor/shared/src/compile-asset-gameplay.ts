@@ -4,6 +4,7 @@ import polygonClipping, { type Polygon } from "polygon-clipping";
 import { assembleSightVolumes } from "./assemble-sight-volumes.ts";
 import { orderSightVolumes } from "./order-sight-volumes.ts";
 import { compileSoundSource } from "./compile-sound-source.ts";
+import { compileSceneryAnimation } from "./compile-scenery-animation.ts";
 import { fixedPolygonBoolean } from "./fixed-polygon-boolean.ts";
 import { unionMovementSurfaces } from "./union-movement-surfaces.ts";
 import { assembleNavigationRegions, type NavigationPiece } from "./assemble-navigation-regions.ts";
@@ -395,6 +396,7 @@ function compileAssetGameplayAttempt(
   const materials: NonNullable<CompiledAssetGeometry["material_sectors"]> = [];
   const groundMaterials: number[] = [];
   const sounds: NonNullable<CompiledAssetGeometry["sound_sources"]> = [];
+  const animations: NonNullable<CompiledAssetGeometry["animations"]> = [];
   let mapSettings: CompiledAssetGeometry["map_settings"];
   const quantize = (n: number) => {
     const result = Math.round(n);
@@ -507,6 +509,14 @@ function compileAssetGameplayAttempt(
       });
     }
     for (const sound of gameplay.sounds ?? []) sounds.push(compileSoundSource(sound, transform));
+    for (const animation of gameplay.animations ?? []) {
+      try {
+        animations.push(compileSceneryAnimation(animation, transform));
+      } catch (error) {
+        if (!options.bestEffort || !(error instanceof Error)) throw error;
+        warnings.push(`Animation ${placement.id}/${animation.id} omitted: ${error.message}.`);
+      }
+    }
     const partSight = new Map<string, SightObstacle>();
     const movementSolid = (id: string) =>
       gameplay.movementSolids?.includes(id) ?? gameplay.movementBlockers === undefined;
@@ -2180,6 +2190,7 @@ function compileAssetGameplayAttempt(
       : {}),
     ...(mapSettings ? { map_settings: mapSettings } : {}),
     ...(sounds.length ? { sound_sources: sounds } : {}),
+    ...(animations.length ? { animations } : {}),
     sight_obstacles: sight,
     ...(materials.length
       ? { material_sectors: materials, sight_material_indices: groundMaterials }

@@ -2268,6 +2268,9 @@ impl TryFrom<HackableLevelDescriptorInput> for HackableLevelDescriptor {
 pub struct CompiledAssetGeometry {
     #[serde(default)]
     pub warnings: Vec<String>,
+    /// Asset-owned animated scenery, separate from mission actor placement.
+    #[serde(default)]
+    pub animations: Vec<RawElementFx>,
     pub motion_data: RawMotionData,
     #[serde(default)]
     pub lifts: Vec<RawLift>,
@@ -3350,6 +3353,16 @@ impl LoadedLevel {
                     return Err("invalid compiled environmental sound source".into());
                 }
             }
+            for animation in &geometry.animations {
+                if animation.sprite.frame_profile_name.trim().is_empty()
+                    || animation.sprite.profile_name.trim().is_empty()
+                {
+                    return Err(
+                        "compiled scenery animation requires a sprite file and profile".into(),
+                    );
+                }
+            }
+            level.proto.animations = geometry.animations;
             level.proto.sound_sources = geometry.sound_sources;
             level.proto.lifts = geometry.lifts;
             if let Some(settings) = geometry.map_settings {
@@ -5878,6 +5891,48 @@ fn read_archery_sectors(
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn compiled_scenery_animations_preserve_placement_and_display_rules() {
+        let mut descriptor: serde_json::Value = serde_json::from_slice(include_bytes!(
+            "../../robin_engine/tests/fixtures/asset-multi-plane-region.level.json"
+        ))
+        .unwrap();
+        let animation = serde_json::json!({
+            "sprite": {"frame_profile_name": "torch.rhs", "profile_name": "burning",
+                "position_x": 230, "position_y": 350, "elevation": 40},
+            "blit_type": 1, "active": true, "force_display": false,
+            "display_polyline": [[220, 400], [260, 410]]
+        });
+        descriptor["asset_geometry"]["animations"] = serde_json::json!([animation]);
+        let loaded =
+            LoadedLevel::hackable_from_json(&serde_json::to_vec(&descriptor).unwrap()).unwrap();
+        assert_eq!(
+            serde_json::to_value(&loaded.proto.animations[0]).unwrap(),
+            animation
+        );
+        assert!(loaded.mission.soldiers.is_empty());
+        for field in ["frame_profile_name", "profile_name"] {
+            let mut invalid = descriptor.clone();
+            invalid["asset_geometry"]["animations"][0]["sprite"][field] = " ".into();
+            assert!(
+                LoadedLevel::hackable_from_json(&serde_json::to_vec(&invalid).unwrap())
+                    .unwrap_err()
+                    .contains("requires a sprite file and profile")
+            );
+        }
+        descriptor["asset_geometry"]
+            .as_object_mut()
+            .unwrap()
+            .remove("animations");
+        assert!(
+            LoadedLevel::hackable_from_json(&serde_json::to_vec(&descriptor).unwrap())
+                .unwrap()
+                .proto
+                .animations
+                .is_empty()
+        );
+    }
 
     #[test]
     fn compiled_elevation_lines_preserve_receiver_boundaries_and_validate_references() {

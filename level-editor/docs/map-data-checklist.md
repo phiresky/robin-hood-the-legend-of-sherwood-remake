@@ -18,6 +18,19 @@ with it. Global indices and connections are rebuilt after placement.
 with Derby/York. “Partial” identifies a remaining gap. “Planned” describes the
 intended construction, not functionality available today.
 
+**Animated scenery:** asset gameplay can now define camera-facing sprite animations
+with a local anchor, sprite file/profile and center, activation/display flags and
+a local 3D masking polyline. Compilation transforms the anchor and polyline with
+the placed part and rebases them to export bounds. The raster center stays in
+camera coordinates. Native descriptors load these into map animations, separately
+from mission soldiers; older exports default to no animations. Invalid runtime
+coordinates omit only the affected animation with a best-effort warning.
+Placement/validation and native descriptor tests pass. This is initial support,
+not completed animation parity: library authoring/recovery, sprite-resource
+packaging and validation, preview, orientation-specific artwork and native
+rendering verification remain unfinished. Referenced sprite resources must
+currently come from the installed shared bank or a separately supplied mod.
+
 **Interior connections:** multiple entrances in an asset-local room remain
 connected automatically, including after moving or duplicating the asset. Distinct
 rooms in one asset retain their authored separation. The Assets inspector can
@@ -572,7 +585,7 @@ sampled Rust queries. Equivalent evidence across all maps remains unfinished.
 | Surface materials | Transform asset-local material polygons; rebuild ground, obstacle and receiving-surface links independently. Preserve receiving defaults, footprints and overlap priority. | Compiler/native tests pass; all nine recovery drafts include receiving materials; publication and geometry coverage remain unfinished |
 | Light/shadow regions | Transform asset-local planar contours, resolve ordinary or traversal receiving layers and preserve ambience filters. Conflicting anchored receivers receive separate runtime layers. | All 148 contours across the five town drafts and Sherwood's night field compile; unrestricted query equivalence, refreshed older drafts and publication remain unfinished |
 | Environmental sound sources | Transform asset-local emitter polylines; retain sample IDs, timing, volume falloff, acoustic altitude, noise-covering distance and ambience filters. Global emitters need no position. | All 119 emitter records match across nine source-backed staged maps; publication, audible playback and Wychford authoring remain outstanding |
-| Animated scenery / effects | Export asset animations, sprite resources, placement and display rules. | Planned |
+| Animated scenery / effects | Transform asset-owned billboard anchors and masking polylines; export sprite references and display flags into native map animations. | Partial: placement and native descriptor loading tested; library definitions, resource packaging, preview and rendered verification unfinished |
 | Interactive patches / state changes | Asset-local transitions compile initial/applied movement contours, sight-obstacle references and door links, trigger zones and fresh state bindings across affected navigation areas. | Partial: movement, sight and door bindings implemented; changing visuals, masks and asset recovery remain unfinished |
 | Map settings | Scene identity/export bounds; terrain assets supply forest behaviour and default material. Ambience is selected by the mission. | Working in compiler/runtime tests; recovered terrain metadata unpublished |
 | Resource banks and references | Package generated resources and resolve shared sprite/audio/profile dependencies. | Partial: baked images; shared resources use the base installation |

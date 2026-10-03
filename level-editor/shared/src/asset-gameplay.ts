@@ -166,6 +166,8 @@ export interface AssetGameplay {
   /** Map-wide defaults supplied by a terrain asset. Ambience is mission-owned. */
   environment?: { forest: boolean; defaultMaterial: number };
   sounds?: AssetSoundSource[];
+  /** Billboard scenery; the local anchor moves with its owner while artwork faces the camera. */
+  animations?: AssetSceneryAnimation[];
   lights?: AssetLightRegion[];
   masks?: AssetOcclusionMask[];
   /** Parts whose complete sprite occlusion is authored by typed masks, including states.
@@ -299,6 +301,21 @@ export interface AssetSoundSource {
 }
 export type GameplayAssetDescriptor = ProjectionAssetDescriptor & { gameplay?: AssetGameplay };
 
+export interface AssetSceneryAnimation {
+  id: string;
+  node: string;
+  anchor: [number, number, number];
+  /** Sprite resources must be supplied by the mod or the installed shared resource bank. */
+  file: string;
+  profile: string;
+  /** Authored sprite center, used to convert the placed anchor into the runtime top-left. */
+  center: Point;
+  active: boolean;
+  forceDisplay: boolean;
+  shadow: boolean;
+  displayPolyline: [number, number, number][];
+}
+
 /** A generated interchange schema; indices are assigned afresh on each compilation. */
 export interface CompiledAssetGeometry {
   /** Authoring diagnostics, also surfaced in the export summary. */
@@ -321,6 +338,19 @@ export interface CompiledAssetGeometry {
   sight_material_indices?: number[];
   map_settings?: { forest_level: boolean; default_material: number };
   sound_sources?: SoundSource[];
+  animations?: {
+    sprite: {
+      frame_profile_name: string;
+      profile_name: string;
+      position_x: number;
+      position_y: number;
+      elevation: number;
+    };
+    blit_type: number;
+    active: boolean;
+    force_display: boolean;
+    display_polyline: Point[];
+  }[];
   light_sectors?: LightSector[];
   jump_zones?: {
     polygon: { points: Point[] };
@@ -773,6 +803,25 @@ export function validateAssetGameplay(
         ))
     )
       fail(`invalid light receiving segments ${light.id}`);
+  }
+  if (data.animations !== undefined && !Array.isArray(data.animations))
+    fail("invalid scenery animations");
+  for (const animation of data.animations ?? []) {
+    feature(animation);
+    if (
+      !point(animation.anchor, 3) ||
+      !point(animation.center, 2) ||
+      typeof animation.file !== "string" ||
+      !animation.file.trim() ||
+      typeof animation.profile !== "string" ||
+      !animation.profile.trim() ||
+      typeof animation.active !== "boolean" ||
+      typeof animation.forceDisplay !== "boolean" ||
+      typeof animation.shadow !== "boolean" ||
+      !Array.isArray(animation.displayPolyline) ||
+      !animation.displayPolyline.every((p) => point(p, 3))
+    )
+      fail(`invalid scenery animation ${animation.id}`);
   }
   if (data.sounds !== undefined && !Array.isArray(data.sounds)) fail("invalid sound sources");
   for (const sound of data.sounds ?? []) {
