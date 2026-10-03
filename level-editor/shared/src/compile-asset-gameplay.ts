@@ -524,7 +524,11 @@ function compileAssetGameplayAttempt(
     for (const sound of gameplay.sounds ?? []) sounds.push(compileSoundSource(sound, transform));
     for (const animation of gameplay.animations ?? []) {
       try {
-        animations.push(compileSceneryAnimation(animation, transform));
+        animations.push(
+          compileSceneryAnimation(animation, transform, (message) => {
+            warnings.push(`Animation ${placement.id}/${animation.id}: ${message}.`);
+          }),
+        );
         scenerySources.push({ assetId: placement.descriptor.id, animationId: animation.id });
       } catch (error) {
         if (!options.bestEffort || !(error instanceof Error)) throw error;

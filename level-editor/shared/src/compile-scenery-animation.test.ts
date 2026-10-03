@@ -117,3 +117,84 @@ test("reversed placement preserves left-to-right scenery ordering boundaries", (
     [20, 40, 20],
   ]);
 });
+
+test("quantized duplicate boundary vertices collapse without changing the authored definition", () => {
+  const source = {
+    ...animation,
+    displayPolyline: [
+      [0, 20, 20],
+      [0.1, 20.1, 20],
+      [20, 20, 20],
+    ] as [number, number, number][],
+  };
+  const warnings: string[] = [];
+  const result = compileSceneryAnimation(
+    source,
+    (_node, point) => point,
+    (message) => warnings.push(message),
+  );
+  assert.deepEqual(result.display_polyline, [
+    [0, 0],
+    [20, 0],
+  ]);
+  assert.equal(source.displayPolyline.length, 3);
+  assert.deepEqual(warnings, []);
+});
+
+test("unsupported placed drawing boundaries warn without omitting effects or navigation", () => {
+  const { document, assets, hut } = assetCompilerFixture();
+  const baseline = compileAssetGameplay(document, assets, [0, 0, 2000, 2000]);
+  for (const [points, reason] of [
+    [
+      [
+        [0, 20, 20],
+        [20, 20, 20],
+        [10, 40, 20],
+      ],
+      "folds back",
+    ],
+    [
+      [
+        [0, 20, 20],
+        [0, 40, 20],
+      ],
+      "vertical segment",
+    ],
+  ] as [[number, number, number][], string][]) {
+    hut.gameplay!.animations = [{ ...animation, displayPolyline: points }];
+    for (const bestEffort of [false, true]) {
+      const compiled = compileAssetGameplay(document, assets, [0, 0, 2000, 2000], { bestEffort });
+      assert.equal(compiled.animations?.length, 1);
+      assert.deepEqual(compiled.motion_data, baseline.motion_data);
+      assert.deepEqual(compiled.sight_obstacles, baseline.sight_obstacles);
+      assert.ok(
+        compiled.warnings?.some(
+          (message) => message.includes("/flame:") && message.includes(reason),
+        ),
+      );
+      assert.ok(!compiled.warnings?.some((message) => message.includes("omitted")));
+    }
+  }
+});
+
+test("rotation can turn a valid boundary into a folded one and reports the current placement", () => {
+  const source = {
+    ...animation,
+    displayPolyline: [
+      [0, 20, 20],
+      [10, 40, 20],
+      [20, 30, 20],
+    ] as [number, number, number][],
+  };
+  const warnings: string[] = [];
+  const warn = (message: string) => warnings.push(message);
+  compileSceneryAnimation(source, (_node, point) => point, warn);
+  assert.deepEqual(warnings, []);
+  compileSceneryAnimation(source, (_node, [x, y, z]) => [100 - (y - z), 200 + x + z, z], warn);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0]!, /folds back/);
+  warnings.length = 0;
+  // Ground effects render in the background pass and do not use this boundary.
+  compileSceneryAnimation(source, (_node, [x, y, z]) => [100 - (y - z), 200 + x, 0], warn);
+  assert.deepEqual(warnings, []);
+});

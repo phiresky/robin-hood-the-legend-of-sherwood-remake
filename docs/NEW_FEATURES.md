@@ -13,6 +13,9 @@
   standalone-effect authoring helper creates reusable local frames without baking
   sprite artwork into the background; placement, copying and save/reopen are
   covered by compiler tests. Library publication and preview remain unfinished.
+  Export warns when placement folds a drawing boundary or leaves a vertical
+  segment that the actor-ordering code cannot handle reliably, retaining the
+  animation in best-effort exports. Repeated quantized vertices are removed.
 
 - **Bounded shadow regions for map appearance switches.** Export includes each
   asset's possible shadow footprint using the scene's sun direction and lowest

@@ -92,8 +92,13 @@ positions. This checks resource identity and spawning, not rendered occlusion.
 Placement also restores left-to-right vertex order when a display polyline is
 reversed by rotation, preserving the same boundary shape. A 180-degree rotated
 three-point fixture checks native front/behind ordering along both segments and
-beyond both endpoints. Folded and vertical projected boundaries, orientation-specific
-artwork and GPU occlusion remain unverified; this is not general visual parity.
+beyond both endpoints. Consecutive vertices that quantize to the same pixel are
+collapsed. Folded and vertical projected boundaries now produce placement-specific
+export warnings while retaining the effect; tests include an initially valid line
+that folds after rotation. Ground effects are exempt because they render in the
+background pass. Their ordering is still unsupported, not repaired by
+the warning. Orientation-specific artwork and GPU occlusion remain unverified;
+this is not general visual parity.
 
 One-time animation recovery uses `pipeline/src/recover-scenery-animation.ts`.
 It requires an explicit owning part and a reviewed 3D anchor whose projected
