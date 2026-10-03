@@ -1,0 +1,889 @@
+{
+  "document": {
+    "map": "Rearranged complete timber houses",
+    "size": [
+      3136,
+      2318
+    ],
+    "camera": {
+      "kind": "oblique-orthographic",
+      "elevation_deg": 35
+    },
+    "sceneAssets": [],
+    "assetSources": [
+      {
+        "model": "3d-assets/york/york-bridge-square-central-timber-house/model.glb",
+        "model_sha256": "27fea41c91c8811ed821f5937cbe11d558af0efc8570f9ecb91ba39e4bc8b03d",
+        "descriptor": "3d-assets/york/york-bridge-square-central-timber-house/asset.json",
+        "descriptor_sha256": "4677280e7f237f398f1f53e129d21b4bfff618b36d96d0d8280660a7b380adf1",
+        "id": "york-bridge-square-central-timber-house",
+        "model_scene": "default",
+        "resources": [
+          {
+            "path": "3d-assets/blobs/c1dc776861f268ca38ecbc4fa8ee5a33a7754d0ae847d668086d3d0287f97204.jpg",
+            "sha256": "c1dc776861f268ca38ecbc4fa8ee5a33a7754d0ae847d668086d3d0287f97204"
+          }
+        ]
+      }
+    ],
+    "sceneMetadata": {},
+    "notes": "Named assets with buried surfaces trimmed against reviewed terrain. Further geometry refinement, texture completion and state-only sprite models are separate work.",
+    "provenance": {
+      "source_sha256": "1ce771ba0c6add26288d012014e00503ca3a05e501a807042448b2347dd21036"
+    },
+    "version": 1,
+    "groups": [
+      {
+        "id": "york-bridge-square-central-timber-house",
+        "name": "Bridge Square central timber house",
+        "transform": {
+          "dx": 600,
+          "dy": 900,
+          "dz": 100,
+          "rot_deg": 0
+        }
+      },
+      {
+        "id": "copy",
+        "transform": {
+          "dx": 505.3820218029957,
+          "dy": 958.1922593046712,
+          "dz": 100,
+          "rot_deg": 180
+        }
+      }
+    ],
+    "objects": [
+      {
+        "id": "building-116",
+        "node": "asset:york-bridge-square-central-timber-house:building-116",
+        "group": "york-bridge-square-central-timber-house",
+        "kind": "building",
+        "source": {
+          "map": "york",
+          "obstacle": 116
+        },
+        "obstacle": {
+          "points": [
+            {
+              "x": 21.65930000000003,
+              "y": 32.22887763503877,
+              "z_bottom": -89.9022493424232,
+              "z_top": 154.0987506575768
+            },
+            {
+              "x": 11.87259999999992,
+              "y": 25.07547763503885,
+              "z_bottom": -89.9022493424232,
+              "z_top": 154.0987506575768
+            },
+            {
+              "x": 17.39760000000001,
+              "y": 22.55587763503877,
+              "z_bottom": -89.9022493424232,
+              "z_top": 157.94477065757678
+            },
+            {
+              "x": 1.3045999999999367,
+              "y": 10.829177635038832,
+              "z_bottom": -89.9022493424232,
+              "z_top": 157.9237706575768
+            },
+            {
+              "x": -4.636400000000094,
+              "y": 13.008977635038946,
+              "z_bottom": -89.9022493424232,
+              "z_top": 154.0987506575768
+            },
+            {
+              "x": -51.63370000000009,
+              "y": -21.342222364961117,
+              "z_bottom": -89.9022493424232,
+              "z_top": 154.0987506575768
+            },
+            {
+              "x": -8.329999999999927,
+              "y": -40.83342236496128,
+              "z_bottom": -89.9022493424232,
+              "z_top": 184.09875065757677
+            },
+            {
+              "x": 64.96299999999997,
+              "y": 12.737677635038835,
+              "z_bottom": -89.9022493424232,
+              "z_top": 184.09875065757677
+            }
+          ],
+          "projection_area": null,
+          "opaque": true,
+          "solid": true,
+          "mouse": true,
+          "show_shadow_polygon": true,
+          "default_material": 0,
+          "material_indices": []
+        },
+        "transform": {
+          "dx": 0,
+          "dy": 0,
+          "dz": 0,
+          "rot_deg": 0
+        },
+        "name": "Structural volume 116"
+      },
+      {
+        "id": "building-117",
+        "node": "asset:york-bridge-square-central-timber-house:building-117",
+        "group": "york-bridge-square-central-timber-house",
+        "kind": "building",
+        "source": {
+          "map": "york",
+          "obstacle": 117
+        },
+        "obstacle": {
+          "points": [
+            {
+              "x": 65.93409999999994,
+              "y": 13.42747763503894,
+              "z_bottom": 106.3487506575768,
+              "z_top": 191.20975065757682
+            },
+            {
+              "x": 5.410000000000082,
+              "y": 40.52067763503874,
+              "z_bottom": 106.3487506575768,
+              "z_top": 143.2927506575768
+            },
+            {
+              "x": -66.66599999999994,
+              "y": -12.450722364961166,
+              "z_bottom": 106.3487506575768,
+              "z_top": 143.2927506575768
+            },
+            {
+              "x": -6.142000000000053,
+              "y": -39.544022364961165,
+              "z_bottom": 106.3487506575768,
+              "z_top": 191.20975065757682
+            }
+          ],
+          "projection_area": [
+            54,
+            1
+          ],
+          "opaque": false,
+          "solid": true,
+          "mouse": true,
+          "show_shadow_polygon": false,
+          "default_material": 1,
+          "material_indices": []
+        },
+        "transform": {
+          "dx": 0,
+          "dy": 0,
+          "dz": 0,
+          "rot_deg": 0
+        },
+        "name": "Raised sloped section 117"
+      },
+      {
+        "id": "building-118",
+        "node": "asset:york-bridge-square-central-timber-house:building-118",
+        "group": "york-bridge-square-central-timber-house",
+        "kind": "building",
+        "source": {
+          "map": "york",
+          "obstacle": 118
+        },
+        "obstacle": {
+          "points": [
+            {
+              "x": 64.53989999999999,
+              "y": 12.404277635038852,
+              "z_bottom": 50.09976065757681,
+              "z_top": 104.5437606575768
+            },
+            {
+              "x": 12.142000000000053,
+              "y": 36.06217763503878,
+              "z_bottom": 50.09976065757681,
+              "z_top": 104.5437606575768
+            },
+            {
+              "x": -59.124900000000025,
+              "y": -15.866522364961156,
+              "z_bottom": 50.09976065757681,
+              "z_top": 104.5437606575768
+            },
+            {
+              "x": -6.726899999999887,
+              "y": -39.52442236496108,
+              "z_bottom": 50.09976065757681,
+              "z_top": 104.5437606575768
+            }
+          ],
+          "projection_area": null,
+          "opaque": false,
+          "solid": true,
+          "mouse": true,
+          "show_shadow_polygon": true,
+          "default_material": 0,
+          "material_indices": []
+        },
+        "transform": {
+          "dx": 0,
+          "dy": 0,
+          "dz": 0,
+          "rot_deg": 0
+        },
+        "name": "Raised section 118"
+      },
+      {
+        "id": "building-116copy",
+        "node": "asset:york-bridge-square-central-timber-house:building-116",
+        "group": "copy",
+        "kind": "building",
+        "source": {
+          "map": "york",
+          "obstacle": 116
+        },
+        "obstacle": {
+          "points": [
+            {
+              "x": 21.65930000000003,
+              "y": 32.22887763503877,
+              "z_bottom": -89.9022493424232,
+              "z_top": 154.0987506575768
+            },
+            {
+              "x": 11.87259999999992,
+              "y": 25.07547763503885,
+              "z_bottom": -89.9022493424232,
+              "z_top": 154.0987506575768
+            },
+            {
+              "x": 17.39760000000001,
+              "y": 22.55587763503877,
+              "z_bottom": -89.9022493424232,
+              "z_top": 157.94477065757678
+            },
+            {
+              "x": 1.3045999999999367,
+              "y": 10.829177635038832,
+              "z_bottom": -89.9022493424232,
+              "z_top": 157.9237706575768
+            },
+            {
+              "x": -4.636400000000094,
+              "y": 13.008977635038946,
+              "z_bottom": -89.9022493424232,
+              "z_top": 154.0987506575768
+            },
+            {
+              "x": -51.63370000000009,
+              "y": -21.342222364961117,
+              "z_bottom": -89.9022493424232,
+              "z_top": 154.0987506575768
+            },
+            {
+              "x": -8.329999999999927,
+              "y": -40.83342236496128,
+              "z_bottom": -89.9022493424232,
+              "z_top": 184.09875065757677
+            },
+            {
+              "x": 64.96299999999997,
+              "y": 12.737677635038835,
+              "z_bottom": -89.9022493424232,
+              "z_top": 184.09875065757677
+            }
+          ],
+          "projection_area": null,
+          "opaque": true,
+          "solid": true,
+          "mouse": true,
+          "show_shadow_polygon": true,
+          "default_material": 0,
+          "material_indices": []
+        },
+        "transform": {
+          "dx": 0,
+          "dy": 0,
+          "dz": 0,
+          "rot_deg": 0
+        },
+        "name": "Structural volume 116"
+      },
+      {
+        "id": "building-117copy",
+        "node": "asset:york-bridge-square-central-timber-house:building-117",
+        "group": "copy",
+        "kind": "building",
+        "source": {
+          "map": "york",
+          "obstacle": 117
+        },
+        "obstacle": {
+          "points": [
+            {
+              "x": 65.93409999999994,
+              "y": 13.42747763503894,
+              "z_bottom": 106.3487506575768,
+              "z_top": 191.20975065757682
+            },
+            {
+              "x": 5.410000000000082,
+              "y": 40.52067763503874,
+              "z_bottom": 106.3487506575768,
+              "z_top": 143.2927506575768
+            },
+            {
+              "x": -66.66599999999994,
+              "y": -12.450722364961166,
+              "z_bottom": 106.3487506575768,
+              "z_top": 143.2927506575768
+            },
+            {
+              "x": -6.142000000000053,
+              "y": -39.544022364961165,
+              "z_bottom": 106.3487506575768,
+              "z_top": 191.20975065757682
+            }
+          ],
+          "projection_area": [
+            54,
+            1
+          ],
+          "opaque": false,
+          "solid": true,
+          "mouse": true,
+          "show_shadow_polygon": false,
+          "default_material": 1,
+          "material_indices": []
+        },
+        "transform": {
+          "dx": 0,
+          "dy": 0,
+          "dz": 0,
+          "rot_deg": 0
+        },
+        "name": "Raised sloped section 117"
+      },
+      {
+        "id": "building-118copy",
+        "node": "asset:york-bridge-square-central-timber-house:building-118",
+        "group": "copy",
+        "kind": "building",
+        "source": {
+          "map": "york",
+          "obstacle": 118
+        },
+        "obstacle": {
+          "points": [
+            {
+              "x": 64.53989999999999,
+              "y": 12.404277635038852,
+              "z_bottom": 50.09976065757681,
+              "z_top": 104.5437606575768
+            },
+            {
+              "x": 12.142000000000053,
+              "y": 36.06217763503878,
+              "z_bottom": 50.09976065757681,
+              "z_top": 104.5437606575768
+            },
+            {
+              "x": -59.124900000000025,
+              "y": -15.866522364961156,
+              "z_bottom": 50.09976065757681,
+              "z_top": 104.5437606575768
+            },
+            {
+              "x": -6.726899999999887,
+              "y": -39.52442236496108,
+              "z_bottom": 50.09976065757681,
+              "z_top": 104.5437606575768
+            }
+          ],
+          "projection_area": null,
+          "opaque": false,
+          "solid": true,
+          "mouse": true,
+          "show_shadow_polygon": true,
+          "default_material": 0,
+          "material_indices": []
+        },
+        "transform": {
+          "dx": 0,
+          "dy": 0,
+          "dz": 0,
+          "rot_deg": 0
+        },
+        "name": "Raised section 118"
+      }
+    ],
+    "interiorConnections": []
+  },
+  "asset": {
+    "version": 1,
+    "kind": "projection-mapped-asset",
+    "id": "york-bridge-square-central-timber-house",
+    "name": "Bridge Square central timber house",
+    "source_map": "york",
+    "source_origin_scene": [
+      1391,
+      -2783,
+      109.75038146972656
+    ],
+    "model": "model.glb",
+    "model_scene": "default",
+    "parts": [
+      {
+        "node": "building-116",
+        "name": "Structural volume 116",
+        "obstacle_local_game": {
+          "points": [
+            {
+              "x": 21.65930000000003,
+              "y": 32.22887763503877,
+              "z_bottom": -89.9022493424232,
+              "z_top": 154.0987506575768
+            },
+            {
+              "x": 11.87259999999992,
+              "y": 25.07547763503885,
+              "z_bottom": -89.9022493424232,
+              "z_top": 154.0987506575768
+            },
+            {
+              "x": 17.39760000000001,
+              "y": 22.55587763503877,
+              "z_bottom": -89.9022493424232,
+              "z_top": 157.94477065757678
+            },
+            {
+              "x": 1.3045999999999367,
+              "y": 10.829177635038832,
+              "z_bottom": -89.9022493424232,
+              "z_top": 157.9237706575768
+            },
+            {
+              "x": -4.636400000000094,
+              "y": 13.008977635038946,
+              "z_bottom": -89.9022493424232,
+              "z_top": 154.0987506575768
+            },
+            {
+              "x": -51.63370000000009,
+              "y": -21.342222364961117,
+              "z_bottom": -89.9022493424232,
+              "z_top": 154.0987506575768
+            },
+            {
+              "x": -8.329999999999927,
+              "y": -40.83342236496128,
+              "z_bottom": -89.9022493424232,
+              "z_top": 184.09875065757677
+            },
+            {
+              "x": 64.96299999999997,
+              "y": 12.737677635038835,
+              "z_bottom": -89.9022493424232,
+              "z_top": 184.09875065757677
+            }
+          ],
+          "projection_area": null,
+          "opaque": true,
+          "solid": true,
+          "mouse": true,
+          "show_shadow_polygon": true,
+          "default_material": 0,
+          "material_indices": []
+        },
+        "source_obstacle": 116
+      },
+      {
+        "node": "building-117",
+        "name": "Raised sloped section 117",
+        "obstacle_local_game": {
+          "points": [
+            {
+              "x": 65.93409999999994,
+              "y": 13.42747763503894,
+              "z_bottom": 106.3487506575768,
+              "z_top": 191.20975065757682
+            },
+            {
+              "x": 5.410000000000082,
+              "y": 40.52067763503874,
+              "z_bottom": 106.3487506575768,
+              "z_top": 143.2927506575768
+            },
+            {
+              "x": -66.66599999999994,
+              "y": -12.450722364961166,
+              "z_bottom": 106.3487506575768,
+              "z_top": 143.2927506575768
+            },
+            {
+              "x": -6.142000000000053,
+              "y": -39.544022364961165,
+              "z_bottom": 106.3487506575768,
+              "z_top": 191.20975065757682
+            }
+          ],
+          "projection_area": [
+            54,
+            1
+          ],
+          "opaque": false,
+          "solid": true,
+          "mouse": true,
+          "show_shadow_polygon": false,
+          "default_material": 1,
+          "material_indices": []
+        },
+        "source_obstacle": 117
+      },
+      {
+        "node": "building-118",
+        "name": "Raised section 118",
+        "obstacle_local_game": {
+          "points": [
+            {
+              "x": 64.53989999999999,
+              "y": 12.404277635038852,
+              "z_bottom": 50.09976065757681,
+              "z_top": 104.5437606575768
+            },
+            {
+              "x": 12.142000000000053,
+              "y": 36.06217763503878,
+              "z_bottom": 50.09976065757681,
+              "z_top": 104.5437606575768
+            },
+            {
+              "x": -59.124900000000025,
+              "y": -15.866522364961156,
+              "z_bottom": 50.09976065757681,
+              "z_top": 104.5437606575768
+            },
+            {
+              "x": -6.726899999999887,
+              "y": -39.52442236496108,
+              "z_bottom": 50.09976065757681,
+              "z_top": 104.5437606575768
+            }
+          ],
+          "projection_area": null,
+          "opaque": false,
+          "solid": true,
+          "mouse": true,
+          "show_shadow_polygon": true,
+          "default_material": 0,
+          "material_indices": []
+        },
+        "source_obstacle": 118
+      }
+    ],
+    "resources": [
+      {
+        "path": "3d-assets/blobs/c1dc776861f268ca38ecbc4fa8ee5a33a7754d0ae847d668086d3d0287f97204.jpg",
+        "sha256": "c1dc776861f268ca38ecbc4fa8ee5a33a7754d0ae847d668086d3d0287f97204"
+      }
+    ],
+    "gameplay": {
+      "version": 1,
+      "collision": "parts",
+      "surfaces": [
+        {
+          "id": "building-117-walk-0",
+          "node": "building-117",
+          "navigationRegion": "walk-region-54",
+          "projectionMaterials": {
+            "defaultMaterial": 1,
+            "regions": [],
+            "planePoints": [
+              [
+                5.410000000000082,
+                40.52067763503888,
+                143.2927506575768
+              ],
+              [
+                -66.66599999999994,
+                -12.450722364961173,
+                143.2927506575768
+              ],
+              [
+                65.93409999999994,
+                13.42747763503884,
+                191.20975065757682
+              ]
+            ],
+            "priority": -117,
+            "footprint": [
+              [
+                65.93409999999994,
+                13.42747763503884,
+                191.20975065757682
+              ],
+              [
+                5.410000000000082,
+                40.52067763503888,
+                143.2927506575768
+              ],
+              [
+                -66.66599999999994,
+                -12.450722364961173,
+                143.2927506575768
+              ],
+              [
+                -6.142000000000053,
+                -39.54402236496125,
+                191.20975065757682
+              ]
+            ],
+            "priorityHeight": 191.20975065757682
+          },
+          "polygon": [
+            [
+              -66,
+              -12.624320089733958
+            ],
+            [
+              -6,
+              -38.66788475757002
+            ],
+            [
+              65,
+              12.805546791102214
+            ],
+            [
+              4,
+              39.15338906167323
+            ]
+          ],
+          "height": [
+            143.73665293280402,
+            190.6930882649679,
+            191.16651981364018,
+            143.51436208421106
+          ],
+          "holes": [],
+          "jump": {
+            "edges": [
+              3
+            ],
+            "maxGap": 100,
+            "maxRise": 40,
+            "maxDrop": 60,
+            "minOverlap": 16,
+            "inset": 4,
+            "landingDepth": 4,
+            "clearance": {
+              "radius": 0,
+              "height": 60
+            },
+            "maxLevelAdjustment": 2
+          }
+        }
+      ],
+      "volumes": [
+        {
+          "id": "gameplay-volume-119",
+          "node": "building-116",
+          "shape": {
+            "points": [
+              {
+                "x": -18.394900000000007,
+                "y": 2.993377635038712,
+                "z_bottom": 42.2007606575768,
+                "z_top": 44.18976065757679
+              },
+              {
+                "x": -31.84609999999998,
+                "y": 9.17047763503896,
+                "z_bottom": 35.95075465757679,
+                "z_top": 37.82575465757678
+              },
+              {
+                "x": -53.37830000000008,
+                "y": -6.25492236496115,
+                "z_bottom": 35.95075465757679,
+                "z_top": 37.82575465757678
+              },
+              {
+                "x": -39.92710000000011,
+                "y": -12.432022364961139,
+                "z_bottom": 42.2007606575768,
+                "z_top": 44.18976065757679
+              }
+            ],
+            "opaque": false,
+            "solid": true,
+            "mouse": true,
+            "show_shadow_polygon": true,
+            "default_material": 0
+          }
+        }
+      ],
+      "sightOrder": {
+        "building-116": 116,
+        "building-117": 117,
+        "building-118": 118,
+        "gameplay-volume-119": 119
+      },
+      "jumpZones": [
+        {
+          "id": "jump-zone-48",
+          "node": "building-116",
+          "anchor": [
+            1,
+            -10.249186923557113,
+            175.11178609898087
+          ],
+          "polygon": [
+            [
+              4,
+              69.75081307644295,
+              175.11178609898087
+            ],
+            [
+              -67,
+              19.75081307644281,
+              175.11178609898087
+            ],
+            [
+              -6,
+              -53.249186923556955,
+              175.11178609898087
+            ],
+            [
+              65,
+              -4.249186923556971,
+              175.11178609898087
+            ]
+          ],
+          "helperNeeded": false
+        }
+      ],
+      "jumpSegments": [
+        {
+          "id": "jump-pair-47-side-0",
+          "node": "building-116",
+          "long": true,
+          "join": [
+            -65,
+            -17.76322236496113,
+            127.09775065757678
+          ],
+          "edge": {
+            "zone": "jump-zone-48",
+            "a": [
+              -44,
+              -9.26322236496119,
+              151.09775065757677
+            ],
+            "b": [
+              -42,
+              -5.263222364961094,
+              150.09775065757677
+            ]
+          }
+        },
+        {
+          "id": "jump-pair-48-side-0",
+          "node": "building-116",
+          "long": true,
+          "join": [
+            -5.25,
+            -56.513222364961166,
+            171.8477506575768
+          ],
+          "edge": {
+            "zone": "jump-zone-48",
+            "a": [
+              -3,
+              -29.263222364961138,
+              184.0977506575768
+            ],
+            "b": [
+              -7,
+              -29.263222364961138,
+              183.09775065757677
+            ]
+          }
+        }
+      ],
+      "movementBlockers": [],
+      "doors": [],
+      "lifts": [],
+      "interiors": [
+        {
+          "id": "interior-0",
+          "node": "building-116",
+          "doors": [
+            {
+              "id": "interior-0/door-0",
+              "node": "building-116",
+              "polygon": [
+                [
+                  14,
+                  19.737787635038877
+                ],
+                [
+                  0,
+                  8.737787635038748
+                ],
+                [
+                  -1,
+                  -30.262212364961258
+                ],
+                [
+                  14,
+                  -18.262212364961236
+                ]
+              ],
+              "inside": [
+                36,
+                -4.262212364961168,
+                0.0987606575767878
+              ],
+              "outside": [
+                -2,
+                24.737787635038863,
+                0.0987606575767878
+              ],
+              "middle": [
+                7,
+                12.737787635038842,
+                0.0987606575767878
+              ],
+              "type": 1,
+              "active": true,
+              "locked": false,
+              "unlockable": false,
+              "lockedVillains": false,
+              "lockedCivilians": false,
+              "afterTransition": {
+                "locked": false,
+                "unlockable": false,
+                "lockedVillains": false,
+                "lockedCivilians": false
+              }
+            }
+          ]
+        }
+      ],
+      "draft": {
+        "issues": [
+          "Incomplete gameplay recovery; full parity is not certified.",
+          "Geometry seeded from asset parts; verify recovered movement clearances and feature coverage before publication",
+          "Non-rendering gameplay restored from explicit ownership: york-bridge-square-central-timber-house",
+          "Review movement contour ownership: footprint intersections can split exclusions shared by adjacent assets",
+          "Door ownership resolved from geometry above its landing; review the physical doorway before publication",
+          "Review cross-asset jump sockets and landing ownership before publication"
+        ]
+      }
+    }
+  }
+}

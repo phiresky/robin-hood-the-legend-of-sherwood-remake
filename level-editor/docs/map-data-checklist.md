@@ -336,7 +336,7 @@ cuts bands around holes and concave boundaries, and can connect one ledge to sev
 destinations. Each retained span gets its own receiving anchor and zone. A new
 two-destination courtyard verifies native routing, animation and collision without
 any authored jump segments/zones. Rotated and elevated copies are also covered.
-Eighteen reviewed library surfaces now carry these rules, with descriptor pins
+Nineteen reviewed library surfaces now carry these rules, with descriptor pins
 updated in six saved scenes. All ten scenes still compile and construct native
 geometry without new warnings. A real rock-surface fixture checks a newly placed
 rotated neighbour without saved jump records. Further library adoption remains
@@ -354,12 +354,21 @@ integer-grid rechecks still apply. Omission is unchanged unless an asset opts in
 A skewed-roof export fixture verifies that this option creates a connection that
 would otherwise be omitted; native flight and gate-routing checks cover it.
 A separate recovered roof-surface fixture checks a rotated copy using its solid
-volume. This is not full-building certification: the complete timber building's
-structural volume blocks the tested eaves connection, so its library rules remain
-unchanged pending collision/ownership review. The option is available for authored
-assets; broader roof publication remains unfinished.
-All ten library maps compile unchanged after this addition; diagnostics are in
-`work/map-compile/level-contour-jumps`.
+volume. The Bridge Square central timber house now publishes a reviewed eaves
+rule with a four-unit inset and landing depth, a two-unit contour adjustment limit
+and sixty-unit headroom. It checks the foot path without lateral body expansion.
+A complete-building fixture retains all eight solid volumes across its moved and
+180-degree-rotated instances, generates a new connection, retains it after two
+placement shifts and removes it when the copy moves out of range. Native tests
+verify skill/helper gate rules and collision-free ordinary, sword and assisted
+flight in both directions at five positions along each edge. These are traversal
+checks, not a visual or whole-building parity certification; the isolated fixture
+has no ground for its entrances, which are omitted with warnings.
+`refinement/catalogs/roof-surface-jumps.json` records the descriptor-bound rule;
+publication updates York's scene pin and retains backups in
+`work/map-compile/roof-surface-publication`. Broader roof publication remains unfinished.
+All ten library maps compile unchanged after contour support and this publication;
+the latest diagnostics are in `work/map-compile/roof-surface-native`.
 
 **Reusable walkway connections:** navigation sockets now support an explicit
 minimum shared span, so different widths and shifts along a shared edge can join.

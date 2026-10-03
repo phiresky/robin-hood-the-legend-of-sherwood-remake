@@ -90,8 +90,10 @@
   An optional endpoint-adjustment limit aligns slightly skewed roof edges to
   level contours while preserving the roof's slope and clipping receiving bands.
   No saved jump zones or neighbour identities are required for these surfaces.
-  Eighteen reviewed library surfaces include these rules; the authoring tool
+  Nineteen reviewed library surfaces include these rules; the authoring tool
   stages descriptor-bound edits and updates saved-scene pins with rollback backups.
+  The Bridge Square central timber house includes an eaves rule verified with a
+  complete moved/rotated copy, retaining both buildings' structural collision.
 
 - **Visible load failures.** Failed in-mission Load and QuickLoad requests show
   an acknowledgeable error dialog with the failure details while retaining the

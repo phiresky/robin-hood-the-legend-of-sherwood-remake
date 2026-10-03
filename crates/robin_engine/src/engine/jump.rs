@@ -1614,6 +1614,7 @@ mod tests {
             include_bytes!("../../tests/fixtures/asset-jump-sword.level.json").as_slice(),
             include_bytes!("../../tests/fixtures/asset-jump-courtyard.level.json").as_slice(),
             include_bytes!("../../tests/fixtures/asset-jump-level-contours.level.json").as_slice(),
+            include_bytes!("../../tests/fixtures/asset-jump-complete-roofs.level.json").as_slice(),
         ] {
             let loaded = crate::level_data::LoadedLevel::hackable_from_json(bytes).unwrap();
             let pairs = loaded.proto.jump_line_pairs.clone();

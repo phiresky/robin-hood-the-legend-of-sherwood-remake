@@ -1,0 +1,18 @@
+[
+  {
+    "asset": "york-bridge-square-central-timber-house",
+    "surface": "building-117-walk-0",
+    "descriptorSha256": "adfaa28c04ed8ebc4f61773cca0dfaee0e29c47aed09b6d2e74751aa9801c65e",
+    "rules": {
+      "edges": [3],
+      "maxGap": 100,
+      "maxRise": 40,
+      "maxDrop": 60,
+      "minOverlap": 16,
+      "inset": 4,
+      "landingDepth": 4,
+      "clearance": { "radius": 0, "height": 60 },
+      "maxLevelAdjustment": 2
+    }
+  }
+]

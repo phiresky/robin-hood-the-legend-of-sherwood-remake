@@ -1,0 +1,628 @@
+{
+  "title": "Rearranged complete timber houses",
+  "map_filename": "editor-rearranged-complete-timber-houses",
+  "spawn_points": [],
+  "walkable_polygon": [
+    [
+      0,
+      0
+    ],
+    [
+      1999,
+      0
+    ],
+    [
+      1999,
+      1999
+    ],
+    [
+      0,
+      1999
+    ]
+  ],
+  "volumes": [],
+  "asset_geometry": {
+    "warnings": [
+      "Draft gameplay asset york-bridge-square-central-timber-house: Incomplete gameplay recovery; full parity is not certified.",
+      "Draft gameplay asset york-bridge-square-central-timber-house: Geometry seeded from asset parts; verify recovered movement clearances and feature coverage before publication",
+      "Draft gameplay asset york-bridge-square-central-timber-house: Non-rendering gameplay restored from explicit ownership: york-bridge-square-central-timber-house",
+      "Draft gameplay asset york-bridge-square-central-timber-house: Review movement contour ownership: footprint intersections can split exclusions shared by adjacent assets",
+      "Draft gameplay asset york-bridge-square-central-timber-house: Door ownership resolved from geometry above its landing; review the physical doorway before publication",
+      "Draft gameplay asset york-bridge-square-central-timber-house: Review cross-asset jump sockets and landing ownership before publication",
+      "Jump copy/york-bridge-square-central-timber-house/jump-pair-47-side-0: no matching edge after placement; connection is unavailable.",
+      "Jump copy/york-bridge-square-central-timber-house/jump-pair-48-side-0: no matching edge after placement; connection is unavailable.",
+      "Jump york-bridge-square-central-timber-house/york-bridge-square-central-timber-house/jump-pair-47-side-0: no matching edge after placement; connection is unavailable.",
+      "Jump york-bridge-square-central-timber-house/york-bridge-square-central-timber-house/jump-pair-48-side-0: no matching edge after placement; connection is unavailable.",
+      "Door york-bridge-square-central-timber-house/york-bridge-square-central-timber-house/interior-0/door-0: omitted because york-bridge-square-central-timber-house/york-bridge-square-central-timber-house/interior-0/door-0 outside must resolve to exactly one unblocked walkable surface (found 0); world point [598,924.7377876350388,100.09876065757678], projected [598,825]; containing areas (0, showing up to 8) [].",
+      "Door copy/york-bridge-square-central-timber-house/interior-0/door-0: omitted because copy/york-bridge-square-central-timber-house/interior-0/door-0 outside must resolve to exactly one unblocked walkable surface (found 0); world point [515.1274218029957,939.61563943971,100.09876065757678], projected [515,840]; containing areas (0, showing up to 8) []."
+    ],
+    "motion_data": {
+      "layers": [
+        [
+          {
+            "is_lift": false,
+            "state_id": 0,
+            "polygon": {
+              "points": [
+                [
+                  448,
+                  660
+                ],
+                [
+                  509,
+                  682
+                ],
+                [
+                  579,
+                  733
+                ],
+                [
+                  519,
+                  712
+                ]
+              ]
+            },
+            "skeleton_segments": [],
+            "flags": 0,
+            "obstacles": []
+          }
+        ],
+        [
+          {
+            "is_lift": false,
+            "state_id": 0,
+            "polygon": {
+              "points": [
+                [
+                  534,
+                  644
+                ],
+                [
+                  594,
+                  571
+                ],
+                [
+                  665,
+                  622
+                ],
+                [
+                  604,
+                  696
+                ]
+              ]
+            },
+            "skeleton_segments": [],
+            "flags": 0,
+            "obstacles": []
+          }
+        ],
+        []
+      ],
+      "graph_bytes": []
+    },
+    "jump_zones": [
+      {
+        "polygon": {
+          "points": [
+            [
+              554,
+              724
+            ],
+            [
+              506,
+              689
+            ],
+            [
+              508,
+              686
+            ],
+            [
+              556,
+              721
+            ]
+          ]
+        },
+        "sector": 0,
+        "layer": 0,
+        "helper_needed": false
+      },
+      {
+        "polygon": {
+          "points": [
+            [
+              541,
+              640
+            ],
+            [
+              589,
+              675
+            ],
+            [
+              587,
+              678
+            ],
+            [
+              539,
+              643
+            ]
+          ]
+        },
+        "sector": 1,
+        "layer": 1,
+        "helper_needed": false
+      }
+    ],
+    "jump_line_pairs": [
+      {
+        "line1": {
+          "point_a": [
+            556,
+            721,
+            254
+          ],
+          "point_b": [
+            508,
+            686,
+            254
+          ],
+          "jump_zone_index": 1
+        },
+        "line2": {
+          "point_a": [
+            539,
+            643,
+            246
+          ],
+          "point_b": [
+            587,
+            678,
+            246
+          ],
+          "jump_zone_index": 0
+        },
+        "jump_long": true
+      }
+    ],
+    "sight_obstacles": [
+      {
+        "points": [
+          {
+            "x": 491.46812180299565,
+            "y": 932.1245494397101,
+            "z_bottom": 10.097750657576796,
+            "z_top": 254.0987506575768
+          },
+          {
+            "x": 501.25482180299576,
+            "y": 939.27794943971,
+            "z_bottom": 10.097750657576796,
+            "z_top": 254.0987506575768
+          },
+          {
+            "x": 495.7298218029957,
+            "y": 941.7975494397101,
+            "z_bottom": 10.097750657576796,
+            "z_top": 257.9447706575768
+          },
+          {
+            "x": 511.82282180299575,
+            "y": 953.52424943971,
+            "z_bottom": 10.097750657576796,
+            "z_top": 257.9237706575768
+          },
+          {
+            "x": 517.7638218029958,
+            "y": 951.3444494397099,
+            "z_bottom": 10.097750657576796,
+            "z_top": 254.0987506575768
+          },
+          {
+            "x": 564.7611218029958,
+            "y": 985.69564943971,
+            "z_bottom": 10.097750657576796,
+            "z_top": 254.0987506575768
+          },
+          {
+            "x": 521.4574218029957,
+            "y": 1005.1868494397102,
+            "z_bottom": 10.097750657576796,
+            "z_top": 284.0987506575768
+          },
+          {
+            "x": 448.1644218029958,
+            "y": 951.61574943971,
+            "z_bottom": 10.097750657576796,
+            "z_top": 284.0987506575768
+          }
+        ],
+        "projection_area": null,
+        "opaque": true,
+        "solid": true,
+        "mouse": true,
+        "show_shadow_polygon": true,
+        "default_material": 0,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 621.6593,
+            "y": 932.2288776350388,
+            "z_bottom": 10.097750657576796,
+            "z_top": 254.0987506575768
+          },
+          {
+            "x": 611.8725999999999,
+            "y": 925.0754776350389,
+            "z_bottom": 10.097750657576796,
+            "z_top": 254.0987506575768
+          },
+          {
+            "x": 617.3976,
+            "y": 922.5558776350388,
+            "z_bottom": 10.097750657576796,
+            "z_top": 257.9447706575768
+          },
+          {
+            "x": 601.3045999999999,
+            "y": 910.8291776350388,
+            "z_bottom": 10.097750657576796,
+            "z_top": 257.9237706575768
+          },
+          {
+            "x": 595.3635999999999,
+            "y": 913.008977635039,
+            "z_bottom": 10.097750657576796,
+            "z_top": 254.0987506575768
+          },
+          {
+            "x": 548.3662999999999,
+            "y": 878.6577776350389,
+            "z_bottom": 10.097750657576796,
+            "z_top": 254.0987506575768
+          },
+          {
+            "x": 591.6700000000001,
+            "y": 859.1665776350387,
+            "z_bottom": 10.097750657576796,
+            "z_top": 284.0987506575768
+          },
+          {
+            "x": 664.963,
+            "y": 912.7376776350388,
+            "z_bottom": 10.097750657576796,
+            "z_top": 284.0987506575768
+          }
+        ],
+        "projection_area": null,
+        "opaque": true,
+        "solid": true,
+        "mouse": true,
+        "show_shadow_polygon": true,
+        "default_material": 0,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 447.1933218029958,
+            "y": 950.9259494397099,
+            "z_bottom": 206.3487506575768,
+            "z_top": 291.2097506575768
+          },
+          {
+            "x": 507.7174218029956,
+            "y": 923.8327494397101,
+            "z_bottom": 206.3487506575768,
+            "z_top": 243.2927506575768
+          },
+          {
+            "x": 579.7934218029957,
+            "y": 976.80414943971,
+            "z_bottom": 206.3487506575768,
+            "z_top": 243.2927506575768
+          },
+          {
+            "x": 519.2694218029958,
+            "y": 1003.89744943971,
+            "z_bottom": 206.3487506575768,
+            "z_top": 291.2097506575768
+          }
+        ],
+        "projection_area": null,
+        "opaque": false,
+        "solid": true,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 1,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 665.9341,
+            "y": 913.4274776350389,
+            "z_bottom": 206.3487506575768,
+            "z_top": 291.2097506575768
+          },
+          {
+            "x": 605.4100000000001,
+            "y": 940.5206776350387,
+            "z_bottom": 206.3487506575768,
+            "z_top": 243.2927506575768
+          },
+          {
+            "x": 533.3340000000001,
+            "y": 887.5492776350388,
+            "z_bottom": 206.3487506575768,
+            "z_top": 243.2927506575768
+          },
+          {
+            "x": 593.858,
+            "y": 860.4559776350388,
+            "z_bottom": 206.3487506575768,
+            "z_top": 291.2097506575768
+          }
+        ],
+        "projection_area": null,
+        "opaque": false,
+        "solid": true,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 1,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 448.58752180299575,
+            "y": 951.94914943971,
+            "z_bottom": 150.0997606575768,
+            "z_top": 204.5437606575768
+          },
+          {
+            "x": 500.98542180299563,
+            "y": 928.2912494397101,
+            "z_bottom": 150.0997606575768,
+            "z_top": 204.5437606575768
+          },
+          {
+            "x": 572.2523218029958,
+            "y": 980.21994943971,
+            "z_bottom": 150.0997606575768,
+            "z_top": 204.5437606575768
+          },
+          {
+            "x": 519.8543218029956,
+            "y": 1003.87784943971,
+            "z_bottom": 150.0997606575768,
+            "z_top": 204.5437606575768
+          }
+        ],
+        "projection_area": null,
+        "opaque": false,
+        "solid": true,
+        "mouse": true,
+        "show_shadow_polygon": true,
+        "default_material": 0,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 664.5399,
+            "y": 912.4042776350389,
+            "z_bottom": 150.0997606575768,
+            "z_top": 204.5437606575768
+          },
+          {
+            "x": 612.142,
+            "y": 936.0621776350388,
+            "z_bottom": 150.0997606575768,
+            "z_top": 204.5437606575768
+          },
+          {
+            "x": 540.8751,
+            "y": 884.1334776350388,
+            "z_bottom": 150.0997606575768,
+            "z_top": 204.5437606575768
+          },
+          {
+            "x": 593.2731000000001,
+            "y": 860.4755776350389,
+            "z_bottom": 150.0997606575768,
+            "z_top": 204.5437606575768
+          }
+        ],
+        "projection_area": null,
+        "opaque": false,
+        "solid": true,
+        "mouse": true,
+        "show_shadow_polygon": true,
+        "default_material": 0,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 531.5223218029957,
+            "y": 961.3600494397102,
+            "z_bottom": 142.2007606575768,
+            "z_top": 144.18976065757678
+          },
+          {
+            "x": 544.9735218029957,
+            "y": 955.1829494397099,
+            "z_bottom": 135.95075465757677,
+            "z_top": 137.82575465757677
+          },
+          {
+            "x": 566.5057218029958,
+            "y": 970.6083494397101,
+            "z_bottom": 135.95075465757677,
+            "z_top": 137.82575465757677
+          },
+          {
+            "x": 553.0545218029959,
+            "y": 976.7854494397101,
+            "z_bottom": 142.2007606575768,
+            "z_top": 144.18976065757678
+          }
+        ],
+        "opaque": false,
+        "solid": true,
+        "mouse": true,
+        "show_shadow_polygon": true,
+        "default_material": 0,
+        "projection_area": null,
+        "material_indices": []
+      },
+      {
+        "points": [
+          {
+            "x": 581.6051,
+            "y": 902.9933776350387,
+            "z_bottom": 142.2007606575768,
+            "z_top": 144.18976065757678
+          },
+          {
+            "x": 568.1539,
+            "y": 909.1704776350389,
+            "z_bottom": 135.95075465757677,
+            "z_top": 137.82575465757677
+          },
+          {
+            "x": 546.6216999999999,
+            "y": 893.7450776350388,
+            "z_bottom": 135.95075465757677,
+            "z_top": 137.82575465757677
+          },
+          {
+            "x": 560.0728999999999,
+            "y": 887.5679776350388,
+            "z_bottom": 142.2007606575768,
+            "z_top": 144.18976065757678
+          }
+        ],
+        "opaque": false,
+        "solid": true,
+        "mouse": true,
+        "show_shadow_polygon": true,
+        "default_material": 0,
+        "projection_area": null,
+        "material_indices": []
+      },
+      {
+        "projection_plane": [
+          [
+            507.71742180299566,
+            923.83274943971,
+            243.2927506575768
+          ],
+          [
+            579.7934218029957,
+            976.80414943971,
+            243.2927506575768
+          ],
+          [
+            447.1933218029958,
+            950.92594943971,
+            291.2097506575768
+          ]
+        ],
+        "points": [
+          {
+            "x": 509,
+            "y": 926.3406800577311,
+            "z_bottom": 244.3406800577311,
+            "z_top": 244.3406800577311
+          },
+          {
+            "x": 579,
+            "y": 976.4380088663511,
+            "z_bottom": 243.43800886635108,
+            "z_top": 243.43800886635108
+          },
+          {
+            "x": 519,
+            "y": 1002.2179696482478,
+            "z_bottom": 290.21796964824784,
+            "z_top": 290.21796964824784
+          },
+          {
+            "x": 448,
+            "y": 950.5837760104504,
+            "z_bottom": 290.5837760104504,
+            "z_top": 290.5837760104504
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 1,
+        "material_indices": []
+      },
+      {
+        "projection_plane": [
+          [
+            605.4100000000001,
+            940.5206776350389,
+            243.2927506575768
+          ],
+          [
+            533.3340000000001,
+            887.5492776350387,
+            243.2927506575768
+          ],
+          [
+            665.9341,
+            913.4274776350388,
+            291.2097506575768
+          ]
+        ],
+        "points": [
+          {
+            "x": 665,
+            "y": 913.0217670910117,
+            "z_bottom": 291.0217670910117,
+            "z_top": 291.0217670910117
+          },
+          {
+            "x": 604,
+            "y": 939.3696093615827,
+            "z_bottom": 243.36960936158263,
+            "z_top": 243.36960936158263
+          },
+          {
+            "x": 534,
+            "y": 887.5919002101755,
+            "z_bottom": 243.59190021017548,
+            "z_top": 243.59190021017548
+          },
+          {
+            "x": 594,
+            "y": 861.5483355423394,
+            "z_bottom": 290.5483355423394,
+            "z_top": 290.5483355423394
+          }
+        ],
+        "projection_area": [
+          1,
+          1
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 1,
+        "material_indices": []
+      }
+    ],
+    "doors": []
+  }
+}
