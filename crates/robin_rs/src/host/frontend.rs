@@ -1070,7 +1070,11 @@ impl HostFrontend {
     pub(super) fn from_snapshot(snapshot: HostContextSnapshot, width: f32, height: f32) -> Self {
         let mut frontend = Self {
             viewport: ViewportState::new(width, height),
-            input: InputState::focused(),
+            input: {
+                let mut input = InputState::focused();
+                input.feedback.draw_hidden = true;
+                input
+            },
             resources: FrontendResources {
                 shipping: snapshot.shipping,
                 ..Default::default()
@@ -1083,7 +1087,11 @@ impl HostFrontend {
     pub(super) fn scratch(width: f32, height: f32) -> Self {
         Self {
             viewport: ViewportState::new(width, height),
-            input: InputState::focused(),
+            input: {
+                let mut input = InputState::focused();
+                input.feedback.draw_hidden = true;
+                input
+            },
             planning: crate::frontend_input::FrontendPlanning::new(true),
             ..Default::default()
         }
