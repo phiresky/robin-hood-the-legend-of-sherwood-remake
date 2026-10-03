@@ -23,7 +23,11 @@ import {
   jumpLandingBand,
   type JumpLandingBand,
 } from "./generate-jump-ledges.ts";
-import { assembleLiftSegments, type PlacedLiftSegment } from "./assemble-lift-segments.ts";
+import {
+  assembleLiftSegments,
+  UnavailableLiftJoin,
+  type PlacedLiftSegment,
+} from "./assemble-lift-segments.ts";
 import { assembleInteriors, type PlacedInterior } from "./assemble-interiors.ts";
 import { interiorEndpointId, validateInteriorConnections } from "./interior-connections.ts";
 import {
@@ -1074,7 +1078,13 @@ function compileAssetGameplayAttempt(
   let interiors = [...new Set(interiorIdentities.values())].filter((id) =>
     doors.some((door) => door.interior === id),
   );
-  const assembledLifts = assembleLiftSegments(lifts);
+  let assembledLifts: ReturnType<typeof assembleLiftSegments>;
+  try {
+    assembledLifts = assembleLiftSegments(lifts);
+  } catch (error) {
+    if (!(error instanceof UnavailableLiftJoin) || !options.bestEffort) throw error;
+    throw new UnavailableLiftPlacement(error.segments[0]!, error.message, false, error.segments);
+  }
   const assembledNavigation = assembleNavigationJoins(navigationJoins);
   for (const surface of [...surfaces, ...projectionSupports])
     if (surface.navigationRegion)

@@ -43,6 +43,10 @@ existing route probes. Native checks also pass 372 directed lift callbacks and
 apply/reset all 57 exported state transitions. Diagnostics:
 `work/map-compile/lift-collision-fallback`. This does not invent a missing landing
 or make the disconnected stair usable.
+Separated, overlapping or orientation-incompatible assembly sockets also warn
+and omit affected traversal pieces during best-effort export. Every competing
+piece at an ambiguous socket is omitted; export never chooses an arbitrary pair.
+Strict export still reports the invalid connection.
 
 **Masks on uneven terrain:** an asset mask may author a finite local
 `receiverSegment` instead of requiring its anchor to match one exact elevation.

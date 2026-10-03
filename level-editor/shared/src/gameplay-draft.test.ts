@@ -146,6 +146,30 @@ test("disconnected compound lift removes all joined traversal pieces without dro
   assert.equal(geometry.warnings?.filter((warning) => warning.startsWith("Lift ")).length, 1);
 });
 
+test("separated stair pieces preserve their collision instead of failing the whole export", () => {
+  const { document, assets } = compoundLiftCompilerFixture();
+  document.objects.find((part) => part.id === "upper-body")!.transform.dx += 400;
+  assert.throws(() => compileAssetGameplay(document, assets, bounds), /exactly one other segment/);
+  const geometry = compileAssetGameplay(document, assets, bounds, { bestEffort: true });
+  assert.equal(geometry.lifts, undefined);
+  assert.ok(geometry.sight_obstacles.some((obstacle) => obstacle.solid));
+  assert.equal(geometry.warnings?.filter((warning) => warning.startsWith("Lift ")).length, 2);
+});
+
+test("ambiguous stair sockets omit every competing piece instead of choosing a pair", () => {
+  const { document, assets } = compoundLiftCompilerFixture();
+  const upper = document.objects.find((part) => part.id === "upper-body")!;
+  document.objects.push({ ...structuredClone(upper), id: "duplicate-upper", group: "duplicate" });
+  document.groups.push({
+    ...structuredClone(document.groups.find((group) => group.id === "upper")!),
+    id: "duplicate",
+  });
+  const geometry = compileAssetGameplay(document, assets, bounds, { bestEffort: true });
+  assert.equal(geometry.lifts, undefined);
+  assert.ok(geometry.sight_obstacles.some((obstacle) => obstacle.solid));
+  assert.equal(geometry.warnings?.filter((warning) => warning.startsWith("Lift ")).length, 1);
+});
+
 test("best effort omits unavailable masks and their empty transitions without dangling references", () => {
   const { document, assets, hut } = maskAssetCompilerFixture();
   for (const mask of hut.gameplay!.masks!) mask.anchor = [1900, 1900, 0];

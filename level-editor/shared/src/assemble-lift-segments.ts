@@ -7,6 +7,14 @@ export interface PlacedLiftSegment {
   joins: Vec3[];
 }
 
+export class UnavailableLiftJoin extends Error {
+  readonly segments: string[];
+  constructor(message: string, segments: string[]) {
+    super(message);
+    this.segments = segments;
+  }
+}
+
 /** Match authored sockets after placement; never bind by scene or source identities. */
 export function assembleLiftSegments(segments: PlacedLiftSegment[]) {
   const parent = segments.map((_, i) => i);
@@ -20,14 +28,20 @@ export function assembleLiftSegments(segments: PlacedLiftSegment[]) {
         other !== socket && Math.hypot(...socket.point.map((n, i) => n - other.point[i]!)) < 1e-4,
     );
     if (matches.length !== 1 || matches[0]!.owner === socket.owner)
-      throw new Error(
+      throw new UnavailableLiftJoin(
         `Lift ${segments[socket.owner]!.id}: join must match exactly one other segment`,
+        [...new Set([socket.owner, ...matches.map((match) => match.owner)])].map(
+          (owner) => segments[owner]!.id,
+        ),
       );
     const other = matches[0]!.owner;
     const a = segments[socket.owner]!,
       b = segments[other]!;
     if (a.type !== b.type || a.direction !== b.direction)
-      throw new Error(`Lift join ${a.id}/${b.id}: traversal type and direction disagree`);
+      throw new UnavailableLiftJoin(
+        `Lift join ${a.id}/${b.id}: traversal type and direction disagree`,
+        [a.id, b.id],
+      );
     parent[root(other)] = root(socket.owner);
   }
   const identities = new Map(segments.map((s, i) => [s.id, segments[root(i)]!.id]));
