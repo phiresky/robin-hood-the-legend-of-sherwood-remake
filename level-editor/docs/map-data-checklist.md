@@ -308,8 +308,15 @@ the ideal arc and direct path, and a short-gap regression catches an overshoot
 beyond the receiving edge. Native checks compare integration endpoints and test
 actual per-frame movement for both styles across the exported fixtures. All ten
 library maps compile unchanged; diagnostics are in
-`work/map-compile/integrated-jump-clearance`. These checks do not yet certify
-every sprite-driven takeoff displacement or shoulder-assisted departure.
+`work/map-compile/integrated-jump-clearance`.
+Shoulder-assisted departures now also check the in-place 40-unit rise and the
+resulting integrated flight toward the ordinary arc targets. The world Y anchor
+stays fixed during this rise; it does not use the ordinary 15-unit moving takeoff.
+This protects assisted jumps against overhead obstacles close to the departure
+edge. Native fixtures exercise both directions and five edge positions with
+upright, sword-fighting and shoulder-assisted departures. All ten library maps
+still compile unchanged (`work/map-compile/assisted-jump-clearance`). These checks
+do not yet certify every sprite-driven takeoff displacement.
 Blocked portions are removed, clear spans are
 retained and warnings explain omissions. Integer endpoints keep equal opposing
 vectors and are checked again after rounding. Optional asset-authored body radius

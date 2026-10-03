@@ -1659,9 +1659,15 @@ mod tests {
                         f32::from(b.point_a.2),
                         f32::from(b.point_b.2),
                     );
-                    for (t, sword) in [0.0, 0.25, 0.5, 0.75, 1.0]
-                        .into_iter()
-                        .flat_map(|t| [false, true].map(move |sword| (t, sword)))
+                    for (t, posture, sword) in
+                        [0.0, 0.25, 0.5, 0.75, 1.0].into_iter().flat_map(|t| {
+                            [
+                                (Posture::Upright, false),
+                                (Posture::Upright, true),
+                                (Posture::OnShoulders, false),
+                            ]
+                            .map(move |(posture, sword)| (t, posture, sword))
+                        })
                     {
                         let flight = if sword {
                             OrderType::JumpingLongSword
@@ -1686,7 +1692,7 @@ mod tests {
                             &source,
                             &destination,
                             start,
-                            Posture::Upright,
+                            posture,
                             sword,
                             false,
                             f32::from(b.point_a.2) - f32::from(a.point_a.2),
@@ -1720,12 +1726,13 @@ mod tests {
                         let mut actor =
                             crate::engine::test_support::actors::TestActor::pc(Posture::Flying)
                                 .build();
-                        actor.element_data_mut().set_position(WorldPoint3D::new(
-                            launch.x,
-                            launch.y + source_z,
-                            source_z,
-                        ));
-                        let mut integrated = vec![path[1]];
+                        let departure = if posture == Posture::OnShoulders {
+                            WorldPoint3D::new(start.x, start.y + source_z, source_z + 40.0)
+                        } else {
+                            WorldPoint3D::new(launch.x, launch.y + source_z, source_z)
+                        };
+                        actor.element_data_mut().set_position(departure);
+                        let mut integrated = vec![path[0], [departure.x, departure.y, departure.z]];
                         for step in steps.iter().filter(|step| step.anim == flight) {
                             start_airborne_jump_motion(&mut actor, flight, step.target_3d.unwrap());
                             while actor.actor_data().unwrap().wait_time > 0 {

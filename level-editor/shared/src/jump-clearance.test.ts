@@ -135,6 +135,19 @@ test("takeoff motion is checked and floor contact is allowed", () => {
   assert.deepEqual(createJumpClearance([wall(-100, -100, 300, 300, -10, 0)])(edges, true), []);
 });
 
+test("assisted departure checks the elevated path before the ordinary takeoff point", () => {
+  // The ordinary arc starts fifteen units away; assisted takeoff rises in place.
+  const obstruction = wall(-1, 20, 2, 10, 35, 45);
+  assert.ok(createJumpClearance([obstruction])(edges, true).length > 0);
+  const result = assembleJumpSegments(segments(), createJumpClearance([obstruction]));
+  assert.equal(result.pairs.length, 2);
+  for (const pair of result.pairs)
+    assert.deepEqual(
+      createJumpClearance([obstruction])(pair.edges as [JumpEdge, JumpEdge], true),
+      [],
+    );
+});
+
 test("short sword flights check the fixed-step overshoot beyond the landing", () => {
   const close: [JumpEdge, JumpEdge] = [
     edges[0],

@@ -82,6 +82,7 @@
   flight. Optional body radius/height account for headroom
   and side clearance. Clearance includes fixed-step airborne motion between
   animation targets and short-flight overshoot before the final landing snap.
+  Assisted jumps also check their raised, stationary shoulder departure.
   Unsupported automatic jump shapes warn and are omitted; explicit authored
   connections retain their existing behavior.
   Surface-level jump rules generate reusable ledges and receiving bands from

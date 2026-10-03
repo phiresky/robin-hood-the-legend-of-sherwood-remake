@@ -170,10 +170,13 @@ export function createJumpClearance(obstacles: SightObstacle[]) {
         source.a[2],
       ];
       const targets = longJumpTrajectory(start, destination.b).slice(1);
+      // Assisted takeoff plays in place, then raises Z without changing world Y.
+      const shoulders: Vec3 = [source.a[0], source.a[1], source.a[2] + 40];
       const paths = [
         [source.a, start, ...targets],
         integratedLongJumpTrajectory(start, targets),
         integratedLongJumpTrajectory(start, [destination.b]),
+        [source.a, ...integratedLongJumpTrajectory(shoulders, targets)],
       ];
       // Sword-fighting jumps use one direct airborne target instead of the arc's waypoints.
       const flights: [Vec3, Vec3][] = paths.flatMap((path) =>
