@@ -1,3 +1,4 @@
+import { riverBankAt } from "../../shared/src/river-banks.ts";
 import { gameToScene, type LevelSpline, type MapCamera, type Vec3 } from "@rle/shared";
 import { splineCurve } from "./spline-geometry.ts";
 import { splineMaterialWeightsAt } from "../../shared/src/spline-sampling.ts";
@@ -67,6 +68,8 @@ export function insertSplinePoint(
         ? [position[0], position[1], mix(a[2], b[2])]
         : (a.map((value, i) => mix(value, b[i]!)) as Vec3),
     ),
+    pointBanks:
+      path.pointBanks && insert(path.pointBanks, riverBankAt(path, (section + t) / sections)),
     pointWidths: blendNumbers(path.pointWidths),
     pointHeightOffsets: blendNumbers(path.pointHeightOffsets),
     pointMaterials:

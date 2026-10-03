@@ -7,7 +7,15 @@ import {
   type TerrainTriangle,
 } from "../../shared/src/authored-terrain.ts";
 
-type Vertex = { x: number; y: number; z: number; offset: number; u: number; v: number };
+export type RibbonVertex = {
+  x: number;
+  y: number;
+  z: number;
+  offset: number;
+  u: number;
+  v: number;
+};
+type Vertex = RibbonVertex;
 type Bounds = { minX: number; minY: number; maxX: number; maxY: number };
 const epsilon = 1e-8;
 function bounds(points: { x: number; y: number }[]): Bounds {
@@ -93,8 +101,6 @@ export function roadGeometry(
 ): THREE.BufferGeometry {
   const sine = Math.sin((camera.elevation_deg * Math.PI) / 180),
     cosine = Math.cos((camera.elevation_deg * Math.PI) / 180);
-  const positions: number[] = [],
-    uvs: number[] = [];
   const pairs = sampleSpline(path, camera).map((sample) => {
     const normal = new THREE.Vector3(-sample.tangent.y, sample.tangent.x, 0)
       .normalize()
@@ -108,6 +114,20 @@ export function roadGeometry(
       v: sample.distance / path.repeatLength,
     }));
   });
+  return drapeRibbonGeometry(pairs, camera, document);
+}
+
+/** Shared exact terrain clipping for surface ribbons. Optional water floor keeps banks visible at the shoreline. */
+export function drapeRibbonGeometry(
+  pairs: RibbonVertex[][],
+  camera: MapCamera,
+  document?: Level3D,
+  waterFloor = false,
+) {
+  const sine = Math.sin((camera.elevation_deg * Math.PI) / 180),
+    cosine = Math.cos((camera.elevation_deg * Math.PI) / 180);
+  const positions: number[] = [],
+    uvs: number[] = [];
   const emit = (polygon: Vertex[], triangle?: TerrainTriangle) => {
     for (let i = 1; i + 1 < polygon.length; i++) {
       const a = polygon[0]!,
@@ -115,7 +135,8 @@ export function roadGeometry(
         c = polygon[i + 1]!;
       if (Math.abs((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)) < epsilon) continue;
       for (const p of [a, b, c]) {
-        positions.push(p.x, -p.y / sine, (triangle ? height(triangle, p) : p.z) / cosine + 0.8);
+        const z = triangle ? height(triangle, p) : p.z;
+        positions.push(p.x, -p.y / sine, (waterFloor ? Math.max(p.z, z) : z) / cosine + 0.8);
         uvs.push(p.u, p.v);
       }
     }
@@ -128,12 +149,9 @@ export function roadGeometry(
       [a[1]!, b[1]!, b[0]!],
     ]) {
       const box = bounds(ribbon);
-      const candidates = terrainTrianglesInBounds(document, [
-        box.minX,
-        box.minY,
-        box.maxX,
-        box.maxY,
-      ]);
+      const candidates = document
+        ? terrainTrianglesInBounds(document, [box.minX, box.minY, box.maxX, box.maxY])
+        : [];
       let remaining = [{ polygon: ribbon, bounds: box }];
       for (const triangle of candidates) {
         const triangleBounds = bounds(triangle.points.map((p) => ({ x: p[0], y: p[1] })));

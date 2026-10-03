@@ -1,3 +1,4 @@
+import { editRiverBanks, riverBankStyles } from "../../shared/src/river-banks.ts";
 import { render } from "@solidjs/web";
 import { createSignal } from "solid-js";
 import * as THREE from "three";
@@ -51,6 +52,11 @@ const river: LevelSpline = {
   channel: { enabled: true, bedDepth: 18, bankSlope: 1 },
   repeatLength: 128,
 };
+river.pointBanks = editRiverBanks(river, [0, 1, 2, 3], "both", {
+  width: 38,
+  mix: { mixed_stones: 1 },
+});
+river.pointBanks = editRiverBanks(river, [2, 3], "left", { mix: { vegetation: 1 } });
 const grid = createTerrainGrid([0, 0, 480, 384], 96);
 let current: Level3D = {
   version: 1,
@@ -183,6 +189,10 @@ async function run() {
   viewport.syncViews(current);
   check(current.splines![0]!.pointWidths![1] === 72, "Variable widths lost on save/reload");
   check(current.splines![1]!.channel!.bedDepth === 18, "Channel settings lost on save/reload");
+  check(
+    JSON.stringify(current.splines![1]!.pointBanks) === JSON.stringify(river.pointBanks),
+    "Bank designs lost on save/reload",
+  );
   await stage("reload");
   const screenshot = viewport.captureThumbnail().toDataURL();
   const { compiled, pixels, appearance } = viewport.bakeMap(current, new Map());
@@ -360,6 +370,51 @@ async function run() {
   check(!document.querySelector('div[style*="100000"]'), "Canceled marquee must be removed");
   await clickSpline("river");
   await checkCurvedToggle("river");
+  const selectBank = async (label: string, value: string) => {
+    const input = document.querySelector<HTMLSelectElement>(`select[aria-label="${label}"]`)!;
+    check(input, `Missing ${label}`);
+    input.value = value;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    await pause();
+  };
+  const bankRiver = () => current.splines!.find((path) => path.id === "river")!;
+  await selectBank("Bank design scope", "river");
+  await selectBank("Bank side", "both");
+  for (const style of Object.keys(riverBankStyles)) {
+    await selectBank("Bank edge design", style);
+    check(
+      bankRiver().pointBanks!.every(
+        (p) =>
+          p.left.mix[style as keyof typeof riverBankStyles] === 1 &&
+          p.right.mix[style as keyof typeof riverBankStyles] === 1,
+      ),
+      `Whole-river style ${style} did not update both banks`,
+    );
+  }
+  await selectBank("Bank design scope", "point");
+  await selectBank("Bank side", "left");
+  await selectBank("Bank edge design", "big_stones");
+  check(
+    bankRiver().pointBanks!.some((p) => p.left.mix.big_stones === 1),
+    "Point bank design missing",
+  );
+  check(
+    bankRiver().pointBanks!.every((p) => p.right.mix.vegetation === 1),
+    "Point edit changed opposite bank",
+  );
+  await selectBank("Selected section", "1");
+  await selectBank("Bank design scope", "section");
+  await selectBank("Bank side", "right");
+  await selectBank("Bank edge design", "stones_plants");
+  check(
+    bankRiver().pointBanks![1]!.right.mix.stones_plants === 1 &&
+      bankRiver().pointBanks![2]!.right.mix.stones_plants === 1,
+    "Section did not set both endpoints",
+  );
+  check(
+    bankRiver().pointBanks![0]!.right.mix.vegetation === 1,
+    "Section edit changed distant bank",
+  );
   const riverBefore = current.splines!.find((path) => path.id === "river")!;
   const riverHandle = project(handles().find((handle) => handle.userData.splinePoint === 1)!);
   pointer("pointerdown", riverHandle);
@@ -396,6 +451,25 @@ async function run() {
     "All spline outlines must remain after finishing selection",
   );
   await stage("viewport-path-selection");
+  const withBanks = viewport.bakeMap(current, new Map()).pixels;
+  const afterBanks = viewport.captureThumbnail().toDataURL();
+  const noBanks = {
+    ...current,
+    splines: current.splines!.map((p) => ({ ...p, pointBanks: undefined })),
+  };
+  setDoc(noBanks);
+  await pause();
+  viewport.syncViews(noBanks);
+  const withoutBanks = viewport.bakeMap(noBanks, new Map()).pixels;
+  const beforeBanks = viewport.captureThumbnail().toDataURL();
+  check(
+    withBanks.color.some((v, i) => v !== withoutBanks.color[i]),
+    "Bank art missing from color export",
+  );
+  setDoc(current);
+  await pause();
+  viewport.syncViews(current);
+  Object.assign(window, { __migrationImages: { before: beforeBanks, after: afterBanks } });
   check(!errors.length, errors.join("\n"));
   Object.assign(window, {
     __splineImages: { screenshot },

@@ -1,3 +1,4 @@
+import { riverBankStyles } from "./river-banks.ts";
 import { validateInteriorConnections } from "./interior-connections.ts";
 import {
   validateCustomTerrainMaterials,
@@ -680,6 +681,37 @@ export function parseLevel3D(value: unknown, context: DocumentContext = {}): Lev
             d.customMaterials as CustomTerrainMaterial[] | undefined,
           );
         });
+      }
+      if (spline.pointBanks !== undefined) {
+        check(spline.kind === "river", spline.id, "only rivers can have bank designs");
+        const banks = array(spline.pointBanks, "spline.pointBanks");
+        check(
+          banks.length === points.length,
+          spline.id,
+          "expected one bank design per control point",
+        );
+        for (const bank of banks) {
+          object(bank, "spline.bank");
+          for (const side of ["left", "right"]) {
+            const setting = bank[side];
+            object(setting, "spline.bank.side");
+            finite(setting.width, "spline.bank.width");
+            check(
+              setting.width > 0 && setting.width <= 512,
+              spline.id,
+              "bank width must be between 0 and 512",
+            );
+            object(setting.mix, "spline.bank.mix");
+            let sum = 0;
+            for (const [id, weight] of Object.entries(setting.mix)) {
+              check(Object.hasOwn(riverBankStyles, id), spline.id, "unknown bank style");
+              finite(weight, "spline.bank.weight");
+              check(Number(weight) >= 0 && Number(weight) <= 1, spline.id, "invalid bank weight");
+              sum += Number(weight);
+            }
+            check(Math.abs(sum - 1) < 1e-6, spline.id, "bank weights must sum to one");
+          }
+        }
       }
       if (spline.channel !== undefined) {
         object(spline.channel, "spline.channel");

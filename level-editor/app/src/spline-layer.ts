@@ -98,7 +98,7 @@ export class SplineLayer {
       }
     for (const path of paths) {
       const previous = this.views.get(path.id);
-      if (previous?.path === path && !appearanceChanged) {
+      if (previous?.path === path && !appearanceChanged && !(path.pointBanks && terrainChanged)) {
         if (path.kind === "wall") continue;
         // A full-quality unchanged texture is also suitable for a drag preview.
         if (!previous.preview || preview) {

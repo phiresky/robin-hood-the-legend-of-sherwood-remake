@@ -2226,3 +2226,17 @@ cutouts aligned with terrain instead of rounding each piece separately.
   differently sized walkways and placements shifted along a seam. Several neighbors
   can use disjoint spans; overlapping claims are rejected and detached edges stay separate.
   Seven Sherwood bridge/platform assets now support this placement rule.
+
+### Riverbank designs in the level editor
+
+River control points now carry separate left and right bank designs: plain,
+small stones, big stones, mixed stones, small stones with plants, and vegetation.
+Choose a selected point, selected section, or whole river in the Riverbanks
+controls. Section changes set both endpoints and blend into neighboring sections;
+inserted points retain the existing blend. Bank width is independent of water
+width, and changing it does not scale the stones. No bank decoration preserves
+existing maps and can clear a bank on either side.
+
+Banks use synthesized Sherwood mission art, follow terrain and river edits, and
+are included in saved maps and color/depth export. They are painted surface
+decoration; their stones and plants do not add collision or alter ford navigation.

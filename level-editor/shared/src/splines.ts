@@ -16,6 +16,8 @@ export interface LevelSpline {
   pointMaterials?: string[];
   /** Interpolated control-point appearance retained when inserting a point in a transition. */
   pointMaterialMixes?: (Record<string, number> | null)[];
+  /** Independent bank designs at control points, blended along each river section. */
+  pointBanks?: import("./river-banks.ts").RiverBankPoint[];
   /** Non-destructive riverbed modifier. Depth is in game pixels; slope is rise/run. */
   channel?: { enabled: boolean; bedDepth: number; bankSlope: number };
   repeatLength: number;

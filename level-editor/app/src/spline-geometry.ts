@@ -1,3 +1,4 @@
+import { addRiverBanks } from "./river-bank-geometry.ts";
 import { TextureAreaFilter } from "./texture-area-filter.ts";
 import { terrainMaterial } from "../../shared/src/terrain-materials.ts";
 import { terrainTexture, terrainMaterialTexture } from "./terrain-texture.ts";
@@ -91,6 +92,7 @@ export function riverMesh(
   const mesh = new THREE.Mesh(riverGeometry(path, camera, document, preview), material);
   mesh.renderOrder = 1;
   mesh.userData.noSunShadow = true;
+  addRiverBanks(mesh, path, camera, document, preview);
   return mesh;
 }
 

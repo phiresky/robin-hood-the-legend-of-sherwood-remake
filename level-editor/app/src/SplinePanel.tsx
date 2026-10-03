@@ -1,3 +1,10 @@
+import {
+  riverBankStyles,
+  riverBankPoint,
+  editRiverBanks,
+  type RiverBankSide,
+  type RiverBankStyle,
+} from "../../shared/src/river-banks.ts";
 import LibraryPortal from "./LibraryPortal";
 import LibraryBrowser from "./LibraryBrowser";
 import ScrubNumber from "./ScrubNumber";
@@ -43,6 +50,8 @@ export default function SplinePanel(props: {
     return setPointValue(value);
   };
   const [section, setSection] = createSignal(-1);
+  const [bankSide, setBankSide] = createSignal<RiverBankSide | "both">("both");
+  const [bankScope, setBankScope] = createSignal<"point" | "section" | "river">("point");
   const [picker, setPicker] = createSignal<"wall" | "corner" | null>(null);
   const [sourceMap, setSourceMap] = createSignal("");
   const [presetSearch, setPresetSearch] = createSignal("");
@@ -66,6 +75,27 @@ export default function SplinePanel(props: {
       ? (terrainHeightAt(document, p[0], p[1]) ?? p[2]) + (path.pointHeightOffsets?.[index] ?? 0)
       : p[2];
   };
+  function bankIndices(current: LevelSpline) {
+    if (bankScope() === "river") return current.points.map((_, i) => i);
+    if (
+      bankScope() === "section" &&
+      section() >= 0 &&
+      section() < current.points.length - (current.closed ? 0 : 1)
+    )
+      return [section(), (section() + 1) % current.points.length];
+    return selectedPoints() ?? [point()];
+  }
+  function bankStyleValue(current: LevelSpline) {
+    const sides: RiverBankSide[] =
+      bankSide() === "both" ? ["left", "right"] : [bankSide() as RiverBankSide];
+    const values = bankIndices(current).flatMap((i) =>
+      sides.map((side) => {
+        const mix = riverBankPoint(current, i)[side].mix;
+        return Object.keys(mix).find((id) => mix[id as RiverBankStyle] === 1) ?? "mixed";
+      }),
+    );
+    return values.every((v) => v === values[0]) ? values[0] : "mixed";
+  }
   const choices = () => [
     ...availableWallPresets(props.entries()),
     ...presets().filter((p) => props.entries().some((e) => e.id === p.asset)),
@@ -417,6 +447,7 @@ export default function SplinePanel(props: {
     const index = Math.min(point(), current.points.length - 1);
     patch({
       points: current.points.filter((_, i) => i !== index),
+      pointBanks: current.pointBanks?.filter((_, i) => i !== index),
       pointWidths: current.pointWidths?.filter((_, i) => i !== index),
       pointHeightOffsets: current.pointHeightOffsets?.filter((_, i) => i !== index),
       pointMaterials: current.pointMaterials?.filter((_, i) => i !== index),
@@ -489,6 +520,9 @@ export default function SplinePanel(props: {
                     return {
                       ...latest,
                       points: [...latest.points, [position[0], position[1], height]],
+                      pointBanks: latest.pointBanks
+                        ? [...latest.pointBanks, riverBankPoint(latest, latest.points.length - 1)]
+                        : undefined,
                       pointWidths: latest.pointWidths
                         ? [...latest.pointWidths, latest.pointWidths.at(-1) ?? latest.width]
                         : undefined,
@@ -1063,6 +1097,82 @@ export default function SplinePanel(props: {
                     </button>
                   </div>
                 </Show>
+              </Show>
+              <Show when={current().kind === "river"}>
+                <fieldset class="riverbank-controls">
+                  <legend>Riverbanks</legend>
+                  <label>
+                    Apply bank design to
+                    <select
+                      aria-label="Bank design scope"
+                      value={bankScope()}
+                      onChange={(e) =>
+                        setBankScope(e.currentTarget.value as "point" | "section" | "river")
+                      }
+                    >
+                      <option value="point">Selected point</option>
+                      <option value="section" disabled={section() < 0}>
+                        Selected section
+                      </option>
+                      <option value="river">Whole river</option>
+                    </select>
+                  </label>
+                  <label>
+                    Bank side
+                    <select
+                      aria-label="Bank side"
+                      value={bankSide()}
+                      onChange={(e) => setBankSide(e.currentTarget.value as RiverBankSide | "both")}
+                    >
+                      <option value="both">Both banks</option>
+                      <option value="left">Left bank</option>
+                      <option value="right">Right bank</option>
+                    </select>
+                  </label>
+                  <label>
+                    Edge design
+                    <select
+                      aria-label="Bank edge design"
+                      value={bankStyleValue(current())}
+                      onChange={(e) =>
+                        patch({
+                          pointBanks: editRiverBanks(
+                            current(),
+                            bankIndices(current()),
+                            bankSide(),
+                            { mix: { [e.currentTarget.value as RiverBankStyle]: 1 } },
+                          ),
+                        })
+                      }
+                    >
+                      <option value="mixed" disabled>
+                        Mixed / blended
+                      </option>
+                      <For each={Object.entries(riverBankStyles)}>
+                        {([id, label]) => <option value={id}>{label}</option>}
+                      </For>
+                    </select>
+                  </label>
+                  <NumberField
+                    label="Bank width"
+                    min={1}
+                    max={512}
+                    value={
+                      riverBankPoint(current(), bankIndices(current())[0] ?? 0)[
+                        bankSide() === "right" ? "right" : "left"
+                      ].width
+                    }
+                    patch={(width) => ({
+                      pointBanks: editRiverBanks(current(), bankIndices(current()), bankSide(), {
+                        width,
+                      }),
+                    })}
+                  />
+                  <p class="hint">
+                    Width is independent of river width. Sections set both endpoints and blend into
+                    adjoining sections. Left and right follow point order.
+                  </p>
+                </fieldset>
               </Show>
               <Show when={current().kind !== "wall"}>
                 <NumberField

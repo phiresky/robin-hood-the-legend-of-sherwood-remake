@@ -40,3 +40,25 @@ pnpm --dir level-editor --filter app generate-material-previews
 
 The generated PNG and JSON are committed so opening the library does not generate
 full-size terrain textures on the browser's main thread.
+
+## Riverbank art
+
+`riverbanks.png` previews (left to right) plain soil, small stones, big stones,
+mixed stones, small stones with plants, and vegetation. `riverbanks.json` bundles
+the same indexed pixels for synchronous previews and map export. They use
+Sherwood day-map soil, foliage and a masked painted boulder. Soil is darkened and
+desaturated for a damp bank; donor ground foreshortening is undone before
+synthesis. Stones retain their painted lighting, with small rotation and size
+variations. Each tile covers 128 × 512 scene units; bank width changes the
+covered area without stretching stones. Each river side gets a stable texture
+offset, feathered irregular margins and blended control-point styles.
+
+Regenerate with Pillow and texture-synthesis 0.8.3:
+
+```sh
+python3 level-editor/scripts/synthesize-riverbanks.py /path/to/Data/Levels/Day \
+  --synthesizer /home/phire/.cargo/bin/texture-synthesis
+```
+
+The script records crop bounds, masks and seeds, and uses one synthesis thread
+for reproducible output. Intermediate donors stay in ignored `work/riverbanks/`.
