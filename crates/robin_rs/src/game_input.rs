@@ -71,6 +71,24 @@ impl ClickCtx {
     }
 }
 
+/// Dispatch a world release. Double-clicks accelerate/repeat the previous
+/// action directly, without interpreting their mouse path as a combat gesture.
+pub fn resolve_world_left_click(
+    host: &mut Host,
+    engine: &Engine,
+    assets: &LevelAssets,
+    map_pt: MapPoint,
+    modifiers: ClickModifiers,
+) -> Vec<PlayerCommand> {
+    if !modifiers.double {
+        let commands = resolve_swordfight(host, engine, assets, map_pt, true);
+        if !commands.is_empty() {
+            return commands;
+        }
+    }
+    resolve_left_click_with_planning(host, engine, assets, map_pt, modifiers)
+}
+
 /// Resolve a left-click at `map_pt` into player commands.
 ///
 /// The engine is read-only; all mutations are expressed as commands. The
@@ -881,7 +899,7 @@ pub fn resolve_action_drag(
     map_pt: MapPoint,
 ) -> Vec<PlayerCommand> {
     let local_seat = host.transport.local_seat();
-    if host.frontend.input.ignore_next_drag() {
+    if host.frontend.input.ignore_next_drag() || host.frontend.input.left_double_click_pending() {
         return vec![];
     }
     // Swordfighting PCs feed the mouse-way gesture recognizer on
@@ -926,8 +944,9 @@ pub fn resolve_action_drag(
     ) {
         Some(t) => t,
         None => {
-            // No focus found: clear `target_drag` so a subsequent
-            // re-hover re-fires the arm.
+            // Losing focus clears the repeat-click target as well as the
+            // drag latch, so a later double-click cannot reuse an old victim.
+            host.frontend.input.gestures.element_old_click = None;
             host.frontend.input.gestures.target_drag = None;
             return vec![];
         }

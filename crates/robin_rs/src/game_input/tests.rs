@@ -1248,6 +1248,52 @@ fn drag_interactions_preserve_launch_and_completion_policy_for_every_action() {
 }
 
 #[test]
+fn punch_double_press_preserves_running_release_and_cached_victim() {
+    let (mut engine, mut assets, mut host) = fixture();
+    let mut profile = robin_engine::profiles::CharacterProfile::default();
+    profile.actions[0] = Action::Hit;
+    std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .characters
+        .push(profile);
+    let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+    let enemy = add_soldier(&mut engine, 50.0, 50.0, 100);
+    select(&mut engine, &assets, pc);
+    arm_action(&mut engine, &assets, pc, Action::Hit);
+    host.frontend.presentation.draw_order.ids.push(enemy);
+    let point = MapPoint::new(50.0, 50.0);
+
+    host.frontend.begin_left_pointer(Default::default(), 1);
+    assert_cmds!(
+        resolve_action_drag(&mut host, &engine, &assets, point),
+        vec![PlayerCommand::LaunchInteraction {
+            actor: pc,
+            target: enemy,
+            command: Command::HitCmd,
+            running: false,
+        }]
+    );
+    assert!(!host.frontend.release_left_pointer());
+    assert!(host.frontend.input.consume_suppressed_click());
+
+    host.frontend.begin_left_pointer(Default::default(), 2);
+    assert!(resolve_action_drag(&mut host, &engine, &assets, point).is_empty());
+    let double = host.frontend.release_left_pointer();
+    assert!(double);
+    assert!(!host.frontend.input.consume_suppressed_click());
+    // The victim may move out from under the cursor between clicks.
+    host.frontend.presentation.draw_order.ids.clear();
+    assert_cmds!(
+        resolve_world_left_click(&mut host, &engine, &assets, point, DOUBLE),
+        vec![PlayerCommand::LaunchInteraction {
+            actor: pc,
+            target: enemy,
+            command: Command::HitCmd,
+            running: true,
+        }]
+    );
+}
+
+#[test]
 fn action_drag_without_armed_action_is_noop() {
     let (mut engine, assets, mut host) = fixture();
     let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
@@ -1276,12 +1322,14 @@ fn action_drag_clears_stale_target_when_focus_lost() {
     select(&mut engine, &assets, pc);
     arm_action(&mut engine, &assets, pc, Action::Hit);
     host.frontend.input.gestures.target_drag = Some(pc);
+    host.frontend.input.gestures.element_old_click = Some(pc);
 
     // Nothing focusable under the cursor: the stale drag target
     // must be cleared so a later re-hover can re-fire.
     let cmds = resolve_action_drag(&mut host, &engine, &assets, MapPoint::new(700.0, 700.0));
     assert!(cmds.is_empty());
     assert_eq!(host.frontend.input.gestures.target_drag, None);
+    assert_eq!(host.frontend.input.gestures.element_old_click, None);
 }
 
 // ── resolve_swordfight ──
@@ -1374,6 +1422,48 @@ fn allied_soldier_swordfight_participates_in_gesture_input_and_parry() {
             seek_distance: None,
         }]
     );
+
+    let mut fighter = engine.get_entity(opponent).unwrap().element_data().clone();
+    fighter.kind = ElementKind::ActorPc;
+    let pc = engine.test_add_entity(Entity::Pc(robin_engine::element::ActorPc {
+        element: fighter,
+        actor: ActorData::default(),
+        human: HumanData {
+            opponents: vec![opponent].into(),
+            ..Default::default()
+        },
+        pc: robin_engine::element::PcData {
+            life_points: 100,
+            playable: true,
+            ..Default::default()
+        },
+    }));
+    select(&mut engine, &assets, pc);
+    host.frontend
+        .input
+        .publish_spatial_hit(robin_engine::engine::SpatialHit {
+            valid_position_for_move: true,
+            selected_sector_idx: Some(robin_engine::fast_find_grid::SectorIndex::new(0).unwrap()),
+            ..Default::default()
+        });
+    assert!(is_selected_unit_swordfighting(
+        &engine.presentation_view(),
+        PlayerId(0)
+    ));
+    let commands = resolve_world_left_click(
+        &mut host,
+        &engine,
+        &assets,
+        MapPoint::new(300.0, 300.0),
+        DOUBLE,
+    );
+    assert!(matches!(commands.first(), Some(PlayerCommand::MakePcFast { pc_id }) if *pc_id == pc));
+    assert!(!commands.iter().any(|command| matches!(
+        command,
+        PlayerCommand::SwordStrikeCmd { .. } | PlayerCommand::Noop
+    )));
+    apply(&mut engine, &assets, PlayerCommand::UnselectAllPcs);
+    select_allied(&mut engine, &assets, soldier);
 
     host.frontend.clear_gesture();
     apply(

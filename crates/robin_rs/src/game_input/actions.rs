@@ -228,13 +228,18 @@ fn click_hit(
     // The seek uses the running gait on double-click and
     // passes the no-transitions / seek-stop-NPC flags (handled
     // inside `apply_interaction_with_seek`).
-    if let Some(target_id) = engine.find_focusable_entity_for_seat(
-        context.local_seat,
-        assets,
-        draw_order,
-        map_pt,
-        Focus::Hit,
-    ) {
+    let cached_target = is_double
+        .then_some(host.frontend.input.gestures.element_old_click)
+        .flatten();
+    if let Some(target_id) = cached_target.or_else(|| {
+        engine.find_focusable_entity_for_seat(
+            context.local_seat,
+            assets,
+            draw_order,
+            map_pt,
+            Focus::Hit,
+        )
+    }) {
         // Cache the drag target so a follow-up double-click
         // repeats on the same victim.
         cache_click_and_drag_target(host, target_id);
@@ -254,6 +259,8 @@ fn click_hit(
         return cmds;
     }
 
+    host.frontend.input.gestures.element_old_click = None;
+    host.frontend.input.gestures.target_drag = None;
     vec![]
 }
 

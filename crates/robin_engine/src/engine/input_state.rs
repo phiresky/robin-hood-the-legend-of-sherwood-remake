@@ -249,6 +249,11 @@ impl InputState {
         self.gestures.next_left_double_is_simple = false;
     }
 
+    /// Whether the current press will dispatch a double-click on release.
+    pub fn left_double_click_pending(&self) -> bool {
+        self.gestures.left_double_click_pending
+    }
+
     /// Release retires drag authority but leaves selection/click suppression for dispatch.
     pub fn release_left_pointer(&mut self) -> bool {
         self.gestures.left_pointer = LeftPointerPhase::Released;

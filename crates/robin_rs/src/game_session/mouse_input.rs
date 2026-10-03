@@ -1219,23 +1219,18 @@ impl MouseCtx<'_> {
                 dispatch_local_command(&host.transport, frame_cmds, &cmd);
                 return;
             }
-            // Resolve swordfight first, then regular click
-            let mut cmds =
-                crate::game_input::resolve_swordfight(host, engine, assets, map_pt, true);
-            if cmds.is_empty() {
-                cmds = crate::game_input::resolve_left_click_with_planning(
-                    host,
-                    engine,
-                    assets,
-                    map_pt,
-                    crate::game_input::ClickModifiers {
-                        shift: shift_held,
-                        planning: planning_held,
-                        control: ctrl_held,
-                        double: is_double,
-                    },
-                );
-            }
+            let mut cmds = crate::game_input::resolve_world_left_click(
+                host,
+                engine,
+                assets,
+                map_pt,
+                crate::game_input::ClickModifiers {
+                    shift: shift_held,
+                    planning: planning_held,
+                    control: ctrl_held,
+                    double: is_double,
+                },
+            );
             let queued_action = if planning_held {
                 engine.planned_action_for_seat(host.transport.local_seat())
             } else {
