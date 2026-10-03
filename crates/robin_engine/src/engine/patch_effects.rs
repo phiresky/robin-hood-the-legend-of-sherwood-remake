@@ -665,6 +665,10 @@ impl EngineInner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    mod route_tests {
+        use super::*;
+        include!("patch_route_tests.rs");
+    }
     use crate::coordinates::{MapPoint, SpriteAnchor, SpriteFrameOffset, WorldPoint3D};
     use crate::element::{
         ActorData, ActorPc, ElementData, ElementFx, ElementKind, Entity, FxData, HumanData, PcData,

@@ -217,6 +217,24 @@ This is a routing/collision consistency check, not an oracle for missing authore
 geometry. Coarse samples omit narrow passages, inter-sector traversal and dynamic
 state changes; those require their separate gameplay fixtures.
 
+To sample the ordinary movement areas changed by each exported transition, run:
+
+```sh
+ROBIN_ASSET_MAP_DIAGNOSTICS=/absolute/path/to/exports RUSTC_WRAPPER= \
+  cargo test -p robin_engine --lib -j1 \
+  exported_state_routes_match_live_collision_components -- --ignored --nocapture
+```
+
+This reuses the live pathfinder through initial, applied and reset states. Each
+state recomputes collision-connected samples and checks returned route clearance.
+`state-route-sampling-report.json` records counts per transition/state, including
+zero-coverage entries. The companion ignored test
+`exported_combined_state_routes_match_live_collision_components` applies all
+transitions together, then resets them in reverse order, writing
+`combined-state-route-sampling-report.json`. These checks cover independent and
+all-applied states; arbitrary combinations, door permissions, inter-sector
+traversal and narrow unsampled passages still need separate coverage.
+
 ## GPU execution
 
 Shader translation tests remain in the normal client suite. GPU execution is
