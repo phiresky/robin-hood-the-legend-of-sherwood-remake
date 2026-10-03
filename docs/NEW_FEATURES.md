@@ -9,8 +9,10 @@
   references remain supported. Independently authored banks with the same name
   and different pinned contents receive distinct export names, preserving both
   effects and keeping installed shared banks separate. Identical contents share
-  packaged files; missing resources omit only the affected bank. Library authoring
-  and preview remain unfinished.
+  packaged files; missing resources omit only the affected bank. An offline
+  standalone-effect authoring helper creates reusable local frames without baking
+  sprite artwork into the background; placement, copying and save/reopen are
+  covered by compiler tests. Library publication and preview remain unfinished.
 
 - **Bounded shadow regions for map appearance switches.** Export includes each
   asset's possible shadow footprint using the scene's sun direction and lowest

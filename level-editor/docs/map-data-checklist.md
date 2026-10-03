@@ -105,6 +105,16 @@ flags and stores no source-record index. Tests reconstruct screen placement at a
 reviewed height and check rotated, translated and raised placement. Real candle
 ownership and heights remain under review; these definitions are not yet published.
 
+Independent effects can be authored with
+`pipeline/src/author-scenery-animation-asset.ts`. It accepts local animation
+definitions and resource pins and returns a validated asset descriptor, an empty
+GLB placement frame and an initial editor placement. Multiple effects may share
+one frame. The frame has no baked artwork or collision: runtime sprite animation
+is exported separately. Tests cover copying, rotation, elevation, deletion and
+save/reopen without changing other geometry or the original effect. This is an
+offline authoring primitive; a visible editor preview and published effect assets
+are still required before treating standalone effects as a finished library feature.
+
 To repeat the animation acceptance chain, generate a fresh output directory with
 `SCENERY_TEST_EXPORT_DIR` while running `app/src/scenery-resources.test.ts`.
 Use that same absolute directory for the ignored native tests
