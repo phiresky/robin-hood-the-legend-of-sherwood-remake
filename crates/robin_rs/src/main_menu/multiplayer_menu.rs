@@ -99,6 +99,7 @@ pub(crate) struct MultiplayerLaunch {
 
 #[derive(Debug, Clone)]
 struct MissionChoice {
+    load_save: bool,
     campaign_rules: Option<robin_engine::coop::CoopRules>,
     campaign_save: Option<crate::savegame::SlotName>,
     mission_id: u32,
@@ -1337,6 +1338,68 @@ impl MultiplayerMenuState {
     ) -> Option<MultiplayerMenuTick> {
         if id == ID_CREATE
             && matches!(self.mode, MenuMode::Missions)
+            && self
+                .selected_mission()
+                .is_some_and(|mission| mission.load_save)
+        {
+            let callbacks = crate::main_entry::RustCallbacks::new_for_window(
+                application_context.clone(),
+                io.window,
+            )
+            .await;
+            let mut callbacks = match callbacks {
+                Ok(Some(callbacks)) => callbacks,
+                Ok(None) => return None,
+                Err(error) => {
+                    self.status = format!("Could not open saves: {error}");
+                    return None;
+                }
+            };
+            let detailed = require(
+                application_context
+                    .with_active_profile(|p| p.gameplay_config.detailed_save_metadata),
+                SCREEN,
+            );
+            let selected = crate::ingame_menu::save_load::show_load_picker(
+                io,
+                &mut callbacks.save_manager,
+                detailed,
+            )
+            .await;
+            let crate::ingame_menu::save_load::SaveLoadOutcome::Slot(index) = selected else {
+                return None;
+            };
+            let save = match callbacks.save_manager.preflight_exact_slot(index) {
+                Ok(save) => save,
+                Err(error) => {
+                    self.status = format!("Could not load save: {error:#}");
+                    return None;
+                }
+            };
+            if save.header.multiplayer_diagnostic {
+                self.status = "Diagnostic captures cannot be used to start a campaign.".into();
+                return None;
+            }
+            let mut choice = self.missions[self.selected].clone();
+            choice.load_save = false;
+            choice.campaign_save = Some(
+                callbacks
+                    .save_manager
+                    .slot_name(index)
+                    .expect("selected slot identity"),
+            );
+            choice.mission_id = save.header.mission_id;
+            choice.mission_name = save.header.provenance.mission_name.clone();
+            choice.label = format!("Load: {}", save.header.display_text);
+            #[cfg(target_arch = "wasm32")]
+            {
+                choice.authoritative_basename = save.header.mission_assets.mission_basename.clone();
+            }
+            self.selected = self.missions.len();
+            self.missions.push(choice);
+        }
+        if id == ID_CREATE
+            && matches!(self.mode, MenuMode::Missions)
             && let Some(mission) = self.missions.get(self.selected)
         {
             self.campaign_save = mission.campaign_save.clone();
@@ -2325,64 +2388,67 @@ fn add_campaign_choices(
     if sources.profiles.characters.len() < 2 || sources.campaign.missions.is_empty() {
         return;
     }
-    let mut campaign = sources.campaign.clone();
+    let resume = sources.saves.and_then(|saves| {
+        saves.find_resume_target().map(|index| {
+            (
+                saves.slot_name(index).expect("resume slot identity"),
+                saves.get(index).expect("resume slot metadata"),
+            )
+        })
+    });
     let config = context.sim_config();
-    campaign.reset(sources.profiles, config.difficulty);
-    let (campaign, first, _, _) =
-        robin_engine::engine::Engine::select_next_mission(campaign, sources.profiles, 0, config);
-    let first = campaign.missions[first].profile(sources.profiles);
+    let (mission_id, basename) = if let Some((_, save)) = &resume {
+        let mission = sources
+            .campaign
+            .missions
+            .iter()
+            .find(|m| m.profile(sources.profiles).id == save.mission_id)
+            .expect("profile checkpoint mission must exist in campaign catalogue");
+        let profile = mission.profile(sources.profiles);
+        (profile.id, profile.mission_filename.clone())
+    } else {
+        let mut campaign = sources.campaign.clone();
+        campaign.reset(sources.profiles, config.difficulty);
+        let (campaign, first, _, _) = robin_engine::engine::Engine::select_next_mission(
+            campaign,
+            sources.profiles,
+            0,
+            config,
+        );
+        let first = campaign.missions[first].profile(sources.profiles);
+        (first.id, first.mission_filename.clone())
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = basename;
+    let label = if resume.is_some() {
+        "Continue Campaign"
+    } else {
+        "Start Campaign"
+    };
     let rules = robin_engine::coop::CoopRules {
         campaign: true,
         ..Default::default()
     };
-    let mut entries = vec![MissionChoice {
+    let campaign_choice = MissionChoice {
+        load_save: false,
         campaign_rules: Some(rules),
-        campaign_save: None,
-        mission_id: first.id,
+        campaign_save: resume.map(|(slot, _)| slot),
+        mission_id,
         #[cfg(target_arch = "wasm32")]
-        authoritative_basename: first.mission_filename.clone(),
-        mission_name: "New cooperative campaign".into(),
-        label: "New campaign".into(),
+        authoritative_basename: basename,
+        mission_name: label.into(),
+        label: label.into(),
         custom: None,
         usual_team: None,
-    }];
-    if let Some(saves) = sources.saves {
-        for (index, save) in saves.saves().enumerate() {
-            if save.multiplayer_diagnostic
-                || save.version != crate::save_file::SAVE_FORMAT_VERSION
-                || save.is_restart()
-            {
-                continue;
-            }
-            let Some(rules) = save.cooperative_campaign else {
-                continue;
-            };
-            let Some(mission) = sources
-                .campaign
-                .missions
-                .iter()
-                .find(|m| m.profile(sources.profiles).id == save.mission_id)
-            else {
-                continue;
-            };
-            let profile = mission.profile(sources.profiles);
-            entries.push(MissionChoice {
-                campaign_rules: Some(rules),
-                campaign_save: Some(
-                    saves
-                        .slot_name(index)
-                        .expect("listed campaign save has a valid slot name"),
-                ),
-                mission_id: profile.id,
-                #[cfg(target_arch = "wasm32")]
-                authoritative_basename: profile.mission_filename.clone(),
-                mission_name: format!("Campaign: {}", save.text),
-                label: format!("Resume campaign: {}", save.text),
-                custom: None,
-                usual_team: None,
-            });
-        }
-    }
+    };
+    let load_choice = MissionChoice {
+        load_save: true,
+        campaign_save: None,
+        label: "Load Save".into(),
+        mission_name: "Load Save".into(),
+        ..campaign_choice.clone()
+    };
+    let mut entries = vec![campaign_choice, load_choice];
     entries.append(missions);
     *missions = entries;
 }
@@ -2417,6 +2483,7 @@ fn mission_choices(
                 |number| format!("{number:02} {mission_name}"),
             );
             MissionChoice {
+                load_save: false,
                 campaign_rules: None,
                 campaign_save: None,
                 usual_team: crate::main_entry::detect_demo_mode_with_context(application_context)
@@ -2490,6 +2557,7 @@ fn mission_choices(
                 requires_spellforge: entry.requires_spellforge,
             };
             choices.push(MissionChoice {
+                load_save: false,
                 campaign_rules: None,
                 campaign_save: None,
                 usual_team: None,
@@ -2883,6 +2951,39 @@ mod visual_tests {
         assert_eq!(choices[0].mission_id, first.id);
         assert!(choices[0].campaign_rules.unwrap().campaign);
         assert_eq!(choices[0].campaign_rules.unwrap().team_len(), 0);
+        assert_eq!(choices[0].label, "Start Campaign");
+        assert_eq!(choices[1].label, "Load Save");
+        assert!(choices[1].load_save);
+        let mut saves = crate::savegame::SaveGameManager::new(String::new());
+        let mut checkpoint =
+            crate::savegame::SaveGame::new("Continue".into(), "Solo checkpoint".into(), first.id);
+        checkpoint.timestamp = "100".into();
+        saves.insert_test_slot(checkpoint, crate::savegame::SlotState::Published);
+        let mut continued = mission_choices(&campaign, &profiles, &context);
+        add_campaign_choices(
+            &mut continued,
+            MultiplayerMissionSources {
+                campaign: &campaign,
+                profiles: &profiles,
+                saves: Some(&saves),
+            },
+            &context,
+        );
+        assert_eq!(continued[0].label, "Continue Campaign");
+        assert_eq!(
+            continued[0].campaign_save,
+            Some(
+                saves
+                    .slot_name(saves.find_resume_target().unwrap())
+                    .unwrap()
+            )
+        );
+        assert_eq!(continued[1].label, "Load Save");
+        assert!(
+            !continued
+                .iter()
+                .any(|choice| choice.label == "New campaign")
+        );
     }
 
     #[test]

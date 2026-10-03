@@ -113,6 +113,7 @@ impl AppliedLoad {
             ),
         };
         OperationOutcome {
+            load_error: None,
             event: Some(SaveLoadEvent::LoadApplied {
                 snapshot: self.snapshot,
                 identity: self.identity,

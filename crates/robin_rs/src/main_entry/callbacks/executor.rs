@@ -72,7 +72,7 @@ pub(super) async fn execute(
                 Ok(resolved) => resolved,
                 Err(error) => {
                     tracing::error!("Load preflight failed: {error:#}");
-                    return outcome;
+                    return OperationOutcome::load_failed(format!("{error:#}"));
                 }
             };
             match resolved {
@@ -92,7 +92,7 @@ pub(super) async fn execute(
                     )
                     .await;
                 }
-                None => tracing::warn!("Load requested but no matching save slot found"),
+                None => return OperationOutcome::load_failed("No matching save slot was found."),
             }
         }
         SaveLoadRequest::Restart => {
@@ -134,6 +134,10 @@ pub(super) async fn execute(
                     if host.transport.net().is_none() {
                         outcome.completion = OperationCompletion::RestartRequested;
                         game.operation.set(GameCode::LevelRestart);
+                    } else {
+                        return OperationOutcome::load_failed(format!(
+                            "Restart snapshot unavailable: {missing:?}"
+                        ));
                     }
                 }
             }
@@ -185,11 +189,12 @@ pub(super) async fn execute(
                     {
                         Err(error) => {
                             tracing::error!("Quick load ({slot_name}) preflight failed: {error:#}");
+                            return OperationOutcome::load_failed(format!("{error:#}"));
                         }
                         Ok(None) => {
-                            tracing::error!(
-                                "Quick load ({slot_name}) lost its selected slot during preflight"
-                            );
+                            return OperationOutcome::load_failed(format!(
+                                "{slot_name} is no longer available."
+                            ));
                         }
                         Ok(Some(save)) => {
                             return execute_load(
@@ -209,7 +214,7 @@ pub(super) async fn execute(
                         }
                     }
                 }
-                _ => tracing::warn!("Quick load requested but no {slot_name} save on disk"),
+                _ => return OperationOutcome::load_failed(format!("No {slot_name} save exists.")),
             }
         }
         SaveLoadRequest::Sherwood { mission_id } => {
@@ -528,7 +533,7 @@ async fn execute_load(
                     ..OperationOutcome::NO_EVENT
                 }
             } else {
-                OperationOutcome::NO_EVENT
+                OperationOutcome::load_failed(format!("{error:#}"))
             }
         }
     }

@@ -26,7 +26,7 @@ fn play_resumes_newer_mission_autosave_instead_of_stale_continue() {
 fn automatic_resume_skips_incompatible_checkpoints_without_removing_them() {
     for version in [
         save_file::SAVE_FORMAT_VERSION - 1,
-        save_file::SAVE_FORMAT_VERSION + 1,
+        save_file::SAVE_FORMAT_VERSION + 3,
     ] {
         let mut manager = SaveGameManager::new(String::new());
         let mut continued = published_slot("Continue");
@@ -948,7 +948,7 @@ fn incompatible_payload_versions_do_not_block_the_save_store() {
 
     for version in [
         save_file::SAVE_FORMAT_VERSION - 1,
-        save_file::SAVE_FORMAT_VERSION + 1,
+        save_file::SAVE_FORMAT_VERSION + 3,
     ] {
         let root = tempfile::tempdir().unwrap();
         let directory = root.path().to_str().unwrap();

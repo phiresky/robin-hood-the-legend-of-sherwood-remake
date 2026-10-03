@@ -469,14 +469,22 @@ pub(super) fn prepare_quickload_cross_mission(
         Err(error) => {
             tracing::error!("QuickLoad confirmation preflight failed for {slot_name}: {error:#}");
             callbacks.clear_operation();
-            return None;
+            return Some(ui_task_state::ActiveUiTask::LoadError(
+                crate::save_recovery::ErrorNotice::new(format!(
+                    "The saved game could not be loaded.\n\n{error:#}"
+                )),
+            ));
         }
     };
     let save = load.save();
     if let Err(error) = callbacks.save_manager.validate_slot_identity(idx, save) {
         tracing::error!("QuickLoad confirmation rejected stale {slot_name} slot: {error:#}");
         callbacks.clear_operation();
-        return None;
+        return Some(ui_task_state::ActiveUiTask::LoadError(
+            crate::save_recovery::ErrorNotice::new(format!(
+                "The saved game could not be loaded.\n\n{error:#}"
+            )),
+        ));
     }
     let current = current_mission_id(engine.campaign(), profiles);
     let active_mission_assets = match game.mission_assets() {
@@ -484,7 +492,11 @@ pub(super) fn prepare_quickload_cross_mission(
         Err(error) => {
             tracing::error!("QuickLoad confirmation rejected {slot_name}: {error}");
             callbacks.clear_operation();
-            return None;
+            return Some(ui_task_state::ActiveUiTask::LoadError(
+                crate::save_recovery::ErrorNotice::new(format!(
+                    "The saved game could not be loaded.\n\n{error:#}"
+                )),
+            ));
         }
     };
     let target_mission_id = match validated_save_reload_target(
@@ -498,7 +510,11 @@ pub(super) fn prepare_quickload_cross_mission(
         Err(error) => {
             tracing::error!("QuickLoad confirmation rejected {slot_name}: {error}");
             callbacks.clear_operation();
-            return None;
+            return Some(ui_task_state::ActiveUiTask::LoadError(
+                crate::save_recovery::ErrorNotice::new(format!(
+                    "The saved game could not be loaded.\n\n{error:#}"
+                )),
+            ));
         }
     };
     if target_mission_id.is_none() {

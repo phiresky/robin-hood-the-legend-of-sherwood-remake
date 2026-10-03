@@ -556,11 +556,18 @@ impl Thumbnail {
 /// Magic bytes at the start of every save file.
 pub const SAVE_MAGIC: &str = "RHSG";
 
-/// Current save format version. Bump on incompatible serialized-field changes.
-/// See `docs/SAVE_FORMAT.md` for the version history.
-/// Version 98 adds the deterministic combat gate for mission victory.
-/// Version 99 stores cooperative campaign rules and resumable lobby metadata.
-pub const SAVE_FORMAT_VERSION: u32 = 99;
+/// Early-access compatibility baseline: preserve saves from version 97 onward.
+/// Every change must remain backward-compatible through defaults or migration.
+/// Bump this version ONLY when ABSOLUTELY necessary AND after explicit human
+/// confirmation; adding engine fields or features alone is not justification.
+/// Disk saves are JSON; binary network/replay codecs have separate versions.
+pub const SAVE_FORMAT_VERSION: u32 = 97;
+
+/// Versions 98 and 99 were briefly emitted for additive, defaulted fields.
+/// Accept those saves too; newly captured saves use version 97.
+pub fn is_supported_save_version(version: u32) -> bool {
+    matches!(version, 97..=99)
+}
 
 /// Human-facing provenance captured when a save is written.
 ///
@@ -656,7 +663,7 @@ impl SaveHeader {
                 self.magic
             );
         }
-        if self.version != SAVE_FORMAT_VERSION {
+        if !is_supported_save_version(self.version) {
             bail!(
                 "unsupported save file version: expected {SAVE_FORMAT_VERSION}, got {}",
                 self.version
@@ -986,7 +993,7 @@ impl GameSaveFile {
                 .ok_or_else(|| anyhow::anyhow!("save header has no version"))?,
         )
         .with_context(|| format!("parsing save header version {}", path.display()))?;
-        if version != SAVE_FORMAT_VERSION {
+        if !is_supported_save_version(version) {
             bail!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got {version}");
         }
         let header: SaveHeader = serde_json::from_value(header_document)
@@ -1366,6 +1373,77 @@ mod tests {
         assert_eq!(
             header.validate().unwrap_err().to_string(),
             "invalid save mission ID: zero is not a valid mission"
+        );
+    }
+
+    #[test]
+    fn version_97_loads_without_additive_campaign_and_combat_fields() {
+        let (mut engine, _assets) = fresh_engine();
+        engine.test_set_frame_counter(12345);
+        let host = Host::scratch(800.0, 600.0);
+        let save = GameSaveFile::capture(&engine, &host, 7, "Existing campaign".into());
+        let mut document = serde_json::to_value(save).unwrap();
+        fn remove_additions(value: &mut serde_json::Value) {
+            match value {
+                serde_json::Value::Object(map) => {
+                    map.remove("prevent_victory_in_combat");
+                    map.remove("cooperative_campaign");
+                    if let Some(coop) = map.get_mut("coop").and_then(|v| v.as_object_mut()) {
+                        coop.remove("campaign");
+                    }
+                    for child in map.values_mut() {
+                        remove_additions(child);
+                    }
+                }
+                serde_json::Value::Array(values) => {
+                    for child in values {
+                        remove_additions(child);
+                    }
+                }
+                _ => {}
+            }
+        }
+        remove_additions(&mut document);
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("existing.json");
+        for version in [97, 98, 99] {
+            document["header"]["version"] = version.into();
+            fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
+            let loaded = GameSaveFile::read_from(&path).unwrap();
+            assert_eq!(loaded.engine.frame_counter(), 12345);
+            assert!(!loaded.engine.sim_config().coop.campaign);
+            assert!(loaded.engine.sim_config().prevent_victory_in_combat);
+            assert_eq!(loaded.header.cooperative_campaign, None);
+        }
+        assert_eq!(SAVE_FORMAT_VERSION, 97);
+    }
+
+    #[test]
+    #[ignore = "requires ROBIN_SAVE_COMPAT_FIXTURE pointing to an existing version-97 save"]
+    fn existing_version_97_save_loads() {
+        let path = std::env::var("ROBIN_SAVE_COMPAT_FIXTURE").unwrap();
+        let save = GameSaveFile::read_from(Path::new(&path)).unwrap();
+        assert_eq!(save.header.version, 97);
+        let campaign_before = serde_json::to_value(save.engine.campaign()).unwrap();
+        let cooperative = save
+            .engine
+            .clone()
+            .for_cooperative_campaign_resume(robin_engine::coop::CoopRules {
+                campaign: true,
+                players: 2,
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(cooperative.sim_config().coop.campaign);
+        assert_eq!(
+            serde_json::to_value(cooperative.campaign()).unwrap(),
+            campaign_before
+        );
+        let encoded = serde_json::to_string(&save).unwrap();
+        let restored: GameSaveFile = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(
+            robin_engine::replay::state_hash(&save.engine),
+            robin_engine::replay::state_hash(&restored.engine)
         );
     }
 

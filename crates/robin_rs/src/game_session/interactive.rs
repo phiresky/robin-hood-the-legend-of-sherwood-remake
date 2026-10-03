@@ -163,6 +163,7 @@ pub(super) struct MissionResources {
 pub(super) struct MissionUi {
     pub(super) pause_menu: Option<PauseMenu>,
     pub(super) active_ui_task: Option<ActiveUiTask>,
+    pub(super) pending_load_errors: std::collections::VecDeque<String>,
     pub(super) active_modal: Option<ActiveModal>,
     pub(super) console_overlay: ConsoleOverlay,
     pub(super) campaign_map: CampaignMapState,
@@ -179,6 +180,7 @@ impl MissionUi {
         Self {
             pause_menu: None,
             active_ui_task: None,
+            pending_load_errors: Default::default(),
             active_modal: None,
             console_overlay: ConsoleOverlay::new(),
             // The map model itself is populated lazily when the overlay is

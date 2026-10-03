@@ -232,6 +232,7 @@ pub(crate) struct OperationOutcome {
     /// The state-affecting event that actually completed, if any.
     pub event: Option<SaveLoadEvent>,
     pub banner: Option<SaveBannerKind>,
+    pub load_error: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -247,6 +248,13 @@ pub(crate) enum OperationCompletion {
 }
 
 impl OperationOutcome {
+    pub(super) fn load_failed(error: impl std::fmt::Display) -> Self {
+        Self {
+            load_error: Some(format!("The saved game could not be loaded.\n\n{error}")),
+            ..Self::NO_EVENT
+        }
+    }
+
     pub(crate) fn processed(&self) -> bool {
         !matches!(self.completion, OperationCompletion::NotPending)
     }
@@ -290,11 +298,13 @@ impl OperationOutcome {
         completion: OperationCompletion::NotPending,
         event: None,
         banner: None,
+        load_error: None,
     };
     const NO_EVENT: Self = Self {
         completion: OperationCompletion::Handled,
         event: None,
         banner: None,
+        load_error: None,
     };
 }
 
@@ -861,6 +871,9 @@ pub(crate) async fn perform_pending_save_load(
             .enqueue_save_failed(format!("{error:#}"));
         return OperationOutcome {
             banner: Some(SaveBannerKind::SaveFailed),
+            load_error: (!request.writes_save_payload()).then(|| format!(
+                "The saved game could not be loaded because pending save writes failed.\n\n{error:#}"
+            )),
             ..OperationOutcome::NO_EVENT
         };
     }
@@ -1438,6 +1451,58 @@ mod operation_outcome_tests {
             assert!(!receipt.with_file_name("saves.json").exists());
             assert!(!receipt.with_file_name("Savegame_000.json").exists());
         }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn failed_load_returns_visible_diagnostic_without_changing_the_mission() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut callbacks, mut host, mut engine, assets, mut game, profiles) =
+            diagnostic_callback_fixture(directory.path());
+        host.transport.test_drop_channels();
+        let slot = callbacks
+            .save_manager
+            .create_draft("Broken save".into(), 17)
+            .unwrap();
+        let index = callbacks.save_manager.resolve_handle(&slot).unwrap();
+        std::fs::create_dir_all(
+            std::path::Path::new(&callbacks.save_manager.save_path(index))
+                .parent()
+                .unwrap(),
+        )
+        .unwrap();
+        callbacks
+            .save_manager
+            .write_save_from_engine(&mut host, &game, index, &engine, 17, Some(&profiles), None)
+            .unwrap();
+        std::fs::write(
+            callbacks.save_manager.save_path(index),
+            r#"{"header":{"version":1}}"#,
+        )
+        .unwrap();
+        let before = robin_engine::replay::state_hash(&engine);
+        callbacks.queue_operation(SaveLoadRequest::Load {
+            slot: Some(slot),
+            mission_id: 17,
+        });
+        let outcome = pollster::block_on(perform_pending_save_load(
+            &mut host,
+            &mut game,
+            &mut callbacks,
+            &mut engine,
+            &assets,
+            &profiles,
+            None,
+        ));
+        let error = outcome
+            .load_error
+            .as_ref()
+            .expect("failed loads must reach the error dialog");
+        assert!(error.contains("could not be loaded"));
+        assert!(error.contains("unsupported save file version"));
+        assert!(outcome.event.is_none());
+        assert!(outcome.restore().is_none());
+        assert_eq!(robin_engine::replay::state_hash(&engine), before);
     }
 
     #[test]

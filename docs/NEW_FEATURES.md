@@ -79,8 +79,21 @@
   Eighteen reviewed library surfaces include these rules; the authoring tool
   stages descriptor-bound edits and updates saved-scene pins with rollback backups.
 
+- **Visible load failures.** Failed in-mission Load and QuickLoad requests show
+  an acknowledgeable error dialog with the failure details while retaining the
+  current mission, instead of merely logging the error.
+
+- **Early-access save compatibility.** Version 97 is the supported compatibility
+  baseline. New fields load with backward-compatible defaults; saves briefly
+  written as versions 98 and 99 are accepted too. Future save-version bumps
+  require absolute necessity and explicit human confirmation. Binary network
+  and replay schemas remain separate from the JSON disk-save version.
+
 - **Cooperative campaigns.** The full-game Multiplayer mission list includes
-  New campaign and Resume campaign entries for host campaign saves. Story
+  Start Campaign for a fresh profile, Continue Campaign using the same latest
+  compatible checkpoint as the main-menu Play button, and Load Save for an
+  explicit save selection. Compatible single-player saves can be continued in
+  co-op without resetting their progress. Story
   progression, recruits, money, Sherwood management and mission selection persist
   between missions. The host manages campaign decisions; existing shared story
   confirmations and transition barriers keep participants together. The authored
@@ -90,7 +103,7 @@
   resumable campaign saves; joining players retain local diagnostic captures.
   Resuming preserves the saved world and reassigns the new lobby's seats. If more
   players join than surviving heroes, use shared control until the next mission
-  fills the missing slots. Current-version cooperative campaign saves are required.
+  fills the missing slots.
 - **Shared Robin supplies.** Robin copies share one stock of arrows, purses,
   food and other consumables in both campaign and single-mission multiplayer.
   Pickups fill one character's capacity, spending updates every copy's action

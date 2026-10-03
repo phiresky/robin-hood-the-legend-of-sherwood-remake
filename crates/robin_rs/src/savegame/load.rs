@@ -58,7 +58,7 @@ impl SaveGameManager {
             .enumerate()
             .filter(|(_, save)| save.is_continue() || save.is_autosave())
             .filter(|(_, save)| {
-                if save.version == save_file::SAVE_FORMAT_VERSION {
+                if save_file::is_supported_save_version(save.version) {
                     true
                 } else {
                     tracing::warn!(

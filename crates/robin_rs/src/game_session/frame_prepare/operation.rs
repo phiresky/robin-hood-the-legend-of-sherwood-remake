@@ -345,6 +345,16 @@ pub(super) async fn process_operation_and_save(
         pending_thumbnail,
     )
     .await;
+    if let Some(error) = save_load.load_error.take() {
+        ui.pending_load_errors.push_back(error);
+    }
+    if ui.active_ui_task.is_none()
+        && let Some(error) = ui.pending_load_errors.pop_front()
+    {
+        ui.active_ui_task = Some(super::super::ui_task_state::ActiveUiTask::LoadError(
+            crate::save_recovery::ErrorNotice::new(error),
+        ));
+    }
     if save_load.processed() {
         runtime.history_mut().reset_checker();
     }

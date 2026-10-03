@@ -468,8 +468,8 @@ impl Engine {
         rules: crate::coop::CoopRules,
     ) -> Result<Self, String> {
         rules.validate()?;
-        if !rules.campaign || !self.inner.control.sim_config.coop.campaign {
-            return Err("only cooperative campaign saves can resume through this lobby".into());
+        if !rules.campaign {
+            return Err("campaign resume requires cooperative campaign rules".into());
         }
         let party: Vec<_> = self
             .inner

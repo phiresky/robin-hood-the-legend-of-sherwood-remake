@@ -373,9 +373,9 @@ fn ui_task_modal_admission(
         return UiTaskModalAdmission::Run;
     }
     match task {
-        UiTaskKind::QuickLoadConfirmation | UiTaskKind::MissionEndLeaderboard => {
-            UiTaskModalAdmission::Suspend
-        }
+        UiTaskKind::LoadError
+        | UiTaskKind::QuickLoadConfirmation
+        | UiTaskKind::MissionEndLeaderboard => UiTaskModalAdmission::Suspend,
         UiTaskKind::CampaignManager
         | UiTaskKind::Options
         | UiTaskKind::SaveLoad
@@ -1780,6 +1780,18 @@ fn manual_step_ui_block_reason(
 #[cfg(test)]
 mod tests {
     use super::{ScriptedModalMode, UiTaskKind, UiTaskModalAdmission, ui_task_modal_admission};
+
+    #[test]
+    fn load_errors_wait_for_scripted_modals_instead_of_disappearing() {
+        assert_eq!(
+            ui_task_modal_admission(UiTaskKind::LoadError, false, true),
+            UiTaskModalAdmission::Suspend
+        );
+        assert_eq!(
+            ui_task_modal_admission(UiTaskKind::LoadError, false, false),
+            UiTaskModalAdmission::Run
+        );
+    }
 
     #[test]
     fn execution_modes_preserve_admission_and_recording_policy() {

@@ -70,6 +70,7 @@ pub(super) enum UiTaskOutcome {
 }
 
 pub(super) enum ActiveUiTask {
+    LoadError(crate::save_recovery::ErrorNotice),
     CampaignManager(crate::campaign_map::CampaignMapModalState),
     Options(OptionsTaskState),
     SaveLoad(SaveLoadTaskState),
@@ -80,6 +81,7 @@ pub(super) enum ActiveUiTask {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) enum UiTaskKind {
+    LoadError,
     CampaignManager,
     Options,
     SaveLoad,
@@ -106,6 +108,14 @@ impl ActiveUiTask {
             sample_loader,
         };
         match self {
+            Self::LoadError(state) => {
+                let acknowledged = state.tick(io);
+                if io.window.close_requested {
+                    Some(UiTaskOutcome::ExitRequested)
+                } else {
+                    acknowledged.then_some(UiTaskOutcome::ReturnToPause)
+                }
+            }
             Self::CampaignManager(state) => state
                 .tick_browser(io.window, io.renderer, io.cursor)
                 .map(|exit| {
@@ -152,7 +162,8 @@ impl ActiveUiTask {
     pub(super) fn owns_presentation(&self) -> bool {
         match self {
             Self::MissionEndLeaderboard(state) => state.owns_presentation(),
-            Self::CampaignManager(_)
+            Self::LoadError(_)
+            | Self::CampaignManager(_)
             | Self::Options(_)
             | Self::SaveLoad(_)
             | Self::Quit(_)
@@ -162,6 +173,7 @@ impl ActiveUiTask {
 
     pub(super) fn kind(&self) -> UiTaskKind {
         match self {
+            Self::LoadError(_) => UiTaskKind::LoadError,
             Self::CampaignManager(_) => UiTaskKind::CampaignManager,
             Self::Options(_) => UiTaskKind::Options,
             Self::SaveLoad(_) => UiTaskKind::SaveLoad,
@@ -177,9 +189,11 @@ impl ActiveUiTask {
     pub(super) fn auto_dismiss(&mut self) -> UiTaskOutcome {
         match self {
             Self::QuickLoad(_) => UiTaskOutcome::QuickLoadCancelled,
-            Self::CampaignManager(_) | Self::Options(_) | Self::SaveLoad(_) | Self::Quit(_) => {
-                UiTaskOutcome::ReturnToPause
-            }
+            Self::LoadError(_)
+            | Self::CampaignManager(_)
+            | Self::Options(_)
+            | Self::SaveLoad(_)
+            | Self::Quit(_) => UiTaskOutcome::ReturnToPause,
             Self::MissionEndLeaderboard(_) => {
                 panic!("mission-end leaderboard auto-dismiss must preserve background work")
             }
