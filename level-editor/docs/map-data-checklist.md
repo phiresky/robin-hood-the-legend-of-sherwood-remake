@@ -26,6 +26,13 @@ visible. The offscreen GPU contract passed with this fixture. This verifies the
 depth-file pipeline; it does not establish arbitrary 3D bake accuracy, full entity
 mask selection, or scenery-overlay rendering. Repeat instructions are in
 `docs/TESTING.md` under GPU execution.
+The separate `work/map-compile/browser-depth-gpu` export comes from the editor's
+real WebGL bake of ground, raised surfaces, transparent cutouts and ownership-filled
+geometry with a nonzero crop origin. The browser bake contract passed, then the
+native GPU test checked six locations at three character depths, including both
+sides of a tile seam. This closes that fixture's geometry-to-bake-to-ZIP-to-native
+pixel chain. Arbitrary scene geometry, complete entity-mask selection and rendered
+scenery overlays are still not certified by it.
 
 **Animated scenery:** asset gameplay can now define camera-facing sprite animations
 with a local anchor, sprite file/profile and center, activation/display flags and

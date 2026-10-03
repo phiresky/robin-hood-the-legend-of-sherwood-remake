@@ -196,6 +196,9 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
     if let Ok(root) = std::env::var("SCENERY_DEPTH_EXPORT_DIR") {
         verify_exported_depth_pixels(gpu.clone(), std::path::Path::new(&root));
     }
+    if let Ok(root) = std::env::var("BAKED_DEPTH_EXPORT_DIR") {
+        verify_browser_baked_depth_pixels(gpu.clone(), std::path::Path::new(&root));
+    }
     verify_map_appearance_pixels(gpu.clone());
     verify_coop_compositing(gpu.clone());
     verify_map_patch_camera_alignment(gpu.clone(), false);
@@ -512,6 +515,60 @@ fn verify_exported_depth_pixels(gpu: GpuContext, root: &std::path::Path) {
             (8, 8, expected),
             "exported depth mask at ground Y {ground_y}"
         );
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+fn verify_browser_baked_depth_pixels(gpu: GpuContext, root: &std::path::Path) {
+    let depth = crate::level_loading_host::decode_occlusion_depth_png(
+        &std::fs::read(root.join("Data/Levels/Day/editor-bake-contract.occlusion-depth.png"))
+            .unwrap(),
+        "browser baked depth",
+        1100,
+        128,
+    )
+    .unwrap();
+    let mut renderer =
+        Renderer::with_optional_surface(gpu, None, None, 1, 1, TextureScaleMode::Nearest);
+    renderer.upload_occlusion_depth(&depth, 1100, 128).unwrap();
+    let sprite = renderer
+        .create_rgba_gpu_image(1, 1, &[255; 4], "baked depth probe")
+        .unwrap();
+    // Ground, raised geometry, physical cutout, ownership fill, and both tile-seam pixels.
+    for (x, y, surface_y) in [
+        (5, 5, 5.5),
+        (30, 30, 50.5),
+        (110, 30, 30.5),
+        (190, 30, 50.5),
+        (1023, 30, 50.5),
+        (1024, 30, 50.5),
+    ] {
+        assert!((f32::from(depth[y * 1100 + x]) - surface_y / 128. * 65535.).abs() <= 2.);
+        for actor_y in [0., 30., 60.] {
+            renderer.begin_gpu_frame_clear();
+            renderer.render_gpu_rect(0, 0, 1, 1, [0, 0, 0, 255]);
+            let checkpoint = renderer.draw_queue_checkpoint();
+            renderer.render_gpu_image(&sprite, None, None, BlendMode::None);
+            renderer.mask_queued_draws_with_depth(
+                checkpoint,
+                &[],
+                Rect::new(0, 0, 1, 1),
+                x as f32,
+                y as f32,
+                1.,
+                actor_y,
+            );
+            let expected = if surface_y > actor_y + 2. {
+                vec![0, 0, 0, 255]
+            } else {
+                vec![255; 4]
+            };
+            assert_eq!(
+                renderer.try_capture_frame_rgba().unwrap(),
+                (1, 1, expected),
+                "baked pixel {x},{y} with character ground Y {actor_y}"
+            );
+        }
     }
 }
 

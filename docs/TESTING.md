@@ -224,6 +224,13 @@ runner. Pass the same absolute directory to the GPU gate. It decodes the package
 ground depths. The fixture uses authored depth steps; it does not test the editor's
 3D baking shader, complete entity-mask selection, or scenery-overlay ordering.
 
+For a real 3D-baked input, run the editor browser fixture `tests/map-bake.html`
+with `TEST_BAKE_ZIP` set, then extract that ZIP into a fresh directory. Set
+`BAKED_DEPTH_EXPORT_DIR` to its absolute path when running the GPU gate. This
+checks ground and raised surfaces, a transparent cutout, ownership-filled
+geometry and both sides of a bake tile seam at three character depths. The
+browser fixture also validates nonzero crop rebasing before exporting the ZIP.
+
 ## Host hardware queries
 
 ```sh
