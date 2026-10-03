@@ -47,6 +47,9 @@ Separated, overlapping or orientation-incompatible assembly sockets also warn
 and omit affected traversal pieces during best-effort export. Every competing
 piece at an ambiguous socket is omitted; export never chooses an arbitrary pair.
 Strict export still reports the invalid connection.
+Collapsed projected endpoints also omit only their traversal assembly during
+best-effort export. The runtime requires distinct projected high/low endpoints;
+collision and independent landings remain available after this omission.
 
 **Masks on uneven terrain:** an asset mask may author a finite local
 `receiverSegment` instead of requiring its anchor to match one exact elevation.

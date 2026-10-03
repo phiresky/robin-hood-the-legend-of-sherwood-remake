@@ -146,6 +146,19 @@ test("disconnected compound lift removes all joined traversal pieces without dro
   assert.equal(geometry.warnings?.filter((warning) => warning.startsWith("Lift ")).length, 1);
 });
 
+test("collapsed projected stair endpoints omit traversal without discarding the building", () => {
+  const { document, assets, hut } = liftAssetCompilerFixture();
+  const high = hut.gameplay!.lifts![0]!.doors[1]!;
+  high.outsideAnchor = [...high.outside];
+  high.outside[1] += 100;
+  assert.throws(() => compileAssetGameplay(document, assets, bounds), /distinct projected endpoint/);
+  const geometry = compileAssetGameplay(document, assets, bounds, { bestEffort: true });
+  assert.equal(geometry.lifts, undefined);
+  assert.ok(geometry.sight_obstacles.some((obstacle) => obstacle.solid));
+  assert.ok(geometry.motion_data.layers.some((layer) => layer.length > 0));
+  assert.ok(geometry.warnings?.some((warning) => warning.includes("distinct projected endpoint")));
+});
+
 test("separated stair pieces preserve their collision instead of failing the whole export", () => {
   const { document, assets } = compoundLiftCompilerFixture();
   document.objects.find((part) => part.id === "upper-body")!.transform.dx += 400;

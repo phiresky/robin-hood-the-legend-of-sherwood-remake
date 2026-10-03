@@ -2200,14 +2200,21 @@ function compileAssetGameplayAttempt(
             const area = areas.find((a) => a.lift === lift.id);
             if (!area) throw new Error(`Missing lift motion area ${lift.id}`);
             const endpoints = selectDoors((door) => door.lift === lift.id);
-            if (endpoints.length < 2 || !endpoints.some((d) => d.door_type === 5))
-              throw new Error(
-                `Lift ${lift.id} needs at least two traversal doors including a low door`,
+            const invalid =
+              endpoints.length < 2 || !endpoints.some((d) => d.door_type === 5)
+                ? `Lift ${lift.id} needs at least two traversal doors including a low door`
+                : new Set(endpoints.map((d) => d.point_out[1])).size < 2
+                  ? `Lift ${lift.id} needs distinct projected endpoint heights after placement`
+                  : undefined;
+            if (invalid) {
+              if (!options.bestEffort) throw new Error(invalid);
+              throw new UnavailableLiftPlacement(
+                lift.id,
+                invalid,
+                false,
+                [...assembledLifts.identities].filter(([, id]) => id === lift.id).map(([id]) => id),
               );
-            if (new Set(endpoints.map((d) => d.point_out[1])).size < 2)
-              throw new Error(
-                `Lift ${lift.id} needs distinct projected endpoint heights after placement`,
-              );
+            }
             return {
               motion_area_index: area.sector,
               lift_type: lift.type,
