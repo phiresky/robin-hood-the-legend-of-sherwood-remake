@@ -506,7 +506,18 @@ async fn run_session_body(
         };
     }
     let mut authoritative_rng_seed = 0;
-    let mut authoritative_sim_config = setup::initial_sim_config(&session_args.config);
+    let mut authoritative_sim_config = match setup::launch_sim_config(
+        setup::initial_sim_config(&session_args.config),
+        &session_args,
+    ) {
+        Ok(config) => config,
+        Err(error) => {
+            return SessionOutcome {
+                campaign,
+                result: Err(error.to_string()),
+            };
+        }
+    };
     let mut preselected_mission = None;
     if let Some(SaveLoadRequest::Load { slot, mission_id }) = callbacks.take_initial_request() {
         let (load, target_idx, resolved) = match preflight_initial_load(
@@ -525,6 +536,23 @@ async fn run_session_body(
                     result: Err(result),
                 };
             }
+        };
+        let load = if session_args.multiplayer.coop.campaign {
+            let mut rules = session_args.multiplayer.coop;
+            if let Some(players) = session_args.multiplayer.expected_players {
+                rules.players = players as u8;
+            }
+            match load.for_campaign_lobby(rules) {
+                Ok(load) => load,
+                Err(error) => {
+                    return SessionOutcome {
+                        campaign,
+                        result: Err(error.to_string()),
+                    };
+                }
+            }
+        } else {
+            load
         };
         let save = load.save();
         // The save's exact assets replace the launch's content for the session.

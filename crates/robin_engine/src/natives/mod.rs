@@ -1549,7 +1549,11 @@ impl NativeContext<'_, '_> {
                         self.campaign
                             .as_ref()
                             .and_then(|campaign| {
-                                let idx = usize::try_from(e.pc.campaign_description_index?).ok()?;
+                                let idx = usize::try_from(
+                                    crate::inventory::inventory_owner(self.entities, &e.pc)
+                                        .campaign_description_index?,
+                                )
+                                .ok()?;
                                 campaign.characters.get(idx)
                             })
                             .map(|desc| desc.status.get_ammo(Action::Bow))
@@ -1613,7 +1617,11 @@ impl NativeContext<'_, '_> {
                 self.campaign
                     .as_ref()
                     .and_then(|campaign| {
-                        let idx = usize::try_from(pc.campaign_description_index?).ok()?;
+                        let idx = usize::try_from(
+                            crate::inventory::inventory_owner(self.entities, pc)
+                                .campaign_description_index?,
+                        )
+                        .ok()?;
                         campaign.characters.get(idx)
                     })
                     .map(|desc| desc.status.get_ammo(action))
@@ -1785,7 +1793,11 @@ impl NativeContext<'_, '_> {
                         }
                     }
                     match entity.pc_data() {
-                        Some(pc) => (pc.profile_index, pc.campaign_description_index),
+                        Some(pc) => (
+                            pc.profile_index,
+                            crate::inventory::inventory_owner(self.entities, pc)
+                                .campaign_description_index,
+                        ),
                         None => {
                             // For an NPC archer, write `number_of_arrows`
                             // directly. The original game gates persistent-property updates
@@ -1957,6 +1969,13 @@ impl NativeContext<'_, '_> {
                 } else {
                     pc.pc.disabled_actions[action_slot] = false;
                 }
+            }
+            if let Some(campaign) = self.campaign.as_mut() {
+                crate::inventory::synchronize_robin_inventory(
+                    campaign,
+                    self.entities,
+                    &self.bindings.profile_manager,
+                );
             }
             return true;
         }

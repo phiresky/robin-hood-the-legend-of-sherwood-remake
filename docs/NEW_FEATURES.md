@@ -74,6 +74,24 @@
   Eighteen reviewed library surfaces include these rules; the authoring tool
   stages descriptor-bound edits and updates saved-scene pins with rollback backups.
 
+- **Cooperative campaigns.** The full-game Multiplayer mission list includes
+  New campaign and Resume campaign entries for host campaign saves. Story
+  progression, recruits, money, Sherwood management and mission selection persist
+  between missions. The host manages campaign decisions; existing shared story
+  confirmations and transition barriers keep participants together. The authored
+  team stays intact and extra Robins fill missing player slots. When Robin is
+  unavailable to the story team, missing slots copy an available teammate instead.
+  Temporary copies never become permanent recruits. Host Save and QuickSave write
+  resumable campaign saves; joining players retain local diagnostic captures.
+  Resuming preserves the saved world and reassigns the new lobby's seats. If more
+  players join than surviving heroes, use shared control until the next mission
+  fills the missing slots. Current-version cooperative campaign saves are required.
+- **Shared Robin supplies.** Robin copies share one stock of arrows, purses,
+  food and other consumables in both campaign and single-mission multiplayer.
+  Pickups fill one character's capacity, spending updates every copy's action
+  buttons, and surviving copies retain the shared supplies if the original dies.
+  Health and coma state remain independent.
+
 - **Shared multiplayer story confirmation.** Story dialogue, briefing pages,
   and debriefings stay open until every player in the lobby has acknowledged
   them. A deliberate host exit tells joining players that the session ended.
@@ -639,7 +657,8 @@ A list of which additional features we have added, which ones we might still wan
   Exclusive prevents simultaneous ownership; Assigned reserves each chosen hero.
   Extra copies increase hostile soldiers' health by a configurable percentage
   (including reinforcements). A required hero is lost only when every copy dies.
-  Copies have independent inventory and coma state and do not become permanent
+  Robin copies share consumables; other hero copies retain separate inventories.
+  Copies have independent health and coma state and do not become permanent
   campaign recruits.
 - **Dynamic local cameras.** Nearby players share a view. Distant groups get
   separate cameras with rotating boundaries that disappear as players regroup.
@@ -1565,8 +1584,8 @@ A list of which additional features we have added, which ones we might still wan
   peer validates and retains those identical bytes, and only then do all
   participants tear down the old mission transport and enter the next ready
   barrier. Load/Restart controls remain disabled for clients and throughout a
-  transition. Multiplayer Save and QuickSave create tagged local diagnostic
-  captures: connected load pickers hide them and the central transition path
+  transition. Campaign hosts write resumable saves; other online Save and
+  QuickSave requests create tagged local diagnostic captures: connected load pickers hide them and the central transition path
   rejects them even if UI filtering is bypassed. Sherwood campaign UI remains
   non-pausing, but only host-authored campaign commands can mutate simulation
   state. Client modal choices remain visible host proposals; only the host can

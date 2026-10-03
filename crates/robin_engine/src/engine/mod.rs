@@ -583,6 +583,31 @@ impl EngineInner {
         self.control.consume_fade_freeze_frame()
     }
 
+    pub(crate) fn pc_inventory_index(&self, pc: &crate::element::PcData) -> Option<usize> {
+        self.pc_description_index_for_pc_data(crate::inventory::inventory_owner(
+            &self.world.entities,
+            pc,
+        ))
+    }
+
+    pub(crate) fn pc_inventory_description(
+        &self,
+        pc: &crate::element::PcData,
+    ) -> Option<&crate::campaign::PcDescription> {
+        self.mission_domain
+            .campaign
+            .characters
+            .get(self.pc_inventory_index(pc)?)
+    }
+
+    pub(crate) fn synchronize_robin_inventory(&mut self, assets: &LevelAssets) {
+        crate::inventory::synchronize_robin_inventory(
+            &mut self.mission_domain.campaign,
+            &mut self.world.entities,
+            &assets.profile_manager,
+        );
+    }
+
     pub(crate) fn pc_description_index_for_pc_data(
         &self,
         pc_data: &crate::element::PcData,

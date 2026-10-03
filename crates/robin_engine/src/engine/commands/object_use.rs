@@ -576,7 +576,7 @@ pub(in crate::engine) fn is_pc_takable(
 
     // Resolve PC status to read current ammo.  Pulled lazily because
     // not every branch needs it (NoAction returns early above).
-    let Some(pc_desc) = engine.pc_description_for_pc_data(pc_data) else {
+    let Some(pc_desc) = engine.pc_inventory_description(pc_data) else {
         return false;
     };
     let status = &pc_desc.status;

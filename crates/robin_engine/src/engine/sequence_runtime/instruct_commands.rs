@@ -642,7 +642,7 @@ impl EngineInner {
             Command::EatCmd => self
                 .get_entity(owner)
                 .and_then(|entity| match entity {
-                    Entity::Pc(pc) => self.pc_description_for_pc_data(&pc.pc),
+                    Entity::Pc(pc) => self.pc_inventory_description(&pc.pc),
                     _ => None,
                 })
                 .is_some_and(|description| {
@@ -867,7 +867,7 @@ impl EngineInner {
         // Decrement PC ammo, clamped to current
         // count.
         let status_idx = self.get_entity(owner).and_then(|e| match e {
-            crate::element::Entity::Pc(pc) => self.pc_description_index_for_pc_data(&pc.pc),
+            crate::element::Entity::Pc(pc) => self.pc_inventory_index(&pc.pc),
             _ => None,
         });
         let Some(status_idx) = status_idx else {
@@ -918,6 +918,7 @@ impl EngineInner {
             .unwrap_or(false);
         // `prev_bonus_state`: Some((id, current_quantity, action))
         // if a previous pile is still active.
+        self.synchronize_robin_inventory(tcx.assets);
         let prev_bonus_state = prev.and_then(|(last, _, _)| last).and_then(|last_id| {
             self.get_entity(last_id).and_then(|e| match e {
                 crate::element::Entity::Bonus(b) if b.element.active => {

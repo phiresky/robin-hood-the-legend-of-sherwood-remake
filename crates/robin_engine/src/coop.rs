@@ -57,6 +57,9 @@ pub enum CharacterControl {
     bitcode::Decode,
 )]
 pub struct CoopRules {
+    /// Preserve story progression and the recruited roster between missions.
+    #[serde(default)]
+    pub campaign: bool,
     pub players: u8,
     pub control: CharacterControl,
     /// Exact party in display order. Trailing zeroes are empty slots;
@@ -73,6 +76,7 @@ pub struct CoopRules {
 impl Default for CoopRules {
     fn default() -> Self {
         Self {
+            campaign: false,
             players: 1,
             control: CharacterControl::Shared,
             team: [0; MAX_PLAYERS],
@@ -110,6 +114,9 @@ impl CoopRules {
             return Err("co-op requires one to five players".into());
         }
         let count = self.team_len();
+        if self.campaign && count > 0 {
+            return Err("campaign co-op uses the persistent campaign roster".into());
+        }
         if self.team[count..].iter().any(|&code| code != 0)
             || self.team[..count]
                 .iter()

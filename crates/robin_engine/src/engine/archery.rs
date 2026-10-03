@@ -1364,7 +1364,7 @@ impl EngineInner {
     /// `number_of_arrows` counter.
     pub fn check_bow_ammo(&self, shooter_id: EntityId) -> bool {
         match self.get_entity(shooter_id) {
-            Some(Entity::Pc(pc)) => match self.pc_description_for_pc_data(&pc.pc) {
+            Some(Entity::Pc(pc)) => match self.pc_inventory_description(&pc.pc) {
                 Some(pc_desc) => pc_desc.status.get_ammo(crate::profiles::Action::Bow) > 0,
                 None => {
                     tracing::warn!(
@@ -1392,7 +1392,7 @@ impl EngineInner {
     /// that do not track bow ammo.
     pub fn get_bow_ammo_count(&self, shooter_id: EntityId) -> u32 {
         match self.get_entity(shooter_id) {
-            Some(Entity::Pc(pc)) => match self.pc_description_for_pc_data(&pc.pc) {
+            Some(Entity::Pc(pc)) => match self.pc_inventory_description(&pc.pc) {
                 Some(pc_desc) => pc_desc.status.get_ammo(crate::profiles::Action::Bow) as u32,
                 None => {
                     tracing::warn!(
@@ -1429,7 +1429,7 @@ impl EngineInner {
             ),
             None => panic!("get_pc_ammo_count PC {pc_id:?} is missing"),
         };
-        self.pc_description_for_pc_data(&pc.pc)
+        self.pc_inventory_description(&pc.pc)
             .unwrap_or_else(|| {
                 panic!(
                     "get_pc_ammo_count PC {pc_id:?} profile {} has no campaign character status",
@@ -1459,7 +1459,7 @@ impl EngineInner {
         }
 
         let status_idx = match self.get_entity(shooter_id) {
-            Some(Entity::Pc(pc)) => self.pc_description_index_for_pc_data(&pc.pc),
+            Some(Entity::Pc(pc)) => self.pc_inventory_index(&pc.pc),
             _ => None,
         };
         let Some(status_idx) = status_idx else {
@@ -1491,6 +1491,7 @@ impl EngineInner {
                 self.hero_speaking(assets, shooter_id, crate::engine::melee::HERO_OUT_OF_AMMO);
             }
         }
+        self.synchronize_robin_inventory(assets);
     }
 
     /// Decrement ammo for a generic ability (heal, net, wasp-nest, etc.)
@@ -1500,7 +1501,7 @@ impl EngineInner {
     /// Returns `false` for non-PCs or if campaign isn't loaded.
     pub(super) fn has_ammo(&self, actor_id: EntityId, action: crate::profiles::Action) -> bool {
         match self.get_entity(actor_id) {
-            Some(Entity::Pc(pc)) => match self.pc_description_for_pc_data(&pc.pc) {
+            Some(Entity::Pc(pc)) => match self.pc_inventory_description(&pc.pc) {
                 Some(pc_desc) => pc_desc.status.get_ammo(action) > 0,
                 None => {
                     tracing::warn!(
@@ -1524,7 +1525,7 @@ impl EngineInner {
         action: crate::profiles::Action,
     ) {
         let status_idx = match self.get_entity(actor_id) {
-            Some(Entity::Pc(pc)) => self.pc_description_index_for_pc_data(&pc.pc),
+            Some(Entity::Pc(pc)) => self.pc_inventory_index(&pc.pc),
             _ => None,
         };
         let Some(status_idx) = status_idx else {
@@ -1559,6 +1560,7 @@ impl EngineInner {
                 self.hero_speaking(assets, actor_id, crate::engine::melee::HERO_OUT_OF_AMMO);
             }
         }
+        self.synchronize_robin_inventory(assets);
     }
 
     /// Consume one Stoeckel ration through the original game's ammunition update.
@@ -1578,7 +1580,7 @@ impl EngineInner {
             crate::profiles::Action::Eat | crate::profiles::Action::Guzzle
         ));
         let status_idx = match self.get_entity(actor_id) {
-            Some(Entity::Pc(pc)) => self.pc_description_index_for_pc_data(&pc.pc),
+            Some(Entity::Pc(pc)) => self.pc_inventory_index(&pc.pc),
             _ => None,
         };
         let status_idx = status_idx
@@ -1607,6 +1609,7 @@ impl EngineInner {
             // mask was stale when the eating animation completed.
             self.enable_pc_action(assets, actor_id, action);
         }
+        self.synchronize_robin_inventory(assets);
     }
 
     /// Spawn an apple / stone projectile at the end of the throw
@@ -1879,10 +1882,7 @@ impl EngineInner {
         amount: u16,
     ) {
         let (profile_idx, status_idx) = match self.get_entity(pc_id) {
-            Some(Entity::Pc(pc)) => (
-                pc.pc.profile_index,
-                self.pc_description_index_for_pc_data(&pc.pc),
-            ),
+            Some(Entity::Pc(pc)) => (pc.pc.profile_index, self.pc_inventory_index(&pc.pc)),
             None => return,
             _ => return,
         };
@@ -1922,6 +1922,7 @@ impl EngineInner {
         if new_ammo > 0 {
             self.enable_pc_action(assets, pc_id, action);
         }
+        self.synchronize_robin_inventory(assets);
     }
 
     /// Handle a PC picking up a bonus item (arrows, plants, food, etc.).
@@ -1938,10 +1939,7 @@ impl EngineInner {
         quantity: u16,
     ) -> Option<crate::inventory::PickupResult> {
         let (profile_idx, status_idx) = match self.get_entity(pc_id) {
-            Some(Entity::Pc(pc)) => (
-                pc.pc.profile_index,
-                self.pc_description_index_for_pc_data(&pc.pc)?,
-            ),
+            Some(Entity::Pc(pc)) => (pc.pc.profile_index, self.pc_inventory_index(&pc.pc)?),
             _ => return None,
         };
 
@@ -1976,6 +1974,7 @@ impl EngineInner {
             self.enable_pc_action(assets, pc_id, action);
         }
 
+        self.synchronize_robin_inventory(assets);
         Some(result)
     }
 

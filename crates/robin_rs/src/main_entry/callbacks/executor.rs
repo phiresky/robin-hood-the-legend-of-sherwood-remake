@@ -235,7 +235,8 @@ pub(super) async fn execute(
     OperationOutcome { event, ..outcome }
 }
 
-/// `SaveLoadRequest::Save`: a local diagnostic capture in multiplayer, else a
+/// `SaveLoadRequest::Save`: a durable campaign-host save; other network peers
+/// capture a local diagnostic. Single-player saves remain a
 /// player-chosen slot or the automatic Continue save.
 fn execute_save(
     slot: Option<crate::savegame::SlotHandle>,
@@ -266,7 +267,10 @@ fn execute_save(
             return outcome;
         }
     };
-    if host.transport.net().is_some() {
+    if host.transport.net().is_some()
+        && (!engine.sim_config().coop.campaign
+            || host.transport.local_seat() != robin_engine::player_command::PlayerId::HOST)
+    {
         let target = slot
             .map(persistence::DiagnosticTarget::Existing)
             .unwrap_or(persistence::DiagnosticTarget::New("Multiplayer diagnostic"));
@@ -353,7 +357,8 @@ fn execute_save(
     OperationOutcome { event, ..outcome }
 }
 
-/// `SaveLoadRequest::QuickSave`: a local diagnostic capture in multiplayer,
+/// `SaveLoadRequest::QuickSave`: a durable campaign-host save; other network peers
+/// capture a local diagnostic,
 /// else the QuickSave slot with its Continue mirror.
 fn execute_quick_save(
     mission_id: u32,
@@ -371,7 +376,10 @@ fn execute_quick_save(
     } = world;
     let mut outcome = OperationOutcome::NO_EVENT;
     let mut event = None;
-    if host.transport.net().is_some() {
+    if host.transport.net().is_some()
+        && (!engine.sim_config().coop.campaign
+            || host.transport.local_seat() != robin_engine::player_command::PlayerId::HOST)
+    {
         match persistence::diagnostic(
             persistence::DiagnosticTarget::New("Multiplayer quick diagnostic"),
             save_manager,

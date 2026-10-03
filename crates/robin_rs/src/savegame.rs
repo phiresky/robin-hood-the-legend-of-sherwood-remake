@@ -148,6 +148,8 @@ pub struct SaveGame {
     /// Mirrors the payload header so connected load pickers can hide local
     /// multiplayer diagnostics without reading every save file.
     pub multiplayer_diagnostic: bool,
+    #[serde(default)]
+    pub cooperative_campaign: Option<robin_engine::coop::CoopRules>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -213,6 +215,7 @@ impl SaveGame {
             blazons: None,
             amulets: None,
             multiplayer_diagnostic: false,
+            cooperative_campaign: None,
         }
     }
 
@@ -259,6 +262,7 @@ impl SaveGame {
         self.version = header.version;
         self.timestamp = header.timestamp_unix.to_string();
         self.multiplayer_diagnostic = header.multiplayer_diagnostic;
+        self.cooperative_campaign = header.cooperative_campaign;
         self.mission_name = header.provenance.mission_name.clone();
         self.player_profile_id = Some(header.provenance.player_profile_id);
         self.player_name = header.provenance.player_name.clone();

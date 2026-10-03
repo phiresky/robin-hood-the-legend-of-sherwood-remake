@@ -1478,7 +1478,7 @@ impl EngineInner {
         let Some(pc) = entity.pc_data() else {
             return false;
         };
-        self.pc_description_for_pc_data(pc)
+        self.pc_inventory_description(pc)
             .map(|d| d.status.get_ammo(action) > 0)
             .unwrap_or(false)
     }

@@ -1209,7 +1209,7 @@ impl EngineInner {
                         panic!("PC {pc_id:?} has missing profile {}", pc.profile_index)
                     });
                 let description = self
-                    .pc_description_for_pc_data(pc)
+                    .pc_inventory_description(pc)
                     .unwrap_or_else(|| panic!("PC {pc_id:?} has no campaign description"));
                 (
                     pc_id,

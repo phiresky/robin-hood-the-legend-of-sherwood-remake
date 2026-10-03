@@ -53,16 +53,25 @@ impl EngineInner {
         let mut party = party;
         while rules.team_len() == 0 && party.len() < rules.players as usize {
             let slot = party.len();
-            let source = originals
-                .get(usize::from(rules.duplicate_choices[slot]))
-                .copied()
-                .unwrap_or_else(|| {
-                    tracing::warn!(
-                        slot,
-                        "chosen co-op duplicate is unavailable; using first mission hero"
-                    );
-                    originals[0]
-                });
+            let preferred = if rules.campaign {
+                originals
+                    .iter()
+                    .position(|&id| {
+                        self.get_entity(id)
+                            .and_then(Entity::pc_data)
+                            .is_some_and(|pc| pc.robin)
+                    })
+                    .unwrap_or(0)
+            } else {
+                usize::from(rules.duplicate_choices[slot])
+            };
+            let source = originals.get(preferred).copied().unwrap_or_else(|| {
+                tracing::warn!(
+                    slot,
+                    "chosen co-op duplicate is unavailable; using first mission hero"
+                );
+                originals[0]
+            });
             let mut copy = self
                 .get_entity(source)
                 .expect("party source exists")
@@ -372,6 +381,127 @@ mod tests {
         engine.initialize_coop_party();
         engine
     }
+    #[test]
+    fn robin_copies_share_consumption_pickups_and_export_without_sharing_health() {
+        use crate::profiles::{Action, CharacterProfile};
+        let mut engine = party(1, 3);
+        let ids = engine.world.pc_ids.clone();
+        let mut assets = crate::engine::LevelAssets::new();
+        std::sync::Arc::make_mut(&mut assets.profile_manager)
+            .characters
+            .push(CharacterProfile {
+                actions: [Action::Eat, Action::Bow, Action::Purse],
+                action_max_ammo: [6, 12, 6],
+                ..Default::default()
+            });
+        for &id in &ids {
+            let pc = engine
+                .world
+                .entities
+                .get_mut(id)
+                .unwrap()
+                .pc_data_mut()
+                .unwrap();
+            pc.robin = true;
+            pc.disabled_actions = vec![false; 3];
+            pc.current_action = Action::Eat;
+            pc.saved_action = Action::Eat;
+        }
+        engine.mission_domain.campaign.characters[0]
+            .status
+            .set_ammo(Action::Eat, 2);
+        engine.mission_domain.campaign.characters[1]
+            .status
+            .life_points = 23;
+        engine.synchronize_robin_inventory(&assets);
+        engine.consume_ration_without_speech(&assets, ids[1], Action::Eat);
+        engine.consume_ration_without_speech(&assets, ids[2], Action::Eat);
+        for &id in &ids {
+            let pc = engine.get_entity(id).unwrap().pc_data().unwrap();
+            assert_eq!(
+                engine
+                    .pc_inventory_description(pc)
+                    .unwrap()
+                    .status
+                    .get_ammo(Action::Eat),
+                0
+            );
+            assert!(pc.disabled_actions[0]);
+            assert_eq!(pc.current_action, Action::NoAction);
+            assert_eq!(pc.saved_action, Action::NoAction);
+        }
+        let pickup = engine
+            .handle_bonus_pickup(&assets, ids[2], Action::Eat, 20)
+            .unwrap();
+        assert_eq!(pickup.taken, 6);
+        assert_eq!(pickup.remainder, 14);
+        for &id in &ids {
+            let pc = engine.get_entity(id).unwrap().pc_data().unwrap();
+            assert_eq!(
+                engine
+                    .pc_inventory_description(pc)
+                    .unwrap()
+                    .status
+                    .get_ammo(Action::Eat),
+                6
+            );
+            assert!(!pc.disabled_actions[0]);
+        }
+        assert_eq!(
+            engine.mission_domain.campaign.characters[1]
+                .status
+                .life_points,
+            23
+        );
+        // Stock remains available when its original owner dies.
+        engine
+            .world
+            .entities
+            .get_mut(ids[0])
+            .unwrap()
+            .pc_data_mut()
+            .unwrap()
+            .life_points = 0;
+        engine.consume_ration_without_speech(&assets, ids[1], Action::Eat);
+        let exported = engine.export_coop_campaign();
+        assert_eq!(exported.characters.len(), 1);
+        assert_eq!(exported.characters[0].status.get_ammo(Action::Eat), 5);
+        let bytes = super::super::snapshot::encode_native_engine_inner(&engine);
+        let mut restored = super::super::snapshot::decode_native_engine_inner(&bytes).unwrap();
+        restored.consume_ration_without_speech(&assets, ids[2], Action::Eat);
+        assert_eq!(
+            restored.export_coop_campaign().characters[0]
+                .status
+                .get_ammo(Action::Eat),
+            4
+        );
+    }
+
+    #[test]
+    fn campaign_fills_missing_slots_with_robin_and_keeps_existing_heroes() {
+        let mut engine = party(2, 1);
+        let robin = engine.world.pc_ids[1];
+        engine
+            .world
+            .entities
+            .get_mut(robin)
+            .unwrap()
+            .pc_data_mut()
+            .unwrap()
+            .robin = true;
+        engine.control.sim_config.coop.campaign = true;
+        engine.control.sim_config.coop.players = 4;
+        engine.initialize_coop_party();
+        assert_eq!(engine.world.pc_ids.len(), 4);
+        for &id in &engine.world.pc_ids[2..] {
+            let pc = engine.get_entity(id).unwrap().pc_data().unwrap();
+            assert!(pc.robin);
+            assert_eq!(pc.coop_origin, Some(robin));
+        }
+        engine.initialize_coop_party();
+        assert_eq!(engine.world.pc_ids.len(), 4);
+    }
+
     #[test]
     fn explicit_team_does_not_grow_to_player_count_and_preserves_slot_order() {
         let mut engine = party(2, 1);

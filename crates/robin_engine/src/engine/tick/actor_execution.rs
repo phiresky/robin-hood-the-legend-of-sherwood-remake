@@ -294,7 +294,7 @@ impl EngineInner {
                 element.obstacle_index(),
                 element.direction(),
                 element.material(),
-                self.pc_description_index_for_pc_data(&pc.pc),
+                self.pc_inventory_index(&pc.pc),
             )
         };
         let status_idx = status_idx.unwrap_or_else(|| {
@@ -377,6 +377,7 @@ impl EngineInner {
                 self.hero_speaking(assets, pc_id, crate::engine::melee::HERO_OUT_OF_AMMO);
             }
         }
+        self.synchronize_robin_inventory(assets);
         tracing::debug!(
             pc = ?pc_id,
             ?ale_id,

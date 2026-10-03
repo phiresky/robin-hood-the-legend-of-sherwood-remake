@@ -18,6 +18,109 @@ use crate::pc_status::{LIFEPOINTS_PC, PcStatus};
 use crate::player_profile::DifficultyLevel;
 use crate::profiles::{Action, CharacterProfile, NUMBER_OF_PC_ACTIONS};
 
+/// Robin copies use their original's consumable stock; identity and health
+/// continue to belong to each individual campaign character.
+pub fn inventory_owner<'a>(
+    entities: &'a crate::entities::Entities,
+    pc: &'a crate::element::PcData,
+) -> &'a crate::element::PcData {
+    if pc.robin
+        && let Some(origin) = pc.coop_origin
+    {
+        let owner = entities
+            .get(origin)
+            .and_then(crate::element::Entity::pc_data)
+            .expect("shared Robin inventory requires its original character");
+        assert!(
+            owner.coop_origin.is_none(),
+            "shared inventory origins cannot form chains"
+        );
+        owner
+    } else {
+        pc
+    }
+}
+
+/// Refresh copies after a stock mutation without copying health, experience,
+/// or other character state. Updating action slots happens at the same boundary.
+pub fn synchronize_robin_inventory(
+    campaign: &mut crate::campaign::Campaign,
+    entities: &mut crate::entities::Entities,
+    profiles: &crate::profiles::ProfileManager,
+) {
+    let copies: Vec<_> = entities
+        .pcs()
+        .filter_map(|(id, actor)| {
+            let pc = &actor.pc;
+            (pc.robin && pc.coop_origin.is_some()).then(|| {
+                let owner = inventory_owner(entities, pc);
+                (
+                    crate::element::EntityId::Pc(id),
+                    pc.coop_origin.unwrap(),
+                    owner
+                        .campaign_description_index
+                        .expect("inventory owner identity") as usize,
+                    pc.campaign_description_index
+                        .expect("inventory copy identity") as usize,
+                )
+            })
+        })
+        .collect();
+    let funded = campaign.get_value(crate::campaign::CampaignValue::Ransom)
+        >= i32::from(COINS_PER_PURSE) * COIN_VALUE as i32;
+    for (id, origin, source, target) in copies {
+        let status = campaign
+            .characters
+            .get(source)
+            .expect("inventory owner status")
+            .status
+            .clone();
+        let target_status = &mut campaign
+            .characters
+            .get_mut(target)
+            .expect("inventory copy status")
+            .status;
+        for action in [
+            Action::Ale,
+            Action::Bow,
+            Action::Apple,
+            Action::Eat,
+            Action::Stone,
+            Action::WaspNest,
+            Action::Net,
+            Action::Heal,
+            Action::Purse,
+        ] {
+            let amount = status.get_ammo(action);
+            if target_status.get_ammo(action) != amount {
+                target_status.set_ammo(action, amount);
+                for member in [origin, id] {
+                    let pc = entities
+                        .get_mut(member)
+                        .and_then(crate::element::Entity::pc_data_mut)
+                        .expect("inventory member");
+                    let profile = profiles
+                        .get_character(pc.profile_index)
+                        .expect("inventory member profile");
+                    pc.ammo.set(action, amount).expect("consumable counter");
+                    if let Some(slot) = find_action_slot(profile, action) {
+                        let disabled = amount == 0 || (action == Action::Purse && !funded);
+                        pc.disabled_actions[slot] = disabled;
+                        if disabled {
+                            if pc.current_action == action {
+                                pc.current_action = Action::NoAction;
+                            }
+                            if pc.saved_action == action {
+                                pc.saved_action = Action::NoAction;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════
 //  Constants
 // ═══════════════════════════════════════════════════════════════════

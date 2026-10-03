@@ -833,7 +833,9 @@ impl MainMenuContext<'_> {
                     self.application_context.sim_config().difficulty,
                 );
             }
-            campaign.force_next_mission(idx);
+            if !launch.coop.campaign || matches!(launch.role, MultiplayerRole::Client { .. }) {
+                campaign.force_next_mission(idx);
+            }
             None
         };
         let (server, connect) = match launch.role {
@@ -1178,8 +1180,12 @@ async fn run_main_menu(
             }
             #[cfg(feature = "multiplayer")]
             MainMenuChoice::Multiplayer(launch) => {
+                let initial_load = launch
+                    .campaign_save
+                    .clone()
+                    .map(|slot| (slot, launch.mission_id));
                 let request = menu.prepare_multiplayer_launch(&mut campaign, launch)?;
-                let Some(next) = menu.launch_session(campaign, request, None).await? else {
+                let Some(next) = menu.launch_session(campaign, request, initial_load).await? else {
                     return Ok(0);
                 };
                 campaign = next;

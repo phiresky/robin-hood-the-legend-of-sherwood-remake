@@ -559,7 +559,8 @@ pub const SAVE_MAGIC: &str = "RHSG";
 /// Current save format version. Bump on incompatible serialized-field changes.
 /// See `docs/SAVE_FORMAT.md` for the version history.
 /// Version 98 adds the deterministic combat gate for mission victory.
-pub const SAVE_FORMAT_VERSION: u32 = 98;
+/// Version 99 stores cooperative campaign rules and resumable lobby metadata.
+pub const SAVE_FORMAT_VERSION: u32 = 99;
 
 /// Human-facing provenance captured when a save is written.
 ///
@@ -615,6 +616,8 @@ pub struct SaveHeader {
     /// Local state capture made during multiplayer for diagnostics only.
     /// These bytes are never an authoritative session transition source.
     pub multiplayer_diagnostic: bool,
+    #[serde(default)]
+    pub cooperative_campaign: Option<robin_engine::coop::CoopRules>,
     /// Mission and player identity frozen at save time. This is mandatory for
     /// every native Rust save; original-game saves use a separate importer.
     pub provenance: SaveProvenance,
@@ -640,6 +643,7 @@ impl SaveHeader {
             timestamp_unix,
             display_text,
             multiplayer_diagnostic: false,
+            cooperative_campaign: None,
             provenance,
             replay: None,
         })
@@ -892,8 +896,14 @@ impl GameSaveFile {
     ) -> Result<Self> {
         let mut game_persistent = game.persistent.clone();
         game_persistent.draw_hidden = host.frontend.input.feedback.draw_hidden;
+        let mut header = SaveHeader::new(mission_id, mission_assets, display_text, provenance)?;
+        header.cooperative_campaign = engine
+            .sim_config()
+            .coop
+            .campaign
+            .then_some(engine.sim_config().coop);
         let save = Self {
-            header: SaveHeader::new(mission_id, mission_assets, display_text, provenance)?,
+            header,
             engine: engine.clone(),
             sound: host.audio.sound.clone(),
             game_persistent,

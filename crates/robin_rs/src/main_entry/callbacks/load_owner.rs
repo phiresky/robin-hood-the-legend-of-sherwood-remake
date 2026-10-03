@@ -89,6 +89,23 @@ impl PreparedLoad {
         }
     }
 
+    /// Rebind only a preflighted campaign to the new lobby, retaining its
+    /// selected local slot and recording the derived world as the load marker.
+    pub(crate) fn for_campaign_lobby(
+        mut self,
+        rules: robin_engine::coop::CoopRules,
+    ) -> anyhow::Result<Self> {
+        let mut save = (*self.save).clone();
+        save.engine = save
+            .engine
+            .for_cooperative_campaign_resume(rules)
+            .map_err(anyhow::Error::msg)?;
+        save.header.cooperative_campaign = Some(rules);
+        save.header.replay = None;
+        self.save = save.into();
+        Ok(self)
+    }
+
     pub(crate) fn save(&self) -> &GameSaveFile {
         &self.save
     }

@@ -311,7 +311,11 @@ pub(crate) async fn show_main_menu(
                         0,
                     )),
                 },
-                multiplayer_menu::MultiplayerMissionSources { campaign, profiles },
+                multiplayer_menu::MultiplayerMissionSources {
+                    campaign,
+                    profiles,
+                    saves: None,
+                },
                 initial_direct_invite,
             )
             .await
@@ -921,6 +925,7 @@ async fn dispatch_click(
             multiplayer_menu::MultiplayerMissionSources {
                 campaign: session.campaign,
                 profiles: session.profiles,
+                saves: Some(session.save_manager),
             },
             None,
         )

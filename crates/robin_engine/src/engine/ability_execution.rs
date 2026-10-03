@@ -553,7 +553,7 @@ impl EngineInner {
         // (80 vs 40); both end up decrementing the same
         // underlying field.
         let pc_status = self.get_entity(actor_id).and_then(|e| match e {
-            Entity::Pc(pc) => Some((pc.pc.profile_index, self.pc_description_for_pc_data(&pc.pc))),
+            Entity::Pc(pc) => Some((pc.pc.profile_index, self.pc_inventory_description(&pc.pc))),
             _ => None,
         });
         if let Some((profile_idx, Some(pc_desc))) = pc_status {

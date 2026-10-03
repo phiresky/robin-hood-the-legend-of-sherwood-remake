@@ -461,6 +461,60 @@ impl Engine {
         Ok(super::snapshot::encode_native_engine_inner(&self.inner))
     }
 
+    /// Derive an owned saved campaign for a fresh lobby. The saved world and
+    /// inventory stay intact; connections belong to the new session.
+    pub fn for_cooperative_campaign_resume(
+        mut self,
+        rules: crate::coop::CoopRules,
+    ) -> Result<Self, String> {
+        rules.validate()?;
+        if !rules.campaign || !self.inner.control.sim_config.coop.campaign {
+            return Err("only cooperative campaign saves can resume through this lobby".into());
+        }
+        let party: Vec<_> = self
+            .inner
+            .world
+            .pc_ids
+            .iter()
+            .copied()
+            .filter(|&id| {
+                self.inner
+                    .get_entity(id)
+                    .and_then(crate::element::Entity::pc_data)
+                    .is_some_and(|pc| {
+                        pc.playable
+                            && pc.life_points > 0
+                            && pc.mission_role == crate::human_control::MissionRole::PlayerParty
+                    })
+            })
+            .collect();
+        if party.is_empty() {
+            return Err("the saved campaign has no surviving playable characters".into());
+        }
+        if rules.control != crate::coop::CharacterControl::Shared
+            && party.len() < usize::from(rules.players)
+        {
+            return Err("this save has fewer heroes than players; use shared control until the next mission".into());
+        }
+        self.inner.control.sim_config.coop = rules;
+        for index in 0..usize::from(rules.players) {
+            self.inner
+                .ensure_seat(crate::player_command::PlayerId(index as u8));
+        }
+        for (index, seat) in self.inner.players.seats.iter_mut().enumerate() {
+            seat.connected = false;
+            seat.nickname.clear();
+            seat.selection.clear();
+            seat.assigned_character = None;
+            if index < usize::from(rules.players) {
+                let assigned = party[index % party.len()];
+                seat.assigned_character = Some(assigned);
+                seat.selection.push(assigned);
+            }
+        }
+        Ok(self)
+    }
+
     /// Decode an owned native engine snapshot without exposing an owned
     /// [`EngineInner`] to downstream crates.
     ///

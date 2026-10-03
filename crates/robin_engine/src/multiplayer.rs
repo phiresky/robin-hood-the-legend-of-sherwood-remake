@@ -94,7 +94,8 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// Protocol 64 carries direct movement commands and actor input ownership.
 /// Protocol 65 carries exact cooperative mission teams.
 /// Protocol 66 adds the combat gate to deterministic simulation configuration.
-pub const NET_PROTOCOL_VERSION: u32 = 66;
+/// Protocol 67 carries cooperative campaign rules and shared Robin inventory.
+pub const NET_PROTOCOL_VERSION: u32 = 67;
 
 /// Maximum bytes in one resumable full-mod transfer chunk. The outer native
 /// transport frame has a larger bound for engine snapshots, so content must

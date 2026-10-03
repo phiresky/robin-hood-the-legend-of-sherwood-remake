@@ -75,6 +75,8 @@ pub(crate) enum MultiplayerRole {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct MultiplayerLaunch {
+    #[serde(skip)]
+    pub campaign_save: Option<crate::savegame::SlotName>,
     #[serde(default)]
     pub coop: robin_engine::coop::CoopRules,
     #[serde(skip)]
@@ -97,6 +99,8 @@ pub(crate) struct MultiplayerLaunch {
 
 #[derive(Debug, Clone)]
 struct MissionChoice {
+    campaign_rules: Option<robin_engine::coop::CoopRules>,
+    campaign_save: Option<crate::savegame::SlotName>,
     mission_id: u32,
     #[cfg(target_arch = "wasm32")]
     authoritative_basename: String,
@@ -139,6 +143,7 @@ fn activation_for_mode(mode: &MenuMode) -> Option<u32> {
 pub(crate) struct MultiplayerMissionSources<'a> {
     pub campaign: &'a Campaign,
     pub profiles: &'a engine_profiles::ProfileManager,
+    pub saves: Option<&'a crate::savegame::SaveGameManager>,
 }
 
 pub(crate) async fn show_multiplayer_menu(
@@ -148,7 +153,8 @@ pub(crate) async fn show_multiplayer_menu(
     initial_direct_invite: Option<&str>,
 ) -> Option<MultiplayerLaunch> {
     let nickname = multiplayer_nickname(application_context);
-    let missions = mission_choices(sources.campaign, sources.profiles, application_context);
+    let mut missions = mission_choices(sources.campaign, sources.profiles, application_context);
+    add_campaign_choices(&mut missions, sources, application_context);
     let initial_direct_error = if let Some(connect_addr) = initial_direct_invite {
         match prepare_direct_browser_launch(
             connect_addr,
@@ -193,6 +199,7 @@ enum MultiplayerMenuTick {
 // Field order preserves the old locals' reverse-drop order: in particular,
 // retire matchmaking before releasing its prepared content owner.
 struct MultiplayerMenuState {
+    campaign_save: Option<crate::savegame::SlotName>,
     coop: robin_engine::coop::CoopRules,
     local: bool,
     edit_assignments: bool,
@@ -258,6 +265,7 @@ impl MultiplayerMenuState {
         let input_state = ModalInputState::new();
         let frame = FrameWnd::interactive();
         Self {
+            campaign_save: None,
             coop: robin_engine::coop::CoopRules {
                 team: [b'R', 0, 0, 0, 0],
                 ..Default::default()
@@ -410,6 +418,7 @@ impl MultiplayerMenuState {
                         }
                     }
                     return Some(MultiplayerMenuTick::Finished(Some(MultiplayerLaunch {
+                        campaign_save: self.campaign_save.clone(),
                         local_custom: None,
                         coop: started.coop,
                         mission_id: started.mission_id,
@@ -513,6 +522,21 @@ impl MultiplayerMenuState {
         None
     }
 
+    fn selected_rules(&self) -> robin_engine::coop::CoopRules {
+        let mut rules = self.coop;
+        if matches!(self.mode, MenuMode::Missions)
+            && let Some(mission) = self.selected_mission()
+            && let Some(saved_rules) = mission.campaign_rules
+        {
+            if mission.campaign_save.is_some() {
+                rules = saved_rules;
+            }
+            rules.campaign = true;
+            rules.team = [0; 5];
+        }
+        rules
+    }
+
     fn publish_rules(&mut self) {
         if self.coop.validate().is_ok()
             && !self.local
@@ -531,7 +555,7 @@ impl MultiplayerMenuState {
         let (w, h) = resources.button_dimensions();
         let x = MENU_W - w - 10;
         let bottom = MENU_H - h - 10;
-        let valid = self.coop.validate().is_ok();
+        let valid = self.selected_rules().validate().is_ok();
         let mut buttons = Vec::new();
         let mut add = |id, label: String, enabled, bx, y, bw, bh| {
             buttons.push((id, label, enabled, bx, y, bw, bh));
@@ -673,15 +697,31 @@ impl MultiplayerMenuState {
                 y += h + 12;
                 add(
                     ID_HERO_SETUP,
-                    format!("Edit team ({}/5)", self.coop.team_len()),
-                    true,
+                    if self.coop.campaign
+                        || self
+                            .selected_mission()
+                            .is_some_and(|m| m.campaign_rules.is_some())
+                    {
+                        "Campaign team".into()
+                    } else {
+                        format!("Edit team ({}/5)", self.coop.team_len())
+                    },
+                    !self.coop.campaign
+                        && !self
+                            .selected_mission()
+                            .is_some_and(|m| m.campaign_rules.is_some()),
                     x,
                     y,
                     w,
                     h,
                 );
                 y += h + 12;
-                if self.coop.control == CharacterControl::Assigned {
+                if self.coop.control == CharacterControl::Assigned
+                    && !self.coop.campaign
+                    && !self
+                        .selected_mission()
+                        .is_some_and(|m| m.campaign_rules.is_some())
+                {
                     add(
                         ID_ASSIGNMENTS,
                         if self.edit_assignments {
@@ -724,7 +764,11 @@ impl MultiplayerMenuState {
         match self.mode {
             MenuMode::Missions => add(
                 ID_CREATE,
-                if self.hero_setup {
+                if self.hero_setup
+                    || self
+                        .selected_mission()
+                        .is_some_and(|m| m.campaign_rules.is_some())
+                {
                     if self.local {
                         "Start local"
                     } else {
@@ -742,7 +786,7 @@ impl MultiplayerMenuState {
             ),
             MenuMode::Hosted { .. } => add(
                 ID_START,
-                if self.hero_setup {
+                if self.hero_setup || self.coop.campaign {
                     "Start mission"
                 } else {
                     "Review team"
@@ -1093,7 +1137,12 @@ impl MultiplayerMenuState {
         io: &mut ModalScreenIo<'_, '_>,
     ) -> Option<MultiplayerMenuTick> {
         match id {
-            ID_HERO_SETUP => {
+            ID_HERO_SETUP
+                if !self.coop.campaign
+                    && !self
+                        .selected_mission()
+                        .is_some_and(|m| m.campaign_rules.is_some()) =>
+            {
                 self.hero_setup = !self.hero_setup;
                 self.edit_assignments = false;
                 self.team_focus = None;
@@ -1101,6 +1150,7 @@ impl MultiplayerMenuState {
             }
             ID_LOCAL => {
                 self.coop.players = 1;
+                self.coop.campaign = false;
                 if self.coop.team_len() == 0 {
                     self.coop.team[0] = b'R';
                 }
@@ -1193,7 +1243,14 @@ impl MultiplayerMenuState {
                 }
                 return None;
             }
-            ID_CREATE | ID_START if !matches!(self.mode, MenuMode::Games) && !self.hero_setup => {
+            ID_CREATE | ID_START
+                if !matches!(self.mode, MenuMode::Games)
+                    && !self.hero_setup
+                    && !self.coop.campaign
+                    && !self
+                        .selected_mission()
+                        .is_some_and(|m| m.campaign_rules.is_some()) =>
+            {
                 self.hero_setup = true;
                 self.edit_assignments = false;
                 self.team_focus = None;
@@ -1252,6 +1309,7 @@ impl MultiplayerMenuState {
             }
             ID_CREATE if matches!(self.mode, MenuMode::Games) => {
                 self.coop.players = 1;
+                self.coop.campaign = false;
                 if self.coop.team_len() == 0 {
                     self.coop.team[0] = b'R';
                 }
@@ -1277,6 +1335,25 @@ impl MultiplayerMenuState {
         application_context: &ApplicationContext,
         io: &mut ModalScreenIo<'_, '_>,
     ) -> Option<MultiplayerMenuTick> {
+        if id == ID_CREATE
+            && matches!(self.mode, MenuMode::Missions)
+            && let Some(mission) = self.missions.get(self.selected)
+        {
+            self.campaign_save = mission.campaign_save.clone();
+            if let Some(rules) = mission.campaign_rules {
+                if mission.campaign_save.is_some() {
+                    self.coop = rules;
+                } else {
+                    self.coop.campaign = true;
+                    self.coop.team = [0; 5];
+                }
+            } else {
+                self.coop.campaign = false;
+                if self.coop.team_len() == 0 {
+                    self.coop.team[0] = b'R';
+                }
+            }
+        }
         match id {
             ID_CREATE if self.local && matches!(self.mode, MenuMode::Missions) => {
                 let player_count = io.window.local_players.count();
@@ -1288,6 +1365,7 @@ impl MultiplayerMenuState {
                     io.window.local_players.enabled = true;
                     self.coop.players = player_count as u8;
                     return Some(MultiplayerMenuTick::Finished(Some(MultiplayerLaunch {
+                        campaign_save: mission.campaign_save.clone(),
                         coop: self.coop,
                         mission_id: mission.mission_id,
                         mission_name: mission.mission_name.clone(),
@@ -1488,6 +1566,7 @@ async fn prepare_joined_launch(
         ),
     };
     Ok(MultiplayerLaunch {
+        campaign_save: None,
         local_custom: None,
         coop: joined.coop,
         mission_id: joined.mission_id,
@@ -1679,6 +1758,7 @@ async fn prepare_direct_browser_launch(
             })?
     };
     Ok(MultiplayerLaunch {
+        campaign_save: None,
         local_custom: None,
         coop: Default::default(),
         mission_id,
@@ -1859,12 +1939,12 @@ impl MultiplayerMenuState {
             MenuMode::Missions => self.missions.get(self.selected),
             MenuMode::Hosted { game } => self.missions.iter().find(|m| {
                 m.mission_id == game.mission_id
+                    && m.campaign_rules.is_some() == game.coop.campaign
                     && (m.mission_id != u32::MAX || m.mission_name == game.mission_name)
             }),
-            MenuMode::Joined { game, .. } => self
-                .missions
-                .iter()
-                .find(|m| m.mission_id == game.mission_id),
+            MenuMode::Joined { game, .. } => self.missions.iter().find(|m| {
+                m.mission_id == game.mission_id && m.campaign_rules.is_some() == game.coop.campaign
+            }),
             _ => None,
         }
     }
@@ -2137,12 +2217,20 @@ impl MultiplayerMenuState {
                 .map(|&code| robin_engine::coop::team_character_name(code))
                 .collect::<Vec<_>>()
                 .join(", ");
-            let detail = if let Err(error) = self.coop.validate() {
+            let detail = if let Err(error) = self.selected_rules().validate() {
                 error
             } else if matches!(mode, MenuMode::Games) {
                 help.to_owned()
             } else {
-                format!("Team: {team}. {help}")
+                if self.coop.campaign
+                    || self
+                        .selected_mission()
+                        .is_some_and(|m| m.campaign_rules.is_some())
+                {
+                    format!("Campaign roster; extra Robins share supplies. {help}")
+                } else {
+                    format!("Team: {team}. {help}")
+                }
             };
             let text = format!("{status}\n{detail}");
             let wrapped = wrap_text_font(font, &text, LIST_RECT.w, 3);
@@ -2225,6 +2313,80 @@ fn usual_mission_team(
     Some(team)
 }
 
+fn add_campaign_choices(
+    missions: &mut Vec<MissionChoice>,
+    sources: MultiplayerMissionSources<'_>,
+    context: &ApplicationContext,
+) {
+    // Full campaigns require the story catalogue; demos remain mission-only.
+    if crate::main_entry::detect_demo_mode_with_context(context).is_some() {
+        return;
+    }
+    if sources.profiles.characters.len() < 2 || sources.campaign.missions.is_empty() {
+        return;
+    }
+    let mut campaign = sources.campaign.clone();
+    let config = context.sim_config();
+    campaign.reset(sources.profiles, config.difficulty);
+    let (campaign, first, _, _) =
+        robin_engine::engine::Engine::select_next_mission(campaign, sources.profiles, 0, config);
+    let first = campaign.missions[first].profile(sources.profiles);
+    let rules = robin_engine::coop::CoopRules {
+        campaign: true,
+        ..Default::default()
+    };
+    let mut entries = vec![MissionChoice {
+        campaign_rules: Some(rules),
+        campaign_save: None,
+        mission_id: first.id,
+        #[cfg(target_arch = "wasm32")]
+        authoritative_basename: first.mission_filename.clone(),
+        mission_name: "New cooperative campaign".into(),
+        label: "New campaign".into(),
+        custom: None,
+        usual_team: None,
+    }];
+    if let Some(saves) = sources.saves {
+        for (index, save) in saves.saves().enumerate() {
+            if save.multiplayer_diagnostic
+                || save.version != crate::save_file::SAVE_FORMAT_VERSION
+                || save.is_restart()
+            {
+                continue;
+            }
+            let Some(rules) = save.cooperative_campaign else {
+                continue;
+            };
+            let Some(mission) = sources
+                .campaign
+                .missions
+                .iter()
+                .find(|m| m.profile(sources.profiles).id == save.mission_id)
+            else {
+                continue;
+            };
+            let profile = mission.profile(sources.profiles);
+            entries.push(MissionChoice {
+                campaign_rules: Some(rules),
+                campaign_save: Some(
+                    saves
+                        .slot_name(index)
+                        .expect("listed campaign save has a valid slot name"),
+                ),
+                mission_id: profile.id,
+                #[cfg(target_arch = "wasm32")]
+                authoritative_basename: profile.mission_filename.clone(),
+                mission_name: format!("Campaign: {}", save.text),
+                label: format!("Resume campaign: {}", save.text),
+                custom: None,
+                usual_team: None,
+            });
+        }
+    }
+    entries.append(missions);
+    *missions = entries;
+}
+
 fn mission_choices(
     campaign: &Campaign,
     profiles: &engine_profiles::ProfileManager,
@@ -2255,6 +2417,8 @@ fn mission_choices(
                 |number| format!("{number:02} {mission_name}"),
             );
             MissionChoice {
+                campaign_rules: None,
+                campaign_save: None,
                 usual_team: crate::main_entry::detect_demo_mode_with_context(application_context)
                     .filter(|(mission, ..)| mission.eq_ignore_ascii_case(&profile.mission_filename))
                     .map(|(_, _, pcs, _)| pcs.to_owned())
@@ -2326,6 +2490,8 @@ fn mission_choices(
                 requires_spellforge: entry.requires_spellforge,
             };
             choices.push(MissionChoice {
+                campaign_rules: None,
+                campaign_save: None,
                 usual_team: None,
                 mission_id: u32::MAX,
                 #[cfg(target_arch = "wasm32")]
@@ -2704,6 +2870,19 @@ mod visual_tests {
             .find(|p| p.mission_filename.eq_ignore_ascii_case("H01_Lin_VL"))
             .unwrap();
         assert!(choices.iter().any(|choice| choice.mission_id == first.id));
+        let mut choices = choices;
+        add_campaign_choices(
+            &mut choices,
+            MultiplayerMissionSources {
+                campaign: &campaign,
+                profiles: &profiles,
+                saves: None,
+            },
+            &context,
+        );
+        assert_eq!(choices[0].mission_id, first.id);
+        assert!(choices[0].campaign_rules.unwrap().campaign);
+        assert_eq!(choices[0].campaign_rules.unwrap().team_len(), 0);
     }
 
     #[test]
@@ -2729,6 +2908,7 @@ mod visual_tests {
             )
             .unwrap();
             let mut state = MultiplayerMenuState {
+                campaign_save: None,
                 coop: robin_engine::coop::CoopRules {
                     team: [b'R', b'T', b'T', b'W', b'M'],
                     ..Default::default()
@@ -2896,6 +3076,7 @@ mod visual_tests {
             .initialize_sprite_bank_with_files(".", &files)
             .unwrap();
         for team in [
+            [0; 5],
             [b'R', 0, 0, 0, 0],
             [b'R', b'R', 0, 0, 0],
             [b'R'; 5],
@@ -2945,7 +3126,8 @@ mod visual_tests {
             let config = SimConfig {
                 script_enabled: true,
                 coop: robin_engine::coop::CoopRules {
-                    players: 1,
+                    campaign: team == [0; 5],
+                    players: if team == [0; 5] { 3 } else { 1 },
                     team,
                     ..Default::default()
                 },
@@ -2980,18 +3162,41 @@ mod visual_tests {
                         && pc.mission_role == robin_engine::human_control::MissionRole::PlayerParty
                 })
                 .collect();
-            assert_eq!(party.len(), config.coop.team_len());
+            assert_eq!(
+                party.len(),
+                if config.coop.campaign {
+                    3
+                } else {
+                    config.coop.team_len()
+                }
+            );
             for (slot, pc) in party.iter().enumerate() {
-                assert_eq!(pc.campaign_description_index, Some(slot as u32));
+                let expected_description = if config.coop.campaign && slot > 0 {
+                    profiles.characters.len() + slot - 1
+                } else {
+                    slot
+                };
+                assert_eq!(
+                    pc.campaign_description_index,
+                    Some(expected_description as u32)
+                );
                 let profile = profiles.get_character(pc.profile_index).unwrap();
                 let expected = robin_engine::coop::TEAM_CHARACTERS
                     .iter()
-                    .find(|entry| entry.0 == team[slot])
+                    .find(|entry| {
+                        entry.0
+                            == if config.coop.campaign {
+                                b'R'
+                            } else {
+                                team[slot]
+                            }
+                    })
                     .unwrap()
                     .2;
                 assert!(
                     profile.profile_name == expected
-                        || (team[slot] == b'R' && pc.kind.is_some_and(|kind| kind.is_robin()))
+                        || ((config.coop.campaign || team[slot] == b'R')
+                            && pc.kind.is_some_and(|kind| kind.is_robin()))
                 );
             }
             let restored =
@@ -3000,6 +3205,25 @@ mod visual_tests {
                 robin_engine::replay::state_hash(&engine),
                 robin_engine::replay::state_hash(&restored)
             );
+            if config.coop.campaign {
+                let campaign_before = serde_json::to_value(restored.campaign()).unwrap();
+                let resumed = restored
+                    .for_cooperative_campaign_resume(robin_engine::coop::CoopRules {
+                        players: 2,
+                        ..config.coop
+                    })
+                    .unwrap();
+                assert_eq!(resumed.sim_config().coop.players, 2);
+                assert_eq!(
+                    serde_json::to_value(resumed.campaign()).unwrap(),
+                    campaign_before
+                );
+                assert_eq!(resumed.pc_ids().len(), engine.pc_ids().len());
+                assert_eq!(
+                    resumed.export_coop_campaign().characters.len() + 2,
+                    resumed.campaign().characters.len()
+                );
+            }
         }
     }
 
