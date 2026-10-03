@@ -91,9 +91,9 @@
   an acknowledgeable error dialog with the failure details while retaining the
   current mission, instead of merely logging the error.
 
-- **Early-access save compatibility.** Version 97 is the supported compatibility
-  baseline. New fields load with backward-compatible defaults; saves briefly
-  written as versions 98 and 99 are accepted too. Future save-version bumps
+- **Early-access save compatibility.** Version 96 is the supported compatibility
+  baseline; new saves remain version 97. New fields load with backward-compatible
+  defaults; saves briefly written as versions 98 and 99 are accepted too. Future save-version bumps
   require absolute necessity and explicit human confirmation. Binary network
   and replay schemas remain separate from the JSON disk-save version.
 

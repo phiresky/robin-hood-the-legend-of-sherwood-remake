@@ -556,17 +556,18 @@ impl Thumbnail {
 /// Magic bytes at the start of every save file.
 pub const SAVE_MAGIC: &str = "RHSG";
 
-/// Early-access compatibility baseline: preserve saves from version 97 onward.
+/// Early-access compatibility baseline: preserve saves from version 96 onward.
 /// Every change must remain backward-compatible through defaults or migration.
 /// Bump this version ONLY when ABSOLUTELY necessary AND after explicit human
 /// confirmation; adding engine fields or features alone is not justification.
 /// Disk saves are JSON; binary network/replay codecs have separate versions.
 pub const SAVE_FORMAT_VERSION: u32 = 97;
 
+/// Version 96 predates explicit team selection; its missing team defaults to automatic.
 /// Versions 98 and 99 were briefly emitted for additive, defaulted fields.
 /// Accept those saves too; newly captured saves use version 97.
 pub fn is_supported_save_version(version: u32) -> bool {
-    matches!(version, 97..=99)
+    matches!(version, 96..=99)
 }
 
 /// Human-facing provenance captured when a save is written.
@@ -1378,7 +1379,7 @@ mod tests {
     }
 
     #[test]
-    fn version_97_loads_without_additive_campaign_and_combat_fields() {
+    fn supported_saves_load_without_additive_team_campaign_and_combat_fields() {
         let (mut engine, _assets) = fresh_engine();
         engine.test_set_frame_counter(12345);
         let host = Host::scratch(800.0, 600.0);
@@ -1391,6 +1392,7 @@ mod tests {
                     map.remove("cooperative_campaign");
                     if let Some(coop) = map.get_mut("coop").and_then(|v| v.as_object_mut()) {
                         coop.remove("campaign");
+                        coop.remove("team");
                     }
                     for child in map.values_mut() {
                         remove_additions(child);
@@ -1407,10 +1409,12 @@ mod tests {
         remove_additions(&mut document);
         let directory = tempdir().unwrap();
         let path = directory.path().join("existing.json");
-        for version in [97, 98, 99] {
+        for version in [96, 97, 98, 99] {
             document["header"]["version"] = version.into();
             fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
             let loaded = GameSaveFile::read_from(&path).unwrap();
+            assert_eq!(loaded.header.version, version);
+            assert_eq!(loaded.engine.sim_config().coop.team, [0; 5]);
             assert_eq!(loaded.engine.frame_counter(), 12345);
             assert!(!loaded.engine.sim_config().coop.campaign);
             assert!(loaded.engine.sim_config().prevent_victory_in_combat);

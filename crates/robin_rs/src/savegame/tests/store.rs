@@ -23,11 +23,17 @@ fn play_resumes_newer_mission_autosave_instead_of_stale_continue() {
 }
 
 #[test]
+fn automatic_resume_accepts_version_96_checkpoint() {
+    let mut manager = SaveGameManager::new(String::new());
+    let mut continued = published_slot("Continue");
+    continued.version = 96;
+    manager.insert_test_slot(continued, SlotState::Published);
+    assert_eq!(manager.find_resume_target(), Some(0));
+}
+
+#[test]
 fn automatic_resume_skips_incompatible_checkpoints_without_removing_them() {
-    for version in [
-        save_file::SAVE_FORMAT_VERSION - 1,
-        save_file::SAVE_FORMAT_VERSION + 3,
-    ] {
+    for version in [95, save_file::SAVE_FORMAT_VERSION + 3] {
         let mut manager = SaveGameManager::new(String::new());
         let mut continued = published_slot("Continue");
         continued.timestamp = "100".into();
@@ -946,10 +952,7 @@ fn corrupt_invalid_and_unreadable_indexes_do_not_reset_existing_saves() {
 fn incompatible_payload_versions_do_not_block_the_save_store() {
     use autosave_store::{AUTOSAVE_MANIFEST_FILE, AutosaveManifest};
 
-    for version in [
-        save_file::SAVE_FORMAT_VERSION - 1,
-        save_file::SAVE_FORMAT_VERSION + 3,
-    ] {
+    for version in [95, save_file::SAVE_FORMAT_VERSION + 3] {
         let root = tempfile::tempdir().unwrap();
         let directory = root.path().to_str().unwrap();
         let mut quick = published_slot(special_slots::EX_QUICK);

@@ -131,7 +131,7 @@ them is behavior, not gratuitous snapshotting. Estimated net removal:
 Start with item 1, then combine items 2 and 3 as one engine-ownership pass. These
 are removal estimates, not measured guarantees; shared scaffolding makes the
 ranges overlap. The game is now released in early access: preserve save compatibility from
-version 97 onward using backward-compatible fields or explicit migrations.
+version 96 onward using backward-compatible fields or explicit migrations.
 A save-version bump is allowed only when ABSOLUTELY necessary and with explicit
 human confirmation. Do not discard save or replay compatibility as an architectural
 cleanup shortcut; replay schema and deterministic playback compatibility must be
