@@ -51,6 +51,16 @@ The validated `scenery-resources-v3` fixture is byte-identical to the native-tes
 v2 export. Animations without an authored
 resource directory still use the installed shared sprite bank.
 
+One-time animation recovery uses `pipeline/src/recover-scenery-animation.ts`.
+It requires an explicit owning part and a reviewed 3D anchor whose projected
+position matches the sprite/profile center. Screen-only candles stored at zero
+elevation do not establish their physical attachment height; a sprite on raised
+geometry would attach incorrectly if that zero were copied blindly. Recovery
+converts the anchor and masking line to the owner's local frame, preserves display
+flags and stores no source-record index. Tests reconstruct screen placement at a
+reviewed height and check rotated, translated and raised placement. Real candle
+ownership and heights remain under review; these definitions are not yet published.
+
 To repeat the animation acceptance chain, generate a fresh output directory with
 `SCENERY_TEST_EXPORT_DIR` while running `app/src/scenery-resources.test.ts`.
 Use that same absolute directory for the ignored native tests
