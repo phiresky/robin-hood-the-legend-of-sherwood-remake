@@ -1,7 +1,10 @@
 import { transformedObstacle, serializeStoredMap, type Level3D, type Point } from "@rle/shared";
 import { encode } from "fast-png";
 import { strToU8, zip } from "fflate";
-import { compileAssetGameplay } from "../../shared/src/compile-asset-gameplay.ts";
+import {
+  compileAssetGameplay,
+  type CompiledScenerySource,
+} from "../../shared/src/compile-asset-gameplay.ts";
 import type { ProjectionAssetDescriptor } from "@rle/shared";
 import { packageAppearanceRegions, type BakedAppearanceRegion } from "./map-appearance.ts";
 import { compileMission } from "./compile-mission.ts";
@@ -96,9 +99,15 @@ export function compileMap(
       .replace(/^-+|-+$/g, "") || "map";
   // Namespace map and mission names so installation cannot replace a base-game map.
   const name = `editor-${slug}`;
+  let scenerySources: CompiledScenerySource[] = [];
   const assetGeometry =
     assets || document.terrain?.cells.length || document.splines?.length
-      ? compileAssetGameplay(document, assets ?? new Map(), bounds, options)
+      ? compileAssetGameplay(document, assets ?? new Map(), bounds, {
+          ...options,
+          onSceneryCompiled: (sources) => {
+            scenerySources = sources;
+          },
+        })
       : undefined;
   const volumes = assetGeometry ? [] : compileVolumes(document, bounds);
   const mission = compileMission(document, bounds, assetGeometry, options.bestEffort, volumes);
@@ -139,7 +148,7 @@ export function compileMap(
   };
   const editorDocument = assets ? serializeStoredMap(document, assets) : structuredClone(document);
   warnings.push(...mission.warnings);
-  return { name, bounds, descriptor, details, warnings, editorDocument };
+  return { name, bounds, descriptor, details, warnings, editorDocument, scenerySources };
 }
 
 export type CompiledMap = ReturnType<typeof compileMap>;

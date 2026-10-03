@@ -79,8 +79,85 @@ function fixture() {
     if (!bytes) throw new Error(`missing ${path}`);
     return bytes;
   };
-  return { assets, hut, files, compiled, read, manifest };
+  return { document, assets, hut, files, compiled, read, manifest };
 }
+
+test("unplaced and hidden assets cannot invalidate a placed scenery bank", async () => {
+  for (const hidden of [false, true]) {
+    const { document, assets, hut, read } = fixture();
+    const unused = structuredClone(hut);
+    unused.id = "unused-flame";
+    unused.gameplay!.animations![0]!.profile = "unavailable-profile";
+    unused.gameplay!.animations![0]!.resourceDirectory = "sprites/unavailable.rhs.d";
+    assets.set(unused.id, unused);
+    if (hidden) {
+      document.assetSources!.push({ ...document.assetSources![0]!, id: unused.id });
+      document.objects.push({
+        ...structuredClone(document.objects[0]!),
+        id: "unused-body",
+        group: "unused",
+        node: "asset:unused-flame:building-999",
+      });
+      document.groups.push({
+        id: "unused",
+        hidden: true,
+        transform: { dx: 0, dy: 0, dz: 0, rot_deg: 0 },
+      });
+    }
+    const compiled = compileMap(document, [0, 0, 600, 600], assets);
+    assert.deepEqual(compiled.scenerySources, [{ assetId: hut.id, animationId: "flame" }]);
+    const resources = await collectSceneryResources(compiled, assets, read);
+    assert.equal(Object.keys(resources).length, 3);
+    assert.equal(compiled.descriptor.asset_geometry!.animations!.length, 1);
+    assert.ok(!compiled.warnings.some((warning) => warning.startsWith("Scenery bank")));
+  }
+});
+
+test("an omitted animation cannot require a missing profile from a valid placed bank", async () => {
+  const { document, assets, hut, read } = fixture();
+  const invalid = structuredClone(hut.gameplay!.animations![0]!);
+  invalid.id = "out-of-range";
+  invalid.profile = "unavailable-profile";
+  invalid.anchor[2] = 100000;
+  hut.gameplay!.animations!.push(invalid);
+  const compiled = compileMap(document, [0, 0, 600, 600], assets, { bestEffort: true });
+  assert.equal(compiled.scenerySources.length, 1);
+  assert.ok(compiled.warnings.some((warning) => warning.includes("out-of-range omitted")));
+  assert.equal(Object.keys(await collectSceneryResources(compiled, assets, read)).length, 3);
+  assert.equal(compiled.descriptor.asset_geometry!.animations!.length, 1);
+});
+
+test("separate placed assets share identical pinned banks but reject conflicting frame contents", async () => {
+  for (const conflict of [false, true]) {
+    const { document, assets, hut, read } = fixture();
+    const copy = structuredClone(hut);
+    copy.id = "second-flame";
+    const root = "sprites/second.rhs.d";
+    copy.gameplay!.animations![0]!.resourceDirectory = root;
+    copy.resources = copy.resources!.map((pin) => ({
+      ...pin,
+      path: pin.path.replace("sprites/flame.rhs.d", root),
+    }));
+    if (conflict) copy.resources[1]!.sha256 = "0".repeat(64);
+    assets.set(copy.id, copy);
+    document.assetSources!.push({ ...document.assetSources![0]!, id: copy.id });
+    document.objects.push({
+      ...structuredClone(document.objects[0]!),
+      id: "second-body",
+      group: "second",
+      node: "asset:second-flame:building-999",
+    });
+    document.groups.push({ id: "second", transform: { dx: 200, dy: 0, dz: 0, rot_deg: 0 } });
+    const compiled = compileMap(document, [0, 0, 900, 900], assets);
+    const resources = await collectSceneryResources(compiled, assets, read);
+    assert.equal(Object.keys(resources).length, conflict ? 0 : 3);
+    assert.equal(compiled.descriptor.asset_geometry!.animations!.length, conflict ? 0 : 2);
+    assert.equal(
+      compiled.warnings.some((warning) => warning.includes("disagree on the pinned")),
+      conflict,
+    );
+  }
+});
 
 test("pinned scenery manifest and frames survive ZIP packaging exactly", async () => {
   const { assets, files, compiled, read } = fixture();

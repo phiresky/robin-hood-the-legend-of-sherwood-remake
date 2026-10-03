@@ -50,6 +50,14 @@ with a warning. Image checks yield between frames and preserve cancellation.
 The validated `scenery-resources-v3` fixture is byte-identical to the native-tested
 v2 export. Animations without an authored
 resource directory still use the installed shared sprite bank.
+Resource collection follows the asset/animation identities actually emitted by
+compilation. Hidden or unplaced assets and individually omitted animations cannot
+invalidate another placed animation's bank. Identical pinned banks in separate
+asset folders share packaged files; conflicting frame hashes still warn and omit
+the ambiguous bank. These bindings remain editor export metadata and are not
+written into the native level descriptor. Regression tests cover these cases;
+`work/map-compile/scenery-placed-resources` retains byte-identical runtime files
+to the native-tested animation export.
 
 One-time animation recovery uses `pipeline/src/recover-scenery-animation.ts`.
 It requires an explicit owning part and a reviewed 3D anchor whose projected

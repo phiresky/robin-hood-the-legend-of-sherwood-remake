@@ -16,36 +16,40 @@ export async function collectSceneryResources(
   const files: SceneryResources = {};
   const banks = new Map<string, { directory: string; pins: Map<string, string> }>();
   const failed = new Set<string>();
+  const sources = compiled.scenerySources.map(({ assetId, animationId }) => {
+    const asset: GameplayAssetDescriptor | undefined = assets.get(assetId);
+    const animation = asset?.gameplay?.animations?.find((entry) => entry.id === animationId);
+    if (!asset || !animation)
+      throw new Error(`Compiled scenery source is unavailable: ${assetId}/${animationId}`);
+    return { asset, animation };
+  });
   const warn = (bank: string, reason: string) => {
     failed.add(bank);
     compiled.warnings.push(`Scenery bank ${bank} omitted: ${reason}`);
   };
-  for (const asset of assets.values()) {
-    for (const animation of (asset as GameplayAssetDescriptor).gameplay?.animations ?? []) {
-      const bank = animation.file.replace(/\.rhs$/i, "");
-      if (!animations.some((placed) => placed.sprite.frame_profile_name === bank)) continue;
-      const directory = animation.resourceDirectory;
-      if (!directory) continue;
-      const pins = new Map(
-        (asset.resources ?? [])
-          .filter((pin) => pin.path.startsWith(`${directory}/`))
-          .map((pin) => [pin.path.slice(directory.length + 1), pin.sha256]),
-      );
-      const previous = banks.get(bank);
-      if (
-        previous &&
-        (previous.directory !== directory ||
-          previous.pins.size !== pins.size ||
-          [...pins].some(([path, hash]) => previous.pins.get(path) !== hash))
-      )
-        warn(bank, "placed assets disagree on the pinned sprite resources.");
-      else banks.set(bank, { directory, pins });
-      for (const other of banks.keys())
-        if (other !== bank && other.toLowerCase() === bank.toLowerCase()) {
-          warn(bank, "sprite bank name differs only by case from another placed bank.");
-          warn(other, "sprite bank name differs only by case from another placed bank.");
-        }
-    }
+  for (const { asset, animation } of sources) {
+    const bank = animation.file.replace(/\.rhs$/i, "");
+    if (!animations.some((placed) => placed.sprite.frame_profile_name === bank)) continue;
+    const directory = animation.resourceDirectory;
+    if (!directory) continue;
+    const pins = new Map(
+      (asset.resources ?? [])
+        .filter((pin) => pin.path.startsWith(`${directory}/`))
+        .map((pin) => [pin.path.slice(directory.length + 1), pin.sha256]),
+    );
+    const previous = banks.get(bank);
+    if (
+      previous &&
+      (previous.pins.size !== pins.size ||
+        [...pins].some(([path, hash]) => previous.pins.get(path) !== hash))
+    )
+      warn(bank, "placed assets disagree on the pinned sprite resources.");
+    else if (!previous) banks.set(bank, { directory, pins });
+    for (const other of banks.keys())
+      if (other !== bank && other.toLowerCase() === bank.toLowerCase()) {
+        warn(bank, "sprite bank name differs only by case from another placed bank.");
+        warn(other, "sprite bank name differs only by case from another placed bank.");
+      }
   }
   let completed = 0;
   const total = [...banks.values()].reduce((sum, bank) => sum + bank.pins.size, 0);
@@ -84,17 +88,16 @@ export async function collectSceneryResources(
           reportingProgress = false;
         },
       );
-      for (const asset of assets.values())
-        for (const animation of (asset as GameplayAssetDescriptor).gameplay?.animations ?? []) {
-          if (animation.file.replace(/\.rhs$/i, "") !== bank) continue;
-          const profile = manifest.profiles.find((profile) => profile.name === animation.profile);
-          if (
-            !profile ||
-            profile.center_x !== animation.center[0] ||
-            profile.center_y !== animation.center[1]
-          )
-            throw new Error(`missing profile or changed sprite center: ${animation.profile}`);
-        }
+      for (const { animation } of sources) {
+        if (animation.file.replace(/\.rhs$/i, "") !== bank) continue;
+        const profile = manifest.profiles.find((profile) => profile.name === animation.profile);
+        if (
+          !profile ||
+          profile.center_x !== animation.center[0] ||
+          profile.center_y !== animation.center[1]
+        )
+          throw new Error(`missing profile or changed sprite center: ${animation.profile}`);
+      }
       for (const [relative, bytes] of Object.entries(pending))
         files[`Data/Animations/Day/${bank}.rhs.d/${relative}`] = bytes;
     } catch (error) {

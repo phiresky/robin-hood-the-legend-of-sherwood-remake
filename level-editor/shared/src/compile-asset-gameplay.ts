@@ -160,18 +160,27 @@ function instances(
   return [...result.values()].sort((a, b) => a.id.localeCompare(b.id, "en"));
 }
 
+export interface CompiledScenerySource {
+  assetId: string;
+  animationId: string;
+}
+
 /** Compile only placed editor assets. There is deliberately no datadir, source-map or level-record input. */
 export function compileAssetGameplay(
   document: Level3D,
   descriptors: ReadonlyMap<string, ProjectionAssetDescriptor>,
   bounds: [number, number, number, number],
-  options: { bestEffort?: boolean } = {},
+  options: {
+    bestEffort?: boolean;
+    onSceneryCompiled?: (sources: CompiledScenerySource[]) => void;
+  } = {},
 ): CompiledAssetGeometry {
   const omitted = new Set<string>();
   const fixedTransitions = new Set<string>();
   const omissions: string[] = [];
   for (;;) {
     try {
+      const scenerySources: CompiledScenerySource[] = [];
       const result = compileAssetGameplayAttempt(
         document,
         descriptors,
@@ -179,8 +188,10 @@ export function compileAssetGameplay(
         options,
         omitted,
         fixedTransitions,
+        scenerySources,
       );
       if (omissions.length) result.warnings = [...omissions, ...(result.warnings ?? [])];
+      options.onSceneryCompiled?.(scenerySources);
       return result;
     } catch (error) {
       if (
@@ -237,6 +248,7 @@ function compileAssetGameplayAttempt(
   options: { bestEffort?: boolean },
   omitted: ReadonlySet<string>,
   fixedTransitions: ReadonlySet<string>,
+  scenerySources: CompiledScenerySource[],
 ): CompiledAssetGeometry {
   const warnings: string[] = [];
   ({ document, descriptors } = normalizeGameplayStateViews(document, descriptors));
@@ -513,6 +525,7 @@ function compileAssetGameplayAttempt(
     for (const animation of gameplay.animations ?? []) {
       try {
         animations.push(compileSceneryAnimation(animation, transform));
+        scenerySources.push({ assetId: placement.descriptor.id, animationId: animation.id });
       } catch (error) {
         if (!options.bestEffort || !(error instanceof Error)) throw error;
         warnings.push(`Animation ${placement.id}/${animation.id} omitted: ${error.message}.`);
