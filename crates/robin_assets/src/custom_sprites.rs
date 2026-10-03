@@ -442,6 +442,25 @@ fn validate_cache_metadata(
 mod tests {
     use super::*;
 
+    #[test]
+    #[ignore = "requires SCENERY_TEST_EXPORT_DIR from the editor resource packaging test"]
+    fn editor_exported_scenery_frames_load_with_native_profile_metadata() {
+        let exported = std::path::PathBuf::from(std::env::var("SCENERY_TEST_EXPORT_DIR").unwrap());
+        let root = exported.join("Data/Animations/Day/editor-flame.rhs.d");
+        let bytes = std::fs::read(root.join("manifest.json")).unwrap();
+        let manifest = serde_json::from_slice(&bytes).unwrap();
+        let cache = build_hackable_cache(&root, hackable_manifest_hash(&bytes), manifest).unwrap();
+        validate_cache_frames("editor-flame", &cache).unwrap();
+        assert_eq!(cache.frames.len(), 1);
+        assert_eq!(cache.profiles.len(), 1);
+        let profile = &cache.profiles[0];
+        assert_eq!(profile.name, "burning");
+        assert_eq!(profile.info.center, SpriteAnchor::new(4.0, 6.0));
+        assert_eq!(profile.info.size, SpriteSize::new(8.0, 8.0));
+        assert_eq!(profile.info.scripts[0].delays, [2]);
+        assert_eq!(profile.info.scripts[0].frame_ids, [0]);
+    }
+
     fn manifest(directions: &[Option<u16>]) -> HackableRhsManifest {
         serde_json::from_value(serde_json::json!({
             "pixel_format": "rgba", "profiles": [{

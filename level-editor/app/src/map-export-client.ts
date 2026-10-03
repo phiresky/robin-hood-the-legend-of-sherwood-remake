@@ -2,6 +2,7 @@ import type { Level3D, ProjectionAssetDescriptor } from "@rle/shared";
 import type { BakeBounds, BakePixels } from "./map-compile.ts";
 import type { BakedAppearanceRegion } from "./map-appearance.ts";
 import type { CompiledMap, ExportRequest, ExportResponse } from "./map-export-worker.ts";
+import type { SceneryResources } from "./scenery-resources.ts";
 
 /** One export owns one worker, including CPU-heavy PNG encoding and ZIP packaging. */
 export class MapExportWorker {
@@ -57,7 +58,12 @@ export class MapExportWorker {
     if (response.kind !== "compiled") throw new Error("Unexpected map compilation response.");
     return response.compiled;
   }
-  async package(compiled: CompiledMap, pixels: BakePixels, appearance: BakedAppearanceRegion[]) {
+  async package(
+    compiled: CompiledMap,
+    pixels: BakePixels,
+    appearance: BakedAppearanceRegion[],
+    scenery: SceneryResources = {},
+  ) {
     // Packaging takes ownership of the bake buffers; exporting must not retain a second copy.
     const buffers = new Set<ArrayBuffer>();
     for (const state of [pixels, ...appearance.flatMap((region) => region.states)]) {
@@ -67,9 +73,15 @@ export class MapExportWorker {
         buffers.add(view.buffer);
       }
     }
-    const response = await this.request({ kind: "package", compiled, pixels, appearance }, [
-      ...buffers,
-    ]);
+    for (const bytes of Object.values(scenery)) {
+      if (!(bytes.buffer instanceof ArrayBuffer))
+        throw new Error("Scenery requires transferable buffers.");
+      buffers.add(bytes.buffer);
+    }
+    const response = await this.request(
+      { kind: "package", compiled, pixels, appearance, scenery },
+      [...buffers],
+    );
     if (response.kind !== "packaged") throw new Error("Unexpected map packaging response.");
     return response.bytes;
   }

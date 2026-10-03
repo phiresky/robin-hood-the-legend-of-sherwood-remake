@@ -30,10 +30,18 @@ required by runtime resolution. A native resource test verifies Night-to-Day
 fallback and selection of the authored profile and sprite center without loose
 file access. This verifies resource lookup, not frame rendering.
 Placement/validation and native descriptor tests pass. This is initial support,
-not completed animation parity: library authoring/recovery, sprite-resource
-packaging and validation, preview, orientation-specific artwork and native
-rendering verification remain unfinished. Referenced sprite resources must
-currently come from the installed shared bank or a separately supplied mod.
+not completed animation parity: library authoring/recovery, preview,
+orientation-specific artwork and native rendering verification remain unfinished.
+Animations can name a library-root-relative `resourceDirectory` ending in `.rhs.d`;
+its manifest and frames must be listed in the asset descriptor's resource hashes.
+Export verifies those hashes, referenced frames, profiles and sprite centers, then
+packages the files under `Data/Animations/Day/<bank>.rhs.d/`. Missing or changed
+resources omit the affected bank's animations with warnings; other gameplay stays
+available. Resource reads report progress and honor cancellation. ZIP byte checks
+and a native PNG/profile decoder check pass using the generated fixture under
+`work/map-compile/scenery-resources-v1`. This does not yet verify in-game playback
+or validate every manifest field before export. Animations without an authored
+resource directory still use the installed shared sprite bank.
 
 **Interior connections:** multiple entrances in an asset-local room remain
 connected automatically, including after moving or duplicating the asset. Distinct
@@ -589,7 +597,7 @@ sampled Rust queries. Equivalent evidence across all maps remains unfinished.
 | Surface materials | Transform asset-local material polygons; rebuild ground, obstacle and receiving-surface links independently. Preserve receiving defaults, footprints and overlap priority. | Compiler/native tests pass; all nine recovery drafts include receiving materials; publication and geometry coverage remain unfinished |
 | Light/shadow regions | Transform asset-local planar contours, resolve ordinary or traversal receiving layers and preserve ambience filters. Conflicting anchored receivers receive separate runtime layers. | All 148 contours across the five town drafts and Sherwood's night field compile; unrestricted query equivalence, refreshed older drafts and publication remain unfinished |
 | Environmental sound sources | Transform asset-local emitter polylines; retain sample IDs, timing, volume falloff, acoustic altitude, noise-covering distance and ambience filters. Global emitters need no position. | All 119 emitter records match across nine source-backed staged maps; publication, audible playback and Wychford authoring remain outstanding |
-| Animated scenery / effects | Transform asset-owned billboard anchors and masking polylines; export sprite references and display flags into native map animations. | Partial: placement and native descriptor loading tested; library definitions, resource packaging, preview and rendered verification unfinished |
+| Animated scenery / effects | Transform asset-owned billboard anchors and masking polylines; export sprite references, pinned manifests/frames and display flags into native map animations. | Partial: placement, ZIP packaging and native resource decoding tested; library definitions, preview and rendered verification unfinished |
 | Interactive patches / state changes | Asset-local transitions compile initial/applied movement contours, sight-obstacle references and door links, trigger zones and fresh state bindings across affected navigation areas. | Partial: movement, sight and door bindings implemented; changing visuals, masks and asset recovery remain unfinished |
 | Map settings | Scene identity/export bounds; terrain assets supply forest behaviour and default material. Ambience is selected by the mission. | Working in compiler/runtime tests; recovered terrain metadata unpublished |
 | Resource banks and references | Package generated resources and resolve shared sprite/audio/profile dependencies. | Partial: baked images; shared resources use the base installation |

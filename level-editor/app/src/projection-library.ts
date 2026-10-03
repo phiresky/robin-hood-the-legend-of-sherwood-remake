@@ -21,7 +21,7 @@ import { readLossyModel, lossyApplies } from "./lossy-models.ts";
 import { disposeObjectResources } from "./resources.ts";
 import { hasGameplayEndpoints, type PlacementAsset } from "./asset-commands.ts";
 
-async function libraryFile(root: FileSystemDirectoryHandle, path: string): Promise<File> {
+export async function libraryFile(root: FileSystemDirectoryHandle, path: string): Promise<File> {
   if (!safeLibraryPath(path)) throw new Error(`Unsafe library path: ${path}`);
   const parts = path.split("/");
   const name = parts.pop()!;

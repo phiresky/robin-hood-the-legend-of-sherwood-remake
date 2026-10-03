@@ -5,6 +5,7 @@ import { compileAssetGameplay } from "../../shared/src/compile-asset-gameplay.ts
 import type { ProjectionAssetDescriptor } from "@rle/shared";
 import { packageAppearanceRegions, type BakedAppearanceRegion } from "./map-appearance.ts";
 import { compileMission } from "./compile-mission.ts";
+import type { SceneryResources } from "./scenery-resources.ts";
 
 export type BakeBounds = [number, number, number, number];
 export interface CompiledVolume {
@@ -148,6 +149,7 @@ export async function packageCompiledMap(
   compiled: CompiledMap,
   pixels: BakePixels,
   appearance: readonly BakedAppearanceRegion[] = [],
+  scenery: SceneryResources = {},
 ): Promise<Uint8Array> {
   const {
     name,
@@ -180,7 +182,15 @@ export async function packageCompiledMap(
     }
   const json = (value: unknown) => strToU8(JSON.stringify(value, null, 2) + "\n");
   const prefix = `Data/Levels/Day/${name}`;
+  for (const path of Object.keys(scenery))
+    if (
+      !/^Data\/Animations\/Day\/[a-zA-Z0-9_-]+\.rhs\.d\//.test(path) ||
+      path.split("/").some((part) => !part || part === "." || part === "..") ||
+      /[\\\0]/.test(path)
+    )
+      throw new Error(`Invalid scenery resource destination: ${path}`);
   const files = {
+    ...scenery,
     ...packageAppearanceRegions(
       prefix,
       width,

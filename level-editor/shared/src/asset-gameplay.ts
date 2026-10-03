@@ -1,5 +1,6 @@
 import type { LightSector, MaterialSector, Point, SightObstacle, SoundSource } from "./level.ts";
 import type { ProjectionAssetDescriptor } from "./projection-assets.ts";
+import { safeLibraryPath } from "./projection-assets.ts";
 
 /** All coordinates belong to the named mesh part's local game frame. No level indices. */
 export interface AssetWalkableSurface {
@@ -307,6 +308,8 @@ export interface AssetSceneryAnimation {
   anchor: [number, number, number];
   /** Sprite basename, with optional .rhs suffix; resources come from a mod or shared bank. */
   file: string;
+  /** Library-root-relative .rhs.d folder; every file must have a descriptor resource pin. */
+  resourceDirectory?: string;
   profile: string;
   /** Authored sprite center, used to convert the placed anchor into the runtime top-left. */
   center: Point;
@@ -808,6 +811,13 @@ export function validateAssetGameplay(
     fail("invalid scenery animations");
   for (const animation of data.animations ?? []) {
     feature(animation);
+    if (
+      animation.resourceDirectory !== undefined &&
+      (!safeLibraryPath(animation.resourceDirectory) ||
+        !animation.resourceDirectory.endsWith(".rhs.d") ||
+        !/^[a-zA-Z0-9_-]+(?:\.rhs)?$/i.test(animation.file))
+    )
+      fail(`invalid scenery resource directory ${animation.id}`);
     if (
       !point(animation.anchor, 3) ||
       !point(animation.center, 2) ||

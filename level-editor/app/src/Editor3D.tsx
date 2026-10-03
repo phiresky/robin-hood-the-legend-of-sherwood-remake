@@ -44,6 +44,7 @@ import {
   listProjectionAssets,
   prepareProjectionPlacement,
   readPinnedAssetDescriptors,
+  libraryFile,
 } from "./projection-library";
 import { prepareMapCandidate } from "./map-candidate";
 import { EditorViewport } from "./editor-viewport";
@@ -1055,8 +1056,16 @@ export default function Editor3D(props: EditorProps) {
         progress,
         (bounds) => worker.compile(document, bounds, assets),
       );
+      const { collectSceneryResources } = await import("./scenery-resources.ts");
+      const scenery = await collectSceneryResources(
+        compiled,
+        assets,
+        async (path) =>
+          new Uint8Array(await (await libraryFile(library.handle, path)).arrayBuffer()),
+        (completed, total) => progress({ stage: "Reading scenery sprites…", completed, total }),
+      );
       progress({ stage: "Encoding images and packaging ZIP…", completed: 0, total: 0 });
-      const bytes = await worker.package(compiled, pixels, appearance);
+      const bytes = await worker.package(compiled, pixels, appearance, scenery);
       if (disposed) return;
       const url = URL.createObjectURL(
         new Blob([new Uint8Array(bytes)], { type: "application/zip" }),

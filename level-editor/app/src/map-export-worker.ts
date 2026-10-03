@@ -1,6 +1,7 @@
 import type { Level3D, ProjectionAssetDescriptor } from "@rle/shared";
 import { compileMap, packageCompiledMap, type BakeBounds, type BakePixels } from "./map-compile.ts";
 import type { BakedAppearanceRegion } from "./map-appearance.ts";
+import type { SceneryResources } from "./scenery-resources.ts";
 
 export type CompiledMap = ReturnType<typeof compileMap>;
 export type ExportRequest =
@@ -15,6 +16,7 @@ export type ExportRequest =
       compiled: CompiledMap;
       pixels: BakePixels;
       appearance: BakedAppearanceRegion[];
+      scenery?: SceneryResources;
     };
 export type ExportResponse =
   | { kind: "compiled"; compiled: CompiledMap }
@@ -30,7 +32,12 @@ globalThis.addEventListener("message", async (event: MessageEvent<ExportRequest>
       });
       globalThis.postMessage({ kind: "compiled", compiled } satisfies ExportResponse, {});
     } else {
-      const bytes = await packageCompiledMap(request.compiled, request.pixels, request.appearance);
+      const bytes = await packageCompiledMap(
+        request.compiled,
+        request.pixels,
+        request.appearance,
+        request.scenery,
+      );
       globalThis.postMessage({ kind: "packaged", bytes } satisfies ExportResponse, {
         transfer: [bytes.buffer],
       });
