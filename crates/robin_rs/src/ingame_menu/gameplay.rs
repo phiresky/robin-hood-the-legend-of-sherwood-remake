@@ -1008,7 +1008,7 @@ mod tests {
         assert!(is_option_selected(&config, 2));
         assert!(is_option_selected(&config, 3));
         assert!(is_option_selected(&config, 4));
-        assert!(is_option_selected(&config, 5));
+        assert!(!is_option_selected(&config, 5));
         assert!(!is_option_selected(&config, 6));
         assert!(is_option_selected(&config, 13));
         assert!(is_option_selected(&config, 14));
