@@ -1351,7 +1351,10 @@ impl MultiplayerMenuState {
                 Ok(Some(callbacks)) => callbacks,
                 Ok(None) => return None,
                 Err(error) => {
-                    self.status = format!("Could not open saves: {error}");
+                    let message = format!("Could not open saves: {error}");
+                    tracing::warn!(%message);
+                    let mut notice = crate::save_recovery::ErrorNotice::new(message);
+                    widget_bridge::run_modal(io, |io| notice.tick(io).then_some(())).await;
                     return None;
                 }
             };
@@ -1360,34 +1363,31 @@ impl MultiplayerMenuState {
                     .with_active_profile(|p| p.gameplay_config.detailed_save_metadata),
                 SCREEN,
             );
-            let selected = crate::ingame_menu::save_load::show_load_picker(
+            let selected = crate::ingame_menu::save_load::show_validated_load_picker(
                 io,
                 &mut callbacks.save_manager,
                 detailed,
+                true,
+                |manager, index| {
+                    let save = manager
+                        .preflight_exact_slot(index)
+                        .map_err(|error| format!("Could not load save: {error:#}"))?;
+                    if save.header.multiplayer_diagnostic {
+                        return Err(
+                            "Diagnostic captures cannot be used to start a campaign.".into()
+                        );
+                    }
+                    let slot = manager.slot_name(index).expect("selected slot identity");
+                    Ok((slot, save))
+                },
             )
             .await;
-            let crate::ingame_menu::save_load::SaveLoadOutcome::Slot(index) = selected else {
+            let Some((slot, save)) = selected else {
                 return None;
             };
-            let save = match callbacks.save_manager.preflight_exact_slot(index) {
-                Ok(save) => save,
-                Err(error) => {
-                    self.status = format!("Could not load save: {error:#}");
-                    return None;
-                }
-            };
-            if save.header.multiplayer_diagnostic {
-                self.status = "Diagnostic captures cannot be used to start a campaign.".into();
-                return None;
-            }
             let mut choice = self.missions[self.selected].clone();
             choice.load_save = false;
-            choice.campaign_save = Some(
-                callbacks
-                    .save_manager
-                    .slot_name(index)
-                    .expect("selected slot identity"),
-            );
+            choice.campaign_save = Some(slot);
             choice.mission_id = save.header.mission_id;
             choice.mission_name = save.header.provenance.mission_name.clone();
             choice.label = format!("Load: {}", save.header.display_text);

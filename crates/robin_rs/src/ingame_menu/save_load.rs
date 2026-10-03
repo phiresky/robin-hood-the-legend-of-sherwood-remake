@@ -811,6 +811,22 @@ pub async fn show_load_picker(
     save_manager: &mut SaveGameManager,
     detailed_metadata: bool,
 ) -> SaveLoadOutcome {
+    show_validated_load_picker(io, save_manager, detailed_metadata, false, |_, index| {
+        Ok(index)
+    })
+    .await
+    .map_or(SaveLoadOutcome::Cancel, SaveLoadOutcome::Slot)
+}
+
+/// Keep the picker open on validation failure, with an acknowledged error notice.
+/// Multiplayer callers hide diagnostic captures, which cannot resume a campaign.
+pub(crate) async fn show_validated_load_picker<T>(
+    io: &mut ModalScreenIo<'_, '_>,
+    save_manager: &mut SaveGameManager,
+    detailed_metadata: bool,
+    multiplayer: bool,
+    mut validate: impl FnMut(&SaveGameManager, usize) -> Result<T, String>,
+) -> Option<T> {
     let mut state = SavePickerModalState::new(
         io.window,
         io.renderer,
@@ -819,7 +835,7 @@ pub async fn show_load_picker(
             mode: SaveLoadMode::Load,
             mission_id: None,
             detailed_metadata,
-            multiplayer_connected: false,
+            multiplayer_connected: multiplayer,
             previews: true,
         },
     );
@@ -829,11 +845,33 @@ pub async fn show_load_picker(
             backend: None,
             sample_loader: None,
         };
-        state.tick(io, save_manager, None, no_audio)
+        let outcome = state.tick(io, save_manager, None, no_audio)?;
+        validate_load_selection(&mut state.model, outcome, |index| {
+            validate(save_manager, index)
+        })
     })
     .await;
     state.close(io.renderer);
     outcome
+}
+
+/// Outer None keeps the modal open; Some(None) is an explicit cancellation.
+fn validate_load_selection<T>(
+    model: &mut PickerModel,
+    outcome: SaveLoadOutcome,
+    validate: impl FnOnce(usize) -> Result<T, String>,
+) -> Option<Option<T>> {
+    match outcome {
+        SaveLoadOutcome::Cancel => Some(None),
+        SaveLoadOutcome::Slot(index) => match validate(index) {
+            Ok(value) => Some(Some(value)),
+            Err(error) => {
+                tracing::warn!(%error, "Load picker validation failed");
+                model.report_error(error);
+                None
+            }
+        },
+    }
 }
 
 /// Tracks a loaded thumbnail so we don't rebuild the GPU surface on
@@ -1396,6 +1434,38 @@ pub(crate) fn finish_picker_delete(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn load_validation_failure_stays_in_picker_until_retry_or_cancel() {
+        let mut manager = SaveGameManager::new("unused-load-validation-store".into());
+        manager.insert_test_slot(
+            published_metadata("Savegame_000"),
+            crate::savegame::SlotState::Published,
+        );
+        let mut model = PickerModel::new(SaveLoadMode::Load, true, 2, picker_slots(&manager));
+        model.navigate(true);
+        let selected = model.selected_slot().cloned();
+        let outcome =
+            validate_load_selection::<usize>(&mut model, SaveLoadOutcome::Slot(0), |_| {
+                Err("Could not decode save".into())
+            });
+        assert_eq!(outcome, None, "failure must not return to the lobby");
+        model.refresh(picker_slots(&manager));
+        assert_eq!(model.operation_error(), Some("Could not decode save"));
+        assert_eq!(model.selected_slot(), selected.as_ref());
+        model.dismiss_error();
+        assert_eq!(
+            validate_load_selection(&mut model, SaveLoadOutcome::Slot(0), Ok),
+            Some(Some(0)),
+            "a successful retry returns the selected save"
+        );
+        assert_eq!(
+            validate_load_selection::<usize>(&mut model, SaveLoadOutcome::Cancel, |_| {
+                panic!("cancel must not load a save")
+            }),
+            Some(None)
+        );
+    }
+
     #[test]
     fn save_catalog_fallback_preserves_complete_relative_time_grammar() {
         for locale in [
