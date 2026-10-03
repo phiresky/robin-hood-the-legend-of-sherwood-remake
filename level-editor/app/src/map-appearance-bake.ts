@@ -5,6 +5,7 @@ import { compileAppearanceBindings } from "../../shared/src/compile-appearance-b
 import type { BakeBounds, BakePixels } from "./map-compile.ts";
 import type { BakedAppearanceRegion } from "./map-appearance.ts";
 import { PatchDisplay } from "./patch-display.ts";
+import { sunShadowBoundsPadding } from "./sun-lighting.ts";
 
 function patchIds(node: THREE.Object3D): string[] {
   const {
@@ -84,16 +85,30 @@ interface AppearancePlan {
   patches: string[];
 }
 
-/** All potentially visible controlled meshes contribute, including hidden applied variants.
- * Shadow changes conservatively cover the full map until projected shadow bounds are available. */
+/** Include hidden applied variants and their shadows down to the lowest scene geometry. */
 export function planAppearanceRegions(
   root: THREE.Object3D,
   camera: MapCamera,
   bounds: BakeBounds,
   transitions: readonly { id: string }[],
-  shadows: boolean,
+  shadows: boolean | NonNullable<Level3D["lighting"]>,
 ): AppearancePlan[] {
   root.updateMatrixWorld(true);
+  const lighting = typeof shadows === "boolean" ? undefined : shadows;
+  const fullShadowFrame = shadows === true;
+  const sceneBounds = new THREE.Box3().setFromObject(root);
+  const shadowDirection = lighting?.enabled
+    ? new THREE.Vector3(
+        Math.sin(THREE.MathUtils.degToRad(lighting.sunAzimuth)),
+        Math.cos(THREE.MathUtils.degToRad(lighting.sunAzimuth)),
+        Math.tan(THREE.MathUtils.degToRad(lighting.sunElevation)),
+      )
+    : undefined;
+  if (shadowDirection && (!Number.isFinite(shadowDirection.z) || shadowDirection.z <= 0))
+    throw new Error("Appearance shadow bounds require sunlight above the horizon");
+  const shadowPadding = lighting?.enabled
+    ? sunShadowBoundsPadding(sceneBounds, lighting.sunElevation)
+    : 0;
   const compiled = new Set(transitions.map((transition) => transition.id));
   const boxes = new Map<string, THREE.Box2>();
   function visit(node: THREE.Object3D, inherited: readonly string[]) {
@@ -116,7 +131,14 @@ export function planAppearanceRegions(
           .fromBufferAttribute(positions, i)
           .applyMatrix4(node.matrixWorld);
         box.expandByPoint(new THREE.Vector2(...sceneToMap(camera, point.toArray())));
+        if (shadowDirection && !node.userData.noSunShadow) {
+          const shadow = point
+            .clone()
+            .addScaledVector(shadowDirection, -(point.z - sceneBounds.min.z) / shadowDirection.z);
+          box.expandByPoint(new THREE.Vector2(...sceneToMap(camera, shadow.toArray())));
+        }
       }
+      if (shadowDirection && !node.userData.noSunShadow) box.expandByScalar(shadowPadding);
       for (const id of patches) {
         const previous = boxes.get(id) ?? new THREE.Box2();
         previous.union(box);
@@ -130,7 +152,7 @@ export function planAppearanceRegions(
   const regions: { box: THREE.Box2; patches: string[] }[] = [];
   for (const [patch, source] of boxes) {
     if (source.isEmpty()) continue;
-    const box = shadows
+    const box = fullShadowFrame
       ? new THREE.Box2(new THREE.Vector2(0, 0), new THREE.Vector2(width, height))
       : new THREE.Box2(
           new THREE.Vector2(

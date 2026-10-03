@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { gameToScene, type Level3D } from "@rle/shared";
+import { DEFAULT_LIGHTING, gameToScene, type Level3D } from "@rle/shared";
 import { decode } from "fast-png";
 import { unzipSync } from "fflate";
 import { bakeScene, renderMapBake, renderMapBakeAsync } from "../src/map-bake-render.ts";
@@ -323,6 +323,58 @@ try {
     mesh.geometry.dispose();
     mesh.material.dispose();
   }
+  // All changed pixels, including shadows below the caster, must fit the exported region.
+  const shadowRoot = new THREE.Group();
+  const shadowGround = surface([0, 0, 512, 512], 0x808080, -10);
+  shadowGround.userData.noSunShadow = true;
+  const caster = surface([240, 220, 20, 20], 0xff0000, 20);
+  caster.geometry.computeVertexNormals();
+  caster.userData.reveal_show_when_applied = ["shadow"];
+  shadowRoot.add(shadowGround, caster);
+  const shadowBounds: [number, number, number, number] = [0, 0, 512, 512];
+  for (const sunAzimuth of [0, 90, 210]) {
+    const lighting = { ...DEFAULT_LIGHTING, enabled: true, sunAzimuth, sunElevation: 20 };
+    caster.visible = false;
+    const plan = planAppearanceRegions(
+      shadowRoot,
+      camera,
+      shadowBounds,
+      [{ id: "shadow" }],
+      lighting,
+    )[0]!;
+    const local = planAppearanceRegions(
+      shadowRoot,
+      camera,
+      shadowBounds,
+      [{ id: "shadow" }],
+      false,
+    )[0]!;
+    const initial = renderMapBake(shadowRoot, camera, shadowBounds, lighting, shadowGround);
+    caster.visible = true;
+    const applied = renderMapBake(shadowRoot, camera, shadowBounds, lighting, shadowGround);
+    const [x, y, w, h] = plan.bounds;
+    const [lx, ly, lw, lh] = local.bounds;
+    let shadowPixels = 0;
+    for (let i = 0; i < initial.depth.length; i++) {
+      const colorChanged = [0, 1, 2, 3].some(
+        (channel) => initial.color[i * 4 + channel] !== applied.color[i * 4 + channel],
+      );
+      if (!colorChanged && initial.depth[i] === applied.depth[i]) continue;
+      const px = i % 512,
+        py = Math.floor(i / 512);
+      check(
+        px >= x && px < x + w && py >= y && py < y + h,
+        `shadow outside region at ${px},${py}, azimuth ${sunAzimuth}`,
+      );
+      if (colorChanged && (px < lx || px >= lx + lw || py < ly || py >= ly + lh)) shadowPixels++;
+    }
+    check(shadowPixels > 20, `fixture must cast a visible shadow beyond the mesh (${sunAzimuth})`);
+    check(w * h < (512 * 512) / 2, "sunlit patch should not reserve the full frame");
+  }
+  for (const mesh of [shadowGround, caster]) {
+    mesh.geometry.dispose();
+    mesh.material.dispose();
+  }
   const files = unzipSync(archive);
   const depth = decode(files["Data/Levels/Day/editor-bake-contract.occlusion-depth.png"]!);
   check(
@@ -334,7 +386,7 @@ try {
   // Acceptance runner can retain this real GPU-produced mod for the Rust loader test.
   (window as unknown as { __bakeZip: number[] }).__bakeZip = [...archive];
   documentResult(
-    "PASS map bake: crop, tile seam, hidden geometry, sRGB color, ground depth, mask-owned depth, state apply/reset, automatic appearance regions, resource restoration, ZIP/PNG roundtrip",
+    "PASS map bake: crop, tile seam, hidden geometry, sRGB color, ground depth, mask-owned depth, state apply/reset, automatic appearance regions, bounded sun shadows, resource restoration, ZIP/PNG roundtrip",
   );
 } catch (error) {
   documentResult(`FAIL ${error instanceof Error ? error.stack : String(error)}`);

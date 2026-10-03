@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
-import { gameToScene } from "@rle/shared";
+import { DEFAULT_LIGHTING, gameToScene } from "@rle/shared";
 import {
   movementTransitionCompilerFixture,
   joinedTransitionCompilerFixture,
@@ -246,6 +246,25 @@ function scene() {
   return root;
 }
 const transitions = [{ id: "a" }, { id: "b" }];
+
+test("sunlit independent switches stay bounded and respect non-casting geometry", () => {
+  const root = scene();
+  const lighting = { ...DEFAULT_LIGHTING, enabled: true, sunElevation: 45 };
+  const plans = planAppearanceRegions(root, camera, [0, 0, 8000, 8000], transitions, lighting);
+  assert.deepEqual(
+    plans.map((plan) => plan.patches),
+    [["a"], ["b"]],
+  );
+  for (const child of root.children) child.userData.noSunShadow = true;
+  assert.deepEqual(
+    planAppearanceRegions(root, camera, bounds, transitions, lighting),
+    planAppearanceRegions(root, camera, bounds, transitions, false),
+  );
+  assert.deepEqual(
+    planAppearanceRegions(root, camera, bounds, transitions, { ...lighting, enabled: false }),
+    planAppearanceRegions(root, camera, bounds, transitions, false),
+  );
+});
 
 test("appearance planning includes hidden variants and merges intersecting dependencies", () => {
   const root = scene();

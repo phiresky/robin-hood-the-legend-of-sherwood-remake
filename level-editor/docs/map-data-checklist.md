@@ -447,8 +447,14 @@ regions. Overlapping changes share complete combination tables; reset uses the
 base map pixels. The editor now derives regions from potentially visible model
 geometry and binds `movementTransitions[].appearances` to fresh per-placement
 patch IDs. Export renders and packages every overlapping combination, with an
-explicit 64-megapixel state-image budget. Dynamic shadows conservatively require
-full-frame combinations. Automatic framing includes applied variants too.
+explicit 64-megapixel state-image budget. Dynamic shadow regions project each
+controlled caster down to the lowest scene geometry using the current sun direction,
+with padding for filtering and shadow bias. Independent switches can therefore
+stay separate; intersecting geometry or shadow footprints still share combinations.
+GPU regression checks cover low sunlight from three directions onto a lower
+receiver and verify every changed color/depth pixel fits its exported region.
+Rendering still evaluates full frames before cropping; tile-only state rendering
+remains an optimization to implement. Automatic framing includes applied variants too.
 Existing assets still need these local bindings restored. Unbound preview names,
 shared aliases across different assets without a joined gameplay transition, and
 manual group state overrides remain export errors. Purely visual transitions now compile when an asset

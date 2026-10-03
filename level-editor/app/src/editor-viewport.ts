@@ -120,7 +120,7 @@ export class EditorViewport {
       document.camera,
       compiled.bounds,
       transitions,
-      levelLighting(document).enabled,
+      levelLighting(document),
     );
     const render = () =>
       renderMapBake(
@@ -165,7 +165,7 @@ export class EditorViewport {
       document.camera,
       compiled.bounds,
       transitions,
-      levelLighting(document).enabled,
+      levelLighting(document),
     );
     const total = 1 + plans.reduce((sum, plan) => sum + 2 ** plan.patches.length - 1, 0);
     const excluded = maskOcclusionObjects(document, assets);

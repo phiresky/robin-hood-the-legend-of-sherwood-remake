@@ -1,5 +1,10 @@
 # Post-port Features
 
+- **Bounded shadow regions for map appearance switches.** Export includes each
+  asset's possible shadow footprint using the scene's sun direction and lowest
+  geometry. Independent switches no longer require full-map state combinations;
+  overlapping shadows still combine correctly within the state-image budget.
+
 - **Initial obstacle activity in map exports.** Unavailable sight-changing controls
   retain their initial state while preserving receiving-plane and material data.
   Obstacle `initial_active` defaults to true when absent. Packed datadirs advance

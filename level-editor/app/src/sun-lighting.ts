@@ -1,6 +1,21 @@
 import * as THREE from "three";
 import { DEFAULT_LIGHTING, type Level3D } from "@rle/shared";
 
+const SHADOW_MAP_SIZE = 2048;
+const SHADOW_NORMAL_BIAS = 1;
+const SHADOW_DEPTH_BIAS = -0.0001;
+
+/** World-space allowance for filtered shadow edges and normal/depth bias. */
+export function sunShadowBoundsPadding(bounds: THREE.Box3, elevation: number): number {
+  const radius = Math.max(100, bounds.getSize(new THREE.Vector3()).length() / 2);
+  const texel = (2 * radius) / SHADOW_MAP_SIZE;
+  return (
+    2 *
+    (4 * texel + SHADOW_NORMAL_BIAS + Math.abs(SHADOW_DEPTH_BIAS) * radius * 4) *
+    (1 + 1 / Math.tan(THREE.MathUtils.degToRad(elevation)))
+  );
+}
+
 /** Direct terrain lighting, with shadow overlays for baked ground artwork. */
 export class SunLighting {
   readonly root = new THREE.Group();
@@ -18,9 +33,9 @@ export class SunLighting {
   });
   constructor() {
     this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(2048, 2048);
-    this.sun.shadow.normalBias = 1;
-    this.sun.shadow.bias = -0.0001;
+    this.sun.shadow.mapSize.set(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
+    this.sun.shadow.normalBias = SHADOW_NORMAL_BIAS;
+    this.sun.shadow.bias = SHADOW_DEPTH_BIAS;
     this.sun.shadow.radius = 2;
     this.root.add(this.sun, this.sun.target, this.ambient);
     this.sun.visible = false;
