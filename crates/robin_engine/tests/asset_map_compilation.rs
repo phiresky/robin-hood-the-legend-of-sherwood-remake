@@ -3,6 +3,9 @@
 use robin_engine::engine::{Engine, EngineArgs, LevelAssets, LevelLoadArgs, SimConfig};
 use robin_engine::level_data::LoadedLevel;
 
+#[path = "asset_map_compilation/route_sampling.rs"]
+mod route_sampling;
+
 #[test]
 fn editor_asset_masks_construct_baked_coverage_and_local_state_links() {
     let mut assets = LevelAssets::new();

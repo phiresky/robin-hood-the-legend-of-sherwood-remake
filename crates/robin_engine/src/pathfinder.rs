@@ -1642,17 +1642,26 @@ impl PathSearch<'_> {
             }
         }
 
-        // O(n^2) Dijkstra is intentionally used here: authored architectural
-        // levels have tens of corner candidates, and stable index-order tie
-        // breaking keeps rollback/replay behavior deterministic.
+        // Euclidean distance is a lower bound on remaining route length. Use it
+        // to focus the visibility search even when a whole town shares one area;
+        // stable index-order ties keep rollback/replay behavior deterministic.
+        let heuristic: Vec<f32> = points
+            .iter()
+            .map(|point| MapVec::new(goal.x - point.x, goal.y - point.y).length())
+            .collect();
         let mut distance = vec![f32::INFINITY; points.len()];
         let mut previous = vec![None; points.len()];
         let mut visited = vec![false; points.len()];
         distance[0] = 0.0;
         for _ in 0..points.len() {
-            let Some(current) = (0..points.len())
-                .filter(|&index| !visited[index])
-                .min_by(|&a, &b| distance[a].total_cmp(&distance[b]).then(a.cmp(&b)))
+            let Some(current) =
+                (0..points.len())
+                    .filter(|&index| !visited[index])
+                    .min_by(|&a, &b| {
+                        (distance[a] + heuristic[a])
+                            .total_cmp(&(distance[b] + heuristic[b]))
+                            .then(a.cmp(&b))
+                    })
             else {
                 break;
             };
@@ -1667,21 +1676,20 @@ impl PathSearch<'_> {
                 if next == current || visited[next] {
                     continue;
                 }
-                if !self.is_reachable_fast(points[current], points[next])
-                    || !self.is_reachable_grid(grid, points[current], points[next])
-                {
-                    continue;
-                }
                 let edge = MapVec::new(
                     points[next].x - points[current].x,
                     points[next].y - points[current].y,
                 )
                 .length();
                 let candidate = distance[current] + edge;
-                if candidate < distance[next] {
-                    distance[next] = candidate;
-                    previous[next] = Some(current);
+                if candidate >= distance[next]
+                    || !self.is_reachable_fast(points[current], points[next])
+                    || !self.is_reachable_grid(grid, points[current], points[next])
+                {
+                    continue;
                 }
+                distance[next] = candidate;
+                previous[next] = Some(current);
             }
         }
         if !distance[1].is_finite() {

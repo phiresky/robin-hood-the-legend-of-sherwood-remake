@@ -2552,14 +2552,17 @@ impl FastFindGrid {
         let mut visited = QueryVisited::new(self.level.lines.len());
         for cy in y_min..=y_max {
             for cx in x_min..=x_max {
-                if !cell_filter(cx, cy) {
-                    continue;
-                }
                 let block_idx = self.block_index_from_cell(cx, cy, layer);
                 if block_idx >= self.level.blocks.len() {
                     continue;
                 }
-                for &line_idx in &self.level.blocks[block_idx].line_indices {
+                let lines = &self.level.blocks[block_idx].line_indices;
+                // Empty blocks cannot contribute lines. Avoid geometric segment
+                // tests for the empty space crossed by long visibility queries.
+                if lines.is_empty() || !cell_filter(cx, cy) {
+                    continue;
+                }
+                for &line_idx in lines {
                     if visited.try_mark(usize::from(line_idx))
                         && !visit(line_idx, &self.level.lines[usize::from(line_idx)])
                     {
@@ -3897,6 +3900,53 @@ mod tests {
         let bbox_miss = MapBBox::from_coords(0.0, 0.0, 256.0, 50.0);
         let lines_miss = grid.get_active_motion_line_indices(0, &bbox_miss);
         assert!(lines_miss.is_empty(), "should not find lines above");
+    }
+
+    #[test]
+    fn sparse_line_queries_filter_only_occupied_cells_and_keep_visit_order() {
+        let mut grid = FastFindGrid::new();
+        grid.size_map(64, 64);
+        grid.allocate_layers(1);
+        let first = grid.add_line(
+            GridLine::new(MapPoint::new(10., 10.), MapPoint::new(30., 10.), true),
+            0,
+        );
+        let second = grid.add_line(
+            GridLine::new(MapPoint::new(210., 210.), MapPoint::new(230., 210.), true),
+            0,
+        );
+        let bounds = MapBBox::from_coords(0., 0., 4095., 4095.);
+        let mut cells = vec![];
+        let mut lines = vec![];
+        grid.visit_lines_in_cells(
+            0,
+            &bounds.0.unwrap(),
+            |x, y| {
+                cells.push((x, y));
+                true
+            },
+            |index, _| {
+                lines.push(index);
+                true
+            },
+        );
+        assert_eq!(cells, [(0, 0), (3, 3)]);
+        assert_eq!(lines, [first, second]);
+        let corridor = FastFindGrid::build_thick_move_corridor(
+            MapPoint::new(20., 0.),
+            MapPoint::new(220., 220.),
+            MoveBoxHalfDiagonal::new(6., 4.),
+        )
+        .unwrap();
+        assert_eq!(
+            grid.get_active_motion_lines_for_segments(
+                0,
+                corridor.seg1,
+                corridor.seg2,
+                &corridor.bbox
+            ),
+            [first, second]
+        );
     }
 
     #[test]

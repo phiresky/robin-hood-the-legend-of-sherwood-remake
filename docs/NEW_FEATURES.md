@@ -1,5 +1,12 @@
 # Post-port Features
 
+- **Focused routing for graph-free maps.** Editor-generated maps now use a
+  deterministic Euclidean A* search for visibility routes, avoiding unnecessary
+  expansion across distant parts of the same movement area. Visibility checks
+  are skipped when an edge cannot improve the known route, and collision-line
+  queries skip geometric intersection tests for empty grid cells. Precomputed
+  navigation graphs retain their existing search path.
+
 - **Asset-owned scenery animation definitions.** Map export transforms local
   billboard anchors and display polylines into native map animations, independently
   of mission characters. Definitions name a sprite/profile and its raster center;

@@ -195,6 +195,28 @@ The two retail Windows v48 cases remain ordinary tests using the required,
 tracked `reference-saves/Savegame_SuN1Sh1nE/Profile_004/Savegame_005`. They do not
 use `ROBINHOOD_DATA_DIR` and fail if the checkout fixture is absent.
 
+## Editor-generated map routes
+
+For editor-generated navigation, the ignored integration test
+`library_exports_route_between_collision_connected_samples` reads a complete
+`diagnostics.json` batch from `ROBIN_ASSET_MAP_DIAGNOSTICS`. It samples numbered
+ordinary motion sectors, flood-fills actor-sized collision-clear connections,
+and asks for forward/reverse routes across each sampled component. Every returned
+segment must clear the same 6×4 half-diagonal footprint. It reports routing and
+sampling times separately, and writes `route-sampling-report.json` after each map.
+The report remains `complete: false` until every map passes. Run it with fresh
+asset-only exports:
+
+```sh
+ROBIN_ASSET_MAP_DIAGNOSTICS=/absolute/path/to/exports RUSTC_WRAPPER= \
+  cargo test -p robin_engine --test asset_map_compilation -j1 \
+  library_exports_route_between_collision_connected_samples -- --ignored --nocapture
+```
+
+This is a routing/collision consistency check, not an oracle for missing authored
+geometry. Coarse samples omit narrow passages, inter-sector traversal and dynamic
+state changes; those require their separate gameplay fixtures.
+
 ## GPU execution
 
 Shader translation tests remain in the normal client suite. GPU execution is

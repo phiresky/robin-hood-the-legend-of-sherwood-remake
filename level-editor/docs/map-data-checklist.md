@@ -18,6 +18,22 @@ with it. Global indices and connections are rebuilt after placement.
 with Derby/York. “Partial” identifies a remaining gap. “Planned” describes the
 intended construction, not functionality available today.
 
+**Ordinary route consistency:** fresh best-effort exports of all ten saved maps
+are under `work/map-compile/route-sampling-HpYhrj`. A native collision flood-fill
+finds connected actor-sized samples within numbered motion sectors, then checks
+forward/reverse pathfinder routes and clearance on every returned segment. The
+baseline passed 1,336 routes using the stock 6×4 half-diagonal, taking 3,471 seconds
+in this debug run. The graph-free visibility fallback now uses Euclidean A* with
+stable index ties and rejects non-improving edges before expensive collision
+queries; collision-line collection skips empty grid cells before geometric tests.
+The audit writes a per-map JSON report and marks it complete only after all maps
+pass. Separate transition fixtures reuse the live pathfinder with the same
+footprint, checking both directions through initially closed/open barriers and
+their applied/reset states. The full-map audit checks initial-state routing
+consistency; it cannot prove that missing asset geometry is correct, and its
+coarse samples do not cover all
+narrow passages, cross-sector doors, traversal callbacks or state changes.
+
 **Exported depth PNG:** the fixture in `work/map-compile/export-depth-gpu` packages
 a known two-region 16-bit depth image and a pinned sprite through the normal ZIP
 exporter. The native map decoder, GPU upload and character masking pass reproduce
@@ -794,7 +810,7 @@ sampled Rust queries. Equivalent evidence across all maps remains unfinished.
 | Walkable regions and layers | Transform asset-local surface polygons and heights; join coplanar regions, local multi-plane regions or matching authored boundary edges across assets, then assign fresh sectors/layers. | Partial: flat/sloped surfaces, holes and cross-asset multi-plane joins tested; join recovery/publication and full-map connectivity unfinished |
 | Movement blockers | Transform explicit asset-local movement contours; optionally select permanent part/volume solids and intersect them with walkable surfaces. Sight states stay independent. | Working in synthetic tests; recovered ownership still needs review |
 | Openings in movement collision | Asset-local clearances remove only the owning asset's derived collision on the matching plane; sight geometry and other assets remain intact. | Working in compiler/runtime tests; recovery geometry failures remain explicit gaps |
-| Navigation graph and fast-find grid | Engine constructs routing and spatial lookup structures from compiled geometry. No copied grids or graph bytes. | Working on synthetic maps |
+| Navigation graph and fast-find grid | Engine constructs routing and spatial lookup structures from compiled geometry. No copied grids or graph bytes. | Synthetic fixtures and 1,336 sampled ordinary routes across ten asset-only map exports pass; complete connectivity and traversal coverage remain unverified |
 | Sight/physical obstacles | Transform asset-local shapes, per-vertex heights and solid/opaque flags. Explicit transition references select initial/applied obstacles. | Static geometry working; sight transitions verified through native initialization, apply and reset; recovered state ownership still incomplete |
 | Projection surfaces / elevation | Generate height planes linked to movement areas; derive receiver-crossing boundaries from all registered planes, independent of sight activation. | Partial: walking crossings verified for rotated copies and initial/applied/reset sight states; ambiguous subpixel boundaries and full-map traversal remain unfinished |
 | Doors, gates and lock rules | Transform local endpoints and optional click polygons; resolve neighbours geometrically and retain initial/alternate actor lock rules. Asset-local transition links either trigger state changes from doors or swap door permissions. | Compiler/native links implemented; recovered ownership and coverage incomplete |
@@ -804,10 +820,10 @@ sampled Rust queries. Equivalent evidence across all maps remains unfinished.
 | Surface materials | Transform asset-local material polygons; rebuild ground, obstacle and receiving-surface links independently. Preserve receiving defaults, footprints and overlap priority. | Compiler/native tests pass; all nine imported map families have published material definitions; full geometry and receiving-material coverage remain unverified |
 | Light/shadow regions | Transform asset-local planar contours, resolve ordinary or traversal receiving layers and preserve ambience filters. Conflicting anchored receivers receive separate runtime layers. | Published definitions exist for all five towns and Sherwood; unrestricted query equivalence and full placement coverage remain unverified |
 | Environmental sound sources | Transform asset-local emitter polylines; retain sample IDs, timing, volume falloff, acoustic altitude, noise-covering distance and ambience filters. Global emitters need no position. | Current published-library exports include emitters in all ten saved maps, including Wychford. Native construction is verified; audible playback and complete ownership/coverage review remain outstanding |
-| Animated scenery / effects | Transform asset-owned billboard anchors and masking polylines; export sprite references, pinned manifests/frames and display flags into native map animations. | Partial: placement, ZIP packaging and native resource decoding tested; library definitions, preview and rendered verification unfinished |
+| Animated scenery / effects | Transform asset-owned billboard anchors and masking polylines; export sprite references, pinned manifests/frames and display flags into native map animations. | Standalone authoring, resource publication, static palette previews, ZIP packaging and native resource decoding tested; real library definitions, live scene preview and rendered verification unfinished |
 | Interactive patches / state changes | Asset-local transitions compile initial/applied movement contours, sight-obstacle references and door links, trigger zones and fresh state bindings across affected navigation areas. | Partial: movement, sight and door bindings implemented; changing visuals, masks and asset recovery remain unfinished |
 | Map settings | Scene identity/export bounds; terrain assets supply forest behaviour and default material. Ambience is selected by the mission. | Compiler/runtime tests pass; environment defaults are published for all nine imported map families |
-| Resource banks and references | Package generated resources and resolve shared sprite/audio/profile dependencies. | Partial: baked images; shared resources use the base installation |
+| Resource banks and references | Package generated resources and resolve shared sprite/audio/profile dependencies. | Baked images and pinned scenery banks package independently; unpinned shared resources use the base installation |
 
 The following information belongs to **missions referencing a map**, not map
 assets. The minimal Mission tab stores explicit authoring in the scene's separate

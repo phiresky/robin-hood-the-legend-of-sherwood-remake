@@ -1831,6 +1831,38 @@ mod tests {
 
     fn check_compiled_transition(bytes: &[u8], sight: bool) {
         let (mut engine, assets) = load_compiled_transition(bytes, (2000., 2000.));
+        let check_actor_routes = |engine: &mut EngineInner, applied: bool| {
+            let grid = &engine.world.fast_grid;
+            let half = grid.try_move_box_half_diagonal(0).unwrap();
+            assert_eq!((half.x, half.y), (6., 4.));
+            for (sector, left, right, open) in [(0, 330., 370., applied), (2, 430., 490., !applied)]
+            {
+                let left = MapPoint::new(left, 320.);
+                let right = MapPoint::new(right, 320.);
+                for (source, goal) in [(left, right), (right, left)] {
+                    // Reuse the live finder: rebuilding it would hide stale state.
+                    let route = engine.world.pathfinder.find_path(
+                        &assets.navigation.pathfinder_graph,
+                        grid,
+                        0,
+                        sector,
+                        0,
+                        source,
+                        goal,
+                        false,
+                    );
+                    assert_eq!(route.is_some(), open, "sector {sector}, applied={applied}");
+                    if let Some(route) = route {
+                        assert_eq!(route.last(), Some(&goal));
+                        let mut previous = source;
+                        for point in route {
+                            assert!(grid.is_reachable_thick(previous, point, 0, half));
+                            previous = point;
+                        }
+                    }
+                }
+            }
+        };
         let western_route = |e: &EngineInner| {
             e.world.fast_grid.is_reachable_thin(
                 MapPoint::new(330., 320.),
@@ -1847,6 +1879,7 @@ mod tests {
         };
         assert!(!western_route(&engine));
         assert!(eastern_route(&engine));
+        check_actor_routes(&mut engine, false);
         if sight {
             assert_eq!(engine.world.static_sight_obstacle_active, vec![true, false]);
         }
@@ -1855,12 +1888,14 @@ mod tests {
         engine.apply_patch(TickCtx::new(&sim, &assets), patch);
         assert!(western_route(&engine));
         assert!(!eastern_route(&engine));
+        check_actor_routes(&mut engine, true);
         if sight {
             assert_eq!(engine.world.static_sight_obstacle_active, vec![false, true]);
         }
         engine.reset_patch(TickCtx::new(&sim, &assets), patch);
         assert!(!western_route(&engine));
         assert!(eastern_route(&engine));
+        check_actor_routes(&mut engine, false);
         if sight {
             assert_eq!(engine.world.static_sight_obstacle_active, vec![true, false]);
         }
