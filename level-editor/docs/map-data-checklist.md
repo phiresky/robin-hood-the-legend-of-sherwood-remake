@@ -43,7 +43,12 @@ under `work/map-compile/scenery-resources-v2`. Its decoded profile and exported
 descriptor also pass the engine's scenery-spawn and static-tick paths: the sprite
 keeps its editor-authored anchor/elevation, follows the expected frame-delay
 sequence, loops, and stops advancing when inactive. This does not yet verify GPU
-rendering/occlusion or validate every manifest field before export. Animations without an authored
+rendering/occlusion. Export also validates action IDs, timing and geometry fields,
+nonempty frame rows, contiguous unique directions, supported pixel formats and
+PNG decoding/CRC within native dimension limits. Invalid pinned content is omitted
+with a warning. Image checks yield between frames and preserve cancellation.
+The validated `scenery-resources-v3` fixture is byte-identical to the native-tested
+v2 export. Animations without an authored
 resource directory still use the installed shared sprite bank.
 
 To repeat the animation acceptance chain, generate a fresh output directory with

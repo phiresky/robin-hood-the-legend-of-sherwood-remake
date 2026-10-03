@@ -1,6 +1,7 @@
 import { safeLibraryPath, type ProjectionAssetDescriptor } from "@rle/shared";
 import type { GameplayAssetDescriptor } from "../../shared/src/asset-gameplay.ts";
 import type { CompiledMap } from "./map-compile.ts";
+import { validateSceneryManifest } from "./scenery-manifest.ts";
 
 export type SceneryResources = Record<string, Uint8Array>;
 
@@ -74,26 +75,15 @@ export async function collectSceneryResources(
         progress(++completed, total);
         reportingProgress = false;
       }
-      const manifest = JSON.parse(new TextDecoder().decode(pending["manifest.json"])) as {
-        profiles: {
-          name: string;
-          center_x: number;
-          center_y: number;
-          rows: { path: string; frames: { file: string }[] }[];
-        }[];
-      };
-      if (!Array.isArray(manifest.profiles)) throw new Error("invalid sprite manifest");
-      for (const profile of manifest.profiles) {
-        if (!Array.isArray(profile.rows)) throw new Error("invalid sprite rows");
-        for (const row of profile.rows) {
-          if (!Array.isArray(row.frames)) throw new Error("invalid sprite frames");
-          for (const frame of row.frames) {
-            const path = row.path && row.path !== "." ? `${row.path}/${frame.file}` : frame.file;
-            if (!safeLibraryPath(path) || !pending[path])
-              throw new Error(`missing pinned frame ${path}`);
-          }
-        }
-      }
+      const manifest = await validateSceneryManifest(
+        JSON.parse(new TextDecoder().decode(pending["manifest.json"])),
+        pending,
+        () => {
+          reportingProgress = true;
+          progress(completed, total);
+          reportingProgress = false;
+        },
+      );
       for (const asset of assets.values())
         for (const animation of (asset as GameplayAssetDescriptor).gameplay?.animations ?? []) {
           if (animation.file.replace(/\.rhs$/i, "") !== bank) continue;

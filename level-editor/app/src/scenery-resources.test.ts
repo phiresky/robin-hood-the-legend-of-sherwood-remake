@@ -79,7 +79,7 @@ function fixture() {
     if (!bytes) throw new Error(`missing ${path}`);
     return bytes;
   };
-  return { assets, hut, files, compiled, read };
+  return { assets, hut, files, compiled, read, manifest };
 }
 
 test("pinned scenery manifest and frames survive ZIP packaging exactly", async () => {
@@ -88,7 +88,7 @@ test("pinned scenery manifest and frames survive ZIP packaging exactly", async (
   const resources = await collectSceneryResources(compiled, assets, read, (done) =>
     progress.push(done),
   );
-  assert.deepEqual(progress, [0, 1, 2, 3]);
+  assert.deepEqual(progress, [0, 1, 2, 3, 3, 3]);
   const zip = unzipSync(
     await packageCompiledMap(
       compiled,
@@ -154,4 +154,46 @@ test("resource progress cancellation escapes best-effort handling immediately", 
   );
   assert.deepEqual(compiled.warnings, warnings);
   assert.equal(compiled.descriptor.asset_geometry!.animations!.length, 1);
+});
+
+test("correctly pinned but invalid sprite data is omitted before export", async () => {
+  for (const failure of [
+    "action",
+    "delay",
+    "geometry",
+    "empty",
+    "directions",
+    "png",
+    "path",
+    "format",
+  ] as const) {
+    const { assets, hut, files, compiled, read, manifest } = fixture();
+    const profile = manifest.profiles[0]!;
+    const row = profile.rows[0]!;
+    if (failure === "action") row.action_id = 283;
+    if (failure === "delay") row.frames[0]!.delay = -1;
+    if (failure === "geometry") profile.width = 0;
+    if (failure === "empty") row.frames = [];
+    if (failure === "directions") {
+      Object.assign(row, { direction: 0 });
+      profile.rows.push(structuredClone(row));
+    }
+    if (failure === "png") files.set("sprites/flame.rhs.d/idle/0.png", new Uint8Array([1, 2, 3]));
+    if (failure === "path") row.frames[0]!.file = "../manifest.json";
+    if (failure === "format") manifest.pixel_format = "unknown";
+    files.set(
+      "sprites/flame.rhs.d/manifest.json",
+      new TextEncoder().encode(JSON.stringify(manifest)),
+    );
+    hut.resources = [...files].map(([path, bytes]) => ({
+      path,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    }));
+    assert.deepEqual(await collectSceneryResources(compiled, assets, read), {}, failure);
+    assert.deepEqual(compiled.descriptor.asset_geometry!.animations, [], failure);
+    assert.ok(
+      compiled.warnings.some((warning) => warning.includes("Scenery bank editor-flame omitted")),
+      failure,
+    );
+  }
 });
