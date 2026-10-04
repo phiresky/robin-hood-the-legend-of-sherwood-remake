@@ -49,20 +49,23 @@ def main():
         tree = registry.wrap(BVHTree.FromPolygons(vertices, triangles, all_triangles=True))
         rows = []
         for cord in audit['cords']:
-            proposal = cord['selected_for_review']
-            start = Vector(cord['current_upper_world']) + RAY*proposal['camera_ray_shift']
-            end = Vector(proposal['attachment_world'])
-            samples = max(2, int((end-start).length*2))
-            exposed = []
-            for i in range(samples):
-                point = start.lerp(end, i/(samples-1))
-                hit = tree.ray_cast(point+RAY*3000, -RAY, 2999.99)
-                if hit[0] is None:
-                    exposed.append(dict(sample=i, world=list(point)))
-            rows.append(dict(cord=cord['cord'], proposal=proposal, samples=samples, exposed=len(exposed), exposed_points=exposed))
+            screened = []
+            for proposal in cord['proposals']:
+                start = Vector(cord['current_upper_world']) + RAY*proposal['camera_ray_shift']
+                end = Vector(proposal['attachment_world'])
+                samples = max(2, int((end-start).length*2))
+                exposed = []
+                for i in range(samples):
+                    point = start.lerp(end, i/(samples-1))
+                    hit = tree.ray_cast(point+RAY*3000, -RAY, 2999.99)
+                    if hit[0] is None:
+                        exposed.append(dict(sample=i, world=list(point)))
+                screened.append(dict(proposal=proposal, samples=samples, exposed=len(exposed), exposed_points=exposed))
+            screened.sort(key=lambda r: (r['exposed']/r['samples'], abs(r['proposal']['camera_ray_shift'])))
+            rows.append(dict(cord=cord['cord'], hypotheses=screened))
         result = dict(status='Private attachment screening; no tree or net model changed', tree_bindings=bindings, attachment_audit_sha256=sha(base/'tree-attachment-audit.json'), cords=rows, limitations=['Current physical cutouts are checked with their explicit image alpha and side rules.', 'A hidden cord is not proof of native attachment identity or physical feasibility.', 'This checks centerline visibility, not the full cord radius or all animated canopy phases.'])
-        (base/'attachment-physical-occlusion.json').write_text(json.dumps(result, indent=2)+'\n')
-        print([(r['cord'], r['samples'], r['exposed']) for r in rows])
+        (base/'attachment-physical-occlusion-v2.json').write_text(json.dumps(result, indent=2)+'\n')
+        print([(r['cord'], [(p['proposal']['camera_ray_shift'], p['samples'], p['exposed']) for p in r['hypotheses'][:3]]) for r in rows])
     finally:
         release()
 
