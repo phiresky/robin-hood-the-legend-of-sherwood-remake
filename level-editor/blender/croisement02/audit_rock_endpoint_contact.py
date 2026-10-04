@@ -10,7 +10,7 @@ from audit_log_endpoint_contact import planar_triangle,overlap,sha
 
 
 def main():
-    base=OUT/'rock-trap-state-candidate-v8'
+    base=Path(sys.argv[sys.argv.index('--candidate')+1]).resolve() if '--candidate' in sys.argv else OUT/'rock-trap-state-candidate-v8'
     report=json.loads((base/'manifest.json').read_text())
     bank=OUT/'terrain-bank-candidate/assets/croisement02-north-woodland-bank'
     assert sha(base/'worker.blend')==report['model_sha256']

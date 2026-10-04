@@ -13,14 +13,14 @@ from render_slots import acquire,release
 
 
 def main():
-    base=OUT/'rock-trap-state-candidate-v8'
+    base=Path(sys.argv[sys.argv.index('--candidate')+1]).resolve() if '--candidate' in sys.argv else OUT/'rock-trap-state-candidate-v8'
     shrub=OUT/'understory-round-11/assets/croisement02-shrub-62'
     audit=json.loads((shrub/'inspection/saved-model-audit.json').read_text())
     assert sha(shrub/'model.blend')==audit['model_sha256']=='5ce1f4150a51ef0cf294ff42b2b9daa2022ac6ffb586d18f7346e48b6ac38ecb'
     model=json.loads((base/'manifest.json').read_text())
     assert sha(base/'worker.blend')==model['model_sha256']
     contact=json.loads((base/'contact-audit.json').read_text());assert contact['status'].startswith('surface clearance pass');assert contact['model_sha256']==model['model_sha256'];assert len(contact['saved_reopened_receiver_proof'])==5
-    dest=OUT/'rock-state-shrub-joint-v2';dest.mkdir(exist_ok=False)
+    dest=Path(sys.argv[sys.argv.index('--output')+1]).resolve() if '--output' in sys.argv else OUT/'rock-state-shrub-joint-v2';dest.mkdir(exist_ok=False)
     acquire()
     try:
         bpy.ops.wm.open_mainfile(filepath=str(base/'worker.blend'))
