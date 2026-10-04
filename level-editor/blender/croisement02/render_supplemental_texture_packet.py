@@ -1,4 +1,4 @@
-"""Render texture inputs from approved cameras without changing framing or geometry."""
+"""Render unchanged approved geometry with explicitly recorded texture framing."""
 import argparse
 import copy
 import json
@@ -20,7 +20,7 @@ from refinement_review import render_review
 from refinement_workspace import _geometry
 
 
-def main(number, output, camera_source="supplemental", resolution_factor=1, fit_complete=False):
+def main(number, output, camera_source="supplemental", resolution_factor=1, fit_complete=False, tile_size=None):
     is_tree = str(number).isdigit()
     asset = f'croisement02-tree-{int(number):02d}' if is_tree else str(number)
     worker = tree_workspace(int(number)) if is_tree else scenery_workspace(asset)
@@ -53,6 +53,11 @@ def main(number, output, camera_source="supplemental", resolution_factor=1, fit_
     if type(resolution_factor) is not int or resolution_factor not in (1, 2, 3):
         raise ValueError('Resolution factor must be one of 1, 2, or 3')
     frames['tile_size'] = [value * resolution_factor for value in original['tile_size']]
+    if tile_size is not None:
+        if (len(tile_size) != 2 or not fit_complete or resolution_factor != 1
+                or any(type(value) is not int or value < 16 or value % 16 for value in tile_size)):
+            raise ValueError('Explicit render tiles require complete framing, factor 1, and two positive multiples of 16')
+        frames['tile_size'] = list(tile_size)
     # The supplemental actual renderer uses the matrix. Legacy Euler aliases
     # can still describe the narrower old framing, so do not select them.
     for view in frames['views']:
@@ -110,6 +115,7 @@ def main(number, output, camera_source="supplemental", resolution_factor=1, fit_
             approved_camera_manifest_sha256=sha(cameras), camera_source=camera_source,
             original_tile_size=original['tile_size'], rendered_tile_size=frames['tile_size'],
             resolution_factor=resolution_factor, image_resampling=False, **camera_binding, geometry_and_appearance_unchanged=True,
+            explicit_render_tile_size=list(tile_size) if tile_size else None,
             framing_adjustment='ortho-scale-only to include the complete mesh with padding' if fit_complete else None,
             original_ortho_scales=[v['ortho_scale'] for v in original['views']],
             rendered_ortho_scales=[v['ortho_scale'] for v in rendered['views']], framing_audit=framing_audit,
@@ -129,5 +135,6 @@ if __name__ == '__main__':
     parser.add_argument('--camera-source', choices=('supplemental', 'original'), default='supplemental')
     parser.add_argument('--resolution-factor', type=int, default=1, help='New render resolution; never resamples an image')
     parser.add_argument('--fit-complete', action='store_true', help='Explicit new preparation framing: retain camera transforms and enlarge scales to include all geometry')
+    parser.add_argument('--tile-size', type=int, nargs=2, metavar=('WIDTH', 'HEIGHT'), help='New complete-framing render grid; never resamples existing pixels')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
-    main(args.tree, args.output.resolve(), args.camera_source, args.resolution_factor, args.fit_complete)
+    main(args.tree, args.output.resolve(), args.camera_source, args.resolution_factor, args.fit_complete, args.tile_size)

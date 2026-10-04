@@ -84,7 +84,10 @@ def prepare_asset(asset, worker, destination, *, tree=False):
         require(min(c['depth_width_ratio'] for c in bounds['crowns']) >= 1, 'Crown depth failed')
     checked(worker / audit['inspection_recipe']['recipe'], audit['inspection_recipe']['recipe_sha256'])
     checked(worker / 'inspection/actual-materials/sheet.png', actual['sheet_sha256'])
-    checked(worker / 'inspection/actual-materials/sheet.png', visual['sheet_sha256'])
+    visual_sheet = visual.get('sheet_sha256')
+    if visual_sheet is None:
+        visual_sheet = visual['reviewed_images'][f'assets/{asset}/inspection/actual-materials/sheet.png']
+    checked(worker / 'inspection/actual-materials/sheet.png', visual_sheet)
     if visual.get('self_review_packet'):
         checked(visual['self_review_packet'], visual['self_review_packet_sha256'])
     if visual.get('full_crown_evidence_sha256'):
