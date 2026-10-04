@@ -82,6 +82,9 @@ def main():
                 current_review=current_review and packet.exists() and sha(packet)==reviewed['self_review_packet_sha256']
             if reviewed.get('full_crown_evidence_sha256'):
                 current_review=current_review and 'stored_material_states' in item and sha(full_crown/'evidence.json')==reviewed['full_crown_evidence_sha256']
+            if reviewed.get('preservation_evidence'):
+                preservation=Path(reviewed['preservation_evidence'])
+                current_review=current_review and preservation.exists() and sha(preservation)==reviewed['preservation_evidence_sha256']
             if current_review:
                 item['notes']+=reviewed.get('notes',[])
                 if reviewed.get('ready_for_geometry_review') and technical:
