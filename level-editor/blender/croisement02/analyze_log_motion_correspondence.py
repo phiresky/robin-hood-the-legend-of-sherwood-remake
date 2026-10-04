@@ -1,4 +1,5 @@
 """Conservative native-texture correspondence evidence, never fabricated rigid identities."""
+import argparse
 import json
 import numpy as np
 from PIL import Image,ImageDraw
@@ -9,11 +10,12 @@ from native_log_foreground_reference import sha
 
 
 def main():
-    source=OUT/'state-target-evidence/log-trap/full-motion';dest=OUT/'log-motion-correspondence-v1';dest.mkdir(exist_ok=False)
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--output',type=str,default='log-motion-correspondence-v1');parser.add_argument('--radius',type=int,default=4);parser.add_argument('--search',type=int,default=20);parser.add_argument('--features',type=int,default=100);args=parser.parse_args();assert 2<=args.radius<=8 and 1<=args.search<=60 and 1<=args.features<=1000
+    source=OUT/'state-target-evidence/log-trap/full-motion';dest=OUT/args.output;dest.mkdir(exist_ok=False)
     manifest=json.loads((source/'manifest.json').read_text());records=manifest['records'];images=[np.array(Image.open(source/r['image']).convert('RGBA'))for r in records]
-    grays=[p[:,:,:3].astype(float)@np.array([.299,.587,.114])/255 for p in images];alphas=[p[:,:,3]>0 for p in images];radius=4;patch=9;search=20
+    grays=[p[:,:,:3].astype(float)@np.array([.299,.587,.114])/255 for p in images];alphas=[p[:,:,3]>0 for p in images];radius=args.radius;patch=radius*2+1;search=args.search
     def features(gray,alpha):
-        gy,gx=np.gradient(gray);a=gaussian_filter(gx*gx,1);b=gaussian_filter(gx*gy,1);c=gaussian_filter(gy*gy,1);score=a*c-b*b-.04*(a+c)**2;valid=binary_erosion(alpha,iterations=radius+1);score[~valid]=0;peaks=(score==maximum_filter(score,size=7))&(score>1e-7);ys,xs=np.nonzero(peaks);order=np.argsort(score[ys,xs])[::-1][:100];return [(int(xs[i]),int(ys[i]))for i in order]
+        gy,gx=np.gradient(gray);a=gaussian_filter(gx*gx,1);b=gaussian_filter(gx*gy,1);c=gaussian_filter(gy*gy,1);score=a*c-b*b-.04*(a+c)**2;valid=binary_erosion(alpha,iterations=radius+1);score[~valid]=0;peaks=(score==maximum_filter(score,size=7))&(score>1e-7);ys,xs=np.nonzero(peaks);order=np.argsort(score[ys,xs])[::-1][:args.features];return [(int(xs[i]),int(ys[i]))for i in order]
     def match(a,b,ab,bb,x,y):
         h,w=a.shape
         if x<radius or y<radius or x>=w-radius or y>=h-radius:return None
@@ -39,7 +41,7 @@ def main():
         entry=dict(first_tick=records[index]['first_tick'],next_tick=records[index+1]['first_tick'],features=len(points),accepted=len(matches),matches=matches);pairs.append(entry)
         bg.save(dest/f'{index:02d}.png');sheet.paste(bg.convert('RGB'),((index%5)*256,(index//5)*265+22));ImageDraw.Draw(sheet).text(((index%5)*256+4,(index//5)*265+4),f"{entry['first_tick']}→{entry['next_tick']}: {len(matches)}/{len(points)}",fill='white')
     sheet.save(dest/'correspondence-sheet.png')
-    result=dict(status='source correspondence diagnostic; not rigid-log identity or3Dmotion',source_manifest_sha256=sha(source/'manifest.json'),source_frames=[dict(image=r['image'],sha256=sha(source/r['image']))for r in records],parameters=dict(patch=patch,search=search,ncc_min=.85,uniqueness_gap_min=.035,roundtrip_max=1),pairs=pairs,limitations=['Repeated bark can still produce ambiguous matches; source evidence needs visual and rigid-component validation.','Occlusion holes are native composition, not physical fractures.','No new log count, depth, texture, geometry or permanent state changes inferred.'])
+    result=dict(status='source correspondence diagnostic; not rigid-log identity or3Dmotion',source_manifest_sha256=sha(source/'manifest.json'),source_frames=[dict(image=r['image'],sha256=sha(source/r['image']))for r in records],parameters=dict(patch=patch,search=search,features=args.features,ncc_min=.85,uniqueness_gap_min=.035,roundtrip_max=1),pairs=pairs,limitations=['Repeated bark can still produce ambiguous matches; source evidence needs visual and rigid-component validation.','Occlusion holes are native composition, not physical fractures.','No new log count, depth, texture, geometry or permanent state changes inferred.'])
     (dest/'manifest.json').write_text(json.dumps(result,indent=2)+'\n');print([(p['first_tick'],p['accepted'],p['features'])for p in pairs])
 
 if __name__=='__main__':main()
