@@ -105,6 +105,6 @@ if __name__ == '__main__':
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--base',type=Path,default=OUT/'fence-integration')
     parser.add_argument('--destination',type=Path,default=OUT/'understory-candidates/fence-rebase-v1')
-    parser.add_argument('--indices',type=int,nargs='+',choices=[81,65,66,54,57,60,62,63,64,77,78,83,84,74,85,86,87,88,89,90,93,22],default=[81,65,66])
+    parser.add_argument('--indices',type=int,nargs='+',choices=[81,65,66,54,57,60,62,63,64,77,78,83,84,74,85,86,87,88,89,90,93,22,76],default=[81,65,66])
     args=parser.parse_args()
     main(args.base.resolve(),args.destination.resolve(),args.indices)
