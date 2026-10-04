@@ -29,6 +29,7 @@ def main():
     parser.add_argument('--exclude-secondary-crowns', action='store_true')
     parser.add_argument('--neighbour', nargs=2, action='append', default=[], metavar=('WORKER','SHA256'))
     parser.add_argument('--opacity-support', action='store_true')
+    parser.add_argument('--focus', nargs=4, type=float, metavar=('X','Y','Z','SCALE'), help='Optional close-view world target and scale; source camera is unchanged')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
     rock_worker = args.rock_worker.resolve() if args.rock_worker else scenery_workspace(args.rock_asset)
     workers = [rock_worker, args.shrub_worker.resolve()] + [Path(p).resolve() for p,_ in args.neighbour]
@@ -137,6 +138,7 @@ def main():
         draw.text((source.width + 4, 4), 'Saved model neighbourhood', fill='white')
         board.resize((board.width * 2, board.height * 2), Image.Resampling.NEAREST).save(destination / 'source-comparison.png')
         scale = max((hi - lo).length * 1.10, 100)
+        if args.focus:center=Vector(args.focus[:3]);scale=args.focus[3]
         for i in range(8):
             angle = 2 * math.pi * i / 8
             direction = Vector((math.sin(angle) * math.cos(.55), -math.cos(angle) * math.cos(.55), math.sin(.55)))
@@ -176,8 +178,8 @@ def main():
             meshes=[dict(name=o.name, asset_group=o.get('asset_group'),
                          minimum_world_z=min((o.matrix_world @ v.co).z for v in o.data.vertices),
                          maximum_world_z=max((o.matrix_world @ v.co).z for v in o.data.vertices)) for o in meshes], cameras=cameras,
-            source_crop=list(crop), sheet_sha256=sha(destination / 'sheet.png'), source_comparison_sha256=sha(destination / 'source-comparison.png'),
-            status='Rendered candidate neighbourhood; requires visual review. Actual terrain and unlisted plants are absent.'))
+            source_crop=list(crop), close_focus=args.focus, sheet_sha256=sha(destination / 'sheet.png'), source_comparison_sha256=sha(destination / 'source-comparison.png'),
+            status='Rendered listed candidate neighbourhood; requires visual review. Contact views add diagnostic Z0; unlisted neighbours are absent.'))
         print(destination)
     finally:
         release()
