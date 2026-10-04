@@ -17,12 +17,15 @@ from refinement_review import _tile
 from render_multiview_asset import render
 
 
-def main(experiment, donor_dir, output, conditioned=None, conditioned_threshold=.7, donor_world_scale=1.):
+def main(experiment, donor_dir, output, conditioned=None, conditioned_threshold=.7,
+         donor_world_scale=1., inferred_shadow_gamma=1.):
     require(not output.exists(), 'Use a fresh candidate directory')
     require(math.isfinite(conditioned_threshold) and -1 <= conditioned_threshold <= 1,
             'Conditioned projection threshold must be finite and in [-1, 1]')
     require(math.isfinite(donor_world_scale) and donor_world_scale > 0,
             'Donor world scale must be finite and positive')
+    require(math.isfinite(inferred_shadow_gamma) and inferred_shadow_gamma > 0,
+            'Inferred shadow gamma must be finite and positive')
     evidence = {str(p): sha(p) for p in [donor_dir / 'donor.png', donor_dir / 'donor-mask.png',
                 donor_dir / 'tile.png', donor_dir / 'donor-provenance.json', donor_dir / 'donor-validation.json']}
     from PIL import Image
@@ -109,6 +112,11 @@ def main(experiment, donor_dir, output, conditioned=None, conditioned_threshold=
                 take = (sx >= 0) & (sy >= 0) & (sx < continuation.shape[1]) & (sy < continuation.shape[0])
                 result[take, :3] = continuation[continuation.shape[0] - 1 - sy[take], sx[take], :3]
                 conditioned_samples += int(take.sum())
+            if inferred_shadow_gamma != 1.:
+                # Only editable inferred texels reach this callback. Preserve
+                # chromatic ratios while varying inferred shadow contrast.
+                peak = result[:, :3].max(axis=1)
+                result[:, :3] *= np.power(np.maximum(peak, 1e-8), inferred_shadow_gamma - 1.)[:, None]
             return np.ones(len(positions), bool)
 
         report = fill([scene.objects[name] for name in sorted(crowns)], sample, None,
@@ -142,6 +150,7 @@ def main(experiment, donor_dir, output, conditioned=None, conditioned_threshold=
                       donor_method='texture-synthesis 0.8.3, masked same-asset native donor, seed40',
                       sampling='Native pixel scale in dominant face tangent plane',
                       donor_world_scale=donor_world_scale,
+                      inferred_shadow_gamma=inferred_shadow_gamma,
                       conditioned_front_samples=conditioned_samples,
                       conditioned_front_threshold=conditioned_threshold if conditioned else None,
                       transparent_bounces=256, approval='pending actual eight-view review',
@@ -161,7 +170,9 @@ if __name__ == '__main__':
                         help='Diagnostic projection-normal threshold; default preserves prior candidates')
     parser.add_argument('--donor-world-scale', type=float, default=1.,
                         help='World-space texture wavelength multiplier; does not change source RGB or geometry')
+    parser.add_argument('--inferred-shadow-gamma', type=float, default=1.,
+                        help='Private inferred-tone diagnostic; protected native texels are excluded')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
     main(args.experiment.resolve(), args.donor_dir.resolve(), args.output.resolve(),
          args.conditioned.resolve() if args.conditioned else None, args.conditioned_threshold,
-         args.donor_world_scale)
+         args.donor_world_scale, args.inferred_shadow_gamma)
