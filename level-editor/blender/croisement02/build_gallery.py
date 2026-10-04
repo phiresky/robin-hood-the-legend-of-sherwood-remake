@@ -111,6 +111,8 @@ def main():
                     item['source_trace']=str(native_context)
                     item['source_trace_label']='Native map scale: source alignment and planting context'
                     item['notes'].append('Hidden leaf arrangement reuses only this plant native palette; no observed rear artwork or AI texture is claimed. Small native-pixel fragments remain coarse when magnified.')
+                    item['notes'].append(f"Observed source leaf pixels: {report['crown']['observed_leaf_pixels']}; covered and rear arrangement is inferred.")
+                    if group.get('native_foliage_mask')==68:item['notes'].append('The shown tree07 neighbour retains an earlier floating-wood limitation. This leaf-group candidate does not claim that trunk correction.')
 
         log_comparison=workspace/'inspection/approved-baseline-comparison/comparison.json'
         log_residual=workspace/'inspection/source-coverage/residual-review.json'
