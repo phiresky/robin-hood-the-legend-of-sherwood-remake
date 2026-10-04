@@ -10,7 +10,7 @@ from native_log_foreground_reference import sha
 
 
 def main():
-    proof=OUT/(sys.argv[1] if len(sys.argv)>1 else 'log-state-appearance-proof-v3');manifest=json.loads((proof/'manifest.json').read_text());root=OUT/'state-target-evidence/log-trap';reference=root/'native-order-reference'
+    proof=OUT/(sys.argv[1] if len(sys.argv)>1 else 'log-state-appearance-proof-v4');manifest=json.loads((proof/'manifest.json').read_text());root=OUT/'state-target-evidence/log-trap';reference=root/'native-order-reference'
     box=manifest['camera']['bbox'];w=box[2]-box[0];h=box[3]-box[1];scale=manifest['camera']['ortho_scale'];yy,xx=np.mgrid[:512,:512];ix=np.floor(w/2+(xx+.5-256)*scale/512).astype(int);iy=np.floor(h/2+(yy+.5-256)*scale/512).astype(int);valid=(ix>=0)&(ix<w)&(iy>=0)&(iy<h)
     def project(mask):
         result=np.zeros((512,512),bool);result[valid]=mask[iy[valid],ix[valid]];return result

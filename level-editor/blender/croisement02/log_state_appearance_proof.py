@@ -56,7 +56,7 @@ def main():
     source=OUT/'state-target-evidence/log-trap';source_manifest=json.loads((source/'manifest.json').read_text());box=source_manifest['bbox']
     reference=source/'native-order-reference';reference_hash=sha(reference/'manifest.json')
     animation=next(r for r in json.loads((OUT/'animation-references/manifest.json').read_text())['animations']if r['index']==2)
-    dest=OUT/'log-state-appearance-proof-v3';dest.mkdir(exist_ok=False);(dest/'renderer.py').write_bytes(Path(__file__).read_bytes())
+    dest=OUT/'log-state-appearance-proof-v4';dest.mkdir(exist_ok=False);(dest/'renderer.py').write_bytes(Path(__file__).read_bytes())
     for phase in(0,6):crop_frame(animation['frames'][phase],box).save(dest/f'native-canopy-phase-{phase:02d}.png')
     selected=[];bindings=[]
     for index in(26,29,30):
@@ -70,7 +70,12 @@ def main():
             for obj in dst.objects:scene.collection.objects.link(obj);obj.hide_render=False;trees.append(obj)
         bpy.context.view_layer.update();before_hash=geometry_hash(logs+trees)
         target=point((box[0]+box[2])/2,(box[1]+box[3])/2,0);scene.camera.location=target+RAY*3000;scene.camera.rotation_euler=(target-scene.camera.location).to_track_quat('-Z','Y').to_euler();scene.camera.data.ortho_scale=max(box[2]-box[0],box[3]-box[1])
-        scene.cycles.use_denoising=False;scene.render.use_compositing=False;scene.render.dither_intensity=0;scene.cycles.pixel_filter_type='BOX';scene.cycles.filter_width=.01;scene.cycles.samples=24;scene.cycles.seed=0;scene.cycles.use_adaptive_sampling=False;scene.cycles.transparent_max_bounces=256
+        scene.cycles.use_denoising=False;scene.render.use_compositing=False;scene.render.dither_intensity=0;scene.cycles.pixel_filter_type='BOX';scene.cycles.filter_width=.01;scene.cycles.samples=8;scene.cycles.seed=0;scene.cycles.use_adaptive_sampling=False;scene.cycles.transparent_max_bounces=256
+        # Keep the importance-sampling strategy identical in both controls and states.
+        # Emission shaders and their radiometric behavior are unchanged by this setting.
+        for obj in logs+trees:
+            for slot in obj.material_slots:
+                if hasattr(slot.material.cycles,'emission_sampling'):slot.material.cycles.emission_sampling='NONE'
         def render(name,state):
             for obj in logs:obj.hide_render=obj['state_endpoint']!=state
             scene.render.filepath=str(dest/f'{name}.png');bpy.ops.render.render(write_still=True)
@@ -88,7 +93,7 @@ def main():
         for state,texture in modified:texture.image=phases[6]
         render('applied-phase-06','applied')
         for state,texture in modified:texture.image=phases[0]
-        emission=bpy.data.materials.new('Visible wood diagnostic');emission.use_nodes=True;nodes=emission.node_tree.nodes;nodes.clear();output=nodes.new('ShaderNodeOutputMaterial');shader=nodes.new('ShaderNodeEmission');shader.inputs['Color'].default_value=(1,0,1,1);emission.node_tree.links.new(shader.outputs[0],output.inputs[0])
+        emission=bpy.data.materials.new('Visible wood diagnostic');emission.use_nodes=True;emission.cycles.emission_sampling='NONE';nodes=emission.node_tree.nodes;nodes.clear();output=nodes.new('ShaderNodeOutputMaterial');shader=nodes.new('ShaderNodeEmission');shader.inputs['Color'].default_value=(1,0,1,1);emission.node_tree.links.new(shader.outputs[0],output.inputs[0])
         for obj in logs:
             if obj['state_endpoint']=='applied':
                 for slot in obj.material_slots:slot.material=emission
@@ -98,7 +103,7 @@ def main():
         assert geometry_hash(logs+trees)==before_hash
         assert sha(base/'worker.blend')==support['model_sha256'];assert sha(reference/'manifest.json')==reference_hash
         for worker,_ in selected:assert sha(worker/'model.blend')==next(r['model_sha256']for r in bindings if r['worker']==str(worker))
-        report=dict(status='private camera-ray appearance prototype; no scene, model, exporter or runtime changes',renderer_sha256=sha(dest/'renderer.py'),log_model_sha256=support['model_sha256'],trees=bindings,geometry_and_uv_hash_before_and_after=before_hash,reference_manifest_sha256=reference_hash,native_wood_rgba_sha256=sha(source/'tick-089.png'),phase_source_hashes={str(p):sha(Path(animation['frames'][p]['image']))for p in(0,6)},altered_materials=altered,camera=dict(bbox=box,ortho_scale=scene.camera.data.ortho_scale,resolution=[512,512],denoising=False,compositing=False,dither=0,filter='BOX',filter_width=.01,transparent_bounces=256,samples=24),limitations=['Only crown material camera-ray appearance inside exact native wood RGBA footprint is gated by applied state; all geometry, UVs and wood materials unchanged.','Initial state keeps original materials behavior; non-camera lighting and shadow rays keep original crown behavior.','Native canopy animation RGBA is retained above target wood in source draw order; this is not a global leaf alpha change.','This Blender shader proof is not a supported exported runtime implementation and is scoped to the native source camera.','Source geometry still has uncovered native wood pixels; this proof does not invent missing wood or complete motion.'])
+        report=dict(status='private camera-ray appearance prototype; no scene, model, exporter or runtime changes',renderer_sha256=sha(dest/'renderer.py'),log_model_sha256=support['model_sha256'],trees=bindings,geometry_and_uv_hash_before_and_after=before_hash,reference_manifest_sha256=reference_hash,native_wood_rgba_sha256=sha(source/'tick-089.png'),phase_source_hashes={str(p):sha(Path(animation['frames'][p]['image']))for p in(0,6)},altered_materials=altered,camera=dict(bbox=box,ortho_scale=scene.camera.data.ortho_scale,resolution=[512,512],denoising=False,compositing=False,dither=0,filter='BOX',filter_width=.01,transparent_bounces=256,samples=8,mesh_emission_importance_sampling='NONE consistently before controls and across states'),limitations=['Only crown material camera-ray appearance inside exact native wood RGBA footprint is gated by applied state; all geometry, UVs and wood materials unchanged.','Initial state keeps original materials behavior; non-camera lighting and shadow rays keep original crown behavior.','Native canopy animation RGBA is retained above target wood in source draw order; this is not a global leaf alpha change.','This Blender shader proof is not a supported exported runtime implementation and is scoped to the native source camera.','Source geometry still has uncovered native wood pixels; this proof does not invent missing wood or complete motion.'])
         (dest/'manifest.json').write_text(json.dumps(report,indent=2)+'\n')
     finally:release()
 
