@@ -25,12 +25,14 @@ def stump(obj, record, index, profile=None):
     """One closed, connected stump; no stacked cylinders or hidden caps."""
     points = record['points']
     native = [Vector((p['x'], -p['y']/SIN, p['z_top']/COS)) for p in points]
-    if index == 55:
+    if index in (55,59):
         # Measured cap perimeter in the native artwork (about 1–2 pixel
         # uncertainty); constant cap elevation retains the surveyed height.
         cap_pixels = [(578,654),(586,653),(594,655),(600,659),(601,664),
                       (598,669),(591,673),(582,674),(574,672),(570,668),
                       (570,662),(573,658)]
+        if index==59:
+            cap_pixels=[(910,642),(913,640),(918,640),(919,642),(922,639),(927,638),(932,640),(935,643),(935,646),(931,648),(925,649),(920,648),(917,649),(912,648),(910,645)]
         height=sum(p['z_top'] for p in points)/len(points)/COS
         native=[Vector((x,-(y+height*COS)/SIN,height)) for x,y in cap_pixels]
     center = sum(native, Vector()) / len(native)
@@ -45,7 +47,9 @@ def stump(obj, record, index, profile=None):
     vertices = []
     bottom = min(p['z_bottom'] for p in points)/COS
     lower_center=Vector((583,-695/SIN,0)) if index==55 else center.copy()
+    if index==59:lower_center=Vector((919,-674/SIN,0))
     sections=[(0,.78),(.15,.80),(.6,.90),(1,1)]
+    if index==59:sections=[(0,.50),(.6,.52),(.86,.78),(1,1)]
     if profile is not None:
         lower_center=Vector((profile[0],-profile[1]/SIN,0))
         sections=[(0,profile[2]),(.2,profile[3]),(.6,profile[4]),(1,1)]
@@ -99,11 +103,24 @@ def main():
     inv=json.loads((OUT/'baseline/masks/manifest.json').read_text())
     for row in inv['masks']:
         row['png']=str(OUT/'baseline/masks'/row['png'])
-    inventory=directory/'native-masks.json';inventory.write_text(json.dumps(inv,indent=2)+'\n')
+    assigned_mask=mask
+    if slug=='southeast-small-stump':
+        from PIL import Image,ImageDraw,ImageChops
+        row=next(r for r in inv['masks'] if r['index']==mask)
+        native=Image.open(row['png']).convert('L');domain=Image.new('L',native.size);draw=ImageDraw.Draw(domain)
+        wood=[(914,637),(925,636),(932,639),(936,644),(934,648),(928,652),(926,661),(926,671),(922,676),(915,675),(912,665),(911,652),(909,645)]
+        foreground=[(921,658),(923,653),(924,660),(928,654),(929,662),(932,672),(928,685),(913,685),(914,668),(917,660),(919,668)]
+        left,top=row['box_top_left']
+        draw.polygon([(x-left,y-top) for x,y in wood],fill=255)
+        draw.polygon([(x-left,y-top) for x,y in foreground],fill=0)
+        domain=ImageChops.multiply(domain,native);domain.save(directory/'small-stump-wood-domain.png')
+        assigned_mask=168;inv['masks'].append(dict(row,index=assigned_mask,png=str(directory/'small-stump-wood-domain.png')))
+        (directory/'small-stump-ownership.json').write_text(json.dumps(dict(status='private source domain; self-review pending',native_mask=mask,wood_outline=wood,foreground_exclusion=foreground,reason='Cut cap and visible bark retained; foreground grass crossing the lower stem is not wood texture.',domain_sha256=sha(directory/'small-stump-wood-domain.png')),indent=2)+'\n')
+    inventory=directory/(slug+'-native-masks.json');inventory.write_text(json.dumps(inv,indent=2)+'\n')
     masks=directory/(slug+'.json')
     masks.write_text(json.dumps(dict(version=1,mask_inventory=str(inventory),projections=dict(exterior=dict(
         state='Initial static source',source_sha256=sha(OUT/'baseline/covered.png'),
-        assignments=[dict(reviewed=True,asset_group=asset,mask_indices=[mask])]))),indent=2)+'\n')
+        assignments=[dict(reviewed=True,asset_group=asset,mask_indices=[assigned_mask])]))),indent=2)+'\n')
     review=directory/(slug+'-grouping-review.json')
     review.write_text(json.dumps(dict(status='reviewed',reviewer='Codex',asset_id=asset,
         catalog_sha256=sha(OUT/'catalog.json'),inventory_sha256=sha(OUT/'grouped-inventory/inventory.json'),

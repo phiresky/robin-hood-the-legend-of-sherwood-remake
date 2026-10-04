@@ -70,3 +70,12 @@ against neutral archived terrain at four frozen cameras. That terrain remains
 provisional. For the fallen branch, bank 078 intersects a naive zero-height
 placement; later private revisions preserve the native projection while raising
 only the bank-facing end. Union operations reject loss of main wood volume.
+
+The mask 68 stump has separate foreground grass in native mask 80. The latter
+accounts for only part of the stump mask's non-wood artwork; static leafy growth
+beside the bare stem still needs its own complete ownership and geometry.
+`prepare_small_stump_grass.py` keeps all grass attempts private. Detached source
+pixels, a flat continuous front and rapidly varying radial depth all failed
+oblique review. `trace_grass_leaves.py` preserves native alpha and derives rooted
+leaf-path assignments; its latest experiment improves continuity but remains
+HOLD. Do not copy these experiments as an approved foliage recipe.

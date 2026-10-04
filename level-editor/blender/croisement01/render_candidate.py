@@ -17,7 +17,7 @@ from evidence_io import sha
 
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('workspace',type=Path)
+    parser=argparse.ArgumentParser();parser.add_argument('workspace',type=Path);parser.add_argument('--native-context-node',action='append',default=[])
     args=parser.parse_args(sys.argv[sys.argv.index('--')+1:])
     workspace=args.workspace.resolve();acquire()
     model_hash=sha(workspace/'model.blend')
@@ -39,7 +39,7 @@ def main():
     for i,image in enumerate(images):sheet.paste(image,((i%4)*width,(i//4)*height))
     sheet.save(output/'sheet.png')
     objects=[o for o in bpy.data.collections[config['collection_name']].all_objects
-             if o.type=='MESH' and o.get('asset_group')==config['asset_id']]
+             if o.type=='MESH' and (o.get('asset_group')==config['asset_id'] or o.get('source_node') in args.native_context_node)]
     native=bpy.data.scenes.new('Native source appearance audit')
     points=[]
     for obj in objects:
@@ -75,7 +75,7 @@ def main():
     assert sha(workspace/'model.blend')==model_hash
     (output/'evidence.json').write_text(json.dumps(dict(model_sha256=model_hash,
         actual_sheet_sha256=sha(output/'sheet.png'),native_comparison_sha256=sha(comparison/'comparison.png'),
-        source_crop=box,status='rendered; visual judgment and independent coverage audit pending'),indent=2)+'\n')
+        source_crop=box,native_context_nodes=args.native_context_node,status='rendered; visual judgment and independent coverage audit pending'),indent=2)+'\n')
     print(output/'sheet.png')
 
 
