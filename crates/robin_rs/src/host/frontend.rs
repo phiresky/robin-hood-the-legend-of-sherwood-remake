@@ -710,6 +710,11 @@ impl HostFrontend {
         // Accumulate UI-request queues — the host drives the widgets
         // asynchronously so signals outlive a single tick.
         if local_seat != engine_player_command::PlayerId::HOST {
+            // Both live frames and standalone effects pass this boundary.
+            // Clients open shared stories only from host announcements; local
+            // simulation output would queue a second copy of the same story.
+            fx.modals
+                .retain(|kind| !robin_engine::multiplayer::is_shared_story_modal(kind));
             fx.trade_receipts.clear();
         }
         // Per-frame mark requests from sim-side Mark() calls (currently

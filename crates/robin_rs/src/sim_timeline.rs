@@ -426,6 +426,64 @@ mod tests {
     }
 
     #[test]
+    fn live_story_batches_do_not_duplicate_client_host_announcements() {
+        use robin_engine::engine::{HostEffects, SimulationFrameOutput};
+        use robin_engine::player_command::{ModalKind, PlayerId};
+
+        for seat in [PlayerId::HOST, PlayerId(1)] {
+            let mut host = crate::host::Host::scratch(800.0, 600.0);
+            let application_context = host.application_context().clone();
+            // A remote opening can already be queued when the client delivers
+            // local script outputs. Only that authoritative copy should survive.
+            let announced = ModalKind::PopupText { text_id: 2 };
+            if seat != PlayerId::HOST {
+                host.effects.modals.push(announced.clone());
+            }
+            let mut events = HostEffects::default();
+            events.extend_popup_texts([0, 1, 2]);
+            events.set_draw_hidden = Some(true);
+            let mut post_boundary_events = HostEffects::default();
+            post_boundary_events.extend_dialogues([7]);
+            let mut post_initialize_events = HostEffects::default();
+            post_initialize_events.extend_popup_texts([3]);
+            apply_frame_effects(
+                &mut host.frontend,
+                &mut host.audio,
+                &mut host.effects,
+                &application_context,
+                seat,
+                &mut DevState::default(),
+                SimulationFrameOutput {
+                    frame_before: 0,
+                    frame_after: 1,
+                    hourglass_ran: true,
+                    events,
+                    post_boundary_events,
+                    post_initialize_events: Some(post_initialize_events),
+                    external_action_results: Vec::new(),
+                    state_hash: (),
+                    spellforge_abort: None,
+                },
+            );
+            assert!(host.frontend.input.feedback.draw_hidden);
+            if seat == PlayerId::HOST {
+                assert_eq!(
+                    host.effects.modals,
+                    [
+                        ModalKind::PopupText { text_id: 0 },
+                        ModalKind::PopupText { text_id: 1 },
+                        announced,
+                        ModalKind::Dialog { dialog_id: 7 },
+                        ModalKind::PopupText { text_id: 3 },
+                    ]
+                );
+            } else {
+                assert_eq!(host.effects.modals, [announced]);
+            }
+        }
+    }
+
+    #[test]
     fn empty_post_initialize_batch_advances_lifetime_only_when_present() {
         for post_initialized in [false, true] {
             let mut host = crate::host::Host::scratch(800.0, 600.0);

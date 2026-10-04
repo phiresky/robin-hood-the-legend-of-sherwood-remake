@@ -328,7 +328,7 @@ mod host_resource_tests {
     use robin_engine::sprite_script::SpriteScript;
 
     #[test]
-    fn admitted_effects_keep_modal_and_render_work_while_filtering_receipts_by_seat() {
+    fn admitted_effects_filter_story_and_receipts_by_seat_but_keep_render_work() {
         use robin_engine::engine::{HostEffects, HostModalPhase};
         use robin_engine::player_command::{ModalKind, PlayerId};
         use robin_engine::trading::{TradeQuantity, TradeReceipt, TradeRejectReason};
@@ -393,11 +393,19 @@ mod host_resource_tests {
             assert!(!effects.skip_render);
             assert_eq!(
                 effects.take_modals(HostModalPhase::Dialogue),
-                vec![ModalKind::Dialog { dialog_id: 7 }]
+                if seat == PlayerId::HOST {
+                    vec![ModalKind::Dialog { dialog_id: 7 }]
+                } else {
+                    vec![]
+                }
             );
             assert_eq!(
                 effects.take_modals(HostModalPhase::Popup),
-                vec![ModalKind::PopupText { text_id: 11 }]
+                if seat == PlayerId::HOST {
+                    vec![ModalKind::PopupText { text_id: 11 }]
+                } else {
+                    vec![]
+                }
             );
             assert_eq!(
                 effects.background_blits.len(),
