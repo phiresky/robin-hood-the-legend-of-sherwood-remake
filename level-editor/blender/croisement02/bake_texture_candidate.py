@@ -67,10 +67,11 @@ def snapshot(scene, receiver_names):
                                'source_ownership_channel': 'vertex-color-r'}.items():
                 require(material.get(key) == value, 'Invalid foliage contract: ' + material.name)
             faces = [face for face in mesh.polygons if face.material_index == slot]
-            require(bool(faces), 'Unused physical foliage slot')
             flags = [[ownership.data[i].color[0] for i in face.loop_indices] for face in faces]
             require(all(set(values) in ({0.}, {1.}) for values in flags), 'Mixed ownership within a foliage face')
-            known = {values[0] for values in flags}
+            # Retained unused physical slots have no editable faces. Freeze their
+            # complete atlas as well, without deleting approved material metadata.
+            known = {values[0] for values in flags} if faces else {1.}
             require(len(known) == 1, 'Atlas mixes known and unknown faces')
             textures = [n for n in material.node_tree.nodes if n.type == 'TEX_IMAGE' and n.image]
             require(len(textures) == 1, 'Expected one physical foliage atlas')
