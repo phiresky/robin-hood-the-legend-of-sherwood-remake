@@ -41,6 +41,15 @@ def main():
     if mixed.exists():
         split=json.loads(mixed.read_text())
         report['mixed_source_reservations']=dict(evidence=str(mixed),evidence_sha256=sha(mixed),records=[dict(native_mask=r['native'],unassigned_uncertain_pixels=r['uncertain_pixels'],ground_pixels_not_foliage=r['ground_pixels'],existing_mixed_owner_pixels=r['prior_mixed_pixels']) for r in split['records']],meaning='These source-classification reservations remain unresolved even after a leaf complement receives geometry; catalog coverage alone does not settle them.')
+    resolved=OUT/'understory-candidates/mixed75-91-source-v2/final-split-status.json'
+    if resolved.exists():
+        status=json.loads(resolved.read_text())
+        for key in ('source_review','receiver_audit'):
+            if sha(Path(status[key]))!=status[key+'_sha256']:raise ValueError('Mixed source classification proof changed')
+        report['mixed_source_history']=report.pop('mixed_source_reservations',None)
+        report['mixed_source_reservations']=dict(evidence=str(resolved),evidence_sha256=sha(resolved),
+            inferred_source_roles_accepted=status['inferred_source_roles_accepted'],geometry_completion=status['geometry_completion'],
+            receiver_holds=status['receiver_holds'],meaning='Source boundaries now have explicit reviewed inferred roles. Receiver geometry and ground restoration remain held until their exact coverage proofs pass; leaf catalog registration alone cannot complete these obligations.')
     target=OUT/'understory-review/remaining-foliage-plan.json';target.write_text(json.dumps(report,indent=2)+'\n')
     print(json.dumps({k:v for k,v in report.items() if k not in ('batches','restrictions')},indent=2))
 
