@@ -82,6 +82,7 @@ def expose(worker):
         'inspection/baseline-comparison/comparison-0-3.png', 'inspection/baseline-comparison/comparison-4-7.png',
         'modified/views.json', 'modified/solid.png', 'modified/textured.png']]
     paths.extend(sorted((worker / 'recipe').glob('*.py')))
+    paths.extend(sorted((worker / 'inspection/source-packet').glob('*')))
     for name in ['inspection/root-preservation.json', 'inspection/root-source-coverage/report.json']:
         if (worker/name).exists():paths.append(worker/name)
     paths.extend([worker/'baseline.blend',worker/'source-masks.json'])

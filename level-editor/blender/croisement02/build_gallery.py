@@ -39,7 +39,7 @@ def main():
         if set(scope['part_ids'])!={source_for_part(p) for p in group['parts']}:
             missing.append(dict(id=group['id'],name=group['name'],status='ownership revision pending',reason='Previous worker owns a different source-part set. A fresh workspace is required; the old geometry packet is withheld.'));continue
         report=json.loads(report_path.read_text())
-        if tree and report['crown'].get('geometry_version') not in ('native-leaf-clusters-v5','native-leaf-clusters-v6','microfragment-curved-envelope-irregular-volume-v2','microfragment-volume-paired-front-v3'):
+        if tree and report['crown'].get('geometry_version') not in ('native-leaf-clusters-v5','native-leaf-clusters-v6','microfragment-curved-envelope-irregular-volume-v2','microfragment-volume-paired-front-v3','branch-clump-fragments-v1'):
             missing.append(dict(id=group['id'],name=group['name'],status='in progress',reason='Replacing the rejected large-shell prototype with small, full-depth leaf clusters.'));continue
         if shrub and report['crown'].get('geometry_version')!='native-shrub-leaf-volume-v2':
             missing.append(dict(id=group['id'],name=group['name'],status='in progress',reason='Current round-volume shrub geometry is not prepared.'));continue
