@@ -10,8 +10,8 @@ from native_log_foreground_reference import sha
 
 
 def main():
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--output',type=str,default='log-motion-correspondence-v1');parser.add_argument('--radius',type=int,default=4);parser.add_argument('--search',type=int,default=20);parser.add_argument('--features',type=int,default=100);args=parser.parse_args();assert 2<=args.radius<=8 and 1<=args.search<=60 and 1<=args.features<=1000
-    source=OUT/'state-target-evidence/log-trap/full-motion';dest=OUT/args.output;dest.mkdir(exist_ok=False)
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--assembly',choices=['log-trap','rock-trap'],default='log-trap');parser.add_argument('--output',type=str,default='log-motion-correspondence-v1');parser.add_argument('--radius',type=int,default=4);parser.add_argument('--search',type=int,default=20);parser.add_argument('--features',type=int,default=100);args=parser.parse_args();assert 2<=args.radius<=8 and 1<=args.search<=60 and 1<=args.features<=1000
+    source=OUT/'state-target-evidence'/args.assembly/'full-motion';dest=OUT/args.output;dest.mkdir(exist_ok=False)
     manifest=json.loads((source/'manifest.json').read_text());records=manifest['records'];images=[np.array(Image.open(source/r['image']).convert('RGBA'))for r in records]
     grays=[p[:,:,:3].astype(float)@np.array([.299,.587,.114])/255 for p in images];alphas=[p[:,:,3]>0 for p in images];radius=args.radius;patch=radius*2+1;search=args.search
     def features(gray,alpha):
@@ -27,7 +27,7 @@ def main():
         yy,xx=np.unravel_index(np.argmax(scores),scores.shape);best=float(scores[yy,xx]);others=scores.copy();others[max(0,yy-3):yy+4,max(0,xx-3):xx+4]=-1;gap=best-float(others.max())
         if best<.85 or gap<.035:return None
         return left+int(xx),top+int(yy),best,gap
-    pairs=[];sheet=Image.new('RGB',(256*5,265*6),'#222')
+    pairs=[];height,width=images[0].shape[:2];sheet=Image.new('RGB',(width*5,(height+22)*int(np.ceil((len(records)-1)/5))),'#222')
     for index in range(len(records)-1):
         a,b=grays[index:index+2];aa,bb=alphas[index:index+2];points=features(a,aa);matches=[]
         preview=Image.fromarray(images[index+1]);bg=Image.new('RGBA',preview.size,(30,30,30,255));bg.alpha_composite(preview);draw=ImageDraw.Draw(bg)
@@ -39,9 +39,9 @@ def main():
             matches.append(dict(source=[x,y],target=[nx,ny],ncc=score,uniqueness_gap=gap,roundtrip_error=float(np.hypot(back[0]-x,back[1]-y))))
             draw.line((x,y,nx,ny),fill=(255,40,240),width=1);draw.ellipse((nx-1,ny-1,nx+1,ny+1),fill=(40,255,100))
         entry=dict(first_tick=records[index]['first_tick'],next_tick=records[index+1]['first_tick'],features=len(points),accepted=len(matches),matches=matches);pairs.append(entry)
-        bg.save(dest/f'{index:02d}.png');sheet.paste(bg.convert('RGB'),((index%5)*256,(index//5)*265+22));ImageDraw.Draw(sheet).text(((index%5)*256+4,(index//5)*265+4),f"{entry['first_tick']}→{entry['next_tick']}: {len(matches)}/{len(points)}",fill='white')
+        bg.save(dest/f'{index:02d}.png');sheet.paste(bg.convert('RGB'),((index%5)*width,(index//5)*(height+22)+22));ImageDraw.Draw(sheet).text(((index%5)*width+4,(index//5)*(height+22)+4),f"{entry['first_tick']}→{entry['next_tick']}: {len(matches)}/{len(points)}",fill='white')
     sheet.save(dest/'correspondence-sheet.png')
-    result=dict(status='source correspondence diagnostic; not rigid-log identity or3Dmotion',source_manifest_sha256=sha(source/'manifest.json'),source_frames=[dict(image=r['image'],sha256=sha(source/r['image']))for r in records],parameters=dict(patch=patch,search=search,features=args.features,ncc_min=.85,uniqueness_gap_min=.035,roundtrip_max=1),pairs=pairs,limitations=['Repeated bark can still produce ambiguous matches; source evidence needs visual and rigid-component validation.','Occlusion holes are native composition, not physical fractures.','No new log count, depth, texture, geometry or permanent state changes inferred.'])
+    result=dict(status='source correspondence diagnostic; not rigid-body identity or3Dmotion',source_manifest_sha256=sha(source/'manifest.json'),source_frames=[dict(image=r['image'],sha256=sha(source/r['image']))for r in records],parameters=dict(patch=patch,search=search,features=args.features,ncc_min=.85,uniqueness_gap_min=.035,roundtrip_max=1),pairs=pairs,limitations=['Repeated texture can still produce ambiguous matches; source evidence needs visual and rigid-component validation.','Occlusion holes are native composition, not physical fractures.','No new body count, depth, texture, geometry or permanent state changes inferred.'])
     (dest/'manifest.json').write_text(json.dumps(result,indent=2)+'\n');print([(p['first_tick'],p['accepted'],p['features'])for p in pairs])
 
 if __name__=='__main__':main()
