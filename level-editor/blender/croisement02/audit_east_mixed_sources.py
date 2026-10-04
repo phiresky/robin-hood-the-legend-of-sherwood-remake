@@ -14,7 +14,7 @@ def main():
     def mask(index):
         layer=Image.new('L',source.size);layer.paste(Image.open(OUT/f'baseline/masks/{index:06}.png').convert('L'),tuple(native[index]['box_top_left']));return np.asarray(layer)>0
     records=[]
-    for index,domain,priors in [(75,487,[38]),(91,501,[128,43,45,46])]:
+    for index,domain,priors in [(75,487,[131,35,38]),(91,501,[128,43,45,46])]:
         original=mask(index);remaining=original.copy();prior=np.zeros_like(original);owners=[]
         for other in priors:
             pixels=remaining&mask(other);remaining &= ~pixels;prior |= pixels;owners.append(dict(native=other,pixels=int(pixels.sum()),sha256=sha(OUT/f'baseline/masks/{other:06}.png')))
@@ -28,7 +28,15 @@ def main():
             trace=Image.new('L',source.size);ImageDraw.Draw(trace).polygon(polygon,fill=255)
             inner=np.asarray(trace.filter(ImageFilter.MinFilter(5)))>0;outer=np.asarray(trace.filter(ImageFilter.MaxFilter(5)))>0
             ground=remaining&inner;uncertain=remaining&outer&~inner;remaining &= ~outer
+        if index==75:
+            # Isolated lowest tan flecks lack evidence of leaf ownership.
+            lower=remaining.copy();lower[:720,:]=False;uncertain |= lower;remaining &= ~lower
         wood_boundary=mask(38) if index==75 else mask(43)|mask(45)|mask(46)
+        if index==91:
+            # A dark lower-left strip follows a branch-shaped silhouette;
+            # imagery does not justify confidently assigning it as leaves.
+            reserve=Image.new('L',source.size);ImageDraw.Draw(reserve).polygon([(1313,1004),(1336,1001),(1350,1014),(1350,1057),(1336,1067),(1317,1047)],fill=255)
+            ambiguous=remaining&(np.asarray(reserve)>0);uncertain |= ambiguous;remaining &= ~ambiguous
         near=np.asarray(Image.fromarray(wood_boundary.astype('uint8')*255).filter(ImageFilter.MaxFilter(3)))>0
         uncertain |= remaining&near;remaining &= ~near
         for label,array in [('foliage',remaining),('ground',ground),('uncertain',uncertain),('prior-mixed-owners',prior)]:
