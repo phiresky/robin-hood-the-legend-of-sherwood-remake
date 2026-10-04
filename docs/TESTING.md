@@ -298,9 +298,12 @@ movement, not rendered frame alignment, other profiles or actor contention.
 `ROBIN_LIFT_AUDIT_MAP=derby.level.json` restricts either audit to one map and records
 that filter in its report. `ROBIN_LIFT_TRACE=1` adds climb and receiver diagnostics.
 The ignored `placed_climbs_support_complete_actor_routes` test needs only
-`ROBIN_CLIMB_RHS`: it walks 24 routes through a constructed ladder, ordinary wall
-and crenellated wall, each translated/rotated into four orientations and traversed
-both ways. This catches clearance failures independently of imported layouts.
+`ROBIN_CLIMB_RHS`: it checks a constructed ladder, ordinary wall and crenellated
+wall at eleven rotations, traversed both ways (66 routes).
+The regular `arbitrarily_rotated_stairs_support_complete_actor_routes` test checks
+14 stair routes at seven non-quarter-turn angles. These catch clearance and receiving-plane
+failures independently of imported layouts, including wall-top direction repair
+while preserving the animation's fixed radius.
 
 ## GPU execution
 

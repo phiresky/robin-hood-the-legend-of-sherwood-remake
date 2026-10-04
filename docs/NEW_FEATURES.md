@@ -10,7 +10,9 @@
   retain their full movement contour independently of their receiving footprint.
   Clearance repair also covers ladder approaches and wall bottoms, keeping the
   actor's collision box inside its movement area after rotation. Wall tops retain
-  their animation-defined offset and warn if that position lacks clearance.
+  their animation-defined radius. If rounding leaves that position blocked,
+  compilation finds the nearest clear direction on the same radius without
+  crossing a wall or obstacle. Unrepairable approaches retain an explicit warning.
 
 - **Map interactions without mission scripts.** Gate routes, jump selection,
   lockpicking validation, door hover/overlays, patch clicks, building AI door lists,

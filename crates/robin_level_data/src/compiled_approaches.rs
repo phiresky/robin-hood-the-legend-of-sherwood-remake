@@ -153,6 +153,51 @@ fn approach(area: &RawMotionArea, point: Point, middle: Point) -> Option<Point> 
     None
 }
 
+fn wall_approach(area: &RawMotionArea, point: Point, middle: Point, radius: f32) -> Option<Point> {
+    let adapt = |point: Point| {
+        crate::level_data::offset_door_approach(
+            [f32::from(point.0), f32::from(point.1)],
+            [f32::from(middle.0), f32::from(middle.1)],
+            radius,
+        )
+        .map(f64::from)
+    };
+    let source = adapt(point);
+    if fits(area, source) {
+        return Some(point);
+    }
+    if !contains(&area.polygon.points, source) {
+        return None;
+    }
+    let mut best: Option<(f64, Point)> = None;
+    for x in -64i16..=64 {
+        for y in -64i16..=64 {
+            let (Some(px), Some(py)) = (point.0.checked_add(x), point.1.checked_add(y)) else {
+                continue;
+            };
+            let candidate = (px, py);
+            if candidate == middle {
+                continue;
+            }
+            let adapted = adapt(candidate);
+            let distance = (adapted[0] - source[0]).powi(2) + (adapted[1] - source[1]).powi(2);
+            if distance > 64. * 64.
+                || best.is_some_and(|(previous, _)| previous <= distance)
+                || !fits(area, adapted)
+                || crosses_boundary(&area.polygon.points, source, adapted)
+                || area.obstacles.iter().any(|obstacle| {
+                    contains(&obstacle.polygon.points, source)
+                        || crosses_boundary(&obstacle.polygon.points, source, adapted)
+                })
+            {
+                continue;
+            }
+            best = Some((distance, candidate));
+        }
+    }
+    best.map(|(_, point)| point)
+}
+
 /// Passage animations can reach points too close to a boundary for ordinary
 /// walking to resume. Give walking lifts a stock 6-by-3 actor footprint on both
 /// sides, retaining the authored midpoint and every permission/state link.
@@ -183,18 +228,20 @@ pub(crate) fn derive(geometry: &mut CompiledAssetGeometry) {
                     continue; // Topology validation reports missing areas separately.
                 };
                 if side == "inside" && lift.lift_type == 3 && matches!(door.door_type, 4 | 6) {
-                    // Wall-top approaches are fixed by the climb animation.
-                    // Extending the authored ray would be undone at runtime.
-                    let adapted = crate::level_data::offset_door_approach(
-                        [f32::from(point.0), f32::from(point.1)],
-                        [f32::from(door.point_mid.0), f32::from(door.point_mid.1)],
+                    // Keep the animation's fixed radius, adjusting only its
+                    // direction when rounded placement leaves no actor clearance.
+                    if let Some(adjusted) = wall_approach(
+                        area,
+                        *point,
+                        door.point_mid,
                         if door.door_type == 6 { 65. } else { 60. },
-                    );
-                    if !fits(area, adapted.map(f64::from)) {
+                    ) {
+                        *point = adjusted;
+                    } else {
                         tracing::warn!(
                             lift_index,
                             door_index,
-                            ?adapted,
+                            ?point,
                             "compiled wall has no actor-sized clearance at its animation approach"
                         );
                     }
@@ -219,6 +266,33 @@ pub(crate) fn derive(geometry: &mut CompiledAssetGeometry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rotated_wall_top_repairs_direction_without_changing_animation_radius() {
+        let area: RawMotionArea = serde_json::from_value(serde_json::json!({
+            "is_lift": true, "state_id": 0, "flags": 0,
+            "polygon": {"points": [[893,793],[978,736],[907,807],[822,864]]},
+            "skeleton_segments": [], "obstacles": []
+        }))
+        .unwrap();
+        for radius in [60., 65.] {
+            let point = (934, 777);
+            let middle = (942, 772);
+            let adjusted =
+                wall_approach(&area, point, middle, radius).expect("nearby wall clearance");
+            let adapted = crate::level_data::offset_door_approach(
+                [f32::from(adjusted.0), f32::from(adjusted.1)],
+                [942., 772.],
+                radius,
+            );
+            assert!(fits(&area, adapted.map(f64::from)));
+            assert!(((adapted[0] - 942.).hypot(adapted[1] - 772.) - radius).abs() < 0.001);
+            assert_eq!(
+                wall_approach(&area, adjusted, middle, radius),
+                Some(adjusted)
+            );
+        }
+    }
 
     #[test]
     fn climbing_approaches_leave_room_for_the_actor() {

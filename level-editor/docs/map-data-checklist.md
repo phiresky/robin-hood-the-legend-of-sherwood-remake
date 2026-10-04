@@ -42,7 +42,7 @@ Fresh published-asset diagnostics in `work/map-compile/stair-routing-HtMZ9h`
 pass all 288 directed stair walks across ten maps and 6,234 sampled actor
 crossings (6,178 between receiving planes and 56 between planes and ground),
 using the corrected 6×3 footprint. No stair routes were skipped for permissions.
-The current changes pass 4,296 engine unit tests, 71 level-data tests, 61 compiler
+The current changes pass 4,297 engine unit tests, 72 level-data tests, 61 compiler
 integration tests and 393 editor/shared compiler tests (one skipped).
 Earlier validation passed 4,293 engine unit tests, 68 level-data tests, 61 compiler
 integration tests and 6,222 sampled actor crossings with a 6×4 half-diagonal.
@@ -71,11 +71,17 @@ character profile, contention between actors or mission behavior.
 
 **Placed climb clearance:** ladder approaches and wall-bottom approaches now
 receive the same collision-box clearance repair as stairs. Wall-top approaches
-retain their animation-defined radius; inadequate clearance there warns instead
-of changing an offset that runtime loading would overwrite. A constructed
-ladder, ordinary wall and crenellated wall pass 24 full actor routes: four
-translated/rotated orientations, both directions, using complete Robin animation
-rows. This verifies those placements, not every possible rotation or asset shape.
+retain their animation-defined radius; when rounding blocks that point, the
+loader searches for the nearest clear direction on that radius, without crossing
+the movement boundary or an obstacle. Unrepairable approaches still warn.
+A constructed ladder, ordinary wall and crenellated wall pass 66 full actor
+routes: eleven translated/rotated orientations, both directions, using complete
+Robin animation rows. A 45° wall regression previously displaced the actor past
+its receiving boundary and left its height attached to the wrong surface.
+Fourteen stair routes also cover non-quarter-turn placements.
+These checks do not certify every rotation or asset shape: a full one-degree
+sweep exposed a separate rejection when rounded outside door endpoints share
+the same map Y. Direction-independent lift endpoint selection remains needed.
 
 **Ordinary route consistency:** fresh best-effort exports of all ten saved maps
 with the corrected 6×3 half-diagonal pass 1,316 sampled routes in 93 seconds in

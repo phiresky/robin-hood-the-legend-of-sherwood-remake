@@ -88,6 +88,25 @@ fn walk_exported_stairs(
     walk_exported_lift(engine, assets, entrance, exit, None)
 }
 
+#[test]
+fn arbitrarily_rotated_stairs_support_complete_actor_routes() {
+    let bytes = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/asset-lift.level.json"
+    ));
+    for degrees in [17., 22.5, 45., 73., 137., 225., 319.] {
+        let placed = super::compiled_lifts::angled_lift_fixture(bytes, degrees, 1);
+        let (engine, assets) = compiled_walkway(&placed);
+        for (entrance, exit) in [(0, 1), (1, 0)] {
+            assert_eq!(
+                walk_exported_stairs(engine.clone(), assets.clone(), entrance, exit),
+                Ok(true),
+                "degrees={degrees}, entrance={entrance}"
+            );
+        }
+    }
+}
+
 fn walk_exported_lift(
     mut engine: EngineInner,
     mut assets: LevelAssets,
@@ -291,24 +310,25 @@ fn placed_climbs_support_complete_actor_routes() {
         "/tests/fixtures/asset-lift.level.json"
     ));
     for (lift_type, high_type) in [(2, 4), (3, 4), (3, 6)] {
-        for turn in 0..4 {
+        for degrees in [0., 17., 22.5, 45., 73., 90., 137., 180., 225., 270., 319.] {
             let mut document: serde_json::Value = serde_json::from_slice(
-                &super::compiled_lifts::placed_stair_fixture(bytes, turn, lift_type),
+                &super::compiled_lifts::angled_lift_fixture(bytes, degrees, lift_type),
             )
             .unwrap();
             document["asset_geometry"]["lifts"][0]["doors"][1]["door_type"] = high_type.into();
             let (engine, assets) = compiled_walkway(&serde_json::to_vec(&document).unwrap());
             for (entrance, exit) in [(0, 1), (1, 0)] {
+                let result = walk_exported_lift(
+                    engine.clone(),
+                    assets.clone(),
+                    entrance,
+                    exit,
+                    Some(&sprite),
+                );
                 assert_eq!(
-                    walk_exported_lift(
-                        engine.clone(),
-                        assets.clone(),
-                        entrance,
-                        exit,
-                        Some(&sprite)
-                    ),
+                    result,
                     Ok(true),
-                    "lift={lift_type}, high={high_type}, turn={turn}, entrance={entrance}"
+                    "lift={lift_type}, high={high_type}, degrees={degrees}, entrance={entrance}"
                 );
             }
         }
@@ -317,9 +337,18 @@ fn placed_climbs_support_complete_actor_routes() {
 
 fn complete_climb_sprite() -> crate::sprite::Sprite {
     if std::env::var_os("ROBIN_LIFT_TRACE").is_some() {
-        let _ = tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::DEBUG)
-            .with_test_writer()
+        use tracing_subscriber::prelude::*;
+        let _ = tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_test_writer())
+            .with(
+                tracing_subscriber::filter::Targets::new()
+                    .with_default(tracing::Level::DEBUG)
+                    .with_target("robin_engine::elevation_crossing", tracing::Level::TRACE)
+                    .with_target(
+                        "robin_engine::engine::movement::elevation",
+                        tracing::Level::TRACE,
+                    ),
+            )
             .try_init();
     }
     use crate::sprite_script::{FrameKind, MissionResourceEnvironment, SpriteScriptor};

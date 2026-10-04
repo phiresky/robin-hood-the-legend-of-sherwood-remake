@@ -15,12 +15,31 @@ fn placed_point(point: MapPoint, turn: u8) -> MapPoint {
 }
 
 pub(super) fn placed_stair_fixture(bytes: &[u8], turn: u8, lift_type: u8) -> Vec<u8> {
+    transformed_lift_fixture(bytes, lift_type, i16::from(turn) * 4, |point| {
+        placed_point(point, turn)
+    })
+}
+
+pub(super) fn angled_lift_fixture(bytes: &[u8], degrees: f32, lift_type: u8) -> Vec<u8> {
+    let (sin, cos) = degrees.to_radians().sin_cos();
+    transformed_lift_fixture(bytes, lift_type, (degrees / 22.5).round() as i16, |point| {
+        let (x, y) = (point.x - 400., point.y - 300.);
+        MapPoint::new(900. + x * cos - y * sin, 800. + x * sin + y * cos)
+    })
+}
+
+fn transformed_lift_fixture(
+    bytes: &[u8],
+    lift_type: u8,
+    direction_delta: i16,
+    place: impl Fn(MapPoint) -> MapPoint,
+) -> Vec<u8> {
     let mut document: serde_json::Value = serde_json::from_slice(bytes).unwrap();
     let mut geometry: crate::level_data::CompiledAssetGeometry =
         serde_json::from_value(document["asset_geometry"].clone()).unwrap();
     let transform = |point: &mut (i16, i16)| {
-        let moved = placed_point(MapPoint::new(f32::from(point.0), f32::from(point.1)), turn);
-        *point = (moved.x as i16, moved.y as i16);
+        let moved = place(MapPoint::new(f32::from(point.0), f32::from(point.1)));
+        *point = (moved.x.round() as i16, moved.y.round() as i16);
     };
     for area in geometry.motion_data.layers.iter_mut().flatten() {
         for point in &mut area.polygon.points {
@@ -34,14 +53,14 @@ pub(super) fn placed_stair_fixture(bytes: &[u8], turn: u8, lift_type: u8) -> Vec
     }
     for obstacle in &mut geometry.sight_obstacles {
         for point in &mut obstacle.points {
-            let moved = placed_point(MapPoint::new(point.x, point.y - point.z_top), turn);
+            let moved = place(MapPoint::new(point.x, point.y - point.z_top));
             point.x = moved.x;
             point.y = moved.y + point.z_top;
         }
     }
     for lift in &mut geometry.lifts {
         lift.lift_type = lift_type;
-        lift.direction = (lift.direction + i16::from(turn) * 4) % 16;
+        lift.direction = (lift.direction + direction_delta).rem_euclid(16);
         for door in &mut lift.doors {
             transform(&mut door.point_in);
             transform(&mut door.point_out);
