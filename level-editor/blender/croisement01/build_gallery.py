@@ -10,18 +10,19 @@ def main():
     inventory=json.loads((OUT/'source-survey/inventory.json').read_text())
     groups=json.loads((OUT/'catalog.json').read_text())['groups']
     fragments=[]
-    for group in groups:
-        worker=OUT/'props-round-1/assets'/group['id']
-        report=worker/'inspection/refinement.json'
-        if not report.exists():continue
+    names={g['id']:g['name'] for g in groups}
+    for report in sorted(OUT.glob('*/assets/*/inspection/self-review.json')):
+        worker=report.parent.parent
         record=json.loads(report.read_text())
+        group={'id':worker.name,'name':names.get(worker.name,worker.name)}
+        revision=worker.parent.parent.name
         images=[]
         for label,relative in [('Solid','modified/solid.png'),('Source projection','modified/textured.png'),
                                ('Saved materials','inspection/actual-materials/sheet.png'),
                                ('Native comparison','inspection/native-source/comparison.png')]:
             path=worker/relative
             if path.exists():images.append(f'<figure><figcaption>{label}</figcaption><a href="../{path.relative_to(OUT)}"><img src="../{path.relative_to(OUT)}"></a></figure>')
-        fragments.append(f'<article id="{group["id"]}"><h2>{html.escape(group["name"])}</h2><p>{html.escape(record["status"])}</p>'+''.join(images)+'<ul>'+''.join('<li>'+html.escape(t)+'</li>' for t in record.get('limitations',[]))+'</ul></article>')
+        fragments.append(f'<article id="{group["id"]}"><h2>{html.escape(group["name"])} — {html.escape(revision)}</h2><p>{html.escape(record["status"])}</p>'+''.join(images)+'<ul>'+''.join('<li>'+html.escape(t)+'</li>' for t in record.get('findings',record.get('limitations',[record.get('finding','')])))+'</ul></article>')
     sheets=sorted((OUT/'source-survey').glob('masks-*.jpg'))
     survey=''.join(f'<a href="../source-survey/{p.name}">{p.stem}</a> ' for p in sheets)
     body=''.join(fragments) or '<p>Geometry workers are being prepared. No candidate has passed self-review yet.</p>'
