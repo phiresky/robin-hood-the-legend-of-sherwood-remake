@@ -252,7 +252,11 @@ impl<'a> ModalNet<'a> {
                 ) if instance == self.instance
                     && kind == self.kind
                     && decision_frame >= instance.opened_frame
-                    && decision_frame <= self.net.current_frame() =>
+                    // Shared stories freeze the local timeline. The host may
+                    // have published its post-tick cursor after opening while a
+                    // slower client opened during a clock hold one frame behind.
+                    // Waiting for that frozen cursor would deadlock dismissal.
+                    && (self.needs_consensus() || decision_frame <= self.net.current_frame()) =>
                 {
                     if self.is_host {
                         panic!(
@@ -607,6 +611,78 @@ mod tests {
                 .is_empty(),
             "old progress must not reopen a dismissed story"
         );
+    }
+
+    #[test]
+    fn paused_client_accepts_close_then_opens_next_scroll() {
+        let (host, host_in, host_out) = fixture();
+        let (client, client_in, client_out) = fixture();
+        host.set_modal_player_count(2);
+        client.set_modal_player_count(2);
+        let first = ModalNet::new(&host, kind(), true);
+        let NetOutbound::ModalProgress(opening) = host_out.try_recv().unwrap() else {
+            panic!("expected first opening");
+        };
+        client
+            .defer_modal_event(NetEvent::ModalProgress(opening))
+            .unwrap();
+        assert_eq!(client.take_ready_story_announcements(0).unwrap(), [kind()]);
+        let client_first = ModalNet::new(&client, kind(), false);
+        let mut gate = ModalDismissalGate::default();
+        // The host publishes the post-tick cursor on its next frame. A slower
+        // client may already have opened the announced scroll while held at 0.
+        host.publish_frame(1);
+        assert_eq!(
+            gate.request(DialogResult::Completed, Some(&client_first)),
+            None
+        );
+        let NetOutbound::ModalProposal(proposal) = client_out.try_recv().unwrap() else {
+            panic!("expected client acknowledgement");
+        };
+        host_in
+            .send(NetEvent::ModalProposal {
+                from: PlayerId(1),
+                proposal,
+            })
+            .unwrap();
+        assert_eq!(first.poll_remote_dismissal(), None);
+        assert_eq!(
+            first.publish(DialogResult::Completed).unwrap(),
+            ModalPublication::HostDecisionQueued
+        );
+        let next_kind = ModalKind::PopupText { text_id: 8 };
+        let next = ModalNet::new(&host, next_kind.clone(), true);
+        // Deliver both the old close and the next opening after a network delay.
+        for event in host_out.try_iter() {
+            match event {
+                NetOutbound::ModalDecision(decision) => {
+                    assert_eq!(decision.decision_frame, 1);
+                    client_in.send(NetEvent::ModalDecision(decision)).unwrap();
+                }
+                NetOutbound::ModalProgress(progress) => {
+                    client_in.send(NetEvent::ModalProgress(progress)).unwrap();
+                }
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+        assert_eq!(client.current_frame(), 0);
+        assert_eq!(
+            gate.poll(Some(&client_first)),
+            Some(DialogResult::Completed),
+            "closing a paused story must not require advancing its frozen clock"
+        );
+        // Normal network ingress routes the remaining announcement after close.
+        while let Ok(event) = client.try_recv_event() {
+            client.defer_modal_event(event).unwrap();
+        }
+        assert!(client.take_ready_story_announcements(0).unwrap().is_empty());
+        client.publish_frame(1);
+        assert_eq!(
+            client.take_ready_story_announcements(1).unwrap(),
+            [next_kind.clone()]
+        );
+        let client_next = ModalNet::new(&client, next_kind, false);
+        assert_eq!(client_next.instance(), next.instance());
     }
 
     #[test]
