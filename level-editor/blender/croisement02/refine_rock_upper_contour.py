@@ -1,7 +1,7 @@
 """Constrain exposed upper rock hulls without slicing their hidden lower bodies."""
 import json, math, sys
 from pathlib import Path
-import bpy
+import bpy, bmesh
 import numpy as np
 from mathutils import Vector
 from PIL import Image
@@ -32,7 +32,8 @@ def inside(p, polygon):
 
 def main():
     base = OUT / 'rock-trap-state-candidate-v8'
-    dest = OUT / 'rock-trap-state-candidate-v9'
+    column_mode = '--column-contour' in sys.argv
+    dest = OUT / ('rock-trap-state-candidate-v10' if column_mode else 'rock-trap-state-candidate-v9')
     dest.mkdir(exist_ok=False)
     binding = json.loads((base/'manifest.json').read_text())
     assert binding['model_sha256'] == sha(base/'worker.blend')
@@ -50,8 +51,11 @@ def main():
         scene=bpy.context.scene
         untouched={o.name:[tuple(v.co) for v in o.data.vertices] for o in scene.objects if o.type=='MESH' and o.get('state_endpoint')!='covered'}
         records=[]
+        top_columns={int(x):float(yy[xx==x].min()) for x in np.unique(xx)}
         for index,(cx,cy,rx,rz) in enumerate(surveys):
             obj=bpy.data.objects[f'covered inferred complete boulder {index:02d}']
+            if column_mode:
+                bm=bmesh.new();bm.from_mesh(obj.data);bmesh.ops.subdivide_edges(bm,edges=list(bm.edges),cuts=1,use_grid_fill=True);bm.to_mesh(obj.data);bm.free();obj.data.update()
             points=[]
             for x,y,owner in zip(xx,yy,owners):
                 if owner==index and y<=cy:
@@ -62,15 +66,20 @@ def main():
             for vertex in obj.data.vertices:
                 world=obj.matrix_world@vertex.co
                 projected=np.array([world.x-left,-world.y*SIN-world.z*COS-top])
-                if projected[1]>=cy or inside(projected,polygon):continue
+                if projected[1]>=cy:continue
+                if column_mode:
+                    col=max(min(top_columns),min(max(top_columns),projected[0]-.5));a=int(math.floor(col));b=int(math.ceil(col));a=min(top_columns,key=lambda x:abs(x-a));b=min(top_columns,key=lambda x:abs(x-b));edge=top_columns[a] if a==b else top_columns[a]+(top_columns[b]-top_columns[a])*(col-a)/(b-a)
+                    destination=projected.copy();destination[1]=max(destination[1],edge+.15)
+                    if abs(destination[1]-projected[1])<1e-8:continue
+                elif inside(projected,polygon):continue
                 start=np.array([cx,cy]);delta=projected-start;lo,hi=0.,1.
                 for _ in range(24):
                     mid=(lo+hi)/2
                     if inside(start+delta*mid,polygon):lo=mid
                     else:hi=mid
-                destination=start+delta*lo
+                if not column_mode:destination=start+delta*lo
                 dx,dy=destination-projected
-                assert math.hypot(dx,dy)<6, (index,vertex.index,dx,dy)
+                assert math.hypot(dx,dy)<10, (index,vertex.index,dx,dy)
                 before=vertex.co.copy();vertex.co+=Vector((dx,-dy*SIN,-dy*COS))
                 assert abs((vertex.co-before).dot(RAY))<1e-5
                 changed.append(dict(vertex=vertex.index,source_before=projected.tolist(),source_after=destination.tolist()))

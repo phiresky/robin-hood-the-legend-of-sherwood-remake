@@ -1,4 +1,5 @@
 """Bind the finite remaining state deliverables without treating source files as models."""
+import argparse
 import json
 from pathlib import Path
 from catalog import OUT
@@ -6,7 +7,8 @@ from native_log_foreground_reference import sha
 
 
 def main():
-    root=OUT/'state-target-evidence'; dest=OUT/'state-completion-checklist-v1';dest.mkdir(exist_ok=True);assert not (dest/'manifest.json').exists()
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--output',default='state-completion-checklist-v1');args=parser.parse_args()
+    root=OUT/'state-target-evidence'; dest=OUT/args.output;dest.mkdir(exist_ok=True);assert not (dest/'manifest.json').exists()
     visual=json.loads((root/'visual-completeness.json').read_text())
     rows=[]
     def add(identifier,scope,evidence,remaining):
@@ -25,6 +27,28 @@ def main():
     add('scoped-fence-clearing','Source-scoped south-field fence subsection; static approval separate from new state geometry',['fence-state-candidate-v2/validation.json'],['Obtain independent covered/cleared state geometry decision.','Integrate exact terminal ground patch and native transition with unchanged surrounding fence geometry.','Reopen/export state and verify unchanged outside-domain geometry and source.'])
     add('map-animations','15native animation sequences; canopy motion cannot be claimed from frozen cards',['animation-references/manifest.json'],['Map every animation component to refined physical geometry and owned source RGBA.','Preserve native phase timing and static-plus-animated composition, including target overlays.','Demonstrate supported animated export and actual viewer/runtime playback; expand tree41 local proof only after review.'])
     add('gameplay-state-metadata','Four groups/eight invisible obstacle records142..149, linked to visible assemblies',['state-target-evidence/visual-completeness.json'],['Retain metadata state activation/collision/sight semantics separately from modeled targets.','Reconcile native9patches and129mission patch instances plus all visibility/background transitions.','Verify no invisible metadata group is counted as a completed visible model.'])
+    optional={
+        'log-trap': ['log-trap-state-candidate-v14/endpoint-orbit/self-review.json','log-late-settling-proof-v1/self-review.json'],
+        'rock-trap': ['rock-trap-state-candidate-v10/manifest.json','rock-trap-state-candidate-v10/contact-audit.json','rock-trap-state-candidate-v10/native-coverage-comparison.json'],
+        'net-rigging': ['net-state-source-review-v1/manifest.json','net-state-source-review-v1/script-call-bindings.json'],
+        'arrow-interaction-markers': ['net-state-source-review-v1/script-call-bindings.json'],
+        'mission-signposts': ['state-sign-candidate/candidate-v2/validation.json','state-sign-candidate/candidate-v2/self-review.json','state-sign-candidate/placement-audit.json'],
+    }
+    for row in rows:
+        for name in optional.get(row['id'],[]):
+            path=OUT/name
+            if path.is_file():row['evidence'].append(dict(path=name,sha256=sha(path)))
+        if row['id']=='arrow-interaction-markers':
+            row['geometry_requirement']='No invented solid required: native animated UI bullseye/pointer, not archery furniture.'
+            row['source_binding_progress']='All 45 actor indices and script self-hide calls reconcile; actual mission export/playback verification remains pending.'
+        if row['id']=='net-rigging':
+            row['source_binding_progress']='All 10 target/marker associations reconcile to script-selected e/i body patch alternatives plus g leaf effect; target action160 is blank.'
+            row['remaining'][0]='Preserve the reconciled mission target/patch identities through actual state export.'
+        if row['id']=='map-animations':
+            animations=json.loads((OUT/'animation-references/manifest.json').read_text())['animations']
+            row['source_sequences']=[dict(index=a['index'],profile=a['profile'],frames=len(a['frames']),cycle_ticks=sum(f['delay']+1 for f in a['frames']),role='tree overlay requiring owned crown appearance' if 'Arbre' in a['profile'] else 'native butterfly visual effect; preserve effect presentation',source_frames=[dict(image=f['image'],sha256=sha(Path(f['image'])))for f in a['frames']]) for a in animations]
+            assert sum('Arbre' in a['profile']for a in animations)==8
+            assert sum('papillon' in a['profile']for a in animations)==7
     result=dict(status='finite scoped state checklist; source preservation and private proofs do not imply completion',items=rows,counts=dict(items=len(rows),assemblies=4,net_instances=10,arrow_markers=45,mission_signposts=5,map_animation_sequences=15),acceptance='Each item needs source/provenance guards, independent geometry or appearance decisions where applicable, actual visible state/motion verification, and reviewed integration. No runtime publication is authorized by this checklist.')
     (dest/'manifest.json').write_text(json.dumps(result,indent=2)+'\n');print([(r['id'],len(r['remaining']))for r in rows])
 
