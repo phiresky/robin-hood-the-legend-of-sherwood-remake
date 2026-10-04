@@ -145,7 +145,7 @@ def foliage_packet(animation,seeds,destination,sector=None):
     ay,ax=np.nonzero(alpha)
     if not len(ax):raise ValueError('Empty canopy sector')
     source_bbox=[x+int(ax.min()),y+int(ay.min()),int(np.ptp(ax))+1,int(np.ptp(ay))+1]
-    report=dict(animation=animation,profile=data['profile'],bbox=source_bbox,lobes=records,source_pixels=int(alpha.sum()),coverage_complete=True,native_mask=128+animation,native_bbox=native['box_top_left']+native['box_size'],coverage_provenance='Native canopy alpha; rounded overlapping per-tree supports are inferred')
+    report=dict(animation=animation,profile=data['profile'],bbox=source_bbox,lobes=records,source_pixels=int(alpha.sum()),coverage_complete=True,native_mask=128+animation,native_bbox=native['box_top_left']+native['box_size'],coverage_provenance='Native occupancy-mask support with composited source RGB; not animated sprite alpha. Static leaf support requires visual review; rounded per-tree ownership is inferred')
     (destination/'partition.json').write_text(json.dumps(report,indent=2)+'\n');return report
 
 

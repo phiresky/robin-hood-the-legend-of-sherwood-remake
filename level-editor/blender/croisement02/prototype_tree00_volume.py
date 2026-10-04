@@ -23,7 +23,7 @@ from audit_candidates import audit
 from render_tree import render_workspace
 
 
-def main(destination, mask=0, interior_clusters=600, root_completion_base=None, branch_clumps=False, approved_base=None):
+def main(destination, mask=0, interior_clusters=600, root_completion_base=None, branch_clumps=False, approved_base=None, transparent_bounces=64):
     worker = destination / 'assets' / f'croisement02-tree-{mask:02}'
     if worker.exists():
         raise ValueError('Use a fresh prototype destination')
@@ -66,6 +66,9 @@ def main(destination, mask=0, interior_clusters=600, root_completion_base=None, 
         local_source = inspection / 'source-packet'
         local_source.mkdir(parents=True)
         packet = json.loads(source_packet.read_text())
+        if packet.get('coverage_provenance', '').startswith('Native canopy alpha;'):
+            packet['coverage_provenance'] = ('Retained native occupancy-mask support with composited source RGB; '
+                'not animated sprite alpha. Static support and inferred per-tree ownership require visual review.')
         if branch_clumps:
             supports_path=Path(source_row['packet'])
             supports=json.loads(supports_path.read_text())
@@ -111,7 +114,7 @@ def main(destination, mask=0, interior_clusters=600, root_completion_base=None, 
             'Earlier approval does not apply to this rebuilt crown. No texture API generation or publication performed.']
         write_json(inspection / 'refinement.json', report)
         audit(worker)
-        render_workspace(worker,384,release_slot=False)
+        render_workspace(worker,384,release_slot=False,transparent_bounces=transparent_bounces)
         coverage = json.loads((inspection / 'source-coverage/report.json').read_text())
         bounds = json.loads((inspection / 'actual-materials/opacity-bounds.json').read_text())
         if coverage['intersection_over_union'] < .95:
@@ -144,7 +147,8 @@ if __name__ == '__main__':
     parser.add_argument('--root-completion-base', type=Path, help='Reviewed private tree15 root addition to preserve')
     parser.add_argument('--branch-clumps', action='store_true', help='Private irregular branch-scale volume experiment')
     parser.add_argument('--approved-base', type=Path, help='Explicit approved original when a pending candidate is already selected')
+    parser.add_argument('--transparent-bounces', type=int, default=64, help='Declared per-asset render budget; validate dense foliage convergence before choosing')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
     main(args.destination.resolve(),args.mask,args.interior_clusters,
          args.root_completion_base.resolve() if args.root_completion_base else None,args.branch_clumps,
-         args.approved_base.resolve() if args.approved_base else None)
+         args.approved_base.resolve() if args.approved_base else None,args.transparent_bounces)

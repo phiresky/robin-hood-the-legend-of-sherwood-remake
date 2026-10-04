@@ -22,7 +22,10 @@ def main(worker):
         model_hash=sha(worker/'model.blend')
         bpy.ops.wm.open_mainfile(filepath=str(baseline))
         scene=bpy.data.scenes['Croisement02 Refinement']
-        scene.render.engine='CYCLES';scene.cycles.samples=4;scene.cycles.transparent_max_bounces=64
+        actual_evidence=json.loads((worker/'inspection/actual-materials/evidence.json').read_text())
+        budget=actual_evidence.get('render_config',{}).get('transparent_max_bounces',64)
+        if not isinstance(budget,int) or not 1<=budget<=1024:raise ValueError('Invalid candidate transparency budget')
+        scene.render.engine='CYCLES';scene.cycles.samples=4;scene.cycles.transparent_max_bounces=budget
         scene.world=bpy.data.worlds.new('Neutral actual-material inspection');scene.world.color=(.10,.10,.10)
         manifest=worker/'inspection/actual-camera-manifest.json'
         render(manifest,output,width=384)
@@ -35,7 +38,7 @@ def main(worker):
             sheet.save(output/f'comparison-{offset}-{offset+3}.png')
         if sha(worker/'model.blend')!=model_hash:raise ValueError('Prototype changed during comparison')
         write_json(output/'evidence.json',dict(baseline_sha256=sha(baseline),model_sha256=model_hash,
-            camera_manifest_sha256=sha(manifest),layout='Prior approved geometry above; isolated prototype below. Identical cameras.',
+            camera_manifest_sha256=sha(manifest),render_config=dict(engine='CYCLES',samples=4,transparent_max_bounces=budget),layout='Prior approved geometry above; isolated prototype below. Identical cameras.',
             sheets={p.name:sha(p) for p in output.glob('comparison-*.png')}))
     finally:release()
 

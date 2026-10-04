@@ -11,7 +11,9 @@ from evidence_io import sha
 from tree_geometry import SIN,COS,RAY
 
 
-def audit(workspace,objects):
+def audit(workspace,objects,transparent_bounces=64):
+    if not isinstance(transparent_bounces,int) or not 1<=transparent_bounces<=1024:
+        raise ValueError("Transparent bounce budget must be an integer in1..1024")
     report=json.loads((workspace/'inspection/refinement.json').read_text())
     if 'mask' not in report:return None
     if 'source_packet' in report:packet_path=Path(report['source_packet'])
@@ -70,7 +72,7 @@ def audit(workspace,objects):
     target=Vector(((left+right)/2,-(top+bottom)/2/SIN,0));data=bpy.data.cameras.new('Exact source coverage')
     data.type='ORTHO';data.sensor_fit='HORIZONTAL';data.ortho_scale=width;data.clip_end=20000
     camera=bpy.data.objects.new(data.name,data);scene.collection.objects.link(camera);camera.location=target+RAY*5000;camera.rotation_euler=(target-camera.location).to_track_quat('-Z','Y').to_euler();scene.camera=camera
-    scene.render.engine='CYCLES';scene.cycles.samples=8;scene.cycles.transparent_max_bounces=64
+    scene.render.engine='CYCLES';scene.cycles.samples=8;scene.cycles.transparent_max_bounces=transparent_bounces
     scene.render.resolution_x=width;scene.render.resolution_y=height;scene.render.resolution_percentage=100
     scene.render.film_transparent=True;scene.render.image_settings.file_format='PNG';scene.render.image_settings.color_mode='RGBA'
     scene.view_settings.view_transform='Standard';scene.view_settings.look='None'
@@ -82,6 +84,7 @@ def audit(workspace,objects):
     overlay=np.asarray(source).copy();overlay[missing]=[255,40,40];overlay[extra]=[0,220,255];Image.fromarray(overlay).save(destination/'difference.png')
     Image.fromarray(expected.astype('uint8')*255).save(destination/'expected.png')
     result=dict(model_sha256=sha(workspace/'model.blend'),source_packet_sha256=sha(packet_path),source_crop=[left,top,right,bottom],expected_pixels=int(expected.sum()),rendered_pixels=int(actual.sum()),missing_pixels=int(missing.sum()),extra_pixels=int(extra.sum()),intersection_over_union=float(intersection.sum()/np.count_nonzero(expected|actual)),legend='Red: native coverage missed. Cyan: rendered coverage outside assigned native masks. Crossed foliage edges and mask-derived wood thickness can differ.',status='measurement; requires visual review')
+    result['render_config']=dict(engine='CYCLES',samples=8,transparent_max_bounces=transparent_bounces)
     if coverage_domain is not None:result['coverage_domain']=coverage_domain
     if physical_authority:result['physical_silhouette_authority']=physical_authority
     if observed_expected is not None:

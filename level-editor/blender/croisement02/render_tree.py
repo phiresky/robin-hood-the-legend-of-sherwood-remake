@@ -11,12 +11,14 @@ from render_slots import acquire,release
 from evidence_io import sha
 from render_multiview_asset import render
 
-def render_workspace(workspace,width=256,release_slot=True):
+def render_workspace(workspace,width=256,release_slot=True,transparent_bounces=64):
+    if not isinstance(transparent_bounces,int) or not 1<=transparent_bounces<=1024:
+        raise ValueError("Transparent bounce budget must be an integer in1..1024")
     workspace=Path(workspace).resolve()
     acquire()
     model_hash=sha(workspace/'model.blend')
     bpy.ops.wm.open_mainfile(filepath=str(workspace/'model.blend'))
-    scene=bpy.data.scenes['Croisement02 Refinement'];scene.render.engine='CYCLES';scene.cycles.samples=4;scene.cycles.transparent_max_bounces=64
+    scene=bpy.data.scenes['Croisement02 Refinement'];scene.render.engine='CYCLES';scene.cycles.samples=4;scene.cycles.transparent_max_bounces=transparent_bounces
     scene.world=bpy.data.worlds.new('Neutral actual-material inspection');scene.world.color=(.10,.10,.10)
     output=workspace/'inspection/actual-materials'
     if output.exists():
@@ -34,7 +36,7 @@ def render_workspace(workspace,width=256,release_slot=True):
     for i,image in enumerate(images):sheet.paste(image,((i%4)*w,(i//4)*h))
     sheet.save(output/'sheet.png')
     if sha(workspace/'model.blend')!=model_hash:raise RuntimeError('Model changed during actual-material inspection')
-    (output/'evidence.json').write_text(json.dumps(dict(model_sha256=model_hash,sheet_sha256=sha(output/'sheet.png')),indent=2)+'\n')
+    (output/'evidence.json').write_text(json.dumps(dict(model_sha256=model_hash,sheet_sha256=sha(output/'sheet.png'),render_config=dict(engine='CYCLES',samples=4,transparent_max_bounces=transparent_bounces)),indent=2)+'\n')
     from opacity_bounds import measure
     crowns=[o for o in bpy.data.collections['Croisement02 Working'].all_objects if o.type=='MESH' and o.get('asset_group')==workspace.name and o.get('projection_component')=='crown']
     if crowns:
@@ -42,13 +44,14 @@ def render_workspace(workspace,width=256,release_slot=True):
         (output/'opacity-bounds.json').write_text(json.dumps(dict(model_sha256=model_hash,crowns=bounds),indent=2)+'\n')
     from source_coverage import audit
     objects=[o for o in bpy.data.collections['Croisement02 Working'].all_objects if o.type=='MESH' and o.get('asset_group')==workspace.name]
-    audit(workspace,objects)
+    audit(workspace,objects,transparent_bounces=transparent_bounces)
     print(output/'sheet.png')
     if release_slot:release()
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('workspace',type=Path);parser.add_argument('--width',type=int,default=256)
+    parser.add_argument('--transparent-bounces',type=int,default=64,help='Declared per-asset transparent traversal budget; default64 preserved')
     args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
-    render_workspace(args.workspace,args.width)
+    render_workspace(args.workspace,args.width,transparent_bounces=args.transparent_bounces)
 
 if __name__=='__main__':main()
