@@ -1694,6 +1694,52 @@ test("subdivided light contours share anchor coverage only within their explicit
   );
 });
 
+test("a bent light receiving probe resolves as one probe and rejects stacked floors", () => {
+  const { hut, document, assets } = lightAssetCompilerFixture();
+  const light = hut.gameplay!.lights![0]!;
+  const expected = compileAssetGameplay(document, assets, bounds).light_sectors;
+  light.receiverPolylines = [
+    [
+      [20, 30, 10],
+      [20, 25, 5],
+      [20, 15, -5],
+    ],
+  ];
+  assert.deepEqual(compileAssetGameplay(document, assets, bounds).light_sectors, expected);
+  hut.gameplay!.surfaces.push({
+    id: "upper",
+    node: "building-999",
+    height: 40,
+    polygon: [
+      [0, 40],
+      [90, 40],
+      [90, 140],
+      [0, 140],
+    ],
+  });
+  light.receiverPolylines = [
+    [
+      [20, 70, 50],
+      [20, 25, 5],
+      [20, 15, -5],
+    ],
+  ];
+  assert.throws(
+    () => compileAssetGameplay(document, assets, bounds),
+    /receiving segment.*exactly one/,
+  );
+  light.receiverPolylines = [
+    [
+      [20, 25, 5],
+      [20, 25, 5],
+    ],
+  ];
+  assert.throws(
+    () => compileAssetGameplay(document, assets, bounds),
+    /invalid light receiving polylines/,
+  );
+});
+
 test("light layer anchors retain fractional positions inside narrow contours and surfaces", () => {
   const { hut, document, assets } = lightAssetCompilerFixture();
   const gameplay = hut.gameplay!;

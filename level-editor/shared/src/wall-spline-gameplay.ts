@@ -360,12 +360,6 @@ export function wallSplineGameplay(
         );
       }
       for (const light of data.lights ?? []) {
-        if (light.receiverSegments) {
-          warnings.push(
-            `Wall spline ${path.id}, light ${light.id}: explicit receiving segments are not deformed; light region omitted.`,
-          );
-          continue;
-        }
         const group = `light-group-${lightGroupSequence++}`;
         const cropped = new Set<number>();
         pieces(
@@ -380,7 +374,35 @@ export function wallSplineGameplay(
                     p[axis] <=
                       Math.min(end, start + (end - start) * (length / run.repeatLength - repeat))),
               );
-            if (receivers && !receivers.length) {
+            const hasProbes = light.receivers || light.receiverSegments || light.receiverPolylines;
+            const receiverPolylines = [
+              ...(light.receiverSegments ?? []),
+              ...(light.receiverPolylines ?? []),
+            ].flatMap((line) => {
+              const points = line.map((p) => source(light.node, p));
+              const fragments = run
+                ? clipSplinePolyline(
+                    points,
+                    axis,
+                    start,
+                    Math.min(end, start + (end - start) * (length / run.repeatLength - repeat)),
+                    stations,
+                  )
+                : [points];
+              // A probe split by trimming must not acquire an artificial bond.
+              if (fragments.length > 1) {
+                if (!cropped.has(repeat))
+                  warnings.push(
+                    `Wall spline ${path.id}, light ${light.id}, repeat ${repeat}: cropping splits a receiving probe into disconnected fragments; probe omitted.`,
+                  );
+                cropped.add(repeat);
+                return [];
+              }
+              return fragments
+                .filter((line) => line.length > 1)
+                .map((line) => line.map((p) => warp(p, repeat)));
+            });
+            if (hasProbes && !receivers?.length && !receiverPolylines.length) {
               if (!cropped.has(repeat))
                 warnings.push(
                   `Wall spline ${path.id}, light ${light.id}, repeat ${repeat}: cropping removed every receiving anchor; light region omitted.`,
@@ -407,7 +429,9 @@ export function wallSplineGameplay(
               node: "$root",
               polygon,
               ambiences: light.ambiences,
-              ...(receivers
+              ...(hasProbes ? { receiverGroup: `${group}-${repeat}` } : {}),
+              ...(receiverPolylines.length ? { receiverPolylines } : {}),
+              ...(receivers?.length
                 ? {
                     // Horizontal source deformation is quantized to 1/1024 game
                     // units. A narrow vertical probe tolerates the corresponding
@@ -419,7 +443,6 @@ export function wallSplineGameplay(
                         [x, y + 1 / 1024, z + 1 / 1024],
                       ];
                     }),
-                    receiverGroup: `${group}-${repeat}`,
                   }
                 : {}),
             });

@@ -123,6 +123,7 @@ export function wallMaterialFixture() {
       node: "body",
       ambiences: 5,
       receivers: [local(-25, -30, 0)],
+      receiverSegments: [[local(-25, -30, -10), local(-25, -30, 10)]],
       polygon: asset.gameplay!.materials[1]!.polygon.map((point) => [...point]),
     },
   ];

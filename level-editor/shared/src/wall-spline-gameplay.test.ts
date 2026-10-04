@@ -5,6 +5,7 @@ import { wallSplineGameplay } from "./wall-spline-gameplay.ts";
 import { compileAssetGameplay } from "./compile-asset-gameplay.ts";
 import { validateAssetGameplay } from "./asset-gameplay.ts";
 import { sceneToGame } from "./geometry.ts";
+import { splineCurve } from "./spline-sampling.ts";
 
 test("spline materials retain vertical faces and receiver ownership after moving and repeating", () => {
   const { document, asset, assets, bounds } = wallSplineFixture();
@@ -184,14 +185,38 @@ test("wall lighting follows repeated and turned paths and preserves ambience fil
       warning.includes("cropping removed every receiving anchor"),
     ),
   );
+  delete asset.gameplay!.lights[0]!.receivers;
   asset.gameplay!.lights[0]!.receiverSegments = [
-    [sceneToGame(document.camera, [0, 0, 20]), sceneToGame(document.camera, [0, 0, 60])],
+    [sceneToGame(document.camera, [-49, 0, 20]), sceneToGame(document.camera, [-49, 0, 60])],
   ];
-  const unsupported = wallSplineGameplay(document, assets, true);
+  const segmented = compileAssetGameplay(document, assets, bounds);
+  assert.deepEqual(segmented.light_sectors, raised.light_sectors);
+  const path = document.splines![0]!;
+  path.curved = true;
+  path.points = [
+    [100, 200, 20],
+    [240, 240, 60],
+    [400, 200, 80],
+  ];
+  path.repeatLength = splineCurve(path, document.camera).getLength();
+  asset.gameplay!.lights[0]!.receiverSegments = [
+    [sceneToGame(document.camera, [-49, 0, 20]), sceneToGame(document.camera, [49, 0, 60])],
+  ];
+  const bent = wallSplineGameplay(document, assets, false);
   assert.ok(
-    unsupported.warnings.some((warning) => warning.includes("explicit receiving segments")),
+    bent.descriptors[0]!.gameplay!.lights!.every(
+      (light) => light.receiverPolylines![0]!.length > 2,
+    ),
   );
-  assert.equal(unsupported.descriptors[0]!.gameplay!.lights!.length, 0);
+  const bentCompiled = compileAssetGameplay(document, assets, bounds);
+  assert.ok(bentCompiled.light_sectors!.length);
+  const ground = bentCompiled.sight_obstacles.find(
+    (obstacle) => obstacle.projection_area && obstacle.points.every((point) => point.z_top === 0),
+  );
+  assert.ok(ground?.projection_area);
+  assert.ok(
+    bentCompiled.light_sectors!.every((light) => light.layer !== ground.projection_area![1]),
+  );
 });
 
 test("wall spatial sounds repeat and crop with their acoustic rules intact", () => {

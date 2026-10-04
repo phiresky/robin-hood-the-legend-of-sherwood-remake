@@ -375,6 +375,7 @@ function compileAssetGameplayAttempt(
     ambiences: number;
     receivers?: Vec3[];
     receiverSegments?: [Vec3, Vec3][];
+    receiverPolylines?: Vec3[][];
   }[] = [];
   const placedMasks: {
     id: string;
@@ -538,6 +539,13 @@ function compileAssetGameplayAttempt(
                 transform(light.node, a),
                 transform(light.node, b),
               ]),
+            }
+          : {}),
+        ...(light.receiverPolylines
+          ? {
+              receiverPolylines: light.receiverPolylines.map((line) =>
+                line.map((p) => transform(light.node, p)),
+              ),
             }
           : {}),
       });
@@ -2070,13 +2078,19 @@ function compileAssetGameplayAttempt(
     ...(lights.length
       ? {
           light_sectors: lights.flatMap((light) => {
-            if (light.receivers || light.receiverSegments) {
-              const segmentReceivers = (light.receiverSegments ?? []).flatMap((segment, index) => {
+            if (light.receivers || light.receiverSegments || light.receiverPolylines) {
+              const probes = [
+                ...(light.receiverSegments ?? []),
+                ...(light.receiverPolylines ?? []),
+              ];
+              const segmentReceivers = probes.flatMap((probe, index) => {
                 const matches = areas.flatMap((area) => {
-                  const point = lightReceiverIntersection(segment, area.plane);
-                  return point && inside([point[0], point[1] - point[2]], area.polygon)
-                    ? [{ area, point }]
-                    : [];
+                  return probe.slice(1).flatMap((end, i) => {
+                    const point = lightReceiverIntersection([probe[i]!, end], area.plane);
+                    return point && inside([point[0], point[1] - point[2]], area.polygon)
+                      ? [{ area, point }]
+                      : [];
+                  });
                 });
                 if (new Set(matches.map(({ area }) => area.sector)).size !== 1) {
                   const candidates = matches.map(({ area, point }) => ({

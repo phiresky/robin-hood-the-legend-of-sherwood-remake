@@ -4,6 +4,27 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Spline lighting receiving segments (2026-10-05)
+
+Authored receiving segments now clip and subdivide at the wall's deformation
+stations. Generated `receiverPolylines` retain those bends. The compiler resolves
+all segments of each probe together and requires one receiving sector, retaining
+the existing rejection of stacked or absent receivers. Disconnected crops warn
+and omit the affected probe rather than creating a false connecting segment.
+
+Focused tests cover rising and curved wall tops, multi-segment probes whose
+individual segments miss the surface, stacked-floor rejection and malformed
+polylines. The full editor suite passes 740 tests with two skipped (45.27 seconds).
+The golden fixture now includes both a point and segment probe and
+still matches the descriptor validated by native lighting queries. Typechecking
+and targeted lint pass.
+
+A remaining automatic-binding gap was reproduced by removing the explicit
+probe from the curved/rising wall case in `wall-spline-gameplay.test.ts`: exact
+plane matching finds no receiver for its first light fragment. Explicit probes
+work, but unanchored curved lighting needs attachment derived from source
+surface ownership rather than equality of independently tessellated planes.
+
 ## Spline lighting point anchors (2026-10-05)
 
 Explicit point anchors now deform with each repeated light region. Subdivided

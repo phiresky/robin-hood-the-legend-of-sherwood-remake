@@ -216,6 +216,8 @@ export interface AssetLightRegion {
   receivers?: [number, number, number][];
   /** Finite local segments selecting one receiving surface after placement, including slopes. */
   receiverSegments?: [[number, number, number], [number, number, number]][];
+  /** Subdivided receiving probes, preserving bends through spline deformation. */
+  receiverPolylines?: [number, number, number][][];
   /** Mission ambience bit mask controlling this region, not a mission selection. */
   ambiences: number;
 }
@@ -857,6 +859,19 @@ export function validateAssetGameplay(
         ))
     )
       fail(`invalid light receiving segments ${light.id}`);
+    if (
+      light.receiverPolylines !== undefined &&
+      (!Array.isArray(light.receiverPolylines) ||
+        !light.receiverPolylines.length ||
+        !light.receiverPolylines.every(
+          (line) =>
+            Array.isArray(line) &&
+            line.length >= 2 &&
+            line.every((p) => point(p, 3)) &&
+            line.slice(1).every((p, i) => p.some((v, j) => v !== line[i]![j])),
+        ))
+    )
+      fail(`invalid light receiving polylines ${light.id}`);
   }
   if (data.animations !== undefined && !Array.isArray(data.animations))
     fail("invalid scenery animations");
