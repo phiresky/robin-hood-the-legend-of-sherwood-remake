@@ -1,9 +1,11 @@
 """Small observed foliage fragments on an irregular full-depth crown envelope."""
 import math
+from pathlib import Path
+from PIL import Image
 import numpy as np
 from mathutils import Vector
 from rounded_interior_geometry import build as volume
-from tree_geometry import SIN, COS, RAY, replace_mesh
+from tree_geometry import SIN, COS, RAY, replace_mesh, material, one_sided
 
 
 def build(obj, packet, ground_y):
@@ -76,13 +78,70 @@ def build(obj, packet, ground_y):
             faces.append(tuple(range(start,len(vertices))))
             slots.append(face.material_index)
             known.append(face.material_index == 0)
-    mesh_report = replace_mesh(obj,vertices,faces,uvs,list(mesh.materials),slots,known)
+    materials = list(mesh.materials)
+    # Fill the visible interior from both sides without reusing source pixels
+    # from a different screen position. The paired front atlas uses the native
+    # RGB projected at each texel; the existing rear keeps the inferred palette.
+    directory = Path(packet['lobes'][0]['image']).parent
+    native = np.asarray(Image.open(directory/'complete-source.png').convert('RGBA'))
+    atlas = np.asarray(Image.open(directory/'inferred-interior-atlas.png').convert('RGBA')).copy()
+    atlas[:,:,:3] = 0
+    original_atlas_height=atlas.shape[0]
+    x0,y0,sw,sh = packet['native_bbox']
+    def source_facing_pair(face):
+        points=np.asarray([vertices[i] for i in face])
+        normal=np.cross(points[1]-points[0],points[2]-points[0])
+        return np.dot(normal,ray)/np.linalg.norm(normal)<-.15
+    originals = [(face,slot) for face,slot in zip(list(faces),list(slots))
+                 if slot==4 and source_facing_pair(face)]
+    # Native alpha is sampled densely enough to avoid thickening the highly
+    # fragmented source silhouette when many interior leaves overlap.
+    trim_height=int(round(max((1-uvs[i][1])*original_atlas_height for face,slot in originals for i in face)))
+    scale=3
+    atlas=np.repeat(np.repeat(atlas[:trim_height],scale,axis=0),scale,axis=1)
+    ah,aw=atlas.shape[:2]
+    for face,slot in originals:
+        uv = np.asarray([uvs[i] for i in face])
+        pixel = uv*np.array([aw,-original_atlas_height*scale])+np.array([0,original_atlas_height*scale])
+        lo=np.maximum(np.floor(pixel.min(axis=0)).astype(int),0)
+        hi=np.minimum(np.ceil(pixel.max(axis=0)).astype(int),[aw,ah])
+        xx,yy=np.meshgrid(np.arange(lo[0],hi[0])+.5,np.arange(lo[1],hi[1])+.5)
+        a2,b2,c2=pixel
+        denom=(b2[1]-c2[1])*(a2[0]-c2[0])+(c2[0]-b2[0])*(a2[1]-c2[1])
+        if abs(denom)<1e-9:raise ValueError('Degenerate interior leaf UV')
+        wa=((b2[1]-c2[1])*(xx-c2[0])+(c2[0]-b2[0])*(yy-c2[1]))/denom
+        wb=((c2[1]-a2[1])*(xx-c2[0])+(a2[0]-c2[0])*(yy-c2[1]))/denom
+        wc=1-wa-wb
+        inside=(wa>=-1e-7)&(wb>=-1e-7)&(wc>=-1e-7)
+        points=np.asarray([vertices[i] for i in face])
+        world=wa[...,None]*points[0]+wb[...,None]*points[1]+wc[...,None]*points[2]
+        sx=np.floor(world[...,0]-x0).astype(int)
+        sy=np.floor(-world[...,1]*SIN-world[...,2]*COS-y0).astype(int)
+        valid=inside&(sx>=0)&(sx<sw)&(sy>=0)&(sy<sh)
+        tile=atlas[lo[1]:hi[1],lo[0]:hi[0]]
+        tile[valid,:3]=native[sy[valid],sx[valid],:3]
+        tile[inside&~valid,3]=0
+        tile[valid,3]=np.minimum(tile[valid,3],native[sy[valid],sx[valid],3])
+    atlas_path=directory/'observed-interior-front-atlas.png'
+    Image.fromarray(atlas).save(atlas_path)
+    front=material(obj.name+' interior projected front leaves',atlas_path,True)
+    one_sided(front);front_slot=len(materials);materials.append(front)
+    for face,slot in originals:
+        start=len(vertices)
+        indices=list(reversed(face))
+        for i in indices:
+            vertices.append((np.asarray(vertices[i])+ray*.01).tolist())
+            u,v=uvs[i]
+            uvs.append((u,1-(1-v)*original_atlas_height/trim_height))
+        faces.append(tuple(range(start,len(vertices))))
+        slots.append(front_slot);known.append(True)
+    mesh_report = replace_mesh(obj,vertices,faces,uvs,materials,slots,known)
     xyz = np.asarray(vertices)
     result = dict(report, **mesh_report)
     result.pop('leaf_clusters', None)
     result['observed_fragment_triangles'] = sum(known)
     result.update(vertices=len(vertices),faces=len(faces),width=float(np.ptp(xyz[:,0])),depth=float(np.ptp(xyz[:,1])),
-        geometry_version='microfragment-curved-envelope-irregular-volume-v2',
+        geometry_version='microfragment-volume-paired-front-v3',
         method='Small source-facing fragments sample an irregular curved envelope, with paired inferred backs and randomly rotated interior leaf clusters',
-        removed_repeated_observed_layers=True)
+        removed_repeated_observed_layers=True, paired_interior_source_fronts=len(originals))
     return result

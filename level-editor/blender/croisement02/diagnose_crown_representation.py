@@ -1,4 +1,4 @@
-"""Measure crown geometry on the current tree00 and the two permitted references."""
+"""Measure crown geometry on the frozen legacy tree00 and the two permitted references."""
 import json
 import math
 import sys
@@ -42,7 +42,7 @@ def measure(obj):
 def main():
     acquire()
     try:
-        old=tree_workspace(0)/'model.blend'
+        old=OUT/'forest-v4-round-3/assets/croisement02-tree-00/model.blend'
         bpy.ops.wm.open_mainfile(filepath=str(old))
         crown=next(o for o in bpy.data.collections['Croisement02 Working'].all_objects if o.type=='MESH' and o.get('asset_group')=='croisement02-tree-00' and o.get('projection_component')=='crown')
         report=dict(tree00=dict(model=str(old),model_sha256=sha(old),crown=measure(crown)),references=[])

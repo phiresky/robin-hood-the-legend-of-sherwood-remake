@@ -25,6 +25,9 @@ def selected_workspace(out, mask, catalog_path):
     for path, expected in record['evidence_sha256'].items():
         if sha(Path(path)) != expected:
             raise ValueError('Canopy cleanup evidence changed: ' + path)
+    previous=Path(record['previous_worker'])
+    if previous==worker or sha(previous/'model.blend')!=record['previous_model_sha256']:
+        raise ValueError('Independent prior canopy worker changed')
     if sha(worker / 'model.blend') != record['model_sha256']:
         raise ValueError('Canopy cleanup candidate model changed')
     review = json.loads((worker / 'inspection/visual-review.json').read_text())
@@ -79,6 +82,7 @@ def expose(worker):
     paths.append(old)
     record = dict(asset_id=asset, worker=str(worker), model_sha256=sha(worker / 'model.blend'),
         part_ids=cfg['part_ids'], approval='pending',
+        previous_worker=previous['previous_worker'], previous_model_sha256=previous['previous_model_sha256'],
         evidence_sha256={str(path): sha(path) for path in paths},
         rationale='Coordinator reviewed the new geometry prototype; previous geometry approval does not apply.')
     receipt = OUT / 'canopy-cleanup-selections' / f'tree-{mask:02}.json'

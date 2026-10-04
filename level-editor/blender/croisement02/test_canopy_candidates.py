@@ -13,6 +13,7 @@ class CandidateTests(unittest.TestCase):
         self.root=Path(self.temp.name);self.worker=self.root/'candidate';self.worker.mkdir()
         (self.worker/'model.blend').write_bytes(b'candidate')
         self.model_hash=sha(self.worker/'model.blend')
+        self.previous=self.root/'previous';self.previous.mkdir();(self.previous/'model.blend').write_bytes(b'original')
         records={'validation.json':dict(status='PASS'),
             'inspection/saved-model-audit.json':dict(status='PASS',model_sha256=self.model_hash),
             'inspection/source-coverage/report.json':dict(model_sha256=self.model_hash,intersection_over_union=.99),
@@ -24,7 +25,7 @@ class CandidateTests(unittest.TestCase):
         self.catalog.write_text(json.dumps(dict(groups=[dict(id='croisement02-tree-00',parts=[dict(obstacle=44)])])))
         self.receipt=self.root/'canopy-cleanup-selections/tree-00.json';self.receipt.parent.mkdir()
         self.receipt.write_text(json.dumps(dict(asset_id='croisement02-tree-00',worker=str(self.worker),approval='pending',
-            model_sha256=self.model_hash,part_ids=['building-044'],evidence_sha256={str(self.worker/p):sha(self.worker/p) for p in records})))
+            model_sha256=self.model_hash,previous_worker=str(self.previous),previous_model_sha256=sha(self.previous/'model.blend'),part_ids=['building-044'],evidence_sha256={str(self.worker/p):sha(self.worker/p) for p in records})))
 
     def test_valid_selection(self):
         self.assertEqual(selected_workspace(self.root,0,self.catalog),self.worker)
@@ -40,6 +41,11 @@ class CandidateTests(unittest.TestCase):
     def test_changed_review_is_rejected(self):
         (self.worker/'inspection/visual-review.json').write_text('{}')
         with self.assertRaisesRegex(ValueError,'evidence changed'):
+            selected_workspace(self.root,0,self.catalog)
+
+    def test_independent_prior_worker_changes(self):
+        (self.previous/'model.blend').write_bytes(b'changed')
+        with self.assertRaisesRegex(ValueError,'prior canopy worker changed'):
             selected_workspace(self.root,0,self.catalog)
 
     def test_depth_guard(self):

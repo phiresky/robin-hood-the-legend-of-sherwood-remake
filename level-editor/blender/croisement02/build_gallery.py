@@ -32,7 +32,7 @@ def main():
         if set(scope['part_ids'])!={source_for_part(p) for p in group['parts']}:
             missing.append(dict(id=group['id'],name=group['name'],status='ownership revision pending',reason='Previous worker owns a different source-part set. A fresh workspace is required; the old geometry packet is withheld.'));continue
         report=json.loads(report_path.read_text())
-        if tree and report['crown'].get('geometry_version') not in ('native-leaf-clusters-v5','native-leaf-clusters-v6','microfragment-curved-envelope-irregular-volume-v2'):
+        if tree and report['crown'].get('geometry_version') not in ('native-leaf-clusters-v5','native-leaf-clusters-v6','microfragment-curved-envelope-irregular-volume-v2','microfragment-volume-paired-front-v3'):
             missing.append(dict(id=group['id'],name=group['name'],status='in progress',reason='Replacing the rejected large-shell prototype with small, full-depth leaf clusters.'));continue
         if shrub and report['crown'].get('geometry_version')!='native-shrub-leaf-volume-v2':
             missing.append(dict(id=group['id'],name=group['name'],status='in progress',reason='Current round-volume shrub geometry is not prepared.'));continue
@@ -151,12 +151,13 @@ def main():
         feedback_path=OUT/'user-feedback.json'
         decisions=[r for r in json.loads(feedback_path.read_text())['records'] if r['asset_id']==group['id']] if feedback_path.exists() else []
         if decisions:
-            decision=decisions[-1];item['notes'].append('User review: '+decision['exact_user_text'])
+            decision=decisions[-1]
             current=decision['model_sha256']==model_hash
             correction=workspace/'inspection/feedback-revision-1.json'
             if not current and correction.exists():
                 corrected=json.loads(correction.read_text())
                 current=(corrected['before_model_sha256']==decision['model_sha256'] and corrected['model_sha256']==model_hash and corrected['before_geometry_sha256']==corrected['geometry_sha256'])
+            item['notes'].append(('Current model user review: ' if current else 'Earlier model user review: ')+decision['exact_user_text'])
             if decision['decision']=='approved' and current:
                 item['user_approval']='approved geometry: '+decision['exact_user_text']
             elif decision['model_sha256']==model_hash:
