@@ -35,6 +35,7 @@ def main(base,proposal_path,destination):
         if sha(domain_path)!=record['files'][str(domain_path)]:raise ValueError('Observed domain not frozen in review')
         native['masks'].append(dict(index=domain,layer=0,png=str(domain_path),box_top_left=[0,0],box_size=[1792,1152],provenance='Reviewed native foliage observed source role; cached old appearances unchanged'))
         records[group['id']]=record
+    if np.stack(list(domains.values())).sum(axis=0).max()>1:raise ValueError('New observed foliage domains overlap; explicit partition required')
     rows={r['index']:r for r in native['masks']};cache=dict(domains)
     def bitmap(index):
         if index not in cache:
