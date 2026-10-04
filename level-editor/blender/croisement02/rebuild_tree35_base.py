@@ -3,6 +3,7 @@ import argparse,json,math,sys
 from pathlib import Path
 import bpy,bmesh
 from mathutils import Vector,Matrix
+from mathutils.kdtree import KDTree
 from PIL import Image
 ROOT=Path(__file__).resolve().parents[3]
 sys.path[:0]=[str(Path(__file__).parent),str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender')]
@@ -65,7 +66,7 @@ def append_mesh(bm,geometry):
     mesh=bpy.data.meshes.new('Private root primitive');mesh.from_pydata(geometry[0],[],geometry[1]);mesh.update();bm.from_mesh(mesh);bpy.data.meshes.remove(mesh)
 
 
-def main(solid_only=False,output_name="candidate-v12"):
+def main(solid_only=False,output_name="candidate-v13"):
     original=tree_workspace(35);directory=OUT/'tree35-root-research'/output_name;directory.mkdir(exist_ok=False);original_hash=sha(original/'model.blend');bpy.ops.wm.open_mainfile(filepath=str(original/'model.blend'));bpy.context.preferences.filepaths.save_version=0
     objects=list(bpy.data.collections['Croisement02 Working'].all_objects);wood=[o for o in objects if o.type=='MESH' and o.get('asset_group')==original.name and o.get('projection_component')!='crown'];outside={o.name:_geometry(o,protect_appearance=True) for o in objects if o.type=='MESH' and o not in wood};records=[]
     for obj in wood:
@@ -98,12 +99,19 @@ def main(solid_only=False,output_name="candidate-v12"):
     # Their shared cut lies inside the trunk; neither part adds an outer patch.
     mainwood=next(o for o in wood if o['source_node'].endswith('090'))
     sidewood=next(o for o in wood if o['source_node'].endswith('091'))
+    normal_tree=KDTree(len(mainwood.data.vertices));surface_normals=[]
+    for vertex in mainwood.data.vertices:
+        normal_tree.insert(vertex.co,vertex.index);surface_normals.append(tuple(vertex.normal))
+    normal_tree.balance()
     sidewood.data=mainwood.data.copy();sidewood.matrix_world=Matrix.Identity(4)
     for obj,keep_left in [(mainwood,False),(sidewood,True)]:
         bm=bmesh.new();bm.from_mesh(obj.data)
         bmesh.ops.bisect_plane(bm,geom=list(bm.verts)+list(bm.edges)+list(bm.faces),dist=.0001,plane_co=(1384,0,0),plane_no=(1,0,1),clear_inner=not keep_left,clear_outer=keep_left)
         bmesh.ops.holes_fill(bm,edges=[e for e in bm.edges if e.is_boundary],sides=0)
         bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces));bm.to_mesh(obj.data);bm.free()
+        # Identical exterior normals on either side of the internal partition
+        # avoid an artificial visible seam between native source owners.
+        obj.data.normals_split_custom_set_from_vertices([surface_normals[normal_tree.find(v.co)[1]] for v in obj.data.vertices])
     records=[dict(part=int(o['source_node'].split('-')[-1]),vertices=len(o.data.vertices),faces=len(o.data.polygons),min_z=min(v.co.z for v in o.data.vertices),method='Continuous angular buttress loft, partitioned by internal x+z=1384 plane') for o in wood]
     cfg=json.loads((original/'workspace.json').read_text());domain=OUT/'tree35-root-research/source-domain-v1'
     if not solid_only:
@@ -127,7 +135,7 @@ def main(solid_only=False,output_name="candidate-v12"):
     write_json(directory/'evidence.json',dict(status='private reconstructed roots; self-review pending',solid_only_preview=solid_only,model_sha256=sha(directory/'model.blend'),original_model=str(original/'model.blend'),original_model_sha256=original_hash,outside_appearance_fingerprints=outside,root_geometry=records,source_domain_sha256=sha(domain/'source-review.json'),crown_and_other_owner_appearance_unchanged=True,reference_assets=['leicester-southeast-cottage-tree','leicester-moat-bank-tree'],limitations=['Old low flares discarded. New rounded buttresses are continuous angular stem profiles, inferred from grounded trunk construction rather than foliage silhouettes.','Actual visible wood above cut retained before union; modest smoothing also relaxes inherited upper collars.','Gray hidden wood requires new approval and fill; no prior texture approval transferred.','No canonical or approved files changed.']))
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--solid-only',action='store_true');parser.add_argument('--output-name',default='candidate-v12');args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--solid-only',action='store_true');parser.add_argument('--output-name',default='candidate-v13');args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
     acquire()
     try:main(args.solid_only,args.output_name)
     finally:release()
