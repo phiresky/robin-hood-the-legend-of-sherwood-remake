@@ -22,12 +22,13 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('shrub_worker', type=Path)
     parser.add_argument('shrub_sha256')
+    parser.add_argument('--rock-worker',type=Path)
     parser.add_argument('--rock-asset', default='croisement02-west-rock-outcrop')
     parser.add_argument('--crop', nargs=4, type=int, default=[-100,230,310,510])
     parser.add_argument('--output-name', default='west-rock-joint-review')
     parser.add_argument('--exclude-secondary-crowns', action='store_true')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
-    rock_worker = scenery_workspace(args.rock_asset)
+    rock_worker = args.rock_worker.resolve() if args.rock_worker else scenery_workspace(args.rock_asset)
     workers = [rock_worker, args.shrub_worker.resolve()]
     hashes = [sha(w / 'model.blend') for w in workers]
     if hashes[1] != args.shrub_sha256:

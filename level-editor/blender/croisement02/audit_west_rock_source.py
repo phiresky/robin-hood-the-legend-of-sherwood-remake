@@ -20,11 +20,12 @@ from render_slots import acquire, release
 
 def main():
     parser=argparse.ArgumentParser()
+    parser.add_argument('--worker',type=Path)
     parser.add_argument('--asset',default='croisement02-west-rock-outcrop')
     parser.add_argument('--domain',type=Path,default=OUT/'west-rock-source-revision/domain-350.png')
     parser.add_argument('--crop',nargs=4,type=int,default=[0,280,280,440])
     args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
-    worker=scenery_workspace(args.asset)
+    worker=args.worker.resolve() if args.worker else scenery_workspace(args.asset)
     model_hash=sha(worker/'model.blend')
     acquire()
     try:

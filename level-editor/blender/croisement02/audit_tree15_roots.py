@@ -17,11 +17,13 @@ from tree_geometry import SIN,RAY
 from prepare_root_bank_domain import SOURCE_OUTLINE
 
 
-def preserved_mesh_state(worker):
+def preserved_mesh_state(worker, root_and_wood=False):
     bpy.ops.wm.open_mainfile(filepath=str(worker/'model.blend'));bpy.context.view_layer.update()
     result={}
     for obj in bpy.data.collections['Croisement02 Working'].all_objects:
-        if obj.type!='MESH' or obj.get('asset_group')!=worker.name or obj.get('root_completion'):continue
+        if obj.type!='MESH' or obj.get('asset_group')!=worker.name:continue
+        if root_and_wood and obj.get('projection_component')=='crown':continue
+        if not root_and_wood and obj.get('root_completion'):continue
         mesh=obj.data
         record=dict(vertices=[list(v.co) for v in mesh.vertices],faces=[list(f.vertices) for f in mesh.polygons],
                     slots=[f.material_index for f in mesh.polygons],smooth=[f.use_smooth for f in mesh.polygons],
@@ -47,12 +49,13 @@ def preserved_mesh_state(worker):
 
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--worker',type=Path,default=tree_workspace(15));args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
+    parser=argparse.ArgumentParser();parser.add_argument('--worker',type=Path,default=tree_workspace(15));parser.add_argument('--preservation-base',type=Path);parser.add_argument('--preserve-root-and-wood',action='store_true');args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
     worker=args.worker.resolve();model_hash=sha(worker/'model.blend');acquire()
     try:
-        original=tree_workspace(15)
-        previous=preserved_mesh_state(original);current=preserved_mesh_state(worker)
-        preservation=dict(previous_worker=str(original),previous_model_sha256=sha(original/'model.blend'),model_sha256=model_hash,previous_meshes=previous,current_meshes=current,preserved=previous==current)
+        original=args.preservation_base.resolve() if args.preservation_base else tree_workspace(15)
+        if args.preserve_root_and_wood and not args.preservation_base:raise ValueError('Combined crown audit requires an explicit reviewed root base')
+        previous=preserved_mesh_state(original,args.preserve_root_and_wood);current=preserved_mesh_state(worker,args.preserve_root_and_wood)
+        preservation=dict(previous_worker=str(original),previous_model_sha256=sha(original/'model.blend'),model_sha256=model_hash,previous_meshes=previous,current_meshes=current,preserved=previous==current,scope='root and wood; crown intentionally excluded' if args.preserve_root_and_wood else 'original wood and crown')
         if previous!=current:raise ValueError('Existing tree15 mesh, transform, UV, or material changed')
         write_json(worker/'inspection/root-preservation.json',preservation)
         scene=bpy.data.scenes.new('Independent root source coverage');bpy.context.window.scene=scene
