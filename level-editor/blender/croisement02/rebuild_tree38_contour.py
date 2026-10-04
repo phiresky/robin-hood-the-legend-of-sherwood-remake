@@ -16,7 +16,7 @@ from tree_geometry import SIN,COS,RAY
 
 
 def main():
-    old=tree_workspace(38);out=OUT/'tree38-root-research/continuous-contour-v4';out.mkdir(parents=True,exist_ok=False);old_hash=sha(old/'model.blend');domain=OUT/'tree38-root-research/source-domain-v1'
+    old=tree_workspace(38);out=OUT/'tree38-root-research/continuous-contour-v9';out.mkdir(parents=True,exist_ok=False);old_hash=sha(old/'model.blend');domain=OUT/'tree38-root-research/source-domain-v1'
     bpy.ops.wm.open_mainfile(filepath=str(old/'model.blend'));bpy.context.view_layer.update();bpy.context.preferences.filepaths.save_version=0
     objects=list(bpy.data.collections['Croisement02 Working'].all_objects);wood=next(o for o in objects if o.type=='MESH' and o.get('asset_group')==old.name and o.get('projection_component')!='crown')
     if wood.get('source_node')!='building-094':raise ValueError('Unexpected native wood owner')
@@ -24,25 +24,19 @@ def main():
     for v in reference.vertices:v.co=wood.matrix_world@v.co
     mask=np.asarray(Image.open(domain/'wood38-plus-reviewed-contour.png').convert('L'))>0;ground=next(r['ground_y'] for r in json.loads((OUT/'forest-v4-sources/manifest.json').read_text()) if r['mask']==38)
     profiles={};bm=bmesh.new()
-    for role,start,end in [('stem',615,705),('left-root',696,711),('right-root',696,717)]:
+    for role,start,end in [('stem',615,713)]:
         rows=[]
         for y in range(start,end):
             xs=np.where(mask[y])[0];xs=xs[(xs>=1550)&(xs<=1610)]
-            if role=='left-root':xs=xs[xs<=round(1585-min(1.,(y-687)/12)*8)]
-            elif role=='right-root':xs=xs[xs>=round(1573+min(1.,(y-687)/12)*5)]
             if not len(xs):continue
             left,right=float(xs.min())-.35,float(xs.max())+1.35;rows.append((y+.5,(left+right)/2,(right-left)/2))
         if len(rows)<3:raise ValueError('Insufficient native root profile')
         profiles[role]=rows
-        adjust=None
-        if role!='stem':
-            parent_rows=profiles['stem'];end_y=parent_rows[-1][0];root_end=rows[-1][0]
-            def adjust(y,cx,radius,default_depth):
-                sample_y=min(y,end_y);px=float(np.interp(sample_y,[r[0] for r in parent_rows],[r[1] for r in parent_rows]));pr=float(np.interp(sample_y,[r[0] for r in parent_rows],[r[2] for r in parent_rows]))
-                center=Vector((px,-ground/SIN,(ground-sample_y)/COS));pd=center.dot(RAY)+max(0.,(.25+pr*RAY.z-center.z)/RAY.z)
-                attached=pd+math.sqrt(max(0.,pr*pr-(cx-px)**2))-radius
-                t=max(0.,min(1.,(y-end_y)/max(.5,root_end-end_y)));t=t*t*(3-2*t)
-                return max(default_depth,attached*(1-t)+default_depth*t)
+        def adjust(y,cx,radius,default_depth):
+            center=Vector((cx,-ground/SIN,(ground-y)/COS))
+            # Keep the complete observed front half above ground; bury only the inferred rear.
+            required=.25
+            return center.dot(RAY)+(max(0.,(required-center.z)/RAY.z) if y>=687 else 0.)
         add_mesh(bm,loft(rows,ground,115,ground_start=687,depth_adjust=adjust))
     retained=bmesh.new();retained.from_mesh(reference)
     bmesh.ops.bisect_plane(retained,geom=list(retained.verts)+list(retained.edges)+list(retained.faces),dist=.0001,plane_co=(0,0,80),plane_no=(0,0,1),clear_inner=True)
@@ -66,7 +60,7 @@ def main():
     write_json(out/'evidence.json',dict(model_sha256=sha(out/'model.blend'),previous_worker=str(old),previous_model_sha256=old_hash,source_review_sha256=sha(domain/'source-review.json'),geometry=report,profiles=profiles,upper_exterior_distance=dict(maximum=max(distances),p95=float(np.quantile(distances,.95))),preserved_appearance=protected,status='Private unprojected geometry; source and solid audits pending',limitations=['Only344 stronger contour pixels incorporated;65 distal-root-vs-ground pixels remain unresolved.','Native38 observed RGB not semantically reclassified as foliage.','No original worker or canonical selection changed.']))
     (out/'recipe.py').write_text(Path(__file__).read_text())
     import inspect_tree07_base
-    previous=sys.argv;sys.argv=[sys.argv[0],'--','--mask','38','--model',str(out/'model.blend'),'--output-name','continuous-contour-v4-review','--solid-only']
+    previous=sys.argv;sys.argv=[sys.argv[0],'--','--mask','38','--model',str(out/'model.blend'),'--output-name','continuous-contour-v9-review','--solid-only']
     try:inspect_tree07_base.main()
     finally:sys.argv=previous
     import audit_tree38_contour
