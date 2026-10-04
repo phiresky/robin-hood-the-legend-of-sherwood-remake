@@ -521,3 +521,10 @@ and 4; set `ROBIN_ASSET_MAP_DIAGNOSTICS` to a diagnostic export directory.
 checks nonmutating shared-control authoring, joined/detached compilation,
 coordinate conversion of trigger contours and receiving segments, and rejection
 of conflicting ownership. It does not verify rendered appearance pixels.
+
+The recovered drawbridge state fixtures in
+`level-editor/work/map-compile/lincoln-bridge-state-hWz7IQ` cover baseline and
+jointly moved bridge/gatehouse placements. With that directory in
+`ROBIN_ASSET_MAP_DIAGNOSTICS`, the ignored native test
+`recovered_asset_transitions_apply_and_reset_native_geometry` verifies ten controls
+per placement, including the independent obstacle-state and six-door-rights controls.

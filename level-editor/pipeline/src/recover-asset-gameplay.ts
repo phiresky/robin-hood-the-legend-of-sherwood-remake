@@ -1927,6 +1927,79 @@ if (values["projection-definitions"]) {
   );
 }
 let maskRecovery: Awaited<ReturnType<typeof recoverReviewedMasks>> = [];
+const sightTransitionRecovery: { patch: number; asset: string; transition: string }[] = [];
+for (const [index, source] of proto.patches.entries()) {
+  const refs = [...source.old_sight_obstacles, ...source.new_sight_obstacles];
+  if (
+    !refs.length ||
+    source.door_indices.length ||
+    movementTransitionRecovery.some((entry) => entry.patch === index)
+  )
+    continue;
+  try {
+    if (
+      movementStateInventory.some((area) =>
+        area.transitions.some((change) => change.patches.includes(index)),
+      )
+    )
+      throw new Error("Sight transition has unrecovered movement changes");
+    const owners = refs.map((ref) => {
+      const candidates = locals.get(ref) ?? [];
+      if (candidates.length !== 1)
+        throw new Error(`Sight transition needs one physical owner for obstacle ${ref}`);
+      return candidates[0]!;
+    });
+    const owner = owners[0]!;
+    if (owners.some((entry) => entry.asset !== owner.asset))
+      throw new Error("Changing sight geometry needs an explicit cross-asset assembly");
+    const sightRef = (ref: number) => {
+      const part = locals.get(ref)![0]!;
+      return part.collisionId ?? part.node;
+    };
+    const waypoint = endpointBinding(
+      `patch-waypoint/${index}`,
+      source.sector,
+      source.layer,
+      source.waypoint,
+    );
+    const transition = recoverMovementTransition({
+      id: `sight-change-${index}`,
+      node: owner.node,
+      patch: source,
+      initial: [],
+      applied: [],
+      initialSight: source.old_sight_obstacles.map(sightRef),
+      appliedSight: source.new_sight_obstacles.map(sightRef),
+      receivers: [],
+      groundLayer: source.layer === 0,
+      waypointHeight: waypoint.height,
+      localize: (point) => localize(owner.part, point),
+    });
+    if (waypoint.anchor) transition.waypointAnchor = localize(owner.part, waypoint.anchor);
+    const p = packet(owner.asset);
+    // Persistent navigation exclusions remain independent of visibility changes.
+    // Without authored exclusions, changing volumes must not create permanent cuts.
+    if (p.movementBlockers === undefined) {
+      const controlled = new Set(owners.map((part) => part.collisionId ?? part.node));
+      const descriptor = descriptors.get(owner.asset)!;
+      p.movementSolids = (
+        p.movementSolids ?? [
+          ...descriptor.parts
+            .filter((part) => part.obstacle_local_game?.solid)
+            .map((part) => part.node),
+          ...(p.volumes ?? []).filter((volume) => volume.shape.solid).map((volume) => volume.id),
+        ]
+      ).filter((ref) => !controlled.has(ref));
+    }
+    (p.movementTransitions ??= []).push(transition);
+    p.issues.push(
+      "Sight state recovered; associated masks and animated effects still require review",
+    );
+    sightTransitionRecovery.push({ patch: index, asset: owner.asset, transition: transition.id });
+  } catch (error) {
+    unresolved.push({ kind: "sight-transition", patch: index, reason: String(error) });
+  }
+}
 const maskTransitionRecovery: { patch: number; asset: string; transition: string }[] = [];
 if (values["mask-definitions"]) {
   const definitions: { source_sha256: string; recipes: ReviewedMaskRecipe[] } = JSON.parse(
@@ -1946,7 +2019,9 @@ if (values["mask-definitions"]) {
     const owner = masks.map((mask) => maskOwners.get(mask)).find((entry) => entry !== undefined);
     if (
       !owner ||
-      [...movementTransitionRecovery, ...doorTransitionRecovery].some((t) => t.patch === index)
+      [...movementTransitionRecovery, ...doorTransitionRecovery, ...sightTransitionRecovery].some(
+        (t) => t.patch === index,
+      )
     )
       continue;
     if (
@@ -2010,6 +2085,7 @@ if (values["mask-definitions"]) {
   maskRecovery = await recoverReviewedMasks(values.library, document, proto, definitions.recipes, [
     ...movementTransitionRecovery,
     ...doorTransitionRecovery,
+    ...sightTransitionRecovery,
     ...maskTransitionRecovery,
   ]);
   for (const recovered of maskRecovery) {
@@ -2028,7 +2104,12 @@ if (values["mask-definitions"]) {
 const appearanceRecovery = recoverAppearanceBindings(
   inputDocument,
   proto.patches.length,
-  [...movementTransitionRecovery, ...doorTransitionRecovery, ...maskTransitionRecovery],
+  [
+    ...movementTransitionRecovery,
+    ...doorTransitionRecovery,
+    ...sightTransitionRecovery,
+    ...maskTransitionRecovery,
+  ],
   new Map([...packets].map(([id, p]) => [id, p.movementTransitions ?? []])),
 );
 for (const binding of appearanceRecovery.bindings) {
@@ -2070,6 +2151,16 @@ for (const entry of unownedSightObstacles) unresolved.push({ kind: "sight-owner"
 const pending = {
   appearanceBindings: appearanceRecovery.unresolved.length,
   sightObstacleOwners: unownedSightObstacles.length,
+  sightTransitionBindings: proto.patches.filter(
+    (patch, index) =>
+      (patch.old_sight_obstacles.length || patch.new_sight_obstacles.length) &&
+      ![
+        ...movementTransitionRecovery,
+        ...doorTransitionRecovery,
+        ...sightTransitionRecovery,
+        ...maskTransitionRecovery,
+      ].some((entry) => entry.patch === index),
+  ).length,
   doorTransitionBindings:
     proto.patches.filter((patch) => patch.door_indices.length > 0).length -
     doorTransitionRecovery.length,
@@ -2152,6 +2243,7 @@ const report = {
   projectionRecovery,
   movementTransitionRecovery,
   doorTransitionRecovery,
+  sightTransitionRecovery,
   maskTransitionRecovery,
   appearanceRecovery,
   doorStateOwnershipRecovery,

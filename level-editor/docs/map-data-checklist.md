@@ -4110,3 +4110,31 @@ Four appearance bindings remain unresolved across the plateau, west terrace,
 drawbridge and gatehouse. The bridge's physical raise/lower state, associated masks,
 and rendered shared-state behavior still need verification. These published draft
 links do not establish full appearance or map parity.
+
+### Recover obstacle-only state controls
+
+One-time recovery now handles changing sight/mouse volumes that have no movement
+polygon or door changes. It requires a unique physical owner for every volume and
+one owning asset for the complete change, retains separate persistent movement
+exclusions, and reports missing ownership or unrecovered movement rather than
+inventing a transition. These controls also participate in appearance and reviewed
+mask binding. `sightTransitionRecovery` and `pending.sightTransitionBindings` expose
+the additional recovery coverage.
+
+Lincoln's drawbridge now has its raised obstacle state and associated appearance
+control, separately from the existing six-door rights control. Its gatehouse
+appearance is explicitly linked using local frames. Both asset definitions and
+scene pins are published. Baseline and a jointly moved bridge/gatehouse compile
+ten controls; native apply/reset passes all ten in both exports. Evidence and
+rollback files are under `work/map-compile/lincoln-bridge-state-hWz7IQ`.
+
+Two appearance bindings remain unresolved on the west plateau and terrace.
+Animated lowering, mask coverage and rendered state changes remain unverified;
+the new control is not evidence that the complete bridge sequence has parity.
+
+A fresh library-wide authoring scan in
+`work/map-compile/sight-state-library-recovery-20261004` produced 1,045 schema-valid
+drafts across eight source-backed maps. Nottingham recovery stopped at a stale
+declared door-owner frame before this new recovery stage; Wychford has no source
+recovery by design. Those scan drafts were not published. This is an authoring
+recipe gap, not a new runtime fallback or a claim of nine-map recovery success.

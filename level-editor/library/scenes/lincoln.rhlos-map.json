@@ -801,7 +801,7 @@
       "model": "3d-assets/lincoln/lincoln-south-gate-drawbridge/model.glb",
       "model_sha256": "11bfac36ded30f043c0a64b6609f12c62ad853bccc1452d375b1d14f74f8df29",
       "descriptor": "3d-assets/lincoln/lincoln-south-gate-drawbridge/asset.json",
-      "descriptor_sha256": "f05865910e37590ce82f3313616a907d5f766ce472902d6357854d372fb90321",
+      "descriptor_sha256": "b7b1ad4d1c5c25c44a95956ec427b42e83d3831ea0c4ba4c7ccbce594d9571ca",
       "id": "lincoln-south-gate-drawbridge"
     },
     {
@@ -815,7 +815,7 @@
       "model": "3d-assets/lincoln/lincoln-south-gatehouse/model.glb",
       "model_sha256": "88004f15ca9b5a03fea39671c0fe2fc5a50a3d6dd8b682ee446b86ca67ba4e02",
       "descriptor": "3d-assets/lincoln/lincoln-south-gatehouse/asset.json",
-      "descriptor_sha256": "d3c5ce8dde946eda2bf3708ea83a5016fa3f53aa170f0e6022763fe9c9dd4f12",
+      "descriptor_sha256": "ad03b7dd5da948ca6f7134369853db654effc8995d8e9d4b1b967a1f37329c32",
       "id": "lincoln-south-gatehouse"
     },
     {

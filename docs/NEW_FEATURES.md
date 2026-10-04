@@ -2416,3 +2416,8 @@ are converted into the secondary asset's own coordinates; collision and door
 effects stay with their original owner. Matching local contacts assemble after
 placement, and independent movement detaches them. This is an asset-authoring
 operation, not automatic coupling by preview names.
+
+Gameplay recovery now retains obstacle-state controls even when they change no
+navigation polygons or door rights. Owned sight/mouse volumes switch with their
+asset's appearance while persistent movement exclusions remain independent.
+Incomplete or cross-asset physical ownership is reported instead of guessed.
