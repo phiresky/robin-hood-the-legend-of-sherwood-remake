@@ -6,8 +6,9 @@
 Opens the combined worker and links every image of the input worker as a library copy.
 Checks: identical object set, mesh geometry, transforms, UV layers, slot assignments and
 material node graphs; every image identical except exterior ownership atlases of the combined
-assets; in those, every changed texel was neutral gray and opaque in the input and is opaque
-afterwards; the changed-texel total equals combine.json's generated count. Writes
+assets; in those, every changed texel was neutral gray and opaque in the input (or
+unobserved alpha-zero terrain) and is opaque afterwards. The changed-texel total
+must not exceed combine.json's generated count. Writes
 verification.json into the output directory.
 """
 import hashlib
@@ -29,6 +30,30 @@ def pixels(image):
     data = np.empty(width * height * 4, dtype=np.float32)
     image.pixels.foreach_get(data)
     return np.rint(data.reshape(height, width, 4) * 255).astype(np.uint8)
+
+
+def editable_texels(data, *, terrain=False):
+    """Terrain alpha records ownership; other atlases use opaque neutral gray."""
+    if terrain:
+        return data[..., 3] == 0
+    rgb = data[..., :3]
+    return (rgb[..., 0] == rgb[..., 1]) & (rgb[..., 1] == rgb[..., 2]) & (data[..., 3] == 255)
+
+
+def terrain_atlases(bpy):
+    """Identify ownership atlases from the input ground's used material slots."""
+    names = set()
+    for obj in bpy.data.objects:
+        if obj.type != 'MESH' or obj.get('source_node') != 'ground':
+            continue
+        for slot in {p.material_index for p in obj.data.polygons}:
+            material = obj.data.materials[slot]
+            if (material and material.use_nodes and material.get('source_ownership_bake')
+                    and material.get('source_ownership_label') == 'exterior'
+                    and material.get('source_ownership_alpha')):
+                names.update(n.image.name for n in material.node_tree.nodes
+                             if n.type == 'TEX_IMAGE' and n.image)
+    return names
 
 
 def records(bpy):
@@ -71,6 +96,7 @@ def main(output):
     spill.mkdir(exist_ok=True)
     bpy.ops.wm.open_mainfile(filepath=str(worker_in))
     before_records = records(bpy)
+    ground_images = terrain_atlases(bpy)
     before_images = {}
     for index, image in enumerate(bpy.data.images):
         if not (image.packed_file or image.has_data) or not image.size[0]:
@@ -104,8 +130,7 @@ def main(output):
             continue
         old = np.load(spill / f'{index}.npy')
         diff = np.any(new != old, axis=2)
-        rgb = old[..., :3].astype(np.int16)
-        gray = (rgb[..., 0] == rgb[..., 1]) & (rgb[..., 1] == rgb[..., 2]) & (old[..., 3] == 255)
+        gray = editable_texels(old, terrain=name in ground_images)
         if np.any(diff & ~gray):
             problems.append('Non-neutral texel changed: ' + name)
         if np.any(new[diff][:, 3] != 255):

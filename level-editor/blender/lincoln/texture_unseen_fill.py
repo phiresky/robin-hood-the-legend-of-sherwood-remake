@@ -261,6 +261,12 @@ def island_unknown(kind, atlas, rows, cols, normals, face_normal, gr):
     return gr.neutral_mask(atlas, rows, cols, normals, face_normal)
 
 
+def island_receivers(kind, unknown, interior):
+    # Terrain uses a continuous atlas: a face's gutter can belong to a different
+    # face. Extending its edge samples there paints stripes across that neighbour.
+    return unknown & interior if kind == 'ground' else unknown
+
+
 def asset_of(obj):
     """Catalog asset of a worker mesh; staged terrain meshes carry only source_node 'ground'."""
     return obj.get('asset_group') or ('lincoln-terrain' if obj.get('source_node') == 'ground' else None)
@@ -392,6 +398,7 @@ class Target:
                 for face, rows, cols, points, face_normals, inner in gr.islands(
                         record, uv, binding['image'].size, lambda group, s=slot: record['slots'][group[0]] == s):
                     neutral = island_unknown(kind, atlas, rows, cols, face_normals, record['face_normals'][face], gr)
+                    neutral = island_receivers(kind, neutral, inner)
                     neutral &= self.in_region(obj, points)
                     positions.append(points[neutral])
                     normals.append(face_normals[neutral])
@@ -828,9 +835,10 @@ def fill_target(target_id, scene, gr):
             atlas = gr.read_image(image)
             before = atlas.copy()
             uv = gr.slot_uvs(obj, binding['uv'])
-            for face, rows, cols, positions, normals, _ in gr.islands(
+            for face, rows, cols, positions, normals, inner in gr.islands(
                     record, uv, image.size, lambda group, s=slot: record['slots'][group[0]] == s):
                 neutral = island_unknown(kind, atlas, rows, cols, normals, record['face_normals'][face], gr)
+                neutral = island_receivers(kind, neutral, inner)
                 neutral &= target.in_region(obj, positions)
                 if not neutral.any():
                     continue
