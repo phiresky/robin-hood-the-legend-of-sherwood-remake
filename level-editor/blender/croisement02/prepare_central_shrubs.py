@@ -60,7 +60,7 @@ def main():
             if np.any(exact&~full) or int(exact.sum())!=chosen['observed_pixels']:raise ValueError('Mixed leaf domain outside native mask or count changed')
             full=exact
             source_role_review=dict(authority=str(authority),authority_sha256=sha(authority),record=chosen,
-                limitation='Only clear leaf pixels are assigned; excluded mixed owners and uncertain branch/ground pixels are not declared entirely bark.')
+                limitation='The domain contains the clear leaf core and any explicitly recorded inferred boundary ownership. Its source RGB remains observed; excluded mixed regions are not declared entirely bark.')
             write_json(DIRECTORY/'source-role-review.json',source_role_review)
         if index==68:full &= ~canvas(7)
         observed=full.copy()
@@ -80,8 +80,8 @@ def main():
         if index==68:packet['physical_silhouette_authority']=dict(sha256=sha(packet_dir/'complete-source.png'),reason='Native68 minus exposed wood7; leaf-only physical silhouette, observed source separately excludes131/133; no source ownership implied for covered leaves')
         if source_role_review:
             packet['source_role_review']=source_role_review
-            packet['physical_silhouette_authority']=dict(sha256=sha(packet_dir/'complete-source.png'),reason='Exact independently reviewed clear-leaf complement; original native mask includes reserved mixed owners, uncertain branches or bare ground and is not a physical foliage union')
-            packet['ownership_note']='Exact clear-leaf complement only; excluded mixed owners remain unchanged. Hidden volume uses own small native leaf patches, not nearest-edge unknown front wedges.'
+            packet['physical_silhouette_authority']=dict(sha256=sha(packet_dir/'complete-source.png'),reason='Exact independently reviewed foliage domain, including explicitly recorded inferred boundary ownership; the original mixed native mask is not a physical foliage union')
+            packet['ownership_note']='Preserve the source-role record distinction between clear leaves and inferred boundary ownership. Excluded mixed owners remain unchanged. Hidden volume uses own small native leaf patches.'
         write_json(packet_dir/'partition.json',packet);packets[index]=packet
     sheet=Image.new('RGB',(512*len(CHOSEN),1000),'#888888');draw=ImageDraw.Draw(sheet);validation=[]
     source_rgb=np.asarray(rgb)
