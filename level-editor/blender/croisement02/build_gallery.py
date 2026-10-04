@@ -8,6 +8,7 @@ sys.path.insert(0,str(Path(__file__).parent));sys.path.insert(0,str(ROOT/'level-
 from catalog import OUT,tree_workspace,scenery_workspace,reviewed_catalog
 from evidence_io import sha
 from build_review_gallery import build
+from supplemental_reviews import records as supplemental_records, append_section as append_supplemental_section
 from catalog_schema import source_for_part
 from audit_native_mask_backlog import audit as audit_native_masks
 
@@ -201,7 +202,9 @@ def main():
         dict(id='croisement02-animation-and-mission-states',name='Animation and mission states',status='pending',reason='All 15 animation sequences and 129 mission patches are preserved as source evidence. Candidates show synchronized first-frame foliage; full state/animation integration is pending.')])
     data=dict(map='Croisement02',items=items,without_packets=missing,status_counts=dict(Counter(i['status'] for i in items)),
               policy='No geometry or texture approval is implied. Only the two explicitly selected Leicester trees are reference assets.')
+    data['supplemental_reviews']=supplemental_records(OUT)
     path=OUT/'review-candidates.json';path.write_text(json.dumps(data,indent=2)+'\n');build(path,OUT/'gallery',pending_only=True,map_name='Croisement02')
+    append_supplemental_section(OUT/'gallery',data['supplemental_reviews'])
     print(OUT/'gallery/index.html',len(items),'candidates')
 
 if __name__=='__main__':main()
