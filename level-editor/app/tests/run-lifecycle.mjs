@@ -82,6 +82,7 @@ try {
   });
   socket.send(JSON.stringify({ id: ++id, method: "Runtime.enable" }));
   let outcome;
+  let lastProgress;
   const deadline = performance.now() + Number(process.env.TEST_TIMEOUT ?? 60000);
   while (performance.now() < deadline) {
     outcome = await evaluate(socket, ++id, "document.querySelector('#result')?.textContent", {
@@ -90,7 +91,13 @@ try {
         Number(process.env.TEST_EVALUATE_TIMEOUT ?? 5000),
         deadline - performance.now(),
       ),
+    }).catch((error) => {
+      throw new Error(`Last fixture progress: ${outcome ?? "not reported"}`, { cause: error });
     });
+    if (process.env.TEST_PROGRESS && outcome !== lastProgress) {
+      console.log(outcome);
+      lastProgress = outcome;
+    }
     if (outcome?.startsWith("PASS") || outcome?.startsWith("FAIL")) break;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -115,7 +122,8 @@ try {
     throw new Error(
       outcome?.startsWith("FAIL")
         ? outcome
-        : "Lifecycle acceptance timed out without a result\n" + browserErrors.join("\n"),
+        : `Lifecycle acceptance timed out: ${outcome ?? "not reported"}\n` +
+            browserErrors.join("\n"),
     );
   if (process.env.TEST_BAKE_ZIP) {
     console.log(outcome);

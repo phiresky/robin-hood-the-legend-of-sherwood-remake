@@ -239,6 +239,7 @@ export async function bakeAppearanceRegionsAsync(
   width: number,
   initial: BakePixels,
   render: () => Promise<BakePixels>,
+  renderRegion?: (bounds: BakeBounds) => Promise<BakePixels>,
 ): Promise<BakedAppearanceRegion[]> {
   const display = new PatchDisplay();
   try {
@@ -249,7 +250,9 @@ export async function bakeAppearanceRegionsAsync(
         display.clear();
         plan.patches.forEach((patch, bit) => display.set(patch, (state & (1 << bit)) !== 0));
         display.apply(root);
-        states.push(crop(await render(), width, plan.bounds));
+        states.push(
+          renderRegion ? await renderRegion(plan.bounds) : crop(await render(), width, plan.bounds),
+        );
       }
       regions.push({ ...plan, states });
     }

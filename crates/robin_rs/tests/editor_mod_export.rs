@@ -101,14 +101,31 @@ fn full_editor_archive_constructs_native_map_without_base_datadir() {
     let grid = engine.fast_grid();
     assert!(!grid.level.blocks.is_empty());
     assert!(!grid.level.sectors.is_empty());
+    for region in &background.appearance_regions {
+        assert!(
+            region
+                .patches
+                .iter()
+                .all(|&patch| usize::from(patch) < engine.patches().len()),
+            "appearance region references a missing native control"
+        );
+        assert_eq!(region.states.len(), 1 << region.patches.len());
+        let pixels = usize::from(region.bounds[2]) * usize::from(region.bounds[3]);
+        for state in &region.states {
+            assert_eq!(state.color.len(), pixels);
+            assert_eq!(state.depth.len(), pixels);
+        }
+    }
     eprintln!(
-        "{name}: {}x{}, {} sight obstacles, {} masks, {} door projections, {} grid blocks; color/depth/minimap and editor scene loaded without a base datadir",
+        "{name}: {}x{}, {} sight obstacles, {} masks, {} door projections, {} grid blocks, {} appearance regions for {} controls; color/depth/minimap and editor scene loaded without a base datadir",
         dimensions.0,
         dimensions.1,
         assets.environment.static_sight_obstacles.len(),
         grid.level.masks.len(),
         grid.level.door_projection_infos.len(),
-        grid.level.blocks.len()
+        grid.level.blocks.len(),
+        background.appearance_regions.len(),
+        engine.patches().len()
     );
 }
 

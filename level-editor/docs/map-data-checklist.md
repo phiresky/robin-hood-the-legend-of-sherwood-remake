@@ -4138,3 +4138,30 @@ drafts across eight source-backed maps. Nottingham recovery stopped at a stale
 declared door-owner frame before this new recovery stage; Wychford has no source
 recovery by design. Those scan drafts were not published. This is an authoring
 recipe gap, not a new runtime fallback or a claim of nine-map recovery success.
+
+### Complete Lincoln appearance bindings
+
+The remaining plateau and west-terrace appearances now share an explicitly
+authored reveal control. Its local waypoint and activation contour were recovered
+once; it carries no navigation, sight-volume or door-rights changes. Both asset
+definitions and scene pins are published. The baseline now compiles in strict
+mode with all appearance bindings resolved, 11 controls, ten lifts and 33 lights.
+Native apply/reset passes all 11 controls for the baseline and jointly moved pair.
+
+Evidence and rollback files are in `work/map-compile/lincoln-plateau-state-gaTztD`.
+The one-pixel placement test retains all controls but uses best-effort export:
+an independent light-region anchor has no receiving floor after the supporting
+assets move. Its omission remains an explicit warning, not a passed lighting
+placement check. Mask coverage, animation and rendered state parity remain open.
+
+### Appearance bake cost and pixel fidelity
+
+Async export now renders only full-frame tiles intersecting each appearance
+region, then copies the region's pixels. The camera, depth scale, scene lighting
+and tile grid remain unchanged. Rendering arbitrary cropped camera rectangles
+changed edge rasterization, so the implementation deliberately retains the
+original tile grid. Browser comparisons pass exact color/depth equality for
+multi-tile crops and shadowed appearances under three sun directions; thirteen
+appearance unit tests pass. GPU setup and shadow rendering are still repeated
+per state, so large combination tables remain expensive. The full Lincoln archive
+check is still outstanding; the small fixture is not full-map visual certification.

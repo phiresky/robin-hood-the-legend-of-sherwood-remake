@@ -166,8 +166,20 @@ function* mapBakeTiles(
   ground?: THREE.Object3D | null,
   depthExcludedObjects: ReadonlySet<string> = new Set(),
   tileLimit = 1024,
+  region?: BakeBounds,
 ): Generator<BakeProgress, BakePixels> {
   const [, , width, height] = validateBakeBounds(bounds);
+  const [regionX, regionY, outputWidth, outputHeight] = region ?? [0, 0, width, height];
+  if (
+    ![regionX, regionY, outputWidth, outputHeight].every(Number.isSafeInteger) ||
+    regionX < 0 ||
+    regionY < 0 ||
+    outputWidth <= 0 ||
+    outputHeight <= 0 ||
+    regionX + outputWidth > width ||
+    regionY + outputHeight > height
+  )
+    throw new Error("Bake region must be an integer rectangle inside the export frame");
   const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false });
   renderer.setPixelRatio(1);
   renderer.setOpaqueSort(stableOpaqueSort);
@@ -242,13 +254,17 @@ function* mapBakeTiles(
     camera.lookAt(center);
     camera.updateMatrixWorld(true);
     const tile = Math.min(tileLimit, renderer.capabilities.maxTextureSize);
-    const color = new Uint8Array(width * height * 4),
-      depth = new Uint16Array(width * height);
-    const total = Math.ceil(width / tile) * Math.ceil(height / tile) * 2;
+    const color = new Uint8Array(outputWidth * outputHeight * 4),
+      depth = new Uint16Array(outputWidth * outputHeight);
+    const startX = Math.floor(regionX / tile) * tile;
+    const startY = Math.floor(regionY / tile) * tile;
+    const endX = regionX + outputWidth;
+    const endY = regionY + outputHeight;
+    const total = Math.ceil((endX - startX) / tile) * Math.ceil((endY - startY) / tile) * 2;
     let completed = 0;
     const renderPass = function* (isDepth: boolean): Generator<BakeProgress> {
-      for (let y = 0; y < height; y += tile)
-        for (let x = 0; x < width; x += tile) {
+      for (let y = startY; y < endY; y += tile)
+        for (let x = startX; x < endX; x += tile) {
           const w = Math.min(tile, width - x),
             h = Math.min(tile, height - y);
           const target = new THREE.WebGLRenderTarget(w, h, {
@@ -256,6 +272,7 @@ function* mapBakeTiles(
             colorSpace: isDepth ? THREE.NoColorSpace : THREE.SRGBColorSpace,
           });
           try {
+            // Preserve tile boundaries too: shifting them can change edge rasterization.
             camera.setViewOffset(width, height, x, y, w, h);
             renderer.setRenderTarget(target);
             renderer.render(scene, camera);
@@ -265,12 +282,14 @@ function* mapBakeTiles(
               throw new Error(
                 "The GPU context was lost while compiling. Try a smaller export frame.",
               );
-            for (let row = 0; row < h; row++) {
-              const source = (h - row - 1) * w * 4,
-                dest = (y + row) * width + x;
-              if (!isDepth) color.set(bytes.subarray(source, source + w * 4), dest * 4);
+            const left = Math.max(x, regionX);
+            const copiedWidth = Math.min(x + w, endX) - left;
+            for (let row = Math.max(y, regionY); row < Math.min(y + h, endY); row++) {
+              const source = ((h - (row - y) - 1) * w + left - x) * 4,
+                dest = (row - regionY) * outputWidth + left - regionX;
+              if (!isDepth) color.set(bytes.subarray(source, source + copiedWidth * 4), dest * 4);
               else
-                for (let column = 0; column < w; column++)
+                for (let column = 0; column < copiedWidth; column++)
                   depth[dest + column] =
                     bytes[source + column * 4]! * 256 + bytes[source + column * 4 + 1]!;
             }
@@ -340,6 +359,7 @@ export async function renderMapBakeAsync(
   depthExcludedObjects: ReadonlySet<string> = new Set(),
   progress: (progress: BakeProgress) => void = () => {},
   checkCurrent: () => void = () => {},
+  region?: BakeBounds,
 ): Promise<BakePixels> {
   const tiles = mapBakeTiles(
     root,
@@ -349,6 +369,7 @@ export async function renderMapBakeAsync(
     ground,
     depthExcludedObjects,
     512,
+    region,
   );
   try {
     while (true) {

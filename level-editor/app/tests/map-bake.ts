@@ -120,6 +120,29 @@ try {
     "async depth differs from sync bake",
   );
   const interruptedRoot = bakeScene([root]);
+  const seamRegion: [number, number, number, number] = [500, 17, 550, 63];
+  const cropped = await renderMapBakeAsync(
+    bakeScene([root]),
+    camera,
+    compiled.bounds,
+    undefined,
+    null,
+    new Set(),
+    () => {},
+    () => {},
+    seamRegion,
+  );
+  for (let row = 0; row < seamRegion[3]; row++)
+    for (let column = 0; column < seamRegion[2]; column++) {
+      const full = (seamRegion[1] + row) * compiled.bounds[2] + seamRegion[0] + column;
+      const local = row * seamRegion[2] + column;
+      check(cropped.depth[local] === asynchronous.depth[full], "cropped tile seam changed depth");
+      for (let channel = 0; channel < 4; channel++)
+        check(
+          cropped.color[local * 4 + channel] === asynchronous.color[full * 4 + channel],
+          "cropped tile seam changed color",
+        );
+    }
   const borrowed = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();
   interruptedRoot.traverse((node) => {
     if (node instanceof THREE.Mesh) borrowed.set(node, node.material);
@@ -373,6 +396,32 @@ try {
     caster.visible = true;
     const applied = renderMapBake(shadowRoot, camera, shadowBounds, lighting, shadowGround);
     const [x, y, w, h] = plan.bounds;
+    const region = await renderMapBakeAsync(
+      shadowRoot,
+      camera,
+      shadowBounds,
+      lighting,
+      shadowGround,
+      new Set(),
+      () => {},
+      () => {},
+      plan.bounds,
+    );
+    for (let row = 0; row < h; row++) {
+      for (let column = 0; column < w; column++) {
+        const full = (y + row) * 512 + x + column;
+        const cropped = row * w + column;
+        check(
+          region.depth[cropped] === applied.depth[full],
+          "cropped state changed depth normalization",
+        );
+        for (let channel = 0; channel < 4; channel++)
+          check(
+            region.color[cropped * 4 + channel] === applied.color[full * 4 + channel],
+            `cropped state changed lighting at ${column},${row}, azimuth ${sunAzimuth}`,
+          );
+      }
+    }
     const [lx, ly, lw, lh] = local.bounds;
     let shadowPixels = 0;
     for (let i = 0; i < initial.depth.length; i++) {

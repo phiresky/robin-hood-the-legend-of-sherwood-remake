@@ -101,7 +101,7 @@
       "model": "3d-assets/lincoln/lincoln-castle-hill-west-plateau/model.glb",
       "model_sha256": "dd56a357ef8cee659b01ff6a4743f56d1a14b13fce8d9cc7859a8e90c9bbb499",
       "descriptor": "3d-assets/lincoln/lincoln-castle-hill-west-plateau/asset.json",
-      "descriptor_sha256": "cf9a941e833c125be8f65a8a75216eef42fbd01649e2be5b7c4d5e39a4dc3393",
+      "descriptor_sha256": "ce906bdf77d051708d361a649fa92120affad820c301fc2400ddad86e098511d",
       "id": "lincoln-castle-hill-west-plateau"
     },
     {
@@ -1305,7 +1305,7 @@
       "model": "3d-assets/lincoln/lincoln-west-tower-terrace/model.glb",
       "model_sha256": "b6b73f48af129f79445d77dfdd656a3bc025d675a5226c9f679d7472595f8bd2",
       "descriptor": "3d-assets/lincoln/lincoln-west-tower-terrace/asset.json",
-      "descriptor_sha256": "5364daf47dd202774cad96525ae87b419bbef6bd9a2e93bdf15b6f4d1bdf7fcd",
+      "descriptor_sha256": "9efb4e66047b40f28cadf4c65b1434a2af57f68241d6140422ac137db2e7dc1b",
       "id": "lincoln-west-tower-terrace"
     },
     {

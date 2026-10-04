@@ -528,3 +528,17 @@ jointly moved bridge/gatehouse placements. With that directory in
 `ROBIN_ASSET_MAP_DIAGNOSTICS`, the ignored native test
 `recovered_asset_transitions_apply_and_reset_native_geometry` verifies ten controls
 per placement, including the independent obstacle-state and six-door-rights controls.
+
+`work/map-compile/lincoln-plateau-state-gaTztD` adds the plateau/terrace reveal:
+native apply/reset checks all eleven controls in both baseline and moved fixtures.
+Reopening the published scene and compiling its pinned assets exactly reproduces
+the tested baseline geometry (eleven controls, ten lifts, 33 light sectors).
+
+The `map-bake.html` browser fixture checks cropped appearance rendering against
+full-frame color/depth pixels under three sun directions and across multiple tile
+boundaries. Keeping the same tile grid is required for exact edge rasterization.
+The 13 appearance unit tests also check independent regional state rendering and
+restoration after cancellation. The client archive smoke test passes; its ignored
+full-ZIP test additionally validates appearance state dimensions and references
+against the loaded engine's controls. This does not certify a full Lincoln ZIP
+until that bake and ignored test complete.

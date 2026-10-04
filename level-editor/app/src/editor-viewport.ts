@@ -170,7 +170,7 @@ export class EditorViewport {
     const total = 1 + plans.reduce((sum, plan) => sum + 2 ** plan.patches.length - 1, 0);
     const excluded = maskOcclusionObjects(document, assets);
     let completed = 0;
-    const render = async () => {
+    const render = async (region?: BakeBounds) => {
       const pixels = await renderMapBakeAsync(
         root,
         document.camera,
@@ -185,6 +185,7 @@ export class EditorViewport {
             total,
           }),
         checkCurrent,
+        region,
       );
       completed++;
       return pixels;
@@ -195,6 +196,7 @@ export class EditorViewport {
       plans,
       compiled.bounds[2],
       pixels,
+      render,
       render,
     );
     checkCurrent();

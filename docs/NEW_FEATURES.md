@@ -2421,3 +2421,13 @@ Gameplay recovery now retains obstacle-state controls even when they change no
 navigation polygons or door rights. Owned sight/mouse volumes switch with their
 asset's appearance while persistent movement exclusions remain independent.
 Incomplete or cross-asset physical ownership is reported instead of guessed.
+
+Lincoln's plateau/terrace reveal is now authored as an appearance-only control.
+It retains local activation geometry and a shared appearance contact without
+inventing movement changes or door effects.
+
+Async map export renders appearance changes using only intersecting map tiles.
+It preserves the full-frame camera, tile boundaries, shadow framing and depth
+normalization, while allocating only the affected region's output pixels.
+Browser acceptance runs can report live progress with `TEST_PROGRESS=1`; timeout
+errors include the last reported stage.

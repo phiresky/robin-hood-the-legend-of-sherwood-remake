@@ -84,6 +84,54 @@ test("async appearance rendering resets state after cancellation between frames"
   assert.equal(child.visible, true);
 });
 
+test("async appearance combinations render only their region and reset independent controls", async () => {
+  const root = new THREE.Group();
+  const children = ["left", "right"].map((patch) => {
+    const child = new THREE.Group();
+    child.userData.reveal_hide_when_applied = [patch];
+    root.add(child);
+    return child;
+  });
+  const initial = { color: new Uint8Array(32), depth: new Uint16Array(8).fill(7) };
+  const calls: BakeBounds[] = [];
+  const regions = await bakeAppearanceRegionsAsync(
+    root,
+    [
+      { bounds: [0, 0, 1, 1], patches: ["left"] },
+      { bounds: [2, 1, 2, 1], patches: ["right"] },
+    ],
+    4,
+    initial,
+    async () => {
+      throw new Error("unexpected full-frame render");
+    },
+    async (bounds) => {
+      calls.push(bounds);
+      assert.deepEqual(
+        children.map((child) => child.visible),
+        calls.length === 1 ? [false, true] : [true, false],
+      );
+      return {
+        color: new Uint8Array(bounds[2] * bounds[3] * 4),
+        depth: new Uint16Array(bounds[2] * bounds[3]).fill(9),
+      };
+    },
+  );
+  assert.deepEqual(calls, [
+    [0, 0, 1, 1],
+    [2, 1, 2, 1],
+  ]);
+  assert.deepEqual(
+    regions.map((region) => Array.from(region.states[0]!.depth)),
+    [[7], [7, 7]],
+  );
+  assert.deepEqual(
+    regions.map((region) => Array.from(region.states[1]!.depth)),
+    [[9], [9, 9]],
+  );
+  assert.ok(children.every((child) => child.visible));
+});
+
 test("one detached gate does not freeze a valid copy's appearance or movement state", () => {
   const { document, assets } = unavailableTerrainControlCompilerFixture();
   const original = document.objects[0]!;
