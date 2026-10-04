@@ -29,6 +29,19 @@ def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
 
 
+def check_gameplay_preserved(source, target):
+    """Model publication must not silently erase separately authored gameplay."""
+    if target.name != 'asset.json' or not target.exists():
+        return
+    previous = json.loads(target.read_text())
+    if previous.get('gameplay') is None:
+        return
+    replacement = json.loads(source.read_text()) if source is not None else {}
+    if replacement.get('gameplay') is None:
+        raise ValueError('Publication would remove asset gameplay: ' + previous.get('id', str(target)) +
+                         '. Reconcile gameplay into the staged asset frames before publication.')
+
+
 def safe_relative(value):
     if (not isinstance(value, str) or not value or
             any(character in value for character in '\\\0:#?%') or
@@ -159,6 +172,7 @@ def _prepare(stage, library, main_blend, map_name, catalog_source=None, catalog_
     targets={}
     for index,(source,target) in enumerate(pairs):
         source=source.resolve(strict=True) if source is not None else None;target=target.resolve()
+        check_gameplay_preserved(source, target)
         if target in targets:
             if targets[target] != source and (source is None or targets[target] is None or sha(targets[target]) != sha(source)):
                 raise ValueError('Conflicting promotion target: ' + str(target))
@@ -221,6 +235,8 @@ def _apply(path):
             raise ValueError('Promotion input/target changed: '+item['target'])
         if Path(item['backup']).exists():
             raise FileExistsError(item['backup'])
+        check_gameplay_preserved(Path(item['source']) if item['source'] is not None else None,
+                                 Path(item['target']))
     for item in manifest['files']:
         target,backup=Path(item['target']),Path(item['backup'])
         backup.parent.mkdir(parents=True,exist_ok=True)

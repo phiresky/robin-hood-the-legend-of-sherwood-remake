@@ -26,10 +26,22 @@ export function recoverAuthoredSounds(
       gameplay.collision !== "none" ||
       gameplay.surfaces.length ||
       gameplay.doors.length ||
+      gameplay.lifts?.length ||
+      gameplay.interiors?.length ||
       !gameplay.sounds?.length ||
       !descriptor.parts.every((p) => p.scenery && p.gameplay_only) ||
       Object.keys(gameplay).some(
-        (key) => !["version", "collision", "surfaces", "doors", "sounds"].includes(key),
+        (key) =>
+          ![
+            "version",
+            "collision",
+            "surfaces",
+            "doors",
+            "sounds",
+            "lifts",
+            "interiors",
+            "draft",
+          ].includes(key),
       )
     )
       throw new Error(`Sound-region asset has unsupported or missing gameplay: ${descriptor.id}`);

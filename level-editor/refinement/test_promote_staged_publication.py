@@ -63,6 +63,25 @@ class PromotionTests(unittest.TestCase):
         promotion.apply(self.stage / 'promotion.json')
         self.assertFalse((self.library / '3d-assets/bridge/lowered.glb').exists())
 
+    def test_publication_cannot_discard_existing_gameplay(self):
+        target = self.library / '3d-assets/bridge/asset.json'
+        self.write_json(target, {**self.descriptor, 'gameplay': {'version': 1}})
+        before = target.read_bytes()
+        with self.assertRaisesRegex(ValueError, 'would remove asset gameplay: bridge'):
+            self.prepare()
+        self.assertFalse((self.stage / 'promotion.json').exists())
+        self.assertEqual(target.read_bytes(), before)
+        self.assertEqual(self.main.read_bytes(), b'old blend')
+
+    def test_reconciled_gameplay_can_be_published(self):
+        self.write_json(self.library / '3d-assets/bridge/asset.json',
+                        {**self.descriptor, 'gameplay': {'version': 1}})
+        self.descriptor['gameplay'] = {'version': 1, 'collision': 'none', 'surfaces': []}
+        self.prepare()
+        promotion.apply(self.stage / 'promotion.json')
+        self.assertEqual(json.loads((self.library / '3d-assets/bridge/asset.json').read_text())['gameplay'],
+                         self.descriptor['gameplay'])
+
     def stage_derivatives(self, receipt=None):
         """Staged lossy model and preview for the bridge, with chained receipts."""
         import hashlib

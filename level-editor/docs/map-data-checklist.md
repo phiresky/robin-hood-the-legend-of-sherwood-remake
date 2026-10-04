@@ -4024,3 +4024,34 @@ the matching tolerance could create ambiguous or invalid connections.
 Recipes are in `refinement/catalogs/york-masks.json`; recovery evidence is
 `work/map-compile/york-next-static-mask-review.json`. Publication snapshots and
 the nine native fixtures are under `work/map-compile/york-static-mask-publication`.
+
+### Lincoln gameplay after model republication
+
+The revised Lincoln model publication omitted gameplay from 189 descriptors,
+including terrain. Their asset origins changed, so copying the earlier local
+coordinates would be incorrect. Fresh one-time recovery in the current placed
+frames restores the ten lifts and publishes draft definitions for those 189
+assets; the 18 existing independent light/sound definitions are retained.
+The compiler continues to read only saved editor placements and asset metadata.
+Models, placements and mission content are unchanged.
+
+Recovery and rollback evidence is in
+`work/map-compile/lincoln-republished-owned-recovery-20261004`. Native actor tests
+pass all 16 stair routes and eight ladder/wall routes in both directions. The
+current scene exports 50 navigation layers and ten lifts instead of two layers
+and no lifts. These counts are coverage evidence, not full parity certification.
+Recovery still reports one unowned building entry, 428 pending mask records,
+seven appearance bindings and 12 patches. One tower light receiver is omitted
+with a warning because its segment intersects multiple navigation surfaces.
+Ground receiver and visual-state coverage still need review in the revised assets.
+
+All ten current published scenes compile in `work/map-compile/stair-routing-9236w2`.
+The complete native navigation audit passes 19 tests, including 288 stair routes,
+84 ladder/wall routes and 6,220 receiving/ground crossings. It also retains the
+constructed rotation sweep. Lincoln contributes 24 receiving crossings; no ground
+receiver crossing was eligible there, which is a coverage gap rather than a pass.
+
+Publication now checks that an existing gameplay definition is not silently
+removed by a model replacement, both during preparation and application. Changed
+asset frames require reconciliation; this guard does not validate the completeness
+of a replacement definition. It does not block best-effort map exports.

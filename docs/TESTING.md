@@ -503,3 +503,9 @@ Layout changes require an explicit version/magic bump and regeneration or an
 offline migration tool. Do not update frozen descriptors merely to make a
 changed live layout pass. Authored sprite envelopes use separately versioned,
 budget-preflighted JSON and do not relax the shipping or replay wire contracts.
+
+Gameplay-preserving asset publication is covered by
+`python3 -m unittest test_promote_staged_publication` from
+`level-editor/refinement` (21 tests). Ambient recovery after draft publication is
+covered by `node --test pipeline/src/author-ambient-sound-asset.test.ts` from
+`level-editor`. These checks do not certify complete map gameplay coverage.

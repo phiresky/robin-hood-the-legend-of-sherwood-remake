@@ -2395,3 +2395,12 @@ existing maps and can clear a bank on either side.
 Banks use synthesized Sherwood mission art, follow terrain and river edits, and
 are included in saved maps and color/depth export. They are painted surface
 decoration; their stones and plants do not add collision or alter ford navigation.
+
+### Preserve gameplay during model publication
+
+Staged model publication now rejects replacements that silently remove an
+existing asset's gameplay definition. Reconcile that definition into the new
+asset frames before publishing; this check also covers previously prepared
+publication manifests. Best-effort map export remains available with warnings.
+Ambient recovery accepts published draft review metadata and empty traversal
+collections without treating them as additional sound behavior.

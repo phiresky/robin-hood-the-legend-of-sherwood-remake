@@ -55,6 +55,11 @@ test("standalone ambient assets compile exactly, remain invisible, and move inde
   const recovered = recoverAuthoredSounds(document, assets, [sound]);
   assert.equal(recovered.length, 1);
   assert.deepEqual(recovered[0]!.sourceIndices, [0]);
+  // Publication attaches review metadata and empty traversal collections.
+  descriptor.gameplay!.lifts = [];
+  descriptor.gameplay!.interiors = [];
+  descriptor.gameplay!.draft = { issues: ["Review ambient extent"] };
+  assert.deepEqual(recoverAuthoredSounds(document, assets, [sound]), recovered);
   recovered[0]!.sounds[0]!.spatial!.polyline[0]![0] = 999;
   assert.equal(descriptor.gameplay!.sounds![0]!.spatial!.polyline[0]![0], 0);
   assert.throws(
