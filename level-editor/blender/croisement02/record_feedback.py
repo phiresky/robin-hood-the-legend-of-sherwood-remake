@@ -13,11 +13,12 @@ from evidence_io import sha,write_json
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('feedback',type=Path)
     parser.add_argument('--approve-ready',action='store_true',help='Bind a blanket user approval to all currently ready gallery items')
+    parser.add_argument('--gallery-evidence',type=Path,help='Frozen gallery evidence defining the scope of a blanket approval')
     args=parser.parse_args()
     user_text=args.feedback.read_text().strip()
     lines=user_text.splitlines()
     if args.approve_ready:
-        items=json.loads((OUT/'gallery/evidence.json').read_text())['items']
+        items=json.loads((args.gallery_evidence or OUT/'gallery/evidence.json').read_text())['items']
         lines=[f"{item['id']}: approved [review {item['review_revision'][:16]}]"
                for item in items if item['status']=='ready-for-user']
     records=[]
@@ -54,6 +55,8 @@ def main():
         record=dict(asset_id=asset,decision=decision,note=note or '',exact_user_text=line,scope='geometry',review_revision=item['review_revision'],model_sha256=model_hash,archive=str(archive),solid_sha256=item['images']['solid']['sha256'],textured_sha256=item['images']['textured']['sha256'])
         if args.approve_ready:
             record.update(exact_user_text=user_text,scope_resolution='All ready-for-user items in the current gallery; in-progress items excluded')
+            if args.gallery_evidence:
+                record.update(scope_resolution='Ready-for-user items in the frozen gallery evidence; later candidates excluded',gallery_evidence=str(args.gallery_evidence.resolve()),gallery_evidence_sha256=sha(args.gallery_evidence))
         write_json(archive/'decision.json',record);records.append(record)
     if not records:raise ValueError('No gallery decisions in input')
     target=OUT/'user-feedback.json';old=json.loads(target.read_text()) if target.exists() else {'records':[]}
