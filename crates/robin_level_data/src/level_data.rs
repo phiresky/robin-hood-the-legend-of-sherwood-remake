@@ -1731,6 +1731,10 @@ pub struct RawLift {
     pub lift_type: u8,
     pub doors: Vec<RawDoor>,
     pub direction: i16,
+    /// Low/high door identities derived from placed landing heights. Binary
+    /// levels leave this unset and retain spatial endpoint selection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint_doors: Option<[u16; 2]>,
 }
 
 /// Building entry from the BUIL/FARM chunk.
@@ -3152,8 +3156,17 @@ impl LoadedLevel {
                     || !(0..=15).contains(&lift.direction)
                     || lift.doors.len() < 2
                     || !lift.doors.iter().any(|door| door.door_type == 5)
-                    || lift.doors.iter().map(|door| door.point_out.1).min()
-                        == lift.doors.iter().map(|door| door.point_out.1).max()
+                    || match lift.endpoint_doors {
+                        Some([low, high]) => {
+                            low == high
+                                || usize::from(low) >= lift.doors.len()
+                                || usize::from(high) >= lift.doors.len()
+                        }
+                        None => {
+                            lift.doors.iter().map(|door| door.point_out.1).min()
+                                == lift.doors.iter().map(|door| door.point_out.1).max()
+                        }
+                    }
                     || lift.doors.iter().any(|door| {
                         !matches!(door.door_type, 4..=6)
                             || door.sector_in != lift.motion_area_index
@@ -5445,6 +5458,7 @@ fn read_lifts(reader: &mut ChunkReader, format: LevelFormat) -> Result<Vec<RawLi
             lift_type,
             doors,
             direction,
+            endpoint_doors: None,
         });
     }
 

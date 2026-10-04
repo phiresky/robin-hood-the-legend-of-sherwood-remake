@@ -539,11 +539,15 @@ pub struct GridSector {
     // original door record (for example falling out of a lift to the outside
     // door point). Movement animation must use the direct exit points above.
     /// Index into the canonical door table of the door at the bottom of this
-    /// lift, or `None` for non-lift sectors. The door whose `point_out.Y`
-    /// is largest (screen coords, Y grows downward); the cached lift-side
-    /// exit above is that selected door's `point_in`. Used by
+    /// lift, or `None` for non-lift sectors. Compiled maps use their authored
+    /// endpoint identity; binary levels select the largest `point_out.Y`.
+    /// The cached lift-side exit above is that selected door's `point_in`. Used by
     /// `translate_ladder_wall_fall` to locate the ground entry point.
     pub lowest_door_index: Option<u32>,
+    /// Compiled top entrance selected by placed landing height. Binary levels
+    /// leave this unset and retain their spatial endpoint/crossing rules.
+    #[serde(default)]
+    pub highest_door_index: Option<u32>,
 
     /// Indices into `FastFindGrid::jump_lines` of the jump lines that
     /// live in this sector. Each motion-area sector keeps a list of its

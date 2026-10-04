@@ -42,17 +42,17 @@ Fresh published-asset diagnostics in `work/map-compile/stair-routing-HtMZ9h`
 pass all 288 directed stair walks across ten maps and 6,234 sampled actor
 crossings (6,178 between receiving planes and 56 between planes and ground),
 using the corrected 6×3 footprint. No stair routes were skipped for permissions.
-The current changes pass 4,297 engine unit tests, 72 level-data tests, 61 compiler
-integration tests and 393 editor/shared compiler tests (one skipped).
+The current changes pass 4,298 engine unit tests, 72 level-data tests, 61 compiler
+integration tests and 712 editor/shared tests (two skipped). Shipping codec
+coverage passes 66 tests (two data-dependent tests skipped).
 Earlier validation passed 4,293 engine unit tests, 68 level-data tests, 61 compiler
 integration tests and 6,222 sampled actor crossings with a 6×4 half-diagonal.
-Client door-hover/input tests pass. The core overlay manifest now declares
-packed-data schema 22, matching the earlier fractional-elevation format update;
-all 11 overlay tests pass.
+Earlier client door-hover/input and 11 core overlay tests passed. The current
+core overlay inventory is independent of the binary shipping codec version.
 
 **Climb exits and landing heights:** door posture transitions now use loaded map
 doors without requiring a mission VM; the old guard rejected ladder/wall exits.
-Compiled ladders and walls derive narrow approach corridors carrying each
+Older compiled ladders and walls derive narrow approach corridors carrying each
 landing's receiving plane on the lift layer. Wall corridors account for runtime
 animation offsets. Crenellated transitions assign their own plane explicitly and
 do not receive a duplicate corridor. The west Sherwood treehouse and York's
@@ -74,14 +74,30 @@ receive the same collision-box clearance repair as stairs. Wall-top approaches
 retain their animation-defined radius; when rounding blocks that point, the
 loader searches for the nearest clear direction on that radius, without crossing
 the movement boundary or an obstacle. Unrepairable approaches still warn.
-A constructed ladder, ordinary wall and crenellated wall pass 66 full actor
-routes: eleven translated/rotated orientations, both directions, using complete
+A constructed ladder, ordinary wall and crenellated wall pass 2,166 full actor
+routes: every whole-degree rotation plus 22.5°, both directions, using complete
 Robin animation rows. A 45° wall regression previously displaced the actor past
 its receiving boundary and left its height attached to the wrong surface.
-Fourteen stair routes also cover non-quarter-turn placements.
-These checks do not certify every rotation or asset shape: a full one-degree
-sweep exposed a separate rejection when rounded outside door endpoints share
-the same map Y. Direction-independent lift endpoint selection remains needed.
+Another 722 stair routes cover the same angle sweep. These checks do not certify
+every sub-degree angle, asset shape, actor profile or rendered animation.
+
+**Placed lift endpoint identities:** compilation now selects low/high doors from
+their transformed 3D landing heights, using stable local door order for ties.
+The native loader validates the indices and caches the matching fall and AI
+destinations. Equal projected-Y endpoints are supported; rotating a lift cannot
+reverse its physical low/high identities. Compiled climbs explicitly transfer
+their receiving plane at sector changes, rather than relying on approach
+crossings which short routes or animation teleports may skip. Older descriptors
+without this metadata keep their existing endpoint/corridor behavior. New export
+fixtures and updated runtime share the field; precompiled shipping containers
+require regeneration for datadir v23 / mission v14.
+
+Fresh exports in `work/map-compile/stair-routing-25heix` pass 272 stair routes,
+76 ladder/wall routes and 6,196 receiving-boundary crossings with the new
+endpoint metadata. All ten currently published scenes were compiled; Lincoln's
+current asset revision contains no lifts and contributes no traversal coverage.
+Its earlier 24 routes remain covered by the historical snapshot above. This
+does not establish parity for the revised Lincoln assets.
 
 **Ordinary route consistency:** fresh best-effort exports of all ten saved maps
 with the corrected 6×3 half-diagonal pass 1,316 sampled routes in 93 seconds in

@@ -1008,10 +1008,10 @@ fn native_shipping_format_roundtrips_and_rejects_legacy_payloads() {
     datadir.locales.insert("de-DE".into(), german);
 
     let encoded = encode_native(&datadir);
-    assert_eq!(&encoded[..8], b"RHDDNA22");
+    assert_eq!(&encoded[..8], b"RHDDNA23");
     let mut previous_version = encoded.clone();
-    previous_version[..8].copy_from_slice(b"RHDDNA21");
-    previous_version[8..12].copy_from_slice(&21u32.to_le_bytes());
+    previous_version[..8].copy_from_slice(b"RHDDNA22");
+    previous_version[8..12].copy_from_slice(&22u32.to_le_bytes());
     assert!(decode_native(&previous_version).is_err());
     assert_eq!(&encoded[..8], &SHIPPING_DATADIR_MAGIC);
     let decoded = decode_native(&encoded).expect("decode native shipping datadir");
@@ -1067,6 +1067,31 @@ fn native_shipping_format_roundtrips_and_rejects_legacy_payloads() {
     let legacy_unversioned = bitcode::encode(datadir.payload());
     let error = decode_native(&legacy_unversioned).unwrap_err();
     assert!(error.to_string().contains("regenerate datadir.bin"));
+}
+
+#[test]
+fn shipping_levels_retain_compiled_lift_endpoint_identities() {
+    let level = LoadedLevel::hackable_from_json(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../robin_engine/tests/fixtures/asset-lift.level.json"
+    )))
+    .unwrap();
+    let mut datadir = ShippingDatadir::default();
+    datadir.levels.insert("lift".into(), level.clone());
+    let decoded = decode_native(&encode_native(&datadir)).unwrap();
+    assert_eq!(
+        decoded.levels["lift"].proto.lifts[0].endpoint_doors,
+        Some([0, 1])
+    );
+    let mut mission = ShippingMission::default();
+    mission.levels.insert("lift".into(), level);
+    let encoded = encode_mission_native(&mission);
+    let decoded =
+        decode_mission_compressed(&zstd_compress_with_window(&encoded, 30).unwrap()).unwrap();
+    assert_eq!(
+        decoded.levels["lift"].proto.lifts[0].endpoint_doors,
+        Some([0, 1])
+    );
 }
 
 #[test]
@@ -1153,10 +1178,10 @@ fn mission_payload_roundtrips_independently() {
         .audio_durations_ms
         .insert("sounds/arrow.opus".into(), 1_234);
     let encoded = encode_mission_native(&mission);
-    assert_eq!(&encoded[..8], b"RHMISN13");
+    assert_eq!(&encoded[..8], b"RHMISN14");
     let mut previous_version = encoded.clone();
-    previous_version[..8].copy_from_slice(b"RHMISN12");
-    previous_version[8..12].copy_from_slice(&12u32.to_le_bytes());
+    previous_version[..8].copy_from_slice(b"RHMISN13");
+    previous_version[8..12].copy_from_slice(&13u32.to_le_bytes());
     assert!(
         decode_mission_compressed(&zstd_compress_with_window(&previous_version, 30).unwrap())
             .is_err()

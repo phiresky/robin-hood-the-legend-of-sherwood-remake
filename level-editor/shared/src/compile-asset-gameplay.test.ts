@@ -2723,6 +2723,7 @@ test("lift surfaces use the reserved layer and rebuild endpoint references", () 
   assert.equal(lift.lift_type, 1);
   assert.equal(lift.direction, 4);
   assert.equal(lift.motion_area_index, 3); // Ground blocker occupies sector 1.
+  assert.deepEqual(lift.endpoint_doors, [0, 1]);
   assert.deepEqual(
     lift.doors.map((d) => d.layer_out),
     [0, 1],
@@ -2741,6 +2742,36 @@ test("lift surfaces use the reserved layer and rebuild endpoint references", () 
   assert.equal(duplicated.lifts!.length, 2);
   assert.notEqual(duplicated.lifts![0]!.motion_area_index, duplicated.lifts![1]!.motion_area_index);
   assert.equal(duplicated.lifts![1]!.direction, 8);
+  assert.deepEqual(duplicated.lifts![1]!.endpoint_doors, [0, 1]);
+});
+
+test("lift endpoint identities survive horizontal and reversed placement", () => {
+  for (const angle of [68, 90, 180, 248, 270]) {
+    const { document, assets, hut } = liftAssetCompilerFixture();
+    document.groups[0]!.transform = { ...IDENTITY_TRANSFORM, dx: 900, dy: 800, rot_deg: angle };
+    // Door animation type does not define physical height: stairs may use
+    // low-door actions at both ends.
+    hut.gameplay!.lifts![0]!.doors[1]!.type = 5;
+    const result = compileAssetGameplay(document, assets, [0, 0, 4000, 4000]);
+    assert.deepEqual(result.lifts![0]!.endpoint_doors, [0, 1]);
+  }
+});
+
+test("lift entrances with equal projected Y retain distinct physical endpoints", () => {
+  const { document, assets, hut } = liftAssetCompilerFixture();
+  for (const surface of hut.gameplay!.surfaces) {
+    surface.height = Array.isArray(surface.height)
+      ? surface.height.map((height) => height / 10)
+      : surface.height / 10;
+  }
+  for (const door of hut.gameplay!.lifts![0]!.doors) {
+    for (const point of [door.outside, door.inside, door.middle]) point[2] /= 10;
+  }
+  const angle = (Math.asin(10 / (40 * Math.sin((35 * Math.PI) / 180))) * 180) / Math.PI;
+  document.groups[0]!.transform = { ...IDENTITY_TRANSFORM, dx: 900, dy: 800, rot_deg: angle };
+  const lift = compileAssetGameplay(document, assets, [0, 0, 4000, 4000]).lifts![0]!;
+  assert.equal(lift.doors[0]!.point_out[1], lift.doors[1]!.point_out[1]);
+  assert.deepEqual(lift.endpoint_doors, [0, 1]);
 });
 
 test("lift validation rejects missing traversal endpoints and mismatched surface ownership", () => {

@@ -2239,12 +2239,18 @@ function compileAssetGameplayAttempt(
             const area = areas.find((a) => a.lift === lift.id);
             if (!area) throw new Error(`Missing lift motion area ${lift.id}`);
             const endpoints = selectDoors((door) => door.lift === lift.id);
+            const placedEndpoints = doors.filter(
+              (door, index) => door.lift === lift.id && compiledDoors[index] !== null,
+            );
+            // Heights and stable local door order survive arbitrary placement;
+            // projected screen Y does not identify the top of a rotated lift.
+            const ranked = placedEndpoints
+              .map((door, index) => ({ index, height: door.outside[2] }))
+              .sort((a, b) => a.height - b.height || a.index - b.index);
             const invalid =
               endpoints.length < 2 || !endpoints.some((d) => d.door_type === 5)
                 ? `Lift ${lift.id} needs at least two traversal doors including a low door`
-                : new Set(endpoints.map((d) => d.point_out[1])).size < 2
-                  ? `Lift ${lift.id} needs distinct projected endpoint heights after placement`
-                  : undefined;
+                : undefined;
             if (invalid) {
               if (!options.bestEffort) throw new Error(invalid);
               throw new UnavailableLiftPlacement(
@@ -2258,6 +2264,7 @@ function compileAssetGameplayAttempt(
               motion_area_index: area.sector,
               lift_type: lift.type,
               direction: lift.direction,
+              endpoint_doors: [ranked[0]!.index, ranked.at(-1)!.index] as [number, number],
               doors: endpoints,
             };
           }),

@@ -94,7 +94,7 @@ fn arbitrarily_rotated_stairs_support_complete_actor_routes() {
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/asset-lift.level.json"
     ));
-    for degrees in [17., 22.5, 45., 73., 137., 225., 319.] {
+    for degrees in (0..360).map(|angle| angle as f32).chain([22.5]) {
         let placed = super::compiled_lifts::angled_lift_fixture(bytes, degrees, 1);
         let (engine, assets) = compiled_walkway(&placed);
         for (entrance, exit) in [(0, 1), (1, 0)] {
@@ -310,7 +310,7 @@ fn placed_climbs_support_complete_actor_routes() {
         "/tests/fixtures/asset-lift.level.json"
     ));
     for (lift_type, high_type) in [(2, 4), (3, 4), (3, 6)] {
-        for degrees in [0., 17., 22.5, 45., 73., 90., 137., 180., 225., 270., 319.] {
+        for degrees in (0..360).map(|angle| angle as f32).chain([22.5]) {
             let mut document: serde_json::Value = serde_json::from_slice(
                 &super::compiled_lifts::angled_lift_fixture(bytes, degrees, lift_type),
             )

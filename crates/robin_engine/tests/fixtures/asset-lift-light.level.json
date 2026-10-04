@@ -346,6 +346,10 @@
             "sector_in": 3,
             "layer_in": 2
           }
+        ],
+        "endpoint_doors": [
+          0,
+          1
         ]
       }
     ]

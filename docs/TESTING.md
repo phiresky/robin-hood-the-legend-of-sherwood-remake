@@ -299,11 +299,15 @@ movement, not rendered frame alignment, other profiles or actor contention.
 that filter in its report. `ROBIN_LIFT_TRACE=1` adds climb and receiver diagnostics.
 The ignored `placed_climbs_support_complete_actor_routes` test needs only
 `ROBIN_CLIMB_RHS`: it checks a constructed ladder, ordinary wall and crenellated
-wall at eleven rotations, traversed both ways (66 routes).
+wall at every whole-degree rotation plus 22.5°, traversed both ways (2,166 routes).
 The regular `arbitrarily_rotated_stairs_support_complete_actor_routes` test checks
-14 stair routes at seven non-quarter-turn angles. These catch clearance and receiving-plane
+722 stair routes over the same angles. These catch clearance and receiving-plane
 failures independently of imported layouts, including wall-top direction repair
 while preserving the animation's fixed radius.
+`compiled_lift_endpoints_and_ai_follow_height_after_rotation` also checks the
+cached fall destination and actual AI forecast at ordinary, horizontal and
+reversed placements. Shipping codec tests preserve endpoint identities through
+both datadir v23 and mission v14 round trips and reject the preceding formats.
 
 ## GPU execution
 

@@ -301,6 +301,7 @@ mod suite {
                 building_index: None,
                 low_exit_point: Some(goal),
                 high_exit_point: Some(start),
+                highest_door_index: None,
                 lowest_door_index: None,
                 jump_line_indices: Vec::new(),
                 gate_indices: Vec::new(),

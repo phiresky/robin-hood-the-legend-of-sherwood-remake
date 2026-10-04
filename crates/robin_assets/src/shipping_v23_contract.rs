@@ -1,10 +1,10 @@
-//! Frozen v22 descriptor with exported engine picture metadata. Do not update when rearranging runtime
+//! Frozen v23 descriptor with exported engine picture metadata. Do not update when rearranging runtime
 //! representations; a deliberate format change must introduce a new version.
-//! v22 retains fractional elevation endpoints in loaded levels.
+//! v23 retains authored lift endpoint identities in loaded levels.
 //! The magic and version below pin that layout.
 use super::*;
 #[derive(Debug, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
-struct FrozenShippingV22 {
+struct FrozenShippingV23 {
     pub profiles: Option<ProfileManager>,
     pub res_files: std::collections::BTreeMap<String, ResourceManager>,
     pub pak_files: std::collections::BTreeMap<String, Vec<EncodedPicture>>,
@@ -56,7 +56,7 @@ struct FrozenShippingV22 {
 }
 
 #[test]
-fn v22_wire_and_json_match_frozen_descriptor_with_runtime_state() {
+fn v23_wire_and_json_match_frozen_descriptor_with_runtime_state() {
     let mut datadir = ShippingDatadir::from_payload(ShippingDatadirPayload {
         profiles: Some(ProfileManager::default()),
         ..Default::default()
@@ -87,12 +87,12 @@ fn v22_wire_and_json_match_frozen_descriptor_with_runtime_state() {
     datadir
         .locales
         .insert("en-US".into(), ShippingLocale::default());
-    let frozen: FrozenShippingV22 =
+    let frozen: FrozenShippingV23 =
         serde_json::from_value(serde_json::to_value(&datadir).unwrap()).unwrap();
     let expected = bitcode::encode(&frozen);
     let before = encode_native(&datadir);
-    assert_eq!(&before[..8], b"RHDDNA22");
-    assert_eq!(&before[8..12], &22u32.to_le_bytes());
+    assert_eq!(&before[..8], b"RHDDNA23");
+    assert_eq!(&before[8..12], &23u32.to_le_bytes());
     assert_eq!(&before[12..], expected);
     datadir.set_remote_base_url("https://invalid.example/assets".into());
     datadir.runtime.source_dir = Some(PathBuf::from("/example"));

@@ -261,13 +261,14 @@ pub(crate) fn derive(geometry: &CompiledAssetGeometry) -> Result<Vec<RawElevatio
                 .fold(f64::NEG_INFINITY, f64::max),
         });
     }
-    // Climb animations may teleport to the inside approach before changing
-    // layers. Carry each landing's receiver through that narrow approach
+    // Older compiled descriptors use crossing-driven climb transfers. Carry
+    // each landing's receiver through that narrow approach
     // corridor, and use the lift receiver between corridors. This creates
-    // crossings for sideways routes between multiple entrances as well.
+    // crossings for sideways routes between multiple entrances as well. New
+    // descriptors with endpoint identities use explicit runtime transfers.
     let mut climb_receivers = Vec::new();
     for lift in &geometry.lifts {
-        if !matches!(lift.lift_type, 2 | 3) {
+        if !matches!(lift.lift_type, 2 | 3) || lift.endpoint_doors.is_some() {
             continue;
         }
         for door in &lift.doors {
@@ -514,6 +515,15 @@ pub(crate) fn derive(geometry: &CompiledAssetGeometry) -> Result<Vec<RawElevatio
     for lift in &geometry.lifts {
         if matches!(lift.lift_type, 2 | 3) {
             for door in &lift.doors {
+                if lift.endpoint_doors.is_some() {
+                    clip_passage_ground_edges(
+                        &mut lines,
+                        door.layer_in,
+                        receiver_at((door.sector_in, door.layer_in), door.point_in),
+                        [f64::from(door.point_mid.0), f64::from(door.point_mid.1)],
+                        [f64::from(door.point_in.0), f64::from(door.point_in.1)],
+                    )?;
+                }
                 clip_passage_ground_edges(
                     &mut lines,
                     door.layer_out,
@@ -642,7 +652,7 @@ mod tests {
     }
 
     #[test]
-    fn climb_approaches_transfer_receivers_in_both_directions() {
+    fn legacy_climb_approaches_transfer_receivers_in_both_directions() {
         let document: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../robin_engine/tests/fixtures/asset-lift.level.json"
@@ -651,6 +661,7 @@ mod tests {
         let mut geometry: CompiledAssetGeometry =
             serde_json::from_value(document["asset_geometry"].clone()).unwrap();
         for (lift_type, high_type) in [(2, 4), (3, 4), (3, 6)] {
+            geometry.lifts[0].endpoint_doors = None;
             geometry.lifts[0].lift_type = lift_type;
             geometry.lifts[0].doors[1].door_type = high_type;
             let low = [392., 340.];

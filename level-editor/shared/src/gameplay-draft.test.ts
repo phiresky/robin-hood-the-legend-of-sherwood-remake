@@ -146,17 +146,20 @@ test("disconnected compound lift removes all joined traversal pieces without dro
   assert.equal(geometry.warnings?.filter((warning) => warning.startsWith("Lift ")).length, 1);
 });
 
-test("collapsed projected stair endpoints omit traversal without discarding the building", () => {
+test("equal projected stair endpoint heights retain traversal and collision", () => {
   const { document, assets, hut } = liftAssetCompilerFixture();
   const high = hut.gameplay!.lifts![0]!.doors[1]!;
   high.outsideAnchor = [...high.outside];
   high.outside[1] += 100;
-  assert.throws(() => compileAssetGameplay(document, assets, bounds), /distinct projected endpoint/);
-  const geometry = compileAssetGameplay(document, assets, bounds, { bestEffort: true });
-  assert.equal(geometry.lifts, undefined);
-  assert.ok(geometry.sight_obstacles.some((obstacle) => obstacle.solid));
-  assert.ok(geometry.motion_data.layers.some((layer) => layer.length > 0));
-  assert.ok(geometry.warnings?.some((warning) => warning.includes("distinct projected endpoint")));
+  for (const bestEffort of [false, true]) {
+    const geometry = compileAssetGameplay(document, assets, bounds, { bestEffort });
+    const lift = geometry.lifts![0]!;
+    assert.deepEqual(lift.endpoint_doors, [0, 1]);
+    assert.equal(lift.doors[0]!.point_out[1], lift.doors[1]!.point_out[1]);
+    assert.ok(geometry.sight_obstacles.some((obstacle) => obstacle.solid));
+    assert.ok(geometry.motion_data.layers.some((layer) => layer.length > 0));
+    assert.ok(!geometry.warnings?.some((warning) => warning.startsWith("Lift ")));
+  }
 });
 
 test("separated stair pieces preserve their collision instead of failing the whole export", () => {

@@ -975,6 +975,7 @@ impl EngineInner {
             _door_type,
             is_lift_high,
             door_point_out,
+            compiled_climb_point,
         ) = {
             let door = self
                 .script_domains
@@ -1001,7 +1002,28 @@ impl EngineInner {
                 DoorType::LiftHigh | DoorType::LiftHighCrenel
             );
             let pout = door.point_out;
-            (tl, ts, ti, door.door_type, is_high, pout)
+            let compiled_climb = door
+                .owning_lift_sector
+                .and_then(|sector| self.grid_sector_by_number(sector))
+                .is_some_and(|sector| {
+                    sector.highest_door_index.is_some()
+                        && sector
+                            .lift_type
+                            .is_some_and(|kind| kind.is_wall_or_ladder())
+                });
+            (
+                tl,
+                ts,
+                ti,
+                door.door_type,
+                is_high,
+                pout,
+                compiled_climb.then_some(if direct {
+                    door.point_in
+                } else {
+                    door.point_out
+                }),
+            )
         };
 
         // Read the entity's current sector before the change.
@@ -1276,14 +1298,18 @@ impl EngineInner {
         // in the branch that switches to the outside sector. A direct pass out
         // of a building sector — which the debug build merely asserts against
         // — keeps its existing obstacle, plane and 3D position.
-        if left_building && !direct {
+        // Compiled climbs transfer the receiving plane explicitly at the
+        // membership change. Close entrances can skip approach waypoints, and
+        // climb animations teleport, so polygon crossings alone cannot ensure
+        // this transfer for arbitrary placed geometry.
+        if (left_building && !direct) || compiled_climb_point.is_some() {
             let target_sector =
                 target_sector.expect("validated PassDoor target sector lost its public handle");
             let new_obstacle = self.find_projection_area_at(
                 tcx.assets,
                 target_layer,
                 target_sector.with_arena_index(target_sector_index),
-                door_point_out,
+                compiled_climb_point.unwrap_or(door_point_out),
             );
             self.set_obstacle_and_material(tcx.assets, entity_id, new_obstacle);
         }

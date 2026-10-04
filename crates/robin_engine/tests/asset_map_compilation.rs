@@ -2483,7 +2483,13 @@ fn compiled_lift_rejects_dangling_and_incomplete_definitions() {
     let mut flat = missing.clone();
     flat["asset_geometry"]["lifts"][0]["doors"][1]["point_out"][1] =
         flat["asset_geometry"]["lifts"][0]["doors"][0]["point_out"][1].clone();
+    assert!(LoadedLevel::hackable_from_json(&serde_json::to_vec(&flat).unwrap()).is_ok());
+    flat["asset_geometry"]["lifts"][0]["endpoint_doors"] = serde_json::Value::Null;
     assert!(LoadedLevel::hackable_from_json(&serde_json::to_vec(&flat).unwrap()).is_err());
+    for endpoints in [[0, 0], [0, 2], [99, 1]] {
+        flat["asset_geometry"]["lifts"][0]["endpoint_doors"] = serde_json::json!(endpoints);
+        assert!(LoadedLevel::hackable_from_json(&serde_json::to_vec(&flat).unwrap()).is_err());
+    }
     missing["asset_geometry"]["lifts"] = serde_json::json!([]);
     assert!(
         LoadedLevel::hackable_from_json(&serde_json::to_vec(&missing).unwrap())

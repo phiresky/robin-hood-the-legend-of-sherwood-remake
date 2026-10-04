@@ -687,7 +687,19 @@ pub fn prepare_forecast_destination_for_ia(
         if gs.sector_type.is_lift() {
             // Target is on a lift — predict high/low exit.
             // Direction uses exit point minus midpoint.
-            if let Some(exit_door) = find_lift_exit_door(sector, moving_upwards, doors) {
+            let cached = if moving_upwards {
+                gs.highest_door_index
+            } else {
+                gs.lowest_door_index
+            };
+            let exit = cached
+                .map(|index| {
+                    doors
+                        .get(index as usize)
+                        .expect("cached lift endpoint is missing")
+                })
+                .or_else(|| find_lift_exit_door(sector, moving_upwards, doors));
+            if let Some(exit_door) = exit {
                 sector =
                     sector_handle_for_door_side(exit_door.sector_out, exit_door.sector_out_index);
                 layer = exit_door.layer_out;

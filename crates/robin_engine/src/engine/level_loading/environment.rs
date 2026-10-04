@@ -712,6 +712,7 @@ impl EngineInner {
                     building_index: None,
                     low_exit_point: None,
                     high_exit_point: None,
+                    highest_door_index: None,
                     lowest_door_index: None,
                     jump_line_indices: Vec::new(),
                     gate_indices: Vec::new(),

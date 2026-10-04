@@ -571,6 +571,7 @@ fn night_detection_orders_light_rays_before_target_los() {
                 building_index: None,
                 low_exit_point: None,
                 high_exit_point: None,
+                highest_door_index: None,
                 lowest_door_index: None,
                 jump_line_indices: Vec::new(),
                 gate_indices: Vec::new(),

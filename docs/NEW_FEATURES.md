@@ -1,5 +1,15 @@
 # Post-port Features
 
+- **Lift endpoints independent of map orientation.** Editor exports carry low/high
+  door identities derived from placed 3D landing heights, with stable door order
+  for equal-height entrances. Horizontal projected entrances no longer invalidate
+  a lift, and rotation cannot reverse its fall destination or AI forecast.
+  Compiled ladder/wall passages attach the destination receiving plane when they
+  change sectors, including short approaches and animation teleports. Binary
+  levels retain their existing endpoint and crossing behavior. Precompiled shipping
+  containers advance to datadir v23 / mission v14 for the added lift metadata;
+  existing JSON descriptors without it retain spatial endpoint selection.
+
 - **Climb landings without mission scripts.** Ladder and wall exit transitions
   use map doors even when no mission VM is loaded. Compiled climb approaches
   carry their landing receiver through a narrow corridor on the lift layer,

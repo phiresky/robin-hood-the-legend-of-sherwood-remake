@@ -421,6 +421,7 @@ export interface CompiledAssetGeometry {
     motion_area_index: number;
     lift_type: number;
     direction: number;
+    endpoint_doors?: [number, number];
     doors: CompiledAssetGeometry["doors"];
   }[];
 }

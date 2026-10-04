@@ -2883,6 +2883,7 @@ impl EngineInner {
                             building_index: None,
                             low_exit_point: None,
                             high_exit_point: None,
+                            highest_door_index: None,
                             lowest_door_index: None,
                             jump_line_indices: Vec::new(),
                             gate_indices: Vec::new(),
@@ -2927,6 +2928,7 @@ impl EngineInner {
                                 building_index: None,
                                 low_exit_point: None,
                                 high_exit_point: None,
+                                highest_door_index: None,
                                 lowest_door_index: None,
                                 jump_line_indices: Vec::new(),
                                 gate_indices: Vec::new(),
@@ -3082,6 +3084,7 @@ impl EngineInner {
                         building_index: crate::sector::BuildingIdx::new(bld_idx as u16),
                         low_exit_point: None,
                         high_exit_point: None,
+                        highest_door_index: None,
                         lowest_door_index: None,
                         jump_line_indices: Vec::new(),
                         gate_indices: Vec::new(),
@@ -3117,6 +3120,7 @@ impl EngineInner {
                     building_index: None,
                     low_exit_point: None,
                     high_exit_point: None,
+                    highest_door_index: None,
                     lowest_door_index: None,
                     jump_line_indices: Vec::new(),
                     gate_indices: Vec::new(),
@@ -3232,6 +3236,7 @@ impl EngineInner {
                         building_index: None,
                         low_exit_point: None,
                         high_exit_point: None,
+                        highest_door_index: None,
                         lowest_door_index: None,
                         jump_line_indices: Vec::new(),
                         gate_indices: Vec::new(),
@@ -3675,6 +3680,7 @@ impl EngineInner {
                 building_index: None,
                 low_exit_point: None,
                 high_exit_point: None,
+                highest_door_index: None,
                 lowest_door_index: None,
                 jump_line_indices: zone_jump_lines[zi].clone(),
                 gate_indices: Vec::new(),
@@ -4081,7 +4087,7 @@ impl EngineInner {
     ) -> Result<(), MissionLevelBuildError> {
         self.build_door_stage(assets, loaded, stages);
         self.build_lift_stage(assets, loaded);
-        self.build_door_lift_attachment_stage()?;
+        self.build_door_lift_attachment_stage(loaded)?;
         self.build_patch_stage(assets, loaded, stages.patch_count);
         self.build_building_stage(stages);
         Ok(())
@@ -4277,7 +4283,10 @@ impl EngineInner {
         }
     }
 
-    fn build_door_lift_attachment_stage(&mut self) -> Result<(), MissionLevelBuildError> {
+    fn build_door_lift_attachment_stage(
+        &mut self,
+        loaded: &crate::level_data::LoadedLevel,
+    ) -> Result<(), MissionLevelBuildError> {
         // Build gate links: connect doors that share a sector.
         // Jump gates are appended later by `load_jump_lines_from_proto`,
         // which re-invokes `build_gate_links` to cover them too.
@@ -4341,6 +4350,7 @@ impl EngineInner {
                 building_index: None,
                 low_exit_point: None,
                 high_exit_point: None,
+                highest_door_index: None,
                 lowest_door_index: None, jump_line_indices: Vec::new(),
                 gate_indices: Vec::new(),
                 underlying_sector: None,
@@ -4371,6 +4381,7 @@ impl EngineInner {
                 gs.low_exit_point = None;
                 gs.high_exit_point = None;
                 gs.lowest_door_index = None;
+                gs.highest_door_index = None;
             }
         }
         let mut lift_endpoints_cached = 0usize;
@@ -4384,17 +4395,37 @@ impl EngineInner {
             .enumerate()
             .filter(|(_, sector)| sector.sector_type.is_lift() || sector.lift_type.is_some())
             .filter_map(|(grid_idx, sector)| {
-                let (low_idx, high_idx) = lift_endpoint_door_indices(
-                    &self.script_domains.interactables.doors,
-                    sector.sector_number,
-                )?;
+                let doors = &self.script_domains.interactables.doors;
+                let authored = loaded
+                    .proto
+                    .lifts
+                    .iter()
+                    .find(|lift| lift.motion_area_index == u16::from(sector.sector_number))
+                    .and_then(|lift| lift.endpoint_doors);
+                let (low_idx, high_idx) = if let Some([low, high]) = authored {
+                    let owned: Vec<_> = doors
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, door)| door.owning_lift_sector == Some(sector.sector_number))
+                        .map(|(index, _)| index as u32)
+                        .collect();
+                    (owned[usize::from(low)], owned[usize::from(high)])
+                } else {
+                    lift_endpoint_door_indices(doors, sector.sector_number)?
+                };
                 let low_point = self.script_domains.interactables.doors[low_idx as usize].point_in;
                 let high_point =
                     self.script_domains.interactables.doors[high_idx as usize].point_in;
-                Some((grid_idx, low_idx, low_point, high_point))
+                Some((
+                    grid_idx,
+                    low_idx,
+                    authored.map(|_| high_idx),
+                    low_point,
+                    high_point,
+                ))
             })
             .collect();
-        for (grid_idx, low_idx, low_point, high_point) in lift_endpoint_selections {
+        for (grid_idx, low_idx, high_idx, low_point, high_point) in lift_endpoint_selections {
             let gs = self
                 .world
                 .fast_grid_mut()
@@ -4405,6 +4436,7 @@ impl EngineInner {
             gs.low_exit_point = Some(low_point);
             gs.high_exit_point = Some(high_point);
             gs.lowest_door_index = Some(low_idx);
+            gs.highest_door_index = high_idx;
         }
         for gs in &self.world.fast_grid.level.sectors {
             if !(gs.sector_type.is_lift() || gs.lift_type.is_some()) {
@@ -4523,6 +4555,7 @@ impl EngineInner {
                     building_index: None,
                     low_exit_point: None,
                     high_exit_point: None,
+                    highest_door_index: None,
                     lowest_door_index: None,
                     jump_line_indices: Vec::new(),
                     gate_indices: Vec::new(),

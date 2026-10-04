@@ -60,6 +60,7 @@ fn transformed_lift_fixture(
     }
     for lift in &mut geometry.lifts {
         lift.lift_type = lift_type;
+        lift.endpoint_doors = Some([0, 1]);
         lift.direction = (lift.direction + direction_delta).rem_euclid(16);
         for door in &mut lift.doors {
             transform(&mut door.point_in);
@@ -69,6 +70,60 @@ fn transformed_lift_fixture(
     }
     document["asset_geometry"] = serde_json::to_value(geometry).unwrap();
     serde_json::to_vec(&document).unwrap()
+}
+
+#[test]
+fn compiled_lift_endpoints_and_ai_follow_height_after_rotation() {
+    use crate::ai::{ForecastInput, forecast_destination_for_ia};
+    for degrees in [0., 68., 180., 248.] {
+        let bytes = angled_lift_fixture(
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/asset-lift.level.json"
+            )),
+            degrees,
+            1,
+        );
+        let (engine, _) = compiled_walkway(&bytes);
+        let doors = &engine.script_domains.interactables.doors;
+        let index = doors[0].sector_in_index.unwrap();
+        let grid = &engine.world.fast_grid.level;
+        let sector = &grid.sectors[usize::from(index)];
+        assert_eq!(
+            sector.lowest_door_index,
+            Some(0),
+            "fall endpoint at {degrees}"
+        );
+        assert_eq!(sector.highest_door_index, Some(1));
+        for (up, endpoint) in [(false, 0), (true, 1)] {
+            let forecast = forecast_destination_for_ia(
+                &crate::sim_rng::test_context(),
+                &ForecastInput {
+                    position_map_x: doors[0].point_in.x,
+                    position_map_y: doors[0].point_in.y,
+                    sector: u16::from(sector.sector_number),
+                    sector_handle: Some(
+                        crate::position_interface::SectorHandle::from_number(sector.sector_number)
+                            .with_arena_index(index),
+                    ),
+                    layer: doors[0].layer_in,
+                    direction: 0,
+                    forecasted_movement_z: if up { 1. } else { -1. },
+                    door_pass: None,
+                    passing_door_directly: false,
+                },
+                doors,
+                &grid.sectors,
+                &grid.sector_number_map,
+            );
+            assert_eq!(
+                forecast.position.map_point(),
+                doors[endpoint].point_out,
+                "AI at {degrees}, up={up}"
+            );
+            assert_eq!(forecast.position.level, doors[endpoint].layer_out);
+        }
+    }
 }
 
 #[test]

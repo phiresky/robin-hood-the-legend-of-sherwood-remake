@@ -17,6 +17,7 @@ fn sector(number: SectorNumber, lift: Option<LiftType>) -> GridSector {
         building_index: None,
         low_exit_point: lift.map(|_| MapPoint::new(2279.0, 1300.0)),
         high_exit_point: lift.map(|_| MapPoint::new(2279.0, 1200.0)),
+        highest_door_index: None,
         lowest_door_index: None,
         jump_line_indices: Vec::new(),
         gate_indices: Vec::new(),
