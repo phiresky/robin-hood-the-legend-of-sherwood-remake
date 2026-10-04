@@ -144,6 +144,10 @@ def main():
             wood=json.loads(wood_review.read_text())
             if (wood['model_sha256']==model_hash and wood['status'].startswith('PASS')
                     and all(sha(Path(path))==expected for path,expected in wood['files'].items())):
+                from wood_revision_candidates import validate_worker as validate_wood_revision
+                validate_wood_revision(workspace)
+                if technical:
+                    item['status']='ready-for-user';item['technical_eligible']=True
                 item['source_trace']=str(workspace/'inspection/lower-stem/textured.png')
                 item['source_trace_label']='NEW continuous lower trunk: actual materials from eight close-up views; gray rear wood awaits texture fill'
                 item['notes'].append('Lower wood058 and junction062 revised; approved crown and wood060/061 preserved. This wood revision needs new geometry approval.')
