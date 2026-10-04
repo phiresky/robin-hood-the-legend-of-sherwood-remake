@@ -16,7 +16,9 @@ build and native stair/control checks passed. Wychford loads with its spline wal
 and passes control apply/reset. The terrain-junction correction passes the
 synthetic four-triangle fan, all 48 crossings in the reduced Wychford case, and
 182 movement tests (five skipped). The updated game build passes. The full
-Wychford crossing audit is still running; full-map traversal is not yet verified.
+Wychford receiving-seam audit passes 17,468 directed actor crossings over 8,734
+eligible pairs. This samples initial-state routes; it does not verify every
+possible route, control state or feature category.
 
 | Map information | How the editor constructs it | Current evidence / gap |
 |---|---|---|
@@ -25,7 +27,7 @@ Wychford crossing audit is still running; full-map traversal is not yet verified
 | View/projectile masks and masking boundaries | Transform and rasterize local coverage; rebuild receiver, obstacle and state links. | Compiler/native state fixtures pass. Library coverage and complete visual integration remain incomplete. Depth alone does not replace these masks. |
 | Walkable regions and layers | Transform surfaces and heights; join matching boundaries, coplanar surfaces and authored multi-plane regions. | Synthetic joins and sampled map routes pass; complete connectivity/traversal remains open. |
 | Movement collision and openings | Intersect placed solids/contours with receiving planes; apply asset-owned clearances. | Compiler/runtime fixtures pass. Recovered geometry still needs review. |
-| Spline walls | Measure pinned source meshes and deform local surfaces, collision, material contours, same-plane lighting and spatial sound emitters with source rotation, trimming, straightening and path placement. | Geometry comparisons pass 24 combinations; Wychford native loading/state checks pass. Material ownership passes moved/repeated, turned, sloped, corner and fractional-origin compiler checks; native ground/obstacle queries pass for three repeated sections. Same-plane lighting passes repeated/turned/rising compiler checks and native ambience queries. Spatial sound placement and acoustic settings pass native construction. Broader receiver-material, playback and traversal checks remain open. Stateful sources, explicit lighting receiver anchors, masks, global sounds and disconnected sound crops remain unsupported with warnings. |
+| Spline walls | Measure pinned source meshes and deform local surfaces, collision, material contours, same-plane lighting and spatial sound emitters with source rotation, trimming, straightening and path placement. | Geometry comparisons pass 24 combinations; Wychford native loading/state checks pass. Material ownership passes moved/repeated, turned, sloped, corner and fractional-origin compiler checks; native ground/obstacle queries pass for three repeated sections. Same-plane lighting and explicit point anchors pass repeated/turned/rising compiler checks and native-fixture equality; native ambience queries pass. Spatial sound placement and acoustic settings pass native construction. Broader receiver-material, playback and traversal checks remain open. Stateful sources, authored lighting receiver segments, masks, global sounds and disconnected sound crops remain unsupported with warnings. |
 | Navigation graph and fast-find grid | Build fresh graph/spatial structures from compiled geometry. | Native initial/switch-state route checks pass; no source grid or graph bytes are copied. Full actor coverage remains open. |
 | Sight/physical obstacles | Transform local shapes, heights and physical/opaque flags. | Native initialization, apply and reset tested; asset ownership coverage remains incomplete. |
 | Projection/elevation receivers | Derive height planes and crossing boundaries from placed receiving surfaces. | Fractional seams, slopes, copies and sampled actor crossings tested; complete placement coverage remains open. |

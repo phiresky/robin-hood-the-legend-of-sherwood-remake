@@ -369,6 +369,7 @@ function compileAssetGameplayAttempt(
   })[] = [];
   const lights: {
     id: string;
+    receiverGroup?: string;
     polygon: Point[];
     plane: HeightPlane;
     ambiences: number;
@@ -524,6 +525,7 @@ function compileAssetGameplayAttempt(
       const points = light.polygon.map((p) => transform(light.node, p));
       lights.push({
         id: `${placement.id}/${light.id}`,
+        ...(light.receiverGroup ? { receiverGroup: `${placement.id}/${light.receiverGroup}` } : {}),
         polygon: ring(points.map(project), `${placement.id}/${light.id}`),
         plane: heightPlane(points.map(([x, y, z]): Vec3 => [x, y - z, z])),
         ambiences: light.ambiences,
@@ -2051,6 +2053,13 @@ function compileAssetGameplayAttempt(
     ...doors.filter((door) => !door.lift && !door.interior),
   ].filter((door) => !omittedDoors.has(door.name));
   const doorIndices = new Map(patchDoors.map((door, index) => [door.name, index]));
+  const lightCoverage = new Map<string, Point[][]>();
+  for (const light of lights) {
+    if (!light.receiverGroup) continue;
+    const contours = lightCoverage.get(light.receiverGroup) ?? [];
+    contours.push(light.polygon);
+    lightCoverage.set(light.receiverGroup, contours);
+  }
   const compiled: CompiledAssetGeometry = {
     ...(warnings.length ? { warnings } : {}),
     motion_data: { layers, graph_bytes: [] },
@@ -2087,7 +2096,10 @@ function compileAssetGameplayAttempt(
                   // These anchors select a layer and are not serialized as integer
                   // geometry. Rounding can move a valid interior anchor outside.
                   const projected: Point = [point[0], point[1] - point[2]];
-                  if (!inside(projected, light.polygon))
+                  const coverage = light.receiverGroup
+                    ? lightCoverage.get(light.receiverGroup)!
+                    : [light.polygon];
+                  if (!coverage.some((contour) => inside(projected, contour)))
                     throw new Error(
                       `${light.id}: receiver ${index} lies outside the light contour`,
                     );

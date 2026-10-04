@@ -1673,6 +1673,27 @@ test("light receiver anchors preserve one contour across elevations and move wit
   assert.throws(() => compileAssetGameplay(document, assets, bounds), /invalid light receivers/);
 });
 
+test("subdivided light contours share anchor coverage only within their explicit group", () => {
+  const { hut, document, assets } = lightAssetCompilerFixture();
+  const light = hut.gameplay!.lights![0]!;
+  light.receivers = [[20, 20, 0]];
+  light.receiverGroup = "split-region";
+  const other = {
+    ...light,
+    id: "other-fragment",
+    polygon: light.polygon.map(([x, y, z]): [number, number, number] => [x + 60, y, z]),
+  };
+  hut.gameplay!.lights = [light, other];
+  assert.equal(compileAssetGameplay(document, assets, bounds).light_sectors!.length, 2);
+  other.receiverGroup = "unrelated";
+  assert.throws(() => compileAssetGameplay(document, assets, bounds), /outside the light contour/);
+  other.receiverGroup = "";
+  assert.throws(
+    () => compileAssetGameplay(document, assets, bounds),
+    /invalid light receiver group/,
+  );
+});
+
 test("light layer anchors retain fractional positions inside narrow contours and surfaces", () => {
   const { hut, document, assets } = lightAssetCompilerFixture();
   const gameplay = hut.gameplay!;

@@ -173,9 +173,24 @@ test("wall lighting follows repeated and turned paths and preserves ambience fil
   const raised = compileAssetGameplay(document, assets, bounds);
   assert.ok(raised.light_sectors!.length);
   assert.ok(raised.light_sectors!.every((light) => light.layer > 0 && light.ambience === 5));
-  asset.gameplay!.lights[0]!.receivers = [sceneToGame(document.camera, [0, 0, 0])];
+  asset.gameplay!.lights[0]!.receivers = [sceneToGame(document.camera, [-49, 0, 40])];
+  const anchored = compileAssetGameplay(document, assets, bounds);
+  assert.deepEqual(anchored.light_sectors, raised.light_sectors);
+  asset.gameplay!.lights[0]!.receivers = [sceneToGame(document.camera, [-49, 0, 41])];
+  assert.throws(() => compileAssetGameplay(document, assets, bounds), /receiving segment/);
+  asset.gameplay!.lights[0]!.receivers = [sceneToGame(document.camera, [0, 0, 40])];
+  assert.ok(
+    wallSplineGameplay(document, assets, true).warnings.some((warning) =>
+      warning.includes("cropping removed every receiving anchor"),
+    ),
+  );
+  asset.gameplay!.lights[0]!.receiverSegments = [
+    [sceneToGame(document.camera, [0, 0, 20]), sceneToGame(document.camera, [0, 0, 60])],
+  ];
   const unsupported = wallSplineGameplay(document, assets, true);
-  assert.ok(unsupported.warnings.some((warning) => warning.includes("explicit receiving anchors")));
+  assert.ok(
+    unsupported.warnings.some((warning) => warning.includes("explicit receiving segments")),
+  );
   assert.equal(unsupported.descriptors[0]!.gameplay!.lights!.length, 0);
 });
 

@@ -77,6 +77,7 @@ export function wallSplineGameplay(
     };
     const out = generated.gameplay!;
     let materialSequence = 0;
+    let lightGroupSequence = 0;
     function append(
       assetId: string | undefined,
       run: LevelSpline | undefined,
@@ -359,15 +360,34 @@ export function wallSplineGameplay(
         );
       }
       for (const light of data.lights ?? []) {
-        if (light.receivers || light.receiverSegments) {
+        if (light.receiverSegments) {
           warnings.push(
-            `Wall spline ${path.id}, light ${light.id}: explicit receiving anchors are not deformed; light region omitted.`,
+            `Wall spline ${path.id}, light ${light.id}: explicit receiving segments are not deformed; light region omitted.`,
           );
           continue;
         }
+        const group = `light-group-${lightGroupSequence++}`;
+        const cropped = new Set<number>();
         pieces(
           light.polygon.map((p) => source(light.node, p)),
           (vertices, repeat) => {
+            const receivers = light.receivers
+              ?.map((p) => source(light.node, p))
+              .filter(
+                (p) =>
+                  !run ||
+                  (p[axis] >= start &&
+                    p[axis] <=
+                      Math.min(end, start + (end - start) * (length / run.repeatLength - repeat))),
+              );
+            if (receivers && !receivers.length) {
+              if (!cropped.has(repeat))
+                warnings.push(
+                  `Wall spline ${path.id}, light ${light.id}, repeat ${repeat}: cropping removed every receiving anchor; light region omitted.`,
+                );
+              cropped.add(repeat);
+              return;
+            }
             const polygon = vertices.map((p) => warp([p[0]!, p[1]!, p[2]!], repeat));
             const projected = polygon.map(([x, y, z]): [number, number] => [
               x - imageOrigin[0]!,
@@ -387,6 +407,21 @@ export function wallSplineGameplay(
               node: "$root",
               polygon,
               ambiences: light.ambiences,
+              ...(receivers
+                ? {
+                    // Horizontal source deformation is quantized to 1/1024 game
+                    // units. A narrow vertical probe tolerates the corresponding
+                    // receiving-plane rounding without selecting another floor.
+                    receiverSegments: receivers.map((p): [Vec3, Vec3] => {
+                      const [x, y, z] = warp(p, repeat);
+                      return [
+                        [x, y - 1 / 1024, z - 1 / 1024],
+                        [x, y + 1 / 1024, z + 1 / 1024],
+                      ];
+                    }),
+                    receiverGroup: `${group}-${repeat}`,
+                  }
+                : {}),
             });
           },
         );

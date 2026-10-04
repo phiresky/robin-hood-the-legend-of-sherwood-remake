@@ -122,6 +122,7 @@ export function wallMaterialFixture() {
       id: "shadow",
       node: "body",
       ambiences: 5,
+      receivers: [local(-25, -30, 0)],
       polygon: asset.gameplay!.materials[1]!.polygon.map((point) => [...point]),
     },
   ];

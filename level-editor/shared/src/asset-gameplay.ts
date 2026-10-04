@@ -208,6 +208,8 @@ export interface AssetOcclusionMask {
 export interface AssetLightRegion {
   id: string;
   node: string;
+  /** Local contour group sharing receiver coverage after subdivision. */
+  receiverGroup?: string;
   /** Planar local 3D contour; defaults to receivers on the same plane. */
   polygon: [number, number, number][];
   /** Optional local anchors selecting receiving layers independently of the contour plane. */
@@ -823,6 +825,11 @@ export function validateAssetGameplay(
   if (data.lights !== undefined && !Array.isArray(data.lights)) fail("invalid light regions");
   for (const light of data.lights ?? []) {
     feature(light);
+    if (
+      light.receiverGroup !== undefined &&
+      (typeof light.receiverGroup !== "string" || !light.receiverGroup.trim())
+    )
+      fail(`invalid light receiver group ${light.id}`);
     if (
       !integer(light.ambiences, 4294967295) ||
       !Array.isArray(light.polygon) ||

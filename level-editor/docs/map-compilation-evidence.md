@@ -4,6 +4,22 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Spline lighting point anchors (2026-10-05)
+
+Explicit point anchors now deform with each repeated light region. Subdivided
+contours share an asset-local receiver-coverage group, namespaced per placement
+and repeat; an anchor may select the receiving layer for the entire group but
+cannot borrow coverage from an unrelated light. Generated points use vertical
+probes of ±1/1024 game unit to accommodate deformation/receiving-plane rounding.
+Wrong-height anchors still fail. A crop removing every anchor omits that repeat's
+region with a warning. Authored receiving segments remain unsupported on walls.
+
+All 131 focused compiler/draft/wall tests pass, including rising wall tops,
+invalid groups, unrelated coverage and wrong-height rejection. The seven app
+wall tests pass: explicit anchors produce the same golden descriptor already
+validated by native shadow/layer/ambience queries. Typechecking and targeted
+lint pass. This is not complete attachment coverage for every slope or asset.
+
 ## Spline-wall spatial sounds (2026-10-04)
 
 Point and polyline emitters now follow repeated wall sections, source trimming,
@@ -53,8 +69,12 @@ The broader movement suite passes 182 tests with five ignored in 9.62 seconds.
 The complete-animation climb regression also passes after the correction:
 2,166 directed routes over ladders and both climbable wall types (15.69 seconds).
 The updated game build passes (`cargo build -p robin_rs --bin robin -j1`, 85
-seconds). The full Wychford audit is running; these results do not yet establish
-full-map traversal acceptance.
+seconds). The full Wychford receiving-seam audit subsequently passes 17,468
+directed actor crossings over 8,734 eligible pairs in 1,054.35 seconds. Its
+`actor-receiver-crossing-report.json` in the calibrated Wychford diagnostic
+directory records `complete: true`. This samples initial-state receiver seams;
+ground boundaries, other control states and other feature categories remain
+separate acceptance checks.
 
 ## Spline-wall material regions (2026-10-04)
 
