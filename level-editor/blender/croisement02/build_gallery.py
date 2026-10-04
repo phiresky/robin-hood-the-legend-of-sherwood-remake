@@ -26,6 +26,7 @@ def main():
         tree='wood_mask' in group
         stem=bool(group.get('authored_scenery') and 'native_wood_mask' in group)
         shrub=bool(group.get('authored_scenery') and 'native_foliage_mask' in group)
+        ground_plant=bool(group.get('authored_scenery') and 'native_ground_plant_mask' in group)
         foliage=tree or shrub
         workspace=OUT/('forest-v4-round-1' if tree else 'scenery-round-1')/'assets'/group['id']
         if tree:workspace=tree_workspace(group['wood_mask'])
@@ -53,7 +54,7 @@ def main():
         actual=workspace/'inspection/actual-materials';evidence=actual/'evidence.json';coverage=workspace/'inspection/source-coverage/report.json'
         if evidence.exists() and json.loads(evidence.read_text())['model_sha256']==model_hash:
             item['stored_material_textured']=str(actual/'sheet.png');item['stored_material_audit']=str(evidence)
-            if (foliage or stem) and coverage.exists() and json.loads(coverage.read_text()).get('model_sha256')==model_hash:
+            if (foliage or stem or ground_plant) and coverage.exists() and json.loads(coverage.read_text()).get('model_sha256')==model_hash:
                 metrics=json.loads(coverage.read_text())
                 bounds=json.loads((actual/'opacity-bounds.json').read_text()) if foliage else None
                 item['projection_errors']=str(coverage.parent/'difference.png');item['projection_errors_label']='Native-mask comparison: red missing, cyan extra'
@@ -61,7 +62,7 @@ def main():
                 if foliage:
                     ratio=min(r['depth_width_ratio'] for r in bounds['crowns'])
                     item['notes'].append(f"Visible depth/width {ratio:.3f}; source silhouette IoU {metrics['intersection_over_union']:.3f}.")
-                else:item['notes'].append(f"Authored standalone stem; source silhouette IoU {metrics['intersection_over_union']:.3f}.")
+                else:item['notes'].append(f"Authored {'ground plant' if ground_plant else 'standalone stem'}; source silhouette IoU {metrics['intersection_over_union']:.3f}.")
         audit_path=workspace/'inspection/saved-model-audit.json'
         audited=False
         if audit_path.exists():
@@ -76,9 +77,20 @@ def main():
             if technical:
                 values=json.loads(coverage.read_text());bounds=json.loads((actual/'opacity-bounds.json').read_text())
                 technical=values['intersection_over_union']>=.95 and min(v['depth_width_ratio'] for v in bounds['crowns'])>=1.
-        elif stem:
+        elif stem or ground_plant:
             technical=technical and coverage.exists() and json.loads(coverage.read_text()).get('model_sha256')==model_hash and json.loads(coverage.read_text())['intersection_over_union']>=.95
         elif 'state' in group['id']:technical=False
+        if ground_plant:
+            geometry=report['crown']
+            technical=technical and geometry['geometry_version']=='native-rooted-ground-plants-v4' and abs(geometry['minimum_z']-geometry['ground_z']-.05)<.002
+            selection=json.loads((OUT/'ground-plant-integration/selection.json').read_text())['records'][group['id']]
+            joint=Path(selection['joint_review_directory'])
+            item['source_comparison_secondary']=str(joint/'sheet.png')
+            item['source_comparison_secondary_label']='Grouped source and oblique ground-contact review'
+            item['source_trace']=str(joint/'native-scale-context.png')
+            item['source_trace_label']='Exact native map scale: coarse source fragments assessed in context'
+            item['notes'].extend(['Principal inferred blades/fronds are rooted; some source-pixel fragments look scattered or detached under magnification. Not every fragment is connected.',
+                                  'Hidden backs reuse only this plant native palette. No AI-generated texture or observed rear artwork is claimed.'])
         joint_path=workspace/'inspection/joint-neighbourhood.json'
         if joint_path.exists():
             joint=json.loads(joint_path.read_text())

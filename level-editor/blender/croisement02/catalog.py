@@ -37,6 +37,9 @@ def bank_workspace(asset):
 
 
 def scenery_workspace(asset):
+    from ground_plant_candidates import selected_workspace as plant_workspace
+    ground_plant=plant_workspace(OUT,asset,reviewed_catalog())
+    if ground_plant is not None:return ground_plant
     from log_candidates import selected_workspace as log_workspace
     revised_log=log_workspace(OUT,asset,reviewed_catalog())
     if revised_log is not None:return revised_log

@@ -106,7 +106,7 @@ def audit(out):
                 phase[global_index].append({'patch': index, 'role': key})
     owner = defaultdict(set)
     for asset, group in groups.items():
-        for field in ('wood_mask', 'native_wood_mask', 'native_foliage_mask', 'native_scenery_mask'):
+        for field in ('wood_mask', 'native_wood_mask', 'native_foliage_mask', 'native_ground_plant_mask', 'native_scenery_mask'):
             if field in group:
                 owner[group[field]].add(asset)
         for mask in group.get('native_foliage_masks', []):
