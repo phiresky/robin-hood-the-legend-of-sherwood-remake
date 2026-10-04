@@ -131,6 +131,18 @@ def main():
                 item['source_trace']=str(cleanup_comparison/'comparison-4-7.png')
                 item['source_trace_label']=baseline_label+' above; NEW cleanup candidate below, identical cameras (views4–7)'
         review=workspace/'inspection/visual-review.json'
+        complete_volume=workspace/'inspection/complete-volume'
+        if (complete_volume/'evidence.json').exists():
+            supplemental=json.loads((complete_volume/'evidence.json').read_text())
+            if (supplemental['model_sha256']!=model_hash
+                    or supplemental['fixed_manifest_sha256']!=sha(workspace/'modified/views.json')
+                    or supplemental['fitted_manifest_sha256']!=sha(complete_volume/'views.json')
+                    or supplemental['actual_sheet_sha256']!=sha(complete_volume/'textured-sheet.png')
+                    or supplemental['solid_sheet_sha256']!=sha(complete_volume/'solid-sheet.png')):
+                raise ValueError('Stale complete-volume review packet')
+            item.setdefault('stored_material_states',[]).extend([
+                dict(id='complete-volume-actual',name='Complete inferred volume: actual materials, wider framing',sheet=str(complete_volume/'textured-sheet.png'),audit=str(complete_volume/'evidence.json')),
+                dict(id='complete-volume-solid',name='Complete inferred volume: solid geometry, wider framing',sheet=str(complete_volume/'solid-sheet.png'),audit=str(complete_volume/'evidence.json'))])
         full_crown=workspace/'inspection/full-crown'
         if (full_crown/'evidence.json').exists():
             supplemental=json.loads((full_crown/'evidence.json').read_text())
