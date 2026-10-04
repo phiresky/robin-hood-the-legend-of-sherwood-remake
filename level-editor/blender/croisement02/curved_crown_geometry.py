@@ -8,9 +8,11 @@ from rounded_interior_geometry import build as volume
 from tree_geometry import SIN, COS, RAY, replace_mesh, material, one_sided
 
 
-def build(obj, packet, ground_y, interior_clusters=600, branch_clumps=False, fragment_depth_jitter=0.):
+def build(obj, packet, ground_y, interior_clusters=600, branch_clumps=False, fragment_depth_jitter=0., interior_front_cosine=.15):
     if not 0 <= fragment_depth_jitter <= 16:
         raise ValueError("Fragment depth jitter must be in 0..16 source pixels")
+    if not 0 < interior_front_cosine < 1:
+        raise ValueError('Interior front cosine must be between 0 and 1')
     report = volume(obj, packet, ground_y, interior_clusters=interior_clusters, branch_clumps=branch_clumps)
     mesh = obj.data
     fx, fy, fw, fh = packet['bbox']
@@ -105,7 +107,7 @@ def build(obj, packet, ground_y, interior_clusters=600, branch_clumps=False, fra
     def source_facing_pair(face):
         points=np.asarray([vertices[i] for i in face])
         normal=np.cross(points[1]-points[0],points[2]-points[0])
-        return np.dot(normal,ray)/np.linalg.norm(normal)<-.15
+        return np.dot(normal,ray)/np.linalg.norm(normal)<-interior_front_cosine
     originals = [(face,slot) for face,slot in zip(list(faces),list(slots))
                  if slot==4 and source_facing_pair(face)]
     # Native alpha is sampled densely enough to avoid thickening the highly
@@ -151,6 +153,7 @@ def build(obj, packet, ground_y, interior_clusters=600, branch_clumps=False, fra
         slots.append(front_slot);known.append(True)
     mesh_report = replace_mesh(obj,vertices,faces,uvs,materials,slots,known)
     report['fragment_depth_jitter']=fragment_depth_jitter
+    report['interior_front_cosine']=interior_front_cosine
     xyz = np.asarray(vertices)
     result = dict(report, **mesh_report)
     result.pop('leaf_clusters', None)

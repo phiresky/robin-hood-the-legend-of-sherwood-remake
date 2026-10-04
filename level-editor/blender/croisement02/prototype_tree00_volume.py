@@ -23,7 +23,7 @@ from audit_candidates import audit
 from render_tree import render_workspace
 
 
-def main(destination, mask=0, interior_clusters=600, root_completion_base=None, branch_clumps=False, approved_base=None, transparent_bounces=64, fragment_depth_jitter=0.):
+def main(destination, mask=0, interior_clusters=600, root_completion_base=None, branch_clumps=False, approved_base=None, transparent_bounces=64, fragment_depth_jitter=0., interior_front_cosine=.15):
     worker = destination / 'assets' / f'croisement02-tree-{mask:02}'
     if worker.exists():
         raise ValueError('Use a fresh prototype destination')
@@ -82,7 +82,7 @@ def main(destination, mask=0, interior_clusters=600, root_completion_base=None, 
             lobe['image'] = str(local_source / original.name)
         packet_path = local_source / 'partition.json'
         write_json(packet_path, packet)
-        result = build(crown, packet, source_row['ground_y'], interior_clusters=interior_clusters, branch_clumps=branch_clumps, fragment_depth_jitter=fragment_depth_jitter)
+        result = build(crown, packet, source_row['ground_y'], interior_clusters=interior_clusters, branch_clumps=branch_clumps, fragment_depth_jitter=fragment_depth_jitter, interior_front_cosine=interior_front_cosine)
         native_alpha = np.asarray(Image.open(local_source / 'complete-source.png'))[:, :, 3]
         north_row = -packet['native_bbox'][1]
         north_contact = (int(np.count_nonzero(native_alpha[north_row] > 127))
@@ -149,7 +149,8 @@ if __name__ == '__main__':
     parser.add_argument('--approved-base', type=Path, help='Explicit approved original when a pending candidate is already selected')
     parser.add_argument('--transparent-bounces', type=int, default=64, help='Declared per-asset render budget; validate dense foliage convergence before choosing')
     parser.add_argument('--fragment-depth-jitter', type=float, default=0., help='Private bounded source-ray fragment depth variation')
+    parser.add_argument('--interior-front-cosine', type=float, default=.15, help='Minimum source-facing cosine for projected interior fronts; private candidates only')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
     main(args.destination.resolve(),args.mask,args.interior_clusters,
          args.root_completion_base.resolve() if args.root_completion_base else None,args.branch_clumps,
-         args.approved_base.resolve() if args.approved_base else None,args.transparent_bounces,args.fragment_depth_jitter)
+         args.approved_base.resolve() if args.approved_base else None,args.transparent_bounces,args.fragment_depth_jitter,args.interior_front_cosine)
