@@ -58,6 +58,51 @@ fn editor_asset_masks_construct_baked_coverage_and_local_state_links() {
     ));
 }
 
+#[test]
+fn spline_masks_repeat_coverage_boundaries_and_obstacle_altitudes_independently() {
+    use robin_engine::coordinates::{MapPoint, WorldPoint3D};
+    let mut assets = LevelAssets::new();
+    let engine = construct(
+        include_bytes!("fixtures/asset-spline-material.level.json"),
+        &mut assets,
+    );
+    let grid = engine.fast_grid();
+    let obstacles = robin_engine::sight_obstacle::ObstacleList::from_slice_all_active(
+        &assets.environment.static_sight_obstacles,
+    );
+    assert_eq!(grid.level.masks.len(), 3);
+    for (index, mask) in grid.level.masks.iter().enumerate() {
+        let x = 150. + 100. * index as f32;
+        assert_eq!(mask.mask_type, 23);
+        assert_eq!((mask.width, mask.height), (100, 34));
+        // The projected top lies below the first row's pixel centers.
+        assert!(mask.bitmap[..100].iter().all(|&pixel| pixel == 0));
+        assert!(mask.bitmap[100..].iter().all(|&pixel| pixel == 1));
+        assert_eq!(mask.obstacle_indices.len(), 2);
+        assert!(mask.is_applied_to_point_character(MapPoint::new(x, 200.)));
+        assert!(!mask.is_applied_to_point_character(MapPoint::new(x, 210.)));
+        assert!(mask.is_applied_to_point_projectile(MapPoint::new(x, 190.)));
+        assert!(!mask.is_applied_to_point_projectile(MapPoint::new(x, 200.)));
+        for other in 0..3 {
+            let point = |z| WorldPoint3D {
+                x: 150. + 100. * other as f32,
+                y: 200.,
+                z,
+            };
+            assert_eq!(
+                mask.is_applied_to_point_3d(point(10.), false, obstacles),
+                other == index
+            );
+            assert!(!mask.is_applied_to_point_3d(point(50.), false, obstacles));
+            assert_eq!(
+                mask.is_applied_to_point_3d(point(-10.), true, obstacles),
+                other == index
+            );
+            assert!(!mask.is_applied_to_point_3d(point(10.), true, obstacles));
+        }
+    }
+}
+
 fn descriptor_with_compiled_masks() -> serde_json::Value {
     let mut descriptor: serde_json::Value =
         serde_json::from_slice(include_bytes!("fixtures/asset-lift.level.json")).unwrap();

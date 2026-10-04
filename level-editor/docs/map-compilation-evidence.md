@@ -4,6 +4,27 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Spline mask coverage and ownership (2026-10-05)
+
+Wall masks now deform and crop their coverage triangles, character/projectile
+boundaries and receiving anchors with each wall repeat. Obstacle references bind
+only to the corresponding repeat's generated volume fragments. Open boundaries
+retain their authored meaning; closed boundaries rebuild their front envelope
+after placement. Degenerate projected triangles are omitted.
+
+The editor regression covers a cropped final repeat and curved paths, unchanged
+source definitions, and preserved collision when an unsupported mask is omitted.
+The shared export fixture passes native bitmap checks, character and projectile
+boundary queries, projectile top-plane and flying-human bottom-plane queries,
+and isolation between all three repeated sections. All eight native spline
+integration tests pass; the 16 focused editor tests, typechecking and targeted
+lint pass.
+
+This is partial mask support: cropped receiving anchors, longitudinal receiving
+segments and disconnected cropped boundaries still warn and omit affected masks.
+Full-scene rendering, changing wall sources and elevated/stacked mask receiver
+coverage remain unverified. These checks do not establish full visual parity.
+
 ## Automatic curved-wall lighting attachment (2026-10-05)
 
 Unanchored spline lights now find matching asset-local receiving planes before

@@ -100,6 +100,31 @@ export function wallMaterialFixture() {
   const fixture = wallSplineFixture();
   const { asset, document } = fixture;
   const local = (x: number, y: number, z: number) => sceneToGame(document.camera, [x, y, z]);
+  const a = local(-50, -10, 0),
+    b = local(50, -10, 0),
+    c = local(50, -10, 40),
+    d = local(-50, -10, 40);
+  asset.gameplay!.masks = [
+    {
+      id: "front-mask",
+      node: "body",
+      triangles: [
+        [a, b, c],
+        [a, c, d],
+      ],
+      anchor: local(-49, 0, 0),
+      view: true,
+      characterBoundary: [
+        local(-50, -10, 0),
+        local(50, -10, 0),
+        local(50, 10, 0),
+        local(-50, 10, 0),
+      ],
+      projectileBoundary: [local(-50, 10, 0), local(50, 10, 0)],
+      projectileBoundaryClosed: false,
+      obstacles: ["body-solid"],
+    },
+  ];
   asset.gameplay!.materials = [
     {
       id: "front",

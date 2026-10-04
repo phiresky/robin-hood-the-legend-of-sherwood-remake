@@ -301,6 +301,73 @@ test("wall spatial sounds repeat and crop with their acoustic rules intact", () 
   );
 });
 
+test("wall masks deform coverage, front boundaries and obstacle ownership together", () => {
+  const { document, asset, assets, bounds } = wallSplineFixture();
+  const local = (x: number, y: number, z: number) => sceneToGame(document.camera, [x, y, z]);
+  const a = local(-50, -10, 0),
+    b = local(50, -10, 0),
+    c = local(50, -10, 40),
+    d = local(-50, -10, 40);
+  const boundary = [local(-50, -10, 0), local(50, -10, 0), local(50, 10, 0), local(-50, 10, 0)];
+  asset.gameplay!.masks = [
+    {
+      id: "front",
+      node: "body",
+      anchor: local(-49, 0, 0),
+      view: true,
+      triangles: [
+        [a, b, c],
+        [a, c, d],
+      ],
+      characterBoundary: boundary,
+      projectileBoundary: boundary,
+      obstacles: ["body-solid"],
+    },
+  ];
+  document.splines![0]!.points = [
+    [100, 200, 0],
+    [345, 200, 0],
+  ];
+  const before = JSON.stringify(asset);
+  const generated = wallSplineGameplay(document, assets, false);
+  assert.deepEqual(generated.warnings, []);
+  const masks = generated.descriptors[0]!.gameplay!.masks!;
+  assert.equal(masks.length, 3);
+  for (const mask of masks) {
+    assert.ok(mask.obstacles.length >= 2);
+    assert.ok(mask.triangles.flat().every(([x]) => x >= 100 && x <= 345));
+    assert.ok(mask.characterBoundary!.every(([x]) => x >= 100 && x <= 345));
+    assert.ok(mask.projectileBoundary!.every(([x]) => x >= 100 && x <= 345));
+  }
+  assert.deepEqual(
+    masks.map((mask) => mask.obstacles.length),
+    [2, 2, 3],
+  );
+  assert.equal(new Set(masks.flatMap((mask) => mask.obstacles)).size, 7);
+  const result = compileAssetGameplay(document, assets, bounds);
+  assert.equal(result.masks!.length, 3);
+  assert.ok(result.masks!.every((mask) => mask.mask_type === 23));
+  assert.equal(JSON.stringify(asset), before);
+  const path = document.splines![0]!;
+  path.curved = true;
+  path.points = [
+    [100, 200, 0],
+    [220, 300, 0],
+    [345, 200, 0],
+  ];
+  const bent = wallSplineGameplay(document, assets, false);
+  assert.deepEqual(bent.warnings, []);
+  assert.ok(
+    bent.descriptors[0]!.gameplay!.masks!.some((mask) => mask.characterBoundary!.length > 4),
+  );
+  assert.ok(compileAssetGameplay(document, assets, bounds).masks!.length > 0);
+  asset.gameplay!.masks![0]!.receiverSegment = [local(-49, 0, -10), local(49, 0, 10)];
+  const omitted = wallSplineGameplay(document, assets, true);
+  assert.ok(omitted.warnings.some((warning) => warning.includes("longitudinal receiving segment")));
+  assert.equal(omitted.descriptors[0]!.gameplay!.masks!.length, 0);
+  assert.ok(omitted.descriptors[0]!.gameplay!.volumes!.length > 0);
+});
+
 test("wall collision follows moved paths, crops repeats and participates in terrain navigation", () => {
   const { document, assets, bounds } = wallSplineFixture();
   const first = compileAssetGameplay(document, assets, bounds);

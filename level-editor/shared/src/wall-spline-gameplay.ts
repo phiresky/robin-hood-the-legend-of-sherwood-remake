@@ -19,6 +19,7 @@ import { matchesWallSource, wallSectionAt } from "./wall-section-profile.ts";
 import { quantizeGeneratedMotionPolygon } from "./motion-quantization.ts";
 import { clipSplinePolyline } from "./clip-spline-polyline.ts";
 import { splineLightReceivers } from "./spline-light-receivers.ts";
+import type { MaskTriangle } from "./compile-mask-geometry.ts";
 
 type Vertex = number[];
 function clip(vertices: Vertex[], axis: number, boundary: number, above: boolean) {
@@ -75,6 +76,7 @@ export function wallSplineGameplay(
         materials: [],
         lights: [],
         sounds: [],
+        masks: [],
       },
     };
     const out = generated.gameplay!;
@@ -108,8 +110,6 @@ export function wallSplineGameplay(
         throw new Error(`asset ${assetId} has stateful geometry; a static wall source is required`);
       for (const issue of data.draft?.issues ?? [])
         warnings.push(`Wall spline ${path.id}, asset ${assetId}: ${issue}`);
-      if (data.masks?.length)
-        warnings.push(`Wall spline ${path.id}, asset ${assetId}: local masks are not deformed.`);
       if (
         data.doors.length ||
         data.lifts?.length ||
@@ -218,7 +218,7 @@ export function wallSplineGameplay(
         const indices = earcut(vertices.flatMap((v) => axes.map((axis) => v[axis]!)));
         if (material && !indices.length)
           warnings.push(
-            `Wall spline ${path.id}, asset ${assetId}: a degenerate material contour could not be triangulated and was omitted.`,
+            `Wall spline ${path.id}, asset ${assetId}: a degenerate spatial contour could not be triangulated and was omitted.`,
           );
         for (let repeat = 0; repeat < repeats; repeat++)
           for (let t = 0; t < indices.length; t += 3) {
@@ -327,6 +327,103 @@ export function wallSplineGameplay(
           if (data.movementSolids?.includes(volume.id) ?? data.movementBlockers === undefined)
             out.movementSolids!.push(id);
         });
+      }
+      for (const mask of data.masks ?? []) {
+        const coverage = new Map<number, MaskTriangle[]>();
+        for (const triangle of mask.triangles)
+          pieces(
+            triangle.map((p) => source(mask.node, p)),
+            (vertices, repeat) => {
+              const warped = vertices.map((p) => warp([p[0]!, p[1]!, p[2]!], repeat));
+              const world: MaskTriangle = [warped[0]!, warped[1]!, warped[2]!];
+              if (
+                Math.abs(
+                  area(...(world.map(([x, y, z]) => [x, y - z]) as [Vertex, Vertex, Vertex])),
+                ) < 1e-8
+              )
+                return;
+              const triangles = coverage.get(repeat) ?? [];
+              triangles.push(world);
+              coverage.set(repeat, triangles);
+            },
+            true,
+          );
+        for (const [repeat, triangles] of coverage) {
+          const limit = run
+            ? Math.min(end, start + (end - start) * (length / run.repeatLength - repeat))
+            : end;
+          const anchorSource = source(mask.node, mask.anchor);
+          if (run && (anchorSource[axis] < start || anchorSource[axis] > limit)) {
+            warnings.push(
+              `Wall spline ${path.id}, mask ${mask.id}, repeat ${repeat}: cropped receiving anchor; mask omitted.`,
+            );
+            continue;
+          }
+          const anchor = warp(anchorSource, repeat);
+          const receiver = mask.receiverSegment?.map((p) => source(mask.node, p));
+          if (receiver && run && receiver[0]![axis] !== receiver[1]![axis]) {
+            warnings.push(
+              `Wall spline ${path.id}, mask ${mask.id}: longitudinal receiving segment needs a deformed probe; mask omitted.`,
+            );
+            continue;
+          }
+          let boundaryMissing = false;
+          const boundary = (points: Vec3[] | undefined, closed = true): Vec3[] | undefined => {
+            if (!points) return undefined;
+            let local = points.map((p) => source(mask.node, p));
+            if (run && closed)
+              local = clip(clip(local, axis, start, true), axis, limit, false).map((p): Vec3 => [
+                p[0]!,
+                p[1]!,
+                p[2]!,
+              ]);
+            if (local.length < (closed ? 3 : 2)) {
+              boundaryMissing = true;
+              return undefined;
+            }
+            const line = closed ? [...local, local[0]!] : local;
+            const fragments = run ? clipSplinePolyline(line, axis, start, limit, stations) : [line];
+            if (fragments.length !== 1 || fragments[0]!.length < (closed ? 4 : 2)) {
+              boundaryMissing = true;
+              return undefined;
+            }
+            return (closed ? fragments[0]!.slice(0, -1) : fragments[0]!).map((p) =>
+              warp(p, repeat),
+            );
+          };
+          const characterBoundary = boundary(mask.characterBoundary, mask.characterBoundaryClosed);
+          const projectileBoundary = boundary(
+            mask.projectileBoundary,
+            mask.projectileBoundaryClosed,
+          );
+          const obstacles = mask.obstacles.flatMap((id) => volumeRefs.get(id)?.get(repeat) ?? []);
+          if (
+            boundaryMissing ||
+            (!mask.view && !characterBoundary && !projectileBoundary && !obstacles.length)
+          ) {
+            warnings.push(
+              `Wall spline ${path.id}, mask ${mask.id}, repeat ${repeat}: cropping removed or disconnected its application boundary; mask omitted.`,
+            );
+            continue;
+          }
+          const receiverSegment: [Vec3, Vec3] = receiver
+            ? [warp(receiver[0]!, repeat), warp(receiver[1]!, repeat)]
+            : [
+                [anchor[0], anchor[1] - 1 / 1024, anchor[2] - 1 / 1024],
+                [anchor[0], anchor[1] + 1 / 1024, anchor[2] + 1 / 1024],
+              ];
+          out.masks!.push({
+            ...mask,
+            id: `mask-${out.masks!.length}`,
+            node: "$root",
+            triangles,
+            anchor,
+            receiverSegment,
+            obstacles,
+            ...(characterBoundary ? { characterBoundary } : {}),
+            ...(projectileBoundary ? { projectileBoundary } : {}),
+          });
+        }
       }
       for (const region of data.materials ?? []) {
         pieces(
