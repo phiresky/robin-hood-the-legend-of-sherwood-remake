@@ -1,11 +1,12 @@
 """Round exposed rock edges while preserving surveyed relief and ownership."""
 import argparse
 import json
-import math
 import sys
+import uuid
 from pathlib import Path
 import bpy
 import bmesh
+from mathutils import Vector, noise
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(Path(__file__).parent))
@@ -27,7 +28,9 @@ def sculpt(obj):
     level = json.loads((OUT / 'baseline/Croisement02.rhp.json').read_text())
     points = level['sight_obstacles'][int(obj['source_node'].split('-')[-1])]['points']
     count = len(points)
-    vertices = [(p['x'], -p['y'] / SIN, p[z] / COS)
+    span_x=max(p['x'] for p in points)-min(p['x'] for p in points)
+    extension=max(36.,min(100.,span_x*.65)) if min(p['x'] for p in points)<=.5 else 0.
+    vertices = [(p['x']-extension if p['x']<=.5 else p['x'], -p['y'] / SIN, p[z] / COS)
                 for z in ('z_bottom', 'z_top') for p in points]
     faces = [tuple(reversed(range(count))), tuple(range(count, count * 2))]
     faces += [(i, (i + 1) % count, (i + 1) % count + count, i + count) for i in range(count)]
@@ -67,9 +70,9 @@ def sculpt(obj):
     for vertex in bm.verts:
         p = obj.matrix_world @ vertex.co
         normal = (normal_matrix @ vertex.normal).normalized()
-        wave = math.sin(p.x * .091 + p.y * .037) * math.sin(p.z * .13 + p.y * .071)
+        wave = noise.noise_vector(p*.06+Vector((3.1,7.3,11.7))).x
         envelope = min(1., max(0., p.z) / 8.)
-        p += normal * (wave * min(1.6, radius * .16) * envelope)
+        p += normal * (wave * min(.8, radius * .12) * envelope)
         p.z = max(0., p.z)
         vertex.co = inverse @ p
     bmesh.ops.recalc_face_normals(bm, faces=list(bm.faces))
@@ -81,11 +84,12 @@ def sculpt(obj):
     if result['nonmanifold_edges']:
         raise ValueError('Rock must remain a closed surface: ' + str(result))
     result.update(source_node=obj['source_node'], edge_radius=radius,
+                  inferred_west_extension=extension,
                   method='Surveyed relief with rounded exposed corners and low-amplitude inferred weathering')
     return result
 
 
-def revise(slug):
+def revise(slug,redo=False):
     asset = 'croisement02-' + slug
     old = OUT / 'scenery-round-1/assets' / asset
     worker = OUT / 'scenery-round-2/assets' / asset
@@ -98,6 +102,8 @@ def revise(slug):
     owners = {f"building-{p['obstacle']:03}": g for g in catalog['groups'] for p in g['parts']}
     acquire()
     try:
+        if receipt.exists() and redo:
+            receipt.rename(receipt.with_name('relief-revision-archive-'+uuid.uuid4().hex[:8]+'.json'))
         if not (worker / 'workspace.json').exists():
             bpy.ops.wm.open_mainfile(filepath=str(OUT / 'forest-v4-input.blend'))
             bpy.context.preferences.filepaths.save_version = 0
@@ -128,6 +134,7 @@ def revise(slug):
                 status='geometry candidate; visual review pending',
                 limitations=['Hidden rock faces remain source-only gray pending texture completion.',
                              'Native footprints and relief determine placement. Rounded edges and small surface weathering are inferred.',
+                             'Rock bodies meeting the western image edge continue beyond it with an inferred closed return; hidden shape is not source evidence.',
                              'Full-scene terrain contact and foreground coverage require integrated review.'])
             write_json(worker / 'inspection/refinement.json', report)
             audit(worker)
@@ -143,6 +150,7 @@ def revise(slug):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--assets', nargs='+', choices=ASSETS, default=list(ASSETS))
+    parser.add_argument('--redo',action='store_true')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else [])
     for slug in args.assets:
-        revise(slug)
+        revise(slug,args.redo)

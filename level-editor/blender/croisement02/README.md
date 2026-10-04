@@ -183,6 +183,11 @@ the earlier models and approvals as archived evidence. Added surfaces are
 explicitly inferred. Existing crown vertices, faces, UVs and ownership are
 checked for preservation, and the saved appearance is retained after projection.
 New geometry requires its own review; it does not inherit the previous approval.
+The cap recipe also handles tree 39's eastern continuation. Added leaf volumes
+use world-aligned radii; stretching a narrow cap along the full prior depth
+produced long tilted protrusions and failed self-review.
+`verify_edge_completions.py` reopens both generations and verifies the retained
+mesh, UVs, source ownership, transforms and packed appearance independently.
 `partition_tree40_crown.py` separates the rear eastern crown from the foreground
 tree 39, proving that the neighbour still owns every removed source pixel.
 Run its boundary completion and `repair_bark_visibility.py -- 40 --redo` next;

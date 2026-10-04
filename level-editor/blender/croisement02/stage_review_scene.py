@@ -3,6 +3,7 @@ import json
 import math
 import shutil
 import sys
+import uuid
 from pathlib import Path
 import bpy
 from mathutils import Vector
@@ -26,6 +27,8 @@ def signature(obj):
 
 def main():
     destination = OUT / 'integration-review'
+    if (destination / 'scene.blend').exists():
+        destination.rename(destination.with_name('integration-review-archive-'+uuid.uuid4().hex[:8]))
     destination.mkdir(exist_ok=True)
     shutil.copy2(reviewed_catalog(), destination / 'catalog.json')
     catalog = json.loads((destination / 'catalog.json').read_text())

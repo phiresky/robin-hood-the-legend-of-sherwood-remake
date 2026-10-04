@@ -62,6 +62,7 @@ def cap(crown, packet_path, mask, destination, edge='north'):
     radius_y = np.ptp(world[:, 1]) / 2
     rise = max(45., min(145., radius_x * .95))
     if edge=='east':radius_y=max(radius_y,(np.ptp(world[:,0])+rise)*.60)
+    else:radius_y=min(radius_y,radius_x*1.15)
     patch_ys=range(max(0,-y),min(height-24,-y+130),8) if edge=='north' else range(0,height-24,8)
     patch_xs=range(0,width-24,8) if edge=='north' else range(max(0,width-130),width-24,8)
     patches = [(px, py) for py in patch_ys for px in patch_xs if alpha[py:py+24, px:px+24].mean() > .55]
@@ -75,16 +76,16 @@ def cap(crown, packet_path, mask, destination, edge='north'):
         direction = rng.normal(size=3)
         direction /= np.linalg.norm(direction)
         direction *= rng.uniform(.02, 1.) ** (1/3)
-        direction[2] = abs(direction[2])
         angle = math.atan2(direction[1], direction[0])
         irregular = 1 + .08 * math.sin(5*angle + mask) + .045 * math.cos(9*angle)
-        xx = center_x + direction[0] * radius_x * irregular
-        yy = center_y + direction[1] * radius_y
-        image_y = -direction[2] * rise * irregular
-        if edge=='east':
-            image_y=xx
-            xx=1792+direction[2]*rise*irregular
-        position = np.array([xx, yy, (-image_y - yy*SIN) / COS])
+        if edge=='north':
+            center=np.array([center_x,center_y,(-center_y*SIN+rise*.15)/COS])
+            position=center+direction*np.array([radius_x,radius_y,rise])*irregular
+            if -position[1]*SIN-position[2]*COS>=0:continue
+        else:
+            center=np.array([1792+rise*.15,center_y,(-center_x-center_y*SIN)/COS])
+            position=center+direction*np.array([rise,radius_y,radius_x])*irregular
+            if position[0]<=1792:continue
         axis = Vector(rng.normal(size=3)).normalized()
         other = axis.cross(Vector((0, 0, 1)) if abs(axis.z) < .9 else Vector((1, 0, 0))).normalized()
         third = axis.cross(other).normalized()
@@ -159,6 +160,7 @@ def cap(crown, packet_path, mask, destination, edge='north'):
     return dict(source_packet_sha256=sha(packet_path), source_image_sha256=sha(source_path),
         native_edge_span=[left,right], inferred_rise=rise, added_faces=len(new_faces),
         map_edge=edge,
+        completion_version='world-aligned-volume-v2',
         added_vertices=len(new_vertices), observed_geometry_preserved=True,
         preserved_crown_prefix_sha256=observed_before,
         method=f'Irregular crossed leaf volume continuing beyond the {edge} image boundary',
