@@ -12,10 +12,13 @@ from skimage.morphology import skeletonize
 from catalog import OUT, TREES
 
 
-def trace(index):
+def trace(index, alpha_override=None):
     level=json.loads((OUT/'baseline/Croisement02.rhp.json').read_text())
     m=level['masks'][index];x,y=m['box_top_left']
     alpha=np.asarray(Image.open(OUT/f'baseline/masks/{index:06}.png').convert('L'))>0
+    if alpha_override is not None:
+        if alpha_override.shape != alpha.shape:raise ValueError('Replacement wood domain has different bounds')
+        alpha=alpha_override
     distance=distance_transform_edt(np.pad(alpha,1))[1:-1,1:-1]
     sk=skeletonize(alpha);points={tuple(p) for p in np.argwhere(sk)}
     graph={p:[(p[0]+dy,p[1]+dx) for dy in (-1,0,1) for dx in (-1,0,1)

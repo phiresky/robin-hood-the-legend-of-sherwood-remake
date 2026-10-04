@@ -3,6 +3,13 @@ import json
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
 OUT=ROOT/'level-editor/work/croisement02-refinement'
+
+def tree_workspace(mask):
+    asset=f'croisement02-tree-{mask:02}'
+    replacement=OUT/'forest-v4-round-2/assets'/asset
+    if (replacement/'inspection/source-domain-revision.json').exists():return replacement
+    return OUT/'forest-v4-round-1/assets'/asset
+
 # Each key is the native wood mask. Parts are observed pieces of the same tree.
 TREES={0:[44,45],1:[46,47,48,64],2:[49],3:[50,51,144],4:[52,53],5:[54],6:[55,56,57],
 7:[58,60,61,62],8:[59],10:[63,65,66],11:[67,68,69],12:[70,71,72],13:[73,74],14:[75,76],

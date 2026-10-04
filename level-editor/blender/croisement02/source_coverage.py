@@ -21,6 +21,12 @@ def audit(workspace,objects):
         if right>left and bottom>top:expected[top:bottom,left:right]|=alpha[top-y:bottom-y,left-x:right-x]
     x,y,_,_=packet['native_bbox'];paste(np.asarray(Image.open(packet_path.parent/'complete-source.png'))[:,:,3]>127,x,y)
     native=next(r for r in json.loads((OUT/'baseline/masks/manifest.json').read_text())['masks'] if r['index']==report['mask'])
+    if 'wood_domain_mask' in report:
+        cfg=json.loads((workspace/'workspace.json').read_text())
+        masks=json.loads(Path(cfg['source_mask_manifest']).read_text())
+        inventory=Path(masks['mask_inventory'])
+        native=next(r for r in json.loads(inventory.read_text())['masks'] if r['index']==report['wood_domain_mask'])
+        native=dict(native,png=str((inventory.parent/native['png']).resolve()))
     paste(np.asarray(Image.open(OUT/'baseline/masks'/native['png']).convert('L'))>0,*native['box_top_left'])
     yy,xx=np.nonzero(expected);left=max(0,int(xx.min())-10);right=min(1792,int(xx.max())+11);top=max(0,int(yy.min())-10);bottom=min(1152,int(yy.max())+11)
     width,height=right-left,bottom-top;expected=expected[top:bottom,left:right]

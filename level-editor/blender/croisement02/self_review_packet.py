@@ -4,14 +4,14 @@ import json
 import sys
 from pathlib import Path
 from PIL import Image, ImageDraw
-from catalog import OUT
+from catalog import OUT, tree_workspace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'refinement/blender'))
 from evidence_io import sha, write_json
 
 
 def assemble(mask):
-    w = OUT / f'forest-v4-round-1/assets/croisement02-tree-{mask:02}'
+    w = tree_workspace(mask)
     model_hash = sha(w / 'model.blend')
     for path in ['inspection/refinement.json', 'inspection/actual-materials/evidence.json',
                  'inspection/source-coverage/report.json', 'inspection/saved-model-audit.json']:

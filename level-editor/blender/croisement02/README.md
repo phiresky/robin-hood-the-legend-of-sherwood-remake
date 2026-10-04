@@ -139,11 +139,11 @@ Run `python3 level-editor/blender/croisement02/self_review_packet.py <ids>` to
 assemble current eight-view and source-comparison boards. This command never
 grants readiness; manual observations belong in hash-bound visual-review records.
 
-Remaining self-review TODOs: correct tree 00's duplicate trunk assignment;
-separate tree 03's obstacle 144 state ownership (patch-006 removes it); remove
-foreground kindling from tree 18's receiver and donor using a new frozen source
-inventory; reconsider cropped/disconnected crown grouping on 20/23/24/40; and
-resolve visible bark ownership or repetitive donor coverage on 05/27/41/46.
+Remaining self-review TODOs: separate tree 03's obstacle 144 state ownership
+(patch-006 removes it); reconsider cropped/disconnected crown grouping on
+20/23/24/40; and improve inferred bark on 41. Tree 23's current canopy belongs
+to a separate patch left of its map-edge trunks; do not treat that assignment
+as evidence of the trunks' actual crown.
 These candidates remain in progress even where silhouette and depth metrics pass.
 Preserve frozen inventories and cameras; corrected ownership needs a new worker,
 and extra inspection views must be explicitly recorded.
@@ -165,3 +165,24 @@ materials to judge leaf coverage. The gallery binds these supplemental images
 and camera evidence to the saved model. These wider views address review-frame
 clipping, not authored map-boundary cropping or missing out-of-map artwork.
 Both supplemental packets passed visual review with the complete crowns visible.
+
+`repair_bark_visibility.py -- 0 5 27 41 46` uses wood self-occlusion inside native
+wood domains after excluding overlapping native shrub/canopy masks. Coarse
+neighbor proxies do not prove visible bark ownership. Its tree 00 correction
+assigns the two traces by their horizontal source positions to parts 044/045,
+with each part's own depth. `--redo` archives the previous correction receipt.
+Optional aperiodic vertical donor mapping reduces short repeated bands on
+unobserved bark; it does not manufacture observed source ownership. Tree 41's
+mostly hidden bark still failed visual review despite passing geometry metrics.
+
+Run `prepare_tree18_domains.py` with the same dependencies as `trace_wood.py`,
+then `revise_tree18.py` in Blender. The new `forest-v4-round-2` worker freezes
+domain 301 (native wood 18 minus the reviewed kindling domain 300). Trunk geometry
+is traced again from that domain, a residual isolated stick edge is omitted,
+and the bark donor comes from a broad trunk strip above the bundle. The earlier
+worker and approved kindling remain intact. `--redo` archives the correction
+receipt. Source comparison explicitly uses corrected domain 301. The gallery
+and self-review packet select this replacement only after its receipt exists.
+
+Trees 00/05/18/27/46 passed the subsequent source and eight-view geometry review.
+Texture completion and integrated ground contact remain separate work.

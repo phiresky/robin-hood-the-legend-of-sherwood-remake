@@ -5,7 +5,7 @@ from pathlib import Path
 from collections import Counter
 ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(Path(__file__).parent));sys.path.insert(0,str(ROOT/'level-editor/refinement/blender'))
-from catalog import OUT
+from catalog import OUT,tree_workspace
 from evidence_io import sha
 from build_review_gallery import build
 
@@ -15,6 +15,7 @@ def main():
     for group in catalog['groups']:
         tree='wood_mask' in group
         workspace=OUT/('forest-v4-round-1' if tree else 'scenery-round-1')/'assets'/group['id']
+        if tree:workspace=tree_workspace(group['wood_mask'])
         replacement=OUT/'scenery-round-2/assets'/group['id']
         if (replacement/'inspection/feedback-revision-1.json').exists():workspace=replacement
         report_path=workspace/'inspection/refinement.json'

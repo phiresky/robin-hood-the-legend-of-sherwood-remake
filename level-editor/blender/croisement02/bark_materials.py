@@ -9,7 +9,8 @@ from catalog import OUT
 from evidence_io import sha
 
 
-def fill(workspace,objects,mask):
+def fill(workspace,objects,mask,*,receiver_only=False,donor_mapping='tiled'):
+    if donor_mapping not in ('tiled','aperiodic-vertical'):raise ValueError('Unknown bark donor mapping')
     rows=json.loads((OUT/'baseline/masks/manifest.json').read_text())['masks']
     row=next(r for r in rows if r['index']==mask)
     x,y=row['box_top_left'];w,h=row['box_size']
@@ -47,11 +48,18 @@ def fill(workspace,objects,mask):
         unknown=~accepted
         ix=np.floor(positions[:,0]).astype(int)%donor_rgb.shape[1]
         iy=np.floor(positions[:,2]).astype(int)%donor_rgb.shape[0]
+        if donor_mapping=='aperiodic-vertical':
+            # Inferred surfaces reuse the same tree's samples with slowly
+            # varying vertical coordinates rather than short horizontal bands.
+            x,z=positions[:,0],positions[:,2]
+            ix=np.floor(x*.75+2*np.sin(z*.071)).astype(int)%donor_rgb.shape[1]
+            iy=np.floor(z*.3+3*np.sin(x*.31)+9*np.sin(z*.013)).astype(int)%donor_rgb.shape[0]
         colors[unknown,:3]=donor_rgb[iy[unknown],ix[unknown]]
         filled[0]+=int(unknown.sum())
         return unknown
     report=bake(config['map_name'],config['source_path'],workspace/'inspection/bark-ownership.json',
                 receiver_nodes=sorted({o['source_node'] for o in wood}),receiver_object_names=[o.name for o in wood],
+                occluder_nodes=sorted({o['source_node'] for o in wood}) if receiver_only else None,
                 collection_name=config['collection_name'],projection_label='exterior',preserve_authored=False,
                 source_mask_manifest=config['source_mask_manifest'],hidden_sampler=sampler,
                 provenance_directory=workspace/'inspection/bark-provenance')
@@ -62,6 +70,7 @@ def fill(workspace,objects,mask):
                 mat['inferred_bark_donor_sha256']=sha(donor_path)
                 mat['inferred_bark_method']='Unknown-only same-tree donor, protected source RGB unchanged'
     result=dict(native_mask=mask,donor_source_box=[int(x+box[0]),int(y+box[1]),int(x+box[2]),int(y+box[3])],donor_sha256=sha(donor_path),
+                donor_mapping=donor_mapping,
                 inferred_samples=filled[0],known_rgb_unchanged=True,method='Explicit unknown-only bake sampler; same-tree donor, no AI generation',ownership_report=str(workspace/'inspection/bark-ownership.json'))
     (workspace/'inspection/bark-fill.json').write_text(json.dumps(result,indent=2)+'\n')
     return result
