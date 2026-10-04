@@ -1,0 +1,83 @@
+"""Reconcile selected foliage appearance evidence without manufacturing approvals."""
+import argparse
+import json
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / 'level-editor/refinement/blender'))
+from catalog import OUT, reviewed_catalog, scenery_workspace
+from evidence_io import sha, write_json
+
+
+def run(destination):
+    catalog_path = reviewed_catalog()
+    catalog_hash = sha(catalog_path)
+    catalog = json.loads(catalog_path.read_text())
+    rows = []
+    for group in catalog['groups']:
+        if not ({'native_foliage_mask', 'native_foliage_masks'} & group.keys()):
+            continue
+        worker = scenery_workspace(group['id'])
+        model_hash = sha(worker / 'model.blend')
+        inspection = worker / 'inspection'
+        errors = []
+        bindings = {}
+        proofs = {}
+        for name in ['saved-model-audit.json', 'visual-review.json',
+                     'actual-materials/evidence.json', 'source-coverage/report.json']:
+            path = inspection / name
+            if not path.exists():
+                errors.append('Missing ' + name)
+                continue
+            bindings[str(path)] = sha(path)
+            proof = json.loads(path.read_text())
+            proofs[name] = proof
+            if proof.get('model_sha256') != model_hash:
+                errors.append('Stale model binding: ' + name)
+        review = proofs.get('visual-review.json', {})
+        sheet = inspection / 'actual-materials/sheet.png'
+        bindings[str(sheet)] = sha(sheet)
+        if review.get('sheet_sha256') != bindings[str(sheet)]:
+            errors.append('Actual appearance sheet changed since review')
+        preservation = Path(review['preservation_evidence'])
+        bindings[str(preservation)] = sha(preservation)
+        if review.get('preservation_evidence_sha256') != bindings[str(preservation)]:
+            errors.append('Observed RGB preservation evidence changed')
+        preserved = json.loads(preservation.read_text())
+        if preserved.get('status') != 'PASS':
+            errors.append('Observed RGB preservation is not PASS')
+        images = []
+        for obj in proofs.get('saved-model-audit.json', {}).get('objects', []):
+            for material in obj['used_materials']:
+                inferred = 'inferred' in material['name'].lower()
+                if inferred and not material.get('images'):
+                    errors.append('Untextured inferred material: ' + material['name'])
+                for image in material.get('images', []):
+                    if not image.get('packed_sha256'):
+                        errors.append('Unbound image in ' + material['name'])
+                    images.append(dict(object=obj['object'], material=material['name'],
+                                       inferred=inferred, **image))
+        rows.append(dict(asset_id=group['id'], worker=str(worker), model_sha256=model_hash,
+                         status='PASS' if not errors else 'HOLD', errors=errors,
+                         appearance='Own-native inferred leaf textures; no API required by recipe',
+                         images=images, evidence=bindings,
+                         user_approval='Not assessed by this audit'))
+    if sha(catalog_path) != catalog_hash:
+        raise ValueError('Catalog changed during audit; rerun against current selection')
+    report = dict(status='PASS' if all(r['status'] == 'PASS' for r in rows) else 'HOLD',
+                  catalog_sha256=catalog_hash, registered_foliage_groups=len(rows), records=rows,
+                  limitations=['Evidence reconciliation only; no new visual or user approval.',
+                               'Packed image binding does not itself prove attractive inferred appearance.',
+                               'Ground union, registered group count and source ownership do not prove full scene completion.',
+                               'Grass and fern scenery without native_foliage_mask are outside this shrub audit.'])
+    write_json(destination, report)
+    print(json.dumps(dict(status=report['status'], groups=len(rows),
+                          holds=[dict(asset_id=r['asset_id'], errors=r['errors']) for r in rows if r['errors']],
+                          output=str(destination)), indent=2))
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--output', type=Path, required=True)
+    run(parser.parse_args().output.resolve())
