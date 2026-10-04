@@ -104,7 +104,9 @@ def main(destination, mask=0, interior_clusters=600, root_completion_base=None, 
         bpy.ops.wm.save_as_mainfile(filepath=str(worker / 'model.blend'))
         report = dict(old_report, model_sha256=sha(worker / 'model.blend'), crown=result,
                       source_packet=str(packet_path), status='New cleanup prototype; geometry approval pending')
-        report['limitations'] = ['Observed patches are jittered across an inferred ellipsoid; rear foliage uses only this native canopy artwork.',
+        report['limitations'] = [('Observed fragments retain native source rays across inferred branch-scale clumps; rear foliage uses only this native canopy artwork.'
+                                 if branch_clumps else
+                                 'Observed patches are jittered across an inferred ellipsoid; rear foliage uses only this native canopy artwork.'),
             'Northern continuation is added only where native alpha reaches the map edge. Only the two permitted Leicester references inform construction.',
             'Earlier approval does not apply to this rebuilt crown. No texture API generation or publication performed.']
         write_json(inspection / 'refinement.json', report)
