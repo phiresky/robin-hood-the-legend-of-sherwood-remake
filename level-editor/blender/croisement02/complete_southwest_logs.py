@@ -163,7 +163,7 @@ def verify_saved(workspace):
 
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--output',type=Path,default=OUT/'southwest-log-revision/v9');parser.add_argument('--verify-only',type=Path);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:]);acquire()
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--output',type=Path,default=OUT/'southwest-log-revision/v10');parser.add_argument('--verify-only',type=Path);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:]);acquire()
     try:
         if args.verify_only:verify_saved(args.verify_only.resolve())
         else:
