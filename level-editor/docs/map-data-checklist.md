@@ -4088,3 +4088,25 @@ exports and verifies all 33 light contours/layers for ambience masks 1, 2 and 4.
 Synthetic stacked-floor recovery also compiles after translation, vertical movement
 and four rotations. This resolves the tower-light omission above, not the remaining
 visual-state/mask coverage gaps or complete rendered lighting parity.
+
+### Shared appearances on separately authored assets
+
+`pipeline/src/author-linked-appearance.ts` authors an explicit appearance follower
+for an existing control. The follower stores its own appearance ID, trigger geometry,
+receiving anchors and matching contact in local coordinates. It does not copy the
+controller's collision, movement, mask or door effects. Compilation assembles
+matching placed contacts; moving one asset away leaves independent controls.
+Conflicting control ownership and invalid coordinate conversions fail.
+
+Three Lincoln relationships are now published: great hall and slate spire,
+west slate tower and tower hall, and drawbridge mechanism and gatehouse appearance.
+The six asset definitions and scene pins were updated together. Evidence and rollback
+bytes are in `work/map-compile/lincoln-shared-appearances-l6H7Ry`. Native construction
+passes with 62 movement areas, 546 sight obstacles, 86 doors and ten jump pairs;
+all nine compiled transitions apply and reset successfully. Authoring tests cover
+independent movement and conversion of rotated/elevated local control coordinates.
+
+Four appearance bindings remain unresolved across the plateau, west terrace,
+drawbridge and gatehouse. The bridge's physical raise/lower state, associated masks,
+and rendered shared-state behavior still need verification. These published draft
+links do not establish full appearance or map parity.

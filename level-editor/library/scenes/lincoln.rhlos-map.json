@@ -276,7 +276,7 @@
       "model": "3d-assets/lincoln/lincoln-great-hall-slate-spire/model.glb",
       "model_sha256": "e2d17cbee4273dae8a674f588beaf340cc5a3d4ad72e9991299b5c6483c06dbc",
       "descriptor": "3d-assets/lincoln/lincoln-great-hall-slate-spire/asset.json",
-      "descriptor_sha256": "8c4402657b3c7f5a301107a9a7cab315790b4aab2ac2e93b2b8351a32792643a",
+      "descriptor_sha256": "688625115ade42b00e47e48ae1cff0d3c404369e8f900d8cd04f9e36458ca665",
       "id": "lincoln-great-hall-slate-spire"
     },
     {
@@ -297,7 +297,7 @@
       "model": "3d-assets/lincoln/lincoln-great-hall/model.glb",
       "model_sha256": "a21bea3d3f255dd29ea49b19e1548dee641d7f077a487fefde0c055a456bbfa3",
       "descriptor": "3d-assets/lincoln/lincoln-great-hall/asset.json",
-      "descriptor_sha256": "dcb465439aaca119f92d3d4b967488fa0034bb4c68e9d467647c9f8ea79501ea",
+      "descriptor_sha256": "c084fed3ca2e3e41f730c27906f6599cf2641490300cbd367819bfad2e3b558a",
       "id": "lincoln-great-hall"
     },
     {
@@ -801,7 +801,7 @@
       "model": "3d-assets/lincoln/lincoln-south-gate-drawbridge/model.glb",
       "model_sha256": "11bfac36ded30f043c0a64b6609f12c62ad853bccc1452d375b1d14f74f8df29",
       "descriptor": "3d-assets/lincoln/lincoln-south-gate-drawbridge/asset.json",
-      "descriptor_sha256": "c04e8aea077c68cfe36a4f1f347c6653d9e196597fa521b05c7c2529b3d51690",
+      "descriptor_sha256": "f05865910e37590ce82f3313616a907d5f766ce472902d6357854d372fb90321",
       "id": "lincoln-south-gate-drawbridge"
     },
     {
@@ -815,7 +815,7 @@
       "model": "3d-assets/lincoln/lincoln-south-gatehouse/model.glb",
       "model_sha256": "88004f15ca9b5a03fea39671c0fe2fc5a50a3d6dd8b682ee446b86ca67ba4e02",
       "descriptor": "3d-assets/lincoln/lincoln-south-gatehouse/asset.json",
-      "descriptor_sha256": "985da390eb0b3d21376750bbd1e3a34adf3390a951b654424713b062d29b65bb",
+      "descriptor_sha256": "d3c5ce8dde946eda2bf3708ea83a5016fa3f53aa170f0e6022763fe9c9dd4f12",
       "id": "lincoln-south-gatehouse"
     },
     {
@@ -1284,7 +1284,7 @@
       "model": "3d-assets/lincoln/lincoln-west-slate-tower/model.glb",
       "model_sha256": "42f65e2257d7af4c7e46cad3b0a8856c89e7ad24a71d3113019ae714f8308276",
       "descriptor": "3d-assets/lincoln/lincoln-west-slate-tower/asset.json",
-      "descriptor_sha256": "a68b6c67f5fd92514f9cbd8e54176ce7de842586abc2f899924b57fbd38b2b64",
+      "descriptor_sha256": "f2c6eb684c54050ae28748551c240132df4bd17f6ba66fb0320365e332fc7a1d",
       "id": "lincoln-west-slate-tower"
     },
     {
@@ -1298,7 +1298,7 @@
       "model": "3d-assets/lincoln/lincoln-west-tower-hall/model.glb",
       "model_sha256": "f532f976148a2b3e3f2094210c99d5eab9b9635fe7caf312145923310df596d3",
       "descriptor": "3d-assets/lincoln/lincoln-west-tower-hall/asset.json",
-      "descriptor_sha256": "d2ca687ad104faebf6222498077c6c6ded5e99cd0ccd4c112c965989ba808913",
+      "descriptor_sha256": "d74cf1e6b38a123999d1a033e5ecee9a049bfd60e9ceaaaf64216d75bb9bd2a1",
       "id": "lincoln-west-tower-hall"
     },
     {

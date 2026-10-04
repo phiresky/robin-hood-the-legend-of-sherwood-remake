@@ -2409,3 +2409,10 @@ Sloped light recovery now bounds each attachment segment before neighboring
 receiving floors. The local segment still follows its asset when moved or rotated,
 without binding the asset to a preassigned runtime layer. Ambiguous light warnings
 include the candidate sectors, layers and intersection heights.
+
+Explicit shared appearance authoring can connect a secondary asset's visual state
+to an existing control on another asset. Trigger geometry and receiving anchors
+are converted into the secondary asset's own coordinates; collision and door
+effects stay with their original owner. Matching local contacts assemble after
+placement, and independent movement detaches them. This is an asset-authoring
+operation, not automatic coupling by preview names.

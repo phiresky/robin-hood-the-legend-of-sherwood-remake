@@ -516,3 +516,8 @@ and four rotations. The ignored native test
 `recovered_light_exports_preserve_contours_layers_and_ambience` checks actual
 loaded shadow sectors against exported contours/layers under ambience masks 1, 2
 and 4; set `ROBIN_ASSET_MAP_DIAGNOSTICS` to a diagnostic export directory.
+
+`node --test pipeline/src/author-linked-appearance.test.ts` from `level-editor`
+checks nonmutating shared-control authoring, joined/detached compilation,
+coordinate conversion of trigger contours and receiving segments, and rejection
+of conflicting ownership. It does not verify rendered appearance pixels.
