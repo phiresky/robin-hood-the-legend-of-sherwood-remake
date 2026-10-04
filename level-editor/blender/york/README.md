@@ -282,6 +282,36 @@ save and full-page reload. `installation.json` records the installed bytes and
 backup; `post-install-verification.json` records index and outside-file checks.
 York remains WIP: choose **York** or **All levels** in the palette's source filter.
 
+## Geometry refinement pass
+
+The subsequent pass is isolated under `geometry-pass-01/`. It retains the
+installed grouping milestone and its review history. `progress.json` separates
+the 252 grouped assets from geometry approval, texture completion, state
+receivers and scenery. All six native mask layers (0, 1, 2, 3, 4 and 6) have an
+overview in `mask-depth-overview.png`; individual masks still require local
+ownership review. Forty existing asset bounds touch the map boundary and need
+complete-object continuation checks. The animation backlog records 14 candles,
+17 water effects, three torches, 20 smoke effects and six birds; this inventory
+does not establish animation or rendering parity.
+
+`prepare_geometry.py` prepares explicitly named baseline workers using frozen
+shared helpers and the machine-wide render pool. It checks the current catalog
+against the grounded scene before writing a new ownership reconciliation. The
+older grouping review is retained unchanged. Initial packets are diagnostic:
+they do not imply refined geometry, reviewed state receivers, calibrated York
+lighting or texture approval.
+
+The first reconstruction recipe is `refine_narrow_house.py`. Its native upper
+mask 217 excludes the lower walls, so an independently traced lower-house
+domain is required for source-completeness review. The recipe adds the missing
+lower body, an upper-storey overhang and a closed thick roof. Rear surfaces and
+the hidden foundation footprint are explicit inferences. `inspect_geometry.py`
+reopens the saved result, renders eight views fitted to the complete object,
+and adds native-camera isolated and neighborhood comparisons. These supplements
+preserve the initial packet's fixed cameras. Candidates remain private until
+source coverage, terrain contact, actual materials and adjoining receivers have
+been reviewed.
+
 Generate browser derivatives with `refinement/blender/lossy_assets.py refresh`
 against the publication stage's `map-assets/3d-assets`, then prepare a private
 editor audit with `prepare_publication_browser.py --map york --document
@@ -305,3 +335,22 @@ backup only if York has not changed since installation. It rebuilds the index
 so subsequent updates to other maps survive. The installer retains the approved
 authoring models and creates separate optimized display copies; no web deployment
 is part of this operation.
+
+## Geometry refinement workspaces
+
+The subsequent geometry pass is separate from the installed grouping milestone.
+`prepare_geometry.py -- <asset-id>` reconciles the grounded scene's ownership
+and creates immutable baseline packets under `work/york-refinement/geometry-pass-01/`.
+These are diagnostic packets, not geometry approvals; source masks, state
+receivers, and York lighting still need asset-specific review.
+
+`refine_narrow_house.py` reconstructs the market southeast narrow house's absent
+lower body, jetty, and roof thickness from numbered source observations. Its
+native upper-body mask does not cover the lower walls, so the full-house domain
+must be reviewed independently. The candidate remains private pending coverage,
+complete-object and terrain-contact checks. `inspect_geometry.py -- <workspace>`
+reopens a saved candidate for eight actual-material views and native isolated
+and joint renders. Its supplemental framing includes the complete geometry;
+it never replaces the fixed input/modified comparison cameras. Use `--output`
+for a fresh inspection revision and `--crop LEFT TOP RIGHT BOTTOM` for an
+explicit native source region.
