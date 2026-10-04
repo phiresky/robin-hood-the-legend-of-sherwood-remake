@@ -15,6 +15,10 @@ def freeze(index,version,root_review):
     inspection=worker/'inspection';joint=OUT/f'ground-plant-candidates/joint-v2/native-shrub-{index}-{version}'
     root=json.loads(root_review.read_text());model=sha(worker/'model.blend');sheet=inspection/'actual-materials/sheet.png'
     if not root['ready'] or root['model_sha256']!=model:raise ValueError('Missing independent geometry readiness')
+    if root.get('joint_directory'):
+        joint=Path(root['joint_directory']).resolve(strict=True)
+        for name in ('sheet.png','evidence.json'):
+            if str(joint/name) not in root['files']:raise ValueError('Recovery joint must be explicitly bound by independent review')
     for path,digest in root['files'].items():
         if sha(Path(path))!=digest:raise ValueError('Independent review evidence changed')
     joint_path=inspection/'joint-neighbourhood.json'
@@ -24,7 +28,8 @@ def freeze(index,version,root_review):
     group=next(g for g in json.loads((batch/'catalog.json').read_text())['groups'] if g['id']==worker.name)
     files=[worker/'model.blend',worker/'workspace.json',worker/'validation.json',sheet,inspection/'refinement.json',inspection/'saved-model-audit.json',inspection/'source-coverage/report.json',inspection/'actual-materials/opacity-bounds.json',inspection/'visual-review.json',joint_path,preservation,root_review,batch/f'domain-{DOMAINS[index]}.png',batch/f'shrub-{index:02}/partition.json',batch/f'shrub-{index:02}/support.json',batch/'scope-derivation.json']
     files.extend(joint/n for n in ('sheet.png','evidence.json','native-scale-context.png','source-overlay.png'))
-    for name in ('support-preservation.json','prior-source-render-comparison.json','appearance-preservation.json','appearance-reopen.json'):
+    files.extend(Path(path) for path in root['files'])
+    for name in ('support-preservation.json','prior-source-render-comparison.json','appearance-preservation.json','appearance-reopen.json','boundary-preservation-reopen.json'):
         path=inspection/name
         if path.exists():files.append(path)
     files.extend(batch/f'shrub-{index:02}'/n for n in ('complete-source.png','observed-source.png'))
