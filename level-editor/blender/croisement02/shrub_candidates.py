@@ -12,7 +12,7 @@ def selected_workspace(out,asset,catalog_path):
     western=asset in ('croisement02-shrub-57','croisement02-shrub-60')
     forest_round={'croisement02-shrub-62':11,'croisement02-shrub-63':13,'croisement02-shrub-64':8}.get(asset)
     clump_round={f'croisement02-shrub-{i}':r for i,r in [(77,16),(78,12),(83,18),(84,12),(74,15),(85,15),(86,15),(87,20),(88,15),(89,17),(90,15),(93,22)]}.get(asset)
-    if asset=='croisement02-canopy-fringe-22':clump_round=21
+    if asset=='croisement02-canopy-fringe-22':clump_round=25
     if asset=='croisement02-shrub-76':clump_round=1
     refit=out/(f'understory-round-{clump_round}/assets' if clump_round else f'understory-round-{forest_round}/assets' if forest_round else 'understory-round-7/assets' if northwest else 'understory-round-9/assets' if western else 'understory-round-2/assets')/asset
     if asset=='croisement02-shrub-76':refit=out/'understory-candidates/native76-clumps-v1/assets'/asset
@@ -34,6 +34,9 @@ def selected_workspace(out,asset,catalog_path):
         if (forest_round and asset!='croisement02-shrub-64') or asset=='croisement02-shrub-83':
             fill=refit/'inspection/inferred-fill-evidence.json'
             if review.get('inferred_fill_evidence_sha256')!=sha(fill):raise ValueError('Forest inferred leaf fill evidence changed')
+        if asset=='croisement02-canopy-fringe-22':
+            visible=Path(review['native_visibility_evidence'])
+            if sha(visible)!=review['native_visibility_evidence_sha256']:raise ValueError('Fringe source visibility proof changed')
         if asset=='croisement02-shrub-93':
             budget=refit/'inspection/render-budget-evidence.json'
             proof_budget=json.loads(budget.read_text())

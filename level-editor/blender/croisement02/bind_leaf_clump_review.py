@@ -7,10 +7,10 @@ sys.path.insert(0,str(Path(__file__).parent));sys.path.insert(0,str(ROOT/'level-
 from catalog import OUT
 from evidence_io import sha,write_json
 
-SPECS={77:(16,'south77-v2'),78:(12,'southwest-small-v1'),83:(18,'southwest-thicket83-v1'),84:(12,'southwest-small-v1'),74:(15,'east-south-clumps-v1'),85:(15,'east-south-clumps-v1'),86:(15,'east-south-clumps-v1'),87:(20,'east87-v2'),88:(15,'east-south-clumps-v1'),89:(17,'south-boundary89-v1'),90:(15,'east-south-clumps-v1'),93:(22,'oak-base93-v2')}
+SPECS={77:(16,'south77-v2'),78:(12,'southwest-small-v1'),83:(18,'southwest-thicket83-v1'),84:(12,'southwest-small-v1'),74:(15,'east-south-clumps-v1'),85:(15,'east-south-clumps-v1'),86:(15,'east-south-clumps-v1'),87:(20,'east87-v2'),88:(15,'east-south-clumps-v1'),89:(17,'south-boundary89-v1'),90:(15,'east-south-clumps-v1'),93:(22,'oak-base93-v2'),22:(25,'north-fringe22-v1')}
 
 def main(index,joint):
-    round_number,proposal=SPECS[index];worker=OUT/f'understory-round-{round_number}/assets/croisement02-shrub-{index}';inspection=worker/'inspection';mh=sha(worker/'model.blend');source=OUT/'understory-candidates'/proposal;packet_folder=source/f'shrub-{index}'
+    round_number,proposal=SPECS[index];worker=OUT/f'understory-round-{round_number}/assets'/('croisement02-canopy-fringe-22' if index==22 else f'croisement02-shrub-{index}');inspection=worker/'inspection';mh=sha(worker/'model.blend');source=OUT/'understory-candidates'/proposal;packet_folder=source/f'shrub-{index}'
     evidence=json.loads((joint/'evidence.json').read_text());rows=evidence['workers']
     if not any(Path(r['path'])==worker and r['model_sha256']==mh for r in rows):raise ValueError('Joint does not bind this exact worker')
     for row in rows:
@@ -20,11 +20,15 @@ def main(index,joint):
         if proof['model_sha256']!=mh:raise ValueError('Current worker proof missing')
     support_paths=sorted(packet_folder.glob('*/support.json')) or [packet_folder/'support.json']
     support=dict(model_sha256=mh,records=[dict(path=str(p),sha256=sha(p),report=json.loads(p.read_text())) for p in support_paths],status='Leaf-volume support hypothesis checked in exact neighbourhood; no observed root claim')
-    write_json(inspection/'support-evidence.json',support)
+    if index==22:
+        support=json.loads((inspection/'support-evidence.json').read_text())
+        if support['model_sha256']!=mh:raise ValueError('Elevated fringe placement proof changed')
+    else:write_json(inspection/'support-evidence.json',support)
     comparison=joint/'source-comparison.png'
     if not comparison.exists():
         board=Image.new('RGB',(1920,664),'#454545');draw=ImageDraw.Draw(board)
-        for col,(name,title) in enumerate([('native-source.png','Native artwork; black is beyond map'),('source-plants.png','Isolated clump at exact native camera'),('source-overlay.png','Native artwork plus clump continuation')]):
+        panels=[('native-source.png','Native artwork; black is beyond map'),('source-plants.png','Isolated clump at exact native camera'),('source.png','Actual joint occlusion with unchanged crowns')] if index==22 else [('native-source.png','Native artwork; black is beyond map'),('source-plants.png','Isolated clump at exact native camera'),('source-overlay.png','Native artwork plus clump continuation')]
+        for col,(name,title) in enumerate(panels):
             im=Image.open(joint/name).convert('RGBA');board.paste(im,(col*640,24),im);draw.text((col*640+5,5),title,fill='white')
         board.save(comparison)
     receipt=dict(model_sha256=mh,evidence=str(joint/'evidence.json'),evidence_sha256=sha(joint/'evidence.json'),sheet=str(joint/'sheet.png'),sheet_sha256=sha(joint/'sheet.png'),source_comparison=str(comparison),source_comparison_sha256=sha(comparison),label='Exact native source and unchanged scenery neighbours; eight obliques with diagnostic ground datum')
@@ -38,6 +42,12 @@ def main(index,joint):
         if report['model_sha256']!=mh or evidence['transparent_bounces']<256:raise ValueError('Dense foliage render budget evidence changed')
         review['render_budget_evidence_sha256']=sha(budget)
     if index in (85,93):review['limitations'].append('Private corrected tree35 lower geometry is context only; its legacy crown remains separately held.')
+    if index==22:
+        visibility=OUT/'understory-candidates/north-fringe22-final-visibility/evidence.json'
+        visible=json.loads(visibility.read_text())
+        if visible['workers'][0]['model_sha256']!=mh or visible['results'][0]['fraction']<.99:raise ValueError('Fringe visible source proof changed')
+        review['native_visibility_evidence']=str(visibility);review['native_visibility_evidence_sha256']=sha(visibility)
+        review['limitations']=['Elevated north-edge crown fringe; parent crown association and hidden volume remain inferred. No ground anchor or new trunk is claimed.','Actual joint camera validates occlusion; isolated source overlay is only a projection aid.','Existing neighbouring crown rows remain separately held.','No user approval, final texture approval or publication implied.']
     fill=inspection/'inferred-fill-evidence.json'
     if fill.exists():review['inferred_fill_evidence_sha256']=sha(fill)
     write_json(inspection/'visual-review.json',review);print(worker)

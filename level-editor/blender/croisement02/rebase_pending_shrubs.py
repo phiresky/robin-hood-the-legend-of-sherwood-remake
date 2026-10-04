@@ -67,7 +67,7 @@ def main(base, destination, indices):
         manifest['projections']['exterior']['occluder_constraints'].append(next(c for c in constraints if c['source_node'] == node))
         nodes.append(node); domains.append(domain)
         round_number=7 if index==54 else 9 if index in (57,60) else 11 if index==62 else 13 if index==63 else 8 if index in (62,64) else 1
-        round_number={77:16,78:12,83:18,84:12,74:15,85:15,86:15,87:20,88:15,89:17,90:15,93:22,22:21}.get(index,round_number)
+        round_number={77:16,78:12,83:18,84:12,74:15,85:15,86:15,87:20,88:15,89:17,90:15,93:22,22:25}.get(index,round_number)
         worker=source/'assets'/asset if index==76 else OUT/f'understory-round-{round_number}/assets'/asset
         refit=OUT/'understory-round-2/assets'/asset
         if (refit/'inspection/refit-evidence.json').exists():worker=refit

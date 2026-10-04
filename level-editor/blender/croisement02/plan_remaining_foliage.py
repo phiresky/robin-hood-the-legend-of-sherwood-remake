@@ -42,9 +42,11 @@ def main():
         split=json.loads(mixed.read_text())
         report['mixed_source_reservations']=dict(evidence=str(mixed),evidence_sha256=sha(mixed),records=[dict(native_mask=r['native'],unassigned_uncertain_pixels=r['uncertain_pixels'],ground_pixels_not_foliage=r['ground_pixels'],existing_mixed_owner_pixels=r['prior_mixed_pixels']) for r in split['records']],meaning='These source-classification reservations remain unresolved even after a leaf complement receives geometry; catalog coverage alone does not settle them.')
     resolved=OUT/'understory-candidates/mixed75-91-source-v2/final-split-status.json'
+    newest=OUT/'understory-candidates/mixed75-91-source-v3/final-split-status.json'
+    if newest.exists():resolved=newest
     if resolved.exists():
         status=json.loads(resolved.read_text())
-        for key in ('source_review','receiver_audit'):
+        for key in [k for k in ('source_review','receiver_audit','prior_status','revised_fence_partition') if k in status]:
             if sha(Path(status[key]))!=status[key+'_sha256']:raise ValueError('Mixed source classification proof changed')
         report['mixed_source_history']=report.pop('mixed_source_reservations',None)
         report['mixed_source_reservations']=dict(evidence=str(resolved),evidence_sha256=sha(resolved),
