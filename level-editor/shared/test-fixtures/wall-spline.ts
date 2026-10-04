@@ -94,3 +94,28 @@ export function wallSplineFixture() {
     bounds: [0, 0, 500, 500] as [number, number, number, number],
   };
 }
+
+export function wallMaterialFixture() {
+  const fixture = wallSplineFixture();
+  const { asset, document } = fixture;
+  const local = (x: number, y: number, z: number) => sceneToGame(document.camera, [x, y, z]);
+  asset.gameplay!.materials = [
+    {
+      id: "front",
+      node: "body",
+      material: 4,
+      ground: false,
+      obstacles: ["body-solid"],
+      polygon: [local(-50, -10, 0), local(50, -10, 0), local(50, -10, 40), local(-50, -10, 40)],
+    },
+    {
+      id: "ground",
+      node: "body",
+      material: 1,
+      ground: true,
+      obstacles: [],
+      polygon: [local(-40, -40, 0), local(0, -40, 0), local(0, -20, 0), local(-40, -20, 0)],
+    },
+  ];
+  return fixture;
+}

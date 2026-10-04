@@ -1977,6 +1977,55 @@ fn materials_keep_ground_and_obstacle_queries_separate() {
 }
 
 #[test]
+fn spline_materials_repeat_with_independent_ground_and_obstacle_ownership() {
+    use robin_engine::{coordinates::MapPoint, element::GameMaterial};
+    let mut assets = LevelAssets::new();
+    let _engine = construct(
+        include_bytes!("fixtures/asset-spline-material.level.json"),
+        &mut assets,
+    );
+    let materials = &assets.environment.material_sectors;
+    for repeat in 0..3 {
+        let offset = repeat as f32 * 100.;
+        assert_eq!(
+            materials.material_at_layer(MapPoint::new(125. + offset, 218.), 0),
+            GameMaterial::Wood
+        );
+        assert_eq!(
+            materials.material_at_layer(MapPoint::new(175. + offset, 218.), 0),
+            GameMaterial::Ground
+        );
+        for obstacle in &assets.environment.static_sight_obstacles[repeat * 2..repeat * 2 + 2] {
+            assert_eq!(
+                materials
+                    .material_at_with_obstacle(Some(obstacle), MapPoint::new(150. + offset, 190.)),
+                GameMaterial::Leaves
+            );
+            assert_eq!(
+                materials
+                    .material_at_with_obstacle(Some(obstacle), MapPoint::new(150. + offset, 215.)),
+                GameMaterial::Grass
+            );
+            assert_eq!(
+                materials
+                    .material_at_with_obstacle(Some(obstacle), MapPoint::new(125. + offset, 218.)),
+                GameMaterial::Grass
+            );
+            assert_eq!(obstacle.material_sectors.len(), 2);
+            let other_offset = ((repeat + 1) % 3) as f32 * 100.;
+            assert_eq!(
+                materials.material_at_with_obstacle(
+                    Some(obstacle),
+                    MapPoint::new(150. + other_offset, 190.),
+                ),
+                GameMaterial::Grass,
+                "material regions must remain local to each repeated wall section"
+            );
+        }
+    }
+}
+
+#[test]
 fn receiving_materials_keep_navigation_connected_and_ground_independent() {
     use robin_engine::{coordinates::MapPoint, element::GameMaterial};
     let mut assets = LevelAssets::new();

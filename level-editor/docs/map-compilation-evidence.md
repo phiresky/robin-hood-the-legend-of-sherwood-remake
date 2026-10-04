@@ -17,8 +17,11 @@ The focused wall/export suite passes 11 tests, including moved/trimmed repeats,
 turned and sloped paths, corners, ground registration, vertical faces, receiver
 ownership and fractional image origins. Editor typechecking and targeted lint
 pass. The full editor suite passes 734 tests with two skipped (91.64 seconds).
-Native material-query acceptance for these spline fixtures remains open;
-these checks do not establish complete wall traversal or visual parity.
+An editor-export golden fixture also passes native ground and obstacle material
+queries across three repeated wall sections. Each section retains its own
+regions, uncovered points use the appropriate default, and ground-only regions
+do not override obstacle materials. These checks do not establish complete wall
+traversal, receiver-material coverage or visual parity.
 
 ## Wall source deformation (2026-10-04)
 

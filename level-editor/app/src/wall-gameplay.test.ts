@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { BoxGeometry, Group, Mesh, MeshBasicMaterial, Vector3 } from "three";
-import { wallSplineFixture } from "../../shared/test-fixtures/wall-spline.ts";
+import { wallSplineFixture, wallMaterialFixture } from "../../shared/test-fixtures/wall-spline.ts";
 import { wallSplineGameplay } from "../../shared/src/wall-spline-gameplay.ts";
 import { sceneToGame } from "../../shared/src/geometry.ts";
 import { heightPlane, planeHeight } from "../../shared/src/gameplay-plane.ts";
@@ -24,6 +24,20 @@ test("wall export matches the fixture exercised by native routing and sight", as
     await readFile(
       new URL(
         "../../../crates/robin_engine/tests/fixtures/asset-spline-wall.level.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(compileMap(f.document, f.bounds, f.assets).descriptor, expected);
+});
+
+test("wall materials match the fixture exercised by native material queries", async () => {
+  const f = wallMaterialFixture();
+  const expected = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/asset-spline-material.level.json",
         import.meta.url,
       ),
       "utf8",
