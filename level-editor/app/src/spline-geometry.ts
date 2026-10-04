@@ -9,6 +9,12 @@ import { terrainSplineCurve, type LevelSpline, type MapCamera } from "@rle/share
 import { sampleSpline, splineMaterialWeightsAt } from "../../shared/src/spline-sampling.ts";
 import { roadGeometry, previewRoadGeometry } from "./road-geometry.ts";
 import type { Level3D } from "@rle/shared";
+import {
+  measureWallSections,
+  wallSectionAt,
+  type WallSectionProfile,
+} from "../../shared/src/wall-section-profile.ts";
+export type { WallSectionProfile } from "../../shared/src/wall-section-profile.ts";
 
 export const splineCurve = terrainSplineCurve;
 
@@ -249,77 +255,36 @@ function clip(polygon: Vertex[], axis: number, boundary: number, above: boolean)
   return result;
 }
 
-export interface WallSectionProfile {
-  start: number;
-  end: number;
-  sections: { center: number; width: number }[];
-}
-
 /** Measure cross-sections, excluding the source's longitudinal bend from thickness. */
 export function wallSectionProfile(
   source: THREE.Object3D,
   bounds: THREE.Box3,
   path: LevelSpline,
 ): WallSectionProfile {
-  const axis = path.axis === "y" ? 1 : 0,
-    cross = 1 - axis;
+  const axis = path.axis === "y" ? 1 : 0;
   const full = bounds.max.getComponent(axis) - bounds.min.getComponent(axis);
   const start = bounds.min.getComponent(axis) + full * (path.sourceStart ?? 0);
   const end = bounds.min.getComponent(axis) + full * (path.sourceEnd ?? 1);
-  const count = 64;
-  const spans = Array.from({ length: count + 1 }, () => ({ min: Infinity, max: -Infinity }));
+  const meshes: THREE.Mesh[] = [];
   source.traverse((node) => {
-    if (!(node instanceof THREE.Mesh)) return;
-    const geometry = node.geometry,
-      positions = geometry.getAttribute("position");
-    const vertices = Array.from({ length: positions.count }, (_, index) =>
-      new THREE.Vector3().fromBufferAttribute(positions, index).applyMatrix4(node.matrixWorld),
-    );
-    const indices = geometry.index;
-    for (let i = 0; i < (indices?.count ?? positions.count); i += 3) {
-      const triangle = [0, 1, 2].map((k) => vertices[indices ? indices.getX(i + k) : i + k]!);
-      const low = Math.min(...triangle.map((p) => p.getComponent(axis)));
-      const high = Math.max(...triangle.map((p) => p.getComponent(axis)));
-      const first = Math.max(0, Math.ceil(((low - start) / (end - start)) * count));
-      const last = Math.min(count, Math.floor(((high - start) / (end - start)) * count));
-      for (let station = first; station <= last; station++) {
-        const coordinate = start + ((end - start) * station) / count;
-        const span = spans[station]!;
-        for (let edge = 0; edge < 3; edge++) {
-          const a = triangle[edge]!,
-            b = triangle[(edge + 1) % 3]!;
-          const av = a.getComponent(axis),
-            bv = b.getComponent(axis);
-          if (Math.abs(av - coordinate) < 1e-6) {
-            span.min = Math.min(span.min, a.getComponent(cross));
-            span.max = Math.max(span.max, a.getComponent(cross));
-          }
-          if ((av < coordinate && bv > coordinate) || (av > coordinate && bv < coordinate)) {
-            const value =
-              a.getComponent(cross) +
-              ((b.getComponent(cross) - a.getComponent(cross)) * (coordinate - av)) / (bv - av);
-            span.min = Math.min(span.min, value);
-            span.max = Math.max(span.max, value);
-          }
-        }
-      }
+    if (node instanceof THREE.Mesh) meshes.push(node);
+  });
+  function* triangles() {
+    for (const node of meshes) {
+      const geometry = node.geometry,
+        positions = geometry.getAttribute("position");
+      const vertices = Array.from({ length: positions.count }, (_, index) =>
+        new THREE.Vector3()
+          .fromBufferAttribute(positions, index)
+          .applyMatrix4(node.matrixWorld)
+          .toArray(),
+      );
+      const indices = geometry.index;
+      for (let i = 0; i < (indices?.count ?? positions.count); i += 3)
+        yield [0, 1, 2].map((k) => vertices[indices ? indices.getX(i + k) : i + k]!);
     }
-  });
-  const valid = spans
-    .map((span, index) => ({ ...span, index }))
-    .filter((span) => span.max - span.min > 0.001);
-  if (!valid.length) throw new Error("Wall source has no measurable cross-section");
-  const sections = spans.map((span, index) => {
-    if (span.max - span.min > 0.001)
-      return { center: (span.min + span.max) / 2, width: span.max - span.min };
-    // A tapered end can reduce to a single vertex. Use the adjacent section
-    // at that endpoint so repetitions join with the requested thickness.
-    if (index !== 0 && index !== count)
-      throw new Error("Wall source has a gap; trim to a continuous section");
-    const adjacent = index === 0 ? valid[0]! : valid.at(-1)!;
-    return { center: (adjacent.min + adjacent.max) / 2, width: adjacent.max - adjacent.min };
-  });
-  return { start, end, sections };
+  }
+  return measureWallSections(triangles(), axis, start, end);
 }
 
 type WallDeformation = {
@@ -402,13 +367,9 @@ export function wallGeometry(
     let sectionCenter = center,
       sectionWidth = sourceWidth;
     if (profile) {
-      const sample = Math.min(1, Math.max(0, along)) * (profile.sections.length - 1);
-      const first = Math.floor(sample),
-        fraction = sample - first;
-      const a = profile.sections[first]!,
-        b = profile.sections[Math.min(first + 1, profile.sections.length - 1)]!;
-      sectionCenter = a.center + (b.center - a.center) * fraction;
-      sectionWidth = a.width + (b.width - a.width) * fraction;
+      const section = wallSectionAt(profile, along);
+      sectionCenter = section.center;
+      sectionWidth = section.width;
     }
     const lateral =
       (((p[cross]! - sectionCenter) * path.width) / sectionWidth) *
