@@ -132,6 +132,10 @@ impl<'a> ModalNet<'a> {
         let instance = net.open_modal_instance(&kind).unwrap_or_else(|error| {
             panic!("failed to identify multiplayer modal {kind:?}: {error}")
         });
+        if is_host && engine_multiplayer::is_shared_story_modal(&kind) {
+            net.announce_modal_instance(instance, &kind)
+                .unwrap_or_else(|error| panic!("failed to announce story modal: {error}"));
+        }
         Self {
             net,
             kind,
@@ -404,6 +408,10 @@ mod tests {
         let (net, incoming, outgoing) = fixture();
         net.set_modal_player_count(2);
         let modal = ModalNet::new(&net, kind(), true);
+        assert!(matches!(
+            outgoing.try_recv().unwrap(),
+            NetOutbound::ModalProgress(_)
+        ));
         incoming
             .send(NetEvent::ModalProposal {
                 from: PlayerId(1),
@@ -441,6 +449,10 @@ mod tests {
         let (net, incoming, outgoing) = fixture();
         net.set_modal_player_count(3);
         let modal = ModalNet::new(&net, kind(), true);
+        assert!(matches!(
+            outgoing.try_recv().unwrap(),
+            NetOutbound::ModalProgress(_)
+        ));
         let mut gate = ModalDismissalGate::default();
         assert_eq!(gate.request(DialogResult::Completed, Some(&modal)), None);
         assert!(matches!(
@@ -487,6 +499,10 @@ mod tests {
             net.set_modal_player_names(vec!["Alice".into(), "Bob".into(), "Carol".into()]);
         }
         let host_modal = ModalNet::new(&host, kind(), true);
+        assert!(matches!(
+            host_out.try_recv().unwrap(),
+            NetOutbound::ModalProgress(_)
+        ));
         let client_modal = ModalNet::new(&client, kind(), false);
         assert_eq!(
             host_modal.publish(DialogResult::Completed).unwrap(),
@@ -517,6 +533,80 @@ mod tests {
         assert_eq!(client_modal.poll_remote_dismissal(), None);
         assert_eq!(client_modal.waiting_message(), "Waiting for Carol...");
         assert_eq!(host_modal.waiting_message(), "Waiting for Carol...");
+    }
+
+    #[test]
+    fn client_ahead_of_host_opens_missing_story_with_host_identity_once() {
+        let (host, host_in, host_out) = fixture();
+        let (client, client_in, client_out) = fixture();
+        host.set_modal_player_count(2);
+        client.set_modal_player_count(2);
+        host.publish_frame(666);
+        client.publish_frame(704);
+        let host_modal = ModalNet::new(&host, kind(), true);
+        let NetOutbound::ModalProgress(opening) = host_out.try_recv().unwrap() else {
+            panic!("missing opening announcement")
+        };
+        // No local simulation effect survived reconstruction on the client.
+        client
+            .defer_modal_event(NetEvent::ModalProgress(opening.clone()))
+            .unwrap();
+        assert!(
+            client
+                .take_ready_story_announcements(665)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            client.take_ready_story_announcements(704).unwrap(),
+            [kind()]
+        );
+        assert!(
+            client
+                .take_ready_story_announcements(704)
+                .unwrap()
+                .is_empty()
+        );
+        let client_modal = ModalNet::new(&client, kind(), false);
+        assert_eq!(client_modal.instance(), host_modal.instance());
+        assert_eq!(client_modal.poll_remote_dismissal(), None);
+        assert_eq!(
+            client_modal.publish(DialogResult::Completed).unwrap(),
+            ModalPublication::ClientProposalQueued
+        );
+        let NetOutbound::ModalProposal(proposal) = client_out.try_recv().unwrap() else {
+            panic!("missing client acknowledgement")
+        };
+        host_in
+            .send(NetEvent::ModalProposal {
+                from: PlayerId(1),
+                proposal,
+            })
+            .unwrap();
+        assert_eq!(host_modal.poll_remote_dismissal(), None);
+        assert_eq!(
+            host_modal.publish(DialogResult::Completed).unwrap(),
+            ModalPublication::HostDecisionQueued
+        );
+        for event in host_out.try_iter() {
+            if let NetOutbound::ModalDecision(decision) = event {
+                client_in.send(NetEvent::ModalDecision(decision)).unwrap();
+            }
+        }
+        assert_eq!(
+            client_modal.poll_remote_dismissal(),
+            Some(DialogResult::Completed)
+        );
+        client
+            .defer_modal_event(NetEvent::ModalProgress(opening))
+            .unwrap();
+        assert!(
+            client
+                .take_ready_story_announcements(704)
+                .unwrap()
+                .is_empty(),
+            "old progress must not reopen a dismissed story"
+        );
     }
 
     #[test]

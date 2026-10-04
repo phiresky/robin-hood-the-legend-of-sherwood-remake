@@ -1599,7 +1599,9 @@ A list of which additional features we have added, which ones we might still wan
 
 - **Shared story confirmations**. After accepting a story scroll or dialogue,
   players see the names still waiting to confirm. The host broadcasts
-  acknowledgement progress while retaining authority over dismissal.
+  acknowledgement progress while retaining authority over dismissal. Story
+  openings are announced by the host, so delayed clients cannot lose them
+  when prediction rollback silently reconstructs past simulation frames.
 
 - **Basic multiplayer**. Native host/client networking over iroh
   (peer-to-peer QUIC with relay fallback; peers addressed by endpoint id, no

@@ -333,7 +333,15 @@ impl Host {
     }
 
     /// Apply engine outputs using only the frontend, audio and effect queues.
-    pub fn apply_side_effects(&mut self, fx: HostEffects) -> GameCode {
+    pub fn apply_side_effects(&mut self, mut fx: HostEffects) -> GameCode {
+        if self.transport.net().is_some()
+            && self.transport.local_seat() != engine_player_command::PlayerId::HOST
+        {
+            // The host announces story openings independently of predicted or
+            // silently reconstructed engine output. Do not enqueue duplicates.
+            fx.modals
+                .retain(|kind| !robin_engine::multiplayer::is_shared_story_modal(kind));
+        }
         self.frontend.apply_side_effects(
             fx,
             &mut self.audio,

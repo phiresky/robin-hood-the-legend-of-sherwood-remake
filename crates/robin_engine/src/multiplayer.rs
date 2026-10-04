@@ -348,6 +348,7 @@ struct ModalSyncState {
     required_players: u8,
     votes: Vec<ModalVotes>,
     player_names: Vec<String>,
+    announced: Vec<(ModalInstanceId, ModalKind)>,
 }
 
 /// Browser-only durable seat claim. The IndexedDB-held private key signs a
@@ -481,6 +482,17 @@ pub struct ModalDecision {
     pub kind: ModalKind,
     pub result: DialogResult,
     pub decision_frame: u32,
+}
+
+/// Story surfaces are opened by the host, including after client rollback.
+pub fn is_shared_story_modal(kind: &ModalKind) -> bool {
+    matches!(
+        kind,
+        ModalKind::Dialog { .. }
+            | ModalKind::PopupText { .. }
+            | ModalKind::SherwoodReport
+            | ModalKind::Debriefing { .. }
+    )
 }
 
 /// Presentation-only progress for a shared modal occurrence.
@@ -1118,6 +1130,86 @@ impl NetChannels {
             vote.host_result = Some(result);
         }
         Ok(())
+    }
+
+    pub fn announce_modal_instance(
+        &self,
+        instance: ModalInstanceId,
+        kind: &ModalKind,
+    ) -> Result<(), String> {
+        {
+            let sync = self
+                .modal_sync
+                .lock()
+                .map_err(|_| "modal state lock poisoned")?;
+            if sync.required_players <= 1 || sync.announced.contains(&(instance, kind.clone())) {
+                return Ok(());
+            }
+        }
+        self.publish_modal_progress(instance, kind)?;
+        tracing::info!(
+            ?instance,
+            ?kind,
+            "multiplayer: announced story modal opening"
+        );
+        self.modal_sync
+            .lock()
+            .map_err(|_| "modal state lock poisoned")?
+            .announced
+            .push((instance, kind.clone()));
+        Ok(())
+    }
+
+    /// Admit host-announced story UI once the client reaches its boundary.
+    /// The engine can have crossed that boundary during silent reconstruction;
+    /// the host's token, rather than the client's current frame, identifies it.
+    pub fn take_ready_story_announcements(&self, frame: u32) -> Result<Vec<ModalKind>, String> {
+        let mut sync = self
+            .modal_sync
+            .lock()
+            .map_err(|_| "modal state lock poisoned")?;
+        let mut ready = Vec::new();
+        let mut retained = std::collections::VecDeque::new();
+        while let Some(event) = sync.inbox.pop_front() {
+            if let NetEvent::ModalProgress(progress) = &event
+                && is_shared_story_modal(&progress.kind)
+                && progress.instance.opened_frame <= frame
+            {
+                if Some(progress.instance.session_id) != sync.session_id {
+                    return Err("story announcement belongs to another session".into());
+                }
+                let state = sync
+                    .occurrences
+                    .iter_mut()
+                    .find(|state| state.kind == progress.kind);
+                match state {
+                    Some(state) if progress.instance.occurrence <= state.next_occurrence => {
+                        // Keep current votes for the modal UI, discard obsolete occurrences.
+                        if state.active == Some(progress.instance) {
+                            retained.push_back(event);
+                        }
+                        continue;
+                    }
+                    Some(state) => {
+                        if state.active.is_some() {
+                            retained.push_back(event);
+                            continue;
+                        }
+                        state.next_occurrence = progress.instance.occurrence;
+                        state.active = Some(progress.instance);
+                    }
+                    None => sync.occurrences.push(ModalOccurrenceState {
+                        kind: progress.kind.clone(),
+                        next_occurrence: progress.instance.occurrence,
+                        active: Some(progress.instance),
+                    }),
+                }
+                ready.push(progress.kind.clone());
+            }
+            retained.push_back(event);
+        }
+        sync.inbox = retained;
+        Ok(ready)
     }
 
     pub fn set_modal_player_names(&self, names: Vec<String>) {

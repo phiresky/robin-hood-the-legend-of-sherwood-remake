@@ -1162,6 +1162,19 @@ pub(super) fn drain_mission_network(
     if let Some(net) = host.transport.net() {
         // Publish an adopted snapshot's cursor before permitting its first input.
         net.publish_frame(timeline.frame_number());
+        if host.transport.local_seat() != robin_engine::player_command::PlayerId::HOST {
+            let announced = net
+                .take_ready_story_announcements(timeline.frame_number())
+                .map_err(|error| channel_failure("story modal admission failed", error))?;
+            for kind in announced {
+                tracing::info!(
+                    ?kind,
+                    local_frame = timeline.frame_number(),
+                    "multiplayer: opening host-announced story modal"
+                );
+                host.effects.modals.push(kind);
+            }
+        }
         net.set_gameplay_input_enabled(!admission_pause && !host.transport.reconnecting());
     }
 
@@ -1483,6 +1496,29 @@ mod tests {
             incoming,
             outgoing,
         )
+    }
+
+    #[test]
+    fn peer_local_story_effects_wait_for_host_but_other_effects_survive() {
+        use robin_engine::engine::HostEffects;
+        use robin_engine::player_command::ModalKind;
+        let (mut host, _, _, _, _) = network_drain_fixture();
+        let mut effects = HostEffects::default();
+        effects.extend_popup_texts([42]);
+        effects.extend_dialogues([9]);
+        effects.set_draw_hidden = Some(true);
+        host.apply_side_effects(effects);
+        assert!(host.frontend.input.feedback.draw_hidden);
+        assert!(
+            host.effects.modals.is_empty(),
+            "predicted story UI must await host announcement"
+        );
+        // Single-player still consumes simulation-originated story requests.
+        let mut solo = Host::default();
+        let mut effects = HostEffects::default();
+        effects.extend_popup_texts([42]);
+        solo.apply_side_effects(effects);
+        assert_eq!(solo.effects.modals, [ModalKind::PopupText { text_id: 42 }]);
     }
 
     /// The unprepared launch a raw CLI configuration describes.
