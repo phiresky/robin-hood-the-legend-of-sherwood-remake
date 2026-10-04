@@ -153,7 +153,7 @@ def main():
         inspection=worker/'inspection';inspection.mkdir(exist_ok=True)
         write_json(inspection/'refinement.json',dict(asset_id=worker.name,mask=index,crown=reports[index],source_packet=str(DIRECTORY/f'shrub-{index:02}/partition.json'),
             model_sha256=sha(worker/'model.blend'),status='isolated authored shrub candidate; visual review pending',limitations=[
-                'Original shrub silhouette is observed; round hidden depth and rear leaf arrangement are inferred.',
+                ('Native in-map conifer silhouette is observed; north tip continuation, conical hidden volume and branch support are inferred.' if index==73 else 'Original shrub silhouette is observed; round hidden depth and rear leaf arrangement are inferred.'),
                 'Known source leaves exclude overlapping foreground masks; covered/front and rear colors reuse only this shrub own visible leaf palette.',
                 'Own native foliage only; no external conifer or other tree donor.',
                 'No native sight obstacle is fabricated. Full terrain refresh, joint placement and user geometry approval remain pending.']))

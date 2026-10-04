@@ -105,6 +105,13 @@ def main():
                             for r in neighbours)):
                 item['source_comparison_secondary']=joint['sheet']
                 item['source_comparison_secondary_label']=joint.get('label','Source and oblique views with approved neighbouring trees; lower row hides foliage' if stem else 'Joint source and oblique review with neighbouring geometry')
+                if group.get('native_foliage_mask') in (67,68,69,70,71,72,73,92):
+                    native_context=Path(joint['sheet']).parent/'native-scale-context.png'
+                    if not native_context.exists():raise ValueError('Central foliage native-scale context missing')
+                    item['source_trace']=str(native_context)
+                    item['source_trace_label']='Native map scale: source alignment and planting context'
+                    item['notes'].append('Hidden leaf arrangement reuses only this plant native palette; no observed rear artwork or AI texture is claimed. Small native-pixel fragments remain coarse when magnified.')
+
         log_comparison=workspace/'inspection/approved-baseline-comparison/comparison.json'
         log_residual=workspace/'inspection/source-coverage/residual-review.json'
         if group['id']=='croisement02-southwest-log-pile' and log_comparison.exists() and log_residual.exists():
