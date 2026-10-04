@@ -7,6 +7,8 @@ import bpy
 import numpy as np
 HERE=Path(__file__).resolve().parent
 sys.path.insert(0,str(HERE))
+sys.path.insert(0,str(HERE.parents[1]/'refinement'))
+sys.path.insert(0,str(HERE.parents[1]/'refinement/blender'))
 from central_support_geometry import leaf_signature
 from catalog import OUT
 from evidence_io import sha,write_json
@@ -32,7 +34,7 @@ def snapshot(model,counts=None):
 
 def main():
     old=OUT/'understory-candidates/native-75-split-v19/assets/croisement02-shrub-75/model.blend'
-    batch=OUT/'understory-candidates/native-75-boundary-add-v22';worker=batch/'assets/croisement02-shrub-75'
+    batch=OUT/'understory-candidates/native-75-boundary-add-v23';worker=batch/'assets/croisement02-shrub-75'
     before=snapshot(old);after=snapshot(worker/'model.blend',before['counts'])
     if before!=after:raise ValueError('Reopened original leaf geometry/material preservation failed')
     result=dict(status='PASS',model_sha256=sha(worker/'model.blend'),prior_model_sha256=sha(old),original_counts=before['counts'],prefix_signature=before['prefix'],old_geometry_uv_ownership_materials_and_transform_unchanged=True)
