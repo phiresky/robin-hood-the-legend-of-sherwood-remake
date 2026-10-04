@@ -335,6 +335,13 @@ this does not certify native rendering, occlusion or full-engine frame schedulin
 The ordinary level-data regression covers animation-only, mixed control/animation,
 and empty construction groups.
 
+The normal mission preload has separate coverage in
+`game_session::setup::custom_sprites::tests`: a directory/ZIP fixture loads scenery
+with no characters and skips an unrelated malformed bank. Run
+`published_scenery_archive_uses_normal_mission_preload` with `--ignored` and
+`SCENERY_LIBRARY_ZIP` pointing at the candle archive to verify all six frames
+through the production preload, without manually injecting profiles.
+
 `app/src/scenery-frames.test.ts` checks the initial sentinel tick, inclusive frame
 delays, looping and the maximum unsigned delay. The browser fixture
 `tests/scenery-live.html` checks a two-frame placed asset: GPU-projected pixels,

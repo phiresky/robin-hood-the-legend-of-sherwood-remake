@@ -9,7 +9,7 @@ mod localization;
 mod preparation;
 mod resources;
 
-use custom_sprites::prepare_custom_character_dirs;
+use custom_sprites::prepare_custom_sprite_dirs;
 use localization::apply_mission_descriptor_patch;
 pub use localization::{load_fixed_vip_name_map, load_peasant_name_pool};
 pub(super) use resources::{

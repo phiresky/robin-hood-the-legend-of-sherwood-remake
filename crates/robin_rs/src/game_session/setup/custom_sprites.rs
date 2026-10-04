@@ -25,11 +25,17 @@ const HACKABLE_RHS_CACHE_DECODED_LIMIT: u64 = 512 * 1024 * 1024;
 // independently of the amount of output a compressed stream produces.
 const HACKABLE_RHS_CACHE_WINDOW_LOG_MAX: u32 = 27;
 
-fn current_hackable_character_filenames(
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+struct CustomSpriteSelection {
+    characters: Option<std::collections::HashSet<String>>,
+    scenery: std::collections::HashSet<String>,
+}
+
+fn current_hackable_sprite_filenames(
     campaign: &Campaign,
     profiles: &engine_profiles::ProfileManager,
     files: &engine_sbfile::SbFileSystem,
-) -> Result<Option<std::collections::HashSet<String>>, ResourcePreparationError> {
+) -> Result<CustomSpriteSelection, ResourcePreparationError> {
     let mission_index = campaign.current_mission_idx.ok_or_else(|| {
         ResourcePreparationError::MissingAuthority(
             "custom sprites require a current mission".into(),
@@ -52,7 +58,7 @@ fn current_hackable_character_filenames(
         &descriptor_path,
     )?
     else {
-        return Ok(None);
+        return Ok(CustomSpriteSelection::default());
     };
     let mut filenames = std::collections::HashSet::new();
     for soldier in descriptor.soldiers {
@@ -80,7 +86,15 @@ fn current_hackable_character_filenames(
         })?;
         filenames.insert(profile.filename.clone());
     }
-    Ok(Some(filenames))
+    Ok(CustomSpriteSelection {
+        characters: Some(filenames),
+        scenery: descriptor
+            .asset_geometry
+            .into_iter()
+            .flat_map(|geometry| geometry.animations)
+            .map(|animation| animation.sprite.frame_profile_name)
+            .collect(),
+    })
 }
 
 fn hackable_cache_sources_are_current(
@@ -246,7 +260,7 @@ impl PreparedCustomSprites {
                 }
                 let key = format!("{filename}/{}", profile.name);
                 scriptor.insert(key.clone(), info);
-                tracing::info!("Loaded hackable character profile {key}");
+                tracing::info!("Loaded hackable sprite profile {key}");
             }
         }
         Ok(())
@@ -261,13 +275,18 @@ fn validate_cache_frames(
         .map_err(|error| ResourcePreparationError::malformed(filename, error))
 }
 
-pub(super) fn prepare_custom_character_dirs(
+pub(super) fn prepare_custom_sprite_dirs(
     campaign: &Campaign,
     profiles: &engine_profiles::ProfileManager,
     files: &engine_sbfile::SbFileSystem,
 ) -> Result<PreparedCustomSprites, ResourcePreparationError> {
-    let mission_filenames = current_hackable_character_filenames(campaign, profiles, files)?;
-    prepare_overlay_characters(files, mission_filenames.as_ref())
+    let selection = current_hackable_sprite_filenames(campaign, profiles, files)?;
+    let mut prepared = prepare_overlay_characters(files, selection.characters.as_ref())?;
+    prepared.batches.extend(
+        prepare_overlay_sprite_directory(files, Some(&selection.scenery), "Data/Animations/Day")?
+            .batches,
+    );
+    Ok(prepared)
 }
 
 fn overlay_bytes(
@@ -294,11 +313,19 @@ fn prepare_overlay_characters(
     files: &engine_sbfile::SbFileSystem,
     mission_filenames: Option<&std::collections::HashSet<String>>,
 ) -> Result<PreparedCustomSprites, ResourcePreparationError> {
+    prepare_overlay_sprite_directory(files, mission_filenames, "Data/Characters")
+}
+
+fn prepare_overlay_sprite_directory(
+    files: &engine_sbfile::SbFileSystem,
+    mission_filenames: Option<&std::collections::HashSet<String>>,
+    directory: &str,
+) -> Result<PreparedCustomSprites, ResourcePreparationError> {
     let mut batches = Vec::new();
     for source in files.overlay_sources() {
-        let chars = "Data/Characters";
-        let mission_scoped =
-            overlay_bytes(files, &source, &format!("{chars}/mission-scoped.json"))?.is_some();
+        let chars = directory;
+        let mission_scoped = chars != "Data/Characters"
+            || overlay_bytes(files, &source, &format!("{chars}/mission-scoped.json"))?.is_some();
         let entries = files.list_overlay_dir(&source, chars).map_err(|error| {
             ResourcePreparationError::unavailable(format!("{source}/{chars}"), error)
         })?;
@@ -432,6 +459,132 @@ mod tests {
             hash.update(&bitcode::encode(&(name, cache)));
         }
         hash.finalize().into()
+    }
+
+    #[test]
+    #[ignore = "requires SCENERY_LIBRARY_ZIP from the candle library export"]
+    fn published_scenery_archive_uses_normal_mission_preload() {
+        let path = std::env::var("SCENERY_LIBRARY_ZIP").unwrap();
+        let files = isolated_files();
+        files
+            .add_overlay_zip_bytes_for_mission("scenery", std::fs::read(path).unwrap().into(), None)
+            .unwrap();
+        let mut profiles = engine_profiles::ProfileManager::new();
+        let mut campaign = Campaign::new();
+        let index = campaign
+            .force_next_mission_by_name(
+                &mut profiles,
+                "editor-scenery-library",
+                "Scenery library",
+                true,
+            )
+            .unwrap();
+        campaign.current_mission_idx = Some(index);
+        let prepared = prepare_custom_sprite_dirs(&campaign, &profiles, &files).unwrap();
+        assert_eq!(prepared.batches.len(), 1);
+        let mut frames = assets_frame_holder::FrameHolder::new();
+        let mut scriptor = robin_engine::sprite_script::SpriteScriptor::new();
+        prepared.install(&mut frames, &mut scriptor).unwrap();
+        assert_eq!(frames.num_sprites(), 6);
+        let selection = current_hackable_sprite_filenames(&campaign, &profiles, &files).unwrap();
+        assert!(selection.characters.unwrap().is_empty());
+        assert_eq!(selection.scenery.len(), 1);
+        let bank = selection.scenery.into_iter().next().unwrap();
+        let profile = scriptor
+            .get(&format!("{bank}/Leicester - bougie01"))
+            .unwrap();
+        assert_eq!(profile.scripts[0].frame_ids, vec![0, 1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn scenery_banks_load_without_character_rosters_from_directory_and_zip() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let bank = root.join("Data/Animations/Day/editor-candle.rhs.d");
+        std::fs::create_dir_all(&bank).unwrap();
+        std::fs::create_dir_all(root.join("Data/Characters")).unwrap();
+        std::fs::write(root.join("Data/Characters/mission-scoped.json"), b"{}").unwrap();
+        let mut descriptor: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../robin_engine/tests/fixtures/asset-multi-plane-region.level.json"
+        )))
+        .unwrap();
+        descriptor["asset_geometry"]["animations"] = serde_json::json!([{
+            "sprite": {"frame_profile_name":"editor-candle", "profile_name":"burning",
+                "position_x":100, "position_y":100, "elevation":0},
+            "blit_type":0, "active":true, "force_display":false, "display_polyline":[]
+        }]);
+        std::fs::create_dir_all(root.join("Data/Levels")).unwrap();
+        std::fs::write(
+            root.join("Data/Levels/editor-scenery.level.json"),
+            serde_json::to_vec(&descriptor).unwrap(),
+        )
+        .unwrap();
+        // A different map's unfinished bank must not break this mission.
+        std::fs::create_dir_all(root.join("Data/Animations/Day/unrelated.rhs.d")).unwrap();
+        std::fs::write(
+            root.join("Data/Animations/Day/unrelated.rhs.d/manifest.json"),
+            b"invalid",
+        )
+        .unwrap();
+        let mut profiles = engine_profiles::ProfileManager::new();
+        let mut campaign = Campaign::new();
+        let index = campaign
+            .force_next_mission_by_name(&mut profiles, "editor-scenery", "Scenery", true)
+            .unwrap();
+        campaign.current_mission_idx = Some(index);
+        let manifest = serde_json::json!({"pixel_format":"rgba", "profiles":[{
+            "name":"burning", "width":1.0,"height":1.0,"center_x":0.0,"center_y":0.0,
+            "rows":[{"action_id":0,"action_done":0,"average_speed":0.0,"hotspot_x":0.0,"hotspot_y":0.0,"path":".",
+            "frames":[{"file":"frame.png","delay":1,"distance":0,"offset_x":0.0,"offset_y":0.0,"sound_id":0}]}]}]});
+        std::fs::write(
+            bank.join("manifest.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        let mut png = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut png, 1, 1);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            encoder
+                .write_header()
+                .unwrap()
+                .write_image_data(&[255, 128, 0, 255])
+                .unwrap();
+        }
+        std::fs::write(bank.join("frame.png"), png).unwrap();
+        for zipped in [false, true] {
+            let files = isolated_files();
+            if zipped {
+                files
+                    .add_overlay_zip_bytes_for_mission(
+                        "scenery",
+                        archive_directory(root, "").into(),
+                        None,
+                    )
+                    .unwrap();
+            } else {
+                files.add_overlay_path(root.to_str().unwrap()).unwrap();
+            }
+            let prepared = prepare_custom_sprite_dirs(&campaign, &profiles, &files).unwrap();
+            assert_eq!(prepared.batches.len(), 1);
+            let mut frames = assets_frame_holder::FrameHolder::new();
+            let mut scriptor = robin_engine::sprite_script::SpriteScriptor::new();
+            prepared.install(&mut frames, &mut scriptor).unwrap();
+            assert_eq!(frames.num_sprites(), 1);
+            let mut sprite = robin_engine::sprite::Sprite::default();
+            sprite
+                .load_frame_info_cached(
+                    &scriptor,
+                    robin_engine::sprite_script::FrameKind::Animation,
+                    "editor-candle",
+                    "burning",
+                )
+                .unwrap();
+            assert_eq!(sprite.current_scripts()[0].frame_ids, vec![0]);
+            assert_eq!(sprite.current_scripts()[0].delays, vec![1]);
+        }
     }
 
     #[test]

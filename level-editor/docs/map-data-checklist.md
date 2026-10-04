@@ -346,6 +346,15 @@ The validated `authored-candle-cluster` asset is installed in the local main lib
 with its six frames and pinned manifest. Publication retained a rollback receipt
 in `work/map-compile/scenery-candle-promotion-20261004`; a fresh export from that
 main catalog also succeeds. No remote library deployment was performed.
+The normal mission preload now installs referenced custom Day scenery banks as
+well as characters. It selects scenery from the compiled map independently of
+the mission roster and skips banks used only by other maps. This closes a separate
+resource-loading gap that explicit profile injection in the earlier acceptance
+test did not exercise. Alternate-ambiance authored banks remain outside this
+Day-only editor export path.
+The production-preload suite passes ten ordinary checks; the separately enabled
+published-candle ZIP check also passes, installing six frames and their profile
+with an empty character roster and no base datadir.
 
 **Live placed scenery:** the viewport now loads verified pinned banks for placed
 asset parts, animating their initial row at 25 ticks per second with the runtime's

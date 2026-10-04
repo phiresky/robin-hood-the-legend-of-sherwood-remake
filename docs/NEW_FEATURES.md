@@ -1,5 +1,11 @@
 # Post-port Features
 
+- **Mission preload for packaged scenery.** Compiled maps load their referenced
+  custom Day animation banks from mod directories or ZIPs before creating effects.
+  Scenery selection is independent of the character roster; unrelated animation
+  banks are not decoded. Frames use the same validated runtime installation as
+  custom characters.
+
 - **Compiled scenery construction order.** Editor-authored animations now register
   their construction group alongside map controls, allowing maps containing effects
   to complete native loading. ZIP acceptance decodes packaged sprite banks and

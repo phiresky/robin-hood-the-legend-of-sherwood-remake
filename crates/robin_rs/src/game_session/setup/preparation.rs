@@ -122,7 +122,7 @@ pub(super) fn mission_resource_environment(
 }
 
 /// Install the sprite bank from the application asset cache and the
-/// hackable character sprites, then publish the bank signature.
+/// hackable character and compiled scenery sprites, then publish the bank signature.
 pub(super) fn install_mission_sprites(
     host: &mut Host,
     campaign: &Campaign,
@@ -158,14 +158,14 @@ pub(super) fn install_mission_sprites(
         tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
     }
     timer.step("sprite bank from application asset cache");
-    let custom_sprites = prepare_custom_character_dirs(campaign, &assets.profile_manager, files)?;
+    let custom_sprites = prepare_custom_sprite_dirs(campaign, &assets.profile_manager, files)?;
     custom_sprites.install(
         host.frontend
             .resources
             .frame_holder_before_publication_mut(),
         assets.sprite_scriptor_mut(),
     )?;
-    timer.step("hackable character preload");
+    timer.step("hackable sprite preload");
     // Publish the sprite-bank signature into LevelAssets so engine-side
     // sprite-script loaders can detect bank changes.
     assets.bank_signature = host.frontend.resources.frame_holder().signature();
