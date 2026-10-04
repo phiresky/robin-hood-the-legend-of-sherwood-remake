@@ -21,14 +21,22 @@ def main():
     bpy.ops.wm.open_mainfile(filepath=str(base/'worker.blend'));bpy.context.view_layer.update();rocks=[o for o in bpy.data.objects if o.get('state_endpoint')=='covered'];surveys=json.loads((base/'manifest.json').read_text())['geometry'];centers={f'covered inferred complete boulder {r["index"]:02d}':r['source_center'][1]for r in surveys if r['state']=='covered'}
     bvhs=[]
     for obj in rocks:bvhs.append((obj,BVHTree.FromPolygons([obj.matrix_world@v.co for v in obj.data.vertices],[tuple(p.vertices)for p in obj.data.polygons])))
-    selected=np.zeros((512,512),bool);domain=np.zeros((h,w),bool)
+    bank_vertices=[];bank_faces=[]
+    for obj in bpy.data.objects:
+        if obj.type!='MESH' or obj.get('state_endpoint'):continue
+        offset=len(bank_vertices);bank_vertices.extend(obj.matrix_world@v.co for v in obj.data.vertices);bank_faces.extend(tuple(offset+i for i in face.vertices)for face in obj.data.polygons)
+    bank_bvh=BVHTree.FromPolygons(bank_vertices,bank_faces)
+    selected=np.zeros((512,512),bool);domain=np.zeros((h,w),bool);bank_occluded=0
     for y,x in zip(*np.where(gray&~known&valid)):
         ray=point(float(sx[y,x]),float(sy[y,x]),0)+RAY*5000;hits=[]
         for obj,bvh in bvhs:
             if sy[y,x]>centers[obj.name]:continue
             hit=bvh.ray_cast(ray,-RAY)
             if hit[0]is not None:hits.append(hit[3])
-        if hits:selected[y,x]=True;domain[iy[y,x],ix[y,x]]=True
+        if hits:
+            bank_hit=bank_bvh.ray_cast(ray,-RAY)
+            if bank_hit[0]is not None and bank_hit[3]<min(hits):bank_occluded+=1;continue
+            selected[y,x]=True;domain[iy[y,x],ix[y,x]]=True
     mask_rows=[]
     for mask in json.loads((OUT/'baseline/masks/manifest.json').read_text())['masks']:
         mx,my=mask['box_top_left'];mw,mh=mask['box_size']
@@ -39,10 +47,10 @@ def main():
     for animation in json.loads((OUT/'animation-references/manifest.json').read_text())['animations']:
         hits=[]
         for frame in animation['frames']:hits.append(int(((np.array(crop_frame(frame,box))[:,:,3]>0)&domain).sum()))
-        if any(hits):animations.append(dict(animation=animation['index'],profile=animation['profile'],polyline=animation['display_polyline'],phase0_pixels=hits[0],minimum_phase_pixels=min(hits),maximum_phase_pixels=max(hits),phase0_sha256=sha(Path(animation['frames'][0]['image']))))
-    dest=root/'unknown-rim-context';dest.mkdir(exist_ok=False);Image.fromarray(domain.astype(np.uint8)*255).save(dest/'rim-native-domain.png');display=pixels.copy();display[selected,:3]=(255,30,160);Image.fromarray(display).save(dest/'rim-actual-locations.png')
+        if any(hits):animations.append(dict(animation=animation['index'],profile=animation['profile'],polyline=animation['display_polyline'],phase0_pixels=hits[0],minimum_phase_pixels=min(hits),maximum_phase_pixels=max(hits),phase0_sha256=sha(Path(animation['frames'][0]['image'])),all_phase_sha256=[sha(Path(f['image']))for f in animation['frames']]))
+    dest=root/'unknown-rim-context-v2';dest.mkdir(exist_ok=False);Image.fromarray(domain.astype(np.uint8)*255).save(dest/'rim-native-domain.png');display=pixels.copy();display[selected,:3]=(255,30,160);Image.fromarray(display).save(dest/'rim-actual-locations.png')
     baseline=Image.open(OUT/'baseline/covered.png').convert('RGBA').crop(box);baseline.save(dest/'static-baseline.png');composite=Image.open(OUT/'animation-references/composite-frame-0.png').convert('RGBA').crop(box);composite.save(dest/'static-plus-native-phase0.png')
-    report=dict(status='context audit only; no further rock shape change justified yet',model_sha256=binding['rock_model_sha256'],joint_manifest_sha256=sha(joint/'manifest.json'),source_manifest_sha256=sha(root/'manifest.json'),selected_render_pixels=int(selected.sum()),unique_native_pixels=int(domain.sum()),mask_overlaps=mask_rows,animation_rgba_overlaps=animations,method='Near-neutral visible pixels outside native rock RGBA; each must intersect a complete covered rock above its source center. Source pixel samples are then intersected with native occupancy and visual-animation RGBA separately.',limitations=['Neutral rendered pixels are a conservative visual diagnostic, not semantic material segmentation.','Mask overlap alone does not prove visible leaf ownership or draw order.','Current joint includes shrub62 only; other exact-context crowns must be considered before shrinking full rocks.'])
+    report=dict(status='context audit only; no further rock shape change justified yet',model_sha256=binding['rock_model_sha256'],joint_manifest_sha256=sha(joint/'manifest.json'),source_manifest_sha256=sha(root/'manifest.json'),bank_first_hit_excluded_render_pixels=bank_occluded,selected_render_pixels=int(selected.sum()),unique_native_pixels=int(domain.sum()),mask_overlaps=mask_rows,animation_rgba_overlaps=animations,method='Near-neutral visible pixels outside native rock RGBA; each must intersect a complete covered rock above its source center before any exact bank surface. Source pixel samples are then intersected with native occupancy and visual-animation RGBA separately.',limitations=['Neutral rendered pixels are a conservative visual diagnostic, not semantic material segmentation.','Mask overlap alone does not prove visible leaf ownership or draw order.','Current joint includes shrub62 only; other exact-context crowns must be considered before shrinking full rocks.'])
     (dest/'manifest.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
 
 
