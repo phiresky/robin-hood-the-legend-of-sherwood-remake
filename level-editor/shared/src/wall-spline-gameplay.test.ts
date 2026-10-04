@@ -362,10 +362,18 @@ test("wall masks deform coverage, front boundaries and obstacle ownership togeth
   );
   assert.ok(compileAssetGameplay(document, assets, bounds).masks!.length > 0);
   asset.gameplay!.masks![0]!.receiverSegment = [local(-49, 0, -10), local(49, 0, 10)];
-  const omitted = wallSplineGameplay(document, assets, true);
-  assert.ok(omitted.warnings.some((warning) => warning.includes("longitudinal receiving segment")));
-  assert.equal(omitted.descriptors[0]!.gameplay!.masks!.length, 0);
-  assert.ok(omitted.descriptors[0]!.gameplay!.volumes!.length > 0);
+  const cropped = compileAssetGameplay(document, assets, bounds, { bestEffort: true });
+  assert.ok(
+    cropped.warnings!.some((warning) => warning.includes("receiving layer is unavailable")),
+  );
+  assert.ok(cropped.masks!.length > 0);
+  path.repeatLength = splineCurve(path, document.camera).getLength() / 3;
+  const probed = wallSplineGameplay(document, assets, false);
+  assert.deepEqual(probed.warnings, []);
+  assert.ok(
+    probed.descriptors[0]!.gameplay!.masks!.some((mask) => mask.receiverPolyline!.length > 2),
+  );
+  assert.ok(compileAssetGameplay(document, assets, bounds).masks!.length > 0);
 });
 
 test("wall collision follows moved paths, crops repeats and participates in terrain navigation", () => {

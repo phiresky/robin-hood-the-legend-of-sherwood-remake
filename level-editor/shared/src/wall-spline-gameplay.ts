@@ -360,10 +360,17 @@ export function wallSplineGameplay(
             continue;
           }
           const anchor = warp(anchorSource, repeat);
-          const receiver = mask.receiverSegment?.map((p) => source(mask.node, p));
-          if (receiver && run && receiver[0]![axis] !== receiver[1]![axis]) {
+          const receiver = (mask.receiverPolyline ?? mask.receiverSegment)?.map((p) =>
+            source(mask.node, p),
+          );
+          const receiverFragments = receiver
+            ? run
+              ? clipSplinePolyline(receiver, axis, start, limit, stations)
+              : [receiver]
+            : [];
+          if (receiver && (receiverFragments.length !== 1 || receiverFragments[0]!.length < 2)) {
             warnings.push(
-              `Wall spline ${path.id}, mask ${mask.id}: longitudinal receiving segment needs a deformed probe; mask omitted.`,
+              `Wall spline ${path.id}, mask ${mask.id}: cropped or disconnected receiving probe; mask omitted.`,
             );
             continue;
           }
@@ -406,19 +413,20 @@ export function wallSplineGameplay(
             );
             continue;
           }
-          const receiverSegment: [Vec3, Vec3] = receiver
-            ? [warp(receiver[0]!, repeat), warp(receiver[1]!, repeat)]
-            : [
-                [anchor[0], anchor[1] - 1 / 1024, anchor[2] - 1 / 1024],
-                [anchor[0], anchor[1] + 1 / 1024, anchor[2] + 1 / 1024],
-              ];
+          const receiverSegment: [Vec3, Vec3] = [
+            [anchor[0], anchor[1] - 1 / 1024, anchor[2] - 1 / 1024],
+            [anchor[0], anchor[1] + 1 / 1024, anchor[2] + 1 / 1024],
+          ];
           out.masks!.push({
             ...mask,
             id: `mask-${out.masks!.length}`,
             node: "$root",
             triangles,
             anchor,
-            receiverSegment,
+            receiverSegment: receiver ? undefined : receiverSegment,
+            receiverPolyline: receiver
+              ? receiverFragments[0]!.map((p) => warp(p, repeat))
+              : undefined,
             obstacles,
             ...(characterBoundary ? { characterBoundary } : {}),
             ...(projectileBoundary ? { projectileBoundary } : {}),

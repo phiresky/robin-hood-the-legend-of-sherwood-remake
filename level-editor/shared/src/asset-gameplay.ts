@@ -193,6 +193,8 @@ export interface AssetOcclusionMask {
   anchor: [number, number, number];
   /** Optional finite local segment selecting the receiving layer instead of the exact anchor height. */
   receiverSegment?: [[number, number, number], [number, number, number]];
+  /** Bend-preserving receiving probe; mutually exclusive with receiverSegment. */
+  receiverPolyline?: [number, number, number][];
   view: boolean;
   /** Local boundary; its projected front envelope controls character masking. */
   characterBoundary?: [number, number, number][];
@@ -595,6 +597,16 @@ export function validateAssetGameplay(
         !mask.receiverSegment[0].some((v, i) => v !== mask.receiverSegment![1][i]))
     )
       fail(`invalid mask receiving segment ${mask.id}`);
+    if (
+      mask.receiverPolyline !== undefined &&
+      (mask.receiverSegment !== undefined ||
+        !Array.isArray(mask.receiverPolyline) ||
+        mask.receiverPolyline.length < 2 ||
+        !mask.receiverPolyline.every(
+          (p, i, line) => point(p, 3) && (!i || p.some((v, axis) => v !== line[i - 1]![axis])),
+        ))
+    )
+      fail(`invalid mask receiving polyline ${mask.id}`);
     if (
       !point(mask.anchor, 3) ||
       typeof mask.view !== "boolean" ||

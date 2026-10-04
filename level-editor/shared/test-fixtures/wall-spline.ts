@@ -113,6 +113,7 @@ export function wallMaterialFixture() {
         [a, c, d],
       ],
       anchor: local(-49, 0, 0),
+      receiverSegment: [local(-49, 0, -10), local(49, 0, 10)],
       view: true,
       characterBoundary: [
         local(-50, -10, 0),

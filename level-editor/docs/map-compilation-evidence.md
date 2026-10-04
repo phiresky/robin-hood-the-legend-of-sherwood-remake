@@ -4,6 +4,23 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Bend-preserving mask receiver probes (2026-10-05)
+
+Mask definitions now accept a finite `receiverPolyline` instead of a straight
+`receiverSegment`. Spline compilation clips and subdivides authored probes at
+deformation stations, preserving their bends. All intersections must select one
+receiving layer; repeated hits on that layer are allowed, while missing or
+competing layers still fail strict export and warn/omit in best-effort export.
+
+The curved-wall regression now exports longitudinal probes. A cropped repeat
+whose surviving probe misses the ground correctly warns while other repeats
+export. Ordinary asset tests cover repeated intersections, ambiguous stacked
+surfaces, missing intersections and degenerate probes. The shared native mask
+fixture now originates from longitudinal probes and retains identical exported
+bytes, including mask layers, bitmap data and obstacle links. This supersedes
+the longitudinal-segment limitation below; cropped anchors and disconnected
+probes/boundaries remain incomplete.
+
 ## Spline mask coverage and ownership (2026-10-05)
 
 Wall masks now deform and crop their coverage triangles, character/projectile

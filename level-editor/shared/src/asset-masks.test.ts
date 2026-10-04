@@ -7,6 +7,40 @@ import { IDENTITY_TRANSFORM } from "./level3d.ts";
 import type { AssetGameplay } from "./asset-gameplay.ts";
 
 const bounds: [number, number, number, number] = [0, 0, 2000, 2000];
+test("mask receiving polylines resolve all bends and reject competing layers", () => {
+  const { document, assets, hut } = maskAssetCompilerFixture();
+  const gameplay = hut.gameplay!;
+  gameplay.doors = [];
+  gameplay.movementTransitions = [];
+  gameplay.collision = "none";
+  const mask = gameplay.masks![0]!;
+  for (const item of gameplay.masks!) item.obstacles = [];
+  const before = compileAssetGameplay(document, assets, bounds).masks;
+  mask.receiverPolyline = [
+    [40, 80, -10],
+    [45, 80, 10],
+    [50, 80, -10],
+  ];
+  assert.deepEqual(compileAssetGameplay(document, assets, bounds).masks, before);
+  gameplay.surfaces.push({ ...gameplay.surfaces[0]!, id: "upper-probe-floor", height: 5 });
+  assert.throws(
+    () => compileAssetGameplay(document, assets, bounds),
+    /exactly one authored receiving layer/,
+  );
+  gameplay.surfaces.pop();
+  mask.receiverPolyline = [
+    [40, 80, 10],
+    [45, 80, 20],
+    [50, 80, 10],
+  ];
+  assert.throws(() => compileAssetGameplay(document, assets, bounds), /found 0/);
+  mask.receiverPolyline = [
+    [40, 80, -10],
+    [40, 80, -10],
+  ];
+  assert.throws(() => validateAssetGameplay(gameplay, hut), /invalid mask receiving polyline/);
+});
+
 test("sloped mask receivers evaluate elevation at the fractional authored point", () => {
   const { document, assets, hut } = maskAssetCompilerFixture();
   const gameplay = hut.gameplay!;
