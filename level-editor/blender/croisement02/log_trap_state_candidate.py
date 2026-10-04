@@ -11,7 +11,6 @@ from catalog import OUT
 from render_slots import acquire,release
 from scenery_geometry import Mesh
 from tree_geometry import SIN,COS,RAY
-from state_fragment_geometry import build_fragments
 
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def point(x,y,z):return Vector((x,-(y+z*COS)/SIN,z))
@@ -21,19 +20,18 @@ def material(imagepath):
     mix=n.new('ShaderNodeMixRGB');mix.blend_type='MIX';mix.inputs[1].default_value=(.17,.17,.17,1);l.new(texture.outputs['Alpha'],mix.inputs[0]);l.new(texture.outputs['Color'],mix.inputs[2]);shader=n.new('ShaderNodeBsdfPrincipled');shader.inputs['Roughness'].default_value=1;l.new(mix.outputs[0],shader.inputs['Base Color']);l.new(mix.outputs[0],shader.inputs['Emission Color']);shader.inputs['Emission Strength'].default_value=.35;out=n.new('ShaderNodeOutputMaterial');l.new(shader.outputs[0],out.inputs[0]);return material
 
 def main():
-    source=OUT/'state-target-evidence/log-trap';manifest=json.loads((source/'manifest.json').read_text());dest=OUT/'log-trap-state-candidate-v6';dest.mkdir(exist_ok=False);box=manifest['bbox'];left,top,right,bottom=box
+    source=OUT/'state-target-evidence/log-trap';manifest=json.loads((source/'manifest.json').read_text());dest=OUT/'log-trap-state-candidate-v7';dest.mkdir(exist_ok=False);box=manifest['bbox'];left,top,right,bottom=box
     # Endpoint centers are surveyed in their own native sprite coordinates.
     initial=json.loads((source/'covered-cylinder-fit.json').read_text())['survey']
+    terminal=json.loads((source/'applied-cylinder-fit.json').read_text())['survey']
     acquire()
     try:
         bpy.ops.wm.read_factory_settings(use_empty=True);scene=bpy.context.scene;scene.name='Croisement02 log trap endpoints';scene.render.engine='CYCLES';scene.cycles.samples=24;scene.view_settings.view_transform='Standard';scene.render.film_transparent=True;scene.render.image_settings.file_format='PNG';scene.render.image_settings.color_mode='RGBA';scene.world=bpy.data.worlds.new('World');scene.world.use_nodes=True;scene.world.node_tree.nodes['Background'].inputs[0].default_value=(.15,.15,.15,1)
         lightdata=bpy.data.lights.new('Sun','SUN');lightdata.energy=2;light=bpy.data.objects.new('Sun',lightdata);scene.collection.objects.link(light);light.rotation_euler=(.6,-.5,-.4)
-        states={};audits=[];fragment_report=[]
-        for name,tick,survey,origin in [('covered',-1,initial,(505,453)),('applied',89,[],(left,top))]:
+        states={};audits=[]
+        for name,tick,survey,origin in [('covered',-1,initial,(505,453)),('applied',89,terminal,(left,top))]:
             image=source/f'tick-{tick:03d}.png';mat=material(image);objects=[]
             gray=bpy.data.materials.new('Unobserved log end and bark');gray.diffuse_color=(.17,.17,.17,1);gray.use_nodes=True;gray.node_tree.nodes.get('Principled BSDF').inputs['Base Color'].default_value=(.17,.17,.17,1)
-            if name=='applied':
-                objects,fragment_report=build_fragments(np.array(Image.open(image))[:,:,3]>0,box,mat,gray,scene);states[name]=objects;continue
             for index,(ax,ay,bx,by,radius,z) in enumerate(survey):
                 m=Mesh();m.tube(point(origin[0]+ax,origin[1]+ay,z),point(origin[0]+bx,origin[1]+by,z),radius,n=16);mesh=bpy.data.meshes.new(f'{name} log {index:02d}');mesh.from_pydata(m.vertices,[],m.faces);mesh.update();obj=bpy.data.objects.new(mesh.name,mesh);scene.collection.objects.link(obj);mesh.materials.append(mat);mesh.materials.append(gray)
                 bm=bmesh.new();bm.from_mesh(mesh);bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces));assert not any(not e.is_manifold for e in bm.edges);bm.to_mesh(mesh);bm.free();mesh.update();uv=mesh.uv_layers.new(name='Native target projection')
@@ -68,7 +66,7 @@ def main():
             for col,view in enumerate(['source','oblique']):
                 image=Image.open(dest/f'{name}-{view}-actual.png').convert('RGBA');sheet.paste(image,(col*512,row*512),image)
         sheet.save(dest/'comparison.png')
-        report=dict(status='candidate requires self-review and geometry refinement',source_manifest_sha256=sha(source/'manifest.json'),model_sha256=sha(dest/'worker.blend'),surveys=dict(initial=initial,applied='Independent rounded source components; no cylinder survey'),geometry=audits,rounded_fragments=fragment_report,limitations=['Endpoint candidates only; per-log correspondence and native transition geometry (last target reaches terminal at tick87) not implemented.','Log end centers and radii inferred from native source; terminal fragments not assigned fabricated identities.','Native atlas RGB on source-facing solid surfaces; unobserved sides intentionally gray, no texture generation requested.','No permanent catalog or scene integration; source shadow patch remains separate ground state.'])
+        report=dict(status='candidate requires self-review and geometry refinement',source_manifest_sha256=sha(source/'manifest.json'),model_sha256=sha(dest/'worker.blend'),surveys=dict(initial=initial,applied=terminal),geometry=audits,limitations=['Applied inferred continuations require actual foreground-owner depth validation; no mask overlap is used to clip geometry.','Endpoint candidates only; per-log correspondence and native transition geometry (last target reaches terminal at tick87) not implemented.','Log end centers and radii inferred from native source; terminal fragments not assigned fabricated identities.','Native atlas RGB on source-facing solid surfaces; unobserved sides intentionally gray, no texture generation requested.','No permanent catalog or scene integration; source shadow patch remains separate ground state.'])
         (dest/'manifest.json').write_text(json.dumps(report,indent=2)+'\n')
     finally:release()
 if __name__=='__main__':main()
