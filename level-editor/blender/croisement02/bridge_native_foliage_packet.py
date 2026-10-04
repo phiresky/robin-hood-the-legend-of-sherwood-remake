@@ -12,7 +12,7 @@ from mathutils import Matrix, Vector
 import numpy as np
 ROOT=Path(__file__).resolve().parents[3]
 sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender'),str(Path(__file__).parent)]
-from catalog import tree_workspace
+from catalog import OUT,tree_workspace
 from render_slots import acquire,release
 from refinement_review import _tree,_save,_tile
 from refinement_workspace import _geometry
@@ -23,6 +23,15 @@ def main(number, source, output):
     if output.exists(): raise ValueError('Use a new immutable derived packet directory')
     manifest=json.loads((source/'views.json').read_text())
     worker=tree_workspace(number)
+    derivation_source=json.loads((source/'derivation.json').read_text())
+    asset=f'croisement02-tree-{number:02d}'
+    decisions=[row for row in json.loads((OUT/'user-feedback.json').read_text())['records'] if row['asset_id']==asset]
+    if not decisions or decisions[-1]['decision']!='approved':raise ValueError('Explicit current geometry approval required')
+    model_hash=sha(worker/'model.blend')
+    if manifest['asset_id']!=asset or derivation_source['asset_id']!=asset:raise ValueError('Native-front bridge asset differs from source packet')
+    if derivation_source['status']!='PASS' or derivation_source['model_sha256']!=model_hash or decisions[-1]['model_sha256']!=model_hash:raise ValueError('Native-front bridge must use exact approved source geometry')
+    for relative,expected in derivation_source['artifacts'].items():
+        if sha(source/relative)!=expected:raise ValueError('Derived source packet changed: '+relative)
     acquire()
     try:
         bpy.ops.wm.open_mainfile(filepath=str(worker/'model.blend'))
@@ -88,6 +97,7 @@ def main(number, source, output):
             view['ownership_sha256']=sha(output/'views'/f'view-{index}-known.png')
         _tile(textured,width,height,output/'textured.png')
         assert before=={o.name:_geometry(o,protect_appearance=True) for o in objects}
+        if sha(worker/'model.blend')!=model_hash:raise ValueError('Approved model changed during native-front bridge')
         manifest['native_foliage_ownership_bridge']=dict(version=1,model_sha256=sha(worker/'model.blend'),source_packet=str(source),source_manifest_sha256=sha(source/'views.json'),rule='First visible physical hit with approved foliage_observed material and unanimous per-corner ownership=1 samples its exact native atlas UV. All other ownership and RGB remain unchanged.',protected_atlases=protected,views=reports)
         (output/'views.json').write_text(json.dumps(manifest,indent=2)+'\n')
         (output/'native-foliage-preservation.json').write_text(json.dumps(dict(status='PASS',geometry_appearance_unchanged=True,**manifest['native_foliage_ownership_bridge']),indent=2)+'\n')
