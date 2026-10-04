@@ -29,6 +29,7 @@ def main():
     parser.add_argument('--exclude-secondary-crowns', action='store_true')
     parser.add_argument('--neighbour', nargs=2, action='append', default=[], metavar=('WORKER','SHA256'))
     parser.add_argument('--opacity-support', action='store_true')
+    parser.add_argument('--hide-crowns-in-orbit', action='store_true', help='Keep native source view intact; hide crown meshes only for scoped wood/contact diagnostics')
     parser.add_argument('--focus', nargs=4, type=float, metavar=('X','Y','Z','SCALE'), help='Optional close-view world target and scale; source camera is unchanged')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
     rock_worker = args.rock_worker.resolve() if args.rock_worker else scenery_workspace(args.rock_asset)
@@ -137,6 +138,11 @@ def main():
         draw.text((4, 4), 'Original source', fill='white')
         draw.text((source.width + 4, 4), 'Saved model neighbourhood', fill='white')
         board.resize((board.width * 2, board.height * 2), Image.Resampling.NEAREST).save(destination / 'source-comparison.png')
+        hidden_crowns=[]
+        if args.hide_crowns_in_orbit:
+            for obj in meshes:
+                if obj.get('projection_component')=='crown' and obj.get('asset_group')==rock_worker.name:
+                    obj.hide_render=True;hidden_crowns.append(obj.name)
         scale = max((hi - lo).length * 1.10, 100)
         if args.focus:center=Vector(args.focus[:3]);scale=args.focus[3]
         for i in range(8):
@@ -178,7 +184,7 @@ def main():
             meshes=[dict(name=o.name, asset_group=o.get('asset_group'),
                          minimum_world_z=min((o.matrix_world @ v.co).z for v in o.data.vertices),
                          maximum_world_z=max((o.matrix_world @ v.co).z for v in o.data.vertices)) for o in meshes], cameras=cameras,
-            source_crop=list(crop), close_focus=args.focus, sheet_sha256=sha(destination / 'sheet.png'), source_comparison_sha256=sha(destination / 'source-comparison.png'),
+            source_crop=list(crop), close_focus=args.focus, orbit_hidden_crowns=hidden_crowns, sheet_sha256=sha(destination / 'sheet.png'), source_comparison_sha256=sha(destination / 'source-comparison.png'),
             status='Rendered listed candidate neighbourhood; requires visual review. Contact views add diagnostic Z0; unlisted neighbours are absent.'))
         print(destination)
     finally:
