@@ -12,6 +12,9 @@ from evidence_io import sha,write_json
 
 
 def selected_workspace(out,asset,catalog_path):
+    from fence_cap_candidate import selected_workspace as cap_workspace
+    cap=cap_workspace(out,asset,catalog_path)
+    if cap is not None:return cap
     receipt_path=out/'fence-integration/selection.json'
     if not receipt_path.exists():return None
     records=json.loads(receipt_path.read_text())['records']
