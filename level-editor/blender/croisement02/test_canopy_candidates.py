@@ -60,6 +60,10 @@ class CandidateTests(unittest.TestCase):
         proof=dict(non_crown_geometry_and_materials_preserved=True,
             root_completion_base=dict(evidence_sha256={str(evidence):sha(evidence)}))
         (self.worker/'inspection/prototype-preservation.json').write_text(json.dumps(proof))
+        (self.worker/'inspection/root-preservation.json').write_text(json.dumps(dict(
+            model_sha256=self.model_hash,preserved=True,previous_meshes={'root':'same'},current_meshes={'root':'same'})))
+        coverage=self.worker/'inspection/root-source-coverage/report.json';coverage.parent.mkdir()
+        coverage.write_text(json.dumps(dict(model_sha256=self.model_hash,source_coverage=.96)))
         validate_worker(self.worker)
         evidence.write_text('changed')
         with self.assertRaisesRegex(ValueError,'Combined root evidence changed'):

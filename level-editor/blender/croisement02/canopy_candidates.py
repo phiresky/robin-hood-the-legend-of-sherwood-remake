@@ -60,6 +60,12 @@ def validate_worker(worker):
         for path,expected in root_base['evidence_sha256'].items():
             if sha(Path(path))!=expected:
                 raise ValueError('Combined root evidence changed: '+path)
+        root_proof=json.loads((worker/'inspection/root-preservation.json').read_text())
+        root_coverage=json.loads((worker/'inspection/root-source-coverage/report.json').read_text())
+        if (root_proof['model_sha256']!=model_hash or not root_proof['preserved'] or
+                root_proof['previous_meshes']!=root_proof['current_meshes'] or
+                root_coverage['model_sha256']!=model_hash or root_coverage['source_coverage']<.95):
+            raise ValueError('Combined root preservation or local coverage failed')
 
 
 def expose(worker):
@@ -76,6 +82,8 @@ def expose(worker):
         'inspection/baseline-comparison/comparison-0-3.png', 'inspection/baseline-comparison/comparison-4-7.png',
         'modified/views.json', 'modified/solid.png', 'modified/textured.png']]
     paths.extend(sorted((worker / 'recipe').glob('*.py')))
+    for name in ['inspection/root-preservation.json', 'inspection/root-source-coverage/report.json']:
+        if (worker/name).exists():paths.append(worker/name)
     paths.extend([worker/'baseline.blend',worker/'source-masks.json'])
     paths.extend(worker/'reference'/name for name in cfg['reference_files'])
     paths.extend(worker/'mask-reference'/name for name in cfg['mask_reference_files'])
