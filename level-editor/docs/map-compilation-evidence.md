@@ -67,7 +67,8 @@ copies. Broader patch/state tests pass 26 cases (four ignored); the stair suite
 passes five cases (three ignored), including 361 rotation angles. These were run
 directly with Cargo's configured 32 MiB test-thread stack. The full game build
 subsequently passed (`cargo build -p robin_rs --bin robin -j1`, 22m21s including
-the shared build wait). The level-data unit test command remains pending.
+the shared build wait). All five `robin_level_data` approach unit tests also pass,
+including permanent barriers, alternate barriers, slanted stairs and wall radii.
 The complete-animation climb regression also passes: ladders, ordinary walls
 and crenellated walls, 361 orientations each, both directions (2,166 routes).
 It uses the shared RobinTown animation resource with a constructed map fixture;
@@ -79,7 +80,7 @@ mode retains their initial state. It also retains excess controls' initial
 barriers at the sixteen-switch-per-area limit instead of aborting the export;
 the eighteen-control regression checks unchanged inputs and each omission warning.
 
-## Current library state compilation (2026-10-04)
+## Earlier library state compilation (2026-10-04, before wall calibration)
 
 All ten saved library scenes compiled with the ordinary `compileMap` entry point,
 best-effort mode, their pinned asset descriptors and their authored states intact.
@@ -101,11 +102,11 @@ under `level-editor`.
 | sherwood | 0 | 4 |
 | york | 6 | 21 |
 
-Wychford retains three concrete omissions: the church-side-tower traversal has no
+At this earlier audit Wychford retained three concrete omissions: the church-side-tower traversal has no
 floor at its endpoint height; the keep-west-tower control has no receiving floor
 at its waypoint height; and the ridge-curtain wall source lacks spline calibration.
-That wall also uses source rotation and cross-section straightening, which need
-matching gameplay deformation support. The other nine descriptors report no
+The wall calibration omission is resolved by the later checks above; the two
+placement height mismatches remain. The other nine descriptors report no
 omitted state controls or traversal assemblies. All maps still carry asset review
 warnings; successful compilation is not full gameplay acceptance.
 
