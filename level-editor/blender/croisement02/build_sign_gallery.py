@@ -1,0 +1,17 @@
+"""Build a private mission-sign review page without recording any approvals."""
+import html,json,sys
+from pathlib import Path
+ROOT=Path(__file__).resolve().parents[3]
+sys.path[:0]=[str(Path(__file__).parent),str(ROOT/'level-editor/refinement/blender')]
+from catalog import OUT
+from evidence_io import sha,write_json
+
+def main():
+ base=OUT/'state-sign-candidate';dst=base/'gallery';dst.mkdir(exist_ok=True)
+ images=[('Native rotating source','native-rotation-sheet.png'),('Solid saved model, eight views','candidate-v2/solid.png'),('Completed native timber appearance, eight saved-model views','native-fill-v1/textured.png'),('Actual 32-pose rotation and painted ground shadow','shadow-proof-v2/actual-32-poses.png'),('Native pose motion proof','shadow-proof-v2/native-motion.gif'),('Five native placement contexts, without added signs','five-native-placement-contexts.png'),('Provisional 32-pose silhouette comparison: red missing, blue extra','fit-v6/source-silhouette-comparison.png')]
+ evidence={name:dict(path=str(base/name),sha256=sha(base/name))for name in ['candidate-v2/model.blend','candidate-v2/validation.json','native-fill-v1/model.blend','native-fill-v1/preservation.json','placement-audit.json','five-instances-v1/assembly.json','shadow-proof-v2/model.blend','shadow-proof-v2/evidence.json','shadow-proof-v2/contact-difference-audit.json']};write_json(dst/'evidence.json',dict(status='Private coordinator review; no user approval or publication',asset_id='croisement02-mission-rotating-sign',files=evidence))
+ cards=''.join(f'<section><h2>{html.escape(title)}</h2><a href="../{path}?sha={sha(base/path)}"><img src="../{path}?sha={sha(base/path)}" alt="{html.escape(title)}"></a></section>'for title,path in images)
+ page='''<!doctype html><meta charset="utf-8"><title>Croisement02 mission sign review</title><style>body{margin:0;background:#202327;color:#eee;font:16px system-ui}main{max-width:1500px;margin:30px auto;padding:20px}h1,h2{font-weight:600}section{margin:35px 0;padding:20px;background:#2c3036;border-radius:8px}img{max-width:100%;display:block}a{color:#8ac7ff}p{line-height:1.5;max-width:1100px}.pending{color:#ffd477}</style><main><h1>Croisement02 rotating mission sign</h1><p class="pending">Private review. Geometry, completed timber appearance, and painted ground-shadow proof remain separate decisions. This page records no user approvals.</p><p>One reusable solid sign, five instances in S03_FoB_MP only. Its 32 native poses advance every 2 ticks at 25 Hz (2.56-second loop). Actions 0, 210, and 211 have identical native RGBA. All five native placements meet the selected terrain within 0.001 world unit. Action positions remain separate from displayed positions.</p><p>The completed appearance fills 33,061 hidden texels using this sign’s own reverse timber, preserving known RGB and saved geometry/UV/transforms. Native source fitting is provisional at 87.76%; the small sprite’s body/shadow split is explicitly inferred. Painted shadows retain 3,071 native black pixels over all poses: 23 contact pixels render solid post color instead of black, and no ground-streak pixels are uncovered.</p><p>Still open: independent geometry/appearance review, five-instance shadow binding, native canopy draw order, and editor integration. <a href="evidence.json">Hash-bound evidence</a>.</p>'''+cards+'</main>'
+ (dst/'index.html').write_text(page);print(dst/'index.html')
+
+if __name__=='__main__':main()

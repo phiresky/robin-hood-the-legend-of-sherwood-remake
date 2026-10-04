@@ -19,8 +19,8 @@ from source_projection_bake import bake
 from render_multiview_asset import render
 
 def main():
- asset='croisement02-southwest-path-wattle-fence';original=scenery_workspace(asset);base=OUT/'mixed-wood-audit/boundary-roles76-93-v1';dst=OUT/'wattle99-source-candidate/v2';dst.mkdir(exist_ok=False,parents=True);original_hash=sha(original/'model.blend')
- native=np.asarray(Image.open(OUT/'baseline/masks/000099.png').convert('L'))>0;top=np.array([np.where(native[:,x])[0].min()if native[:,x].any()else np.nan for x in range(native.shape[1])]);bottom=np.array([np.where(native[:,x])[0].max()if native[:,x].any()else np.nan for x in range(native.shape[1])]);valid=np.where(np.isfinite(top))[0];top=np.interp(np.arange(len(top)),valid,top[valid]);bottom=np.interp(np.arange(len(bottom)),valid,bottom[valid]);body=grey_closing(top,size=11);bottom=median_filter(bottom,size=7);peaks,_=find_peaks(bottom-top,prominence=5,distance=8)
+ asset='croisement02-southwest-path-wattle-fence';original=scenery_workspace(asset);base=OUT/'mixed-wood-audit/boundary-roles76-93-v1';dst=OUT/'wattle99-source-candidate/v3';dst.mkdir(exist_ok=False,parents=True);original_hash=sha(original/'model.blend')
+ native=np.asarray(Image.open(OUT/'baseline/masks/000099.png').convert('L'))>0;native|=np.asarray(Image.open(base/'76-wattle99.png').convert('L'))[750:1021,530:785]>0;top=np.array([np.where(native[:,x])[0].min()if native[:,x].any()else np.nan for x in range(native.shape[1])]);bottom=np.array([np.where(native[:,x])[0].max()if native[:,x].any()else np.nan for x in range(native.shape[1])]);valid=np.where(np.isfinite(top))[0];top=np.interp(np.arange(len(top)),valid,top[valid]);bottom=np.interp(np.arange(len(bottom)),valid,bottom[valid]);body=grey_closing(top,size=11);bottom=median_filter(bottom,size=7);peaks,_=find_peaks(bottom-top,prominence=5,distance=8)
  xs=np.array(sorted(set([int(valid[0]+2),*map(int,peaks),int(valid[-1]-2)])));nodes=[]
  for x in xs:
   source_x=int(x+530);source_base=float(bottom[x]+750);source_top=float(top[x]+750);height=(source_base-source_top)/COS;nodes.append(dict(source_x=source_x,source_base_y=source_base,source_top_y=source_top,height=height,foot=(source_x,-source_base/SIN,0),certainty='Source silhouette hypothesis; hidden ground contact and stake depth inferred'))
@@ -36,13 +36,13 @@ def main():
  write_json(dst/'mask-inventory.json',inventory);manifest['mask_inventory']=str(dst/'mask-inventory.json');write_json(dst/'source-masks.json',manifest)
  bpy.ops.wm.open_mainfile(filepath=str(original/'model.blend'));bpy.context.preferences.filepaths.save_version=0;scene=bpy.context.scene;objects=list(bpy.data.collections['Croisement02 Working'].all_objects);selected=[o for o in objects if o.type=='MESH' and o.get('asset_group')==asset];assert len(selected)==1;obj=selected[0];outside={o.name:_geometry(o,protect_appearance=True)for o in objects if o.type=='MESH' and o!=obj};mesh=Mesh()
  for i,node in enumerate(nodes):
-  foot=Vector(node['foot']);height=node['height'];mesh.tube(foot,foot+Vector((0,0,height)),1.85,1.55,10)
+  foot=Vector(node['foot']);height=node['height'];mesh.tube(foot,foot+Vector((0,0,height)),2.35,2.2,10)
  for left,right in zip(nodes,nodes[1:]):
   a,b=left['source_x']-530,right['source_x']-530
-  for row in range(12):
+  for row in range(15):
    points=[]
    for step in range(7):
-    t=step/6;x=a+(b-a)*t;base_y=float(np.interp(x,np.arange(len(bottom)),bottom)+750);top_y=float(np.interp(x,np.arange(len(body)),body)+750);height=(base_y-top_y)/COS;z=2+(height-3)*(row+.5)/12;depth=1.35*math.sin(t*math.pi*2+row*math.pi);points.append(Vector((x+530,-base_y/SIN+depth,z)))
+    t=step/6;x=a+(b-a)*t;base_y=float(np.interp(x,np.arange(len(bottom)),bottom)+750);top_y=float(np.interp(x,np.arange(len(body)),body)+750);height=(base_y-top_y)/COS;z=1.75+(height-3.5)*row/14;depth=1.35*math.sin(t*math.pi*2+row*math.pi);points.append(Vector((x+530,-base_y/SIN+depth,z)))
    for aa,bb in zip(points,points[1:]):mesh.tube(aa,bb,1.75,n=8)
  mesh.apply(obj);topology=bevel(obj,.12,1);assert topology['nonmanifold_edges']==0 and topology['degenerate_faces']==0
  bpy.ops.wm.save_as_mainfile(filepath=str(dst/'geometry.blend'));cfg=json.loads((original/'workspace.json').read_text());bake('Croisement02',cfg['source_path'],dst/'source-ownership.json',receiver_nodes=['building-021'],receiver_object_names=[obj.name],occluder_nodes=['building-021'],projection_label='exterior',preserve_authored=False,source_mask_manifest=str(dst/'source-masks.json'))
