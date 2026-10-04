@@ -56,7 +56,7 @@
  const mapCard=()=>[...document.querySelectorAll('.map-card-open')].find(button=>button.dataset.map===config.map);
  await wait(()=>mapCard()&&!mapCard().disabled,'Map chooser entry '+config.map);
  mapCard().click();
- await wait(()=>document.querySelectorAll('.object-list li.depth-0').length===config.expected.groups,'ActualUI map groups');
+ await wait(()=>document.querySelectorAll('.object-list li.depth-0').length===config.expected.groups+(config.expected.ungrouped_parts??0),'ActualUI map groups and ungrouped parts');
  // The asset palette is mounted inside the opened map workspace.
  await wait(()=>document.querySelector('.shared-library select[aria-label="Source level"]'),'Source level filter');
  const sourceFilter=document.querySelector('.shared-library select[aria-label="Source level"]');

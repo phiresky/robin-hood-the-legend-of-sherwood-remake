@@ -19,6 +19,19 @@ def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def preserved_ungrouped(document, previous):
+    """Carry editor-owned placements only with their exact original asset pins."""
+    objects = lambda doc: {obj['id']: obj for obj in doc['objects'] if not obj.get('group')}
+    current, before = objects(document), objects(previous)
+    if current != before:
+        raise ValueError('Ungrouped editor placements changed during publication')
+    ids = {obj['node'].split(':', 2)[1] for obj in current.values()}
+    pins = lambda doc: {ref['id']: ref for ref in doc.get('assetSources', []) if ref['id'] in ids}
+    if set(pins(document)) != ids or pins(document) != pins(previous):
+        raise ValueError('Ungrouped editor asset pins changed during publication')
+    return len(current)
+
+
 def bound_patches(nodes, document):
     """Mission patch IDs the editor exposes for this map.
 
@@ -96,13 +109,20 @@ def prepare(stage, scope_path, output, *, map_name="leicester", live=False, migr
                 str(Path(__file__).resolve().parents[1]/'pipeline/src/rebase-map-assets.ts'),
                 previous.name, str(library), str(stage/f'{map_name}.rhlos-map.json'), str(asset_library)], text=True)))
     def canonical(node): return node.split(':', 2)[-1] if node.startswith('asset:') else node
-    if {canonical(obj["node"]) for obj in document["objects"]} != part_names:
+    ungrouped_count = 0
+    if live_document.exists():
+        previous = expand_document(library, json.loads(live_document.read_text()))
+        ungrouped_count = preserved_ungrouped(document, previous)
+    elif any(not obj.get('group') for obj in document['objects']):
+        raise ValueError('Ungrouped placements require existing publication evidence')
+    grouped_objects = [obj for obj in document['objects'] if obj.get('group')]
+    if {canonical(obj["node"]) for obj in grouped_objects} != part_names:
         raise ValueError("Canonical part identities changed; explicit editor document migration required")
     if {group["id"] for group in document["groups"]} != {group["extras"]["asset_group"] for group in groups}:
         raise ValueError("Canonical group identities changed; explicit editor document migration required")
     part_groups = {nodes[index]["name"]: group["extras"]["asset_group"]
                    for group in groups for index in group.get("children", [])}
-    if any(obj["group"] != part_groups[canonical(obj["node"])] for obj in document["objects"]):
+    if any(obj["group"] != part_groups[canonical(obj["node"])] for obj in grouped_objects):
         raise ValueError("Editor part ownership differs from staged canonical hierarchy")
     document_path = live_document
     if not live:
@@ -131,7 +151,8 @@ def prepare(stage, scope_path, output, *, map_name="leicester", live=False, migr
     # validates their pins against the index; they belong to the private index whether or not
     # the scope names them. Descriptor-less local scene models need no index entry.
     scene_ids = {reference["id"] for reference in staged_document["sceneAssets"] if reference.get("descriptor")}
-    expected_ids = set(scope["asset_ids"]) | set(scope["already_published"]) | scene_ids
+    expected_ids = (set(scope["asset_ids"]) | set(scope["already_published"]) | scene_ids
+                    | {ref['id'] for ref in document.get('assetSources', [])})
     if not expected_ids <= sources.keys():
         raise ValueError("Missing expected assets: " + repr(sorted(expected_ids - sources.keys())))
     entries = [sources[identity][0] for identity in sorted(expected_ids)]
@@ -217,6 +238,7 @@ def prepare(stage, scope_path, output, *, map_name="leicester", live=False, migr
     config = {"map": map_name, "mode": "live" if live else "staged", "files": files,
               "shared_module_url": "/@fs/" + str(Path(__file__).resolve().parents[1] / 'shared/src/index.ts'),
               "expected": {"groups": len(document["groups"]), "parts": len(document["objects"]),
+                           "ungrouped_parts": ungrouped_count,
                            "width": document["size"][0], "assets": expanded,
                            "base_asset_ids": sorted(expected_ids), "new_asset_ids": scope["asset_ids"],
                            "generated_materials": generated, "required_patches": required},

@@ -5,7 +5,7 @@ from pathlib import Path
 import struct
 import tempfile
 import unittest
-from prepare_publication_browser import prepare
+from prepare_publication_browser import prepare, preserved_ungrouped
 from scene_manifest import import_document
 
 
@@ -41,6 +41,22 @@ def write_asset(root, model_bytes):
 
 
 class FirstPublicationTest(unittest.TestCase):
+    def test_ungrouped_placements_preserve_pose_and_exact_asset_pins(self):
+        from copy import deepcopy
+        previous = {'objects': [{'id': 'ambient', 'node': 'asset:sound:emitter',
+                                 'transform': {'dx': 4, 'dy': 5}}],
+                    'assetSources': [{'id': 'sound', 'model_sha256': 'original'}]}
+        self.assertEqual(preserved_ungrouped(deepcopy(previous), previous), 1)
+        changed = deepcopy(previous); changed['objects'][0]['transform']['dx'] = 7
+        with self.assertRaisesRegex(ValueError, 'placements changed'):
+            preserved_ungrouped(changed, previous)
+        changed = deepcopy(previous); changed['objects'] = []
+        with self.assertRaisesRegex(ValueError, 'placements changed'):
+            preserved_ungrouped(changed, previous)
+        changed = deepcopy(previous); changed['assetSources'][0]['model_sha256'] = 'replaced'
+        with self.assertRaisesRegex(ValueError, 'asset pins changed'):
+            preserved_ungrouped(changed, previous)
+
     def test_explicit_document_is_staged_without_creating_live_document(self):
         previous = Path.cwd()
         with tempfile.TemporaryDirectory() as temporary:
