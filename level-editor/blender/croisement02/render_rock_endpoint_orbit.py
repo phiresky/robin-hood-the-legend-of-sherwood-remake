@@ -9,7 +9,7 @@ from log_trap_state_candidate import sha
 from render_slots import acquire,release
 
 def main():
-    base=OUT/'rock-trap-state-candidate-v10';dest=base/'endpoint-orbit';dest.mkdir(exist_ok=False);report=json.loads((base/'contact-audit.json').read_text());assert report['status'].startswith('surface clearance pass');assert sha(base/'worker.blend')==report['model_sha256'];acquire()
+    base=Path(sys.argv[sys.argv.index('--candidate')+1]).resolve() if '--candidate' in sys.argv else OUT/'rock-trap-state-candidate-v10';dest=base/'endpoint-orbit';dest.mkdir(exist_ok=False);report=json.loads((base/'contact-audit.json').read_text());assert report['status'].startswith('surface clearance pass');assert sha(base/'worker.blend')==report['model_sha256'];acquire()
     try:
         bpy.ops.wm.open_mainfile(filepath=str(base/'worker.blend'));scene=bpy.context.scene;scene.cycles.samples=12;scene.cycles.use_denoising=False;scene.render.resolution_x=scene.render.resolution_y=512
         solid=bpy.data.materials.new('Private endpoint solid review');solid.use_nodes=True;solid.node_tree.nodes.get('Principled BSDF').inputs['Base Color'].default_value=(.25,.25,.25,1);records=[]

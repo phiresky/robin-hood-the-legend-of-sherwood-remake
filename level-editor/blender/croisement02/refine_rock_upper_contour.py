@@ -33,8 +33,9 @@ def inside(p, polygon):
 def main():
     base = OUT / 'rock-trap-state-candidate-v8'
     column_mode = '--column-contour' in sys.argv
-    dest = OUT / ('rock-trap-state-candidate-v10' if column_mode else 'rock-trap-state-candidate-v9')
-    dest.mkdir(exist_ok=False)
+    convex_body = '--convex-body' in sys.argv
+    dest = OUT / ('rock-trap-state-candidate-v11' if convex_body else 'rock-trap-state-candidate-v10' if column_mode else 'rock-trap-state-candidate-v9')
+    dest.mkdir(exist_ok=True);assert not (dest/'worker.blend').exists()
     binding = json.loads((base/'manifest.json').read_text())
     assert binding['model_sha256'] == sha(base/'worker.blend')
     source = OUT/'state-target-evidence/rock-trap'
@@ -58,7 +59,8 @@ def main():
                 bm=bmesh.new();bm.from_mesh(obj.data);bmesh.ops.subdivide_edges(bm,edges=list(bm.edges),cuts=1,use_grid_fill=True);bm.to_mesh(obj.data);bm.free();obj.data.update()
             points=[]
             for x,y,owner in zip(xx,yy,owners):
-                if owner==index and y<=cy:
+                belongs = (x<=130 if index==0 else x>=131 if index==1 else x>=130 and y>=30) if convex_body else owner==index
+                if belongs and y<=cy:
                     points.extend((float(x)+dx,float(y)+dy)for dx in (-.25,.25)for dy in (-.25,.25))
             # Preserve the equatorial width and the entire hidden lower half.
             points.extend([(cx-rx*1.1,cy),(cx+rx*1.1,cy),(cx,cy+1)])
@@ -84,6 +86,12 @@ def main():
                 assert abs((vertex.co-before).dot(RAY))<1e-5
                 changed.append(dict(vertex=vertex.index,source_before=projected.tolist(),source_after=destination.tolist()))
             obj.data.update()
+            if convex_body:
+                bm=bmesh.new();[bm.verts.new(v.co) for v in obj.data.vertices];result=bmesh.ops.convex_hull(bm,input=list(bm.verts),use_existing_faces=False);discard=[g for g in result['geom_interior']+result['geom_unused'] if isinstance(g,bmesh.types.BMVert)]
+                if discard:bmesh.ops.delete(bm,geom=list(set(discard)),context='VERTS')
+                bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces));assert all(e.is_manifold for e in bm.edges);bm.to_mesh(obj.data);bm.free();obj.data.update()
+                for face in obj.data.polygons:face.material_index=0 if face.normal.dot(RAY)>.05 else 1
+            if not obj.data.uv_layers:obj.data.uv_layers.new(name='Native target projection')
             for face in obj.data.polygons:
                 for loop in face.loop_indices:
                     p=obj.matrix_world@obj.data.vertices[obj.data.loops[loop].vertex_index].co
@@ -92,7 +100,7 @@ def main():
         for name,coords in untouched.items():assert coords==[tuple(v.co)for v in bpy.data.objects[name].data.vertices]
         bpy.ops.wm.save_as_mainfile(filepath=str(dest/'worker.blend'))
         report=dict(binding)
-        report.update(status='private upper-contour candidate; contact and joint review pending',model_sha256=sha(dest/'worker.blend'),base_model_sha256=binding['model_sha256'],upper_contour_correction=records)
+        report.update(status='private upper-contour candidate; contact and joint review pending',model_sha256=sha(dest/'worker.blend'),base_model_sha256=binding['model_sha256'],upper_contour_correction=records,convex_body_completion=convex_body,body_partition_inference='Upper source split at native crop x130/131 separates the left peak from the right slope; full convex volumes remain inferred.' if convex_body else None)
         (dest/'manifest.json').write_text(json.dumps(report,indent=2)+'\n')
         target=point((left+right)/2,(top+bottom)/2,0)
         scene.camera.location=target+RAY*3000;scene.camera.rotation_euler=(target-scene.camera.location).to_track_quat('-Z','Y').to_euler()

@@ -56,7 +56,25 @@ def main():
                     rock_z=(offset-normal[0]*x-normal[1]*y)/normal[2];bank_z=(bank_offset-bank_normal[0]*x-bank_normal[1]*y)/bank_normal[2]
                     if rock_z-bank_z<minimum:minimum=rock_z-bank_z;worst=dict(x=x,y=y,rock_z=rock_z,bank_z=bank_z)
         row=dict(object=obj.name,state=obj['state_endpoint'],minimum_clearance=float(minimum),worst=worst);records.append(row);print(row,flush=True)
-    (base/'contact-audit.json').write_text(json.dumps(dict(status='HOLD'if any(r['minimum_clearance']<-.05 or r['minimum_clearance']>1.05 for r in records)else 'surface clearance pass; silhouette and balance still require review',model_sha256=report['model_sha256'],bank_model_sha256=report['bank_model_sha256'],saved_reopened_receiver_proof=transform_proof,projected_overlap_area_tolerance=1e-5,records=records,limitations=['Checks bank height surfaces and ground plane; does not prove stable balance, rock-to-rock contacts or motion.']),indent=2)+'\n')
+    pair_checks=[]
+    if report.get('initial_stack'):
+        from settle_initial_rock_pile import collision_interval
+        covered=[bpy.data.objects[r['object']]for r in records if r['state']=='covered']
+        for obj in covered:
+            supports=[]
+            for other in covered:
+                if other==obj:continue
+                interval=collision_interval(other,obj)
+                penetrates=interval is not None and interval['first']<-.001 and interval['last']>.001
+                pair_checks.append(dict(object=obj.name,other=other.name,interval=interval,penetrates=penetrates))
+                if interval and abs(interval['last'])<.02 and interval['separating_normal'][2]>.1:
+                    supports.append(dict(object=other.name,ray_gap=-interval['last'],normal=interval['separating_normal']))
+            next(r for r in records if r['object']==obj.name)['rock_supports']=supports
+    failed=any(r['minimum_clearance']<-.05 or (r['minimum_clearance']>1.05 and not r.get('rock_supports'))for r in records)or any(p['penetrates']for p in pair_checks)
+    limitations=['Checks bank height surfaces and ground plane; does not prove stable balance or motion.']
+    if pair_checks:limitations.append('Covered convex solids have pairwise separating-axis checks and upward near-contact evidence; dynamic stability is not established.')
+    else:limitations.append('Rock-to-rock contacts are not checked.')
+    (base/'contact-audit.json').write_text(json.dumps(dict(status='HOLD'if failed else 'surface clearance pass; silhouette and balance still require review',model_sha256=report['model_sha256'],bank_model_sha256=report['bank_model_sha256'],saved_reopened_receiver_proof=transform_proof,projected_overlap_area_tolerance=1e-5,records=records,pair_checks=pair_checks,limitations=limitations),indent=2)+'\n')
 
 
 if __name__=='__main__':main()
