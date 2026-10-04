@@ -275,3 +275,12 @@ catalog drift or absent manual/hash-bound reviews before registering the three
 new authored sources. Native silhouette and alpha-covered depth checks run
 before gallery readiness. This registers geometry candidates, not user
 approval, texture approval or finished terrain placement.
+
+`prepare_west_shrubs.py` treats overlapping native56/61 foliage as one authored
+western bank, preserving their exact observed union in domain413. Its two lobes
+have independently measured depth; the western lobe continues beyond the map
+edge. Off-map colors and hidden leaves reuse the bank's own source imagery and
+remain explicitly inferred. Larger lobes use denser internal leaves and curved
+front patches to avoid artificial parallel shell steps. This isolated candidate
+lives in `understory-round-4`; it needs joint review with the western rocks
+before catalog integration. The script never changes approved assets.

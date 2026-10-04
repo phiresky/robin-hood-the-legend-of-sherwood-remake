@@ -18,6 +18,11 @@ def build(obj, packet):
     if known_alpha.sum()<200:raise ValueError('Insufficient uncontaminated native leaf evidence')
     _,nearest=distance_transform_edt(~known_alpha,return_indices=True)
     inferred=visible[nearest[0],nearest[1]].copy();inferred[:,:,3]=rgba[:,:,3]
+    if packet.get('inferred_front_image'):
+        provisional=np.asarray(Image.open(directory/packet['inferred_front_image']).convert('RGBA'))
+        if provisional.shape!=inferred.shape:raise ValueError('Inferred front dimensions differ')
+        inferred[~known_alpha]=provisional[~known_alpha]
+        inferred[:,:,3]=rgba[:,:,3]
     Image.fromarray(inferred).save(directory/'inferred-source.png')
     unknown=inferred.copy();unknown[:,:,3]=np.where(known_alpha,0,rgba[:,:,3])
     Image.fromarray(unknown).save(directory/'unknown-front.png')
@@ -48,6 +53,12 @@ def build(obj, packet):
             b=2*np.sum(relative*ray/radii**2);c=np.sum((relative/radii)**2)-1
             depth=(-b+math.sqrt(max(0,b*b-4*a*c)))/(2*a)
             pts=[point(xa,ya,depth),point(xb,ya,depth),point(xb,yb,depth),point(xa,yb,depth)]
+            if packet.get('curved_front'):
+                pts=[]
+                for sx,sy in [(xa,ya),(xb,ya),(xb,yb),(xa,yb)]:
+                    relative=point(sx,sy,0)-center
+                    b=2*np.sum(relative*ray/radii**2);c=np.sum((relative/radii)**2)-1
+                    pts.append(point(sx,sy,(-b+math.sqrt(max(0,b*b-4*a*c)))/(2*a)))
             uv=[(left/width,1-top/height),(right/width,1-top/height),(right/width,1-bottom/height),(left/width,1-bottom/height)]
             quad(pts,uv,0,True,True)
             quad([p-ray*.001 for p in pts],uv,1,False,True)
@@ -56,12 +67,13 @@ def build(obj, packet):
     if not patches:raise ValueError('No native leaf patches')
     rng=np.random.default_rng(55100+packet['native_mask']);tiles=[]
     sample_v,sample_u=np.mgrid[0:24,0:24]/24+.5/24
-    for _ in range(450):
+    cluster_count=int(packet.get('cluster_count',450));atlas_rows=max(64,math.ceil(cluster_count*6/48))
+    for _ in range(cluster_count):
         unit=rng.normal(size=3);unit/=np.linalg.norm(unit);unit*=rng.uniform(.03,1)**(1/3)
         pos=center+unit*radii*.92
         axis=rng.normal(size=3);axis/=np.linalg.norm(axis)
         other=np.cross(axis,[0,0,1] if abs(axis[2])<.9 else [1,0,0]);other/=np.linalg.norm(other)
-        third=np.cross(axis,other);size=float(rng.uniform(3.5,6.))
+        third=np.cross(axis,other);size=float(rng.uniform(*packet.get('leaf_size_range',[3.5,6.])))
         px,py=patches[int(rng.integers(len(patches)))]
         leaf=np.asarray(Image.fromarray(inferred[py:py+12,px:px+12]).resize((24,24),Image.Resampling.NEAREST)).copy()
         for u,v in [(axis,other),(axis,third),(other,third)]:
@@ -74,7 +86,7 @@ def build(obj, packet):
             tile=leaf.copy();tile[:,:,3]=np.where(gate,tile[:,:,3],0)
             def tile_quad(tile_image, points, slot):
                 index=len(tiles);tiles.append(tile_image);column,row=index%48,index//48
-                uv=[(column/48,1-row/64),((column+1)/48,1-row/64),((column+1)/48,1-(row+1)/64),(column/48,1-(row+1)/64)]
+                uv=[(column/48,1-row/atlas_rows),((column+1)/48,1-row/atlas_rows),((column+1)/48,1-(row+1)/atlas_rows),(column/48,1-(row+1)/atlas_rows)]
                 quad(points,uv,slot)
             if np.any(tile[:,:,3]>127):tile_quad(tile,pts,3)
             # Unseen leaves on the rear half fill the long source-ray holes.
@@ -84,7 +96,7 @@ def build(obj, packet):
             if np.dot(np.cross(back_points[1]-back_points[0],back_points[2]-back_points[0]),ray)>0:
                 back_points.reverse()
             tile_quad(leaf.copy(),back_points,4)
-    atlas=np.zeros((64*24,48*24,4),dtype=np.uint8)
+    atlas=np.zeros((atlas_rows*24,48*24,4),dtype=np.uint8)
     for i,tile in enumerate(tiles):atlas[(i//48)*24:(i//48+1)*24,(i%48)*24:(i%48+1)*24]=tile
     Image.fromarray(atlas).save(directory/'inferred-volume.png')
     mats.append(material(obj.name+' inferred interior leaves',directory/'inferred-volume.png',False))
