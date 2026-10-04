@@ -1,5 +1,6 @@
 """Measure saved rock geometry coverage against its observed source domain."""
 import json
+import argparse
 import sys
 from pathlib import Path
 import bpy
@@ -18,7 +19,12 @@ from render_slots import acquire, release
 
 
 def main():
-    worker=scenery_workspace('croisement02-west-rock-outcrop')
+    parser=argparse.ArgumentParser()
+    parser.add_argument('--asset',default='croisement02-west-rock-outcrop')
+    parser.add_argument('--domain',type=Path,default=OUT/'west-rock-source-revision/domain-350.png')
+    parser.add_argument('--crop',nargs=4,type=int,default=[0,280,280,440])
+    args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
+    worker=scenery_workspace(args.asset)
     model_hash=sha(worker/'model.blend')
     acquire()
     try:
@@ -38,7 +44,7 @@ def main():
             scene.collection.objects.link(obj)
             obj.data.materials.clear();obj.data.materials.append(white)
             for face in obj.data.polygons:face.material_index=0
-        box=(0,280,280,440);left,top,right,bottom=box;width=right-left;height=bottom-top
+        box=tuple(args.crop);left,top,right,bottom=box;width=right-left;height=bottom-top
         target=Vector(((left+right)/2,-(top+bottom)/2/SIN,0))
         data=bpy.data.cameras.new('Native rock source camera');data.type='ORTHO'
         data.sensor_fit='HORIZONTAL';data.ortho_scale=width;data.clip_end=20000
@@ -52,7 +58,7 @@ def main():
         destination=worker/'inspection/source-domain-coverage';destination.mkdir(exist_ok=True)
         scene.render.filepath=str(destination/'render.png');bpy.ops.render.render(write_still=True,scene=scene.name)
         actual=np.asarray(Image.open(destination/'render.png').convert('RGBA'))[:,:,0]>127
-        domain=OUT/'west-rock-source-revision/domain-350.png'
+        domain=args.domain
         expected=np.asarray(Image.open(domain).convert('L').crop(box))>127
         missing=expected&~actual;extra=actual&~expected
         source=np.asarray(Image.open(OUT/'animation-references/composite-frame-0.png').convert('RGB').crop(box)).copy()

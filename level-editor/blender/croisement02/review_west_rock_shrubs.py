@@ -22,13 +22,16 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('shrub_worker', type=Path)
     parser.add_argument('shrub_sha256')
+    parser.add_argument('--rock-asset', default='croisement02-west-rock-outcrop')
+    parser.add_argument('--crop', nargs=4, type=int, default=[-100,230,310,510])
+    parser.add_argument('--output-name', default='west-rock-joint-review')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
-    rock_worker = scenery_workspace('croisement02-west-rock-outcrop')
+    rock_worker = scenery_workspace(args.rock_asset)
     workers = [rock_worker, args.shrub_worker.resolve()]
     hashes = [sha(w / 'model.blend') for w in workers]
     if hashes[1] != args.shrub_sha256:
         raise ValueError('Shrub candidate changed since independent review')
-    destination = OUT / 'west-rock-joint-review' / (hashes[0][:8] + '-' + hashes[1][:8])
+    destination = OUT / args.output_name / (hashes[0][:8] + '-' + hashes[1][:8])
     if destination.exists():
         attempt = 2
         while destination.with_name(destination.name + f'-{attempt}').exists():
@@ -106,7 +109,7 @@ def main():
             bpy.ops.render.render(write_still=True, scene=scene.name)
             cameras.append(dict(image=name, matrix=[list(row) for row in camera.matrix_world], ortho_scale=scale))
 
-        crop = (-100, 230, 310, 510)
+        crop = tuple(args.crop)
         left, top, right, bottom = crop
         target = Vector(((left + right) / 2, -(top + bottom) / 2 / SIN, 0))
         render('source-view.png', target, RAY, right - left, right - left, bottom - top)
@@ -117,7 +120,7 @@ def main():
         board.paste(source, (0, 24))
         board.paste(actual, (source.width, 24), actual)
         draw = ImageDraw.Draw(board)
-        draw.text((4, 4), 'Original source; left padding is outside map', fill='white')
+        draw.text((4, 4), 'Original source (negative coordinates are outside map)', fill='white')
         draw.text((source.width + 4, 4), 'Saved rock and shrub materials together', fill='white')
         board.resize((board.width * 2, board.height * 2), Image.Resampling.NEAREST).save(destination / 'source-comparison.png')
         scale = max((hi - lo).length * 1.10, 100)
