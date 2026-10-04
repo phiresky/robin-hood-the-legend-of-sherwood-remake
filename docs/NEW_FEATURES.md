@@ -2443,3 +2443,8 @@ with the tower independently of the neighboring gateway's door permissions.
 Derby's keep hall and upper gatehouse now have asset-local reveal controls.
 Their trigger locations and activation contours move with each asset; they do
 not change navigation or door rights.
+
+Derby's east-hall reveal now switches its owned sight volumes alongside its
+appearance while keeping permanent navigation unchanged. Leicester's remaining
+modeled reveals now have local controls too; the three-part moat reveal joins
+through explicit contacts and separates when an asset moves away.

@@ -580,3 +580,16 @@ appearance-part warnings. These are part warnings, not distinct asset counts.
 `work/map-compile/derby-appearance-controls-lwHfaC` subsequently adds two Derby
 reveals: all four controls pass baseline and independent hall/gatehouse moves,
 leaving the east hall's sight-state appearance unfinished.
+
+`work/map-compile/derby-hall-sight-state-fWXBwB` closes that east-hall binding:
+one initial and eight applied sight volumes switch, with unchanged baseline
+navigation/doors/lifts. Native apply/reset passes all five controls in baseline
+and one-unit hall-move exports.
+
+`work/map-compile/leicester-appearance-controls-MJmVl8` passes native apply/reset
+for twelve baseline/jointly moved controls and thirteen with the church-side
+tower detached. All modeled appearance bindings resolve. Baseline navigation,
+doors and lifts are unchanged. The joint move leaves three independent light
+regions without receivers; this is a warning-bearing placement test, not a
+complete lighting-placement pass. Published Derby and Leicester scenes compile
+exactly to their tested baselines. Animated effects and mask coverage remain open.

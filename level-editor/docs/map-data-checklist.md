@@ -4221,3 +4221,24 @@ all four controls (`work/map-compile/derby-appearance-controls-lwHfaC`). The wes
 tower's existing mask control remains intact. The remaining 43 appearance-part
 warnings belong to the east hall's unbound sight-state change; it requires its
 physical state semantics rather than another appearance-only control.
+
+### Derby and Leicester modeled appearance bindings
+
+Derby's east hall now switches one initial sight volume to eight applied volumes
+with its appearance. Its baseline navigation, doors and lifts remain unchanged;
+native apply/reset passes all five controls for the baseline and moved hall.
+The published scene matches `work/map-compile/derby-hall-sight-state-fWXBwB`.
+
+Leicester now has twelve baseline controls, including separate keep, moat-tower
+and west-wing sight changes. Three moat-reveal assets use explicit local contacts:
+joint translation retains twelve controls, while detaching the church-side tower
+produces thirteen independent controls. Native apply/reset passes all three
+fixtures in `work/map-compile/leicester-appearance-controls-MJmVl8`, and reopening
+the published scene reproduces its tested baseline. Baseline navigation/doors/
+lifts are unchanged and no modeled appearance binding is missing in either map.
+
+The Leicester joint-move fixture still warns about three independently placed
+light-region receivers left behind by their supporting assets. These checks do
+not certify light attachment after arbitrary moves, animated state sequences,
+unrecovered masks or rendered gameplay. The previous ten-map audit remains a
+historical snapshot rather than a claim that its omissions have all been fixed.
