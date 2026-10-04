@@ -69,6 +69,23 @@ use robin_engine::sbfile::{SbFile, resolve_case_insensitive};
 use robin_engine::sprite_script;
 use robin_rs::main_entry::{FALLBACK_LOCALE_FOLDER, LANGUAGE_FOLDERS};
 
+/// RHS banks referenced by level or mission patch FX. In these banks, the
+/// original game's patch system interprets animation slots 148–150 through
+/// its PATCH_INITIAL / PATCH_TRANSITION / PATCH_FINAL aliases.
+const PATCH_ANIMATION_BANKS: &[&str] = &[
+    "derpatch",
+    "chariot02",
+    "linpatch",
+    "leipatch",
+    "notpatch",
+    "pixel_vert",
+    "trapcr01",
+    "trapcr02",
+    "trapcr03",
+    "york_door",
+    "yorkpatch",
+];
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum OutFormat {
     /// JSON + PNGs, human-readable and hackable.
@@ -956,6 +973,17 @@ impl Converter {
             sprite_script::SpriteScriptor::load_all_profiles_legacy(&src.to_string_lossy())
                 .map_err(|e| anyhow!("rhs: {e}"))?;
 
+        // These order slots have patch-specific names in RHOrder.h. The
+        // bank list is based on RHS profiles referenced by level and mission
+        // patch FX, including banks whose filenames do not contain "patch".
+        let bank_name = src
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .map(str::to_ascii_lowercase);
+        let is_patch_bank = bank_name
+            .as_deref()
+            .is_some_and(|name| PATCH_ANIMATION_BANKS.contains(&name));
+
         fs::create_dir_all(out_dir)?;
 
         // Character `.rhs` files in practice only have one profile. When
@@ -985,10 +1013,20 @@ impl Converter {
 
             for (row_idx, row) in info.scripts.iter().enumerate() {
                 let action_id = row.action_id as u32;
-                let action_label = OrderType::try_from(action_id)
+                let order_label = OrderType::try_from(action_id)
                     .ok()
                     .map(|a| format!("{a:?}"))
                     .unwrap_or_else(|| format!("action_{action_id:04}"));
+                let action_label = if is_patch_bank {
+                    match action_id {
+                        148 => "PatchInitial".to_owned(),
+                        149 => "PatchTransition".to_owned(),
+                        150 => "PatchFinal".to_owned(),
+                        _ => order_label.clone(),
+                    }
+                } else {
+                    order_label.clone()
+                };
                 let dir = dir_of_row[row_idx];
                 // If an action has more than one row, put each direction in
                 // its own sub-folder; if it's a single-row action, keep the
