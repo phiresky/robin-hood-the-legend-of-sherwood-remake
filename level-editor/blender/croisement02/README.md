@@ -292,3 +292,10 @@ integrator rejects changed existing groups or source owners. Joint-neighbourhood
 receipts bind both participating saved models before the gallery shows their
 supplemental review sheet. This does not approve inferred textures or actual
 terrain placement.
+
+`prepare_shrubs.py -- --batch southwest81` (arguments after Blender's `--`)
+prepares native81 as an isolated foreground shrub using the current western-bank
+source inventory. Domain414 is exactly native81; its only native overlap is
+the rock behind it. This batch has no boundary completion and keeps observed RGB
+intact. It requires the southwest rock/contact review before integration; the
+initial55/58/59 batch and approved assets are not rewritten.

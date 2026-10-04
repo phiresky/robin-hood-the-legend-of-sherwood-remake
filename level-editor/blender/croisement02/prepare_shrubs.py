@@ -1,4 +1,5 @@
 """Prepare isolated authored understory clumps without changing approved assets."""
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -21,6 +22,9 @@ from render_tree import render_workspace
 
 CHOSEN={55:[64,133],58:[59,60,133],59:[60,133]}
 DIRECTORY=OUT/'understory-candidates/clumps-v1'
+BASE=OUT/'authored-stem-integration'
+FIRST_DOMAIN=410
+GEOMETRY_OPTIONS={}
 
 
 def main():
@@ -28,7 +32,7 @@ def main():
     catalog=json.loads(reviewed_catalog().read_text())
     write_json(DIRECTORY/'previous-catalog.json',catalog)
     source=OUT/'animation-references/composite-frame-0.png';rgb=Image.open(source).convert('RGBA')
-    mask_manifest=json.loads((OUT/'authored-stem-integration/source-masks.json').read_text())
+    mask_manifest=json.loads((BASE/'source-masks.json').read_text())
     source_inventory=Path(mask_manifest['mask_inventory']);native=json.loads(source_inventory.read_text())
     rows={r['index']:r for r in native['masks']}
     def canvas(index):
@@ -37,7 +41,7 @@ def main():
         return result
     packets={}
     for number,(index,exclusions) in enumerate(CHOSEN.items()):
-        node=f'foliage-shrub-{index:03}';asset=f'croisement02-shrub-{index:02}';domain=410+number
+        node=f'foliage-shrub-{index:03}';asset=f'croisement02-shrub-{index:02}';domain=FIRST_DOMAIN+number
         catalog['groups'].append(dict(id=asset,name=f'Understory Shrub {index:02}',authored_scenery=True,native_foliage_mask=index,
             parts=[dict(node=node,name=f'Native understory foliage {index:02}',foliage_domain_mask=domain)]))
         catalog['canonical_owners'][node]=asset
@@ -53,9 +57,9 @@ def main():
         packet=dict(directory=str(packet_dir),native_bbox=[x,y,w,h],bbox=[x,y,w,h],native_mask=index,
             observed_domain=domain,excluded_foreground=exclusions,observed_pixels=int(observed.sum()),
             complete_native_pixels=int(full.sum()),source_sha256=sha(source),
-            ownership_note='Complete physical clump follows native silhouette; covered regions have inferred appearance only. Source evidence excludes overlapping foreground.59 takes foreground ownership over58.')
+            ownership_note='Complete physical clump follows native silhouette; covered regions have inferred appearance only. Source evidence excludes the explicitly listed overlapping foreground masks.',**GEOMETRY_OPTIONS)
         write_json(packet_dir/'partition.json',packet);packets[index]=packet
-    sheet=Image.new('RGB',(1536,1000),'#888888');draw=ImageDraw.Draw(sheet);validation=[]
+    sheet=Image.new('RGB',(512*len(CHOSEN),1000),'#888888');draw=ImageDraw.Draw(sheet);validation=[]
     source_rgb=np.asarray(rgb)
     for column,index in enumerate(CHOSEN):
         packet=packets[index];x,y,w,h=packet['native_bbox']
@@ -68,23 +72,23 @@ def main():
             im=im.resize((im.width*3,im.height*3),Image.Resampling.NEAREST)
             sheet.paste(im,(column*512,row*480+35),im);draw.text((column*512+4,row*480+5),f'{index} {name}',fill='black')
     sheet.save(DIRECTORY/'source-ownership-sheet.png')
-    a=np.asarray(Image.open(DIRECTORY/'domain-411.png').convert('L'))>0
-    b=np.asarray(Image.open(DIRECTORY/'domain-412.png').convert('L'))>0
-    if np.any(a&b):raise ValueError('Duplicate observed ownership across shrubs58/59')
-    write_json(DIRECTORY/'source-rgb-validation.json',dict(status='PASS',known_rgb_unchanged=True,duplicate_observed_pixels_58_59=0,records=validation))
+    domains=[np.asarray(Image.open(DIRECTORY/f'domain-{FIRST_DOMAIN+i}.png').convert('L'))>0 for i in range(len(CHOSEN))]
+    duplicate=sum(int((a&b).sum()) for i,a in enumerate(domains) for b in domains[i+1:])
+    if duplicate:raise ValueError('Duplicate observed ownership across new shrubs')
+    write_json(DIRECTORY/'source-rgb-validation.json',dict(status='PASS',known_rgb_unchanged=True,duplicate_observed_pixels=0,records=validation))
     receivers={'ground',*catalog['canonical_owners']}
     for number,index in enumerate(CHOSEN):
-        node=f'foliage-shrub-{index:03}';domain=410+number
+        node=f'foliage-shrub-{index:03}';domain=FIRST_DOMAIN+number
         mask_manifest['projections']['exterior'].setdefault('occluder_constraints',[]).append(dict(reviewed=True,source_node=node,
             receiver_nodes=sorted(receivers-{node}),mask_indices=[domain],reason='Hidden clump volume cannot block foreign source receivers outside its own observed leaf domain.'))
     for rule in mask_manifest['projections']['exterior']['occluder_constraints']:
-        if rule['source_node'].startswith('foliage-wood-'):rule['receiver_nodes']=sorted(receivers-{rule['source_node']})
+        if rule['source_node'].startswith('foliage-'):rule['receiver_nodes']=sorted(receivers-{rule['source_node']})
     ground=next(a for a in mask_manifest['projections']['exterior']['assignments'] if a.get('source_node')=='ground')
-    ground['exclude_mask_indices']+=list(range(410,413))
-    ground['exclusion_reason']+=' Authored shrub55/58/59 observed leaf domains also leave the ground receiver.'
+    ground['exclude_mask_indices']+=list(range(FIRST_DOMAIN,FIRST_DOMAIN+len(CHOSEN)))
+    ground['exclusion_reason']+=' Authored shrub '+','.join(map(str,CHOSEN))+' observed leaf domains also leave the ground receiver.'
     write_json(DIRECTORY/'catalog.json',catalog);write_json(DIRECTORY/'mask-inventory.json',native)
     mask_manifest['mask_inventory']=str(DIRECTORY/'mask-inventory.json');write_json(DIRECTORY/'source-masks.json',mask_manifest)
-    bpy.ops.wm.open_mainfile(filepath=str(OUT/'authored-stem-integration/input.blend'))
+    bpy.ops.wm.open_mainfile(filepath=str(BASE/'input.blend'))
     bpy.context.preferences.filepaths.save_version=0
     collection=bpy.data.collections['Croisement02 Working'];reports={}
     for index,packet in packets.items():
@@ -98,7 +102,7 @@ def main():
     for o,value in visibility.items():o.hide_render=value
     validate_catalog(DIRECTORY/'inventory/inventory.json',DIRECTORY/'catalog.json')
     write_json(DIRECTORY/'grouping-review.json',dict(status='reviewed',reviewer='Codex',catalog_sha256=sha(DIRECTORY/'catalog.json'),
-        inventory_sha256=sha(DIRECTORY/'inventory/inventory.json'),evidence='Source cutouts and context55/58/59 are leafy clumps; native mask overlap with foreground59/60/64/133 is excluded from observed RGB. Three independent authored sources; existing sources unchanged.'))
+        inventory_sha256=sha(DIRECTORY/'inventory/inventory.json'),evidence='Source cutouts and context '+','.join(map(str,CHOSEN))+' are leafy clumps. Explicit foreground exclusions are recorded per source packet; existing sources unchanged.'))
     bpy.ops.wm.save_as_mainfile(filepath=str(DIRECTORY/'input.blend'))
     for index in CHOSEN:
         bpy.ops.wm.open_mainfile(filepath=str(DIRECTORY/'input.blend'))
@@ -120,6 +124,11 @@ def main():
 
 
 if __name__=='__main__':
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--batch',choices=['initial','southwest81'],default='initial')
+    args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
+    if args.batch=='southwest81':
+        CHOSEN={81:[]};DIRECTORY=OUT/'understory-candidates/southwest81-v1'
+        BASE=OUT/'understory-candidates/west-bank-v4';FIRST_DOMAIN=414;GEOMETRY_OPTIONS={'curved_front':True}
     acquire()
     try:main()
     finally:release()
