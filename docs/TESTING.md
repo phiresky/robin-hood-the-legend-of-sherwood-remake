@@ -226,7 +226,7 @@ For editor-generated navigation, the ignored integration test
 `diagnostics.json` batch from `ROBIN_ASSET_MAP_DIAGNOSTICS`. It samples numbered
 ordinary motion sectors, flood-fills actor-sized collision-clear connections,
 and asks for forward/reverse routes across each sampled component. Every returned
-segment must clear the same 6×4 half-diagonal footprint. It reports routing and
+segment must clear the same 6×3 half-diagonal footprint. It reports routing and
 sampling times separately, and writes `route-sampling-report.json` after each map.
 The report remains `complete: false` until every map passes. Run it with fresh
 asset-only exports:
@@ -276,6 +276,27 @@ During a passage, sector membership changes before the two approach movements
 finish, so its receiving plane can temporarily belong to the adjoining sector.
 This is an initial-state stair test, not coverage of ladders, walls, all character
 profiles, live sprite resources or mission behavior.
+
+Climbing routes use a complete character animation profile instead of synthetic
+walking frames. Only that explicitly supplied RHS file is mounted; source-level
+files and mission scripts are unavailable. Navigation comes from the compiled
+editor descriptors:
+
+```sh
+ROBIN_ASSET_MAP_DIAGNOSTICS=/absolute/path/to/exports \
+ROBIN_CLIMB_RHS=/absolute/path/to/Data/Characters/RobinTown.rhs RUSTC_WRAPPER= \
+  cargo test -p robin_engine --lib -j1 \
+  exported_climbs_support_complete_actor_routes -- --ignored --nocapture
+```
+
+`actor-climb-route-report.json` checks every directed entrance pair of ladder and
+wall sectors, including crenellated walls. It requires arrival in the exact
+destination sector/layer with its receiving plane and height. During climbing,
+animation movement may retain the preceding plane; the ordinary receiving
+lookup assertion applies after landing. This exercises animation timing and
+movement, not rendered frame alignment, other profiles or actor contention.
+`ROBIN_LIFT_AUDIT_MAP=derby.level.json` restricts either audit to one map and records
+that filter in its report. `ROBIN_LIFT_TRACE=1` adds climb and receiver diagnostics.
 
 ## GPU execution
 

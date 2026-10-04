@@ -42,13 +42,32 @@ Fresh published-asset diagnostics in `work/map-compile/stair-routing-HtMZ9h`
 pass all 288 directed stair walks across ten maps and 6,234 sampled actor
 crossings (6,178 between receiving planes and 56 between planes and ground),
 using the corrected 6×3 footprint. No stair routes were skipped for permissions.
-The current changes pass 4,295 engine unit tests, 69 level-data tests, 61 compiler
+The current changes pass 4,296 engine unit tests, 70 level-data tests, 61 compiler
 integration tests and 393 editor/shared compiler tests (one skipped).
 Earlier validation passed 4,293 engine unit tests, 68 level-data tests, 61 compiler
 integration tests and 6,222 sampled actor crossings with a 6×4 half-diagonal.
 Client door-hover/input tests pass. The core overlay manifest now declares
 packed-data schema 22, matching the earlier fractional-elevation format update;
 all 11 overlay tests pass.
+
+**Climb exits and landing heights:** door posture transitions now use loaded map
+doors without requiring a mission VM; the old guard rejected ladder/wall exits.
+Compiled ladders and walls derive narrow approach corridors carrying each
+landing's receiving plane on the lift layer. Wall corridors account for runtime
+animation offsets. Crenellated transitions assign their own plane explicitly and
+do not receive a duplicate corridor. The west Sherwood treehouse and York's
+central-lane stone-gable house now preserve their complete asset-local movement
+contours, with the corrected descriptors published and scene hashes updated.
+
+The combined native audit in `work/map-compile/stair-routing-2IBVdk` passes
+**288 stair walks, 84 ladder/wall walks and 6,234 sampled receiving crossings**.
+Climb walks use Robin's complete animation rows and validate arrival, exact
+sector/layer and landing receiver/height; no routes were skipped for permissions.
+The report retains Lincoln's earlier `stair-routing-HtMZ9h` descriptor while that
+library is being reauthored. Its current publication descriptor has no lifts and
+is saved separately; this result does not certify that publication. The audit
+does not certify rendered sprites, arbitrary rotated climb assemblies, every
+character profile, contention between actors or mission behavior.
 
 **Ordinary route consistency:** fresh best-effort exports of all ten saved maps
 are under `work/map-compile/route-sampling-HpYhrj`. A native collision flood-fill
@@ -902,7 +921,7 @@ sampled Rust queries. Equivalent evidence across all maps remains unfinished.
 | Projection surfaces / elevation | Generate height planes linked to movement areas; derive fractional receiver-crossing boundaries from all registered planes, independent of sight activation. Stair entrances connect receivers on their own lift layer. | Partial: rotated copies, curved/rising paths, sight-state fixtures, 6,234 sampled actor crossings and 288 full stair walks pass; complete full-map traversal remains unfinished |
 | Doors, gates and lock rules | Transform local endpoints and optional click polygons; resolve neighbours geometrically and retain initial/alternate actor lock rules. Asset-local transition links either trigger state changes from doors or swap door permissions. | Compiler/native links implemented; recovered ownership and coverage incomplete |
 | Building interiors | Asset-local rooms connect their own entrances automatically. Map-owned editor links or matching passage sockets join rooms across assets. | Compiler/native tests cover separate, moved, rotated and duplicated assemblies and editable ZIP round-trips; occupants remain mission-owned |
-| Lifts / special traversal | Asset-local traversal surfaces, type, direction and endpoints; explicit local join sockets combine placed segments into one sector with multiple height planes. Independent lifts have separate layers. | Published exports pass 288 full directed stair walks and 372 passage callbacks plus rotated/duplicated compound fixtures. Missing assemblies warn and retain independent collision. Changing lift surfaces, complete ladder/wall walks and rendered traversal remain unfinished |
+| Lifts / special traversal | Asset-local traversal surfaces, type, direction and endpoints; explicit local join sockets combine placed segments into one sector with multiple height planes. Independent lifts have separate layers; climb corridors transfer landing receivers. | Regression snapshots pass 288 full directed stair walks, 84 ladder/wall walks and 372 passage callbacks plus rotated/duplicated compound fixtures. Missing assemblies warn and retain independent collision. Changing lift surfaces, arbitrary rotated climb assemblies and rendered traversal remain unfinished |
 | Jump zones and paired jump edges | Transform authored 3D edges or derive ledges from marked surfaces; construct receiving bands, trim flight/approach obstructions, resolve current neighbours and preserve long-jump/helper rules. | Nineteen published surfaces carry reusable generation rules; native tests cover moved buildings, multiple destinations, skills, flight, walking approaches and changing nearby blockers. Broader asset authoring and full-map traversal remain unfinished |
 | Surface materials | Transform asset-local material polygons; rebuild ground, obstacle and receiving-surface links independently. Preserve receiving defaults, footprints and overlap priority. | Compiler/native tests pass; all nine imported map families have published material definitions; full geometry and receiving-material coverage remain unverified |
 | Light/shadow regions | Transform asset-local planar contours, resolve ordinary or traversal receiving layers and preserve ambience filters. Conflicting anchored receivers receive separate runtime layers. | Published definitions exist for all five towns and Sherwood; unrestricted query equivalence and full placement coverage remain unverified |

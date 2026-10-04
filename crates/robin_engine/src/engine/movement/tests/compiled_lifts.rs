@@ -53,6 +53,64 @@ pub(super) fn placed_stair_fixture(bytes: &[u8], turn: u8, lift_type: u8) -> Vec
 }
 
 #[test]
+fn compiled_climb_exit_preserves_climbing_posture_without_a_mission_script() {
+    for (lift_type, posture) in [(2, Posture::OnLadder), (3, Posture::OnWall)] {
+        let bytes = placed_stair_fixture(
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/asset-lift.level.json"
+            )),
+            0,
+            lift_type,
+        );
+        let (mut engine, mut assets) = compiled_walkway(&bytes);
+        assert!(engine.scripts.mission.is_none());
+        let door = engine.script_domains.interactables.doors[0].clone();
+        let sector = crate::position_interface::SectorHandle::from_number(door.sector_in)
+            .with_arena_index(door.sector_in_index.unwrap());
+        let owner = walking_pc(
+            &mut engine,
+            &mut assets,
+            door.point_in,
+            door.layer_in,
+            sector,
+        );
+        engine
+            .ent_mut(owner)
+            .element_data_mut()
+            .publish_order_posture(posture);
+        let mut element = SequenceElement::new_movement(
+            1,
+            Command::PassDoor,
+            Some(owner),
+            OrderType::WalkingUpright,
+        );
+        let crate::sequence::SequenceElementData::Movement { gate_id, .. } = &mut element.data
+        else {
+            unreachable!()
+        };
+        *gate_id = Some(crate::gate::DoorIndex::new(0).unwrap());
+        let sequence = engine.orders.sequence_manager.insert_element(element);
+        let reference = crate::sequence::SequenceElementRef::new(sequence, 0);
+        engine.stamp_element_transition_state(owner, reference);
+        assert!(engine.generate_transition(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            &mut vec![],
+            owner,
+            reference
+        ));
+        assert_eq!(
+            engine
+                .seq()
+                .get_element(sequence, 0)
+                .unwrap()
+                .posture_after_transition,
+            posture
+        );
+    }
+}
+
+#[test]
 fn compiled_doors_and_patch_cursors_work_without_a_mission_script() {
     let (mut engine, _) = compiled_walkway(include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),

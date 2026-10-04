@@ -80,10 +80,20 @@ fn stair_passages_bridge_gaps_overlaps_and_ground_edges_after_placement() {
 }
 
 fn walk_exported_stairs(
+    engine: EngineInner,
+    assets: LevelAssets,
+    entrance: usize,
+    exit: usize,
+) -> Result<bool, String> {
+    walk_exported_lift(engine, assets, entrance, exit, None)
+}
+
+fn walk_exported_lift(
     mut engine: EngineInner,
     mut assets: LevelAssets,
     entrance: usize,
     exit: usize,
+    sprite: Option<&crate::sprite::Sprite>,
 ) -> Result<bool, String> {
     let doors = &engine.script_domains.interactables.doors;
     let enter = doors[entrance].clone();
@@ -93,6 +103,10 @@ fn walk_exported_stairs(
     let destination_sector = crate::position_interface::SectorHandle::from_number(leave.sector_out)
         .with_arena_index(leave.sector_out_index.unwrap());
     let lift_sector = enter.sector_in_index.unwrap();
+    let climbing = matches!(
+        engine.world.fast_grid.level.sectors[usize::from(lift_sector)].lift_type,
+        Some(crate::sector::LiftType::Ladder | crate::sector::LiftType::Wall)
+    );
     assert_eq!(Some(lift_sector), leave.sector_in_index);
     let owner = walking_pc(
         &mut engine,
@@ -101,6 +115,13 @@ fn walk_exported_stairs(
         enter.layer_out,
         source_sector,
     );
+    if let Some(sprite) = sprite {
+        engine.ent_mut(owner).pc_data_mut().unwrap().has_climb = true;
+        let element = engine.ent_mut(owner).element_data_mut();
+        let position = element.sprite.position_iface.clone();
+        element.sprite = sprite.clone();
+        element.sprite.position_iface = position;
+    }
     let auth = engine.ent(owner).actor_auth_info();
     if !enter.active
         || !leave.active
@@ -123,7 +144,7 @@ fn walk_exported_stairs(
             direct: false,
         },
     ];
-    engine
+    let route = engine
         .launch_gate_movement_sequence(
             TickCtx::new(&sim, &assets),
             &mut vec![],
@@ -155,6 +176,8 @@ fn walk_exported_stairs(
     let mut crossed = false;
     let mut previous = enter.point_out;
     let mut stationary = 0;
+    let mut previous_receiver = receiver;
+    let trace = std::env::var_os("ROBIN_LIFT_TRACE").is_some();
     for _ in 0..(distance.ceil() as usize * 4 + 1000) {
         engine.control.frame_counter += 1;
         engine.t_hourglass_phase_sequences(&assets);
@@ -163,6 +186,14 @@ fn walk_exported_stairs(
         let element = engine.ent(owner).element_data();
         let position = element.position_map();
         let sector = element.sector().ok_or("stair actor lost its sector")?;
+        let receiver = engine.ent(owner).position_iface().get_obstacle();
+        if trace && receiver != previous_receiver {
+            eprintln!(
+                "route {entrance}->{exit}: {position:?} layer {} receiver {previous_receiver:?}->{receiver:?}",
+                element.layer()
+            );
+        }
+        previous_receiver = receiver;
         crossed |= sector.arena_index() == Some(lift_sector);
         // A passage straddles two receiving polygons while the sector changes
         // at its midpoint. Require ordinary lookup agreement once its explicit
@@ -172,7 +203,9 @@ fn walk_exported_stairs(
             &engine.seq(),
             owner,
         );
-        if !passing {
+        // Climbing preserves its approach receiver while animation motion
+        // changes altitude; ordinary receiving lookup applies after landing.
+        if !passing && !(climbing && sector.arena_index() == Some(lift_sector)) {
             actor_receiver_result(&engine, &assets, owner, sector, element.layer(), position)?;
         }
         if crossed
@@ -190,6 +223,13 @@ fn walk_exported_stairs(
         };
         previous = position;
         if stationary >= 200 {
+            let route_states = engine.seq().get_sequence(route).map(|sequence| {
+                sequence
+                    .elements
+                    .iter()
+                    .map(|element| (element.command, element.state))
+                    .collect::<Vec<_>>()
+            });
             let bounds = *engine.ent(owner).position_iface().get_move_box_map();
             let blockers: Vec<_> = engine
                 .world
@@ -206,7 +246,7 @@ fn walk_exported_stairs(
                 .and_then(|(id, index)| engine.seq().get_element(id, index))
                 .map(|element| element.command);
             return Err(format!(
-                "stair route stalled at {position:?}, layer {}, sector {sector:?}, goal {:?}, crossed={crossed}, bounds={bounds:?}, blockers={blockers:?}, selected={selected:?}",
+                "lift route stalled at {position:?}, layer {}, sector {sector:?}, goal {:?}, crossed={crossed}, bounds={bounds:?}, blockers={blockers:?}, selected={selected:?}, route={route_states:?}",
                 element.layer(),
                 leave.point_out,
             ));
@@ -221,14 +261,73 @@ fn walk_exported_stairs(
 #[test]
 #[ignore = "requires current exports via ROBIN_ASSET_MAP_DIAGNOSTICS"]
 fn exported_stairs_support_complete_actor_routes() {
+    audit_exported_lifts(
+        &[crate::sector::LiftType::Stairs],
+        None,
+        "actor-stair-route-report.json",
+    );
+}
+
+#[test]
+#[ignore = "requires ROBIN_ASSET_MAP_DIAGNOSTICS and ROBIN_CLIMB_RHS"]
+fn exported_climbs_support_complete_actor_routes() {
+    if std::env::var_os("ROBIN_LIFT_TRACE").is_some() {
+        let _ = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_test_writer()
+            .try_init();
+    }
+    use crate::sprite_script::{FrameKind, MissionResourceEnvironment, SpriteScriptor};
+    use robin_util::asset_fs::{AssetVfs, Bundle};
+    let path = std::env::var("ROBIN_CLIMB_RHS").expect("path to a complete RobinTown RHS sprite");
+    let bytes = std::fs::read(path).unwrap();
+    let signature = u32::from_le_bytes(bytes[..4].try_into().unwrap());
+    let vfs = Arc::new(AssetVfs::new());
+    vfs.mount_bundle(Arc::new(Bundle::from([(
+        "characters/audit.rhs".into(),
+        bytes.into(),
+    )])))
+    .unwrap();
+    let files = crate::sbfile::SbFileSystem::new(vfs);
+    let mut scriptor =
+        SpriteScriptor::with_resources(Arc::new(MissionResourceEnvironment::from_files(&files)));
+    let mut sprite = crate::sprite::Sprite::default();
+    sprite
+        .load_frame_info(
+            &mut scriptor,
+            FrameKind::Character,
+            "Data/Characters",
+            "audit",
+            "Robin des bois",
+            signature,
+            None,
+        )
+        .unwrap();
+    audit_exported_lifts(
+        &[
+            crate::sector::LiftType::Ladder,
+            crate::sector::LiftType::Wall,
+        ],
+        Some(&sprite),
+        "actor-climb-route-report.json",
+    );
+}
+
+fn audit_exported_lifts(
+    types: &[crate::sector::LiftType],
+    sprite: Option<&crate::sprite::Sprite>,
+    report_name: &str,
+) {
     let directory = std::path::PathBuf::from(std::env::var("ROBIN_ASSET_MAP_DIAGNOSTICS").unwrap());
     let manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(directory.join("diagnostics.json")).unwrap())
             .unwrap();
     assert_eq!(manifest["complete"], true);
-    let report_path = directory.join("actor-stair-route-report.json");
+    let report_path = directory.join(report_name);
     let mut report = serde_json::json!({
-        "scope": "initial-state-directed-stair-walks-between-every-entrance-pair",
+        "scope": "initial-state-directed-lift-walks-between-every-entrance-pair",
+        "lift_types": types, "complete_sprite": sprite.is_some(),
+        "map_filter": std::env::var("ROBIN_LIFT_AUDIT_MAP").ok(),
         "complete": false, "audit_finished": false, "results": []
     });
     let mut total_checked = 0;
@@ -236,6 +335,9 @@ fn exported_stairs_support_complete_actor_routes() {
     std::fs::write(&report_path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
     for result in manifest["results"].as_array().unwrap() {
         let file = result["file"].as_str().unwrap();
+        if std::env::var("ROBIN_LIFT_AUDIT_MAP").is_ok_and(|selected| selected != file) {
+            continue;
+        }
         let bytes = std::fs::read(directory.join(file)).unwrap();
         let descriptor: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         let dims = &descriptor["walkable_polygon"][2];
@@ -251,7 +353,7 @@ fn exported_stairs_support_complete_actor_routes() {
         let mut failures = vec![];
         let doors = &engine.script_domains.interactables.doors;
         for (sector_index, sector) in engine.world.fast_grid.level.sectors.iter().enumerate() {
-            if sector.lift_type != Some(crate::sector::LiftType::Stairs) {
+            if !sector.lift_type.is_some_and(|kind| types.contains(&kind)) {
                 continue;
             }
             let entrances: Vec<_> = doors
@@ -267,7 +369,7 @@ fn exported_stairs_support_complete_actor_routes() {
                         continue;
                     }
                     let outcome =
-                        walk_exported_stairs(engine.clone(), assets.clone(), entrance, exit);
+                        walk_exported_lift(engine.clone(), assets.clone(), entrance, exit, sprite);
                     match outcome {
                         Ok(true) => checked += 1,
                         Ok(false) => skipped += 1,
@@ -284,7 +386,7 @@ fn exported_stairs_support_complete_actor_routes() {
         total_checked += checked;
         total_failed += failures.len();
         eprintln!(
-            "{file}: {checked} stair routes, {} failures, {skipped} forbidden routes",
+            "{file}: {checked} lift routes, {} failures, {skipped} forbidden routes",
             failures.len()
         );
         report["results"].as_array_mut().unwrap().push(serde_json::json!({
@@ -295,6 +397,6 @@ fn exported_stairs_support_complete_actor_routes() {
     report["audit_finished"] = true.into();
     report["complete"] = (total_checked > 0 && total_failed == 0).into();
     std::fs::write(&report_path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
-    assert!(total_checked > 0, "no stair routes tested");
+    assert!(total_checked > 0, "no lift routes tested");
     assert_eq!(total_failed, 0, "see {}", report_path.display());
 }

@@ -1,5 +1,14 @@
 # Post-port Features
 
+- **Climb landings without mission scripts.** Ladder and wall exit transitions
+  use map doors even when no mission VM is loaded. Compiled climb approaches
+  carry their landing receiver through a narrow corridor on the lift layer,
+  then connect it to the interior receiving plane. Wall approaches use the same
+  animation offset as runtime loading. Crenellated transitions retain their
+  explicit plane assignment. Together these prevent failed exits and stale
+  landing heights on lifts with multiple entrances. Two further library assets
+  retain their full movement contour independently of their receiving footprint.
+
 - **Map interactions without mission scripts.** Gate routes, jump selection,
   lockpicking validation, door hover/overlays, patch clicks, building AI door lists,
   blocked-door corpse handling and lift fall destinations use loaded map data

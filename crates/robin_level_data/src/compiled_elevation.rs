@@ -198,13 +198,13 @@ fn clip_passage_ground_edges(
     Ok(())
 }
 
-/// Stair entrances connect receiving surfaces across navigation layers.
-pub(crate) fn stair_connections(
+/// Lift entrances connect receiving surfaces across navigation layers.
+pub(crate) fn lift_connections(
     geometry: &CompiledAssetGeometry,
 ) -> BTreeMap<(u16, u16), BTreeSet<(u16, u16)>> {
     let mut connections = BTreeMap::<_, BTreeSet<_>>::new();
     for lift in &geometry.lifts {
-        if !matches!(lift.lift_type, 0 | 1) {
+        if !matches!(lift.lift_type, 0..=3) {
             continue;
         }
         for door in &lift.doors {
@@ -260,6 +260,76 @@ pub(crate) fn derive(geometry: &CompiledAssetGeometry) -> Result<Vec<RawElevatio
                 .map(|p| f64::from(p.z_top.max(p.z_bottom)))
                 .fold(f64::NEG_INFINITY, f64::max),
         });
+    }
+    // Climb animations may teleport to the inside approach before changing
+    // layers. Carry each landing's receiver through that narrow approach
+    // corridor, and use the lift receiver between corridors. This creates
+    // crossings for sideways routes between multiple entrances as well.
+    let mut climb_receivers = Vec::new();
+    for lift in &geometry.lifts {
+        if !matches!(lift.lift_type, 2 | 3) {
+            continue;
+        }
+        for door in &lift.doors {
+            // Crenellated wall transitions explicitly attach the landing or
+            // lift plane during their animation; a corridor would swap twice.
+            if lift.lift_type == 3 && door.door_type == 6 {
+                continue;
+            }
+            let point = [f64::from(door.point_out.0), f64::from(door.point_out.1)];
+            let index = groups
+                .get(&(door.sector_out, door.layer_out))
+                .into_iter()
+                .flatten()
+                .filter(|receiver| contains(&receiver.polygon, point))
+                .max_by(|a, b| {
+                    a.maximum_height
+                        .total_cmp(&b.maximum_height)
+                        .then_with(|| b.index.cmp(&a.index))
+                })
+                .map_or(u16::MAX, |receiver| receiver.index);
+            let mut inside = [f32::from(door.point_in.0), f32::from(door.point_in.1)];
+            if lift.lift_type == 3 && door.door_type == 4 {
+                inside = crate::level_data::offset_door_approach(
+                    inside,
+                    [f32::from(door.point_mid.0), f32::from(door.point_mid.1)],
+                    60.,
+                );
+            }
+            let inside = inside.map(f64::from);
+            let middle = [f64::from(door.point_mid.0), f64::from(door.point_mid.1)];
+            let direction = subtract(middle, inside);
+            let length = direction[0].hypot(direction[1]);
+            if length == 0. {
+                return Err("climbing passage has an approach at its midpoint".into());
+            }
+            let direction = direction.map(|v| v / length);
+            let across = [-direction[1], direction[0]];
+            let polygon = [
+                (-0.5, -1.),
+                (length + 1., -1.),
+                (length + 1., 1.),
+                (-0.5, 1.),
+            ]
+            .map(|(along, side)| {
+                [
+                    inside[0] + direction[0] * along + across[0] * side,
+                    inside[1] + direction[1] * along + across[1] * side,
+                ]
+            })
+            .to_vec();
+            climb_receivers.push((
+                (door.sector_in, door.layer_in),
+                Receiver {
+                    index,
+                    polygon,
+                    maximum_height: f64::MAX,
+                },
+            ));
+        }
+    }
+    for (topology, receiver) in climb_receivers {
+        groups.entry(topology).or_default().push(receiver);
     }
     let mut area_polygons = BTreeMap::new();
     let mut sector = 0u16;
@@ -442,6 +512,17 @@ pub(crate) fn derive(geometry: &CompiledAssetGeometry) -> Result<Vec<RawElevatio
     };
     let mut passages = Vec::new();
     for lift in &geometry.lifts {
+        if matches!(lift.lift_type, 2 | 3) {
+            for door in &lift.doors {
+                clip_passage_ground_edges(
+                    &mut lines,
+                    door.layer_out,
+                    receiver_at((door.sector_out, door.layer_out), door.point_out),
+                    [f64::from(door.point_mid.0), f64::from(door.point_mid.1)],
+                    [f64::from(door.point_out.0), f64::from(door.point_out.1)],
+                )?;
+            }
+        }
         if !matches!(lift.lift_type, 0 | 1) {
             continue;
         }
@@ -556,14 +637,71 @@ mod tests {
             serde_json::to_value(derive(&geometry).unwrap()).unwrap(),
             expected
         );
-        // Merely touching another layer does not connect it. Wall and ladder
-        // traversal use their own animation-driven height changes.
-        for lift_type in [2, 3] {
-            geometry.lifts[0].lift_type = lift_type;
-            assert!(derive(&geometry).unwrap().is_empty());
-        }
         geometry.lifts.clear();
         assert!(derive(&geometry).unwrap().is_empty());
+    }
+
+    #[test]
+    fn climb_approaches_transfer_receivers_in_both_directions() {
+        let document: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../robin_engine/tests/fixtures/asset-lift.level.json"
+        )))
+        .unwrap();
+        let mut geometry: CompiledAssetGeometry =
+            serde_json::from_value(document["asset_geometry"].clone()).unwrap();
+        for (lift_type, high_type) in [(2, 4), (3, 4), (3, 6)] {
+            geometry.lifts[0].lift_type = lift_type;
+            geometry.lifts[0].doors[1].door_type = high_type;
+            let low = [392., 340.];
+            let high = if lift_type == 3 {
+                crate::level_data::offset_door_approach(
+                    [408., 260.],
+                    [410., 250.],
+                    if high_type == 6 { 65. } else { 60. },
+                )
+                .map(f64::from)
+            } else {
+                [408., 260.]
+            };
+            let lines = derive(&geometry).unwrap();
+            let high_receiver = if high_type == 6 { 2 } else { 1 };
+            for (from, to, mut receiver, expected) in [
+                (low, high, u16::MAX, high_receiver),
+                (high, low, high_receiver, u16::MAX),
+            ] {
+                let movement = subtract(to, from);
+                let mut crossings = Vec::new();
+                for line in lines.iter().filter(|line| line.layer == 2) {
+                    let [a, b] = line.map_endpoints().map(|p| p.map(f64::from));
+                    let edge = subtract(b, a);
+                    let denominator = cross(movement, edge);
+                    if denominator.abs() < EPS {
+                        continue;
+                    }
+                    let offset = subtract(a, from);
+                    let t = cross(offset, edge) / denominator;
+                    let u = cross(offset, movement) / denominator;
+                    if t > 0. && t <= 1. && (0. ..=1.).contains(&u) {
+                        crossings.push((t, line));
+                    }
+                }
+                crossings.sort_by(|a, b| a.0.total_cmp(&b.0));
+                assert!(!crossings.is_empty());
+                for (_, line) in crossings {
+                    receiver = if receiver == line.left_obstacle_index {
+                        line.right_obstacle_index
+                    } else {
+                        assert_eq!(receiver, line.right_obstacle_index);
+                        line.left_obstacle_index
+                    };
+                }
+                assert_eq!(
+                    receiver, expected,
+                    "lift {lift_type}, high door {high_type}"
+                );
+            }
+        }
     }
 
     #[test]

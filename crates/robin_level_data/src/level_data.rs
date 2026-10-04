@@ -1702,6 +1702,19 @@ pub struct RawDoor {
     pub layer_in: u16,
 }
 
+/// Place an inside approach at the animation's fixed offset from its midpoint.
+/// Shared by runtime door loading and compiled receiving-boundary construction.
+pub fn offset_door_approach(inside: [f32; 2], middle: [f32; 2], distance: f32) -> [f32; 2] {
+    let dx = inside[0] - middle[0];
+    let dy = inside[1] - middle[1];
+    let length = (dx * dx + dy * dy).sqrt();
+    if length <= f32::EPSILON {
+        return inside;
+    }
+    let scale = distance / length;
+    [middle[0] + dx * scale, middle[1] + dy * scale]
+}
+
 /// Lift data from the LIFT/AZ chunk.
 #[derive(
     Debug,
@@ -2923,7 +2936,7 @@ impl LoadedLevel {
             if geometry.elevation_lines.is_empty() {
                 geometry.elevation_lines = crate::compiled_elevation::derive(&geometry)?;
             }
-            let stair_connections = crate::compiled_elevation::stair_connections(&geometry);
+            let lift_connections = crate::compiled_elevation::lift_connections(&geometry);
             for (index, line) in geometry.elevation_lines.iter().enumerate() {
                 let [a, b] = line.map_endpoints();
                 if a == b
@@ -2946,7 +2959,7 @@ impl LoadedLevel {
                         .is_some_and(|(sector, layer)| {
                             area_refs.contains(&(sector, layer))
                                 && (layer == line.layer
-                                    || stair_connections.get(&(sector, layer)).is_some_and(
+                                    || lift_connections.get(&(sector, layer)).is_some_and(
                                         |areas| {
                                             areas.iter().any(|&(sector, layer)| {
                                                 layer == line.layer

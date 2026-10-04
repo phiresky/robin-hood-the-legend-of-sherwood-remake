@@ -679,14 +679,12 @@ impl Door {
             DoorType::LiftHighCrenel if lift_wall => 65.0,
             _ => return,
         };
-        let dx = self.point_in.x - self.point_mid.x;
-        let dy = self.point_in.y - self.point_mid.y;
-        let len = (dx * dx + dy * dy).sqrt();
-        if len <= f32::EPSILON {
-            return;
-        }
-        let inv = offset / len;
-        self.point_in = MapPoint::new(self.point_mid.x + dx * inv, self.point_mid.y + dy * inv);
+        let point = crate::level_data::offset_door_approach(
+            [self.point_in.x, self.point_in.y],
+            [self.point_mid.x, self.point_mid.y],
+            offset,
+        );
+        self.point_in = MapPoint::new(point[0], point[1]);
     }
 
     /// Compute the A* gate-graph traversal penalty for this door.
