@@ -10,9 +10,10 @@ from evidence_io import sha,write_json
 def selected_workspace(out,asset,catalog_path):
     northwest=asset=='croisement02-northwest-boundary-shrub-54'
     western=asset in ('croisement02-shrub-57','croisement02-shrub-60')
-    refit=out/('understory-round-7/assets' if northwest else 'understory-round-9/assets' if western else 'understory-round-2/assets')/asset
+    forest_round={'croisement02-shrub-62':11,'croisement02-shrub-63':13,'croisement02-shrub-64':8}.get(asset)
+    refit=out/(f'understory-round-{forest_round}/assets' if forest_round else 'understory-round-7/assets' if northwest else 'understory-round-9/assets' if western else 'understory-round-2/assets')/asset
     candidate=refit/'inspection/shrub-candidate.json'
-    proof=refit/'inspection'/('support-evidence.json' if northwest or western else 'refit-evidence.json')
+    proof=refit/'inspection'/('support-evidence.json' if northwest or western or forest_round else 'refit-evidence.json')
     if candidate.exists() and proof.exists():
         receipt=json.loads(candidate.read_text())
         group=next(g for g in json.loads(catalog_path.read_text())['groups'] if g['id']==asset)
@@ -25,7 +26,10 @@ def selected_workspace(out,asset,catalog_path):
                 or audit['status']!='PASS' or not review['ready_for_geometry_review']
                 or review['sheet_sha256']!=sha(refit/'inspection/actual-materials/sheet.png')):
             raise ValueError('Refitted shrub review changed')
-        if (northwest or western) and review.get('support_evidence_sha256')!=sha(proof):raise ValueError('Shrub support evidence changed')
+        if (northwest or western or forest_round) and review.get('support_evidence_sha256')!=sha(proof):raise ValueError('Shrub support evidence changed')
+        if forest_round and asset!='croisement02-shrub-64':
+            fill=refit/'inspection/inferred-fill-evidence.json'
+            if review.get('inferred_fill_evidence_sha256')!=sha(fill):raise ValueError('Forest inferred leaf fill evidence changed')
         coverage=json.loads((refit/'inspection/source-coverage/report.json').read_text())
         bounds=json.loads((refit/'inspection/actual-materials/opacity-bounds.json').read_text())
         if coverage['model_sha256']!=model_hash or bounds['model_sha256']!=model_hash or coverage['intersection_over_union']<.95 or min(c['depth_width_ratio'] for c in bounds['crowns'])<1:
