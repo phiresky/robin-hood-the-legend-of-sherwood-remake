@@ -92,6 +92,17 @@ def main():
                             for r in neighbours)):
                 item['source_comparison_secondary']=joint['sheet']
                 item['source_comparison_secondary_label']=joint.get('label','Source and oblique views with approved neighbouring trees; lower row hides foliage' if stem else 'Joint source and oblique review with neighbouring geometry')
+        log_comparison=workspace/'inspection/approved-baseline-comparison/comparison.json'
+        log_residual=workspace/'inspection/source-coverage/residual-review.json'
+        if group['id']=='croisement02-southwest-log-pile' and log_comparison.exists() and log_residual.exists():
+            compared=json.loads(log_comparison.read_text());residual=json.loads(log_residual.read_text())
+            if compared['model_sha256']!=model_hash or residual['model_sha256']!=model_hash or compared['comparison_sha256']!=sha(log_comparison.parent/'comparison.png'):
+                raise ValueError('Stale additive log comparison')
+            item['source_comparison_secondary']=str(log_comparison.parent/'comparison.png')
+            item['source_comparison_secondary_label']='Original source, approved baseline, additive candidate, and aligned source overlays'
+            item['projection_errors']=str(log_residual.parent/'residual-review.png')
+            item['projection_errors_label']='Residuals: red timber outlines; magenta fine twig region; yellow ambiguous plant/wood boundary'
+            item['notes'].append('Earlier approved geometry and fill remain unchanged. New hidden wood faces are neutral pending fill; residual fine wood and plant boundaries remain documented, not 100% silhouette coverage.')
         cleanup_comparison=workspace/'inspection/baseline-comparison'
         if (cleanup_comparison/'evidence.json').exists():
             compared=json.loads((cleanup_comparison/'evidence.json').read_text())

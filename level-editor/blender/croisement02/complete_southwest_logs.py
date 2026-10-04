@@ -159,6 +159,7 @@ def verify_saved(workspace):
     if actual!=expected:raise ValueError('Reopened approved geometry or appearance changed')
     if any(sha(Path(p))!=digest for p,digest in evidence['protected_files'].items()):raise ValueError('Approved baseline file changed')
     write_json(workspace/'inspection/reopened-preservation.json',dict(status='PASS',model_sha256=sha(workspace/'model.blend'),preservation_sha256=sha(workspace/'inspection/preservation.json'),existing_objects_unchanged=len(actual),scope='Existing vertex positions, faces, UVs, transforms, materials, shader nodes and packed images are unchanged.'))
+    write_json(workspace/'validation.json',validate(workspace))
     print('Reopened preservation PASS',workspace,flush=True)
 
 
