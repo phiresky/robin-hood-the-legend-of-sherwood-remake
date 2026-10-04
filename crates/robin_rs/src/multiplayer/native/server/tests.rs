@@ -1149,7 +1149,7 @@ fn gameplay_input_requires_both_host_and_peer_snapshot_readiness() {
 }
 
 #[test]
-fn story_progress_uses_authenticated_names_before_sim_seat_admission() {
+fn story_modal_progress_recovers_authenticated_names_before_sim_seat_admission() {
     use robin_engine::multiplayer::{ModalInstanceId, ModalProgress, NetMsg};
     use robin_engine::player_command::ModalKind;
     let (context, events) = dispatch_test_context();
@@ -1183,4 +1183,19 @@ fn story_progress_uses_authenticated_names_before_sim_seat_admission() {
     };
     assert_eq!(local, remote);
     assert_eq!(remote.player_names, ["host", "slow reader"]);
+    let recovery = context.peers.lock().modals.messages();
+    assert!(
+        matches!(recovery.as_slice(), [NetMsg::ModalProgress(progress)] if progress == &remote)
+    );
+    // Losing the socket does not lose the currently held story or its names.
+    super::release_peer_session(
+        &context,
+        PlayerId(seat.seat),
+        PeerOwner::Native([1; 32]),
+        seat.generation,
+    );
+    let recovered = context.peers.lock().modals.messages();
+    assert!(
+        matches!(recovered.as_slice(), [NetMsg::ModalProgress(progress)] if progress == &remote)
+    );
 }

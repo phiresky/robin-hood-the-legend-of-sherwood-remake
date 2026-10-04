@@ -631,6 +631,7 @@ async fn drive_scripted_modal_lanes(
             let Some((lane, items)) = take_next_scripted_batch(&mut host.effects, false) else {
                 break;
             };
+            let requested: Vec<_> = items.iter().cloned().collect();
             ui.active_modal = match lane {
                 ScriptedModalLane::Dialogue => start_active_dialogue_batch(
                     items
@@ -680,6 +681,23 @@ async fn drive_scripted_modal_lanes(
                     unreachable!("leave prompt follows scripted presentation")
                 }
             };
+            if host.transport.local_seat() == engine_player_command::PlayerId::HOST
+                && let Some(net) = host.transport.net()
+            {
+                let mut retained = ui
+                    .active_modal
+                    .as_ref()
+                    .map(ActiveModal::pending_story_kinds)
+                    .unwrap_or_default();
+                for kind in requested {
+                    if let Some(index) = retained.iter().position(|retained| retained == &kind) {
+                        retained.remove(index);
+                    } else {
+                        net.discard_pending_modal(&kind)
+                            .expect("filtered story owns a reservation");
+                    }
+                }
+            }
         }
         if !rendered && ui.active_modal.is_some() {
             let outcome = tick_active_modal(

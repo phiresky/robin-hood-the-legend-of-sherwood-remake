@@ -2,12 +2,7 @@ use robin_engine::multiplayer as engine_multiplayer;
 use robin_engine::player_command::{DialogResult, ModalKind, PlayerId};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ModalPublication {
-    HostDecisionQueued,
-    ClientProposalQueued,
-    HostVoteQueued,
-}
+pub use engine_multiplayer::ModalPublication;
 
 #[derive(Default, Serialize, Deserialize)]
 enum DismissalState {
@@ -118,7 +113,7 @@ impl ModalDismissalGate {
 /// Multiplayer synchronization hook for cooperative modal UI.
 ///
 /// Each modal occurrence is identified by the host session, the frame on which
-/// it opened, and a per-kind occurrence counter. Clients can submit visible
+/// its effect was admitted, and a per-kind occurrence counter. Clients can submit visible
 /// requests, but only a host-authored decision may close the surface.
 pub struct ModalNet<'a> {
     net: &'a engine_multiplayer::NetChannels,
@@ -129,13 +124,12 @@ pub struct ModalNet<'a> {
 
 impl<'a> ModalNet<'a> {
     pub fn new(net: &'a engine_multiplayer::NetChannels, kind: ModalKind, is_host: bool) -> Self {
-        let instance = net.open_modal_instance(&kind).unwrap_or_else(|error| {
-            panic!("failed to identify multiplayer modal {kind:?}: {error}")
-        });
-        if is_host && engine_multiplayer::is_shared_story_modal(&kind) {
-            net.announce_modal_instance(instance, &kind)
-                .unwrap_or_else(|error| panic!("failed to announce story modal: {error}"));
+        let instance = if engine_multiplayer::is_shared_story_modal(&kind) {
+            net.current_modal_instance(&kind)
+        } else {
+            net.open_modal_instance(&kind)
         }
+        .unwrap_or_else(|error| panic!("failed to bind multiplayer modal {kind:?}: {error}"));
         Self {
             net,
             kind,
@@ -170,198 +164,38 @@ impl<'a> ModalNet<'a> {
         }
     }
 
-    /// Publication success is distinct from permission to complete the modal.
-    fn needs_consensus(&self) -> bool {
-        matches!(
-            self.kind,
-            ModalKind::Dialog { .. }
-                | ModalKind::PopupText { .. }
-                | ModalKind::SherwoodReport
-                | ModalKind::Debriefing { .. }
-        )
-    }
-
-    fn publish_consensus_if_ready(&self) -> Result<Option<DialogResult>, String> {
-        let Some(result) = self.net.unanimous_modal_result(self.instance, &self.kind)? else {
-            return Ok(None);
-        };
-        self.net
-            .decide_modal_dismiss(self.instance, self.kind.clone(), result)?;
-        self.net
-            .complete_modal_instance(&self.kind, self.instance)?;
-        Ok(Some(result))
-    }
-
     pub fn publish(&self, result: DialogResult) -> Result<ModalPublication, String> {
-        if self.is_host && self.needs_consensus() {
+        let publication =
             self.net
-                .record_modal_vote(self.instance, &self.kind, PlayerId::HOST, result)?;
-            return Ok(if self.publish_consensus_if_ready()?.is_some() {
-                ModalPublication::HostDecisionQueued
-            } else {
-                self.net.publish_modal_progress(self.instance, &self.kind)?;
-                ModalPublication::HostVoteQueued
-            });
+                .submit_modal_outcome(self.instance, &self.kind, result, self.is_host)?;
+        if publication == ModalPublication::HostDecisionQueued {
+            self.net
+                .complete_modal_instance(&self.kind, self.instance)?;
         }
-        let send = if self.is_host {
-            self.net
-                .decide_modal_dismiss(self.instance, self.kind.clone(), result)
-        } else {
-            self.net
-                .propose_modal_dismiss(self.instance, self.kind.clone(), result)
-        };
-        send.map_err(|error| {
-            format!(
-                "queue modal {:?} {:?} {result:?}: {error}",
-                self.instance, self.kind
-            )
-        })?;
-        if !self.is_host {
-            tracing::info!(
-                ?self.instance,
-                kind = ?self.kind,
-                ?result,
-                "multiplayer modal request sent to host"
-            );
-            return Ok(ModalPublication::ClientProposalQueued);
-        }
-        self.net
-            .complete_modal_instance(&self.kind, self.instance)
-            .unwrap_or_else(|error| {
-                panic!(
-                    "failed to complete authoritative multiplayer modal {:?}: {error}",
-                    self.instance
-                )
-            });
-        Ok(ModalPublication::HostDecisionQueued)
+        Ok(publication)
     }
 
     pub fn poll_remote_dismissal(&self) -> Option<DialogResult> {
-        let mut deferred_modal = Vec::new();
-        let mut deferred_other = Vec::new();
-        let mut matched = None;
-        while let Ok(event) = self.net.try_recv_modal_event() {
-            match event {
-                engine_multiplayer::NetEvent::ModalDecision(
-                    engine_multiplayer::ModalDecision {
-                        instance,
-                        kind,
-                        result,
-                        decision_frame,
-                    },
-                ) if instance == self.instance
-                    && kind == self.kind
-                    && decision_frame >= instance.opened_frame
-                    // Shared stories freeze the local timeline. The host may
-                    // have published its post-tick cursor after opening while a
-                    // slower client opened during a clock hold one frame behind.
-                    // Waiting for that frozen cursor would deadlock dismissal.
-                    && (self.needs_consensus() || decision_frame <= self.net.current_frame()) =>
-                {
-                    if self.is_host {
-                        panic!(
-                            "host received a remote authoritative modal decision for {:?}",
-                            self.instance
-                        );
-                    }
-                    matched = Some(result);
-                    break;
-                }
-                engine_multiplayer::NetEvent::ModalProposal {
-                    from,
-                    proposal:
-                        engine_multiplayer::ModalProposal {
-                            instance,
-                            kind,
-                            result,
-                            requested_frame,
-                        },
-                } if self.is_host && instance == self.instance && kind == self.kind => {
-                    if self.needs_consensus() {
-                        self.net
-                            .record_modal_vote(instance, &kind, from, result)
-                            .unwrap_or_else(|error| {
-                                panic!("invalid modal acknowledgement: {error}")
-                            });
-                    }
-                    if self.needs_consensus()
-                        && self
-                            .net
-                            .unanimous_modal_result(self.instance, &self.kind)
-                            .expect("modal state available")
-                            .is_none()
-                    {
-                        self.net.publish_modal_progress(self.instance, &self.kind)
-                            .unwrap_or_else(|error| tracing::error!(%error, "modal progress publication failed"));
-                    }
-                    self.net
-                        .record_visible_modal_request(engine_multiplayer::VisibleModalRequest {
-                            from,
-                            instance,
-                            kind,
-                            result,
-                            requested_frame,
-                        })
-                        .unwrap_or_else(|error| {
-                            panic!("failed to retain visible multiplayer modal request: {error}")
-                        });
-                    tracing::info!(
-                        ?from,
-                        ?instance,
-                        ?result,
-                        "multiplayer client requested a host modal result"
-                    );
-                }
-                engine_multiplayer::NetEvent::ModalProgress(progress)
-                    if progress.instance == self.instance && progress.kind == self.kind =>
-                {
-                    if self.is_host {
-                        self.net
-                            .set_modal_player_names(progress.player_names.clone());
-                        continue;
-                    }
-                    self.net
-                        .apply_modal_progress(&progress)
-                        .unwrap_or_else(|error| panic!("invalid modal progress: {error}"));
-                }
-                event @ (engine_multiplayer::NetEvent::ModalProposal { .. }
-                | engine_multiplayer::NetEvent::ModalDecision { .. }
-                | engine_multiplayer::NetEvent::ModalProgress(_)) => {
-                    deferred_modal.push(event);
-                }
-                other => deferred_other.push(other),
-            }
-        }
-        for event in deferred_modal {
-            self.net.defer_modal_event(event).unwrap_or_else(|error| {
-                panic!("failed to preserve unmatched multiplayer modal event: {error}")
-            });
-        }
-        self.net.defer_events(deferred_other);
-        if self.is_host && self.needs_consensus() {
-            return self.publish_consensus_if_ready().unwrap_or_else(|error| {
-                tracing::error!(%error, "modal consensus publication failed; will retry");
-                None
-            });
-        }
-        if matched.is_some() {
+        self.net
+            .service_modal_session(self.is_host)
+            .unwrap_or_else(|error| panic!("modal session control failed: {error}"));
+        let result = self
+            .net
+            .modal_decision(self.instance, &self.kind)
+            .expect("modal session decision available");
+        if result.is_some() {
             self.net
                 .complete_modal_instance(&self.kind, self.instance)
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "failed to complete remote multiplayer modal {:?}: {error}",
-                        self.instance
-                    )
-                });
+                .unwrap_or_else(|error| panic!("failed to retire modal projection: {error}"));
         }
-        matched
+        result
     }
 
     /// Drain acknowledgements for presentation. Story pages still require
     /// every participant, including the host, before publishing a decision.
     pub fn take_visible_requests(&self) -> Vec<(PlayerId, DialogResult)> {
         self.net
-            .take_visible_modal_requests(self.instance)
+            .take_visible_modal_requests(self.instance, &self.kind)
             .unwrap_or_else(|error| {
                 panic!("failed to read visible multiplayer modal requests: {error}")
             })
@@ -375,6 +209,18 @@ impl<'a> ModalNet<'a> {
 mod tests {
     use super::*;
     use robin_engine::multiplayer::{NetChannels, NetEvent, NetOutbound};
+
+    fn bind_modal(net: &NetChannels, kind: ModalKind, is_host: bool) -> ModalNet<'_> {
+        // Most adapter fixtures start at an already-admitted effect boundary.
+        // Tests covering transport admission use the real host announcement.
+        if net.open_modal_instance(&kind).is_err() {
+            net.modal_effect_admission()
+                .admit(std::slice::from_ref(&kind))
+                .unwrap();
+        }
+        net.present_modal(&kind, is_host).unwrap();
+        ModalNet::new(net, kind, is_host)
+    }
 
     fn kind() -> ModalKind {
         ModalKind::PopupText { text_id: 7 }
@@ -394,7 +240,7 @@ mod tests {
     #[test]
     fn client_proposal_does_not_become_a_decision_locally() {
         let (net, _incoming, outgoing) = fixture();
-        let modal = ModalNet::new(&net, kind(), false);
+        let modal = bind_modal(&net, kind(), false);
         assert_eq!(
             modal.publish(DialogResult::Completed).unwrap(),
             ModalPublication::ClientProposalQueued
@@ -411,7 +257,7 @@ mod tests {
     fn host_proposal_is_advisory_until_host_ui_decides() {
         let (net, incoming, outgoing) = fixture();
         net.set_modal_player_count(2);
-        let modal = ModalNet::new(&net, kind(), true);
+        let modal = bind_modal(&net, kind(), true);
         assert!(matches!(
             outgoing.try_recv().unwrap(),
             NetOutbound::ModalProgress(_)
@@ -452,7 +298,7 @@ mod tests {
     fn host_waits_for_every_client_including_late_loading_clients() {
         let (net, incoming, outgoing) = fixture();
         net.set_modal_player_count(3);
-        let modal = ModalNet::new(&net, kind(), true);
+        let modal = bind_modal(&net, kind(), true);
         assert!(matches!(
             outgoing.try_recv().unwrap(),
             NetOutbound::ModalProgress(_)
@@ -502,12 +348,12 @@ mod tests {
             net.set_modal_player_count(3);
             net.set_modal_player_names(vec!["Alice".into(), "Bob".into(), "Carol".into()]);
         }
-        let host_modal = ModalNet::new(&host, kind(), true);
+        let host_modal = bind_modal(&host, kind(), true);
         assert!(matches!(
             host_out.try_recv().unwrap(),
             NetOutbound::ModalProgress(_)
         ));
-        let client_modal = ModalNet::new(&client, kind(), false);
+        let client_modal = bind_modal(&client, kind(), false);
         assert_eq!(
             host_modal.publish(DialogResult::Completed).unwrap(),
             ModalPublication::HostVoteQueued
@@ -547,7 +393,7 @@ mod tests {
         client.set_modal_player_count(2);
         host.publish_frame(666);
         client.publish_frame(704);
-        let host_modal = ModalNet::new(&host, kind(), true);
+        let host_modal = bind_modal(&host, kind(), true);
         let NetOutbound::ModalProgress(opening) = host_out.try_recv().unwrap() else {
             panic!("missing opening announcement")
         };
@@ -571,7 +417,7 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
-        let client_modal = ModalNet::new(&client, kind(), false);
+        let client_modal = bind_modal(&client, kind(), false);
         assert_eq!(client_modal.instance(), host_modal.instance());
         assert_eq!(client_modal.poll_remote_dismissal(), None);
         assert_eq!(
@@ -619,7 +465,7 @@ mod tests {
         let (client, client_in, client_out) = fixture();
         host.set_modal_player_count(2);
         client.set_modal_player_count(2);
-        let first = ModalNet::new(&host, kind(), true);
+        let first = bind_modal(&host, kind(), true);
         let NetOutbound::ModalProgress(opening) = host_out.try_recv().unwrap() else {
             panic!("expected first opening");
         };
@@ -627,7 +473,7 @@ mod tests {
             .defer_modal_event(NetEvent::ModalProgress(opening))
             .unwrap();
         assert_eq!(client.take_ready_story_announcements(0).unwrap(), [kind()]);
-        let client_first = ModalNet::new(&client, kind(), false);
+        let client_first = bind_modal(&client, kind(), false);
         let mut gate = ModalDismissalGate::default();
         // The host publishes the post-tick cursor on its next frame. A slower
         // client may already have opened the announced scroll while held at 0.
@@ -651,7 +497,7 @@ mod tests {
             ModalPublication::HostDecisionQueued
         );
         let next_kind = ModalKind::PopupText { text_id: 8 };
-        let next = ModalNet::new(&host, next_kind.clone(), true);
+        let next = bind_modal(&host, next_kind.clone(), true);
         // Deliver both the old close and the next opening after a network delay.
         for event in host_out.try_iter() {
             match event {
@@ -681,14 +527,14 @@ mod tests {
             client.take_ready_story_announcements(1).unwrap(),
             [next_kind.clone()]
         );
-        let client_next = ModalNet::new(&client, next_kind, false);
+        let client_next = bind_modal(&client, next_kind, false);
         assert_eq!(client_next.instance(), next.instance());
     }
 
     #[test]
     fn client_only_closes_on_host_decision() {
         let (net, incoming, _outgoing) = fixture();
-        let modal = ModalNet::new(&net, kind(), false);
+        let modal = bind_modal(&net, kind(), false);
         incoming
             .send(NetEvent::ModalDecision(engine_multiplayer::ModalDecision {
                 instance: modal.instance(),
@@ -704,11 +550,11 @@ mod tests {
     fn disconnected_publication_is_an_error_for_both_roles_and_preserves_instance() {
         for is_host in [false, true] {
             let (net, _incoming, outgoing) = fixture();
-            let modal = ModalNet::new(&net, kind(), is_host);
+            let modal = bind_modal(&net, kind(), is_host);
             let instance = modal.instance();
             drop(outgoing);
             assert!(modal.publish(DialogResult::Aborted).is_err());
-            assert_eq!(ModalNet::new(&net, kind(), is_host).instance(), instance);
+            assert_eq!(bind_modal(&net, kind(), is_host).instance(), instance);
         }
     }
 
@@ -717,7 +563,7 @@ mod tests {
         for is_host in [false, true] {
             let (net, _incoming, outgoing) = fixture();
             drop(outgoing);
-            let modal = ModalNet::new(&net, kind(), is_host);
+            let modal = bind_modal(&net, kind(), is_host);
             let mut gate = ModalDismissalGate::default();
             assert_eq!(gate.request(DialogResult::Aborted, Some(&modal)), None);
             assert!(matches!(
@@ -739,7 +585,7 @@ mod tests {
             // Replace only the disconnected channel fixture, retaining the same
             // session/occurrence identity. No second request/UI action is made.
             let (replacement, _incoming, outgoing) = fixture();
-            let replacement = ModalNet::new(&replacement, kind(), is_host);
+            let replacement = bind_modal(&replacement, kind(), is_host);
             assert_eq!(replacement.instance(), modal.instance());
             let completed = gate.poll(Some(&replacement));
             assert_eq!(completed, is_host.then_some(DialogResult::Aborted));
@@ -765,7 +611,7 @@ mod tests {
     #[test]
     fn driver_gate_waits_for_authority_and_delivers_its_result_once() {
         let (net, incoming, outgoing) = fixture();
-        let modal = ModalNet::new(&net, kind(), false);
+        let modal = bind_modal(&net, kind(), false);
         let mut gate = ModalDismissalGate::default();
         assert_eq!(gate.request(DialogResult::Aborted, Some(&modal)), None);
         assert!(matches!(gate.state, DismissalState::AwaitingAuthority));
@@ -803,7 +649,7 @@ mod tests {
     fn authoritative_decision_can_complete_a_failed_proposal_without_resending() {
         let (net, incoming, outgoing) = fixture();
         drop(outgoing);
-        let modal = ModalNet::new(&net, kind(), false);
+        let modal = bind_modal(&net, kind(), false);
         let mut gate = ModalDismissalGate::default();
         assert_eq!(gate.request(DialogResult::Aborted, Some(&modal)), None);
         incoming
@@ -822,11 +668,11 @@ mod tests {
     fn retained_outcome_cannot_publish_into_a_different_modal_occurrence() {
         let (net, _incoming, outgoing) = fixture();
         drop(outgoing);
-        let modal = ModalNet::new(&net, kind(), true);
+        let modal = bind_modal(&net, kind(), true);
         let mut gate = ModalDismissalGate::default();
         assert_eq!(gate.request(DialogResult::Aborted, Some(&modal)), None);
         let (replacement, _incoming, outgoing) = fixture();
-        let wrong_modal = ModalNet::new(&replacement, ModalKind::PopupText { text_id: 8 }, true);
+        let wrong_modal = bind_modal(&replacement, ModalKind::PopupText { text_id: 8 }, true);
         assert_eq!(gate.poll(Some(&wrong_modal)), None);
         assert!(outgoing.try_recv().is_err());
         assert!(gate.is_pending());

@@ -121,6 +121,7 @@ pub(super) struct ServerPeers {
     pub(super) sessions: PeerSessions,
     pub(super) readiness: ReadyBarrier,
     pub(super) transitions: SnapshotTransitions,
+    pub(super) modals: robin_engine::multiplayer::ModalRecoveryState,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -208,6 +209,7 @@ impl ServerPeers {
             sessions: PeerSessions::new(expected_players),
             readiness: ReadyBarrier::default(),
             transitions: SnapshotTransitions::default(),
+            modals: Default::default(),
         }
     }
 
@@ -216,6 +218,7 @@ impl ServerPeers {
             sessions: PeerSessions::from_continuation(continuation),
             readiness: ReadyBarrier::default(),
             transitions: SnapshotTransitions::default(),
+            modals: Default::default(),
         }
     }
 }
@@ -1005,6 +1008,14 @@ pub(super) fn prepare_peer_session(
             } else {
                 None
             };
+            // Session control is durable independently of simulation ticks.
+            // In particular, a scroll may open or close while this engine
+            // snapshot remains frozen at the same frame.
+            for message in p.modals.messages() {
+                sender
+                    .send(message)
+                    .map_err(|_| writer_closed("writer queue closed before modal recovery"))?;
+            }
             if let Some(transition) = p.transitions.pending() {
                 sender
                     .send(NetMsg::PrepareSnapshotTransition {

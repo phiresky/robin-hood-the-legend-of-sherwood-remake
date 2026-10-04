@@ -522,6 +522,14 @@ impl NetDrain<'_> {
                     .diagnostics_mut()
                     .queue_console_output("Reconnected; synchronizing game…".into());
                 tracing::info!("multiplayer: transport reconnected; awaiting host snapshot");
+                self.host
+                    .transport
+                    .net()
+                    .expect("reconnected transport retains channels")
+                    .resend_pending_modal_proposals()
+                    .map_err(|error| {
+                        channel_failure("failed to recover modal acknowledgements", error)
+                    })?;
             }
             NetEvent::MissionConfig {
                 mission_id,
@@ -988,12 +996,14 @@ impl NetDrain<'_> {
         }
         if needs_rewind {
             let rollback_start = web_time::Instant::now();
+            let mut reconstructed_stories = Vec::new();
             if let Some((new_engine, mut telemetry)) = rewind_from_recent_timeline_history(
                 effective_frame,
                 assets,
                 rewind_buffer,
                 earliest,
                 late_input_count,
+                &mut reconstructed_stories,
             ) {
                 telemetry.total = rollback_start.elapsed();
                 tracing::info!(
@@ -1014,7 +1024,12 @@ impl NetDrain<'_> {
                 manager.engine = new_engine;
                 self.rollback_telemetry = Some(telemetry);
                 self.rewrote_sim_state = true;
-            } else if let Some(new_engine) = rewind_buffer.rewind_to(assets, effective_frame) {
+            } else if let Some(new_engine) = {
+                reconstructed_stories.clear();
+                rewind_buffer.rewind_to_observe(assets, effective_frame, |frame, output| {
+                    collect_reconstructed_stories(frame, output, &mut reconstructed_stories);
+                })
+            } {
                 let telemetry = MultiplayerRollbackTelemetry {
                     path: "rewind-buffer",
                     earliest_frame: earliest,
@@ -1046,6 +1061,21 @@ impl NetDrain<'_> {
                 panic!(
                     "multiplayer rollback failed: canonical journal accepted {late_input_count} late input(s) from frame {earliest}, but no retained snapshot can reconstruct authoritative frame {effective_frame}"
                 );
+            }
+            if !local_is_peer {
+                let admission = host
+                    .transport
+                    .net()
+                    .expect("rollback retains the authoritative session")
+                    .modal_effect_admission();
+                let recovered = admission
+                    .reconcile_frames(earliest, effective_frame, &reconstructed_stories)
+                    .map_err(|error| {
+                        channel_failure("story rollback reconciliation failed", error)
+                    })?;
+                // Identities are already reserved by reconciliation. This queue
+                // is only the session's next presentation projection.
+                host.effects.modals.extend(recovered);
             }
         }
         if let Some(reason) = host_reconnect_reason
@@ -1162,6 +1192,10 @@ pub(super) fn drain_mission_network(
     if let Some(net) = host.transport.net() {
         // Publish an adopted snapshot's cursor before permitting its first input.
         net.publish_frame(timeline.frame_number());
+        net.service_modal_session(
+            host.transport.local_seat() == robin_engine::player_command::PlayerId::HOST,
+        )
+        .map_err(|error| channel_failure("modal session control failed", error))?;
         if host.transport.local_seat() != robin_engine::player_command::PlayerId::HOST {
             let announced = net
                 .take_ready_story_announcements(timeline.frame_number())
@@ -1175,6 +1209,7 @@ pub(super) fn drain_mission_network(
                 host.effects.modals.push(kind);
             }
         }
+        drain.pause_simulation |= net.story_barrier_pending();
         net.set_gameplay_input_enabled(!admission_pause && !host.transport.reconnecting());
     }
 
@@ -1187,12 +1222,30 @@ pub(super) fn drain_mission_network(
     Ok(drain)
 }
 
+fn collect_reconstructed_stories(
+    frame: u32,
+    output: &robin_engine::engine::SimulationFrameOutput,
+    collected: &mut Vec<(u32, Vec<robin_engine::player_command::ModalKind>)>,
+) {
+    let kinds: Vec<_> = [&output.events, &output.post_boundary_events]
+        .into_iter()
+        .chain(output.post_initialize_events.iter())
+        .flat_map(|effects| effects.modals.iter())
+        .filter(|kind| robin_engine::multiplayer::is_shared_story_modal(kind))
+        .cloned()
+        .collect();
+    if !kinds.is_empty() {
+        collected.push((frame, kinds));
+    }
+}
+
 fn rewind_from_recent_timeline_history(
     target_frame: u32,
     assets: &LevelAssets,
     rewind_buffer: &mut RewindBuffer,
     start_frame: u32,
     late_input_count: usize,
+    reconstructed_stories: &mut Vec<(u32, Vec<robin_engine::player_command::ModalKind>)>,
 ) -> Option<(Engine, MultiplayerRollbackTelemetry)> {
     let restore_start = web_time::Instant::now();
     let mut snapshot = rewind_buffer.restore_recent(assets, start_frame, RestorePolicy::Exact)?;
@@ -1228,7 +1281,7 @@ fn rewind_from_recent_timeline_history(
         let replayed_frame = replay_authoritative_frame_profiled(&mut snapshot, assets, frame);
         replay_apply += duration_from_micros(replayed_frame.timing.apply_us);
         replay_tick += duration_from_micros(replayed_frame.timing.tick_us);
-        let _discarded_frame_output = replayed_frame.output;
+        collect_reconstructed_stories(boundary, &replayed_frame.output, reconstructed_stories);
     }
     let remember_start = web_time::Instant::now();
     corrected_history.remember(snapshot.clone());
@@ -1293,7 +1346,16 @@ pub(super) async fn setup_multiplayer_session(
         campaign,
     )
     .await
-    .map_err(MultiplayerSessionError::Setup)
+    .map_err(MultiplayerSessionError::Setup)?;
+    if let Some(net) = host.transport.net() {
+        if host.transport.local_seat() == robin_engine::player_command::PlayerId::HOST {
+            host.effects
+                .bind_modal_session(net.modal_effect_admission());
+        } else {
+            host.effects.bind_remote_modal_session();
+        }
+    }
+    Ok(())
 }
 
 // Transport bring-up behind `setup_multiplayer_session`; without the feature
@@ -2019,7 +2081,10 @@ mod tests {
 
         // Frame 2 has no command entry, so reconstruction from frame 1 to 3
         // must fail after doing some work without truncating frames 2 and 3.
-        assert!(rewind_from_recent_timeline_history(3, &assets, &mut rewind, 1, 1).is_none());
+        assert!(
+            rewind_from_recent_timeline_history(3, &assets, &mut rewind, 1, 1, &mut Vec::new())
+                .is_none()
+        );
         assert!(
             rewind
                 .restore_recent(&assets, 2, RestorePolicy::Exact)

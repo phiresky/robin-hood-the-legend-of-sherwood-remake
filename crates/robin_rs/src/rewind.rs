@@ -180,6 +180,18 @@ impl RewindBuffer {
     /// Entries past the current target are pruned here because
     /// rewind walks monotonically backward within a session.
     pub fn rewind_to(&mut self, assets: &LevelAssets, target_frame: u32) -> Option<Engine> {
+        self.rewind_to_observe(assets, target_frame, |_, _| {})
+    }
+
+    /// Observe logical outputs without replaying their audiovisual effects.
+    /// Callers must collect them transactionally and use them only if the
+    /// complete reconstruction succeeds.
+    pub(crate) fn rewind_to_observe(
+        &mut self,
+        assets: &LevelAssets,
+        target_frame: u32,
+        mut observe: impl FnMut(u32, &robin_engine::engine::SimulationFrameOutput),
+    ) -> Option<Engine> {
         // Prune cache entries past the current target — they're the
         // "future" we've already rewound past and won't revisit.
         if let Some(cache) = &mut self.session
@@ -217,8 +229,8 @@ impl RewindBuffer {
                 tracing::error!(boundary, %error, "rewind paused input admission failed");
                 return None;
             }
-            let _discarded_frame_output =
-                replay_authoritative_frame(&mut snapshot, assets, frame).output;
+            let output = replay_authoritative_frame(&mut snapshot, assets, frame).output;
+            observe(boundary, &output);
             // Cache the state we just produced — it's the pre-tick
             // state for `frame + 1`.
             if let Some(cache) = &mut self.session

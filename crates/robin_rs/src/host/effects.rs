@@ -53,6 +53,8 @@ impl SherwoodTradingAccess {
 pub struct HostEffectBatches {
     requests: robin_engine::engine::HostEffects,
     next_trade_request_id: u64,
+    modal_admission: Option<robin_engine::multiplayer::ModalEffectAdmission>,
+    remote_story_session: bool,
 }
 
 impl std::ops::Deref for HostEffectBatches {
@@ -69,6 +71,95 @@ impl std::ops::DerefMut for HostEffectBatches {
 }
 
 impl HostEffectBatches {
+    pub(crate) fn bind_modal_session(
+        &mut self,
+        admission: robin_engine::multiplayer::ModalEffectAdmission,
+    ) {
+        admission
+            .admit(&self.requests.modals)
+            .expect("pending startup story admission");
+        self.modal_admission = Some(admission);
+        self.remote_story_session = false;
+    }
+
+    pub(crate) fn bind_remote_modal_session(&mut self) {
+        self.remote_story_session = true;
+        self.modal_admission = None;
+        self.requests
+            .modals
+            .retain(|kind| !robin_engine::multiplayer::is_shared_story_modal(kind));
+    }
+
+    pub fn append(&mut self, mut incoming: robin_engine::engine::HostEffects) {
+        if self.remote_story_session {
+            incoming
+                .modals
+                .retain(|kind| !robin_engine::multiplayer::is_shared_story_modal(kind));
+        }
+        let previous = self.requests.modals.len();
+        self.requests.append(incoming);
+        if let Some(admission) = &self.modal_admission {
+            admission
+                .admit(&self.requests.modals[previous..])
+                .expect("story effect admission");
+        }
+    }
+
+    fn extend_story_requests(
+        &mut self,
+        kinds: impl IntoIterator<Item = robin_engine::player_command::ModalKind>,
+    ) {
+        if self.remote_story_session {
+            return;
+        }
+        let previous = self.requests.modals.len();
+        self.requests.modals.extend(kinds);
+        if let Some(admission) = &self.modal_admission {
+            admission
+                .admit(&self.requests.modals[previous..])
+                .expect("story request admission");
+        }
+    }
+
+    pub fn extend_dialogues(&mut self, ids: impl IntoIterator<Item = i32>) {
+        self.extend_story_requests(
+            ids.into_iter()
+                .map(|dialog_id| robin_engine::player_command::ModalKind::Dialog { dialog_id }),
+        );
+    }
+
+    pub fn extend_popup_texts(&mut self, ids: impl IntoIterator<Item = i32>) {
+        self.extend_story_requests(
+            ids.into_iter()
+                .map(|text_id| robin_engine::player_command::ModalKind::PopupText { text_id }),
+        );
+    }
+
+    pub fn extend_debriefings(
+        &mut self,
+        ids: impl IntoIterator<Item = robin_engine::player_command::DebriefingTextId>,
+    ) {
+        self.extend_story_requests(
+            ids.into_iter()
+                .map(|text_id| robin_engine::player_command::ModalKind::Debriefing { text_id }),
+        );
+    }
+
+    pub fn request_sherwood_report(&mut self) {
+        if !self.requests.has_sherwood_report() {
+            self.extend_story_requests([robin_engine::player_command::ModalKind::SherwoodReport]);
+        }
+    }
+
+    pub fn clear(&mut self) {
+        if let Some(admission) = &self.modal_admission {
+            admission
+                .discard_pending()
+                .expect("clear pending story effects");
+        }
+        self.requests.clear();
+    }
+
     /// Allocate a process-session correlation id for one authoritative sale.
     /// This counter deliberately survives panel close/reopen and effect-queue
     /// clears so a delayed network receipt cannot alias a newer request.
@@ -103,5 +194,58 @@ impl HostEffectBatches {
         }
         access.validate()?;
         Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod modal_tests {
+    use super::*;
+    use robin_engine::multiplayer::{MultiplayerSessionId, NetChannels};
+    use robin_engine::player_command::ModalKind;
+
+    #[test]
+    fn story_requests_preserve_other_effects_and_reserve_only_retained_reports() {
+        let (net, _input, _output, _, _) = NetChannels::new();
+        net.install_session_id(MultiplayerSessionId([9; 32]))
+            .unwrap();
+        let mut effects = HostEffectBatches::default();
+        effects.bind_modal_session(net.modal_effect_admission());
+        effects.skip_render = true;
+        effects.request_sherwood_report();
+        let mut additional = robin_engine::engine::HostEffects::default();
+        additional.request_sherwood_report();
+        additional.skip_render = true;
+        effects.append(additional);
+        effects.extend_popup_texts([7]);
+        assert!(effects.skip_render);
+        assert_eq!(
+            effects.modals,
+            [
+                ModalKind::SherwoodReport,
+                ModalKind::PopupText { text_id: 7 }
+            ]
+        );
+        let report = net.open_modal_instance(&ModalKind::SherwoodReport).unwrap();
+        net.complete_modal_instance(&ModalKind::SherwoodReport, report)
+            .unwrap();
+        assert!(net.open_modal_instance(&ModalKind::SherwoodReport).is_err());
+        effects.clear();
+        assert!(
+            net.open_modal_instance(&ModalKind::PopupText { text_id: 7 })
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn remote_story_requests_require_session_admission() {
+        let mut effects = HostEffectBatches::default();
+        effects.extend_dialogues([1]);
+        effects.bind_remote_modal_session();
+        effects.extend_dialogues([2]);
+        effects.request_sherwood_report();
+        assert!(effects.modals.is_empty());
+        // The authoritative ingress explicitly projects its admitted instance.
+        effects.modals.push(ModalKind::Dialog { dialog_id: 3 });
+        assert_eq!(effects.dialogue_count(), 1);
     }
 }

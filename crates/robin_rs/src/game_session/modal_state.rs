@@ -113,6 +113,25 @@ pub(super) type ActiveDialogueBatch = ModalBatch<DialogueModalState>;
 pub(super) type ActivePopupScrollBatch = ModalBatch<PopupScrollModalState>;
 pub(super) type ActiveDebriefingBatch = ModalBatch<DebriefingModalState>;
 
+fn discard_aborted_batch<T>(
+    host: &Host,
+    lifecycle: &ModalBatchState<T>,
+    kind: &engine_player_command::ModalKind,
+    result: engine_player_command::DialogResult,
+    item_kind: impl Fn(&T) -> engine_player_command::ModalKind,
+) {
+    if matches!(kind, engine_player_command::ModalKind::Debriefing { .. })
+        && result == engine_player_command::DialogResult::Aborted
+        && host.transport.local_seat() == engine_player_command::PlayerId::HOST
+        && let Some(net) = host.transport.net()
+    {
+        for pending in lifecycle.pending_kinds(item_kind) {
+            net.discard_pending_modal(&pending)
+                .expect("aborted batch owns its pending story reservations");
+        }
+    }
+}
+
 impl<S: ModalScreen> ModalBatch<S> {
     fn new(pending: VecDeque<S::Item>) -> Self {
         Self {
@@ -132,11 +151,13 @@ impl<S: ModalScreen> ModalBatch<S> {
 
     fn apply_replay_result(
         &mut self,
+        host: &Host,
         kind: engine_player_command::ModalKind,
         result: engine_player_command::DialogResult,
         ctx: &mut ModalContext<'_>,
     ) {
         self.dismissal.retire();
+        discard_aborted_batch(host, &self.lifecycle, &kind, result, S::item_kind);
         self.lifecycle.finish(&kind, result);
         ctx.modal_dismissals
             .push(engine_player_command::PlayerCommand::ModalDismiss { kind, result });
@@ -177,6 +198,13 @@ impl<S: ModalScreen> ModalBatch<S> {
             && let Some(item) = self.lifecycle.start_next(S::item_kind)
         {
             let kind = S::item_kind(&item);
+            if let Some(net) = host.transport.net() {
+                net.present_modal(
+                    &kind,
+                    host.transport.local_seat() == engine_player_command::PlayerId::HOST,
+                )
+                .expect("session admitted the next modal before constructing its surface");
+            }
             let screen = S::begin(host, ctx, item);
             self.current = Some((kind, screen));
             self.dismissal = ModalDismissalGate::default();
@@ -192,7 +220,7 @@ impl<S: ModalScreen> ModalBatch<S> {
                 .take()
                 .expect("active modal disappeared while applying replay dismissal");
             screen.finish_replay(host, ctx, result);
-            self.apply_replay_result(kind, result, ctx);
+            self.apply_replay_result(host, kind, result, ctx);
             return;
         }
 
@@ -218,7 +246,7 @@ impl<S: ModalScreen> ModalBatch<S> {
                     .current
                     .take()
                     .expect("active modal disappeared while applying host decision");
-                self.apply_replay_result(kind, result, ctx);
+                self.apply_replay_result(host, kind, result, ctx);
                 return;
             }
             if self.dismissal.is_pending() {
@@ -251,6 +279,7 @@ impl<S: ModalScreen> ModalBatch<S> {
                     kind: kind.clone(),
                     result,
                 });
+            discard_aborted_batch(host, &self.lifecycle, kind, result, S::item_kind);
             self.lifecycle.finish(kind, result);
             self.current = None;
         }
@@ -571,6 +600,19 @@ pub(super) enum ActiveModal {
 }
 
 impl ActiveModal {
+    pub(super) fn pending_story_kinds(&self) -> Vec<engine_player_command::ModalKind> {
+        match self {
+            Self::Dialogue(batch) => batch.lifecycle.pending_kinds(DialogueModalState::item_kind),
+            Self::PopupScroll(batch) => batch
+                .lifecycle
+                .pending_kinds(PopupScrollModalState::item_kind),
+            Self::Debriefing(batch) => batch
+                .lifecycle
+                .pending_kinds(DebriefingModalState::item_kind),
+            _ => Vec::new(),
+        }
+    }
+
     pub(super) fn is_empty(&self) -> bool {
         match self {
             ActiveModal::Dialogue(batch) => batch.is_empty(),
@@ -756,6 +798,11 @@ pub(super) async fn drain_pending_dialogues(
                 .map(|(kind, sentences)| {
                     let replay_result = pop_matching_dismissal(replay_modal_dismissals, kind);
                     let modal_net = host.transport.net().map(|net| {
+                        net.present_modal(
+                            &kind,
+                            host.transport.local_seat() == engine_player_command::PlayerId::HOST,
+                        )
+                        .expect("session modal admission");
                         ModalNet::new(
                             net,
                             kind.clone(),
@@ -1279,6 +1326,11 @@ pub(super) async fn drain_pending_popup_scroll(
                 .picture_from(ctx.renderer, text_res, picture_id);
             let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
             let modal_net = host.transport.net().map(|net| {
+                net.present_modal(
+                    &kind,
+                    host.transport.local_seat() == engine_player_command::PlayerId::HOST,
+                )
+                .expect("session modal admission");
                 ModalNet::new(
                     net,
                     kind.clone(),
@@ -1337,6 +1389,11 @@ pub(super) async fn drain_pending_sherwood_stat(
             let kind = engine_player_command::ModalKind::SherwoodReport;
             let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
             let modal_net = host.transport.net().map(|net| {
+                net.present_modal(
+                    &kind,
+                    host.transport.local_seat() == engine_player_command::PlayerId::HOST,
+                )
+                .expect("session modal admission");
                 ModalNet::new(
                     net,
                     kind.clone(),

@@ -94,8 +94,9 @@ iroh transport and identity live in
 `robin_rs::multiplayer::{native, identity}`; the relay-only browser client
 lives in `robin_rs::multiplayer::wasm`. Canonical ticket and content-closure
 code is shared across the platform boundary.
-Mission-loop admission, input scheduling, rollback, hash comparison and modal
-synchronization live in `robin_rs::game_session::multiplayer`. The graphical
+Mission-loop admission, input scheduling, rollback and hash comparison live in
+`robin_rs::game_session::multiplayer`. Session modal identities, acknowledgements,
+recovery and decisions live in `robin_engine::multiplayer::modal_session`. The graphical
 and true-headless drivers use the same network drain and timeline admission
 state; the headless path does not construct renderer, native-input, UI, or
 audio substitutes.
@@ -140,6 +141,7 @@ different protocol version.
 | client → server | `ReadyToSim { frame }` | peer loaded and adopted the snapshot |
 | server → peers | `BeginSim { frame, start_epoch_ms }` | release the start barrier |
 | client → server | `ModalProposal { instance, kind, result, requested_frame }` | present a non-authoritative client request to the host |
+| server → clients | `ModalProgress { instance, kind, accepted, player_names }` | announce a story and retain its acknowledgement state for reconnect |
 | server → clients | `ModalDecision { instance, kind, result, decision_frame }` | commit the host's sole authoritative result for one exact modal occurrence |
 | server → client | `ReconnectRequired { reason }` | discard the prediction future and perform a complete handshake/snapshot admission |
 | server → clients | `PrepareSnapshotTransition { id, payload }` | distribute exact host-authored save or campaign-exit bytes for validation and retention |
@@ -225,11 +227,33 @@ must not be repaired by silently adopting a new default Engine.
 
 ## Modal authority and mission transitions
 
-Pause-side screens and scripted modals are frame-owned states: they poll and
-render once, then return to the mission driver so transport, HTTP, replay, and
-the multiplayer simulation continue. A client may propose a result for a
-session-bound modal instance, but only the host's `ModalDecision` closes it.
-The normal replay record captures that decision at the mission-frame boundary.
+Shared stories have session-owned identities and acknowledgement state. Effect
+admission reserves their identities at the source timeline boundary, before a
+widget exists. The common modal batch lifecycle selects the next presentation;
+widgets bind to that existing occurrence and submit local outcomes. Every
+admitted player must acknowledge a story before the host publishes its decision.
+
+The session drain services acknowledgements and retains authoritative decisions
+while simulation is paused, independently of widget polling. A shared story's
+close does not wait for a future simulation frame: the client may be paused one
+frame behind the host. The session itself holds the story pause barrier before
+the surface is drawn. Progress, duplicate acknowledgements and repeated decisions
+are idempotent; conflicting authoritative decisions are errors.
+
+Engine rollback leaves already-admitted presentation decisions intact. Both
+recent-history and sparse-snapshot reconstruction collect story effects without
+replaying audiovisual output. Reconciliation recovers newly discovered occurrences
+and suppresses already-admitted ones, counting repeated identical text ids
+separately. Filtering a page or aborting its batch retires only its pending
+reservations, preserving later batches.
+
+Reconnect sends retained modal progress and completion tombstones alongside the
+engine snapshot. A client also resends any locally submitted acknowledgement for
+which it has not received a decision. Neither recovery depends on a new engine
+tick or another click. The wire message shapes, engine save schema and replay
+encoding are unchanged. The normal replay journal still records the authoritative
+kind/result at the mission-frame boundary; playback and seeking retain their
+existing modal batch policy.
 
 Host-only save, load, restart, QuickLoad, and campaign-exit operations use an
 exact `Prepare`/`Ready`/`Commit` barrier. Clients first decode, validate, and

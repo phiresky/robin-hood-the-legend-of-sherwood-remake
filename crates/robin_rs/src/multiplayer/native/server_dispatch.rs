@@ -165,6 +165,11 @@ pub(super) async fn run_server_outgoing_pump(
                     );
                     continue;
                 }
+                context
+                    .peers
+                    .lock()
+                    .modals
+                    .observe_decision(decision.clone());
                 if let Err(error) =
                     broadcast_msg_required(&context, NetMsg::ModalDecision(decision))
                 {
@@ -304,7 +309,7 @@ pub(super) fn broadcast_modal_progress(
         ));
     }
     {
-        let peers = context.peers.lock();
+        let mut peers = context.peers.lock();
         progress.player_names = (0..peers.sessions.expected_players())
             .map(|seat| format!("Player {}", seat + 1))
             .collect();
@@ -313,6 +318,7 @@ pub(super) fn broadcast_modal_progress(
             progress.player_names[*seat as usize] =
                 peers.sessions.nickname(PlayerId(*seat)).to_owned();
         }
+        peers.modals.observe_progress(progress.clone());
     }
     context
         .incoming_tx

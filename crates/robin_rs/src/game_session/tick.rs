@@ -2303,12 +2303,30 @@ mod tests {
         use crate::multiplayer::{NetChannels, NetOutbound};
         use robin_engine::player_command::{DialogResult, ModalKind, PlayerId};
 
-        let (net, _incoming, outgoing, _cursor, _snapshot) = NetChannels::new();
+        let (net, incoming, outgoing, _cursor, _snapshot) = NetChannels::new();
         net.install_session_id(crate::multiplayer::MultiplayerSessionId([1; 32]))
             .unwrap();
+        let instance = robin_engine::multiplayer::ModalInstanceId {
+            session_id: crate::multiplayer::MultiplayerSessionId([1; 32]),
+            opened_frame: 0,
+            occurrence: 1,
+        };
+        net.set_modal_player_count(2);
+        incoming
+            .send(crate::multiplayer::NetEvent::ModalProgress(
+                robin_engine::multiplayer::ModalProgress {
+                    instance,
+                    kind: ModalKind::Dialog { dialog_id: 7 },
+                    accepted: [false; robin_engine::coop::MAX_PLAYERS],
+                    player_names: vec!["Host".into(), "Client".into()],
+                },
+            ))
+            .unwrap();
+        let announced = net.take_ready_story_announcements(0).unwrap();
         let mut host = Host::default();
         host.transport = crate::host::HostTransport::test_session(net, PlayerId(1));
-        host.effects.extend_dialogues([7]);
+        host.effects.bind_remote_modal_session();
+        host.effects.modals.extend(announced);
         let expected = crate::http_server::HttpModalDismissal {
             kind: ModalKind::Dialog { dialog_id: 7 },
             result: DialogResult::Completed,
@@ -2330,13 +2348,13 @@ mod tests {
         assert_eq!(host.effects.dialogue_count(), 1);
         assert!(matches!(
             outgoing.try_recv().expect("advisory proposal"),
-            NetOutbound::ModalProposal(robin_engine::multiplayer::ModalProposal { kind, result, .. })
-                if kind == expected.kind && result == expected.result
+            NetOutbound::ModalProposal(robin_engine::multiplayer::ModalProposal { instance: actual, kind, result, .. })
+                if actual == instance && kind == expected.kind && result == expected.result
         ));
     }
 
     #[test]
-    fn multiplayer_host_http_step_broadcasts_decision_before_dismissal() {
+    fn multiplayer_host_http_step_broadcasts_modal_decision_before_dismissal() {
         use crate::multiplayer::{NetChannels, NetOutbound};
         use robin_engine::player_command::{DialogResult, ModalKind, PlayerId};
 
@@ -2344,6 +2362,8 @@ mod tests {
         net.install_session_id(crate::multiplayer::MultiplayerSessionId([2; 32]))
             .unwrap();
         let mut host = Host::default();
+        host.effects
+            .bind_modal_session(net.modal_effect_admission());
         host.transport = crate::host::HostTransport::test_session(net, PlayerId::HOST);
         host.effects.extend_popup_texts([9]);
         let expected = crate::http_server::HttpModalDismissal {

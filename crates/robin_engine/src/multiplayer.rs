@@ -11,6 +11,11 @@
 //! route locally-sourced player commands over the wire and drain
 //! peer-sourced inputs back into the engine at the correct frames.
 
+#[path = "multiplayer/modal_session.rs"]
+mod modal_session;
+use modal_session::ModalSyncState;
+pub use modal_session::{ModalEffectAdmission, ModalPublication, ModalRecoveryState};
+
 use crate::engine::Engine;
 use crate::player_command::{DialogResult, ModalKind, PlayerCommand, PlayerId, PlayerInput};
 use serde::{Deserialize, Serialize};
@@ -302,7 +307,7 @@ pub enum SnapshotTransitionPayload {
 /// Stable identity for one occurrence of a multiplayer modal.
 ///
 /// `opened_frame` identifies the authoritative timeline boundary at which the
-/// modal appeared. `occurrence` distinguishes repeated instances of the same
+/// modal effect was admitted, independently of when its widget is drawn. `occurrence` distinguishes repeated instances of the same
 /// [`ModalKind`], including repeated unkeyed Sherwood reports.
 #[derive(
     Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode,
@@ -322,33 +327,6 @@ pub struct VisibleModalRequest {
     pub kind: ModalKind,
     pub result: DialogResult,
     pub requested_frame: u32,
-}
-
-#[derive(Debug)]
-struct ModalOccurrenceState {
-    kind: ModalKind,
-    next_occurrence: u64,
-    active: Option<ModalInstanceId>,
-}
-
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct ModalVotes {
-    instance: ModalInstanceId,
-    kind: ModalKind,
-    seats: [bool; crate::coop::MAX_PLAYERS],
-    host_result: Option<DialogResult>,
-}
-
-#[derive(Debug, Default)]
-struct ModalSyncState {
-    session_id: Option<MultiplayerSessionId>,
-    occurrences: Vec<ModalOccurrenceState>,
-    inbox: std::collections::VecDeque<NetEvent>,
-    visible_requests: std::collections::VecDeque<VisibleModalRequest>,
-    required_players: u8,
-    votes: Vec<ModalVotes>,
-    player_names: Vec<String>,
-    announced: Vec<(ModalInstanceId, ModalKind)>,
 }
 
 /// Browser-only durable seat claim. The IndexedDB-held private key signs a
@@ -784,7 +762,7 @@ pub struct NetChannels {
     /// reads it and sends `NetMsg::InitialSnapshot` to each new peer
     /// immediately after `Welcome`.
     pub initial_snapshot: InitialSnapshot,
-    modal_sync: Mutex<ModalSyncState>,
+    modal_sync: Arc<Mutex<ModalSyncState>>,
     next_transition_sequence: AtomicU64,
     command_worker_closed: AtomicBool,
     gameplay_input_enabled: AtomicBool,
@@ -813,7 +791,7 @@ impl NetChannels {
                 deferred_events,
                 frame_cursor: Arc::clone(&cursor),
                 initial_snapshot: Arc::clone(&snapshot),
-                modal_sync: Mutex::new(ModalSyncState::default()),
+                modal_sync: Arc::new(Mutex::new(ModalSyncState::default())),
                 next_transition_sequence: AtomicU64::new(0),
                 command_worker_closed: AtomicBool::new(false),
                 gameplay_input_enabled: AtomicBool::new(true),
@@ -977,362 +955,6 @@ impl NetChannels {
             .ok_or_else(|| "multiplayer session identity is not installed".to_string())
     }
 
-    /// Return the stable token for the currently open occurrence of `kind`, or
-    /// allocate the next occurrence when this is a newly opened modal.
-    pub fn open_modal_instance(&self, kind: &ModalKind) -> Result<ModalInstanceId, String> {
-        let opened_frame = self.frame_cursor.load(Ordering::Relaxed);
-        let mut sync = self
-            .modal_sync
-            .lock()
-            .map_err(|_| "multiplayer modal state lock is poisoned".to_string())?;
-        let session_id = sync
-            .session_id
-            .ok_or_else(|| "multiplayer session identity is not installed".to_string())?;
-        if let Some(state) = sync
-            .occurrences
-            .iter_mut()
-            .find(|state| state.kind == *kind)
-        {
-            if let Some(instance) = state.active {
-                return Ok(instance);
-            }
-            state.next_occurrence = state
-                .next_occurrence
-                .checked_add(1)
-                .ok_or_else(|| "multiplayer modal occurrence counter overflowed".to_string())?;
-            let instance = ModalInstanceId {
-                session_id,
-                opened_frame,
-                occurrence: state.next_occurrence,
-            };
-            state.active = Some(instance);
-            return Ok(instance);
-        }
-        let instance = ModalInstanceId {
-            session_id,
-            opened_frame,
-            occurrence: 1,
-        };
-        sync.occurrences.push(ModalOccurrenceState {
-            kind: kind.clone(),
-            next_occurrence: 1,
-            active: Some(instance),
-        });
-        Ok(instance)
-    }
-
-    pub fn complete_modal_instance(
-        &self,
-        kind: &ModalKind,
-        instance: ModalInstanceId,
-    ) -> Result<(), String> {
-        let mut sync = self
-            .modal_sync
-            .lock()
-            .map_err(|_| "multiplayer modal state lock is poisoned".to_string())?;
-        let state = sync
-            .occurrences
-            .iter_mut()
-            .find(|state| state.kind == *kind)
-            .ok_or_else(|| format!("no multiplayer modal occurrence exists for {kind:?}"))?;
-        if state.active != Some(instance) {
-            return Err(format!(
-                "multiplayer modal completion mismatch for {kind:?}: active={:?}, completed={instance:?}",
-                state.active
-            ));
-        }
-        state.active = None;
-        sync.votes
-            .retain(|vote| vote.instance != instance || vote.kind != *kind);
-        Ok(())
-    }
-
-    /// Route a modal event out of the ordinary simulation drain and into the
-    /// presentation-side modal inbox.
-    pub fn defer_modal_event(&self, event: NetEvent) -> Result<(), String> {
-        if !matches!(
-            event,
-            NetEvent::ModalProposal { .. }
-                | NetEvent::ModalDecision { .. }
-                | NetEvent::ModalProgress(_)
-        ) {
-            return Err("attempted to route a non-modal event into the modal inbox".to_string());
-        }
-        self.modal_sync
-            .lock()
-            .map_err(|_| "multiplayer modal state lock is poisoned".to_string())?
-            .inbox
-            .push_back(event);
-        Ok(())
-    }
-
-    pub fn try_recv_modal_event(&self) -> Result<NetEvent, std::sync::mpsc::TryRecvError> {
-        if self.command_worker_closed.load(Ordering::Acquire) {
-            return Err(std::sync::mpsc::TryRecvError::Disconnected);
-        }
-        if let Some(event) = self
-            .modal_sync
-            .lock()
-            .expect("multiplayer modal event queue poisoned")
-            .inbox
-            .pop_front()
-        {
-            return Ok(event);
-        }
-        self.try_recv_transport_event()
-    }
-
-    /// The admitted lobby roster must acknowledge story pages before the host closes them.
-    pub fn set_modal_player_count(&self, count: u8) {
-        assert!((1..=crate::coop::MAX_PLAYERS as u8).contains(&count));
-        self.modal_sync
-            .lock()
-            .expect("modal state lock poisoned")
-            .required_players = count;
-    }
-
-    pub fn record_modal_vote(
-        &self,
-        instance: ModalInstanceId,
-        kind: &ModalKind,
-        seat: PlayerId,
-        result: DialogResult,
-    ) -> Result<(), String> {
-        let mut sync = self
-            .modal_sync
-            .lock()
-            .map_err(|_| "modal state lock poisoned")?;
-        let count = sync.required_players.max(1);
-        if seat.0 >= count {
-            return Err(format!(
-                "modal vote from seat {seat:?} outside admitted roster"
-            ));
-        }
-        if !sync
-            .votes
-            .iter()
-            .any(|vote| vote.instance == instance && vote.kind == *kind)
-        {
-            sync.votes.push(ModalVotes {
-                instance,
-                kind: kind.clone(),
-                seats: [false; crate::coop::MAX_PLAYERS],
-                host_result: None,
-            });
-        }
-        let vote = sync
-            .votes
-            .iter_mut()
-            .find(|vote| vote.instance == instance && vote.kind == *kind)
-            .unwrap();
-        vote.seats[seat.0 as usize] = true;
-        if seat == PlayerId::HOST {
-            vote.host_result = Some(result);
-        }
-        Ok(())
-    }
-
-    pub fn announce_modal_instance(
-        &self,
-        instance: ModalInstanceId,
-        kind: &ModalKind,
-    ) -> Result<(), String> {
-        {
-            let sync = self
-                .modal_sync
-                .lock()
-                .map_err(|_| "modal state lock poisoned")?;
-            if sync.required_players <= 1 || sync.announced.contains(&(instance, kind.clone())) {
-                return Ok(());
-            }
-        }
-        self.publish_modal_progress(instance, kind)?;
-        tracing::info!(
-            ?instance,
-            ?kind,
-            "multiplayer: announced story modal opening"
-        );
-        self.modal_sync
-            .lock()
-            .map_err(|_| "modal state lock poisoned")?
-            .announced
-            .push((instance, kind.clone()));
-        Ok(())
-    }
-
-    /// Admit host-announced story UI once the client reaches its boundary.
-    /// The engine can have crossed that boundary during silent reconstruction;
-    /// the host's token, rather than the client's current frame, identifies it.
-    pub fn take_ready_story_announcements(&self, frame: u32) -> Result<Vec<ModalKind>, String> {
-        let mut sync = self
-            .modal_sync
-            .lock()
-            .map_err(|_| "modal state lock poisoned")?;
-        let mut ready = Vec::new();
-        let mut retained = std::collections::VecDeque::new();
-        while let Some(event) = sync.inbox.pop_front() {
-            if let NetEvent::ModalProgress(progress) = &event
-                && is_shared_story_modal(&progress.kind)
-                && progress.instance.opened_frame <= frame
-            {
-                if Some(progress.instance.session_id) != sync.session_id {
-                    return Err("story announcement belongs to another session".into());
-                }
-                let state = sync
-                    .occurrences
-                    .iter_mut()
-                    .find(|state| state.kind == progress.kind);
-                match state {
-                    Some(state) if progress.instance.occurrence <= state.next_occurrence => {
-                        // Keep current votes for the modal UI, discard obsolete occurrences.
-                        if state.active == Some(progress.instance) {
-                            retained.push_back(event);
-                        }
-                        continue;
-                    }
-                    Some(state) => {
-                        if state.active.is_some() {
-                            retained.push_back(event);
-                            continue;
-                        }
-                        state.next_occurrence = progress.instance.occurrence;
-                        state.active = Some(progress.instance);
-                    }
-                    None => sync.occurrences.push(ModalOccurrenceState {
-                        kind: progress.kind.clone(),
-                        next_occurrence: progress.instance.occurrence,
-                        active: Some(progress.instance),
-                    }),
-                }
-                ready.push(progress.kind.clone());
-            }
-            retained.push_back(event);
-        }
-        sync.inbox = retained;
-        Ok(ready)
-    }
-
-    pub fn set_modal_player_names(&self, names: Vec<String>) {
-        self.modal_sync
-            .lock()
-            .expect("modal state lock poisoned")
-            .player_names = names;
-    }
-
-    pub fn modal_waiting_names(&self, instance: ModalInstanceId, kind: &ModalKind) -> Vec<String> {
-        let sync = self.modal_sync.lock().expect("modal state lock poisoned");
-        let vote = sync
-            .votes
-            .iter()
-            .find(|vote| vote.instance == instance && vote.kind == *kind);
-        (0..sync.required_players.max(1) as usize)
-            .filter(|&i| !vote.is_some_and(|vote| vote.seats[i]))
-            .map(|i| {
-                sync.player_names
-                    .get(i)
-                    .filter(|name| !name.is_empty())
-                    .cloned()
-                    .unwrap_or_else(|| format!("Player {}", i + 1))
-            })
-            .collect()
-    }
-
-    pub fn publish_modal_progress(
-        &self,
-        instance: ModalInstanceId,
-        kind: &ModalKind,
-    ) -> Result<(), String> {
-        let sync = self
-            .modal_sync
-            .lock()
-            .map_err(|_| "modal state lock poisoned")?;
-        let accepted = sync
-            .votes
-            .iter()
-            .find(|vote| vote.instance == instance && vote.kind == *kind)
-            .map(|vote| vote.seats)
-            .unwrap_or([false; crate::coop::MAX_PLAYERS]);
-        self.outgoing
-            .send(NetOutbound::ModalProgress(ModalProgress {
-                instance,
-                kind: kind.clone(),
-                accepted,
-                player_names: sync.player_names.clone(),
-            }))
-            .map_err(|error| error.to_string())
-    }
-
-    pub fn apply_modal_progress(&self, progress: &ModalProgress) -> Result<(), String> {
-        self.set_modal_player_names(progress.player_names.clone());
-        for (seat, accepted) in progress.accepted.iter().enumerate() {
-            if *accepted {
-                self.record_modal_vote(
-                    progress.instance,
-                    &progress.kind,
-                    PlayerId(seat as u8),
-                    DialogResult::Completed,
-                )?;
-            }
-        }
-        Ok(())
-    }
-
-    pub fn unanimous_modal_result(
-        &self,
-        instance: ModalInstanceId,
-        kind: &ModalKind,
-    ) -> Result<Option<DialogResult>, String> {
-        let sync = self
-            .modal_sync
-            .lock()
-            .map_err(|_| "modal state lock poisoned")?;
-        let count = sync.required_players.max(1) as usize;
-        Ok(sync
-            .votes
-            .iter()
-            .find(|vote| vote.instance == instance && vote.kind == *kind)
-            .filter(|vote| vote.seats[..count].iter().all(|ready| *ready))
-            .and_then(|vote| vote.host_result))
-    }
-
-    pub fn record_visible_modal_request(&self, request: VisibleModalRequest) -> Result<(), String> {
-        self.modal_sync
-            .lock()
-            .map_err(|_| "multiplayer modal state lock is poisoned".to_string())?
-            .visible_requests
-            .push_back(request);
-        Ok(())
-    }
-
-    pub fn take_visible_modal_requests(
-        &self,
-        instance: ModalInstanceId,
-    ) -> Result<Vec<VisibleModalRequest>, String> {
-        let mut sync = self
-            .modal_sync
-            .lock()
-            .map_err(|_| "multiplayer modal state lock is poisoned".to_string())?;
-        let mut matched = Vec::new();
-        let mut retained = std::collections::VecDeque::new();
-        while let Some(request) = sync.visible_requests.pop_front() {
-            if request.instance == instance {
-                matched.push(request);
-            } else {
-                retained.push_back(request);
-            }
-        }
-        sync.visible_requests = retained;
-        Ok(matched)
-    }
-
-    pub fn take_all_visible_modal_requests(&self) -> Result<Vec<VisibleModalRequest>, String> {
-        let mut sync = self
-            .modal_sync
-            .lock()
-            .map_err(|_| "multiplayer modal state lock is poisoned".to_string())?;
-        Ok(sync.visible_requests.drain(..).collect())
-    }
-
     /// Admission controls gameplay input independently of chat and readiness.
     pub fn set_gameplay_input_enabled(&self, enabled: bool) {
         self.gameplay_input_enabled
@@ -1366,45 +988,6 @@ impl NetChannels {
             clock_frame: Some(clock_frame),
             ms_until_next_frame: Some(ms_until_next_frame),
         }))
-    }
-
-    /// Submit a visible client request without changing local modal state.
-    /// Channel closure is an authoritative session failure and is propagated.
-    pub fn propose_modal_dismiss(
-        &self,
-        instance: ModalInstanceId,
-        kind: ModalKind,
-        result: DialogResult,
-    ) -> Result<(), String> {
-        let requested_frame = self.frame_cursor.load(Ordering::Relaxed);
-        self.outgoing
-            .send(NetOutbound::ModalProposal(ModalProposal {
-                instance,
-                kind,
-                result,
-                requested_frame,
-            }))
-            .map_err(|_| "multiplayer modal proposal channel is closed".to_string())
-    }
-
-    /// Publish the host's sole authoritative result for an exact modal.
-    /// Channel closure is returned so the caller keeps the modal open instead
-    /// of applying a local-only result.
-    pub fn decide_modal_dismiss(
-        &self,
-        instance: ModalInstanceId,
-        kind: ModalKind,
-        result: DialogResult,
-    ) -> Result<(), String> {
-        let decision_frame = self.frame_cursor.load(Ordering::Relaxed);
-        self.outgoing
-            .send(NetOutbound::ModalDecision(ModalDecision {
-                instance,
-                kind,
-                result,
-                decision_frame,
-            }))
-            .map_err(|_| "multiplayer modal decision channel is closed".to_string())
     }
 
     pub fn reconnect_for_snapshot(
@@ -2011,10 +1594,18 @@ mod tests {
         channels.publish_frame(17);
         let kind = ModalKind::SherwoodReport;
 
+        channels
+            .modal_effect_admission()
+            .admit(std::slice::from_ref(&kind))
+            .unwrap();
         let first = channels.open_modal_instance(&kind).unwrap();
         assert_eq!(channels.open_modal_instance(&kind).unwrap(), first);
         channels.complete_modal_instance(&kind, first).unwrap();
         channels.publish_frame(20);
+        channels
+            .modal_effect_admission()
+            .admit(std::slice::from_ref(&kind))
+            .unwrap();
         let second = channels.open_modal_instance(&kind).unwrap();
 
         assert_eq!(first.session_id, session);

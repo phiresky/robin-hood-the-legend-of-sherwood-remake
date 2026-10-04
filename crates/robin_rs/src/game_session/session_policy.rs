@@ -42,6 +42,10 @@ impl<T> ModalBatchState<T> {
         Some(item)
     }
 
+    pub(super) fn pending_kinds(&self, kind: impl Fn(&T) -> ModalKind) -> Vec<ModalKind> {
+        self.pending.iter().map(kind).collect()
+    }
+
     pub(super) fn has_active_item(&self) -> bool {
         self.active.is_some()
     }
