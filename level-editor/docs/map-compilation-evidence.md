@@ -4,6 +4,23 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Terrain-junction receiver correction (2026-10-04)
+
+Crossing all incident elevation edges can cycle back to a face the actor has
+left. Landing exactly on their common vertex also suppresses those edges on
+the next step, leaving a stale receiver on departure. The runtime correction
+resolves the destination when a multi-edge dispatch leaves the actor outside
+its receiver, and handles exact-boundary departure through the usual movement
+update path. Ordinary directional ownership at shared boundaries is retained.
+
+The synthetic sloping four-triangle fan passes in both axes and directions;
+the audit still rejects stale interior receivers and unequal-height vertices.
+All 48 directed crossings in the reduced Wychford fixture pass in 0.13 seconds.
+The broader movement suite passes 182 tests with five ignored in 9.62 seconds.
+The updated game build passes (`cargo build -p robin_rs --bin robin -j1`, 85
+seconds). The full Wychford audit is running; these results do not yet establish
+full-map traversal acceptance.
+
 ## Spline-wall material regions (2026-10-04)
 
 Wall compilation now deforms asset-local material contours and rebuilds their

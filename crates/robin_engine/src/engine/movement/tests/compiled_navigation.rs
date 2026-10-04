@@ -468,7 +468,20 @@ fn actor_receiver_result(
     let queried = engine.get_projection_area_index(assets, sector, layer, position);
     let current = engine.ent(owner).position_iface().get_obstacle();
     // Crossing direction can select either side at an exact shared boundary.
-    // Away from that boundary, both identity and plane height must agree.
+    // At a fan vertex the lookup may select a nonadjacent triangle: both
+    // contours must contain the point and their heights must agree there.
+    // Away from these boundaries, receiver identity must agree too.
+    let shared_junction = current.zip(queried).is_some_and(|(a, b)| {
+        a != b
+            && receiver_edge_contains(assets, a, position)
+            && receiver_edge_contains(assets, b, position)
+            && (assets.environment.static_sight_obstacles[usize::from(a)]
+                .compute_top_z_from_projection(position.x, position.y)
+                - assets.environment.static_sight_obstacles[usize::from(b)]
+                    .compute_top_z_from_projection(position.x, position.y))
+            .abs()
+                < 0.001
+    });
     let shared_boundary = current != queried
         && engine.world.fast_grid.level.lines.iter().any(|line| {
             line.is_elevation
@@ -477,7 +490,7 @@ fn actor_receiver_result(
                         && line.left_obstacle_index == queried))
                 && point_on_edge(line.a, line.b, position)
         });
-    if current != queried && !shared_boundary {
+    if current != queried && !shared_boundary && !shared_junction {
         return Err(format!(
             "actor receiver mismatch at {position:?}, layer {layer}, sector {sector:?}: current {current:?}, queried {queried:?}"
         ));
@@ -495,6 +508,87 @@ fn actor_receiver_result(
         ));
     }
     Ok(())
+}
+
+#[test]
+fn receiving_audit_accepts_equal_height_fan_vertices_but_rejects_stale_interior_receivers() {
+    let mut descriptor: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/asset-navigation-copies.level.json"
+    )))
+    .unwrap();
+    let corners = [(0., 0.), (100., 0.), (100., 100.), (0., 100.)];
+    descriptor["asset_geometry"] = serde_json::json!({
+        "motion_data": {"layers": [[{
+            "is_lift": false, "state_id": 0, "flags": 0,
+            "polygon": {"points": [[0,0],[100,0],[100,100],[0,100]]},
+            "skeleton_segments": [], "obstacles": []
+        }], []], "graph_bytes": []},
+        "sight_obstacles": (0..4).map(|i| serde_json::json!({
+            "points": ([(50.,50.), corners[i], corners[(i+1)%4]].map(|(x,y)| {
+                let z = 10. + y * 0.4;
+                serde_json::json!({"x":x,"y":y+z,"z_bottom":z,"z_top":z})
+            })),
+            "projection_area": [0,0], "solid":false, "opaque":false,
+            "mouse":true,"show_shadow_polygon":false,"default_material":0,"material_indices":[]
+        })).collect::<Vec<_>>(), "doors": []
+    });
+    let (mut engine, mut assets) = compiled_walkway(&serde_json::to_vec(&descriptor).unwrap());
+    let sector = crate::position_interface::SectorHandle::new(0)
+        .unwrap()
+        .with_arena_index(crate::fast_find_grid::SectorIndex::new(0).unwrap());
+    let center = MapPoint::new(50., 50.);
+    let queried = engine
+        .get_projection_area_index(&assets, sector, 0, center)
+        .unwrap();
+    let opposite =
+        crate::sight_obstacle::SightObstacleIndex::new((u32::from(queried) + 2) % 4).unwrap();
+    let owner = walking_pc(&mut engine, &mut assets, center, 0, sector);
+    engine.set_obstacle_and_material(&assets, owner, Some(opposite));
+    assert_eq!(
+        actor_receiver_result(&engine, &assets, owner, sector, 0, center),
+        Ok(())
+    );
+    // The same two coplanar receivers are not interchangeable inside a face.
+    let interior = MapPoint::new(50., 20.);
+    let queried = engine
+        .get_projection_area_index(&assets, sector, 0, interior)
+        .unwrap();
+    let wrong =
+        crate::sight_obstacle::SightObstacleIndex::new((u32::from(queried) + 2) % 4).unwrap();
+    let owner = walking_pc(&mut engine, &mut assets, interior, 0, sector);
+    engine.set_obstacle_and_material(&assets, owner, Some(wrong));
+    assert!(actor_receiver_result(&engine, &assets, owner, sector, 0, interior).is_err());
+    for (a, b) in [
+        (MapPoint::new(50., 26.), MapPoint::new(50., 74.)),
+        (MapPoint::new(26., 50.), MapPoint::new(74., 50.)),
+    ] {
+        for (source, goal) in [(a, b), (b, a)] {
+            let (engine, assets) = compiled_walkway(&serde_json::to_vec(&descriptor).unwrap());
+            tick_walkway_crossing(engine, assets, 0, 0, source, goal);
+        }
+    }
+    // A coincident projected vertex on a different floor is not equivalent.
+    for point in descriptor["asset_geometry"]["sight_obstacles"][2]["points"]
+        .as_array_mut()
+        .unwrap()
+    {
+        for key in ["y", "z_bottom", "z_top"] {
+            point[key] = serde_json::json!(point[key].as_f64().unwrap() + 10.);
+        }
+    }
+    let (mut engine, mut assets) = compiled_walkway(&serde_json::to_vec(&descriptor).unwrap());
+    let queried = engine
+        .get_projection_area_index(&assets, sector, 0, center)
+        .unwrap();
+    assert_eq!(u32::from(queried), 2);
+    let owner = walking_pc(&mut engine, &mut assets, center, 0, sector);
+    engine.set_obstacle_and_material(
+        &assets,
+        owner,
+        Some(crate::sight_obstacle::SightObstacleIndex::new(0).unwrap()),
+    );
+    assert!(actor_receiver_result(&engine, &assets, owner, sector, 0, center).is_err());
 }
 
 #[test]

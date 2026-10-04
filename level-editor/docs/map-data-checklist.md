@@ -13,10 +13,10 @@ not evidence that an omitted feature works.
 
 Latest validation (2026-10-04): 734 editor tests passed, two skipped; the game
 build and native stair/control checks passed. Wychford loads with its spline wall
-and passes control apply/reset. Its broader actor-crossing audit currently fails:
-a reduced shared-vertex case and a synthetic four-triangle fan both retain a
-stale receiving surface after crossing the junction. Exact-vertex lookup
-ambiguity alone does not explain this failure; traversal needs correction.
+and passes control apply/reset. The terrain-junction correction passes the
+synthetic four-triangle fan, all 48 crossings in the reduced Wychford case, and
+182 movement tests (five skipped). The updated game build passes. The full
+Wychford crossing audit is still running; full-map traversal is not yet verified.
 
 | Map information | How the editor constructs it | Current evidence / gap |
 |---|---|---|

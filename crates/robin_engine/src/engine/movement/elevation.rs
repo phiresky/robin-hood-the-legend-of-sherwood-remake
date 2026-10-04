@@ -480,7 +480,7 @@ impl EngineInner {
             "queried elevation crossings"
         );
         if indices.is_empty() {
-            return false;
+            return self.resolve_receiver_departure(assets, entity_id, old_pos, new_pos, layer);
         }
 
         // Read the actor's current obstacle — used as the seed for the
@@ -548,6 +548,75 @@ impl EngineInner {
             self.cross_elevation_line(assets, entity_id, idx, new_pos, increment_map);
         }
 
+        // Several edges incident on one vertex can form a closed receiver
+        // chain. Dispatching the whole chain then returns to a face the actor
+        // has already left. Resolve the destination only when that happened;
+        // ordinary edge crossings retain their directional ownership.
+        if indices.len() > 1 {
+            let entity = self.expect_entity(entity_id, "elevation junction owner");
+            let current = entity.element_data().obstacle_index();
+            let sector = entity.position_iface().get_sector();
+            let outside = current.is_some_and(|index| {
+                !assets.environment.static_sight_obstacles[usize::from(index)]
+                    .contains_point_projection(new_pos)
+            });
+            if outside && let Some(sector) = sector {
+                let next = self.get_projection_area_index(assets, sector, layer, new_pos);
+                self.set_obstacle_and_material(assets, entity_id, next);
+                self.expect_entity_mut(entity_id, "elevation junction owner")
+                    .position_iface_mut()
+                    .set_map_position(new_pos);
+            }
+        }
+
+        true
+    }
+
+    fn resolve_receiver_departure(
+        &mut self,
+        assets: &LevelAssets,
+        entity_id: EntityId,
+        old_pos: MapPoint,
+        new_pos: MapPoint,
+        layer: u16,
+    ) -> bool {
+        let entity = self.expect_entity(entity_id, "receiver departure owner");
+        let Some(current) = entity.element_data().obstacle_index() else {
+            return false;
+        };
+        let Some(sector) = entity.position_iface().get_sector() else {
+            return false;
+        };
+        let obstacle = &assets.environment.static_sight_obstacles[usize::from(current)];
+        if obstacle.contains_point_projection(new_pos) {
+            return false;
+        }
+        // An exact boundary departure is filtered from the crossing list to
+        // avoid processing the previous tick's edge twice. At a fan vertex the
+        // next step can enter a different face without another edge crossing.
+        let points = &obstacle.obstacle_points;
+        let on_boundary = (0..points.len()).any(|i| {
+            let a = &points[i];
+            let b = &points[(i + 1) % points.len()];
+            let (ax, ay, bx, by) = (
+                f64::from(a.x),
+                f64::from(a.y - a.z_top),
+                f64::from(b.x),
+                f64::from(b.y - b.z_top),
+            );
+            let (x, y) = (f64::from(old_pos.x), f64::from(old_pos.y));
+            (x - ax) * (by - ay) == (y - ay) * (bx - ax)
+                && (ax.min(bx)..=ax.max(bx)).contains(&x)
+                && (ay.min(by)..=ay.max(by)).contains(&y)
+        });
+        if !on_boundary {
+            return false;
+        }
+        let next = self.get_projection_area_index(assets, sector, layer, new_pos);
+        self.set_obstacle_and_material(assets, entity_id, next);
+        self.expect_entity_mut(entity_id, "receiver departure owner")
+            .position_iface_mut()
+            .set_map_position(new_pos);
         true
     }
 
@@ -656,9 +725,6 @@ impl EngineInner {
             .fast_grid
             .get_actor_crossing_line_indices(layer, old_pos, new_pos);
         let crossing_count = crossing_indices.len();
-        if crossing_count == 0 {
-            return;
-        }
         let elevation_indices = crossing_indices
             .iter()
             .copied()
