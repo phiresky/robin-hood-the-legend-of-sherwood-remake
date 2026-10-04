@@ -20,7 +20,7 @@ def main():
         assert np.array_equal(expected,np.array(Image.open(decoded).convert('RGBA')))
     proof=dict(status='PASS',target_profiles=len(data['profiles']),mobile_profiles=len(mobile['mobile_profiles']),exact_frames=len(frames),target_instances=len(data['instances']),mobile_instances=len(mobile['mobile_instances']),scope='RGBA decoding removes only native green color key. All raw frame bytes, source RGB, offsets, delays and sounds remain bound.')
     (root/'source-verification.json').write_text(json.dumps(proof,indent=2)+'\n');print(proof)
-    dest=OUT/'log-trap-state-candidate-v4'
+    dest=OUT/'log-trap-state-candidate-v6'
     if not (dest/'worker.blend').exists():return
     source=root/'log-trap';m=json.loads((source/'manifest.json').read_text());left,top,right,bottom=m['bbox'];scale=max(right-left,bottom-top)*1.2;yy,xx=np.mgrid[:512,:512];ix=np.floor((left+right)/2+(xx+.5-256)*scale/512-left).astype(int);iy=np.floor((top+bottom)/2+(yy+.5-256)*scale/512-top).astype(int);coverage=[]
     for state,tick in [('covered',-1),('applied',89)]:
