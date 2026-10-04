@@ -71,6 +71,25 @@ def main():
                                 'Background-integrated terminal frames require state-scoped ground ownership.',
                                 'Native nonvisual patches still change obstacle and mask activation.'])
     (destination/'manifest.json').write_text(json.dumps(receipt, indent=2)+'\n')
+    targets, mobiles, target_profiles = [], [], Counter()
+    for mission in sorted({r['mission'] for r in rows}):
+        path = ROOT/'datadirs/fullgame_gog_hackable/Data/Levels'/f'{mission}.rhm.json'
+        data = json.loads(path.read_text())
+        for index, record in enumerate(data['targets']):
+            target_profiles[(record['filename'], record['profile_name'])] += 1
+            targets.append(dict(mission=mission, mission_sha256=sha(path),
+                                target_index=index, record=record))
+        for index, record in enumerate(data['mobile_elements']):
+            mobiles.append(dict(mission=mission, mission_sha256=sha(path),
+                                mobile_index=index, record=record))
+    target_inventory = dict(status='source records only; sprite reconstruction and script timing pending',
+                            target_instances=len(targets), mobile_instances=len(mobiles),
+                            profiles=[dict(bank=k[0], profile=k[1], instances=n)
+                                      for k, n in target_profiles.items()],
+                            targets=targets, mobile_elements=mobiles,
+                            limitations=['Living targets and embedded horse teams are not static scenery.',
+                                         'Trap and cart bodies require separate visual evidence from their shadow patches.'])
+    (destination/'target-mobile-records.json').write_text(json.dumps(target_inventory, indent=2)+'\n')
     print(json.dumps({k: receipt[k] for k in ('mission_count','mission_patch_count','decoded_frame_count','profile_counts')}))
 
 
