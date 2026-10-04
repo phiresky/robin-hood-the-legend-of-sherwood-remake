@@ -2026,6 +2026,38 @@ fn spline_materials_repeat_with_independent_ground_and_obstacle_ownership() {
 }
 
 #[test]
+fn spline_lighting_repeats_and_filters_by_mission_ambience() {
+    use robin_engine::coordinates::MapPoint;
+    for mask in [1, 2, 4] {
+        let mut loaded = LoadedLevel::hackable_from_json(include_bytes!(
+            "fixtures/asset-spline-material.level.json"
+        ))
+        .unwrap();
+        loaded.mission.header.ambiance = mask;
+        let mut assets = LevelAssets::new();
+        let engine = construct_loaded(loaded, &mut assets);
+        for offset in [0., 100., 200.] {
+            assert_eq!(
+                engine
+                    .fast_grid()
+                    .is_in_shadow_sector(MapPoint::new(125. + offset, 218.), 0),
+                mask != 2
+            );
+            assert!(
+                !engine
+                    .fast_grid()
+                    .is_in_shadow_sector(MapPoint::new(175. + offset, 218.), 0)
+            );
+            assert!(
+                !engine
+                    .fast_grid()
+                    .is_in_shadow_sector(MapPoint::new(125. + offset, 218.), 1)
+            );
+        }
+    }
+}
+
+#[test]
 fn receiving_materials_keep_navigation_connected_and_ground_independent() {
     use robin_engine::{coordinates::MapPoint, element::GameMaterial};
     let mut assets = LevelAssets::new();

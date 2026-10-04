@@ -117,5 +117,13 @@ export function wallMaterialFixture() {
       polygon: [local(-40, -40, 0), local(0, -40, 0), local(0, -20, 0), local(-40, -20, 0)],
     },
   ];
+  asset.gameplay!.lights = [
+    {
+      id: "shadow",
+      node: "body",
+      ambiences: 5,
+      polygon: asset.gameplay!.materials[1]!.polygon.map((point) => [...point]),
+    },
+  ];
   return fixture;
 }

@@ -117,6 +117,68 @@ test("spline materials retain vertical faces and receiver ownership after moving
   }
 });
 
+test("wall lighting follows repeated and turned paths and preserves ambience filters", () => {
+  const { document, asset, assets, bounds } = wallSplineFixture();
+  asset.gameplay!.lights = [
+    {
+      id: "shadow",
+      node: "body",
+      ambiences: 5,
+      polygon: [
+        [-40, -10, 0],
+        [40, -10, 0],
+        [40, 10, 0],
+        [-40, 10, 0],
+      ].map(([x, y, z]) => sceneToGame(document.camera, [x!, y!, z!])),
+    },
+  ];
+  const before = JSON.stringify(asset);
+  for (const points of [
+    [
+      [100, 200, 0],
+      [345, 200, 0],
+    ],
+    [
+      [130, 300, 0],
+      [130, 70, 0],
+    ],
+    [
+      [100, 200, 0],
+      [240, 250, 0],
+      [390, 100, 0],
+    ],
+  ]) {
+    document.splines![0]!.points = points.map(([x, y, z]) => [x!, y!, z!]);
+    const generated = wallSplineGameplay(document, assets, false);
+    assert.deepEqual(generated.warnings, []);
+    const result = compileAssetGameplay(document, assets, bounds);
+    assert.ok(result.light_sectors!.length >= 4);
+    assert.ok(result.light_sectors!.every((light) => light.layer === 0 && light.ambience === 5));
+  }
+  assert.equal(JSON.stringify(asset), before);
+  const top = [
+    [-50, -10, 40],
+    [50, -10, 40],
+    [50, 10, 40],
+    [-50, 10, 40],
+  ].map(([x, y, z]) => sceneToGame(document.camera, [x!, y!, z!]));
+  asset.gameplay!.surfaces = [
+    { id: "top", node: "body", polygon: top.map(([x, y]) => [x, y]), height: top[0]![2] },
+  ];
+  asset.gameplay!.lights[0]!.polygon = top;
+  document.splines![0]!.points = [
+    [100, 200, 20],
+    [400, 200, 80],
+  ];
+  const raised = compileAssetGameplay(document, assets, bounds);
+  assert.ok(raised.light_sectors!.length);
+  assert.ok(raised.light_sectors!.every((light) => light.layer > 0 && light.ambience === 5));
+  asset.gameplay!.lights[0]!.receivers = [sceneToGame(document.camera, [0, 0, 0])];
+  const unsupported = wallSplineGameplay(document, assets, true);
+  assert.ok(unsupported.warnings.some((warning) => warning.includes("explicit receiving anchors")));
+  assert.equal(unsupported.descriptors[0]!.gameplay!.lights!.length, 0);
+});
+
 test("wall collision follows moved paths, crops repeats and participates in terrain navigation", () => {
   const { document, assets, bounds } = wallSplineFixture();
   const first = compileAssetGameplay(document, assets, bounds);

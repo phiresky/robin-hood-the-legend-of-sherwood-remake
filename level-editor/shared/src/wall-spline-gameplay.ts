@@ -70,6 +70,7 @@ export function wallSplineGameplay(
         movementBlockers: [],
         movementClearances: [],
         materials: [],
+        lights: [],
       },
     };
     const out = generated.gameplay!;
@@ -101,9 +102,9 @@ export function wallSplineGameplay(
         throw new Error(`asset ${assetId} has stateful geometry; a static wall source is required`);
       for (const issue of data.draft?.issues ?? [])
         warnings.push(`Wall spline ${path.id}, asset ${assetId}: ${issue}`);
-      if (data.masks?.length || data.lights?.length || data.sounds?.length)
+      if (data.masks?.length || data.sounds?.length)
         warnings.push(
-          `Wall spline ${path.id}, asset ${assetId}: local masks, lighting and sound regions are not deformed.`,
+          `Wall spline ${path.id}, asset ${assetId}: local masks and sound regions are not deformed.`,
         );
       if (
         data.doors.length ||
@@ -355,6 +356,39 @@ export function wallSplineGameplay(
             });
           },
           true,
+        );
+      }
+      for (const light of data.lights ?? []) {
+        if (light.receivers || light.receiverSegments) {
+          warnings.push(
+            `Wall spline ${path.id}, light ${light.id}: explicit receiving anchors are not deformed; light region omitted.`,
+          );
+          continue;
+        }
+        pieces(
+          light.polygon.map((p) => source(light.node, p)),
+          (vertices, repeat) => {
+            const polygon = vertices.map((p) => warp([p[0]!, p[1]!, p[2]!], repeat));
+            const projected = polygon.map(([x, y, z]): [number, number] => [
+              x - imageOrigin[0]!,
+              y - z - imageOrigin[1]!,
+            ]);
+            if (
+              !quantizeGeneratedMotionPolygon(
+                [projected],
+                Math.round,
+                `Wall spline ${path.id}, light ${light.id}`,
+                warnings,
+              )
+            )
+              return;
+            out.lights!.push({
+              id: `light-${out.lights!.length}`,
+              node: "$root",
+              polygon,
+              ambiences: light.ambiences,
+            });
+          },
         );
       }
       const surfaceSet = `span-${out.surfaces.length}`;

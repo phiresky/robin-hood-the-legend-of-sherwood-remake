@@ -4,6 +4,22 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Spline-wall same-plane lighting (2026-10-04)
+
+Wall-local light/shadow contours now follow repeated source spans and path
+deformation, retaining their ambience masks. Receiving layers are rebuilt from
+the deformed planes. Compiler tests cover trimmed repeats, turns, a rising
+wall-top surface and explicit omission warnings for receiver anchors that are
+not yet supported. The focused editor wall suite passes 13 tests; typechecking
+and targeted lint pass.
+
+The golden export fixture passes native shadow queries on all three repeated
+sections, distinguishing lit and unlit points, receiving layers and ambience
+masks 1, 2 and 4. All six native spline integration tests pass. Explicit point
+and segment receiver anchors remain unsupported on spline walls; their regions
+are omitted with a specific warning. No mission ambience selection is added to
+the map.
+
 ## Terrain-junction receiver correction (2026-10-04)
 
 Crossing all incident elevation edges can cycle back to a face the actor has
@@ -17,6 +33,8 @@ The synthetic sloping four-triangle fan passes in both axes and directions;
 the audit still rejects stale interior receivers and unequal-height vertices.
 All 48 directed crossings in the reduced Wychford fixture pass in 0.13 seconds.
 The broader movement suite passes 182 tests with five ignored in 9.62 seconds.
+The complete-animation climb regression also passes after the correction:
+2,166 directed routes over ladders and both climbable wall types (15.69 seconds).
 The updated game build passes (`cargo build -p robin_rs --bin robin -j1`, 85
 seconds). The full Wychford audit is running; these results do not yet establish
 full-map traversal acceptance.
