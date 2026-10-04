@@ -49,8 +49,14 @@ stopped at map coordinate `[436,1498]`: receivers 10674 and 10671 meet at the sa
 terrain vertex, while the audit requires a direct shared elevation edge between
 them. Their heights agree at that vertex. A 67-receiver reduction reproduces the
 failure in 0.10 seconds (`work/map-compile/wychford-receiver-junction-GDKJfg`).
-The audit's shared-vertex handling is under correction; the full crossing audit
-has **not passed**. No runtime receiver behavior was changed for this diagnosis.
+Allowing equal-height receiver identities at the exact shared vertex moves the
+failure one step further: at `[436,1497]`, the reduced case still owns receiver
+48 while lookup selects 25. A synthetic four-triangle sloping fan independently
+fails after crossing its center (`[50,50.600006]`, current receiver 0, queried 2).
+The problem therefore includes stale receiver ownership beyond the junction,
+not just boundary lookup ambiguity. These failing regressions remain under
+investigation; the full crossing audit has **not passed**. No runtime receiver
+behavior was changed for this diagnosis.
 
 ## Changing stair barriers (2026-10-04)
 
