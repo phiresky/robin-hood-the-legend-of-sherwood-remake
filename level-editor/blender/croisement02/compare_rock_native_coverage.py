@@ -30,6 +30,19 @@ def main():
         results.append(dict(path=str(path),model_sha256=sha(path/'worker.blend'),hits=hits,covered=sum(hits),samples=len(hits),coverage=sum(hits)/len(hits)))
     before,after=[np.array(r.pop('hits'))for r in results]
     report=dict(status='coverage comparison; visual quality and support remain separate',models=results,newly_missing=int((before&~after).sum()),newly_covered=int((after&~before).sum()),source_manifest_sha256=sha(source/'manifest.json'))
+    missing={(int(x),int(y))for x,y,hit in zip(xx,yy,after)if not hit};remaining=set(missing);components=[]
+    while remaining:
+        pending=[remaining.pop()];component=[]
+        while pending:
+            x,y=pending.pop();component.append([x,y])
+            for dx,dy in ((-1,0),(1,0),(0,-1),(0,1)):
+                neighbor=(x+dx,y+dy)
+                if neighbor in remaining:remaining.remove(neighbor);pending.append(neighbor)
+        components.append(dict(pixels=len(component),crop_coordinates=component))
+    report['missing_components']=sorted(components,key=lambda r:-r['pixels'])
+    rgba=np.array(Image.open(source/('tick--01.png'if state=='covered'else 'tick-104.png')).convert('RGBA'))
+    rgba[yy[~after],xx[~after]]=[255,30,30,255]
+    Image.fromarray(rgba).save(candidate/f'{state}-missing-native-pixels.png')
     report['state']=state
     (candidate/('native-coverage-comparison.json'if state=='covered'else 'applied-native-coverage-comparison.json')).write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
 
