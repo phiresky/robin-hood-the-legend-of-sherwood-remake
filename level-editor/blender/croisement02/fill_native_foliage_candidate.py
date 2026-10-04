@@ -17,7 +17,7 @@ from refinement_review import _tile
 from render_multiview_asset import render
 
 
-def main(experiment, donor_dir, output):
+def main(experiment, donor_dir, output, conditioned=None):
     require(not output.exists(), 'Use a fresh candidate directory')
     evidence = {str(p): sha(p) for p in [donor_dir / 'donor.png', donor_dir / 'donor-mask.png',
                 donor_dir / 'tile.png', donor_dir / 'donor-provenance.json', donor_dir / 'donor-validation.json']}
@@ -37,6 +37,22 @@ def main(experiment, donor_dir, output):
     allowed = set(map(tuple, source[owned].tolist()))
     require(all(tuple(v) in allowed for v in tile_rgb.reshape(-1, 3).tolist()),
             'Synthesis contains pixels outside the source-owned donor palette')
+    conditioned_proof = None
+    if conditioned:
+        conditioned_proof = json.loads((conditioned / 'source-provenance.json').read_text())
+        for key, field in [('source', 'source_sha256'), ('native_mask', 'native_mask_sha256')]:
+            require(sha(Path(conditioned_proof[key])) == conditioned_proof[field], 'Continuation source changed')
+        canvas = np.array(Image.open(conditioned / 'native-canvas.png').convert('RGB'))
+        keep = np.array(Image.open(conditioned / 'known-mask.png').convert('L')) > 0
+        generated = np.array(Image.open(conditioned / 'continuation.png').convert('RGB'))
+        require(sha(conditioned / 'native-canvas.png') == conditioned_proof['canvas_sha256']
+                and sha(conditioned / 'known-mask.png') == conditioned_proof['mask_sha256'],
+                'Continuation canvas or mask changed')
+        require(np.array_equal(canvas[keep], generated[keep]), 'Inpainting changed native boundary pixels')
+        native_palette = set(map(tuple, canvas[keep].tolist()))
+        require(all(tuple(v) in native_palette for v in generated.reshape(-1, 3).tolist()),
+                'Continuation contains foreign donor pixels')
+        evidence.update({str(p): sha(p) for p in conditioned.iterdir() if p.is_file()})
     acquire()
     try:
         manifest, scene, names, _, preflight_report = preflight(experiment)
@@ -50,8 +66,16 @@ def main(experiment, donor_dir, output):
         colors = pixels.reshape(image.size[1], image.size[0], 4)
         height, width = colors.shape[:2]
         sin, cos = math.sin(math.radians(35)), math.cos(math.radians(35))
+        continuation = None
+        if conditioned:
+            image = bpy.data.images.load(str(conditioned / 'continuation.png'), check_existing=False)
+            data = np.empty(len(image.pixels), np.float32)
+            image.pixels.foreach_get(data)
+            continuation = data.reshape(image.size[1], image.size[0], 4)
+        conditioned_samples = 0
 
         def sample(obj, normal, positions, known, result, **kwargs):
+            nonlocal conditioned_samples
             # Use a nondegenerate face plane: source-camera projection collapses
             # side-facing surfaces into repeated stripes.
             axis = int(np.argmax(np.abs(np.asarray(normal))))
@@ -60,6 +84,19 @@ def main(experiment, donor_dir, output):
             x = np.floor(scaled[:, axes[0]]).astype(int) % width
             y = np.floor(scaled[:, axes[1]]).astype(int) % height
             result[:, :3] = colors[height - 1 - y, x, :3]
+            facing = float(np.dot(np.asarray(normal), [0., -cos, sin]))
+            face = obj.data.polygons[kwargs['face_index']]
+            material = obj.data.materials[face.material_index]
+            # A double-sided card may present its reverse winding to the source
+            # camera. Its projection remains well conditioned at either sign.
+            if material.get('foliage_card_sides') != 'paired-one-sided':
+                facing = abs(facing)
+            if continuation is not None and facing >= .7:
+                sx = np.floor(positions[:, 0] - conditioned_proof['origin'][0]).astype(int)
+                sy = np.floor(-positions[:, 1] * sin - positions[:, 2] * cos - conditioned_proof['origin'][1]).astype(int)
+                take = (sx >= 0) & (sy >= 0) & (sx < continuation.shape[1]) & (sy < continuation.shape[0])
+                result[take, :3] = continuation[continuation.shape[0] - 1 - sy[take], sx[take], :3]
+                conditioned_samples += int(take.sum())
             return np.ones(len(positions), bool)
 
         report = fill([scene.objects[name] for name in sorted(crowns)], sample, None,
@@ -92,6 +129,8 @@ def main(experiment, donor_dir, output):
                       evidence_sha256=evidence, physical_foliage=report,
                       donor_method='texture-synthesis 0.8.3, masked same-asset native donor, seed40',
                       sampling='Native pixel scale in dominant face tangent plane',
+                      conditioned_front_samples=conditioned_samples,
+                      conditioned_front_threshold=.7 if conditioned else None,
                       transparent_bounces=256, approval='pending actual eight-view review',
                       preflight=preflight_report)
         (output / 'validation.json').write_text(json.dumps(result, indent=2) + '\n')
@@ -104,5 +143,7 @@ if __name__ == '__main__':
     parser.add_argument('experiment', type=Path)
     parser.add_argument('donor_dir', type=Path)
     parser.add_argument('output', type=Path)
+    parser.add_argument('--conditioned', type=Path)
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
-    main(args.experiment.resolve(), args.donor_dir.resolve(), args.output.resolve())
+    main(args.experiment.resolve(), args.donor_dir.resolve(), args.output.resolve(),
+         args.conditioned.resolve() if args.conditioned else None)
