@@ -11,7 +11,8 @@ BATCHES=[
     ('western-rock-complements',[57,60],'foliage','Use reviewed rock complements351/352, subtract existing foliage source owners, inspect remaining wood before authoring.'),
     ('covered-forest-overlaps',[62,63,64],'foliage','Partition shared62/63 leaves and existing wood; retain patch-state ownership136/137.64 includes existing birch wood.'),
     ('northern-boundary-fragment',[22],'foliage','Leaves, not a new trunk. Resolve association with existing canopy134/135 and infer only defensible off-map volume.'),
-    ('southwest-thickets',[77,78,79,80,82,83,84],'foliage','Respect fences/logs, grass116 ownership and southwest rock52.83/84 overlap requires explicit shared-leaf partition.'),
+    ('southwest-small-plants',[79,80,82],'ground-plants','Leaf-only wood overlaps retained; exclude authored grass116, infer west-edge80 continuation.'),
+    ('southwest-thickets',[77,78,83,84],'foliage','Respect fences/logs, grass116 ownership and southwest rock52.83/84 overlap requires explicit shared-leaf partition.'),
     ('eastern-and-southern-companions',[74,75,85,86,87,88,89,90,91],'foliage','Partition existing trees, upright fences430/431, wall/stump/shed source. Complete boundary clumps; no state-mask scenery substitution.'),
     ('mixed-wattle-and-oak-base',[76,93],'fence-source-audit then foliage','Source splits owned by fence worker.76 growth lies over wattle99;93 includes existing oak35 base, not a separate stump.'),
 ]
