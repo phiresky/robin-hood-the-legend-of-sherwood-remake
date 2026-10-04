@@ -107,12 +107,15 @@ def main():
             write_json(worker / 'inspection/bark-donor-selection.json', dict(native_mask=21, source_box=[798, 21, 805, 30],
                 source_sha256=sha(worker / 'reference/source.png'), reviewer='Codex',
                 notes='Inspected upper exposed bark and native foreground overlap. This donor lies inside wood mask 21 and outside foreground canopy 134.'))
+            crown = next(o for o in objects if o.get('projection_component') == 'crown')
+            crown_report = inferred_crown(crown, center_x=806, ground_y=104.569885,
+                                         palette=directory / 'native-northern-leaves.png')
             modified(worker)
             bark = fill(worker, objects, 21, receiver_only=True, donor_mapping='aperiodic-vertical')
             validate(worker)
             bpy.ops.wm.save_as_mainfile(filepath=str(worker / 'model.blend'))
             report = json.loads((worker / 'inspection/refinement.json').read_text())
-            report.update(model_sha256=sha(worker / 'model.blend'), bark=bark)
+            report.update(model_sha256=sha(worker / 'model.blend'), bark=bark, crown=crown_report)
             write_json(worker / 'inspection/refinement.json', report)
             audit(worker)
             write_json(receipt, dict(model_sha256=report['model_sha256'], native_mask=21, native_obstacle=132,

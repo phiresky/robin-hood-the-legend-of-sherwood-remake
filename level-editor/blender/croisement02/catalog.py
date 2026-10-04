@@ -16,6 +16,8 @@ def scenery_workspace(asset):
 
 def tree_workspace(mask):
     asset=f'croisement02-tree-{mask:02}'
+    completed=OUT/'forest-v4-round-3/assets'/asset
+    if (completed/'inspection/northern-cap-revision.json').exists():return completed
     replacement=OUT/'forest-v4-round-2/assets'/asset
     if (replacement/'inspection/source-domain-revision.json').exists():return replacement
     return OUT/'forest-v4-round-1/assets'/asset

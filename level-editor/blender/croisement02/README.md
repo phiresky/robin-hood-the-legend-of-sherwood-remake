@@ -162,12 +162,32 @@ full-crown visual review. `prepare_tree21.py` replaces the former bank with its
 native wood silhouette and an inferred northern crown. Its bark excludes
 foreground canopy 134. The revised tree 23 wood uses row-span sweeps to retain
 the small visible root edges that a simplified skeleton missed.
-Remaining self-review TODOs include boundary tree 20 and inferred bark on 41.
+`complete_north_tree20.py` separates its northern trunks from a formerly assigned
+canopy domain already covered by other trees, recording the overlap evidence.
+It adds an explicitly inferred northern crown and excludes foreground canopy
+135 from bark projection. Northern crowns use irregular volumes and varying
+leaf-card orientations; horizontal depth is at least their width. Boundary
+24/40 completions join the observed half across the map edge rather than leaving
+a straight gap. These changes still require current full-crown self-review.
+Remaining self-review TODOs include inferred bark on 41.
 Tree 23's former canopy
 lay left of its map-edge trunks and is not evidence of their actual crown.
 These candidates remain in progress even where silhouette and depth metrics pass.
 Preserve frozen inventories and cameras; corrected ownership needs a new worker,
 and extra inspection views must be explicitly recorded.
+
+`audit_map_edges.py` inventories native foliage domains touching the image edge;
+contact is a review cue, not an automatic failure. `complete_northern_caps.py`
+creates fresh `forest-v4-round-3` workers for northern continuations, retaining
+the earlier models and approvals as archived evidence. Added surfaces are
+explicitly inferred. Existing crown vertices, faces, UVs and ownership are
+checked for preservation, and the saved appearance is retained after projection.
+New geometry requires its own review; it does not inherit the previous approval.
+`partition_tree40_crown.py` separates the rear eastern crown from the foreground
+tree 39, proving that the neighbour still owns every removed source pixel.
+Run its boundary completion and `repair_bark_visibility.py -- 40 --redo` next;
+the latter removes foreground canopy/shrub colour from bark. Joint scene
+coverage remains a separate check from that source-domain proof.
 
 `repair_tree_roots.py -- --masks <ids>` reconstructs the existing canonical wood
 assignments, joins short trace gaps for single-part trees and tree 06, and unions overlapping
@@ -180,7 +200,9 @@ Root revisions for 06/15/30/35/39 passed the subsequent source-overlay and
 eight-view self-review; inferred basal textures still need texture review.
 
 `render_full_crown.py -- 17 19` adds eight solid-mesh and saved-material views with
-1.5 times the original orthographic scale. Original frozen views remain intact.
+at least 1.5 times the original orthographic scale. It recentres on the complete
+visible geometry and enlarges further if required for 20 percent padding.
+Original frozen views remain intact. Stale supplemental packets are archived.
 The supplemental solid mode displays opaque foliage cards; use the actual
 materials to judge leaf coverage. The gallery binds these supplemental images
 and camera evidence to the saved model. These wider views address review-frame

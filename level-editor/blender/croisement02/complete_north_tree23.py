@@ -22,12 +22,16 @@ from audit_candidates import audit
 from render_tree import render_workspace
 
 
-def silhouette_wood(mask, ground_y, center_x=616):
+def silhouette_wood(mask, ground_y, center_x=616, domain=None):
     """Sweep each observed row span; continue cropped upper ends beyond the map."""
     level = json.loads((OUT / 'baseline/Croisement02.rhp.json').read_text())
     record = level['masks'][mask]
     x0, y0 = record['box_top_left']
     alpha = np.asarray(Image.open(OUT / f'baseline/masks/{mask:06}.png').convert('L')) > 0
+    if domain is not None:
+        if domain.shape != alpha.shape or np.any(domain & ~alpha):
+            raise ValueError('Wood partition must remain inside its native mask')
+        alpha = domain
     tracks, active = [], []
     for y, row in enumerate(alpha):
         changes = np.diff(np.pad(row.astype(int), 1))
@@ -85,33 +89,42 @@ def inferred_crown(crown, *, center_x=616, ground_y=73, palette=None):
         raise ValueError('No sufficiently leafy native samples')
     from tree_geometry import material
     mat = material('Inferred northern crown leaf samples', palette, False)
-    rng = np.random.default_rng(23021)
+    rng = np.random.default_rng(23021 + int(center_x))
     vertices, faces, uvs = [], [], []
     for _ in range(700):
         unit = rng.normal(size=3)
         unit /= np.linalg.norm(unit)
+        angle = math.atan2(unit[1], unit[0])
+        outline = 1 + .10 * math.sin(angle * 3) + .06 * math.sin(angle * 5 + unit[2] * 3) + .07 * math.cos(unit[2] * 8 + angle)
         unit *= rng.uniform(.05, 1.) ** (1 / 3)
-        center = np.array([center_x, -ground_y / SIN, (ground_y + 172) / COS]) + unit * [84., 98., 76.]
+        center = np.array([center_x, -ground_y / SIN, (ground_y + 172) / COS]) + unit * [84., 98., 76.] * outline
         px, py = patches[int(rng.integers(len(patches)))]
         uv = [(px / width, 1 - py / height), ((px + 24) / width, 1 - py / height),
               ((px + 24) / width, 1 - (py + 24) / height), (px / width, 1 - (py + 24) / height)]
         size = rng.uniform(11., 17.)
-        for a, b in [(0, 1), (0, 2), (1, 2)]:
+        axis = rng.normal(size=3)
+        axis /= np.linalg.norm(axis)
+        second = np.cross(axis, [0, 0, 1] if abs(axis[2]) < .9 else [1, 0, 0])
+        second /= np.linalg.norm(second)
+        third = np.cross(axis, second)
+        for a, b in [(axis, second), (axis, third), (second, third)]:
             start = len(vertices)
             for sa, sb in [(-1, -1), (1, -1), (1, 1), (-1, 1)]:
-                p = center.copy()
-                p[a] += sa * size
-                p[b] += sb * size
+                p = center + a * sa * size + b * sb * size
                 vertices.append(p.tolist())
             faces.extend([(start, start + 1, start + 2), (start, start + 2, start + 3)])
             uvs.extend(uv)
     points = np.asarray(vertices)
+    scale = max(1., np.ptp(points[:, 0]) * 1.12 / np.ptp(points[:, 1]))
+    points[:, 1] = -ground_y / SIN + (points[:, 1] + ground_y / SIN) * scale
+    vertices = points.tolist()
     if np.max(-points[:, 1] * SIN - points[:, 2] * COS) >= 0:
         raise ValueError('Inferred crown must remain outside observed map pixels')
     result = replace_mesh(crown, vertices, faces, uvs, [mat], [0] * len(faces), [False] * len(faces))
     result.update(geometry_version='native-leaf-clusters-v5', width=float(np.ptp(points[:, 0])),
                   depth=float(np.ptp(points[:, 1])), source_projection_preserved=False,
                   inferred_off_map_crown=True, leaf_clusters=700,
+                  inferred_crown_version='irregular-leaf-volume-v2',
                   tree_references=['leicester-southeast-cottage-tree', 'leicester-moat-bank-tree'])
     return result
 

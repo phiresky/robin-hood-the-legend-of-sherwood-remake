@@ -66,6 +66,13 @@ def build(obj, packet, ground_y, boundary):
             for fraction in [.12 + rng.random() * .12, .44 + rng.random() * .12, .76 + rng.random() * .12]:
                 depth = low + fraction * (high - low)
                 quad([point(xa, ya, depth), point(xb, ya, depth), point(xb, yb, depth), point(xa, yb, depth)], uv, True)
+                # A narrow continuation of the actual edge joins the two
+                # volumes. Only this local transition is mirrored; the outer
+                # silhouette and hidden depth stay irregular and inferred.
+                edge_distance = min(abs(xa-boundary),abs(xb-boundary))
+                if edge_distance < 24 + 9*math.sin((ya-image_center_y)/27):
+                    quad([point(2*boundary-xa,ya,depth),point(2*boundary-xb,ya,depth),
+                          point(2*boundary-xb,yb,depth),point(2*boundary-xa,yb,depth)],uv)
                 cx, cy = (xa + xb) / 2, (ya + yb) / 2
                 radius = (xb - xa) * .6
                 quad([point(cx, ya, depth - radius), point(cx, ya, depth + radius),
@@ -77,15 +84,15 @@ def build(obj, packet, ground_y, boundary):
                if alpha[y:y + 24, x:x + 24].mean() > .55]
     if not patches:
         raise ValueError('No leafy source patches for inferred half')
-    atlas = np.zeros((40 * 24, 64 * 24, 4), dtype=np.uint8)
+    atlas = np.zeros((80 * 24, 64 * 24, 4), dtype=np.uint8)
     atlas_index = 0
     sample_v, sample_u = np.mgrid[0:24, 0:24] / 24 + .5 / 24
-    for _ in range(850):
+    for _ in range(1600):
         unit = rng.normal(size=3)
         unit /= np.linalg.norm(unit)
         unit *= rng.uniform(.05, 1.) ** (1 / 3)
-        unit[0] = -abs(unit[0]) if boundary == 0 else abs(unit[0])
         position = center + unit * radii
+        inner_cluster = position[0] >= boundary if boundary == 0 else position[0] <= boundary
         # Keep the inferred outline continuous with the observed crown height
         # at the map edge, and round it toward the outer extremity.
         projected_y = -position[1] * SIN - position[2] * COS
@@ -101,8 +108,11 @@ def build(obj, packet, ground_y, boundary):
         for u, v in [(axis, other), (axis, third), (other, third)]:
             points = [position + (np.asarray(u) * su + np.asarray(v) * sv) * size
                       for su, sv in [(-1, -1), (1, -1), (1, 1), (-1, 1)]]
-            if any((p[0] > boundary if boundary == 0 else p[0] < boundary) for p in points):
-                continue
+            for p in points:
+                if not inner_cluster:
+                    p[0] = min(p[0], boundary - .01) if boundary == 0 else max(p[0], boundary + .01)
+            if inner_cluster and np.dot(np.cross(points[1]-points[0], points[2]-points[0]), ray) > 0:
+                points.reverse()
             # Continue the source's gaps near the cut edge, then gradually
             # release that constraint into the inferred outer volume. Bake the
             # physical alpha into the tile so every renderer and audit sees it.
@@ -111,7 +121,9 @@ def build(obj, packet, ground_y, boundary):
                       + sample_u[..., None] * (1 - sample_v)[..., None] * p1
                       + sample_u[..., None] * sample_v[..., None] * p2
                       + (1 - sample_u)[..., None] * sample_v[..., None] * p3)
-            ix = np.floor(2 * boundary - sample[..., 0] - x0).astype(int)
+            inside = sample[..., 0] >= boundary if boundary == 0 else sample[..., 0] <= boundary
+            source_x = np.where(inside, sample[..., 0], 2 * boundary - sample[..., 0])
+            ix = np.floor(source_x - x0).astype(int)
             iy = np.floor(-sample[..., 1] * SIN - sample[..., 2] * COS - y0).astype(int)
             valid = (ix >= 0) & (ix < width) & (iy >= 0) & (iy < height)
             edge_alpha = np.zeros((24, 24))
@@ -119,21 +131,34 @@ def build(obj, packet, ground_y, boundary):
             weight = np.clip(1 - np.abs(sample[..., 0] - boundary) / 60, 0, 1)
             tile = source[py:py + 24, px:px + 24].copy()
             tile[..., 3] = np.rint(tile[..., 3] * (1 - weight + weight * edge_alpha)).astype(np.uint8)
+            if not inner_cluster:
+                # Continue the local colours across the source edge before
+                # blending into the unconstrained inferred leaf palette.
+                colour_weight = np.clip(1 - np.abs(sample[..., 0] - boundary) / 30, 0, 1)
+                blend = colour_weight[valid, None]
+                tile[..., :3][valid] = np.rint(tile[..., :3][valid] * (1 - blend)
+                    + source[iy[valid], ix[valid], :3] * blend).astype(np.uint8)
+            # Fill the observed half's depth with the same irregular volume.
+            # Its source-facing projection stays inside the native domain;
+            # these hidden leaf placements remain explicitly inferred.
+            tile[..., 3][inside] = np.rint(tile[..., 3][inside] * edge_alpha[inside]).astype(np.uint8)
             ax, ay = atlas_index % 64 * 24, atlas_index // 64 * 24
             atlas[ay:ay + 24, ax:ax + 24] = tile
             atlas_uv = [(ax / atlas.shape[1], 1 - ay / atlas.shape[0]),
                         ((ax + 24) / atlas.shape[1], 1 - ay / atlas.shape[0]),
                         ((ax + 24) / atlas.shape[1], 1 - (ay + 24) / atlas.shape[0]),
                         (ax / atlas.shape[1], 1 - (ay + 24) / atlas.shape[0])]
-            quad(points, atlas_uv, inferred_slot=3)
+            quad(points, atlas_uv, inferred_slot=4 if inner_cluster else 3)
             atlas_index += 1
     atlas_path = path.parent / 'inferred-boundary-atlas.png'
     Image.fromarray(atlas).save(atlas_path)
     mats.append(material(obj.name + ' inferred outer leaf tiles', atlas_path, False))
+    mats.append(material(obj.name + ' inferred inner leaf backs', atlas_path, False))
+    one_sided(mats[4])
     result = replace_mesh(obj, vertices, faces, uvs, mats, slots, known)
     points = np.asarray(vertices)
     result.update(geometry_version='native-leaf-clusters-v6', width=float(np.ptp(points[:, 0])),
-        depth=float(np.ptp(points[:, 1])), source_projection_preserved=True, leaf_clusters=count + 850,
+        depth=float(np.ptp(points[:, 1])), source_projection_preserved=True, leaf_clusters=count + atlas_index // 3,
         inferred_off_map_half=True, method='World-space ellipsoid depth; irregular crossed leaf clusters beyond map boundary',
         tree_references=['leicester-southeast-cottage-tree', 'leicester-moat-bank-tree'])
     return result

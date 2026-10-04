@@ -2,8 +2,10 @@
 import argparse
 import json
 import sys
+import uuid
 from pathlib import Path
 import bpy
+from mathutils import Matrix, Vector
 from PIL import Image
 ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(Path(__file__).parent));sys.path.insert(0,str(ROOT/'level-editor/refinement'));sys.path.insert(0,str(ROOT/'level-editor/refinement/blender'))
@@ -18,12 +20,35 @@ def main():
     args=parser.parse_args(sys.argv[sys.argv.index('--')+1:])
     try:
         for mask in args.masks:
-            w=tree_workspace(mask);dest=w/'inspection/full-crown';dest.mkdir(exist_ok=True)
+            w=tree_workspace(mask);dest=w/'inspection/full-crown'
+            if dest.exists():
+                evidence=dest/'evidence.json'
+                if evidence.exists():
+                    old=json.loads(evidence.read_text())
+                    if (old.get('framing_revision')==2 and old['model_sha256']==sha(w/'model.blend')
+                            and old['original_cameras_sha256']==sha(w/'modified/views.json')
+                            and old['supplemental_cameras_sha256']==sha(dest/'cameras.json')
+                            and old['solid_sha256']==sha(dest/'solid.png')
+                            and old['textured_sha256']==sha(dest/'textured.png')):
+                        continue
+                dest.rename(dest.with_name('full-crown-archive-'+uuid.uuid4().hex[:8]))
+            dest.mkdir()
             acquire();before=sha(w/'model.blend');bpy.ops.wm.open_mainfile(filepath=str(w/'model.blend'))
             scene=bpy.data.scenes['Croisement02 Refinement'];scene.render.engine='CYCLES';scene.cycles.samples=4;scene.cycles.transparent_max_bounces=64
             packet=json.loads((w/'modified/views.json').read_text())
+            objects=[o for o in scene.objects if o.type=='MESH' and not o.hide_render and o.get('asset_group')==w.name]
+            points=[o.matrix_world@v.co for o in objects for v in o.data.vertices]
+            if not points:raise ValueError('No visible geometry for full-crown framing')
             for view in packet['views']:
-                view['ortho_scale']*=1.5;view['crop']=dict(width=packet['tile_size'][0],height=packet['tile_size'][1])
+                matrix=Matrix(view['camera_matrix_world']);inverse=matrix.inverted()
+                local=[inverse@p for p in points]
+                left,right=min(p.x for p in local),max(p.x for p in local)
+                bottom,top=min(p.y for p in local),max(p.y for p in local)
+                matrix.translation+=matrix.to_3x3()@Vector(((left+right)/2,(bottom+top)/2,0))
+                aspect=packet['tile_size'][0]/packet['tile_size'][1]
+                view['ortho_scale']=max(view['ortho_scale']*1.5,1.2*max(top-bottom,(right-left)/aspect))
+                view['camera_matrix_world']=[list(row) for row in matrix]
+                view['crop']=dict(width=packet['tile_size'][0],height=packet['tile_size'][1])
             write_json(dest/'cameras.json',packet)
             render(dest/'cameras.json',dest,modes=('solid','textured'),width=384)
             for mode in ['solid','textured']:
@@ -32,7 +57,7 @@ def main():
                 for i,image in enumerate(images):sheet.paste(image,((i%4)*width,(i//4)*height))
                 sheet.save(dest/f'{mode}.png')
             assert before==sha(w/'model.blend')
-            write_json(dest/'evidence.json',dict(model_sha256=before,original_cameras_sha256=sha(w/'modified/views.json'),supplemental_cameras_sha256=sha(dest/'cameras.json'),scale_factor=1.5,solid_sha256=sha(dest/'solid.png'),textured_sha256=sha(dest/'textured.png')))
+            write_json(dest/'evidence.json',dict(model_sha256=before,original_cameras_sha256=sha(w/'modified/views.json'),supplemental_cameras_sha256=sha(dest/'cameras.json'),framing_revision=2,minimum_scale_factor=1.5,framing='Recentered on complete visible geometry with at least 20 percent padding',solid_sha256=sha(dest/'solid.png'),textured_sha256=sha(dest/'textured.png')))
             release()
     finally:release()
 

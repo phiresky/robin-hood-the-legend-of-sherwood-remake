@@ -206,6 +206,16 @@ geometry/projection mismatch and requires a count/phase correction.
 Keep source-supported geometry separate from artistic inference. Document every
 inferred hidden surface and every unresolved limitation.
 
+Complete assets that extend beyond the source map. The image boundary is not
+an object boundary: infer the missing crown, trunk, rock, wall return or other
+continuation from the visible shape and permitted references instead of cutting
+the model off at the map edge. Preserve observed in-map pixels and label the
+added geometry and its appearance as inferred. Do not claim mirrored or reused
+artwork as observed evidence. Inspect the complete object from oblique and rear
+views, including the transition across the map boundary. Add wider supplemental
+views when necessary without changing the frozen comparison cameras. Keep any
+intentional map export crop separate from the reusable asset geometry.
+
 ### Numbered source artwork corners: why and how
 
 Use this whenever repeated architecture, especially battlements, disagrees with

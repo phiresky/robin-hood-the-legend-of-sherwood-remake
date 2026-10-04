@@ -5,14 +5,12 @@ import sys
 import uuid
 from pathlib import Path
 import bpy
-import numpy as np
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(ROOT / 'level-editor/refinement'))
 sys.path.insert(0, str(ROOT / 'level-editor/refinement/blender'))
 from catalog import OUT
-from tree_geometry import replace_mesh, RAY, SIN, COS
 from evidence_io import sha, write_json
 from refinement_workspace import validate, modified
 from render_slots import acquire, release
@@ -57,7 +55,7 @@ def complete(mask):
             write_json(worker / 'inspection/refinement.json', report)
             audit(worker)
             write_json(receipt, dict(model_sha256=report['model_sha256'], previous_model_sha256=before,
-                boundary_x=boundary, algorithm='world-ellipsoid-and-inferred-half-v2'))
+                boundary_x=boundary, algorithm='world-ellipsoid-and-continuous-leaf-volume-v3'))
         elif json.loads(receipt.read_text())['model_sha256'] != sha(worker / 'model.blend'):
             raise ValueError('Boundary revision changed')
         render_workspace(worker, 256, release_slot=False)
