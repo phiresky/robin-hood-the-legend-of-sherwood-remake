@@ -37,6 +37,9 @@ def bank_workspace(asset):
 
 
 def scenery_workspace(asset):
+    from shrub_candidates import selected_workspace as shrub_workspace
+    revised_shrub=shrub_workspace(OUT,asset,reviewed_catalog())
+    if revised_shrub is not None:return revised_shrub
     from fence_candidates import selected_workspace as selected_fence_workspace
     fence=selected_fence_workspace(OUT,asset,reviewed_catalog())
     if fence is not None:return fence
