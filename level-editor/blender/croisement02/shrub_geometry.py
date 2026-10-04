@@ -105,6 +105,17 @@ def build(obj, packet):
         third=np.cross(axis,other);size=float(rng.uniform(*packet.get('leaf_size_range',[3.5,6.])))
         px,py=patches[int(rng.integers(len(patches)))]
         leaf=np.asarray(Image.fromarray(inferred[py:py+12,px:px+12]).resize((24,24),Image.Resampling.NEAREST)).copy()
+        if packet.get('irregular_inferred_alpha'):
+            gy,gx=np.mgrid[0:24,0:24];gx=(gx+.5)/12-1;gy=(gy+.5)/12-1
+            angle=np.arctan2(gy,gx)
+            radius=.66+.13*np.sin(3*angle+rng.uniform(0,2*math.pi))+.08*np.sin(5*angle+rng.uniform(0,2*math.pi))
+            value=leaf[:,:,:3].astype(float)@[.2126,.7152,.0722]
+            donor=leaf[:,:,3]>127
+            threshold=float(np.quantile(value[donor],.20)) if donor.any() else 255
+            # Native front alpha is never changed. Hidden donors need their
+            # own irregular cluster silhouette, not an opaque crop rectangle.
+            cut=(np.sqrt(gx*gx+gy*gy)<radius)&(value>=threshold)
+            leaf[:,:,3]=np.where(cut,leaf[:,:,3],0)
         for u,v in [(axis,other),(axis,third),(other,third)]:
             pts=[pos+(u*su+v*sv)*size for su,sv in [(-1,-1),(1,-1),(1,1),(-1,1)]]
             p0,p1,p2,p3=pts
@@ -146,6 +157,7 @@ def build(obj, packet):
     result.update(geometry_version='native-shrub-leaf-volume-v2',native_mask=packet['native_mask'],
         source_projection_preserved=True,observed_leaf_pixels=int(known_alpha.sum()),inferred_covered_pixels=int((alpha&~known_alpha).sum()),
         leaf_clusters=len(tiles),opacity_bounds=measure(obj),minimum_z=min(v.co.z for v in obj.data.vertices),
+        inferred_donor_alpha='irregular silhouette and luminance cut' if packet.get('irregular_inferred_alpha') else 'native crop alpha',
         source_fragment_layout='jittered Delaunay triangles' if packet.get('irregular_source_fragments') else 'regular source patches',
         method=('Irregular source-facing microtriangles on an uneven round envelope' if packet.get('irregular_source_fragments') else 'Small observed front cutouts on a round world volume')+'; source-clipped interior leaves and one-sided inferred rear volume',
         references=['leicester-southeast-cottage-tree','leicester-moat-bank-tree'])
