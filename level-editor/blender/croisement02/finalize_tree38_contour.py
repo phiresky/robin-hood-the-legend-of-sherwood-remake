@@ -12,14 +12,14 @@ from audit_candidates import audit
 from render_tree import render_workspace
 
 def main():
-    old=tree_workspace(32);prototype=OUT/'tree32-root-research/continuous-fork-v4';worker=OUT/'root-stem-round-3/assets'/old.name
+    old=tree_workspace(38);prototype=OUT/'tree38-root-research/continuous-contour-v4';worker=OUT/'root-stem-round-1/assets'/old.name
     if worker.exists():raise FileExistsError(worker)
     old_hash=sha(old/'model.blend');prototype_hash=sha(prototype/'model.blend');cfg=json.loads((old/'workspace.json').read_text())
     bpy.ops.wm.open_mainfile(filepath=str(old/'model.blend'));bpy.context.preferences.filepaths.save_version=0
-    prepare(worker,asset_id=old.name,scene_name=cfg['scene_name'],collection_name=cfg['collection_name'],source_path=old/'reference/source.png',grouping_manifest=old/'reference/grouping.json',inventory_path=old/'reference/inventory.json',review_path=old/'reference/grouping-review.json',source_mask_manifest=old/'source-masks.json',width=384,height=384,framing_padding=cfg['framing_padding'],lighting=cfg['lighting'])
+    prepare(worker,asset_id=old.name,scene_name=cfg['scene_name'],collection_name=cfg['collection_name'],source_path=old/'reference/source.png',grouping_manifest=old/'reference/grouping.json',inventory_path=old/'reference/inventory.json',review_path=old/'reference/grouping-review.json',source_mask_manifest=OUT/'tree38-root-research/source-domain-v1/source-masks.json',width=384,height=384,framing_padding=cfg['framing_padding'],lighting=cfg['lighting'])
     bpy.ops.wm.open_mainfile(filepath=str(prototype/'model.blend'));bpy.context.preferences.filepaths.save_version=0
     objects=[o for o in bpy.data.collections['Croisement02 Working'].all_objects if o.type=='MESH' and o.get('asset_group')==old.name]
-    unchanged=[o for o in objects if not(o.get('source_node') in ('building-080','building-081','building-082') and o.get('projection_component')!='crown')]
+    unchanged=[o for o in objects if not(o.get('source_node') in ('building-094',) and o.get('projection_component')!='crown')]
     for obj in objects:
         if obj not in unchanged and not obj.data.uv_layers:
             # Neutral fallback has no texture; a UV layer is still required by projection.
@@ -30,13 +30,13 @@ def main():
     bpy.ops.wm.save_as_mainfile(filepath=str(worker/'model.blend'));modified(worker)
     for obj in unchanged:obj.data=saved[obj.name]
     validate(worker);bpy.ops.wm.save_as_mainfile(filepath=str(worker/'model.blend'));(worker/'inspection').mkdir(exist_ok=True)
-    report=json.loads((old/'inspection/refinement.json').read_text());report.update(model_sha256=sha(worker/'model.blend'),lower_stem=json.loads((prototype/'evidence.json').read_text()),status='Private continuous lower-stem candidate; local source and contact audits pending')
+    report=json.loads((old/'inspection/refinement.json').read_text());report.update(model_sha256=sha(worker/'model.blend'),lower_stem=json.loads((prototype/'evidence.json').read_text()),source_domain_review=json.loads((OUT/'tree38-root-research/source-domain-v1/source-review.json').read_text()),status='Private continuous lower-stem candidate; local source and contact audits pending')
     write_json(worker/'inspection/refinement.json',report);audit(worker);render_workspace(worker,384,release_slot=False)
-    import audit_tree32_roots,inspect_tree07_base
+    import audit_tree38_contour,inspect_tree07_base
     previous_args=sys.argv
     try:
-        sys.argv=[previous_args[0],'--','--worker',str(worker),'--preservation-base',str(old)];audit_tree32_roots.main(release_slot=False)
-        sys.argv=[previous_args[0],'--','--mask','32','--model',str(worker/'model.blend'),'--output-name','continuous-fork-v4-projected-review-r3'];inspect_tree07_base.main()
+        sys.argv=[previous_args[0],'--','--worker',str(worker),'--preservation-base',str(old)];audit_tree38_contour.main(release_slot=False)
+        sys.argv=[previous_args[0],'--','--mask','38','--model',str(worker/'model.blend'),'--output-name','continuous-contour-v4-projected-review'];inspect_tree07_base.main()
     finally:sys.argv=previous_args
     if sha(old/'model.blend')!=old_hash or sha(prototype/'model.blend')!=prototype_hash:raise ValueError('Reviewed input changed')
     write_json(worker/'inspection/stem-candidate.json',dict(previous_worker=str(old),previous_model_sha256=old_hash,prototype=str(prototype),prototype_sha256=prototype_hash,model_sha256=sha(worker/'model.blend'),status='New geometry candidate; independent self-review required',approval='pending'))
