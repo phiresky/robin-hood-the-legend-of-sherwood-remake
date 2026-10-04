@@ -1,4 +1,4 @@
-//! Actor-sized approach points for walking passages in compiled asset geometry.
+//! Actor-sized approach points for passages in compiled asset geometry.
 use crate::level_data::{CompiledAssetGeometry, RawMotionArea};
 use std::collections::BTreeMap;
 
@@ -166,7 +166,7 @@ pub(crate) fn derive(geometry: &mut CompiledAssetGeometry) {
         }
     }
     for (lift_index, lift) in geometry.lifts.iter_mut().enumerate() {
-        if !matches!(lift.lift_type, 0 | 1) {
+        if !matches!(lift.lift_type, 0..=3) {
             continue;
         }
         for (door_index, door) in lift.doors.iter_mut().enumerate() {
@@ -182,6 +182,24 @@ pub(crate) fn derive(geometry: &mut CompiledAssetGeometry) {
                 let Some(area) = areas.get(&(usize::from(sector), usize::from(layer))) else {
                     continue; // Topology validation reports missing areas separately.
                 };
+                if side == "inside" && lift.lift_type == 3 && matches!(door.door_type, 4 | 6) {
+                    // Wall-top approaches are fixed by the climb animation.
+                    // Extending the authored ray would be undone at runtime.
+                    let adapted = crate::level_data::offset_door_approach(
+                        [f32::from(point.0), f32::from(point.1)],
+                        [f32::from(door.point_mid.0), f32::from(door.point_mid.1)],
+                        if door.door_type == 6 { 65. } else { 60. },
+                    );
+                    if !fits(area, adapted.map(f64::from)) {
+                        tracing::warn!(
+                            lift_index,
+                            door_index,
+                            ?adapted,
+                            "compiled wall has no actor-sized clearance at its animation approach"
+                        );
+                    }
+                    continue;
+                }
                 if let Some(adjusted) = approach(area, *point, door.point_mid) {
                     *point = adjusted;
                 } else {
@@ -190,7 +208,7 @@ pub(crate) fn derive(geometry: &mut CompiledAssetGeometry) {
                         door_index,
                         side,
                         ?point,
-                        "compiled walking lift has no actor-sized approach near its authored passage"
+                        "compiled lift has no actor-sized approach near its authored passage"
                     );
                 }
             }
@@ -201,6 +219,43 @@ pub(crate) fn derive(geometry: &mut CompiledAssetGeometry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn climbing_approaches_leave_room_for_the_actor() {
+        let document: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../robin_engine/tests/fixtures/asset-lift.level.json"
+        )))
+        .unwrap();
+        for kind in [2, 3] {
+            let mut geometry: CompiledAssetGeometry =
+                serde_json::from_value(document["asset_geometry"].clone()).unwrap();
+            geometry.lifts[0].lift_type = kind;
+            let high_inside = geometry.lifts[0].doors[1].point_in;
+            derive(&mut geometry);
+            let low = &geometry.lifts[0].doors[0];
+            assert!(fits(
+                &geometry.motion_data.layers[2][0],
+                [f64::from(low.point_in.0), f64::from(low.point_in.1)]
+            ));
+            assert!(fits(
+                &geometry.motion_data.layers[0][0],
+                [f64::from(low.point_out.0), f64::from(low.point_out.1)]
+            ));
+            let high = geometry.lifts[0].doors[1].point_in;
+            if kind == 2 {
+                assert!(fits(
+                    &geometry.motion_data.layers[2][0],
+                    [f64::from(high.0), f64::from(high.1)]
+                ));
+            } else {
+                assert_eq!(
+                    high, high_inside,
+                    "wall-top animation direction remains authored"
+                );
+            }
+        }
+    }
 
     #[test]
     fn narrow_slanted_stair_has_an_actor_sized_approach() {

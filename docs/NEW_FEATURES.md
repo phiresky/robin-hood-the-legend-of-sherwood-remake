@@ -8,6 +8,9 @@
   explicit plane assignment. Together these prevent failed exits and stale
   landing heights on lifts with multiple entrances. Two further library assets
   retain their full movement contour independently of their receiving footprint.
+  Clearance repair also covers ladder approaches and wall bottoms, keeping the
+  actor's collision box inside its movement area after rotation. Wall tops retain
+  their animation-defined offset and warn if that position lacks clearance.
 
 - **Map interactions without mission scripts.** Gate routes, jump selection,
   lockpicking validation, door hover/overlays, patch clicks, building AI door lists,

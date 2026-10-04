@@ -271,6 +271,51 @@ fn exported_stairs_support_complete_actor_routes() {
 #[test]
 #[ignore = "requires ROBIN_ASSET_MAP_DIAGNOSTICS and ROBIN_CLIMB_RHS"]
 fn exported_climbs_support_complete_actor_routes() {
+    let sprite = complete_climb_sprite();
+    audit_exported_lifts(
+        &[
+            crate::sector::LiftType::Ladder,
+            crate::sector::LiftType::Wall,
+        ],
+        Some(&sprite),
+        "actor-climb-route-report.json",
+    );
+}
+
+#[test]
+#[ignore = "requires ROBIN_CLIMB_RHS"]
+fn placed_climbs_support_complete_actor_routes() {
+    let sprite = complete_climb_sprite();
+    let bytes = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/asset-lift.level.json"
+    ));
+    for (lift_type, high_type) in [(2, 4), (3, 4), (3, 6)] {
+        for turn in 0..4 {
+            let mut document: serde_json::Value = serde_json::from_slice(
+                &super::compiled_lifts::placed_stair_fixture(bytes, turn, lift_type),
+            )
+            .unwrap();
+            document["asset_geometry"]["lifts"][0]["doors"][1]["door_type"] = high_type.into();
+            let (engine, assets) = compiled_walkway(&serde_json::to_vec(&document).unwrap());
+            for (entrance, exit) in [(0, 1), (1, 0)] {
+                assert_eq!(
+                    walk_exported_lift(
+                        engine.clone(),
+                        assets.clone(),
+                        entrance,
+                        exit,
+                        Some(&sprite)
+                    ),
+                    Ok(true),
+                    "lift={lift_type}, high={high_type}, turn={turn}, entrance={entrance}"
+                );
+            }
+        }
+    }
+}
+
+fn complete_climb_sprite() -> crate::sprite::Sprite {
     if std::env::var_os("ROBIN_LIFT_TRACE").is_some() {
         let _ = tracing_subscriber::fmt()
             .with_max_level(tracing::Level::DEBUG)
@@ -303,14 +348,7 @@ fn exported_climbs_support_complete_actor_routes() {
             None,
         )
         .unwrap();
-    audit_exported_lifts(
-        &[
-            crate::sector::LiftType::Ladder,
-            crate::sector::LiftType::Wall,
-        ],
-        Some(&sprite),
-        "actor-climb-route-report.json",
-    );
+    sprite
 }
 
 fn audit_exported_lifts(
@@ -327,6 +365,7 @@ fn audit_exported_lifts(
     let mut report = serde_json::json!({
         "scope": "initial-state-directed-lift-walks-between-every-entrance-pair",
         "lift_types": types, "complete_sprite": sprite.is_some(),
+        "input_snapshot_notes": manifest.get("snapshot_notes"),
         "map_filter": std::env::var("ROBIN_LIFT_AUDIT_MAP").ok(),
         "complete": false, "audit_finished": false, "results": []
     });

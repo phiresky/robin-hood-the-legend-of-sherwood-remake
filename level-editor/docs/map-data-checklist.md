@@ -42,7 +42,7 @@ Fresh published-asset diagnostics in `work/map-compile/stair-routing-HtMZ9h`
 pass all 288 directed stair walks across ten maps and 6,234 sampled actor
 crossings (6,178 between receiving planes and 56 between planes and ground),
 using the corrected 6×3 footprint. No stair routes were skipped for permissions.
-The current changes pass 4,296 engine unit tests, 70 level-data tests, 61 compiler
+The current changes pass 4,296 engine unit tests, 71 level-data tests, 61 compiler
 integration tests and 393 editor/shared compiler tests (one skipped).
 Earlier validation passed 4,293 engine unit tests, 68 level-data tests, 61 compiler
 integration tests and 6,222 sampled actor crossings with a 6×4 half-diagonal.
@@ -69,7 +69,18 @@ is saved separately; this result does not certify that publication. The audit
 does not certify rendered sprites, arbitrary rotated climb assemblies, every
 character profile, contention between actors or mission behavior.
 
+**Placed climb clearance:** ladder approaches and wall-bottom approaches now
+receive the same collision-box clearance repair as stairs. Wall-top approaches
+retain their animation-defined radius; inadequate clearance there warns instead
+of changing an offset that runtime loading would overwrite. A constructed
+ladder, ordinary wall and crenellated wall pass 24 full actor routes: four
+translated/rotated orientations, both directions, using complete Robin animation
+rows. This verifies those placements, not every possible rotation or asset shape.
+
 **Ordinary route consistency:** fresh best-effort exports of all ten saved maps
+with the corrected 6×3 half-diagonal pass 1,316 sampled routes in 93 seconds in
+`work/map-compile/stair-routing-2IBVdk`; the Lincoln snapshot limitation above
+also applies here. Historical exports using the larger 6×4 footprint
 are under `work/map-compile/route-sampling-HpYhrj`. A native collision flood-fill
 finds connected actor-sized samples within numbered motion sectors, then checks
 forward/reverse pathfinder routes and clearance on every returned segment. The
