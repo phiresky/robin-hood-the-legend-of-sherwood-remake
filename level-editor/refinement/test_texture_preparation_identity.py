@@ -83,6 +83,31 @@ class PreparationIdentityTests(unittest.TestCase):
                 with self.subTest(field=field),self.assertRaisesRegex(ValueError,'different approved geometry'):
                     resolve(altered,self.root,{},self.root,self.approval,self.frames,supplemental=True)
 
+    def test_covered_only_packet_requires_exact_source_model_and_cameras(self):
+        import hashlib
+        camera = self.root/'modified/views.json'; camera.parent.mkdir(); camera.write_text('{}')
+        source = dict(asset_id='house', decision='approved', model_sha256=self.item['revision']['model_sha256'],
+                      modified_views_sha256=sha(camera), state_bundle_sha256=None, lighting_review_sha256=None)
+        identity = {k: source[k] for k in ('asset_id', 'model_sha256', 'modified_views_sha256', 'state_bundle_sha256', 'lighting_review_sha256')}
+        parent = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+        self.item.pop('preparation_state'); self.approval.pop('review_state'); self.frames.pop('review_state')
+        self.item['parent_geometry_revision'] = parent
+        self.approval['geometry_revision'] = self.frames['geometry_revision'] = parent
+        provenance = dict(selected_state='covered', source_approval=source)
+        self.item['approval_provenance'] = self.approval['approval_provenance'] = provenance
+        selection = Path(self.item['preparation_selection'])
+        selection.write_text(json.dumps({k:self.item[k] for k in ('parent_geometry_revision','preparation_model')}))
+        self.item['revision']['evidence']['selection']['sha256'] = sha(selection)
+        self.item['revision']['evidence']['frames'] = dict(path=str(camera),sha256=sha(camera))
+        manifest = self.root/'manifest.json'; manifest.write_text(json.dumps({'items':[self.item]}))
+        (self.root/'preparation.json').write_text(json.dumps(dict(source_review_manifest=str(manifest),review_manifest_sha256=sha(manifest),approved_revision=parent)))
+        self.assertEqual(self.run_resolve()[2], parent)
+        with self.assertRaisesRegex(ValueError, 'Covered preparation'):
+            self.run_resolve(frames=dict(self.frames,review_state='revealed'))
+        camera.write_text('{"changed":true}')
+        with self.assertRaisesRegex(ValueError, 'not approved'):
+            self.run_resolve()
+
     def test_parent_without_bound_selection_fails(self):
         item=copy.deepcopy(self.item);item['revision']['evidence'].pop('selection')
         with self.assertRaises(ValueError):self.run_resolve(item=item)

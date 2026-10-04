@@ -1,5 +1,6 @@
 """Validate the separate approved geometry and normalized preparation identities."""
 import json
+import hashlib
 from pathlib import Path
 from review_evidence import sha
 
@@ -62,9 +63,24 @@ def resolve(item, workspace, protected, experiment, approval, frames, *, supplem
             approval.get('source_decision', {}).get('decision') != 'approved'):
         raise ValueError('Normalized preparation lost its exact geometry approval lineage')
     model = bound(item['preparation_model'])
-    state = item['preparation_state']
-    if approval.get('review_state') != state or frames.get('review_state') != state:
-        raise ValueError('Normalized preparation state differs from approved selection')
+    if 'preparation_state' in item:
+        state = item['preparation_state']
+        if approval.get('review_state') != state or frames.get('review_state') != state:
+            raise ValueError('Normalized preparation state differs from approved selection')
+    else:
+        # Legacy covered-only packets bind their model and cameras directly to
+        # the recorded gallery decision, without a separate state selection.
+        provenance = item['approval_provenance']
+        source = provenance.get('source_approval', {})
+        identity = {key: source.get(key) for key in
+                    ('asset_id', 'model_sha256', 'modified_views_sha256', 'state_bundle_sha256', 'lighting_review_sha256')}
+        source_parent = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+        if (supplemental or provenance.get('selected_state') != 'covered' or
+                approval.get('review_state') is not None or frames.get('review_state') is not None or
+                source.get('decision') != 'approved' or source.get('asset_id') != item['id'] or
+                source.get('model_sha256') != sha(model) or source_parent != parent or
+                source.get('modified_views_sha256') != sha(bound(workspace/'modified/views.json'))):
+            raise ValueError('Covered preparation differs from its explicit geometry approval')
     protected[receipt_path] = sha(receipt_path)
     protected[manifest] = sha(manifest)
     return item, workspace, parent, sha(model)
