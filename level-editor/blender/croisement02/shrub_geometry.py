@@ -5,6 +5,7 @@ import bpy
 import numpy as np
 from PIL import Image
 from scipy.ndimage import distance_transform_edt, binary_erosion
+from scipy.spatial import Delaunay
 from tree_geometry import SIN, COS, RAY, material, one_sided, replace_mesh
 from opacity_bounds import measure
 
@@ -44,25 +45,53 @@ def build(obj, packet):
     # The observed source is divided into small fixed patches along the front
     # of a round volume; one shell avoids repeated broad parallel image layers.
     a=np.sum((ray/radii)**2)
-    for top in range(0,height,6):
-        for left in range(0,width,6):
-            right,bottom=min(width,left+7),min(height,top+7)
-            if not alpha[top:bottom,left:right].any():continue
-            xa,xb,ya,yb=x0+left,x0+right,y0+top,y0+bottom
-            relative=point((xa+xb)/2,(ya+yb)/2,0)-center
-            b=2*np.sum(relative*ray/radii**2);c=np.sum((relative/radii)**2)-1
-            depth=(-b+math.sqrt(max(0,b*b-4*a*c)))/(2*a)
-            pts=[point(xa,ya,depth),point(xb,ya,depth),point(xb,yb,depth),point(xa,yb,depth)]
-            if packet.get('curved_front'):
-                pts=[]
-                for sx,sy in [(xa,ya),(xb,ya),(xb,yb),(xa,yb)]:
-                    relative=point(sx,sy,0)-center
-                    b=2*np.sum(relative*ray/radii**2);c=np.sum((relative/radii)**2)-1
-                    pts.append(point(sx,sy,(-b+math.sqrt(max(0,b*b-4*a*c)))/(2*a)))
-            uv=[(left/width,1-top/height),(right/width,1-top/height),(right/width,1-bottom/height),(left/width,1-bottom/height)]
-            quad(pts,uv,0,True,True)
-            quad([p-ray*.001 for p in pts],uv,1,False,True)
-            quad([p-ray*.02 for p in pts],uv,2)
+    def front_depth(sx,sy):
+        relative=point(sx,sy,0)-center
+        b=2*np.sum(relative*ray/radii**2);c=np.sum((relative/radii)**2)-1
+        return (-b+math.sqrt(max(0,b*b-4*a*c)))/(2*a)
+    if packet.get('irregular_source_fragments'):
+        rng_front=np.random.default_rng(81700+packet['native_mask'])
+        xs=np.linspace(0,width,math.ceil(width/6)+1);ys=np.linspace(0,height,math.ceil(height/6)+1)
+        samples=[]
+        for iy,sy in enumerate(ys):
+            for ix,sx in enumerate(xs):
+                samples.append([sx+(rng_front.uniform(-1.9,1.9) if 0<ix<len(xs)-1 else 0),
+                                sy+(rng_front.uniform(-1.9,1.9) if 0<iy<len(ys)-1 else 0)])
+        samples=np.asarray(samples)
+        for face in Delaunay(samples).simplices:
+            xy=samples[face];lo=np.floor(xy.min(axis=0)).astype(int);hi=np.ceil(xy.max(axis=0)).astype(int)
+            if not alpha[max(0,lo[1]):min(height,hi[1]),max(0,lo[0]):min(width,hi[0])].any():continue
+            sx,sy=xy.mean(axis=0)+[x0,y0]
+            uneven=(5*math.sin(sx*.052+sy*.031)+3*math.sin(sx*.11-sy*.057))*min(1,fw/220)
+            depth=front_depth(sx,sy)+uneven+rng_front.uniform(-1.5,1.5)
+            pts=[point(x0+px,y0+py,depth) for px,py in xy]
+            coords=[(px/width,1-py/height) for px,py in xy]
+            if np.dot(np.cross(pts[1]-pts[0],pts[2]-pts[0]),ray)<0:
+                pts.reverse();coords.reverse()
+            for slot,offset,observed,reverse in [(0,0,True,False),(1,.001,False,False),(2,.02,False,True)]:
+                start=len(vertices);vertices.extend([list(p-ray*offset) for p in pts]);uvs.extend(coords)
+                faces.append((start+2,start+1,start) if reverse else (start,start+1,start+2))
+                slots.append(slot);known.append(observed)
+    else:
+        for top in range(0,height,6):
+            for left in range(0,width,6):
+                right,bottom=min(width,left+7),min(height,top+7)
+                if not alpha[top:bottom,left:right].any():continue
+                xa,xb,ya,yb=x0+left,x0+right,y0+top,y0+bottom
+                relative=point((xa+xb)/2,(ya+yb)/2,0)-center
+                b=2*np.sum(relative*ray/radii**2);c=np.sum((relative/radii)**2)-1
+                depth=(-b+math.sqrt(max(0,b*b-4*a*c)))/(2*a)
+                pts=[point(xa,ya,depth),point(xb,ya,depth),point(xb,yb,depth),point(xa,yb,depth)]
+                if packet.get('curved_front'):
+                    pts=[]
+                    for sx,sy in [(xa,ya),(xb,ya),(xb,yb),(xa,yb)]:
+                        relative=point(sx,sy,0)-center
+                        b=2*np.sum(relative*ray/radii**2);c=np.sum((relative/radii)**2)-1
+                        pts.append(point(sx,sy,(-b+math.sqrt(max(0,b*b-4*a*c)))/(2*a)))
+                uv=[(left/width,1-top/height),(right/width,1-top/height),(right/width,1-bottom/height),(left/width,1-bottom/height)]
+                quad(pts,uv,0,True,True)
+                quad([p-ray*.001 for p in pts],uv,1,False,True)
+                quad([p-ray*.02 for p in pts],uv,2)
     patches=[(x,y) for y in range(0,height-12,3) for x in range(0,width-12,3) if known_alpha[y:y+12,x:x+12].mean()>.25]
     if not patches:raise ValueError('No native leaf patches')
     rng=np.random.default_rng(55100+packet['native_mask']);tiles=[]
@@ -117,6 +146,7 @@ def build(obj, packet):
     result.update(geometry_version='native-shrub-leaf-volume-v2',native_mask=packet['native_mask'],
         source_projection_preserved=True,observed_leaf_pixels=int(known_alpha.sum()),inferred_covered_pixels=int((alpha&~known_alpha).sum()),
         leaf_clusters=len(tiles),opacity_bounds=measure(obj),minimum_z=min(v.co.z for v in obj.data.vertices),
-        method='Small observed front cutouts on a round world volume; source-clipped interior leaves and one-sided inferred rear volume',
+        source_fragment_layout='jittered Delaunay triangles' if packet.get('irregular_source_fragments') else 'regular source patches',
+        method=('Irregular source-facing microtriangles on an uneven round envelope' if packet.get('irregular_source_fragments') else 'Small observed front cutouts on a round world volume')+'; source-clipped interior leaves and one-sided inferred rear volume',
         references=['leicester-southeast-cottage-tree','leicester-moat-bank-tree'])
     return result

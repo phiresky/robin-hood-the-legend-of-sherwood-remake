@@ -299,3 +299,15 @@ source inventory. Domain414 is exactly native81; its only native overlap is
 the rock behind it. This batch has no boundary completion and keeps observed RGB
 intact. It requires the southwest rock/contact review before integration; the
 initial55/58/59 batch and approved assets are not rewritten.
+
+The pending southwest81 and northern65/66 batches use source-facing
+microtriangles on an uneven rounded envelope. Delaunay tessellation of jittered
+source samples breaks regular rows; each small triangle keeps its source RGB
+undistorted. Randomly rotated interior and rear leaves provide physical depth.
+`--batch north65-66` chains from the private81 proposal, so catalog integration
+refuses it until81 is registered and the frozen base hash matches.
+
+`refine_west_shrubs.py` stages this recipe in `understory-round-5`, retaining the
+previous bank worker exactly. It removes copied approval/integration receipts
+and requires renewed rock/contact review. Approved55/58/59 are not changed by
+these pending recipes; their visible card rows need a separate reviewed revision.

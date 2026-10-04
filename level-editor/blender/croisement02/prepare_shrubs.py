@@ -25,11 +25,12 @@ DIRECTORY=OUT/'understory-candidates/clumps-v1'
 BASE=OUT/'authored-stem-integration'
 FIRST_DOMAIN=410
 GEOMETRY_OPTIONS={}
+INHERIT_BASE_CATALOG=False
 
 
 def main():
     DIRECTORY.mkdir(exist_ok=False)
-    catalog=json.loads(reviewed_catalog().read_text())
+    catalog=json.loads((BASE/'catalog.json' if INHERIT_BASE_CATALOG else reviewed_catalog()).read_text())
     write_json(DIRECTORY/'previous-catalog.json',catalog)
     source=OUT/'animation-references/composite-frame-0.png';rgb=Image.open(source).convert('RGBA')
     mask_manifest=json.loads((BASE/'source-masks.json').read_text())
@@ -124,11 +125,14 @@ def main():
 
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--batch',choices=['initial','southwest81'],default='initial')
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--batch',choices=['initial','southwest81','north65-66'],default='initial')
     args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
     if args.batch=='southwest81':
         CHOSEN={81:[]};DIRECTORY=OUT/'understory-candidates/southwest81-v1'
-        BASE=OUT/'understory-candidates/west-bank-v4';FIRST_DOMAIN=414;GEOMETRY_OPTIONS={'curved_front':True}
+        BASE=OUT/'understory-candidates/west-bank-v4';FIRST_DOMAIN=414;GEOMETRY_OPTIONS={'curved_front':True,'irregular_source_fragments':True}
+    elif args.batch=='north65-66':
+        CHOSEN={65:[134],66:[]};DIRECTORY=OUT/'understory-candidates/north65-66-v1'
+        BASE=OUT/'understory-candidates/southwest81-v1';FIRST_DOMAIN=415;GEOMETRY_OPTIONS={'curved_front':True,'irregular_source_fragments':True};INHERIT_BASE_CATALOG=True
     acquire()
     try:main()
     finally:release()
