@@ -57,6 +57,17 @@ def main():
                 technical=values['intersection_over_union']>=.95 and min(v['depth_width_ratio'] for v in bounds['crowns'])>=1.
         elif 'state' in group['id']:technical=False
         review=workspace/'inspection/visual-review.json'
+        full_crown=workspace/'inspection/full-crown'
+        if (full_crown/'evidence.json').exists():
+            supplemental=json.loads((full_crown/'evidence.json').read_text())
+            if (supplemental['model_sha256']==model_hash
+                    and supplemental['original_cameras_sha256']==sha(workspace/'modified/views.json')
+                    and supplemental['supplemental_cameras_sha256']==sha(full_crown/'cameras.json')
+                    and supplemental['solid_sha256']==sha(full_crown/'solid.png')
+                    and supplemental['textured_sha256']==sha(full_crown/'textured.png')):
+                item['source_comparison_secondary']=str(full_crown/'solid.png')
+                item['source_comparison_secondary_label']='Supplemental full-crown solid mesh (opaque cards; wider framing)'
+                item['stored_material_states']=[dict(id='full-crown',name='Supplemental full-crown views (wider framing)',sheet=str(full_crown/'textured.png'),audit=str(full_crown/'evidence.json'))]
         if review.exists():
             reviewed=json.loads(review.read_text())
             current_review=reviewed.get('model_sha256')==model_hash
@@ -65,6 +76,8 @@ def main():
             if reviewed.get('self_review_packet'):
                 packet=Path(reviewed['self_review_packet'])
                 current_review=current_review and packet.exists() and sha(packet)==reviewed['self_review_packet_sha256']
+            if reviewed.get('full_crown_evidence_sha256'):
+                current_review=current_review and 'stored_material_states' in item and sha(full_crown/'evidence.json')==reviewed['full_crown_evidence_sha256']
             if current_review:
                 item['notes']+=reviewed.get('notes',[])
                 if reviewed.get('ready_for_geometry_review') and technical:

@@ -139,12 +139,29 @@ Run `python3 level-editor/blender/croisement02/self_review_packet.py <ids>` to
 assemble current eight-view and source-comparison boards. This command never
 grants readiness; manual observations belong in hash-bound visual-review records.
 
-Second-pass self-review TODOs: correct tree 00's duplicate trunk assignment;
+Remaining self-review TODOs: correct tree 00's duplicate trunk assignment;
 separate tree 03's obstacle 144 state ownership (patch-006 removes it); remove
 foreground kindling from tree 18's receiver and donor using a new frozen source
-inventory; repair root junctions on 06/15/30/35/39; provide complete review framing
-for 17/19; reconsider cropped/disconnected crown grouping on 20/23/24/40; and
+inventory; reconsider cropped/disconnected crown grouping on 20/23/24/40; and
 resolve visible bark ownership or repetitive donor coverage on 05/27/41/46.
 These candidates remain in progress even where silhouette and depth metrics pass.
 Preserve frozen inventories and cameras; corrected ownership needs a new worker,
 and extra inspection views must be explicitly recorded.
+
+`repair_tree_roots.py -- --masks <ids>` reconstructs the existing canonical wood
+assignments, joins short trace gaps for single-part trees and tree 06, and unions overlapping
+tubes before bending low roots toward ground along the source ray. Union must
+precede the ground deformation: remeshing already flattened roots can erase
+thin connections. Cross sections, gap bridges and ground contact are inferred;
+review the source overlay and all eight views after baking. Approved models are
+guarded against revision. Root repairs are candidates, not automatic approvals.
+Root revisions for 06/15/30/35/39 passed the subsequent source-overlay and
+eight-view self-review; inferred basal textures still need texture review.
+
+`render_full_crown.py -- 17 19` adds eight solid-mesh and saved-material views with
+1.5 times the original orthographic scale. Original frozen views remain intact.
+The supplemental solid mode displays opaque foliage cards; use the actual
+materials to judge leaf coverage. The gallery binds these supplemental images
+and camera evidence to the saved model. These wider views address review-frame
+clipping, not authored map-boundary cropping or missing out-of-map artwork.
+Both supplemental packets passed visual review with the complete crowns visible.
