@@ -4055,3 +4055,17 @@ Publication now checks that an existing gameplay definition is not silently
 removed by a model replacement, both during preparation and application. Changed
 asset frames require reconciliation; this guard does not validate the completeness
 of a replacement definition. It does not block best-effort map exports.
+
+The subsequent ground-receiver revision restores 19 reviewed receiving shapes.
+Each current placed shape passes exact float32 geometry, flags, unique ownership
+and persistent unblocked-anchor checks before its model pin is refreshed in
+`refinement/catalogs/lincoln-ground-receivers.json`. Ground clearances are recovered
+together across all assets: installing only the receiver-owning assets disconnects
+six lifts because neighboring assets retain incompatible exclusions.
+
+The published complete revision is in
+`work/map-compile/lincoln-republished-ground-recovery-20261004`; it has 39 layers
+and all ten lifts. Eight native tests pass, including all 24 Lincoln lift routes,
+six ground crossings and 32 other receiving crossings. Reopening the published
+document and compiling exclusively from its pinned assets reproduces the tested
+geometry exactly. The tower light and visual-state/mask gaps above remain open.

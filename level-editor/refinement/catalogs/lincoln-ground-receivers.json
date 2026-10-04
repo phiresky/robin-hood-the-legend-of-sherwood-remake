@@ -4,7 +4,7 @@
     {
       "asset": "lincoln-village-stone-footbridge",
       "node": "building-049",
-      "model_sha256": "471b4befa0ec9a2aebfcbd486dc01b8eb85f0d3475b346509c1ab3ffe2570891",
+      "model_sha256": "539bc5cc3a7232ae62fa8499ee31a3f965b19d12bf45d7337a3fbcba38472650",
       "source_obstacle": 49,
       "anchor": [
         651,
@@ -14,7 +14,7 @@
     {
       "asset": "lincoln-village-stone-footbridge",
       "node": "building-050",
-      "model_sha256": "471b4befa0ec9a2aebfcbd486dc01b8eb85f0d3475b346509c1ab3ffe2570891",
+      "model_sha256": "539bc5cc3a7232ae62fa8499ee31a3f965b19d12bf45d7337a3fbcba38472650",
       "source_obstacle": 50,
       "anchor": [
         736,
@@ -24,7 +24,7 @@
     {
       "asset": "lincoln-southwest-cliff-road",
       "node": "building-052",
-      "model_sha256": "beb297ea43310f3a161c5b94b7e1c0e2c1fe385dd73c9b7efbfb867a4c14be6e",
+      "model_sha256": "c5c4c6dbdcab9ce8b3dcac57d1e5779a43e287f2341541675a33c07f78887761",
       "source_obstacle": 52,
       "anchor": [
         151,
@@ -34,7 +34,7 @@
     {
       "asset": "lincoln-south-bank-plateau",
       "node": "building-053",
-      "model_sha256": "433e5d1d43aba1c821e61e246f9c1db38c654ffd61d0438ad4fd5cadb27b535e",
+      "model_sha256": "74650ae349c1ea7b033f1167bc6b79a418ebcc0a0bf5109b1a4fd8ee75b10350",
       "source_obstacle": 53,
       "anchor": [
         605,
@@ -44,7 +44,7 @@
     {
       "asset": "lincoln-southwest-road-slope",
       "node": "building-054",
-      "model_sha256": "7c746e1f4ebdd3cc4a53a35734efef1f24e8cf587b64d3dad67064240946c383",
+      "model_sha256": "72b42d48409943ffbe093bc15958a1025138a8147af180f387ee5a5abafb759f",
       "source_obstacle": 54,
       "anchor": [
         586,
@@ -54,7 +54,7 @@
     {
       "asset": "lincoln-southwest-road-slope",
       "node": "building-055",
-      "model_sha256": "7c746e1f4ebdd3cc4a53a35734efef1f24e8cf587b64d3dad67064240946c383",
+      "model_sha256": "72b42d48409943ffbe093bc15958a1025138a8147af180f387ee5a5abafb759f",
       "source_obstacle": 55,
       "anchor": [
         411,
@@ -64,7 +64,7 @@
     {
       "asset": "lincoln-southwest-ravine-bridge",
       "node": "building-056",
-      "model_sha256": "05ee1710a327f1eb6d604afb2a0b1734c6d092859302f81222a8380b10b664bf",
+      "model_sha256": "7f0ce8f5bbd8ef53c58a5f49db4f6ec20808bbe086b856cd4589a6b02225088e",
       "source_obstacle": 56,
       "anchor": [
         561,
@@ -74,7 +74,7 @@
     {
       "asset": "lincoln-southwest-ravine-bridge",
       "node": "building-057",
-      "model_sha256": "05ee1710a327f1eb6d604afb2a0b1734c6d092859302f81222a8380b10b664bf",
+      "model_sha256": "7f0ce8f5bbd8ef53c58a5f49db4f6ec20808bbe086b856cd4589a6b02225088e",
       "source_obstacle": 57,
       "anchor": [
         581,
@@ -84,7 +84,7 @@
     {
       "asset": "lincoln-south-gate-drawbridge",
       "node": "building-058",
-      "model_sha256": "7b5b2bd31fd9d8f4ba0523de55391842e3d64ad92d96ee97684f3fc5e4bef613",
+      "model_sha256": "11bfac36ded30f043c0a64b6609f12c62ad853bccc1452d375b1d14f74f8df29",
       "source_obstacle": 58,
       "anchor": [
         1046,
@@ -94,7 +94,7 @@
     {
       "asset": "lincoln-south-gate-drawbridge",
       "node": "building-059",
-      "model_sha256": "7b5b2bd31fd9d8f4ba0523de55391842e3d64ad92d96ee97684f3fc5e4bef613",
+      "model_sha256": "11bfac36ded30f043c0a64b6609f12c62ad853bccc1452d375b1d14f74f8df29",
       "source_obstacle": 59,
       "anchor": [
         1097,
@@ -104,7 +104,7 @@
     {
       "asset": "lincoln-west-tower-terrace",
       "node": "building-060",
-      "model_sha256": "cc41967fd655643cfbfa4bb624debe44a19af92e64f9a72b27be845fd5728fb1",
+      "model_sha256": "b6b73f48af129f79445d77dfdd656a3bc025d675a5226c9f679d7472595f8bd2",
       "source_obstacle": 60,
       "anchor": [
         420,
@@ -114,7 +114,7 @@
     {
       "asset": "lincoln-castle-hill-inner-bailey-plateau",
       "node": "building-062",
-      "model_sha256": "72668bc2d401c73a36af52d70f97d31298d65e9d85ad18e845a8ee2a468f0f37",
+      "model_sha256": "a682cc4227506a78df3b7ff3bf9ac7a2429bb326ab522d1a78c5d7cb4c6e4d31",
       "source_obstacle": 62,
       "anchor": [
         1872,
@@ -124,7 +124,7 @@
     {
       "asset": "lincoln-south-bank-plateau",
       "node": "building-063",
-      "model_sha256": "433e5d1d43aba1c821e61e246f9c1db38c654ffd61d0438ad4fd5cadb27b535e",
+      "model_sha256": "74650ae349c1ea7b033f1167bc6b79a418ebcc0a0bf5109b1a4fd8ee75b10350",
       "source_obstacle": 63,
       "anchor": [
         2636,
@@ -134,7 +134,7 @@
     {
       "asset": "lincoln-castle-hill-east-slope",
       "node": "building-064",
-      "model_sha256": "4379542cb4e925fca9eb5cf8c4d7cc5c7f0fe48513381f0a391f749bc1c0a1ea",
+      "model_sha256": "b35d2d71a9f4a97487299792157c307e2a2cfd9466e8c922d9ca4d18e52af132",
       "source_obstacle": 64,
       "anchor": [
         2723,
@@ -144,7 +144,7 @@
     {
       "asset": "lincoln-castle-hill-west-plateau",
       "node": "building-065",
-      "model_sha256": "a355ceed7074f904df7f73cf252e5c82d36c80950ad7be26e838826f47fbfa52",
+      "model_sha256": "dd56a357ef8cee659b01ff6a4743f56d1a14b13fce8d9cc7859a8e90c9bbb499",
       "source_obstacle": 65,
       "anchor": [
         492,
@@ -154,7 +154,7 @@
     {
       "asset": "lincoln-castle-hill-north-bailey-plateau",
       "node": "building-067",
-      "model_sha256": "0f0b9457b142a612234c7a2e90c1ab30432e7430f5dfe9c9bd2a7bb70f7194a2",
+      "model_sha256": "4daeefca819d631f382a924dbb121aaf17ed8e734a445e9b37cdc5c906147f22",
       "source_obstacle": 67,
       "anchor": [
         2344,
@@ -164,7 +164,7 @@
     {
       "asset": "lincoln-west-tower-terrace",
       "node": "building-069",
-      "model_sha256": "cc41967fd655643cfbfa4bb624debe44a19af92e64f9a72b27be845fd5728fb1",
+      "model_sha256": "b6b73f48af129f79445d77dfdd656a3bc025d675a5226c9f679d7472595f8bd2",
       "source_obstacle": 69,
       "anchor": [
         350,
@@ -174,7 +174,7 @@
     {
       "asset": "lincoln-west-slate-tower",
       "node": "building-073",
-      "model_sha256": "7608aae532f6bb101f283e64d47f4171dc108a0c416b99a02c7aff6c60c43d5c",
+      "model_sha256": "42f65e2257d7af4c7e46cad3b0a8856c89e7ad24a71d3113019ae714f8308276",
       "source_obstacle": 73,
       "anchor": [
         726,
@@ -184,7 +184,7 @@
     {
       "asset": "lincoln-west-tower-terrace",
       "node": "building-409",
-      "model_sha256": "cc41967fd655643cfbfa4bb624debe44a19af92e64f9a72b27be845fd5728fb1",
+      "model_sha256": "b6b73f48af129f79445d77dfdd656a3bc025d675a5226c9f679d7472595f8bd2",
       "source_obstacle": 409,
       "anchor": [
         421,
