@@ -21,9 +21,11 @@ def main():
   # Every existing leaf vertex samples its own source-atlas coordinate. This
   # keeps paired fronts/backs coherent and carries local material motion into depth.
   coords=np.zeros((len(rest),2));counts=np.zeros(len(rest))
-  for loop in mesh.loops:
-   u,v=uv.data[loop.index].uv;coords[loop.vertex_index]+=[px+u*pw,py+(1-v)*ph];counts[loop.vertex_index]+=1
-  coords/=counts[:,None];ix=np.clip(np.rint(coords[:,0]-x).astype(int),0,w-1);iy=np.clip(np.rint(coords[:,1]-y).astype(int),0,h-1);inside=(coords[:,0]>=x)&(coords[:,0]<x+w)&(coords[:,1]>=y)&(coords[:,1]<y+h)
+  for face in mesh.polygons:
+   if face.material_index not in (0,2):continue
+   for index in face.loop_indices:
+    loop=mesh.loops[index];u,v=uv.data[index].uv;coords[loop.vertex_index]+=[px+u*pw,py+(1-v)*ph];counts[loop.vertex_index]+=1
+  coords/=np.maximum(counts[:,None],1);ix=np.clip(np.rint(coords[:,0]-x).astype(int),0,w-1);iy=np.clip(np.rint(coords[:,1]-y).astype(int),0,h-1);inside=(counts>0)&(coords[:,0]>=x)&(coords[:,0]<x+w)&(coords[:,1]>=y)&(coords[:,1]<y+h)
   basis=crown.shape_key_add(name='Approved static phase 0');keys=[];audits=[];inv=crown.matrix_world.inverted().to_3x3()
   for phase in range(1,len(flows)):
    field=flows[phase,iy,ix].copy();field[~inside]=0
@@ -60,7 +62,7 @@ def main():
    for col,view in enumerate((0,2)):
     image=Image.open(dest/f'phase-{phase:02}'/f'view-{view}-textured.png').convert('RGB');sheet.paste(image,(col*512,row*532+20));draw.text((col*512+8,row*532+5),f'Native phase{phase} '+('source' if view==0 else 'oblique'),fill='black')
   sheet.save(dest/'representative-phases.png')
-  report=dict(model_sha256=sha(base),candidate_sha256=sha(dest/'worker.blend'),glb_sha256=sha(dest/'animated-tree41.glb'),wood_unchanged=True,approved_base_phase_unchanged=True,phases=audits,native_delays=[p['delay'] for p in motion['phases']],preview_ticks_per_second=30,coverage_supported_vertices=int(inside.sum()),total_crown_vertices=len(rest),holds=['Preview speed30 native ticks per second is presentation only; runtime tick-rate parity unverified.','Motion-only proof retains approved phase0 RGB/alpha; native per-phase RGB+alpha changes and temporal union are not fully reproduced.','GLB uses supported morph-target animation but editor runtime integration remains unimplemented.','Rear motion follows own source-atlas correspondence as inference.'])
+  report=dict(model_sha256=sha(base),candidate_sha256=sha(dest/'worker.blend'),glb_sha256=sha(dest/'animated-tree41.glb'),wood_unchanged=True,approved_base_phase_unchanged=True,phases=audits,native_delays=[p['delay'] for p in motion['phases']],preview_ticks_per_second=30,coverage_supported_vertices=int(inside.sum()),total_crown_vertices=len(rest),holds=['Preview speed30 native ticks per second is presentation only; runtime tick-rate parity unverified.','Motion-only proof retains approved phase0 RGB/alpha; native per-phase RGB+alpha changes and temporal union are not fully reproduced.','GLB uses supported morph-target animation but editor runtime integration remains unimplemented.','Only native-atlas observed fronts and paired backs move; packed inferred rear is stationary.'])
   (dest/'proof.json').write_text(json.dumps(report,indent=2)+'\n')
  finally:release()
 if __name__=='__main__':main()
