@@ -983,6 +983,21 @@ impl InteractiveFrameSimulation {
                 enabled: result.gameplay_config.clean_hands_npc_kills_invalidate,
             });
         }
+        if result
+            .gameplay_config
+            .exclude_starting_dead_soldiers_from_preserved_lives
+            != result
+                .original_gameplay_config
+                .exclude_starting_dead_soldiers_from_preserved_lives
+        {
+            dispatch(
+                PlayerCommand::SetExcludeStartingDeadSoldiersFromPreservedLives {
+                    enabled: result
+                        .gameplay_config
+                        .exclude_starting_dead_soldiers_from_preserved_lives,
+                },
+            );
+        }
         if result.gameplay_config.reusable_cloaks != result.original_gameplay_config.reusable_cloaks
         {
             dispatch(PlayerCommand::SetReusableCloaks {

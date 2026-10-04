@@ -1115,7 +1115,15 @@ impl EngineInner {
         let mut living = 0u32;
         let mut dead = 0u32;
         let mut living_by_camp = std::collections::BTreeMap::<Camp, u32>::new();
-        for (_, s) in self.world.entities.soldiers() {
+        for (id, s) in self.world.entities.soldiers() {
+            if self
+                .control
+                .sim_config
+                .exclude_starting_dead_soldiers_from_preserved_lives
+                && self.is_baseline_dead_npc(id)
+            {
+                continue;
+            }
             if s.life_points() > 0 {
                 *living_by_camp.entry(s.camp()).or_default() += 1;
             }

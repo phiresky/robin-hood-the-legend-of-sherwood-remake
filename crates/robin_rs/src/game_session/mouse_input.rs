@@ -1639,6 +1639,9 @@ pub(super) fn handle_pause_menu_events(
                 gameplay_config.enable_unbinding = engine.sim_config().enable_unbinding;
                 gameplay_config.clean_hands_npc_kills_invalidate =
                     engine.sim_config().clean_hands_npc_kills_invalidate;
+                gameplay_config.exclude_starting_dead_soldiers_from_preserved_lives = engine
+                    .sim_config()
+                    .exclude_starting_dead_soldiers_from_preserved_lives;
                 gameplay_config.reusable_cloaks = engine.sim_config().reusable_cloaks;
                 gameplay_config.item_gameplay = engine.sim_config().item_gameplay;
                 gameplay_config.noise_distraction_feedback =

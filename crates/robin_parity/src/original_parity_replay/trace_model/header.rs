@@ -210,6 +210,8 @@ impl TraceSimConfig {
             // Untying is a post-port extension and stays off in Original traces.
             enable_unbinding: false,
             clean_hands_npc_kills_invalidate: false,
+            // Retain the original saved-lives behavior in original traces.
+            exclude_starting_dead_soldiers_from_preserved_lives: false,
             // Reusable cloaks are an opt-in extension and must never alter
             // original-parity traces.
             reusable_cloaks: false,

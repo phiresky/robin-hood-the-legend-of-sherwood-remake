@@ -301,6 +301,11 @@ pub struct GameplayConfig {
     #[serde(default)]
     pub clean_hands_npc_kills_invalidate: bool,
 
+    /// Exclude hostile soldiers already dead when mission startup settles from
+    /// the campaign preserved-lives and recruitment totals.
+    #[serde(default = "crate::serde_defaults::enabled")]
+    pub exclude_starting_dead_soldiers_from_preserved_lives: bool,
+
     /// Independent achievement and detailed-XP presentation switches.
     #[serde(default)]
     pub show_detailed_xp: bool,
@@ -405,6 +410,7 @@ impl Default for GameplayConfig {
             noise_distraction_feedback: true,
             campaign_presentation: CampaignPresentationMode::ClassicMap,
             clean_hands_npc_kills_invalidate: false,
+            exclude_starting_dead_soldiers_from_preserved_lives: true,
             show_detailed_xp: false,
             show_speedrun_tracker: false,
             show_clean_hands_tracker: false,
@@ -452,6 +458,7 @@ impl GameplayConfig {
             noise_distraction_feedback: false,
             campaign_presentation: CampaignPresentationMode::ClassicMap,
             clean_hands_npc_kills_invalidate: false,
+            exclude_starting_dead_soldiers_from_preserved_lives: true,
             show_detailed_xp: false,
             show_speedrun_tracker: false,
             show_clean_hands_tracker: false,

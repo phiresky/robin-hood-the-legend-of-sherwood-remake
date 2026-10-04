@@ -48,6 +48,10 @@ pub struct SimConfig {
     /// Optional Clean Hands rule for deaths caused by non-player NPCs.
     #[serde(default)]
     pub clean_hands_npc_kills_invalidate: bool,
+    /// Exclude enemies already dead at mission startup from preserved-life
+    /// campaign totals and post-mission recruitment calculations.
+    #[serde(default = "enabled_by_default")]
+    pub exclude_starting_dead_soldiers_from_preserved_lives: bool,
     /// Enable the deterministic reusable-cloak extension for this session.
     /// Missing state predates the extension and retains Original behavior.
     #[serde(default)]
@@ -129,6 +133,7 @@ pub enum RankedSimulationConfigField {
     FixHardReactionTimes,
     EnableUnbinding,
     CleanHandsNpcKillsInvalidate,
+    ExcludeStartingDeadSoldiersFromPreservedLives,
     ReusableCloaks,
     ReversibleBackgroundPatches,
     ItemGameplay,
@@ -164,6 +169,9 @@ impl RankedSimulationConfigField {
             Self::FixHardReactionTimes => "sim_config.fix_hard_reaction_times",
             Self::EnableUnbinding => "sim_config.enable_unbinding",
             Self::CleanHandsNpcKillsInvalidate => "sim_config.clean_hands_npc_kills_invalidate",
+            Self::ExcludeStartingDeadSoldiersFromPreservedLives => {
+                "sim_config.exclude_starting_dead_soldiers_from_preserved_lives"
+            }
             Self::ReversibleBackgroundPatches => "sim_config.reversible_background_patches",
             Self::ReusableCloaks => "sim_config.reusable_cloaks",
             Self::ItemGameplay => "sim_config.item_gameplay",
@@ -376,6 +384,7 @@ profile_gameplay_projection! {
     fix_hard_reaction_times,
     enable_unbinding,
     clean_hands_npc_kills_invalidate,
+    exclude_starting_dead_soldiers_from_preserved_lives,
     reusable_cloaks,
     reversible_background_patches,
     item_gameplay,
@@ -409,6 +418,7 @@ impl SimConfig {
             fix_hard_reaction_times: true,
             enable_unbinding: true,
             clean_hands_npc_kills_invalidate: false,
+            exclude_starting_dead_soldiers_from_preserved_lives: true,
             reusable_cloaks: true,
             reversible_background_patches: false,
             item_gameplay: ItemGameplayConfig::default(),
@@ -451,6 +461,7 @@ impl SimConfig {
         config.enable_timed_missions = false;
         config.enable_dynamic_ambience = false;
         config.prevent_victory_in_combat = false;
+        config.exclude_starting_dead_soldiers_from_preserved_lives = false;
         config
     }
 
@@ -461,6 +472,7 @@ impl SimConfig {
             fix_hard_reaction_times,
             enable_unbinding,
             clean_hands_npc_kills_invalidate,
+            exclude_starting_dead_soldiers_from_preserved_lives,
             reusable_cloaks,
             reversible_background_patches,
             item_gameplay,
@@ -488,6 +500,8 @@ impl SimConfig {
             fix_hard_reaction_times: expected_fix_hard_reaction_times,
             enable_unbinding: expected_enable_unbinding,
             clean_hands_npc_kills_invalidate: expected_clean_hands_npc_kills_invalidate,
+            exclude_starting_dead_soldiers_from_preserved_lives:
+                expected_exclude_starting_dead_soldiers_from_preserved_lives,
             reusable_cloaks: expected_reusable_cloaks,
             reversible_background_patches: expected_reversible_background_patches,
             item_gameplay: expected_item_gameplay,
@@ -519,6 +533,11 @@ impl SimConfig {
                 .then_some(RankedSimulationConfigField::EnableUnbinding),
             (clean_hands_npc_kills_invalidate != expected_clean_hands_npc_kills_invalidate)
                 .then_some(RankedSimulationConfigField::CleanHandsNpcKillsInvalidate),
+            (exclude_starting_dead_soldiers_from_preserved_lives
+                != expected_exclude_starting_dead_soldiers_from_preserved_lives)
+                .then_some(
+                    RankedSimulationConfigField::ExcludeStartingDeadSoldiersFromPreservedLives,
+                ),
             (reversible_background_patches != expected_reversible_background_patches)
                 .then_some(RankedSimulationConfigField::ReversibleBackgroundPatches),
             (reusable_cloaks != expected_reusable_cloaks)
@@ -571,6 +590,7 @@ impl SimConfig {
             fix_hard_reaction_times: true,
             enable_unbinding: true,
             clean_hands_npc_kills_invalidate: false,
+            exclude_starting_dead_soldiers_from_preserved_lives: true,
             reusable_cloaks: true,
             reversible_background_patches: false,
             item_gameplay: ItemGameplayConfig::classic(),

@@ -164,6 +164,12 @@ impl EngineInner {
             .expect("contributing party member has no campaign identity");
         self.mission_domain.achievements.record_contribution(index);
     }
+
+    pub(crate) fn is_baseline_dead_npc(&self, entity: EntityId) -> bool {
+        self.mission_domain
+            .achievements
+            .is_baseline_dead_npc(entity)
+    }
     /// Capture the baseline after startup scripts and Sherwood production
     /// setup have settled. This is deliberately later than level parsing:
     /// scripted setup deaths must not be attributed to the player.

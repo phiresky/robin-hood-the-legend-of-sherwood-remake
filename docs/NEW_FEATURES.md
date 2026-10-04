@@ -816,6 +816,11 @@ A list of which additional features we have added, which ones we might still wan
   Robin copies share consumables; other hero copies retain separate inventories.
   Copies have independent health and coma state and do not become permanent
   campaign recruits.
+- **Fair preserved-lives accounting.** By default, hostile soldiers already
+  dead after mission startup setup are excluded from the campaign preserved-lives
+  percentage and post-mission recruitment calculation. The Gameplay option
+  “Exclude Starting Corpses” can be disabled to restore the original counting
+  behavior. Original-parity sessions retain the original rule.
 - **Dynamic local cameras.** Nearby players share a view. Distant groups get
   separate cameras with rotating boundaries that disappear as players regroup.
   Up to five controller cursors remain in their own views. Reconnecting a

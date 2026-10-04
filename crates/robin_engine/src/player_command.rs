@@ -1437,6 +1437,11 @@ pub enum PlayerCommand {
         direction: crate::coordinates::MapVec,
         running: bool,
     },
+    /// Toggle exclusion of startup-dead enemies from saved-life statistics.
+    /// Appended to preserve existing command wire variant indexes.
+    SetExcludeStartingDeadSoldiersFromPreservedLives {
+        enabled: bool,
+    },
 }
 
 impl PlayerCommand {
@@ -1497,6 +1502,7 @@ impl PlayerCommand {
                 | Self::DisconnectSeat { .. }
                 | Self::SetReusableCloaks { .. }
                 | Self::SetCleanHandsNpcKillsInvalidate { .. }
+                | Self::SetExcludeStartingDeadSoldiersFromPreservedLives { .. }
                 | Self::SetItemGameplayConfig { .. }
                 | Self::SetNoiseDistractionFeedback { .. }
                 | Self::SetTimedMissionsEnabled { .. }
@@ -1525,6 +1531,9 @@ impl PlayerCommand {
             Self::SetReusableCloaks { .. } => Some(Field::ReusableCloaks),
             Self::SetCleanHandsNpcKillsInvalidate { .. } => {
                 Some(Field::CleanHandsNpcKillsInvalidate)
+            }
+            Self::SetExcludeStartingDeadSoldiersFromPreservedLives { .. } => {
+                Some(Field::ExcludeStartingDeadSoldiersFromPreservedLives)
             }
             Self::SetItemGameplayConfig { .. } => Some(Field::ItemGameplay),
             Self::SetNoiseDistractionFeedback { .. } => Some(Field::NoiseDistractionFeedback),

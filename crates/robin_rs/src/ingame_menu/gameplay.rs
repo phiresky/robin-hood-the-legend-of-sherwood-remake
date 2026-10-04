@@ -43,6 +43,7 @@ impl GameplaySetting {
                 | Self::EnableUnbinding
                 | Self::ReusableCloaks
                 | Self::CleanHandsNpcKillsInvalidate
+                | Self::ExcludeStartingDeadSoldiersFromPreservedLives
                 | Self::SherwoodTrading
                 | Self::AppleCombatInterrupt
                 | Self::WaspReliableAcquisition
@@ -545,6 +546,10 @@ pub(crate) fn apply_setting(config: &mut GameplayConfig, setting: GameplaySettin
         Setting::CleanHandsNpcKillsInvalidate => {
             config.clean_hands_npc_kills_invalidate = !config.clean_hands_npc_kills_invalidate
         }
+        Setting::ExcludeStartingDeadSoldiersFromPreservedLives => {
+            config.exclude_starting_dead_soldiers_from_preserved_lives =
+                !config.exclude_starting_dead_soldiers_from_preserved_lives
+        }
         Setting::ShowDetailedXp => config.show_detailed_xp = !config.show_detailed_xp,
         Setting::ShowSpeedrunTracker => {
             config.show_speedrun_tracker = !config.show_speedrun_tracker
@@ -672,6 +677,9 @@ impl GameplaySetting {
                     != robin_engine::gameplay_config::CampaignPresentationMode::ClassicMap
             }
             Setting::CleanHandsNpcKillsInvalidate => config.clean_hands_npc_kills_invalidate,
+            Setting::ExcludeStartingDeadSoldiersFromPreservedLives => {
+                config.exclude_starting_dead_soldiers_from_preserved_lives
+            }
             Setting::ShowDetailedXp => config.show_detailed_xp,
             Setting::ShowSpeedrunTracker => config.show_speedrun_tracker,
             Setting::ShowCleanHandsTracker => config.show_clean_hands_tracker,

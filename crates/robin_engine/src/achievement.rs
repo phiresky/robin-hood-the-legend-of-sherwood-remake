@@ -1529,6 +1529,11 @@ impl MissionAchievementState {
         self.refresh_metrics(frame);
     }
 
+    /// Whether an NPC was already dead at the post-startup baseline.
+    pub fn is_baseline_dead_npc(&self, entity: crate::element::EntityId) -> bool {
+        self.baseline_dead_npcs.contains(&entity)
+    }
+
     /// Record one fresh hostile death using the damage element's exact origin.
     pub fn is_fresh_death(&self, victim: crate::element::EntityId) -> bool {
         !self.processed_deaths.contains(&victim)

@@ -443,6 +443,7 @@ impl EngineInner {
             | SetCombatGestureRules { .. }
             | SetUnbindingEnabled { .. }
             | SetCleanHandsNpcKillsInvalidate { .. }
+            | SetExcludeStartingDeadSoldiersFromPreservedLives { .. }
             | SetReusableCloaks { .. }
             | SetItemGameplayConfig { .. }
             | SetNoiseDistractionFeedback { .. }
@@ -975,6 +976,11 @@ impl EngineInner {
                     .achievements
                     .refresh_clean_hands_rule(*enabled)
                     .expect("achievement results changed after mission finalization");
+            }
+            SetExcludeStartingDeadSoldiersFromPreservedLives { enabled } => {
+                self.control
+                    .sim_config
+                    .exclude_starting_dead_soldiers_from_preserved_lives = *enabled;
             }
             SetReusableCloaks { enabled } => {
                 self.set_reusable_cloaks_enabled(tcx, *enabled);

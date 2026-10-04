@@ -77,4 +77,5 @@ settings! {
     ReversibleBackgroundPatches,
     KeyboardDirectControl,
     PreventVictoryInCombat,
+    ExcludeStartingDeadSoldiersFromPreservedLives,
 }

@@ -175,6 +175,12 @@ en_tooltip = "Count hostile deaths caused by other NPCs against Clean Hands."
 de_label = "NPC-Tötungen verhindern Saubere Hände"
 de_tooltip = "Auch von anderen NPCs getötete Feinde für Saubere Hände zählen."
 
+[gameplay.ExcludeStartingDeadSoldiersFromPreservedLives]
+en_label = "Exclude Starting Corpses"
+en_tooltip = "Soldiers already dead when the mission starts do not lower your preserved-lives percentage or recruitment."
+de_label = "Leichen zu Missionsbeginn ausschließen"
+de_tooltip = "Zu Missionsbeginn bereits tote Soldaten senken weder den Anteil geretteter Leben noch die Rekrutierung."
+
 [gameplay.ShowDetailedXp]
 en_label = "Detailed Sword/Bow XP"
 en_tooltip = "Show detailed sword and bow experience progress."
