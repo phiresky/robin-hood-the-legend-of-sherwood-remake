@@ -1055,7 +1055,7 @@ export default function Editor3D(props: EditorProps) {
         document,
         assets,
         progress,
-        (bounds) => worker.compile(document, bounds, assets),
+        (bounds, preparedAssets) => worker.compile(document, bounds, preparedAssets ?? assets),
       );
       const { collectSceneryResources } = await import("./scenery-resources.ts");
       const scenery = await collectSceneryResources(

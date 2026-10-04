@@ -131,6 +131,8 @@ export interface AssetGameplay {
     bounds: { min: import("./scene.ts").Vec3; max: import("./scene.ts").Vec3 };
     /** Column-major local-part to asset-scene transforms, including gameplay-only frames. */
     frames: Record<string, number[]>;
+    /** Measurements from the asset mesh for rotated or straightened source sections. */
+    deformations?: import("./wall-section-profile.ts").WallSourceCalibration[];
   };
   /** Publish usable definitions while retaining known gaps in every compilation report.
    * Absence does not certify parity; it only means no draft issues were recorded. */
@@ -499,6 +501,45 @@ export function validateAssetGameplay(
       fail("invalid spline model calibration");
     if (calibration.modelSha256 !== undefined && !/^[0-9a-f]{64}$/.test(calibration.modelSha256))
       fail("invalid spline model hash");
+    if (calibration.deformations !== undefined && !Array.isArray(calibration.deformations))
+      fail("invalid spline deformation calibrations");
+    for (const deformation of calibration.deformations ?? []) {
+      if (
+        !deformation ||
+        !["x", "y"].includes(deformation.axis) ||
+        !Number.isFinite(deformation.sourceAngle) ||
+        !Number.isFinite(deformation.sourceStart) ||
+        !Number.isFinite(deformation.sourceEnd) ||
+        deformation.sourceStart < 0 ||
+        deformation.sourceEnd > 1 ||
+        deformation.sourceStart >= deformation.sourceEnd ||
+        typeof deformation.sourceStraight !== "boolean" ||
+        !deformation.bounds ||
+        !point(deformation.bounds.min, 3) ||
+        !point(deformation.bounds.max, 3) ||
+        deformation.bounds.min.some((n, i) => n >= deformation.bounds.max[i]!)
+      )
+        fail("invalid spline source deformation");
+      const profile = deformation.profile;
+      const axis = deformation.axis === "y" ? 1 : 0;
+      const min = deformation.bounds.min[axis],
+        span = deformation.bounds.max[axis] - min;
+      if (
+        (!deformation.sourceStraight && !profile) ||
+        (profile &&
+          (!Number.isFinite(profile.start) ||
+            !Number.isFinite(profile.end) ||
+            Math.abs(profile.start - (min + span * deformation.sourceStart)) > 1e-6 ||
+            Math.abs(profile.end - (min + span * deformation.sourceEnd)) > 1e-6 ||
+            !Array.isArray(profile.sections) ||
+            profile.sections.length !== 65 ||
+            profile.sections.some(
+              (s) =>
+                !s || !Number.isFinite(s.center) || !Number.isFinite(s.width) || s.width <= 0.001,
+            )))
+      )
+        fail("invalid spline cross-section profile");
+    }
     for (const [node, matrix] of Object.entries(calibration.frames))
       if (
         !nodes.has(node) ||

@@ -116,7 +116,7 @@ export function assembleNavigationRegions(
         throw new Error(
           `Lift ${first.lift}: joined surfaces must form one connected traversal area`,
         );
-      return merged.map((region) => ({
+      const assembled = merged.map((region) => ({
         layer,
         lift: first.lift,
         polygon: movementRing(region[0]!),
@@ -145,6 +145,18 @@ export function assembleNavigationRegions(
           }),
         ),
       }));
+      const supported = assembled.filter((region) => {
+        if (region.pieces.length) return true;
+        // Rounding a union can create a tiny island even when each contributing
+        // receiving fragment collapses. It has no surface to supply its height.
+        warnings.push(
+          `Joined navigation region at ${JSON.stringify(region.polygon)}: all receiving fragments collapsed on the integer movement grid; region omitted.`,
+        );
+        return false;
+      });
+      if (first.lift && supported.length !== 1)
+        throw new Error(`Lift ${first.lift}: joined surfaces have no traversable receiving area`);
+      return supported;
     })
     .sort((a, b) => a.layer - b.layer);
 }

@@ -4,6 +4,36 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Wall source deformation (2026-10-04)
+
+Export now measures the pinned models already loaded by the editor and passes
+their source frames, rotated bounds and cross-section profiles to the compiler.
+It keeps the original editor document and resource pins unchanged. Measurements
+yield between assets/source sections so cancellation and progress can repaint.
+The renderer and compiler share cross-section interpolation. Exact subdivision
+endpoints prevent rounding from discarding the final collision band.
+
+Tests compare every rendered vertex with exported physical coverage for 24
+combinations of source rotation, straightening, curvature and reflection. They
+also cover transformed source frames, trimming, slopes, malformed metadata,
+partially invalid sources, save/reopen and asynchronous cancellation. The focused
+compiler/export batch passes 178 tests; both editor typechecks and lint pass.
+
+Wychford's isolated ridge-curtain now compiles from its actual pinned models
+without calibration warnings (`work/map-compile/wychford-wall-calibration-5aVMhz`).
+This found rounded navigation islands whose receiving fragments all collapse on
+the integer movement grid. Those islands now produce explicit omission warnings
+instead of dereferencing a missing plane. A reduced regression retains another
+usable surface and rejects an entirely collapsed lift. Twelve such islands are
+omitted in this wall-only audit; this is not complete wall traversal acceptance.
+The diagnostic descriptor contains 3,877 sight/receiving obstacles. The audit
+script's final summary initially failed on an absent optional control array after
+writing the successful descriptor; that reporting bug is corrected.
+
+Full-map compilation and native traversal remain separate checks. These changes
+do not add deformation for wall-owned masks, lighting, sounds, material regions
+or stateful geometry, and do not repair unresolved passages in placed assets.
+
 ## Current library state compilation (2026-10-04)
 
 All ten saved library scenes compiled with the ordinary `compileMap` entry point,

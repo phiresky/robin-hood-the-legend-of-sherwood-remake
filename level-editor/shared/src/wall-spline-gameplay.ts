@@ -14,6 +14,7 @@ import { applyAffineMatrix, sceneToGame } from "./geometry.ts";
 import { splineCurve } from "./spline-sampling.ts";
 import { wallCorners, wallRuns } from "./wall-path.ts";
 import { heightPlane, planeHeight } from "./gameplay-plane.ts";
+import { matchesWallSource, wallSectionAt } from "./wall-section-profile.ts";
 
 type Vertex = number[];
 function clip(vertices: Vertex[], axis: number, boundary: number, above: boolean) {
@@ -84,10 +85,13 @@ export function wallSplineGameplay(
       const pinned = document.assetSources?.find((s) => s.id === assetId);
       if (data.spline.modelSha256 && pinned && pinned.model_sha256 !== data.spline.modelSha256)
         throw new Error(`asset ${assetId} spline calibration belongs to a different model`);
-      const { bounds, frames } = data.spline;
-      if (run && (!run.sourceStraight || (run.sourceAngle ?? 0) !== 0))
+      const { frames } = data.spline;
+      const deformation = run && data.spline.deformations?.find((c) => matchesWallSource(c, run));
+      const bounds = deformation?.bounds ?? data.spline.bounds;
+      const profile = run && !run.sourceStraight ? deformation?.profile : undefined;
+      if (run && (!run.sourceStraight || (run.sourceAngle ?? 0) !== 0) && !deformation)
         throw new Error(
-          "cross-section straightening and source rotation need calibrated deformation support",
+          "cross-section straightening and source rotation require matching asset mesh calibration",
         );
       if (data.movementTransitions?.length || descriptor.states)
         throw new Error(`asset ${assetId} has stateful geometry; a static wall source is required`);
@@ -115,7 +119,13 @@ export function wallSplineGameplay(
       const source = (node: string, point: Vec3): Vec3 => {
         const matrix = frames[node];
         if (!matrix) throw new Error(`asset ${assetId} needs a spline frame for ${node}`);
-        return applyAffineMatrix(matrix, gameToScene(document.camera, ...point));
+        const p = applyAffineMatrix(matrix, gameToScene(document.camera, ...point));
+        const angle = (-(run?.sourceAngle ?? 0) * Math.PI) / 180;
+        return [
+          p[0] * Math.cos(angle) - p[1] * Math.sin(angle),
+          p[0] * Math.sin(angle) + p[1] * Math.cos(angle),
+          p[2],
+        ];
       };
       const axis = run?.axis === "y" ? 1 : 0,
         cross = 1 - axis;
@@ -163,8 +173,9 @@ export function wallSplineGameplay(
           };
           framesByDistance.set(t, frame);
         }
+        const section = profile ? wallSectionAt(profile, along) : { center, width };
         const lateral =
-          (((p[cross]! - center) * run.width) / width) *
+          (((p[cross]! - section.center) * run.width) / section.width) *
           (axis === 1 ? -1 : 1) *
           (run.flipCrossSection ? -1 : 1);
         return toGame([
@@ -175,7 +186,9 @@ export function wallSplineGameplay(
       };
       let stations = Array.from(
         { length: bands + 1 },
-        (_, i) => start + ((end - start) * i) / bands,
+        // Keep exact endpoints: arithmetic can put the final station just beyond
+        // `end`, causing range filtering to remove an entire terminal band.
+        (_, i) => (i === 0 ? start : i === bands ? end : start + ((end - start) * i) / bands),
       );
       const pieces = (vertices: Vertex[], emit: (v: Vertex[], repeat: number) => void) => {
         const indices = earcut(vertices.flatMap((v) => v.slice(0, 2)));

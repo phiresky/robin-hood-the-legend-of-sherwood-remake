@@ -57,6 +57,10 @@ import { disposeObjectResources } from "./resources.ts";
 import { TextureDisplay } from "./texture-display.ts";
 import { PatchDisplay, applyPlacementPatches } from "./patch-display.ts";
 import { setViewportRay, visibleSurface } from "./viewport-picking.ts";
+import {
+  prepareWallGameplayAssets,
+  prepareWallGameplayAssetsAsync,
+} from "./wall-gameplay-calibration.ts";
 
 interface View {
   wrapper: THREE.Group;
@@ -111,7 +115,11 @@ export class EditorViewport {
     assets?: ReadonlyMap<string, import("@rle/shared").ProjectionAssetDescriptor>,
   ) {
     const { root, bounds } = this.prepareMapBake(document);
-    const compiled = compileMap(document, bounds, assets, { bestEffort: true });
+    const prepared = prepareWallGameplayAssets(document, assets ?? new Map(), this.sourceNodes);
+    const compiled = compileMap(document, bounds, assets ? prepared.assets : assets, {
+      bestEffort: true,
+    });
+    compiled.warnings.push(...prepared.warnings);
     const transitions = compiled.descriptor.asset_geometry?.movement_transitions ?? [];
     bindBakeAppearances(root, document, assets ?? new Map(), transitions, (message) => {
       if (!compiled.warnings.includes(message)) compiled.warnings.push(message);
@@ -140,7 +148,10 @@ export class EditorViewport {
     document: Level3D,
     assets?: ReadonlyMap<string, import("@rle/shared").ProjectionAssetDescriptor>,
     progress: (progress: BakeProgress) => void = () => {},
-    compiler?: (bounds: BakeBounds) => Promise<CompiledMap>,
+    compiler?: (
+      bounds: BakeBounds,
+      assets: ReadonlyMap<string, import("@rle/shared").ProjectionAssetDescriptor> | undefined,
+    ) => Promise<CompiledMap>,
   ) {
     const checkCurrent = () => {
       if (this.disposed || this.bindings.document() !== document)
@@ -150,12 +161,23 @@ export class EditorViewport {
     await yieldBakeFrame();
     checkCurrent();
     const { root, bounds } = this.prepareMapBake(document);
+    progress({ stage: "Calibrating wall sources", completed: 0, total: 0 });
+    const prepared = await prepareWallGameplayAssetsAsync(
+      document,
+      assets ?? new Map(),
+      this.sourceNodes,
+      async () => {
+        await yieldBakeFrame();
+        checkCurrent();
+      },
+    );
     progress({ stage: "Compiling gameplay", completed: 0, total: 0 });
     await yieldBakeFrame();
     checkCurrent();
     const compiled = compiler
-      ? await compiler(bounds)
-      : compileMap(document, bounds, assets, { bestEffort: true });
+      ? await compiler(bounds, assets ? prepared.assets : assets)
+      : compileMap(document, bounds, assets ? prepared.assets : assets, { bestEffort: true });
+    compiled.warnings.push(...prepared.warnings);
     checkCurrent();
     const transitions = compiled.descriptor.asset_geometry?.movement_transitions ?? [];
     bindBakeAppearances(root, document, assets ?? new Map(), transitions, (message) => {

@@ -2,6 +2,59 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { assembleNavigationRegions, type NavigationPiece } from "./assemble-navigation-regions.ts";
 
+test("rounded wall islands without a receiving plane are omitted without losing usable surfaces", () => {
+  const fragments: Pick<NavigationPiece, "polygon" | "plane">[] = [
+    {
+      polygon: [
+        [2273.4345703125, 1080.2275390625],
+        [2273.2421875, 1080.060546875],
+        [2272.5078125, 1078.86328125],
+        [2272.4755859375, 1078.7939453125],
+      ],
+      plane: [0.03493787194283309, 0.09102298951610928, -17.585290013629404],
+    },
+    {
+      polygon: [
+        [2273.4345703125, 1080.2275390625],
+        [2272.470703125, 1078.7861328125],
+        [2273.494140625, 1080.2041015625],
+        [2273.4970703125, 1080.2041015625],
+      ],
+      plane: [0.03492229742739973, 0.091033404529851, -17.561132953908384],
+    },
+    {
+      polygon: [
+        [0, 0],
+        [100, 0],
+        [100, 100],
+        [0, 100],
+      ],
+      plane: [0, 0, 80],
+    },
+  ];
+  const pieces: NavigationPiece[] = fragments.map((piece) => ({
+    ...piece,
+    layer: 0,
+    navigationRegion: "wall",
+    blockers: [],
+    closeDeformationSeams: true,
+  }));
+  const warnings: string[] = [];
+  const result = assembleNavigationRegions(pieces, warnings);
+  assert.equal(result.length, 1);
+  assert.deepEqual(result[0]!.polygon, pieces[2]!.polygon);
+  assert.deepEqual(result[0]!.pieces[0]!.plane, pieces[2]!.plane);
+  assert.match(warnings.join("\n"), /all receiving fragments collapsed.*region omitted/);
+  assert.throws(
+    () =>
+      assembleNavigationRegions(
+        pieces.slice(0, 2).map((p) => ({ ...p, lift: "stairs" })),
+        [],
+      ),
+    /no traversable receiving area/,
+  );
+});
+
 test("preserved joined boundaries retain crossing contours without blocking another surface", () => {
   const crossing: [number, number][] = [
     [-3, 3],

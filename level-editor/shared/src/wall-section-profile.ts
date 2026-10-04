@@ -1,4 +1,36 @@
 import type { Vec3 } from "./scene.ts";
+import type { LevelSpline } from "./splines.ts";
+
+export interface WallSourceCalibration {
+  axis: "x" | "y";
+  sourceAngle: number;
+  sourceStart: number;
+  sourceEnd: number;
+  sourceStraight: boolean;
+  bounds: { min: Vec3; max: Vec3 };
+  profile?: WallSectionProfile;
+}
+
+export function wallSourceSettings(path: LevelSpline) {
+  return {
+    axis: path.axis ?? "x",
+    sourceAngle: path.sourceAngle ?? 0,
+    sourceStart: path.sourceStart ?? 0,
+    sourceEnd: path.sourceEnd ?? 1,
+    sourceStraight: path.sourceStraight === true,
+  };
+}
+
+export function matchesWallSource(calibration: WallSourceCalibration, path: LevelSpline) {
+  const settings = wallSourceSettings(path);
+  return (
+    calibration.axis === settings.axis &&
+    calibration.sourceAngle === settings.sourceAngle &&
+    calibration.sourceStart === settings.sourceStart &&
+    calibration.sourceEnd === settings.sourceEnd &&
+    calibration.sourceStraight === settings.sourceStraight
+  );
+}
 
 export interface WallSectionProfile {
   start: number;
