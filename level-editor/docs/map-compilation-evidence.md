@@ -65,9 +65,14 @@ All three `compiled_stair_barriers` tests pass in the rebuilt native test binary
 including both travel directions, apply/reset, live route queries and independent
 copies. Broader patch/state tests pass 26 cases (four ignored); the stair suite
 passes five cases (three ignored), including 361 rotation angles. These were run
-directly with Cargo's configured 32 MiB test-thread stack. The separately queued
-Cargo level-data unit tests and full game build are still pending; they are not
-reported as passed here.
+directly with Cargo's configured 32 MiB test-thread stack. The full game build
+subsequently passed (`cargo build -p robin_rs --bin robin -j1`, 22m21s including
+the shared build wait). The level-data unit test command remains pending.
+The complete-animation climb regression also passes: ladders, ordinary walls
+and crenellated walls, 361 orientations each, both directions (2,166 routes).
+It uses the shared RobinTown animation resource with a constructed map fixture;
+no level records enter compilation. This validates animation-driven movement,
+not rendered compositing or changing climb barriers.
 
 Changing ladder/wall barriers remain explicit unsupported controls. Best-effort
 mode retains their initial state. It also retains excess controls' initial
