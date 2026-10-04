@@ -17,7 +17,7 @@ from stage_review_scene import signature
 
 
 def worker(index):
-    rounds={77:16,78:12,83:18,84:12,74:15,85:15,86:15,87:20,88:15,89:17,90:15,93:22,22:23}
+    rounds={77:16,78:12,83:18,84:12,74:15,85:15,86:15,87:20,88:15,89:17,90:15,93:22,22:25}
     asset=f'croisement02-canopy-fringe-{index}' if index==22 else f'croisement02-shrub-{index}'
     return OUT/f'understory-round-{rounds[index]}/assets'/asset
 

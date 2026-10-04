@@ -1,5 +1,5 @@
 """Read-only source visibility of the north fringe behind unchanged crowns."""
-import sys,json
+import sys,json,argparse
 from pathlib import Path
 import bpy,numpy as np
 from PIL import Image
@@ -11,10 +11,9 @@ from evidence_io import sha,write_json
 from tree_geometry import RAY,SIN,COS
 from render_slots import acquire,release
 
-def main():
-    dest=OUT/'understory-candidates/north-fringe22-visibility-v3';dest.mkdir(exist_ok=False)
+def main(fringe,dest,offsets):
+    dest.mkdir(exist_ok=False)
     bpy.ops.wm.read_factory_settings(use_empty=True);scene=bpy.context.scene
-    fringe=OUT/'understory-round-23/assets/croisement02-canopy-fringe-22'
     proof=json.loads((OUT/'understory-candidates/north-fringe22-audit/evidence.json').read_text())
     paths=[fringe]+[Path(r['worker']) for r in proof['selected_crowns']];records=[];plants=[];original_materials={}
     for n,path in enumerate(paths):
@@ -52,7 +51,7 @@ def main():
     x,y=1339.5,18;center=Vector((x,-y*SIN,-y*COS));camera.location=center+RAY*5000;camera.rotation_euler=(center-camera.location).to_track_quat('-Z','Y').to_euler()
     domain=np.asarray(Image.open(OUT/'understory-candidates/north-fringe22-audit/domain-480.png').convert('L'))[0:36,1311:1368]>127
     results=[]
-    for offset in [0,-40,-80,-120,-160,-200,-240]:
+    for offset in offsets:
         for obj,matrix in plants:obj.matrix_world=matrix.copy();obj.location+=RAY*offset
         bpy.context.view_layer.update();output=dest/f'offset-{abs(offset):03}.png';scene.render.filepath=str(output);bpy.ops.render.render(write_still=True)
         image=np.asarray(Image.open(output).convert('RGBA'));white=(image[:,:,:3].min(axis=2)>127)&(image[:,:,3]>127)
@@ -62,7 +61,7 @@ def main():
     scene.render.resolution_x=180;scene.render.resolution_y=150;data.ortho_scale=180
     x,y=1350,25;center=Vector((x,-y*SIN,-y*COS));camera.location=center+RAY*5000;camera.rotation_euler=(center-camera.location).to_track_quat('-Z','Y').to_euler()
     actual=[]
-    for offset in [0,-40,-80,-120,-160]:
+    for offset in [o for o in offsets if o>=-160]:
         for obj,matrix in plants:obj.matrix_world=matrix.copy();obj.location+=RAY*offset
         bpy.context.view_layer.update();output=dest/f'actual-{abs(offset):03}.png';scene.render.filepath=str(output);bpy.ops.render.render(write_still=True)
         actual.append(dict(ray_offset=offset,image=output.name,sha256=sha(output)))
@@ -72,6 +71,7 @@ def main():
     write_json(dest/'evidence.json',dict(status='Read-only diagnostic; no saved model changes',workers=records,results=results,domain_sha256=sha(OUT/'understory-candidates/north-fringe22-audit/domain-480.png'),note='White is observed fringe slot0, all other surfaces black. Texture alpha and one-sided transparency chains preserved. Source-ray displacement preserves projection; neighbor alpha determines actual occlusion.'))
     print(json.dumps(results),flush=True)
 if __name__=='__main__':
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--worker',type=Path,default=OUT/'understory-round-23/assets/croisement02-canopy-fringe-22');parser.add_argument('--destination',type=Path,default=OUT/'understory-candidates/north-fringe22-visibility-v3');parser.add_argument('--offsets',type=int,nargs='+',default=[0,-40,-80,-120,-160,-200,-240]);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
     acquire()
-    try:main()
+    try:main(args.worker.resolve(),args.destination.resolve(),args.offsets)
     finally:release()
