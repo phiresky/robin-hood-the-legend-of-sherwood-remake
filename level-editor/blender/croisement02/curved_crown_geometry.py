@@ -8,7 +8,9 @@ from rounded_interior_geometry import build as volume
 from tree_geometry import SIN, COS, RAY, replace_mesh, material, one_sided
 
 
-def build(obj, packet, ground_y, interior_clusters=600, branch_clumps=False):
+def build(obj, packet, ground_y, interior_clusters=600, branch_clumps=False, fragment_depth_jitter=0.):
+    if not 0 <= fragment_depth_jitter <= 16:
+        raise ValueError("Fragment depth jitter must be in 0..16 source pixels")
     report = volume(obj, packet, ground_y, interior_clusters=interior_clusters, branch_clumps=branch_clumps)
     mesh = obj.data
     fx, fy, fw, fh = packet['bbox']
@@ -72,6 +74,12 @@ def build(obj, packet, ground_y, interior_clusters=600, branch_clumps=False):
                 depth += 1.5*math.sin(x*2.731+y*3.237)
                 if clumps is not None:
                     depth=clumps.front_depth(x,y)
+                if fragment_depth_jitter:
+                    # Camera-ray displacement preserves native projected vertices.
+                    # Quantization keeps paired front/back fragment offsets equal.
+                    qx,qy=round(x,4),round(y,4)
+                    hashed=math.sin(qx*12.9898+qy*78.233)*43758.5453
+                    depth += fragment_depth_jitter*(2*(hashed-math.floor(hashed))-1)
                 if face.material_index == 2:
                     depth -= .02
             for point, uv in zip(points,patch_uv):
@@ -142,6 +150,7 @@ def build(obj, packet, ground_y, interior_clusters=600, branch_clumps=False):
         faces.append(tuple(range(start,len(vertices))))
         slots.append(front_slot);known.append(True)
     mesh_report = replace_mesh(obj,vertices,faces,uvs,materials,slots,known)
+    report['fragment_depth_jitter']=fragment_depth_jitter
     xyz = np.asarray(vertices)
     result = dict(report, **mesh_report)
     result.pop('leaf_clusters', None)
