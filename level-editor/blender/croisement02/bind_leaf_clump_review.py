@@ -28,6 +28,7 @@ def main(index,joint):
             im=Image.open(joint/name).convert('RGBA');board.paste(im,(col*640,24),im);draw.text((col*640+5,5),title,fill='white')
         board.save(comparison)
     receipt=dict(model_sha256=mh,evidence=str(joint/'evidence.json'),evidence_sha256=sha(joint/'evidence.json'),sheet=str(joint/'sheet.png'),sheet_sha256=sha(joint/'sheet.png'),source_comparison=str(comparison),source_comparison_sha256=sha(comparison),label='Exact native source and unchanged scenery neighbours; eight obliques with diagnostic ground datum')
+    if index in (85,93):receipt['label']='Exact native source and private corrected tree35 lower geometry with unchanged scenery; legacy crown separately held'
     write_json(inspection/'joint-neighbourhood.json',receipt)
     preservation=source/'source-rgb-validation.json'
     review=dict(reviewer='Codex',status='Native source, all eight isolated views and exact neighbourhood views manually reviewed; new user review pending',ready_for_geometry_review=True,model_sha256=mh,sheet_sha256=sha(inspection/'actual-materials/sheet.png'),joint_neighbourhood_sha256=sha(inspection/'joint-neighbourhood.json'),support_evidence_sha256=sha(inspection/'support-evidence.json'),preservation_evidence=str(preservation),preservation_evidence_sha256=sha(preservation),limitations=['Hidden volume and any beyond-map continuation are inferred from the same native foliage.','Diagnostic ground plane is a contact aid; complete terrain integration remains separate.','Existing neighbouring texture/geometry artifacts are preserved and not approved by this review.','No user approval, final texture approval or publication implied.'])
@@ -36,7 +37,7 @@ def main(index,joint):
         report=json.loads(budget.read_text())
         if report['model_sha256']!=mh or evidence['transparent_bounces']<256:raise ValueError('Dense foliage render budget evidence changed')
         review['render_budget_evidence_sha256']=sha(budget)
-        review['limitations'].append('Private corrected tree35 lower geometry is context only; its legacy crown remains separately held.')
+    if index in (85,93):review['limitations'].append('Private corrected tree35 lower geometry is context only; its legacy crown remains separately held.')
     fill=inspection/'inferred-fill-evidence.json'
     if fill.exists():review['inferred_fill_evidence_sha256']=sha(fill)
     write_json(inspection/'visual-review.json',review);print(worker)

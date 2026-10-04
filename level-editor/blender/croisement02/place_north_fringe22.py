@@ -15,7 +15,7 @@ from opacity_bounds import measure
 from tree_geometry import RAY,SIN,COS
 
 def main():
-    asset='croisement02-canopy-fringe-22';previous=OUT/'understory-round-23/assets'/asset;worker=OUT/'understory-round-24/assets'/asset
+    asset='croisement02-canopy-fringe-22';previous=OUT/'understory-round-23/assets'/asset;worker=OUT/'understory-round-25/assets'/asset
     if worker.exists():raise FileExistsError(worker)
     proof=OUT/'understory-candidates/north-fringe22-visibility-v3/evidence.json';visibility=json.loads(proof.read_text())
     if next(r for r in visibility['results'] if r['ray_offset']==-80)['visible_owned_pixels']!=387:raise ValueError('Observed fringe visibility not proven')
