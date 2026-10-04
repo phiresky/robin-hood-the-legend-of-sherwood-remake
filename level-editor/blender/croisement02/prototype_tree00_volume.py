@@ -23,7 +23,7 @@ from audit_candidates import audit
 from render_tree import render_workspace
 
 
-def main(destination, mask=0, interior_clusters=600, root_completion_base=None):
+def main(destination, mask=0, interior_clusters=600, root_completion_base=None, branch_clumps=False):
     worker = destination / 'assets' / f'croisement02-tree-{mask:02}'
     if worker.exists():
         raise ValueError('Use a fresh prototype destination')
@@ -64,6 +64,12 @@ def main(destination, mask=0, interior_clusters=600, root_completion_base=None):
         local_source = inspection / 'source-packet'
         local_source.mkdir(parents=True)
         packet = json.loads(source_packet.read_text())
+        if branch_clumps:
+            supports_path=Path(source_row['packet'])
+            supports=json.loads(supports_path.read_text())
+            packet['branch_supports']=[dict(seed=lobe['seed'],bbox=lobe['bbox']) for lobe in supports['lobes']]
+            packet['branch_supports_source_sha256']=sha(supports_path)
+            shutil.copy2(supports_path,local_source/'branch-supports.json')
         shutil.copy2(source_packet.parent / 'complete-source.png', local_source / 'complete-source.png')
         for lobe in packet['lobes']:
             original = Path(lobe['image'])
@@ -71,7 +77,7 @@ def main(destination, mask=0, interior_clusters=600, root_completion_base=None):
             lobe['image'] = str(local_source / original.name)
         packet_path = local_source / 'partition.json'
         write_json(packet_path, packet)
-        result = build(crown, packet, source_row['ground_y'], interior_clusters=interior_clusters)
+        result = build(crown, packet, source_row['ground_y'], interior_clusters=interior_clusters, branch_clumps=branch_clumps)
         native_alpha = np.asarray(Image.open(local_source / 'complete-source.png'))[:, :, 3]
         north_row = -packet['native_bbox'][1]
         north_contact = (int(np.count_nonzero(native_alpha[north_row] > 127))
@@ -132,6 +138,7 @@ if __name__ == '__main__':
     parser.add_argument('--mask',type=int,default=0,help='Native wood mask; one isolated candidate per invocation')
     parser.add_argument('--interior-clusters', type=int, default=600, help='Private inferred volume density experiment')
     parser.add_argument('--root-completion-base', type=Path, help='Reviewed private tree15 root addition to preserve')
+    parser.add_argument('--branch-clumps', action='store_true', help='Private irregular branch-scale volume experiment')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
     main(args.destination.resolve(),args.mask,args.interior_clusters,
-         args.root_completion_base.resolve() if args.root_completion_base else None)
+         args.root_completion_base.resolve() if args.root_completion_base else None,args.branch_clumps)

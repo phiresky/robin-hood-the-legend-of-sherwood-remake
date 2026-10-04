@@ -7,7 +7,7 @@ from mathutils import Vector
 from tree_geometry import SIN, COS, RAY, material, one_sided, replace_mesh
 
 
-def build(obj, packet, ground_y, interior_clusters=600):
+def build(obj, packet, ground_y, interior_clusters=600, branch_clumps=False):
     if not 1 <= interior_clusters <= 1600:
         raise ValueError('Interior cluster count must be between 1 and 1600')
     path = Path(packet['lobes'][0]['image']).parent / 'complete-source.png'
@@ -22,6 +22,10 @@ def build(obj, packet, ground_y, interior_clusters=600):
     center = np.array([float(boundary), -ground_y / SIN, (ground_y - image_center_y) / COS])
     if center[2] - radii[2] < 50:
         center += np.asarray(RAY) * ((50 + radii[2] - center[2]) / SIN)
+    clumps=None
+    if branch_clumps:
+        from crown_clumps import CrownClumps
+        clumps=CrownClumps(packet,center,SIN,COS,RAY)
     mats = [material(obj.name + ' observed patches', path, True),
             material(obj.name + ' inferred leaf volume', path, False),
             material(obj.name + ' inferred leaf backs', path, False)]
@@ -84,11 +88,11 @@ def build(obj, packet, ground_y, interior_clusters=600):
         unit = rng.normal(size=3)
         unit /= np.linalg.norm(unit)
         unit *= rng.uniform(.05, 1.) ** (1 / 3)
-        position = center + unit * radii
+        position = clumps.sample(rng) if clumps is not None else center + unit * radii
         # The inferred volume follows the observed crown height and narrows
         # toward its outer silhouette.
         projected_y = -position[1] * SIN - position[2] * COS
-        if ((position[0] - boundary) / radii[0]) ** 2 + ((projected_y - image_center_y) / (fh * .52)) ** 2 > 1:
+        if clumps is None and ((position[0] - boundary) / radii[0]) ** 2 + ((projected_y - image_center_y) / (fh * .52)) ** 2 > 1:
             continue
         px, py = patches[int(rng.integers(len(patches)))]
         uv = [(px / width, 1 - py / height), ((px + 24) / width, 1 - py / height),

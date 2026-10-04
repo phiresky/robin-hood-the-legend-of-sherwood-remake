@@ -8,8 +8,8 @@ from rounded_interior_geometry import build as volume
 from tree_geometry import SIN, COS, RAY, replace_mesh, material, one_sided
 
 
-def build(obj, packet, ground_y, interior_clusters=600):
-    report = volume(obj, packet, ground_y, interior_clusters=interior_clusters)
+def build(obj, packet, ground_y, interior_clusters=600, branch_clumps=False):
+    report = volume(obj, packet, ground_y, interior_clusters=interior_clusters, branch_clumps=branch_clumps)
     mesh = obj.data
     fx, fy, fw, fh = packet['bbox']
     cx, cy = int(fx + fw / 2), fy + fh / 2
@@ -19,6 +19,10 @@ def build(obj, packet, ground_y, interior_clusters=600):
     ray = np.asarray(RAY)
     if center[2] - radii[2] < 50:
         center += ray * ((50 + radii[2] - center[2]) / SIN)
+    clumps=None
+    if branch_clumps:
+        from crown_clumps import CrownClumps
+        clumps=CrownClumps(packet,center,SIN,COS,RAY)
     a = np.sum((ray / radii) ** 2)
     vertices, faces, uvs, slots, known = [], [], [], [], []
     seen = set()
@@ -66,6 +70,8 @@ def build(obj, packet, ground_y, interior_clusters=600):
                 depth = (-b+math.sqrt(max(0.,b*b-4*a*c)))/(2*a)
                 depth += 5*math.sin(x*.052+y*.031)+3*math.sin(x*.11-y*.057)
                 depth += 1.5*math.sin(x*2.731+y*3.237)
+                if clumps is not None:
+                    depth=clumps.front_depth(x,y)
                 if face.material_index == 2:
                     depth -= .02
             for point, uv in zip(points,patch_uv):
@@ -144,4 +150,7 @@ def build(obj, packet, ground_y, interior_clusters=600):
         geometry_version='microfragment-volume-paired-front-v3',
         method='Small source-facing fragments sample an irregular curved envelope, with paired inferred backs and randomly rotated interior leaf clusters',
         removed_repeated_observed_layers=True, paired_interior_source_fronts=len(originals))
+    if clumps is not None:
+        result.update(geometry_version='branch-clump-fragments-v1',branch_clumps=clumps.report(),
+            method='Native-ray source fragments and hidden leaf clusters follow multiple irregular branch-scale clumps')
     return result
