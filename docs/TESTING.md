@@ -259,6 +259,24 @@ transitions together, then resets them in reverse order, writing
 all-applied states; arbitrary combinations, door permissions, inter-sector
 traversal and narrow unsampled passages still need separate coverage.
 
+Complete actor walks through every directed pair of stair entrances can be
+audited separately:
+
+```sh
+ROBIN_ASSET_MAP_DIAGNOSTICS=/absolute/path/to/exports RUSTC_WRAPPER= \
+  cargo test -p robin_engine --lib -j1 \
+  exported_stairs_support_complete_actor_routes -- --ignored --nocapture
+```
+
+`actor-stair-route-report.json` records successful routes, forbidden routes and
+failures per map. It uses synthetic walking frames with the stock human 6×3
+half-diagonal and checks arrival, exact sector/layer, and receiving surfaces and
+height outside passage animation intervals. Arrival always checks the receiver.
+During a passage, sector membership changes before the two approach movements
+finish, so its receiving plane can temporarily belong to the adjoining sector.
+This is an initial-state stair test, not coverage of ladders, walls, all character
+profiles, live sprite resources or mission behavior.
+
 ## GPU execution
 
 Shader translation tests remain in the normal client suite. GPU execution is

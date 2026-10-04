@@ -920,7 +920,7 @@
       "model": "3d-assets/york/york-precinct-east-wall-stair/model.glb",
       "model_sha256": "7067d46f61bf48aa415da78a88fff2e1f604b12187cc5de5f3780dd26e4b803f",
       "descriptor": "3d-assets/york/york-precinct-east-wall-stair/asset.json",
-      "descriptor_sha256": "624c2136df7e49fa294238c0c60f0fd9c1e3814975c7bb792271d06e78106b0e",
+      "descriptor_sha256": "8e51ad05edcb944b74949c2e87b0ccb27abf6357699fe9a4c63590b338a48b0a",
       "id": "york-precinct-east-wall-stair"
     },
     {
@@ -1060,7 +1060,7 @@
       "model": "3d-assets/york/york-riverbank-wooden-landing-steps/model.glb",
       "model_sha256": "98c294698b21a06dad394438bb0e3fdc3c79078002164d4b00e5513ac26d6787",
       "descriptor": "3d-assets/york/york-riverbank-wooden-landing-steps/asset.json",
-      "descriptor_sha256": "b8638fec211ae5e6f98bc4aa70bdc40b6a6fa14ff7dc10eafcc22dced9c9dbcf",
+      "descriptor_sha256": "46964e99d9756ebf5efda0dae5b6a8076966bd481f6a72637019ea18e3b9d5bd",
       "id": "york-riverbank-wooden-landing-steps"
     },
     {

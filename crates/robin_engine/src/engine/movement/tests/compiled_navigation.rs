@@ -12,6 +12,10 @@ mod compiled_lifts {
     include!("compiled_lifts.rs");
 }
 
+mod exported_stairs {
+    include!("exported_stairs.rs");
+}
+
 fn compiled_walkway(bytes: &[u8]) -> (EngineInner, LevelAssets) {
     compiled_walkway_with_dimensions(bytes, (2000., 2000.))
 }
@@ -342,7 +346,7 @@ fn walking_pc(
     pc.element.set_layer(layer);
     pc.element.sprite.position_iface.configure_for_actor(
         crate::position_interface::PathfinderIndex::new(0).unwrap(),
-        crate::coordinates::MoveBoxHalfDiagonal::new(6., 4.),
+        crate::coordinates::MoveBoxHalfDiagonal::new(6., 3.),
         source,
     );
     pc.actor.action_state = ActionState::Moving;
@@ -450,6 +454,17 @@ fn assert_actor_receiver(
     layer: u16,
     position: MapPoint,
 ) {
+    actor_receiver_result(engine, assets, owner, sector, layer, position).unwrap();
+}
+
+fn actor_receiver_result(
+    engine: &EngineInner,
+    assets: &LevelAssets,
+    owner: crate::element::EntityId,
+    sector: crate::position_interface::SectorHandle,
+    layer: u16,
+    position: MapPoint,
+) -> Result<(), String> {
     let queried = engine.get_projection_area_index(assets, sector, layer, position);
     let current = engine.ent(owner).position_iface().get_obstacle();
     // Crossing direction can select either side at an exact shared boundary.
@@ -462,10 +477,11 @@ fn assert_actor_receiver(
                         && line.left_obstacle_index == queried))
                 && point_on_edge(line.a, line.b, position)
         });
-    assert!(
-        current == queried || shared_boundary,
-        "actor receiver mismatch at {position:?}: current {current:?}, queried {queried:?}"
-    );
+    if current != queried && !shared_boundary {
+        return Err(format!(
+            "actor receiver mismatch at {position:?}, layer {layer}, sector {sector:?}: current {current:?}, queried {queried:?}"
+        ));
+    }
     let expected_height = current
         .map(|receiver| {
             assets.environment.static_sight_obstacles[usize::from(receiver)]
@@ -473,10 +489,12 @@ fn assert_actor_receiver(
         })
         .unwrap_or(0.);
     let actual_height = engine.ent(owner).element_data().position().z;
-    assert!(
-        (actual_height - expected_height).abs() < 0.001,
-        "actor height mismatch at {position:?}: {actual_height} != {expected_height}"
-    );
+    if (actual_height - expected_height).abs() >= 0.001 {
+        return Err(format!(
+            "actor height mismatch at {position:?}: {actual_height} != {expected_height}"
+        ));
+    }
+    Ok(())
 }
 
 #[test]

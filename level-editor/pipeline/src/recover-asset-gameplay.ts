@@ -347,7 +347,7 @@ for (const [layer, areas] of proto.motion_data.layers.entries())
         ? [{ obstacle, index }]
         : [],
     );
-    if (layer === 0 && supports.length) {
+    if (layer === 0 && supports.length && !motion.is_lift) {
       const raised = supports.filter(({ obstacle }) =>
         obstacle.points.some((p) => Math.abs(p.z_top) > 1e-4),
       );
@@ -419,6 +419,9 @@ for (const [layer, areas] of proto.motion_data.layers.entries())
       soleOwner !== undefined &&
       supportOwners.every((owners) => owners.length === 1 && owners[0]!.asset === soleOwner);
     const navigationRegion = regionIsLocal ? `walk-region-${identity}` : undefined;
+    const staticMotion = motion.state_id === 0 && motion.obstacles.every((o) => o.state_id === 0);
+    const preserveSingleLiftBoundary =
+      motion.is_lift && staticMotion && supports.length === 1 && supportOwners[0]!.length === 1;
     const partition = partitionRecoverySurfaces(
       close(motion.polygon.points),
       motion.obstacles.map((o) => close(o.polygon.points)),
@@ -426,8 +429,8 @@ for (const [layer, areas] of proto.motion_data.layers.entries())
         polygon: close(obstacle.points.map((p) => [p.x, p.y - p.z_top])),
         maximumHeight: Math.max(...obstacle.points.map((p) => Math.max(p.z_top, p.z_bottom))),
       })),
+      preserveSingleLiftBoundary,
     );
-    const staticMotion = motion.state_id === 0 && motion.obstacles.every((o) => o.state_id === 0);
     if (layer === 0 && staticMotion) {
       // Shared receivers retain ground navigation beneath their receiving footprint.
       // Include that coverage when recovering clearances for nearby collision parts.
@@ -483,10 +486,12 @@ for (const [layer, areas] of proto.motion_data.layers.entries())
         });
         continue;
       }
-      let regions = polygonClipping.intersection(
-        close(motion.polygon.points),
-        close(obstacle.points.map((p) => [p.x, p.y - p.z_top])),
-      );
+      let regions = preserveSingleLiftBoundary
+        ? [close(motion.polygon.points)]
+        : polygonClipping.intersection(
+            close(motion.polygon.points),
+            close(obstacle.points.map((p) => [p.x, p.y - p.z_top])),
+          );
       if (motion.obstacles.length)
         regions = polygonClipping.difference(
           regions,

@@ -1838,7 +1838,7 @@ mod tests {
         let check_actor_routes = |engine: &mut EngineInner, applied: bool| {
             let grid = &engine.world.fast_grid;
             let half = grid.try_move_box_half_diagonal(0).unwrap();
-            assert_eq!((half.x, half.y), (6., 4.));
+            assert_eq!((half.x, half.y), (6., 3.));
             for (sector, left, right, open) in [(0, 330., 370., applied), (2, 430., 490., !applied)]
             {
                 let left = MapPoint::new(left, 320.);

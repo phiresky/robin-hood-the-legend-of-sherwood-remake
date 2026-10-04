@@ -75,7 +75,7 @@ fn graph_free_mission_installs_actor_footprints_before_spawning() {
         .load_motion_stage(&mut assets, &mut staging, &mut loaded, (2508.0, 2508.0))
         .expect("graph-free motion stage");
 
-    let footprint = crate::coordinates::MoveBoxHalfDiagonal::new(6.0, 4.0);
+    let footprint = crate::coordinates::MoveBoxHalfDiagonal::new(6.0, 3.0);
     assert_eq!(
         engine.world.fast_grid.try_move_box_half_diagonal(0),
         Some(footprint)

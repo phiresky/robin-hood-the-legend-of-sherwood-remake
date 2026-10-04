@@ -45,3 +45,23 @@ test("empty ground and traversal layers retain their reserved roles", () => {
   assert.equal(compactNavigationLayers(lift), 1);
   assert.equal(lift[0]!.layer, 1);
 });
+
+test("independent overlapping lifts receive separate layers while one lift keeps its pieces together", () => {
+  const regions = [
+    region(0),
+    region(12, "stairs-a"),
+    region(12, "stairs-b"),
+    region(12, "stairs-a"),
+  ];
+  assert.equal(compactNavigationLayers(regions), 2);
+  assert.deepEqual(
+    regions.map((item) => [item.lift, item.layer]),
+    [
+      [undefined, 0],
+      ["stairs-a", 1],
+      ["stairs-a", 1],
+      ["stairs-b", 2],
+    ],
+  );
+  assert.ok(regions.every((item) => item.pieces.every((piece) => piece.layer === item.layer)));
+});

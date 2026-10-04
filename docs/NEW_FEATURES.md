@@ -6,14 +6,19 @@
   even when no mission script VM is present. Patch animations follow map switch
   state, and available campaign reinforcements can use map entrances.
 
-- **Receiving boundaries at stair entrances.** Compiled stair
-  connections generate receiver changes at shared navigation-area boundaries on
-  both approach layers. Separate unconnected layers and animation-driven ladder
-  or wall traversal do not acquire these walking boundaries. Native compilation
-  extends cramped walking-lift approach points along their authored direction
-  until a stock 6-by-4 actor fits, without crossing obstacles or leaving the
-  owning area. If no point fits within 64 map units, it keeps the authored point
-  and emits a warning. Binary level data is unchanged.
+- **Stairs that connect after placement.** Compiled stairs generate receiving
+  bonds just inside each passage on its owning lift layer, including landings
+  whose contours overlap or have gaps. Ground-facing boundaries within the
+  passage are clipped to prevent a second receiver switch. Independent lifts
+  receive separate navigation layers so overlapping stairs cannot block each
+  other. Native compilation adjusts cramped approach points within the owning
+  area, preferring the authored direction and then nearby forward/sideways
+  clearance. If nothing fits within 64 map units, it keeps the authored point
+  and warns. Graph-free pathfinding and approach construction now use the stock
+  human profile's 6-by-3 half-diagonal; the former 6-by-4 default incorrectly
+  rejected narrow passages. One-time recovery now retains the full movement
+  contour of a static lift with one receiving owner, independently of its
+  receiving footprint. Binary level data is unchanged.
 
 - **Partial navigation cells at map edges.** Maps whose pixel dimensions are not
   multiples of 64 allocate the final partial grid cells and retain their exact

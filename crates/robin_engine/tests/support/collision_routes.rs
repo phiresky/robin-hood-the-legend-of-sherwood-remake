@@ -10,7 +10,7 @@ pub fn check_collision_routes(
     include_sector: impl Fn(u16, u16) -> bool,
 ) -> usize {
     let half = grid.try_move_box_half_diagonal(0).unwrap();
-    assert_eq!((half.x, half.y), (6., 4.));
+    assert_eq!((half.x, half.y), (6., 3.));
     let mut checked = 0;
     let sampling_started = std::time::Instant::now();
     let mut routing_time = std::time::Duration::ZERO;

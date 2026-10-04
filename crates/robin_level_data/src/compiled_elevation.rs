@@ -123,6 +123,81 @@ fn coordinate_from_key(key: u32) -> f32 {
     })
 }
 
+/// Replace only the ground-facing edge under an explicit passage. Its actor
+/// keeps the approach plane through contour gaps until the entrance bond takes
+/// over; retaining that edge would switch it twice. Preserve the rest of each
+/// polygon boundary for ordinary movement beside the passage.
+fn clip_passage_ground_edges(
+    lines: &mut Vec<RawElevationLine>,
+    layer: u16,
+    receiver: u16,
+    source: Point,
+    goal: Point,
+) -> Result<(), String> {
+    if receiver == u16::MAX {
+        return Ok(());
+    }
+    let vector = subtract(goal, source);
+    let length = vector[0].hypot(vector[1]);
+    if length == 0. {
+        return Ok(());
+    }
+    let along = vector.map(|v| v / length);
+    let across = [-along[1], along[0]];
+    let mut result = Vec::with_capacity(lines.len());
+    for line in lines.drain(..) {
+        if line.layer != layer
+            || BTreeSet::from([line.left_obstacle_index, line.right_obstacle_index])
+                != BTreeSet::from([receiver, u16::MAX])
+        {
+            result.push(line);
+            continue;
+        }
+        let [a, b] = line.map_endpoints().map(|p| p.map(f64::from));
+        let delta = subtract(b, a);
+        let offset = subtract(a, source);
+        let mut low = 0f64;
+        let mut high = 1f64;
+        for (axis, minimum, maximum) in [(along, -1., length + 1.), (across, -1., 1.)] {
+            let origin = offset[0] * axis[0] + offset[1] * axis[1];
+            let speed = delta[0] * axis[0] + delta[1] * axis[1];
+            if speed == 0. {
+                if origin < minimum || origin > maximum {
+                    low = 1.;
+                    high = 0.;
+                }
+            } else {
+                let first = (minimum - origin) / speed;
+                let last = (maximum - origin) / speed;
+                low = low.max(first.min(last));
+                high = high.min(first.max(last));
+            }
+        }
+        if low >= high {
+            result.push(line);
+            continue;
+        }
+        for (start, end) in [(0., low), (high, 1.)] {
+            if start >= end {
+                continue;
+            }
+            let (a, b) = (interpolate(a, b, start), interpolate(a, b, end));
+            let precise = [a.map(|v| v as f32), b.map(|v| v as f32)];
+            if precise[0] == precise[1] {
+                continue;
+            }
+            result.push(RawElevationLine {
+                point_a: rounded(a)?,
+                point_b: rounded(b)?,
+                precise_points: Some(precise),
+                ..line.clone()
+            });
+        }
+    }
+    *lines = result;
+    Ok(())
+}
+
 /// Stair entrances connect receiving surfaces across navigation layers.
 pub(crate) fn stair_connections(
     geometry: &CompiledAssetGeometry,
@@ -208,18 +283,12 @@ pub(crate) fn derive(geometry: &CompiledAssetGeometry) -> Result<Vec<RawElevatio
     }
     let mut output = BTreeMap::new();
     let mut ambiguous = BTreeSet::new();
-    let connections = stair_connections(geometry);
-    for &topology @ (_, layer) in area_polygons.keys() {
+    for (&topology @ (_, layer), area_polygon) in &area_polygons {
         // Sight activation controls collision and visibility, not receiving
         // height lookup. Keep bonds for all registered planes in every state;
         // doors and motion obstacles control access to switched surfaces.
-        let mut contexts = vec![topology];
-        contexts.extend(connections.get(&topology).into_iter().flatten().copied());
-        let receivers: Vec<_> = contexts
-            .iter()
-            .flat_map(|key| groups.get(key).into_iter().flatten())
-            .collect();
-        let mut edges: Vec<Edge> = receivers
+        let receivers = groups.get(&topology).map(Vec::as_slice).unwrap_or_default();
+        let edges: Vec<Edge> = receivers
             .iter()
             .flat_map(|receiver| {
                 (0..receiver.polygon.len()).map(|i| {
@@ -230,45 +299,31 @@ pub(crate) fn derive(geometry: &CompiledAssetGeometry) -> Result<Vec<RawElevatio
                 })
             })
             .collect();
-        if contexts.len() > 1 {
-            // A receiver may extend beyond its navigation area's contour.
-            // The ownership change at a stair entrance still occurs on the
-            // area boundary even when neither plane has an edge there.
-            for polygon in contexts.iter().filter_map(|key| area_polygons.get(key)) {
-                edges.extend(
-                    (0..polygon.len()).map(|i| (polygon[i], polygon[(i + 1) % polygon.len()])),
-                );
+        let owner = |point| -> Option<u16> {
+            if !contains(area_polygon, point) {
+                return None;
             }
-        }
-        let owner = |point| -> Option<(u16, bool)> {
-            let key = contexts.iter().find(|key| {
-                area_polygons
-                    .get(key)
-                    .is_some_and(|polygon| contains(polygon, point))
-            })?;
             let mut best: Option<&Receiver> = None;
-            for receiver in groups.get(key).into_iter().flatten() {
+            for receiver in receivers {
                 if contains(&receiver.polygon, point)
                     && best.is_none_or(|previous| receiver.maximum_height > previous.maximum_height)
                 {
                     best = Some(receiver);
                 }
             }
-            Some((best.map_or(u16::MAX, |r| r.index), *key == topology))
+            Some(best.map_or(u16::MAX, |r| r.index))
         };
         for edge in &edges {
             let mut cuts = vec![0., 1.];
             for other in &edges {
                 split_at(*edge, *other, &mut cuts);
             }
-            for polygon in contexts.iter().filter_map(|key| area_polygons.get(key)) {
-                for i in 0..polygon.len() {
-                    split_at(
-                        *edge,
-                        (polygon[i], polygon[(i + 1) % polygon.len()]),
-                        &mut cuts,
-                    );
-                }
+            for i in 0..area_polygon.len() {
+                split_at(
+                    *edge,
+                    (area_polygon[i], area_polygon[(i + 1) % area_polygon.len()]),
+                    &mut cuts,
+                );
             }
             cuts.sort_by(f64::total_cmp);
             // A parameter-space epsilon can erase a distinct float32 endpoint
@@ -298,10 +353,10 @@ pub(crate) fn derive(geometry: &CompiledAssetGeometry) -> Result<Vec<RawElevatio
                 let normal = unit_normal.map(|value| value * distance);
                 let left = owner([middle[0] + normal[0], middle[1] + normal[1]]);
                 let right = owner([middle[0] - normal[0], middle[1] - normal[1]]);
-                let (Some((left, left_local)), Some((right, right_local))) = (left, right) else {
+                let (Some(left), Some(right)) = (left, right) else {
                     continue;
                 };
-                if left == right || (!left_local && !right_local) {
+                if left == right {
                     continue;
                 }
                 let key = (layer, point_a, point_b);
@@ -343,7 +398,7 @@ pub(crate) fn derive(geometry: &CompiledAssetGeometry) -> Result<Vec<RawElevatio
             "omitted ambiguous coincident elevation boundaries"
         );
     }
-    Ok(output
+    let mut lines: Vec<_> = output
         .into_iter()
         .filter(|(_, (left, right))| left != right)
         .map(
@@ -364,7 +419,83 @@ pub(crate) fn derive(geometry: &CompiledAssetGeometry) -> Result<Vec<RawElevatio
                 }
             },
         )
-        .collect())
+        .collect();
+    // A walking passage explicitly moves through its midpoint before changing
+    // sectors. Its receiving bond must follow that passage, even when landing
+    // and stair contours have a gap or overlap. Polygon contact alone cannot
+    // establish this connection. Keep the bond local to the mandatory crossing
+    // point so nearby ordinary movement does not acquire a different layer.
+    let receiver_at = |topology, point: (i16, i16)| {
+        groups
+            .get(&topology)
+            .into_iter()
+            .flatten()
+            .filter(|receiver| {
+                contains(&receiver.polygon, [f64::from(point.0), f64::from(point.1)])
+            })
+            .max_by(|a, b| {
+                a.maximum_height
+                    .total_cmp(&b.maximum_height)
+                    .then_with(|| b.index.cmp(&a.index))
+            })
+            .map_or(u16::MAX, |receiver| receiver.index)
+    };
+    let mut passages = Vec::new();
+    for lift in &geometry.lifts {
+        if !matches!(lift.lift_type, 0 | 1) {
+            continue;
+        }
+        for door in &lift.doors {
+            let outside = receiver_at((door.sector_out, door.layer_out), door.point_out);
+            let inside = receiver_at((door.sector_in, door.layer_in), door.point_in);
+            if outside == inside {
+                continue;
+            }
+            let middle = [f64::from(door.point_mid.0), f64::from(door.point_mid.1)];
+            for (layer, receiver, point) in [
+                (door.layer_out, outside, door.point_out),
+                (door.layer_in, inside, door.point_in),
+            ] {
+                clip_passage_ground_edges(
+                    &mut lines,
+                    layer,
+                    receiver,
+                    middle,
+                    [f64::from(point.0), f64::from(point.1)],
+                )?;
+            }
+            let toward = |point: (i16, i16)| {
+                let v = [
+                    f64::from(point.0) - middle[0],
+                    f64::from(point.1) - middle[1],
+                ];
+                let length = v[0].hypot(v[1]);
+                (length > 0.).then(|| v.map(|x| x / length))
+            };
+            let Some(inward) = toward(door.point_in) else {
+                return Err("walking passage has an approach at its midpoint".into());
+            };
+            // Keep the bond just inside the lift's own layer. An outside-layer
+            // copy can be crossed by an actor using a neighboring entrance on
+            // the same landing, incorrectly attaching it to that other lift.
+            // Offset from the exact midpoint because origin contacts are not
+            // counted as crossings after the door switches actor membership.
+            let middle = [middle[0] + inward[0] * 0.25, middle[1] + inward[1] * 0.25];
+            let tangent = [-inward[1], inward[0]];
+            let a = [middle[0] - tangent[0], middle[1] - tangent[1]];
+            let b = [middle[0] + tangent[0], middle[1] + tangent[1]];
+            passages.push(RawElevationLine {
+                layer: door.layer_in,
+                point_a: rounded(a)?,
+                point_b: rounded(b)?,
+                precise_points: Some([a.map(|x| x as f32), b.map(|x| x as f32)]),
+                left_obstacle_index: outside,
+                right_obstacle_index: inside,
+            });
+        }
+    }
+    lines.extend(passages);
+    Ok(lines)
 }
 
 #[cfg(test)]
@@ -381,7 +512,7 @@ mod tests {
     }
 
     #[test]
-    fn stair_receivers_connect_on_both_approach_layers() {
+    fn stair_receivers_connect_only_on_the_owned_lift_layer() {
         let document: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../robin_engine/tests/fixtures/asset-lift.level.json"
@@ -392,15 +523,21 @@ mod tests {
         for lift_type in [0, 1] {
             geometry.lifts[0].lift_type = lift_type;
             let lines = derive(&geometry).unwrap();
-            assert_eq!(lines.len(), 4);
-            for (x, layers, receivers) in [
-                (390., [0, 2], BTreeSet::from([u16::MAX, 2])),
-                (410., [1, 2], BTreeSet::from([1, 2])),
+            assert_eq!(lines.len(), 2);
+            for (layers, receivers) in [
+                ([2], BTreeSet::from([u16::MAX, 2])),
+                ([2], BTreeSet::from([1, 2])),
             ] {
                 for layer in layers {
                     let line = lines
                         .iter()
-                        .find(|line| line.layer == layer && line.map_endpoints()[0][0] == x)
+                        .find(|line| {
+                            line.layer == layer
+                                && BTreeSet::from([
+                                    line.left_obstacle_index,
+                                    line.right_obstacle_index,
+                                ]) == receivers
+                        })
                         .unwrap();
                     assert_eq!(
                         BTreeSet::from([line.left_obstacle_index, line.right_obstacle_index,]),

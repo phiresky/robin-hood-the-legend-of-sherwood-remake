@@ -2738,7 +2738,7 @@ impl EngineInner {
             // Both actor spawning and visibility-graph routing need it.
             // TODO: expose authored footprints for custom profiles that use
             // additional pathfinder slots; keep invalid indices strict.
-            let half_diagonal = crate::coordinates::MoveBoxHalfDiagonal::new(6.0, 4.0);
+            let half_diagonal = crate::coordinates::MoveBoxHalfDiagonal::new(6.0, 3.0);
             graph.static_mut().half_diagonals.push(half_diagonal);
             self.world
                 .fast_grid_mut()

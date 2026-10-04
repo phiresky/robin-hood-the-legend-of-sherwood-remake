@@ -14,7 +14,7 @@ fn placed_point(point: MapPoint, turn: u8) -> MapPoint {
     MapPoint::new(x + 900., y + 800.)
 }
 
-fn placed_stair_fixture(bytes: &[u8], turn: u8, lift_type: u8) -> Vec<u8> {
+pub(super) fn placed_stair_fixture(bytes: &[u8], turn: u8, lift_type: u8) -> Vec<u8> {
     let mut document: serde_json::Value = serde_json::from_slice(bytes).unwrap();
     let mut geometry: crate::level_data::CompiledAssetGeometry =
         serde_json::from_value(document["asset_geometry"].clone()).unwrap();

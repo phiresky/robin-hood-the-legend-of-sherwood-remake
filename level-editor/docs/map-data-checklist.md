@@ -22,19 +22,31 @@ intended construction, not functionality available today.
 script VM. Gate routes, jump selection, lockpicking validation, door hover/overlays,
 patch clicks/ownership, building AI door lists, corpse door-blocking checks, lift
 fall destinations, reinforcement entrances and patch animation progression now
-use the loaded map domains independently of that VM. Compiled walking lifts
-derive receiving-plane boundaries at shared entrances on both approach layers.
-Their approach points are extended along the authored passage direction when
-necessary to fit the stock 6×4 actor footprint. The search stays within the
-assigned movement area and avoids obstacles, stopping after 64 map units;
-unresolved approaches retain their authored position with a native load warning.
-This is derived during native descriptor compilation, without modifying assets
-or legacy binary maps. Eight actual actor routes cover both directions in four
-map-plane orientations, checking receiving surfaces and height on every interior
-tick. Full-map stair walks and all actor sizes remain unaudited.
-Validation also passes 4,293 engine unit tests, 68 level-data tests, 61 compiler
-integration tests and the existing 6,222 sampled actor crossings across all ten
-maps. Client door-hover/input tests pass. The core overlay manifest now declares
+use the loaded map domains independently of that VM. Each independent walking
+lift receives its own navigation layer, while joined pieces share their lift's
+layer. Receiving-plane bonds sit just inside each stair entrance on that lift's
+layer. Ground-facing receiver edges are clipped only along the explicit passage,
+so contour gaps or overlaps cannot cause duplicate receiver swaps. Approach
+repair first follows the authored direction, then searches nearby clear positions
+within 64 map units for the stock 6×3 half-diagonal. Unresolved approaches retain
+their authored position with a native load warning. Binary maps are unchanged.
+One-time recovery also preserves a sole static lift owner's full movement contour
+instead of clipping actor clearance to its receiving footprint. Two York stair
+assets have this correction published, with saved-scene hashes updated.
+Actor fixtures cover both directions, four map-plane orientations, contour gaps,
+overlaps and independent stairs with overlapping projections. Full-map stair
+audits check receiving surfaces and height outside the passage animation and at
+arrival; these use synthetic walking frames and do not certify ladder/wall
+animations, every actor size or rendered sprite alignment.
+Fresh published-asset diagnostics in `work/map-compile/stair-routing-HtMZ9h`
+pass all 288 directed stair walks across ten maps and 6,234 sampled actor
+crossings (6,178 between receiving planes and 56 between planes and ground),
+using the corrected 6×3 footprint. No stair routes were skipped for permissions.
+The current changes pass 4,295 engine unit tests, 69 level-data tests, 61 compiler
+integration tests and 393 editor/shared compiler tests (one skipped).
+Earlier validation passed 4,293 engine unit tests, 68 level-data tests, 61 compiler
+integration tests and 6,222 sampled actor crossings with a 6×4 half-diagonal.
+Client door-hover/input tests pass. The core overlay manifest now declares
 packed-data schema 22, matching the earlier fractional-elevation format update;
 all 11 overlay tests pass.
 
@@ -42,7 +54,7 @@ all 11 overlay tests pass.
 are under `work/map-compile/route-sampling-HpYhrj`. A native collision flood-fill
 finds connected actor-sized samples within numbered motion sectors, then checks
 forward/reverse pathfinder routes and clearance on every returned segment. The
-baseline passed 1,336 routes using the stock 6×4 half-diagonal, taking 3,471 seconds
+baseline passed 1,336 routes using a 6×4 half-diagonal, taking 3,471 seconds
 in this debug run. Euclidean A* with stable index ties, non-improving edge rejection
 and empty-grid-cell skipping pass the same 1,336 routes in 655 seconds. That report
 is saved as `route-sampling-astar-report.json`. Pathfinder corridor checks now also
@@ -887,10 +899,10 @@ sampled Rust queries. Equivalent evidence across all maps remains unfinished.
 | Openings in movement collision | Asset-local clearances remove only the owning asset's derived collision on the matching plane; sight geometry and other assets remain intact. | Working in compiler/runtime tests; recovery geometry failures remain explicit gaps |
 | Navigation graph and fast-find grid | Engine constructs routing and spatial lookup structures from compiled geometry. No copied grids or graph bytes. | Synthetic fixtures, 1,336 initial-state routes across ten maps and 3,706 routes through independent/combined switch states pass; complete connectivity and actor traversal remain unverified |
 | Sight/physical obstacles | Transform asset-local shapes, per-vertex heights and solid/opaque flags. Explicit transition references select initial/applied obstacles. | Static geometry working; sight transitions verified through native initialization, apply and reset; recovered state ownership still incomplete |
-| Projection surfaces / elevation | Generate height planes linked to movement areas; derive fractional receiver-crossing boundaries from all registered planes, independent of sight activation. | Partial: rotated copies, curved/rising paths, sight-state fixtures and 6,222 sampled actor crossings pass; conflicting coincident boundaries and complete full-map traversal remain unfinished |
+| Projection surfaces / elevation | Generate height planes linked to movement areas; derive fractional receiver-crossing boundaries from all registered planes, independent of sight activation. Stair entrances connect receivers on their own lift layer. | Partial: rotated copies, curved/rising paths, sight-state fixtures, 6,234 sampled actor crossings and 288 full stair walks pass; complete full-map traversal remains unfinished |
 | Doors, gates and lock rules | Transform local endpoints and optional click polygons; resolve neighbours geometrically and retain initial/alternate actor lock rules. Asset-local transition links either trigger state changes from doors or swap door permissions. | Compiler/native links implemented; recovered ownership and coverage incomplete |
 | Building interiors | Asset-local rooms connect their own entrances automatically. Map-owned editor links or matching passage sockets join rooms across assets. | Compiler/native tests cover separate, moved, rotated and duplicated assemblies and editable ZIP round-trips; occupants remain mission-owned |
-| Lifts / special traversal | Asset-local traversal surfaces, type, direction and endpoints; explicit local join sockets combine placed segments into one sector with multiple height planes. | Published library exports include lifts; native checks cover 372 directed passage callbacks plus rotated/duplicated compound fixtures. Missing assemblies warn and retain independent collision. Changing lift surfaces and complete traversal coverage remain unfinished |
+| Lifts / special traversal | Asset-local traversal surfaces, type, direction and endpoints; explicit local join sockets combine placed segments into one sector with multiple height planes. Independent lifts have separate layers. | Published exports pass 288 full directed stair walks and 372 passage callbacks plus rotated/duplicated compound fixtures. Missing assemblies warn and retain independent collision. Changing lift surfaces, complete ladder/wall walks and rendered traversal remain unfinished |
 | Jump zones and paired jump edges | Transform authored 3D edges or derive ledges from marked surfaces; construct receiving bands, trim flight/approach obstructions, resolve current neighbours and preserve long-jump/helper rules. | Nineteen published surfaces carry reusable generation rules; native tests cover moved buildings, multiple destinations, skills, flight, walking approaches and changing nearby blockers. Broader asset authoring and full-map traversal remain unfinished |
 | Surface materials | Transform asset-local material polygons; rebuild ground, obstacle and receiving-surface links independently. Preserve receiving defaults, footprints and overlap priority. | Compiler/native tests pass; all nine imported map families have published material definitions; full geometry and receiving-material coverage remain unverified |
 | Light/shadow regions | Transform asset-local planar contours, resolve ordinary or traversal receiving layers and preserve ambience filters. Conflicting anchored receivers receive separate runtime layers. | Published definitions exist for all five towns and Sherwood; unrestricted query equivalence and full placement coverage remain unverified |

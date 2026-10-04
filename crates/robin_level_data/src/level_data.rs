@@ -2891,7 +2891,7 @@ impl LoadedLevel {
             let mut sector = 0u16;
             for (layer, areas) in geometry.motion_data.layers.iter().enumerate() {
                 for area in areas {
-                    if area.is_lift != (layer == lift_layer)
+                    if (layer == lift_layer && !area.is_lift)
                         || area.polygon.points.len() < 3
                         || area
                             .obstacles
@@ -3144,8 +3144,8 @@ impl LoadedLevel {
                     || lift.doors.iter().any(|door| {
                         !matches!(door.door_type, 4..=6)
                             || door.sector_in != lift.motion_area_index
-                            || door.layer_in as usize != lift_layer
-                            || door.layer_out as usize == lift_layer
+                            || !area_refs.contains(&(door.sector_in, door.layer_in))
+                            || lift_refs.contains(&door.sector_out)
                     })
                 {
                     return Err("invalid asset lift or unresolved lift connection".into());
