@@ -29,6 +29,24 @@ def audit(workspace,objects):
         native=next(r for r in json.loads(inventory.read_text())['masks'] if r['index']==report['wood_domain_mask'])
         native=dict(native,png=str((inventory.parent/native['png']).resolve()))
     paste(np.asarray(Image.open(OUT/'baseline/masks'/native['png']).convert('L'))>0,*native['box_top_left'])
+    coverage_domain=None
+    if 'coverage_domain_mask' in report:
+        # A mixed native mask can contain another receiver's rock or bark.
+        # Its explicitly reviewed authored domain replaces the raw union;
+        # inferred front pixels outside this domain remain measurable extras.
+        cfg=json.loads((workspace/'workspace.json').read_text())
+        mask_path=Path(cfg['source_mask_manifest']);masks=json.loads(mask_path.read_text())
+        inventory_path=Path(masks['mask_inventory']);inventory=json.loads(inventory_path.read_text())
+        index=report['coverage_domain_mask'];part_ids=set(cfg['part_ids'])
+        assignments=masks['projections']['exterior']['assignments']
+        if not any(index in a.get('mask_indices',[]) and (a.get('source_node') in part_ids or a.get('asset_group')==cfg['asset_id']) for a in assignments):
+            raise ValueError('Coverage domain is not assigned to this worker')
+        domain=next(r for r in inventory['masks'] if r['index']==index)
+        path=(inventory_path.parent/domain['png']).resolve()
+        expected[:]=False
+        paste(np.asarray(Image.open(path).convert('L'))>0,*domain['box_top_left'])
+        coverage_domain=dict(index=index,png=str(path),png_sha256=sha(path),inventory_sha256=sha(inventory_path),
+                             source_manifest_sha256=sha(mask_path),semantics='Exact authored domain replaces raw native and complete-source union; extra inferred silhouette remains reported')
     yy,xx=np.nonzero(expected);left=max(0,int(xx.min())-10);right=min(1792,int(xx.max())+11);top=max(0,int(yy.min())-10);bottom=min(1152,int(yy.max())+11)
     width,height=right-left,bottom-top;expected=expected[top:bottom,left:right]
     scene=bpy.data.scenes.new('Isolated source coverage audit');copies=[]
@@ -50,6 +68,7 @@ def audit(workspace,objects):
     overlay=np.asarray(source).copy();overlay[missing]=[255,40,40];overlay[extra]=[0,220,255];Image.fromarray(overlay).save(destination/'difference.png')
     Image.fromarray(expected.astype('uint8')*255).save(destination/'expected.png')
     result=dict(model_sha256=sha(workspace/'model.blend'),source_packet_sha256=sha(packet_path),source_crop=[left,top,right,bottom],expected_pixels=int(expected.sum()),rendered_pixels=int(actual.sum()),missing_pixels=int(missing.sum()),extra_pixels=int(extra.sum()),intersection_over_union=float(intersection.sum()/np.count_nonzero(expected|actual)),legend='Red: native coverage missed. Cyan: rendered coverage outside assigned native masks. Crossed foliage edges and mask-derived wood thickness can differ.',status='measurement; requires visual review')
+    if coverage_domain is not None:result['coverage_domain']=coverage_domain
     (destination/'report.json').write_text(json.dumps(result,indent=2)+'\n')
     for obj in copies+[camera]:bpy.data.objects.remove(obj,do_unlink=True)
     bpy.data.cameras.remove(data);bpy.data.scenes.remove(scene)
