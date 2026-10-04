@@ -1,5 +1,6 @@
 """Replace a mirrored inferred twig with own-native leaf texture, preserving geometry."""
 import json
+import hashlib
 import shutil
 import sys
 from pathlib import Path
@@ -15,6 +16,29 @@ from refinement_workspace import prepare,modified
 from audit_candidates import audit
 from render_tree import render_workspace
 from central_support_geometry import leaf_signature
+
+
+def verify_saved():
+    old=OUT/'understory-candidates/native-80-scoped-v1/input.blend'
+    worker=OUT/'understory-candidates/native-80-leaf-fill-v2/assets/croisement02-shrub-80'
+    bpy.ops.wm.open_mainfile(filepath=str(old))
+    obj=next(o for o in bpy.data.objects if o.type=='MESH' and o.get('source_node')=='foliage-shrub-080')
+    counts=(len(obj.data.vertices),len(obj.data.polygons),len(obj.data.loops));signature=leaf_signature(obj.data,*counts)
+    bpy.ops.wm.open_mainfile(filepath=str(worker/'model.blend'))
+    obj=next(o for o in bpy.data.objects if o.type=='MESH' and o.get('source_node')=='foliage-shrub-080')
+    if counts!=(len(obj.data.vertices),len(obj.data.polygons),len(obj.data.loops)) or signature!=leaf_signature(obj.data,*counts):raise ValueError('Saved material derivative geometry changed')
+    bound={}
+    for mat in obj.data.materials:
+        for node in mat.node_tree.nodes:
+            if node.type!='TEX_IMAGE' or node.image is None:continue
+            name=Path(node.image.filepath).name
+            if name not in ('inferred-source.png','unknown-front.png'):continue
+            if node.image.packed_file is None:raise ValueError('Corrected native image is not packed')
+            digest=hashlib.sha256(node.image.packed_file.data).hexdigest()
+            if digest!=sha(worker.parents[1]/'shrub-80'/name):raise ValueError('Saved material does not use corrected inferred pixels')
+            bound[name]=digest
+    if set(bound)!={'inferred-source.png','unknown-front.png'}:raise ValueError('Corrected material bindings missing')
+    write_json(worker/'inspection/appearance-reopen.json',dict(status='PASS',model_sha256=sha(worker/'model.blend'),prior_input_sha256=sha(old),geometry_uv_ownership_signature=signature,corrected_packed_images=bound))
 
 
 def main():
@@ -78,5 +102,7 @@ def main():
 
 if __name__=='__main__':
     acquire()
-    try:main()
+    try:
+        if '--verify-only' in sys.argv:verify_saved()
+        else:main()
     finally:release()
