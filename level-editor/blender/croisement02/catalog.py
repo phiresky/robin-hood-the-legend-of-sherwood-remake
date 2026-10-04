@@ -53,6 +53,9 @@ def scenery_workspace(asset):
     return OUT/'scenery-round-1/assets'/asset
 
 def tree_workspace(mask):
+    from canopy_candidates import selected_workspace
+    cleanup=selected_workspace(OUT,mask,reviewed_catalog())
+    if cleanup is not None:return cleanup
     asset=f'croisement02-tree-{mask:02}'
     completed=OUT/'forest-v4-round-3/assets'/asset
     if (completed/'inspection/northern-cap-revision.json').exists():return completed

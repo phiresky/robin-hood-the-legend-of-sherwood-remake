@@ -32,7 +32,7 @@ def main():
         if set(scope['part_ids'])!={source_for_part(p) for p in group['parts']}:
             missing.append(dict(id=group['id'],name=group['name'],status='ownership revision pending',reason='Previous worker owns a different source-part set. A fresh workspace is required; the old geometry packet is withheld.'));continue
         report=json.loads(report_path.read_text())
-        if tree and report['crown'].get('geometry_version') not in ('native-leaf-clusters-v5','native-leaf-clusters-v6'):
+        if tree and report['crown'].get('geometry_version') not in ('native-leaf-clusters-v5','native-leaf-clusters-v6','microfragment-curved-envelope-irregular-volume-v2'):
             missing.append(dict(id=group['id'],name=group['name'],status='in progress',reason='Replacing the rejected large-shell prototype with small, full-depth leaf clusters.'));continue
         if shrub and report['crown'].get('geometry_version')!='native-shrub-leaf-volume-v2':
             missing.append(dict(id=group['id'],name=group['name'],status='in progress',reason='Current round-volume shrub geometry is not prepared.'));continue
@@ -87,6 +87,17 @@ def main():
                             for r in neighbours)):
                 item['source_comparison_secondary']=joint['sheet']
                 item['source_comparison_secondary_label']=joint.get('label','Source and oblique views with approved neighbouring trees; lower row hides foliage' if stem else 'Joint source and oblique review with neighbouring geometry')
+        cleanup_comparison=workspace/'inspection/baseline-comparison'
+        if (cleanup_comparison/'evidence.json').exists():
+            compared=json.loads((cleanup_comparison/'evidence.json').read_text())
+            if (compared['model_sha256']==model_hash and
+                    compared['baseline_sha256']==sha(workspace/'baseline.blend') and
+                    compared['camera_manifest_sha256']==sha(workspace/'inspection/actual-camera-manifest.json') and
+                    all(sha(cleanup_comparison/name)==expected for name,expected in compared['sheets'].items())):
+                item['source_comparison_secondary']=str(cleanup_comparison/'comparison-0-3.png')
+                item['source_comparison_secondary_label']='Earlier approved geometry above; NEW cleanup candidate below, identical cameras (views0–3)'
+                item['source_trace']=str(cleanup_comparison/'comparison-4-7.png')
+                item['source_trace_label']='Earlier approved geometry above; NEW cleanup candidate below, identical cameras (views4–7)'
         review=workspace/'inspection/visual-review.json'
         full_crown=workspace/'inspection/full-crown'
         if (full_crown/'evidence.json').exists():
