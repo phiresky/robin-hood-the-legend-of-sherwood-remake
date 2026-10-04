@@ -8,9 +8,11 @@ from evidence_io import sha,write_json
 
 
 def selected_workspace(out,asset,catalog_path):
-    refit=out/'understory-round-2/assets'/asset
+    northwest=asset=='croisement02-northwest-boundary-shrub-54'
+    refit=out/('understory-round-7/assets' if northwest else 'understory-round-2/assets')/asset
     candidate=refit/'inspection/shrub-candidate.json'
-    if candidate.exists() and (refit/'inspection/refit-evidence.json').exists():
+    proof=refit/'inspection'/('support-evidence.json' if northwest else 'refit-evidence.json')
+    if candidate.exists() and proof.exists():
         receipt=json.loads(candidate.read_text())
         group=next(g for g in json.loads(catalog_path.read_text())['groups'] if g['id']==asset)
         if receipt.get('group')!=group or not group.get('authored_scenery') or 'native_foliage_mask' not in group:
@@ -22,6 +24,11 @@ def selected_workspace(out,asset,catalog_path):
                 or audit['status']!='PASS' or not review['ready_for_geometry_review']
                 or review['sheet_sha256']!=sha(refit/'inspection/actual-materials/sheet.png')):
             raise ValueError('Refitted shrub review changed')
+        if northwest and review.get('support_evidence_sha256')!=sha(proof):raise ValueError('Northwest shrub support evidence changed')
+        coverage=json.loads((refit/'inspection/source-coverage/report.json').read_text())
+        bounds=json.loads((refit/'inspection/actual-materials/opacity-bounds.json').read_text())
+        if coverage['model_sha256']!=model_hash or bounds['model_sha256']!=model_hash or coverage['intersection_over_union']<.95 or min(c['depth_width_ratio'] for c in bounds['crowns'])<1:
+            raise ValueError('Registered shrub source or physical bounds changed')
         joint_path=refit/'inspection/joint-neighbourhood.json'
         if sha(joint_path)!=review['joint_neighbourhood_sha256']:raise ValueError('Refitted shrub joint receipt changed')
         joint=json.loads(joint_path.read_text())
