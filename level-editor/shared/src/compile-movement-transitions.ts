@@ -26,6 +26,14 @@ export interface PlacedTransitionBlocker {
   };
 }
 
+export class MovementTransitionLimit extends Error {
+  readonly transition: string;
+  constructor(transition: string) {
+    super("More than 16 independent movement transitions affect one navigation area");
+    this.transition = transition;
+  }
+}
+
 /** Intersect an authored vertical volume with a receiving plane before projecting into movement space. */
 function terrainSlice(
   volume: NonNullable<PlacedTransitionBlocker["terrainVolume"]>,
@@ -185,10 +193,7 @@ export function compileTransitionObstacles(
       let pair = pairs.get(blocker.transition);
       if (!blocker.fixed && pair === undefined) {
         pair = pairs.size;
-        if (pair >= 16)
-          throw new Error(
-            "More than 16 independent movement transitions affect one navigation area",
-          );
+        if (pair >= 16) throw new MovementTransitionLimit(blocker.transition);
         pairs.set(blocker.transition, pair);
       }
       const state_id = blocker.fixed ? 0 : (1 << (2 * pair! + (blocker.applied ? 1 : 0))) >>> 0;

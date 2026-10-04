@@ -869,6 +869,59 @@ mod tests {
     }
 
     #[test]
+    fn compiled_stair_barriers_update_live_routes_after_placement_and_reset() {
+        let fixtures: Vec<serde_json::Value> = serde_json::from_slice(include_bytes!(
+            "../../tests/fixtures/asset-changing-lifts.levels.json"
+        ))
+        .unwrap();
+        assert_eq!(fixtures.len(), 4);
+        for (rotation, fixture) in fixtures.iter().enumerate() {
+            let bytes = serde_json::to_vec(fixture).unwrap();
+            let loaded = crate::level_data::LoadedLevel::hackable_from_json(&bytes).unwrap();
+            let lift = &loaded.proto.lifts[0];
+            let layer = lift.doors[0].layer_in;
+            let sector = lift.motion_area_index;
+            let [a, b] = [lift.doors[0].point_in, lift.doors[1].point_in]
+                .map(|(x, y)| MapPoint::new(f32::from(x), f32::from(y)));
+            let (mut engine, assets) = load_compiled_transition(&bytes, (2000., 2000.));
+            let sim = crate::sim_rng::test_context();
+            let patch = crate::patch::PatchIndex::new(0).unwrap();
+            for (step, applied) in [false, true, false, true, false].into_iter().enumerate() {
+                if step > 0 {
+                    if applied {
+                        engine.apply_patch(TickCtx::new(&sim, &assets), patch);
+                    } else {
+                        engine.reset_patch(TickCtx::new(&sim, &assets), patch);
+                    }
+                }
+                let grid = &engine.world.fast_grid;
+                for (source, goal) in [(a, b), (b, a)] {
+                    assert_eq!(
+                        grid.is_reachable_thin(source, goal, layer),
+                        !applied,
+                        "stair collision, rotation {rotation}, applied {applied}"
+                    );
+                    let route = engine.world.pathfinder.find_path(
+                        &assets.navigation.pathfinder_graph,
+                        grid,
+                        layer,
+                        sector,
+                        0,
+                        source,
+                        goal,
+                        false,
+                    );
+                    assert_eq!(
+                        route.is_some(),
+                        !applied,
+                        "stair route, rotation {rotation}, applied {applied}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn editor_compiled_movement_transition_changes_live_routes_without_mission_content() {
         check_compiled_transition(
             include_bytes!("../../tests/fixtures/asset-movement-transition.level.json"),

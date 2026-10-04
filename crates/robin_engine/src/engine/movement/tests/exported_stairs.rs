@@ -1,6 +1,96 @@
 use super::*;
 
 #[test]
+fn compiled_stair_barriers_stop_actor_traversal_and_reset() {
+    let fixtures: Vec<serde_json::Value> = serde_json::from_slice(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/asset-changing-lifts.levels.json"
+    )))
+    .unwrap();
+    for (rotation, fixture) in fixtures.iter().enumerate() {
+        let (mut engine, assets) = compiled_walkway(&serde_json::to_vec(fixture).unwrap());
+        let sim = crate::sim_rng::test_context();
+        let patch = crate::patch::PatchIndex::new(0).unwrap();
+        for (step, applied) in [false, true, false].into_iter().enumerate() {
+            if step > 0 {
+                if applied {
+                    engine.apply_patch(TickCtx::new(&sim, &assets), patch);
+                } else {
+                    engine.reset_patch(TickCtx::new(&sim, &assets), patch);
+                }
+            }
+            for (entrance, exit) in [(0, 1), (1, 0)] {
+                let result = walk_exported_stairs(engine.clone(), assets.clone(), entrance, exit);
+                if applied {
+                    assert!(
+                        result
+                            .as_ref()
+                            .is_err_and(|error| error.starts_with("lift route stalled")),
+                        "closed stair, rotation {rotation}, entrance {entrance}: {result:?}"
+                    );
+                } else {
+                    assert_eq!(
+                        result,
+                        Ok(true),
+                        "open stair, rotation {rotation}, entrance {entrance}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn compiled_stair_barriers_remain_independent_after_copying() {
+    let bytes = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/asset-changing-lifts-copied.level.json"
+    ));
+    let document: serde_json::Value = serde_json::from_slice(bytes).unwrap();
+    let geometry: crate::level_data::CompiledAssetGeometry =
+        serde_json::from_value(document["asset_geometry"].clone()).unwrap();
+    assert_eq!(geometry.lifts.len(), 2);
+    assert_eq!(geometry.movement_transitions.len(), 2);
+    let (mut engine, assets) = compiled_walkway(bytes);
+    let sim = crate::sim_rng::test_context();
+    let mut closed = [false; 2];
+    for (changed, applied) in [(0, true), (1, true), (0, false), (1, false)] {
+        let sector = geometry.lifts[changed].motion_area_index;
+        let patch_index = geometry
+            .movement_transitions
+            .iter()
+            .position(|transition| transition.motion_changes.iter().any(|c| c.sector == sector))
+            .expect("copied stair must have its own control");
+        let patch = crate::patch::PatchIndex::new(patch_index as u32).unwrap();
+        if applied {
+            engine.apply_patch(TickCtx::new(&sim, &assets), patch);
+        } else {
+            engine.reset_patch(TickCtx::new(&sim, &assets), patch);
+        }
+        closed[changed] = applied;
+        for (index, &blocked) in closed.iter().enumerate() {
+            for (entrance, exit) in [(index * 2, index * 2 + 1), (index * 2 + 1, index * 2)] {
+                let result = walk_exported_stairs(engine.clone(), assets.clone(), entrance, exit);
+                if blocked {
+                    assert!(
+                        result
+                            .as_ref()
+                            .is_err_and(|error| error.starts_with("lift route stalled")),
+                        "copied stair {index}, changed {changed}, applied {applied}: {result:?}"
+                    );
+                } else {
+                    assert_eq!(
+                        result,
+                        Ok(true),
+                        "copied stair {index}, changed {changed}, applied {applied}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn overlapping_stairs_on_separate_layers_do_not_block_each_other() {
     let mut document: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),

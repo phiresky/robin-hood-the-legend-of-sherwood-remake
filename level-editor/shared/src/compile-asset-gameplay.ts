@@ -61,6 +61,7 @@ import {
 } from "./compile-mask-geometry.ts";
 import {
   compileTransitionObstacles,
+  MovementTransitionLimit,
   type PlacedTransitionBlocker,
 } from "./compile-movement-transitions.ts";
 
@@ -200,6 +201,17 @@ export function compileAssetGameplay(
       options.onSceneryCompiled?.(scenerySources);
       return result;
     } catch (error) {
+      if (
+        error instanceof MovementTransitionLimit &&
+        options.bestEffort &&
+        !fixedTransitions.has(error.transition)
+      ) {
+        fixedTransitions.add(error.transition);
+        omissions.push(
+          `Transition ${error.transition}: control omitted; retained its initial state; ${error.message}`,
+        );
+        continue;
+      }
       if (
         error instanceof UnavailableStateControl &&
         (options.bestEffort || error.cropped) &&
@@ -1508,9 +1520,11 @@ function compileAssetGameplayAttempt(
       pieces.length > 1 ? pieces : undefined,
       pieces[0]!.preserveMovementBoundary === true,
     );
-    if (lift && changing.pairs.size)
-      throw new Error(
-        `Lift ${lift}: changing traversal surfaces require lift state compilation support`,
+    if (lift && changing.pairs.size && lifts.find((candidate) => candidate.id === lift)!.type !== 1)
+      throw new UnavailableStateControl(
+        changing.pairs.keys().next().value!,
+        `Lift ${lift}: changing ladder/wall barriers require climbing state support`,
+        false,
       );
     for (const [id, pair] of changing.pairs)
       transitions

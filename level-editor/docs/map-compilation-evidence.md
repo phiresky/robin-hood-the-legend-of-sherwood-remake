@@ -52,6 +52,28 @@ failure in 0.10 seconds (`work/map-compile/wychford-receiver-junction-GDKJfg`).
 The audit's shared-vertex handling is under correction; the full crossing audit
 has **not passed**. No runtime receiver behavior was changed for this diagnosis.
 
+## Changing stair barriers (2026-10-04)
+
+The compiler now retains asset-local movement controls on stair surfaces. Four
+rotated/elevated exports and two independent copies match the native fixtures.
+Native checks initially exposed a real failure: approach construction considered
+every alternate barrier simultaneously, leaving an initially open stair without
+actor-sized approach clearance. Shared approach construction now considers
+permanent obstacles; active barriers remain enforced by runtime movement.
+
+All three `compiled_stair_barriers` tests pass in the rebuilt native test binary,
+including both travel directions, apply/reset, live route queries and independent
+copies. Broader patch/state tests pass 26 cases (four ignored); the stair suite
+passes five cases (three ignored), including 361 rotation angles. These were run
+directly with Cargo's configured 32 MiB test-thread stack. The separately queued
+Cargo level-data unit tests and full game build are still pending; they are not
+reported as passed here.
+
+Changing ladder/wall barriers remain explicit unsupported controls. Best-effort
+mode retains their initial state. It also retains excess controls' initial
+barriers at the sixteen-switch-per-area limit instead of aborting the export;
+the eighteen-control regression checks unchanged inputs and each omission warning.
+
 ## Current library state compilation (2026-10-04)
 
 All ten saved library scenes compiled with the ordinary `compileMap` entry point,

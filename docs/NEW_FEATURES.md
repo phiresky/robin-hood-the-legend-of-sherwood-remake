@@ -8,6 +8,18 @@
   without discarding valid paths that use the same asset. Exact subdivision
   endpoints prevent floating-point clipping from dropping a terminal wall band.
 
+- **State-dependent stair barriers.** Asset-local movement controls can bind to
+  stair surfaces after placement, including slopes, rotations, elevation and
+  copies. Controls retain separate generated state bindings. Mutually exclusive
+  barriers no longer prevent constructing actor-sized stair approaches: permanent
+  collision constrains the shared anchors, and traversal enforces active barriers.
+  Unsupported changing
+  ladder/wall barriers remain explicit errors in strict compilation; best-effort
+  exports omit their controls with warnings and retain the initial state.
+  Best-effort exports also retain excess controls' initial states when more than
+  sixteen independent movement switches overlap one navigation area, reporting
+  each omitted control instead of aborting the map export.
+
 - **Mission preload for packaged scenery.** Compiled maps load their referenced
   custom Day animation banks from mod directories or ZIPs before creating effects.
   Scenery selection is independent of the character roster; unrelated animation

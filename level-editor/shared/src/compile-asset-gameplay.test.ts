@@ -11,6 +11,8 @@ import {
   anchoredReceiverCompilerFixture,
   slopedAssetCompilerFixture,
   liftAssetCompilerFixture,
+  changingLiftCompilerFixture,
+  copiedChangingLiftCompilerFixture,
   liftLightCompilerFixture,
   interiorAssetCompilerFixture,
   terrainInteriorCompilerFixture,
@@ -40,6 +42,48 @@ import {
 
 import { heightPlane, planeHeight } from "./gameplay-plane.ts";
 
+test("changing stair barriers follow translated and rotated traversal areas", () => {
+  for (const rotation of [0, 90, 180, 270]) {
+    const { document, assets } = changingLiftCompilerFixture();
+    document.groups[0]!.transform = { dx: 900, dy: 900, dz: 20, rot_deg: rotation };
+    const compiled = compileAssetGameplay(document, assets, bounds);
+    const lift = compiled.lifts![0]!;
+    const transition = compiled.movement_transitions![0]!;
+    assert.equal(transition.motion_changes.length, 1);
+    assert.equal(transition.motion_changes[0]!.sector, lift.motion_area_index);
+    const area = compiled.motion_data.layers[transition.motion_changes[0]!.layer]!.find(
+      (a) => a.is_lift,
+    )!;
+    assert.equal(area.obstacles.filter((o) => o.state_id === 2).length, 1);
+  }
+});
+
+test("copied stairs retain independent state controls and traversal bindings", () => {
+  const { document, assets } = copiedChangingLiftCompilerFixture();
+  const compiled = compileAssetGameplay(document, assets, bounds);
+  assert.equal(compiled.lifts!.length, 2);
+  assert.equal(compiled.movement_transitions!.length, 2);
+  const sectors = compiled.movement_transitions!.map((transition) => {
+    assert.equal(transition.motion_changes.length, 1);
+    return transition.motion_changes[0]!.sector;
+  });
+  assert.equal(new Set(sectors).size, 2);
+  assert.deepEqual(
+    new Set(sectors),
+    new Set(compiled.lifts!.map((lift) => lift.motion_area_index)),
+  );
+});
+
+test("unsupported changing climb barriers remain explicit best-effort omissions", () => {
+  const { document, assets, hut } = changingLiftCompilerFixture();
+  hut.gameplay!.lifts![0]!.type = 2;
+  assert.throws(() => compileAssetGameplay(document, assets, bounds), /climbing state support/);
+  const compiled = compileAssetGameplay(document, assets, bounds, { bestEffort: true });
+  assert.equal(compiled.lifts!.length, 1);
+  assert.equal(compiled.movement_transitions?.length ?? 0, 0);
+  assert.ok(compiled.warnings?.some((warning) => warning.includes("climbing state support")));
+});
+
 test("best-effort terrain retries preserve input and subsequent terrain edits", () => {
   const { document, assets } = unavailableTerrainControlCompilerFixture();
   document.terrain = createTerrainGrid([1000, 1000, 100, 100], 100, 17);
@@ -53,6 +97,27 @@ test("best-effort terrain retries preserve input and subsequent terrain edits", 
   assert.notDeepEqual(changed.sight_obstacles, baseline.sight_obstacles);
   document.terrain = structuredClone(original.terrain!);
   assert.deepEqual(compile(), baseline);
+});
+
+test("excess movement controls retain initial barriers in best-effort exports", () => {
+  const { document, assets, hut } = movementTransitionCompilerFixture();
+  const template = hut.gameplay!.movementTransitions![0]!;
+  hut.gameplay!.movementTransitions = Array.from({ length: 18 }, (_, index) => {
+    const transition = { ...structuredClone(template), id: `control-${index}` };
+    for (const surface of [...transition.initial, ...transition.applied]) surface.id += `-${index}`;
+    return transition;
+  });
+  assert.throws(() => compileAssetGameplay(document, assets, bounds), /More than 16/);
+  const original = structuredClone(document);
+  const originalAssets = structuredClone(assets);
+  const compiled = compileAssetGameplay(document, assets, bounds, { bestEffort: true });
+  assert.equal(compiled.movement_transitions!.length, 16);
+  assert.equal(compiled.warnings!.filter((warning) => warning.includes("More than 16")).length, 2);
+  const areas = compiled.motion_data.layers[0]!;
+  assert.equal(areas[0]!.obstacles.filter((obstacle) => obstacle.state_id === 0).length, 2);
+  assert.equal(areas[1]!.obstacles.filter((obstacle) => obstacle.state_id === 0).length, 0);
+  assert.deepEqual(document, original);
+  assert.deepEqual(assets, originalAssets);
 });
 
 test("mask receiving segments bind slopes without moving their pixels or boundary rules", () => {

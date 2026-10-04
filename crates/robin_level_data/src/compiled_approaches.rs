@@ -53,10 +53,14 @@ fn touches_boundary(polygon: &[Point], point: [f64; 2]) -> bool {
 fn fits(area: &RawMotionArea, point: [f64; 2]) -> bool {
     contains(&area.polygon.points, point)
         && !touches_boundary(&area.polygon.points, point)
-        && area.obstacles.iter().all(|obstacle| {
-            !contains(&obstacle.polygon.points, point)
-                && !touches_boundary(&obstacle.polygon.points, point)
-        })
+        && area
+            .obstacles
+            .iter()
+            .filter(|obstacle| obstacle.state_id == 0)
+            .all(|obstacle| {
+                !contains(&obstacle.polygon.points, point)
+                    && !touches_boundary(&obstacle.polygon.points, point)
+            })
 }
 
 fn crosses_boundary(polygon: &[Point], source: [f64; 2], goal: [f64; 2]) -> bool {
@@ -105,10 +109,14 @@ fn approach(area: &RawMotionArea, point: Point, middle: Point) -> Option<Point> 
             .any(|v| *v < f64::from(i16::MIN) || *v > f64::from(i16::MAX))
             || !contains(&area.polygon.points, candidate)
             || crosses_boundary(&area.polygon.points, source, candidate)
-            || area.obstacles.iter().any(|obstacle| {
-                contains(&obstacle.polygon.points, candidate)
-                    || touches_boundary(&obstacle.polygon.points, candidate)
-            })
+            || area
+                .obstacles
+                .iter()
+                .filter(|obstacle| obstacle.state_id == 0)
+                .any(|obstacle| {
+                    contains(&obstacle.polygon.points, candidate)
+                        || touches_boundary(&obstacle.polygon.points, candidate)
+                })
         {
             break;
         }
@@ -141,10 +149,14 @@ fn approach(area: &RawMotionArea, point: Point, middle: Point) -> Option<Point> 
             .any(|v| *v < f64::from(i16::MIN) || *v > f64::from(i16::MAX))
             || !fits(area, candidate)
             || crosses_boundary(&area.polygon.points, source, candidate)
-            || area.obstacles.iter().any(|obstacle| {
-                contains(&obstacle.polygon.points, source)
-                    || crosses_boundary(&obstacle.polygon.points, source, candidate)
-            })
+            || area
+                .obstacles
+                .iter()
+                .filter(|obstacle| obstacle.state_id == 0)
+                .any(|obstacle| {
+                    contains(&obstacle.polygon.points, source)
+                        || crosses_boundary(&obstacle.polygon.points, source, candidate)
+                })
         {
             continue;
         }
@@ -185,10 +197,14 @@ fn wall_approach(area: &RawMotionArea, point: Point, middle: Point, radius: f32)
                 || best.is_some_and(|(previous, _)| previous <= distance)
                 || !fits(area, adapted)
                 || crosses_boundary(&area.polygon.points, source, adapted)
-                || area.obstacles.iter().any(|obstacle| {
-                    contains(&obstacle.polygon.points, source)
-                        || crosses_boundary(&obstacle.polygon.points, source, adapted)
-                })
+                || area
+                    .obstacles
+                    .iter()
+                    .filter(|obstacle| obstacle.state_id == 0)
+                    .any(|obstacle| {
+                        contains(&obstacle.polygon.points, source)
+                            || crosses_boundary(&obstacle.polygon.points, source, adapted)
+                    })
             {
                 continue;
             }
@@ -201,6 +217,9 @@ fn wall_approach(area: &RawMotionArea, point: Point, middle: Point, radius: f32)
 /// Passage animations can reach points too close to a boundary for ordinary
 /// walking to resume. Give walking lifts a stock 6-by-3 actor footprint on both
 /// sides, retaining the authored midpoint and every permission/state link.
+/// Only permanent obstacles constrain these shared approach points. Mutually
+/// exclusive barriers must not erase clearance in a state where they are absent;
+/// runtime collision still checks the currently active barriers during traversal.
 pub(crate) fn derive(geometry: &mut CompiledAssetGeometry) {
     let mut areas = BTreeMap::new();
     let mut sector = 0usize;
@@ -266,6 +285,41 @@ pub(crate) fn derive(geometry: &mut CompiledAssetGeometry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn changing_barriers_do_not_prevent_static_approach_clearance() {
+        let document: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../robin_engine/tests/fixtures/asset-changing-lifts.levels.json"
+        )))
+        .unwrap();
+        for fixture in document.as_array().unwrap() {
+            let geometry: CompiledAssetGeometry =
+                serde_json::from_value(fixture["asset_geometry"].clone()).unwrap();
+            let mut unobstructed = geometry.clone();
+            unobstructed.motion_data.layers.last_mut().unwrap()[0]
+                .obstacles
+                .clear();
+            derive(&mut unobstructed);
+            for state_id in [1, 2] {
+                let mut changing = geometry.clone();
+                changing.motion_data.layers.last_mut().unwrap()[0].obstacles[0].state_id = state_id;
+                derive(&mut changing);
+                for (actual, expected) in changing.lifts[0]
+                    .doors
+                    .iter()
+                    .zip(&unobstructed.lifts[0].doors)
+                {
+                    assert_eq!(actual.point_in, expected.point_in);
+                    assert_eq!(actual.point_out, expected.point_out);
+                }
+                assert_eq!(
+                    changing.motion_data.layers.last().unwrap()[0].obstacles[0].state_id,
+                    state_id
+                );
+            }
+        }
+    }
 
     #[test]
     fn rotated_wall_top_repairs_direction_without_changing_animation_radius() {

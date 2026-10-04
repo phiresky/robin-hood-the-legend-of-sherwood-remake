@@ -1273,6 +1273,53 @@ export function liftAssetCompilerFixture() {
   return fixture;
 }
 
+export function changingLiftCompilerFixture() {
+  const fixture = liftAssetCompilerFixture();
+  fixture.hut.gameplay!.movementTransitions = [
+    {
+      id: "stair-barrier",
+      node: "building-999",
+      waypoint: [50, 50, 0],
+      active: true,
+      definitive: false,
+      initial: [],
+      applied: [
+        {
+          id: "blocked-stairs",
+          node: "building-999",
+          polygon: [
+            [98, 0],
+            [102, 0],
+            [102, 100],
+            [98, 100],
+          ],
+          height: [40, 60, 60, 40],
+        },
+      ],
+      applyPolygon: [],
+      noApplyPolygon: [],
+    },
+  ];
+  fixture.document.map = "Changing lift fixture";
+  return fixture;
+}
+
+export function copiedChangingLiftCompilerFixture() {
+  const fixture = changingLiftCompilerFixture();
+  const { document } = fixture;
+  const body = structuredClone(document.objects.find((part) => part.group === "hut-a")!);
+  body.id = "hut-b-body";
+  body.group = "hut-b";
+  document.objects.push(body);
+  document.groups.push({
+    ...structuredClone(document.groups.find((group) => group.id === "hut-a")!),
+    id: "hut-b",
+    transform: { dx: 600, dy: 600, dz: 40, rot_deg: 90 },
+  });
+  document.map = "Copied changing lift fixture";
+  return fixture;
+}
+
 export function disconnectedLiftCompilerFixture() {
   const fixture = liftAssetCompilerFixture();
   const gameplay = fixture.hut.gameplay!;
