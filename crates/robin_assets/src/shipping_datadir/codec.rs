@@ -65,10 +65,10 @@ use super::*;
 // Datadir v22 / mission v13: elevation lines retain optional fractional endpoints.
 // Release checklist: a version bump must ship with regenerated datadir.bin and
 // affected mission payloads, not just changed constants. Update the matching
-// magic tags, assets/core-datadir/core-overlay-manifest.json's
-// shippingDatadirSchema, and schema contract fixtures; package and validate the
+// magic tags and schema contract fixtures; package and validate the
 // regenerated data with the matching runtime before releasing it. Retail source
-// game files are not rewritten. These versions describe the shipping bitcode
+// game files and JSON overlays/mods are not version-bumped or rewritten.
+// These versions describe the shipping bitcode
 // format, not saves. Only incompatible encoded layouts or codec changes require
 // a bump; gameplay-only changes do not. Supporting an older layout requires an
 // explicit decoder/migration, since bitcode does not infer missing fields.

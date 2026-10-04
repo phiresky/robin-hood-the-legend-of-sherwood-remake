@@ -211,7 +211,7 @@ fn install_bundled_core_overlay() -> anyhow::Result<()> {
     .context("install bundled Android core overlay")?;
     tracing::info!(
         files = manifest.files.len(),
-        shipping_schema = manifest.shipping_datadir_schema,
+        manifest_schema = manifest.schema,
         "Mounted validated Android core overlay ahead of shipping content"
     );
     Ok(())

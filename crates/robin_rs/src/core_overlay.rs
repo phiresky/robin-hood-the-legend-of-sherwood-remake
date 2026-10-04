@@ -11,7 +11,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result, anyhow};
-use robin_assets::shipping_datadir::SHIPPING_DATADIR_VERSION;
 #[cfg(not(target_arch = "wasm32"))]
 use robin_engine::sbfile::SbFileError;
 use robin_run_protocol::Digest32;
@@ -68,7 +67,9 @@ pub const EXPECTED_CORE_OVERLAY_PATHS: &[&str] = &[
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CoreOverlayManifest {
     pub schema: u32,
-    pub shipping_datadir_schema: u32,
+    // Accept older inventories without coupling JSON assets to the binary codec.
+    #[serde(default, rename = "shippingDatadirSchema", skip_serializing)]
+    legacy_shipping_datadir_schema: Option<u32>,
     pub files: Vec<CoreOverlayFile>,
 }
 
@@ -245,13 +246,6 @@ fn validate_manifest_inventory(manifest: &CoreOverlayManifest) -> Result<()> {
             CORE_OVERLAY_MANIFEST_SCHEMA
         ));
     }
-    if manifest.shipping_datadir_schema != SHIPPING_DATADIR_VERSION {
-        return Err(anyhow!(
-            "core overlay targets shipping datadir schema {}; runtime expects {}",
-            manifest.shipping_datadir_schema,
-            SHIPPING_DATADIR_VERSION
-        ));
-    }
 
     if manifest
         .files
@@ -411,6 +405,39 @@ mod tests {
             std::fs::copy(core_root().join(path), destination).unwrap();
         }
         directory
+    }
+
+    #[test]
+    fn json_inventory_is_independent_of_shipping_binary_version() {
+        let (bytes, files) = load_repo_overlay();
+        let original: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(original.get("shippingDatadirSchema").is_none());
+        for legacy_version in [None, Some(21), Some(u32::MAX)] {
+            let mut json = original.clone();
+            if let Some(version) = legacy_version {
+                json["shippingDatadirSchema"] = version.into();
+            }
+            let (manifest, _) =
+                load_validated_bundle(&serde_json::to_vec(&json).unwrap(), |path| {
+                    Ok(files[path].clone())
+                })
+                .unwrap();
+            assert!(
+                serde_json::to_value(manifest)
+                    .unwrap()
+                    .get("shippingDatadirSchema")
+                    .is_none()
+            );
+            json["schema"] = 999.into();
+            assert!(
+                load_validated_bundle(&serde_json::to_vec(&json).unwrap(), |path| Ok(
+                    files[path].clone()
+                ))
+                .unwrap_err()
+                .to_string()
+                .contains("unsupported core overlay manifest schema")
+            );
+        }
     }
 
     #[test]

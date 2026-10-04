@@ -20,6 +20,11 @@ symlinked, or corrupt entries fail validation.
 Browser builds preload the audio timing table, `arial.ttf`, and the UI PNGs
 they use, listed in their generated `preload-assets.json`.
 
+The inventory's `schema` versions its own JSON structure, independently of the
+shipping binary datadir/mission formats. Shipping codec bumps do not require
+changes to this inventory or its assets. Older inventories containing
+`shippingDatadirSchema` remain readable; that obsolete field is ignored.
+
 ## Regenerating audio timing
 
 Build the Rust generator separately, then pass the core output directory and

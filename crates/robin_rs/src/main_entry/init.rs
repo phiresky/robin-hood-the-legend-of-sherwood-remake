@@ -239,7 +239,7 @@ pub(super) fn add_overlay_data_dirs(
     tracing::info!(
         path = %core_dir.display(),
         files = manifest.files.len(),
-        shipping_schema = manifest.shipping_datadir_schema,
+        manifest_schema = manifest.schema,
         "Registered validated native core overlay datadir"
     );
 

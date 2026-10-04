@@ -8,7 +8,6 @@ plugins {
 def repoRoot = layout.projectDirectory.dir("../..")
 def coreOverlayDir = repoRoot.dir("assets/core-datadir")
 def coreOverlayManifest = coreOverlayDir.file("core-overlay-manifest.json")
-def runtimeContractFile = repoRoot.file("wasm-www/runtime-contract.json")
 def pinnedNdkVersion = "29.0.14206865"
 // Locked CPAL 0.18 uses directly linked AAudio (ndk api-level-26); advertising
 // API 24 would produce an APK whose audio library cannot load on Android 7.
@@ -75,7 +74,6 @@ tasks.register("validateCoreOverlay") {
     description = "Validate the exact engine core-overlay inventory packaged in the APK"
     inputs.file(coreOverlayManifest)
     inputs.dir(coreOverlayDir.dir("Data"))
-    inputs.file(runtimeContractFile)
 
     doLast {
         if (!coreOverlayRegistered) {
@@ -91,16 +89,6 @@ tasks.register("validateCoreOverlay") {
             throw new GradleException("unsupported core overlay manifest schema ${manifest.schema}; expected 1")
         }
 
-        def runtimeContract = new JsonSlurper().parse(runtimeContractFile.asFile)
-        if (runtimeContract.schema != 1 || !(runtimeContract.shippingDatadirSchema instanceof Integer)) {
-            throw new GradleException("invalid generated runtime contract: ${runtimeContractFile.asFile}")
-        }
-        def shippingVersion = runtimeContract.shippingDatadirSchema
-        if (manifest.shippingDatadirSchema != shippingVersion) {
-            throw new GradleException(
-                "core overlay targets shipping datadir schema ${manifest.shippingDatadirSchema}; runtime expects ${shippingVersion}"
-            )
-        }
         if (!(manifest.files instanceof List) || manifest.files.isEmpty()) {
             throw new GradleException("core overlay manifest must contain a non-empty files array")
         }
