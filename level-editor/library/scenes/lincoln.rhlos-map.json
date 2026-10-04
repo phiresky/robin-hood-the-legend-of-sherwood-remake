@@ -16,701 +16,1324 @@
       "model": "3d-assets/lincoln/lincoln-terrain/model.glb",
       "model_sha256": "65833a88068a695dc1f6415bf8e5a653ca4679597b5ece7ba6740a80ae3fa2d4",
       "descriptor": "3d-assets/lincoln/lincoln-terrain/asset.json",
-      "descriptor_sha256": "cc8869eb99f8c25eaf3c4041f091074bb90cfe1bfed123cbfa5fe71437c0a9c0"
+      "descriptor_sha256": "0d5a55ff912257f1d8a2d5eee732fee9505bb13240d2c3d732ecaeaaa3a4aa4b"
     }
   ],
   "assetSources": [
     {
       "model": "3d-assets/lincoln/lincoln-archery-target-east/model.glb",
-      "model_sha256": "065b39462672be4c3f63b397e4fa716929d93c4fe1564a1c3d6e6f398779b4f2",
+      "model_sha256": "f7281d13383d5a9fd82a83ae9af52ec0c69bc543526f8f4f3e6ac44a98fd1f05",
       "descriptor": "3d-assets/lincoln/lincoln-archery-target-east/asset.json",
-      "descriptor_sha256": "0552e4421632179c68181f9685f450d1aa84145aab4e03acb50242efadf60275",
+      "descriptor_sha256": "de0e116a73fb3d3d36c77f5da1c34ec6616fbc327de6dd66e2d96f7ae52f14f9",
       "id": "lincoln-archery-target-east"
     },
     {
       "model": "3d-assets/lincoln/lincoln-archery-target-east-middle/model.glb",
-      "model_sha256": "ad5cbee95e8c523ed6b42ebb46e4aaf5d187ae454a2420fac5ca6c0bb83ec225",
+      "model_sha256": "833ddc99e2cea33c44f49b87771c9a8ebd2204473055e5c1dba2a1ea5484e6c6",
       "descriptor": "3d-assets/lincoln/lincoln-archery-target-east-middle/asset.json",
-      "descriptor_sha256": "3585055abecfcbbb1f75b5d19e6c969a540a3ee2565895204e7bd0186b56f594",
+      "descriptor_sha256": "e81d6578822d6cb15a3133b77934aac4e4047feea14a364b68a57be745ffcfd9",
       "id": "lincoln-archery-target-east-middle"
     },
     {
       "model": "3d-assets/lincoln/lincoln-archery-target-west/model.glb",
-      "model_sha256": "a19da900fe1a62446e79a2b9feac0d7c4d5cb05a0582ff1e98eeb42e6332b4fc",
+      "model_sha256": "e431fb8370cb47fc498740215fdfe241a600b7f5fc770885c6162d0e5e28888f",
       "descriptor": "3d-assets/lincoln/lincoln-archery-target-west/asset.json",
-      "descriptor_sha256": "a36f34d0d3d0a9b24f9a175ec80fc6c5366a8c2359e3c793dcb0917161741146",
+      "descriptor_sha256": "e73a1d945b4afd8f0b3f6e2b9a398979a92bf07beda679c4aed695999a98dd92",
       "id": "lincoln-archery-target-west"
     },
     {
       "model": "3d-assets/lincoln/lincoln-archery-target-west-middle/model.glb",
-      "model_sha256": "1410b8f4687ed65a94a4a98de6b9fda34b67c010d1d349fae64da9e4a977087a",
+      "model_sha256": "dbddb8a788001014221517bc50d3b080d15c44834d9abbdda0ec8990d90e8934",
       "descriptor": "3d-assets/lincoln/lincoln-archery-target-west-middle/asset.json",
-      "descriptor_sha256": "976480fe876ccf283d12f48e222665f915f8fb66aac656bf88b4abc7e87c5a8d",
+      "descriptor_sha256": "ed6d47392df68d34c3b8899a081bc2961d4f45ab5534e1e5f86d51371c530ada",
       "id": "lincoln-archery-target-west-middle"
     },
     {
       "model": "3d-assets/lincoln/lincoln-garden-fountain/model.glb",
-      "model_sha256": "86e08bf84b2e975d7ad0b0c1805ef7674990473826d5abeb10e0898bfbe12915",
+      "model_sha256": "0988e6d6147e59c82efe4c6882daf774d44abbfd24096844a3d402716916d8ab",
       "descriptor": "3d-assets/lincoln/lincoln-garden-fountain/asset.json",
-      "descriptor_sha256": "de3cece22dbfa43cca241bef4a587e3e26487eb5a7da3d032172e2af0c97226b",
+      "descriptor_sha256": "cb1fb648035622ffe5d99d47945550a91659c32edd9486ea7c51804a90d934a2",
       "id": "lincoln-garden-fountain"
     },
     {
       "model": "3d-assets/lincoln/lincoln-garden/model.glb",
-      "model_sha256": "b343186ba1800d901108037abe6671929a1bd2b3b882da055ad9fa5ec966fe4f",
+      "model_sha256": "82f0ce2684450605c95c63db1d4c383a715aefeebe4c628954c4f41184a0bdfe",
       "descriptor": "3d-assets/lincoln/lincoln-garden/asset.json",
-      "descriptor_sha256": "b30ebff7c1c1a4b13f9665a1aee6ffeccdec2ac1cf50a42567706484f688ac81",
+      "descriptor_sha256": "cbdbd114a317311da77cc26da88d74554df8bd6ad0c50e89f8116af3c4980207",
       "id": "lincoln-garden"
     },
     {
       "model": "3d-assets/lincoln/lincoln-garden-north-wall/model.glb",
-      "model_sha256": "3e635959f7e2bae14266e168762eabf900c69bd14bb9f4ee61c04ef1899d3bce",
+      "model_sha256": "f78a531e1f9242dd34bc8eda324f5c3117d2817847327223b2be51ba3911feeb",
       "descriptor": "3d-assets/lincoln/lincoln-garden-north-wall/asset.json",
-      "descriptor_sha256": "fe4588f7c34791c20ea0a5c3ac4a13f945b79b109ba8f68824fd0d866738ff71",
+      "descriptor_sha256": "32fd7158927609826d9ea0c1656dcd10f92972ddbea45a04c5ac3d89aa94d16a",
       "id": "lincoln-garden-north-wall"
     },
     {
       "model": "3d-assets/lincoln/lincoln-castle-hill-east-slope/model.glb",
-      "model_sha256": "4379542cb4e925fca9eb5cf8c4d7cc5c7f0fe48513381f0a391f749bc1c0a1ea",
+      "model_sha256": "b35d2d71a9f4a97487299792157c307e2a2cfd9466e8c922d9ca4d18e52af132",
       "descriptor": "3d-assets/lincoln/lincoln-castle-hill-east-slope/asset.json",
-      "descriptor_sha256": "516bc86bf1c0b5d27b734ac82966f9d9dbb46dbfb2a12260a441475f7f79b7ee",
+      "descriptor_sha256": "dab4f6334d60b18720ba8254af8a3771cb1ff01882f80278c5235edc65da9b69",
       "id": "lincoln-castle-hill-east-slope"
     },
     {
       "model": "3d-assets/lincoln/lincoln-castle-hill-inner-bailey-plateau/model.glb",
-      "model_sha256": "72668bc2d401c73a36af52d70f97d31298d65e9d85ad18e845a8ee2a468f0f37",
+      "model_sha256": "a682cc4227506a78df3b7ff3bf9ac7a2429bb326ab522d1a78c5d7cb4c6e4d31",
       "descriptor": "3d-assets/lincoln/lincoln-castle-hill-inner-bailey-plateau/asset.json",
-      "descriptor_sha256": "69b54ede8357872f4a3486492dd893648ee9c09590adb71d83a282ed5a3db8a5",
+      "descriptor_sha256": "65ce4a22a81f52dcac253751483d47748125a5a4c8a4b65568e0098054d4d3a0",
       "id": "lincoln-castle-hill-inner-bailey-plateau"
     },
     {
       "model": "3d-assets/lincoln/lincoln-castle-hill-keep-plateau/model.glb",
-      "model_sha256": "9c6c951bbd53d5242382bb86a8801fd8f43dcb4cb995986df2eb9ff39bfdb9ff",
+      "model_sha256": "d3371fa5bf0c8cf842e804c1c2e6cbee18e0f2849e411850a7f3c5990cd7fbfd",
       "descriptor": "3d-assets/lincoln/lincoln-castle-hill-keep-plateau/asset.json",
-      "descriptor_sha256": "36f9308c13a80c0f539a1d72cc682a09282b1688a5cefa0bd18e75b9d50d8ed1",
+      "descriptor_sha256": "c713c1ab3e01139a44d72474b54adcfdd420234c9d2cd34bd6f94b19a8ffae5f",
       "id": "lincoln-castle-hill-keep-plateau"
     },
     {
       "model": "3d-assets/lincoln/lincoln-castle-hill-north-bailey-plateau/model.glb",
-      "model_sha256": "0f0b9457b142a612234c7a2e90c1ab30432e7430f5dfe9c9bd2a7bb70f7194a2",
+      "model_sha256": "4daeefca819d631f382a924dbb121aaf17ed8e734a445e9b37cdc5c906147f22",
       "descriptor": "3d-assets/lincoln/lincoln-castle-hill-north-bailey-plateau/asset.json",
-      "descriptor_sha256": "099e6b130cb60e3993075c1ce143974118f2d3d2cc686fee2630e501b66d44fa",
+      "descriptor_sha256": "b97f286e8596508aa08a00c0276ff741aa08b73f2547a1dbfee12ccfe0822d92",
       "id": "lincoln-castle-hill-north-bailey-plateau"
     },
     {
       "model": "3d-assets/lincoln/lincoln-castle-hill-west-plateau/model.glb",
-      "model_sha256": "a355ceed7074f904df7f73cf252e5c82d36c80950ad7be26e838826f47fbfa52",
+      "model_sha256": "dd56a357ef8cee659b01ff6a4743f56d1a14b13fce8d9cc7859a8e90c9bbb499",
       "descriptor": "3d-assets/lincoln/lincoln-castle-hill-west-plateau/asset.json",
-      "descriptor_sha256": "03c989a8e0a8ba68e0ce306d2e6f2d09ae5ef9a8829ac4619d3243ff8f559cb5",
+      "descriptor_sha256": "e7a4d95e41271b341f6e3c949e89bc36c59cfda0cfb583e4b420710f0636a7c5",
       "id": "lincoln-castle-hill-west-plateau"
     },
     {
       "model": "3d-assets/lincoln/lincoln-castle-inner-rock-spur/model.glb",
-      "model_sha256": "809cdf95a9d2c6574f5f233fa8ab71f3194f91a25b0d52473abca84a7a2adfb8",
+      "model_sha256": "65d0dc7bc34c066483c539cc920c57ee3018f15e96307d8f6da09b382b1893d5",
       "descriptor": "3d-assets/lincoln/lincoln-castle-inner-rock-spur/asset.json",
-      "descriptor_sha256": "360107e6157e1a2b450b4c1d042fcfba0932a5f128f9c6f8c0725e42ba959cb3",
+      "descriptor_sha256": "7c42f1a72595de34f95c285cc0500d7384fe31c658780b5e85e6ea6765d2a185",
       "id": "lincoln-castle-inner-rock-spur"
     },
     {
       "model": "3d-assets/lincoln/lincoln-courtyard-shed/model.glb",
-      "model_sha256": "c90fb69f36e565cce5cf5a22b14bb8b040221fe366c37351bd7cae323d1cbb8e",
+      "model_sha256": "7855522e013817e4db0d8fa88074a4c27c6a4d8347344adf0a1b6df65d94a324",
       "descriptor": "3d-assets/lincoln/lincoln-courtyard-shed/asset.json",
-      "descriptor_sha256": "96768abe6b67ae42c185b0701ecb5947791d71f9350ac3fd26f854455d8ca5ea",
+      "descriptor_sha256": "c0db2b9553b1cd9bcf1a2773ba2c4f0a9c7d3b3da4628a4152de4086ef2400d2",
       "id": "lincoln-courtyard-shed"
     },
     {
       "model": "3d-assets/lincoln/lincoln-east-corner-turret/model.glb",
-      "model_sha256": "56aaba06a05e9625795cff6e4d32c7e283b4beea3e701b46c9a507a4a8bfd63f",
+      "model_sha256": "721447ddbacd564b2f2a9d1571b9e5173a396359de780366a494bf559571ef20",
       "descriptor": "3d-assets/lincoln/lincoln-east-corner-turret/asset.json",
-      "descriptor_sha256": "6aacde82d94d48d5831f85ed9c42cf3960de3bfff34a42bfe224366eea9a5f39",
+      "descriptor_sha256": "395f16ae6430a3bbf895d712f1514fdfdaf102f709a296f8298155376b4edb00",
       "id": "lincoln-east-corner-turret"
     },
     {
       "model": "3d-assets/lincoln/lincoln-east-curtain-wall-middle/model.glb",
-      "model_sha256": "30d7e96ec98ca716142dddf0c7ae7018c9a3be700ff643ef8c5cb261c5021ac4",
+      "model_sha256": "2afa5ab94806770bc24e4b63d46d43cfdc26a5bb788e37c453d2b25037ebacbe",
       "descriptor": "3d-assets/lincoln/lincoln-east-curtain-wall-middle/asset.json",
-      "descriptor_sha256": "37a19913267cd2a9822217c85495ac45bde801efe4f7151c67f0075a2757607d",
+      "descriptor_sha256": "bbdf739ac50701b6528c9d65ca9f51738f90c23ec14c7bda18e0ad1405b988e0",
       "id": "lincoln-east-curtain-wall-middle"
     },
     {
       "model": "3d-assets/lincoln/lincoln-east-curtain-wall-south/model.glb",
-      "model_sha256": "a69e4ace0cdb251521ada15ed6405b3b4815be43929db1a84ec39fd6ff527c86",
+      "model_sha256": "61f80bc1b76f6d0e328dbdbb8094f8aab5282a3b31cab56f66fa580d5a9e143a",
       "descriptor": "3d-assets/lincoln/lincoln-east-curtain-wall-south/asset.json",
-      "descriptor_sha256": "2dca52c9dea6743c41c49a842078e8116df09f784c6316b0b8b2143ba788f71c",
+      "descriptor_sha256": "05770faa2b31718b23eebbb1e59d445212453c0ef16a9c31f4ce9602efe1fc05",
       "id": "lincoln-east-curtain-wall-south"
     },
     {
+      "model": "3d-assets/lincoln/lincoln-tree-east-field/model.glb",
+      "model_sha256": "378c1eae46d2428ccb66c08401a41bc90768fdab4a57793f2761f32635d6d495",
+      "descriptor": "3d-assets/lincoln/lincoln-tree-east-field/asset.json",
+      "descriptor_sha256": "af3ba323f38ed0625737dd37d5aee427ef4379b35bfc8eb1c5467c08fe557c27",
+      "id": "lincoln-tree-east-field"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-east-field-edge/model.glb",
+      "model_sha256": "481ccfacdcda1f693b96222068cd7156bfc920d5d6f6a0ec335d848f24ece2c1",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-east-field-edge/asset.json",
+      "descriptor_sha256": "3622072ff6a711616111d331385be3fa98262575cac57804b3b0e349aaf49f6d",
+      "id": "lincoln-bush-east-field-edge"
+    },
+    {
       "model": "3d-assets/lincoln/lincoln-east-gate-arch/model.glb",
-      "model_sha256": "1adbea0c111575793cff31157c4eefd2f68aceb62b3dc2ed0521479ca40dc2dd",
+      "model_sha256": "6650402e739962571fd43cf66d6c98f3570248d26fef0de754d6f52cca7ffa4b",
       "descriptor": "3d-assets/lincoln/lincoln-east-gate-arch/asset.json",
-      "descriptor_sha256": "e589f3e6ed669c46cbd0c5e2bfe7c5e8b531b2aa72defe9d238b08fdfdf42fcb",
+      "descriptor_sha256": "8eb22b1f122cb5b9ecdd548c7dbbfe12ad4ab96a86c55a1cdbc2591e46bd0d31",
       "id": "lincoln-east-gate-arch"
     },
     {
       "model": "3d-assets/lincoln/lincoln-east-gate-north-tower/model.glb",
-      "model_sha256": "7f38785c7be127fb71523826c36c37cdba2c363db7c45dfee3f451e772efc912",
+      "model_sha256": "048513c49dc58c92f97e42648aaf7fe25953825cf517c5674419c8fa25dded6f",
       "descriptor": "3d-assets/lincoln/lincoln-east-gate-north-tower/asset.json",
-      "descriptor_sha256": "bf9a64e91976b9e1afad048f019ae97a8df099184484f00ae02081818f861306",
+      "descriptor_sha256": "067d8467632ee7f5711bdf67dd31e3dec84497e1ac532c9a9096308f1025316f",
       "id": "lincoln-east-gate-north-tower"
     },
     {
       "model": "3d-assets/lincoln/lincoln-east-gate-south-tower/model.glb",
-      "model_sha256": "37ab3dd9bc2964149d95a38c6e96024abe4b34f29af10c729373a33e488ac1ec",
+      "model_sha256": "12b8c018265e99988cd8f2046d07860cc67049ad6b1ce7c97eb08e7de6a496ab",
       "descriptor": "3d-assets/lincoln/lincoln-east-gate-south-tower/asset.json",
-      "descriptor_sha256": "6361f3d7582b5e1f4e3890231771a652d15ed2dd753a27ead225a1e73d77d376",
+      "descriptor_sha256": "5cd6b3f7c1784d9dcacb3511a91231605765104bda24f277df93d7c7c6a9dd7a",
       "id": "lincoln-east-gate-south-tower"
     },
     {
       "model": "3d-assets/lincoln/lincoln-east-curtain-wall-lower/model.glb",
-      "model_sha256": "11cc1d3f1b54a1095817a2147d354e2e440648cc1d8bdecb00c0afd80be791f2",
+      "model_sha256": "0f66a46a01b41b2f34da8372371789aa9a43995a3ff6ba2a6938dcda543999c0",
       "descriptor": "3d-assets/lincoln/lincoln-east-curtain-wall-lower/asset.json",
-      "descriptor_sha256": "3d44b7776c4317bea36da42cb8cdf850ca15ab381f5e69d266736f8be5b0ea54",
+      "descriptor_sha256": "450c916cfe9f2f294727a2da78561be97014e9df5c64eee240d12699eeb7c939",
       "id": "lincoln-east-curtain-wall-lower"
     },
     {
       "model": "3d-assets/lincoln/lincoln-east-slate-tower/model.glb",
-      "model_sha256": "42486f12c73126008371e1ceceeaf184974bc424882d16cab9435da4131fd8c2",
+      "model_sha256": "5c1df735e99cf73d3035243cc72734a15b4353beacde06ce6e21bfd880deef6b",
       "descriptor": "3d-assets/lincoln/lincoln-east-slate-tower/asset.json",
-      "descriptor_sha256": "c617c3df9c518a584bc536a25bb2ec0f735f1c0eed976167c7761b3983b8e7c9",
+      "descriptor_sha256": "fc868449e4c40ae798f6d83784238524cfbd34f6c9ce4847565eace33d13ac07",
       "id": "lincoln-east-slate-tower"
     },
     {
+      "model": "3d-assets/lincoln/lincoln-bush-east-slope-edge/model.glb",
+      "model_sha256": "580f53accb374fa21fcb3fcff03bcb757269473ab2c06041e38c264e2d224e3b",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-east-slope-edge/asset.json",
+      "descriptor_sha256": "3f08b72ddd5f15be2954f10beff11a5fa11566b2b6c1308673dc03399e11400c",
+      "id": "lincoln-bush-east-slope-edge"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-east-slope-middle/model.glb",
+      "model_sha256": "5e34cbe660ccddf535a95e18ad8df7863a50096a89944941efd49dca18ab8ef0",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-east-slope-middle/asset.json",
+      "descriptor_sha256": "a038ea8e4c0b20fcf190fb205dca2b1355317561a0e8ad4efc8c6ac0b7bfe417",
+      "id": "lincoln-bush-east-slope-middle"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-east-slope-north/model.glb",
+      "model_sha256": "4b46f1e25ffde253b2f15a8899123fd5ca6af76c695200716783af632ef6a461",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-east-slope-north/asset.json",
+      "descriptor_sha256": "b78507c60f8e99c63eef98a3d65404359afb8ebf24b66aa37da31287763eeca3",
+      "id": "lincoln-bush-east-slope-north"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-east-slope-rock/model.glb",
+      "model_sha256": "a5b2dee51c79bb079143732cdb574fcfa661ccee0949b9e8154820fc3e1a800e",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-east-slope-rock/asset.json",
+      "descriptor_sha256": "5a025eb227d8ac2676345e501713ad65daeeb964531c26e8febbc78abc5eabe7",
+      "id": "lincoln-bush-east-slope-rock"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-field-fence-east/model.glb",
+      "model_sha256": "36a3065879575886957f066c051c927a8428e0462b7db6c9ba2f5460bb1df763",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-field-fence-east/asset.json",
+      "descriptor_sha256": "ef4fe95f554fd5e94c8c0ffcd2305532de5215615f3921e73c8bee163a000500",
+      "id": "lincoln-bush-field-fence-east"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-field-fence-west/model.glb",
+      "model_sha256": "0c5f8f8d884d00c8556ff84d55efcf93f9cd10723ea4e16e82aa4d08d0da4343",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-field-fence-west/asset.json",
+      "descriptor_sha256": "6ff731a97fab443aa7282e1fd993924ae4e844a7dcb70f007022a5472a767019",
+      "id": "lincoln-bush-field-fence-west"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-tree-garden-east/model.glb",
+      "model_sha256": "a9f37a7b01c2d48b01b40e4b9d50e4bc3dfbdb1439e997c28f277e303ebd2290",
+      "descriptor": "3d-assets/lincoln/lincoln-tree-garden-east/asset.json",
+      "descriptor_sha256": "e9ebb07ed063a6e5fba25d83da8a2df42e0532839785c12cdb661efe32aede5e",
+      "id": "lincoln-tree-garden-east"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-garden-northwest/model.glb",
+      "model_sha256": "23ff00ee00b908a1f5a4cd6eede1df523b6ae7b6667536759a13606b39e2c90a",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-garden-northwest/asset.json",
+      "descriptor_sha256": "2b5557501a9c5d9aa74ca606b9027e0610e192cf14379ec78e9e54f2404fa028",
+      "id": "lincoln-bush-garden-northwest"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-garden-southwest/model.glb",
+      "model_sha256": "e6e333b5c99882ecf1b844edb4d7e43c1c3ab66f524227964f5c2727a1e615f6",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-garden-southwest/asset.json",
+      "descriptor_sha256": "408b3f4fa42d123c92f7058ea69fba442144235483297aa509e093621d36010f",
+      "id": "lincoln-bush-garden-southwest"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-garden-bed/model.glb",
+      "model_sha256": "ee749b6919b28d5ac0c12964598fdb38fd6fc3a2f184380bfa905cc4d29004b6",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-garden-bed/asset.json",
+      "descriptor_sha256": "5714b2cf6d0f71db771f1bd09630821070f6f72a05f9ad6ec162477067239c24",
+      "id": "lincoln-bush-garden-bed"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-tree-garden-west/model.glb",
+      "model_sha256": "64429113d9916517f822fec20ff4887c4b019ad7ae9fb01e8509b917502a91e2",
+      "descriptor": "3d-assets/lincoln/lincoln-tree-garden-west/asset.json",
+      "descriptor_sha256": "97665a2736068bc799aa5e96da8d31a1eb003a702dfac3940a4e1ef7bbf9e5cf",
+      "id": "lincoln-tree-garden-west"
+    },
+    {
       "model": "3d-assets/lincoln/lincoln-hall-northwest-rocks/model.glb",
-      "model_sha256": "dbf124e3c0cb327c640eac74f08df4be24aa32b14509101be41bb4f775a5dd4c",
+      "model_sha256": "17461ef9adc2b8dd281aea000ed2faec6f78cfd4682492a91be155e05be58ff1",
       "descriptor": "3d-assets/lincoln/lincoln-hall-northwest-rocks/asset.json",
-      "descriptor_sha256": "39a94a355958839d2b3c7703d8a992a9785a7aef73dc044bcaf51e81f57e11c3",
+      "descriptor_sha256": "06c5d1a4dd14607740dee0d569cd7c99d9751603cc1c2d435398a51826e91958",
       "id": "lincoln-hall-northwest-rocks"
     },
     {
       "model": "3d-assets/lincoln/lincoln-great-hall-slate-spire/model.glb",
-      "model_sha256": "7093eb2340894b38b3bf8f078e650e558b97c638156af53a9f677c1764edc7b4",
+      "model_sha256": "e2d17cbee4273dae8a674f588beaf340cc5a3d4ad72e9991299b5c6483c06dbc",
       "descriptor": "3d-assets/lincoln/lincoln-great-hall-slate-spire/asset.json",
-      "descriptor_sha256": "f47fd93e5c773a9d3d3f655b41eb7c292615ab37485b5f1a092b515c03adb49c",
+      "descriptor_sha256": "dc4fa42d3cb4a5f7fdda1a036950efc07cf9effb5f7d66afc15dabbd8e8e8302",
       "id": "lincoln-great-hall-slate-spire"
     },
     {
       "model": "3d-assets/lincoln/lincoln-hall-south-terrace/model.glb",
-      "model_sha256": "92c32b1ea6c7ec1abfd98a3e8ae0ad4427c4a2b30b72d827e72af37bc62d6670",
+      "model_sha256": "37f5a8e1a34444ae303c34e5c60c66811dc77a569fe3f64985db1bcf1726cdc2",
       "descriptor": "3d-assets/lincoln/lincoln-hall-south-terrace/asset.json",
-      "descriptor_sha256": "7debe75af98b9f118cd5098c6f60e1b5c09ca1b907d5ec73663a5a7667277fb5",
+      "descriptor_sha256": "b3f6a196d15622921264bb35d8701a6a98f1ac6630b4fa64172dba31ca5d1147",
       "id": "lincoln-hall-south-terrace"
     },
     {
       "model": "3d-assets/lincoln/lincoln-hall-approach-ramp/model.glb",
-      "model_sha256": "d24748666bd01d7926dea11e5c44173080f2a85e001d3e65dbcf23087a599303",
+      "model_sha256": "6164fc10b8b49c03317946784f54e82f453c837511a07248ba7cf1d087157c27",
       "descriptor": "3d-assets/lincoln/lincoln-hall-approach-ramp/asset.json",
-      "descriptor_sha256": "a54e9e7678d611d782e9439b04c04dec4ef8c9339c29e0df9efe3a389c2b7147",
+      "descriptor_sha256": "1a0282bb505c07467eca0d120153cc6d2e7dd86703051ce6308ac8a06c2d4798",
       "id": "lincoln-hall-approach-ramp"
     },
     {
       "model": "3d-assets/lincoln/lincoln-great-hall/model.glb",
-      "model_sha256": "21e8014994b357a5f64c92112352ba636577b1ab69d47ed1cb7c8f33ddb8f438",
+      "model_sha256": "a21bea3d3f255dd29ea49b19e1548dee641d7f077a487fefde0c055a456bbfa3",
       "descriptor": "3d-assets/lincoln/lincoln-great-hall/asset.json",
-      "descriptor_sha256": "b2f5fc79997f9ac6c7597ddfd10d527219493cd7fc38a1780752f694746bc399",
+      "descriptor_sha256": "5e8d8f8024e3202b5f05cbfea6cc4293803a89daafc412150e7067fe1a19192c",
       "id": "lincoln-great-hall"
     },
     {
       "model": "3d-assets/lincoln/lincoln-keep/model.glb",
-      "model_sha256": "eca0f74d71cd3a0bff41e6345834b7478f23016ef5c44600826dc3f13bf4b189",
+      "model_sha256": "302163f3b85d0356a986b2b7b55841b8a5dec5547df4def2addedd4844784025",
       "descriptor": "3d-assets/lincoln/lincoln-keep/asset.json",
-      "descriptor_sha256": "41de18cec146a02bfc214918989564fc617ef3e2826273382eeeec0e199418da",
+      "descriptor_sha256": "ae10b4ac3cb0799bccd40452121f99773202b22dcbb85e60895201805538fbf8",
       "id": "lincoln-keep"
     },
     {
       "model": "3d-assets/lincoln/lincoln-south-angle-bastion/model.glb",
-      "model_sha256": "cff344488ddcd5d135b5af52512e38c7d549ee704c38187ace3b7cc6c518d007",
+      "model_sha256": "37d5248dc80298d2f3f92141eeca0d07b4fcce534806645d409b9b906cd559ef",
       "descriptor": "3d-assets/lincoln/lincoln-south-angle-bastion/asset.json",
-      "descriptor_sha256": "f3ebd99b2385c501eaa318062dea2dec84829229b616b388aa14da7c98583c2c",
+      "descriptor_sha256": "e862eccf4b40a5a42c6b0bf59cf395604dd8702679f9a6b66c27fb59ae5987e4",
       "id": "lincoln-south-angle-bastion"
     },
     {
       "model": "3d-assets/lincoln/lincoln-hall-keep-north-wall/model.glb",
-      "model_sha256": "f67577a6f162c09d66f864de6043969e61d561ea81a4f2a038de01770cb0d1df",
+      "model_sha256": "b5696382ebdbaf13557020f6656cfca47d2c8ea7f55c1d1ea7071f47dbc14ba5",
       "descriptor": "3d-assets/lincoln/lincoln-hall-keep-north-wall/asset.json",
-      "descriptor_sha256": "22c5f517c3598706bcb3f164a5e3b64e70d18a4b6a2af1cd801e3abc2d3e86a2",
+      "descriptor_sha256": "72f04ba474223ad535b3e8f24053df794658e7ba132236ebb2b359b41681c007",
       "id": "lincoln-hall-keep-north-wall"
     },
     {
+      "model": "3d-assets/lincoln/lincoln-bush-bailey-cottage-west/model.glb",
+      "model_sha256": "89c376f3c990a61f84a3cb8d9f2cb9b743acd77315b279efcdbb037e6eb62c1b",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-bailey-cottage-west/asset.json",
+      "descriptor_sha256": "9c9777cb025a894626ca4a218ed8b672a37d3e3cf8170e475156e1917a3d2442",
+      "id": "lincoln-bush-bailey-cottage-west"
+    },
+    {
       "model": "3d-assets/lincoln/lincoln-bailey-hay-cart/model.glb",
-      "model_sha256": "541f614ca64b84248cbca4e64762c2946c67bc4214c35e0a8869c44b60ec809c",
+      "model_sha256": "947eaa9602f986ff85e38e43f46300272283df66030e76060455c39d93ad7469",
       "descriptor": "3d-assets/lincoln/lincoln-bailey-hay-cart/asset.json",
-      "descriptor_sha256": "e74e09cd983e6fc9b58a988b89e3b28b9f892089b491d48fbe8399154453e6a8",
+      "descriptor_sha256": "c76e42c1b05a8137580a733bef822f009a7fa5af23d6e096f74b03c281c12bdb",
       "id": "lincoln-bailey-hay-cart"
     },
     {
+      "model": "3d-assets/lincoln/lincoln-bush-bailey-rock/model.glb",
+      "model_sha256": "20b82ce764db79c5606e7802c4d59d6d16540c88abc244a3ef5d2ba962e4d0bd",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-bailey-rock/asset.json",
+      "descriptor_sha256": "ea8f54c337714e0122f2df93a2a4d11154335c0a0f9b05b1550b0ce6fac747f4",
+      "id": "lincoln-bush-bailey-rock"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-bailey-shed/model.glb",
+      "model_sha256": "ac2c79574bcaceae82615ababf6b369ec72c0c08d4a65f9c07d2945b1864c0b2",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-bailey-shed/asset.json",
+      "descriptor_sha256": "88f62efe7167232016a9a7f2ff3e43331c431db4ab335e46577c10c5627c8efd",
+      "id": "lincoln-bush-bailey-shed"
+    },
+    {
       "model": "3d-assets/lincoln/lincoln-bailey-shingle-cottage/model.glb",
-      "model_sha256": "e5efabd9d9b97b4a04745df52cd1ecb4e52278081f37dde7834489b374d47d84",
+      "model_sha256": "cc9b8b13474cee2f4fa58d8291e9c9d870156c15213949980e10c1d844f28696",
       "descriptor": "3d-assets/lincoln/lincoln-bailey-shingle-cottage/asset.json",
-      "descriptor_sha256": "ca552b53f16157f746d60a3d3c4ffd583040a72b95bc028efa6ab87f2c4e9136",
+      "descriptor_sha256": "fa62b0aeb84a371cc86835c66651717b4ebd2f5e1019a04b14564e741e8c4a90",
       "id": "lincoln-bailey-shingle-cottage"
     },
     {
       "model": "3d-assets/lincoln/lincoln-bailey-thatched-cottage/model.glb",
-      "model_sha256": "6e29b2e6225614f8e8795d53a5a8db461fe578477655ddc79df840700c643534",
+      "model_sha256": "9585f58eb1ac9d9ea14c497bac5925601866fa4fc51251d61a24c94bcddeaeae",
       "descriptor": "3d-assets/lincoln/lincoln-bailey-thatched-cottage/asset.json",
-      "descriptor_sha256": "19911cf8a8a152ceca6b35efdd99e8dce32201dc079e1a2ee64ce284b9b4435e",
+      "descriptor_sha256": "0c7c2093ec5d9eb3abbfb2c4391ba9c264636c92b435e252babd19b8f30bede8",
       "id": "lincoln-bailey-thatched-cottage"
     },
     {
       "model": "3d-assets/lincoln/lincoln-bailey-trough/model.glb",
-      "model_sha256": "cd57b69ce876646bf785e3ffa817ac5c8be71ea212bf727e631c054cb2680117",
+      "model_sha256": "2b482160067e8548406c077b31dced75ccc1dc795ebbecccbc4791a3393893ad",
       "descriptor": "3d-assets/lincoln/lincoln-bailey-trough/asset.json",
-      "descriptor_sha256": "e011d8d7cbb2712a4d784034a1f0d779d4768aa9a1e05e3a4e84a5520e393e6f",
+      "descriptor_sha256": "878aafb71f02c3967269b10dea271af3a03a95f1cf26472e8365a8c624ec2139",
       "id": "lincoln-bailey-trough"
     },
     {
       "model": "3d-assets/lincoln/lincoln-bailey-well/model.glb",
-      "model_sha256": "3ae662d183267956b427642320e829350822fa4d05bb94a7f6aa39c6b8996c1e",
+      "model_sha256": "87e123ea3b2c0ec8e77d2719763b05e79034e770dbf8af371f37b3e8cf9bedb8",
       "descriptor": "3d-assets/lincoln/lincoln-bailey-well/asset.json",
-      "descriptor_sha256": "1f5b50f6216b569a8cec30d8910b1805c44f16f7cf130361cfd4da3db4e4e44b",
+      "descriptor_sha256": "dc0481004f40e5fddabdb082982cb42e292134472c910f78d2bd923b80287697",
       "id": "lincoln-bailey-well"
     },
     {
       "model": "3d-assets/lincoln/lincoln-inner-gatehouse/model.glb",
-      "model_sha256": "cf9126a425b04b32af4c37c1dda8c0656402cdbc4246bca8af69d8e1b6eeebae",
+      "model_sha256": "105f281bd4e927efe5c8442e4c6602fb68a55c8b184e0e1332f0fa05da923462",
       "descriptor": "3d-assets/lincoln/lincoln-inner-gatehouse/asset.json",
-      "descriptor_sha256": "db2623d48c716678d4ceee8a62a39017da5336f32b3f4a6d3b11b673ea7bb0fa",
+      "descriptor_sha256": "01c168473cfa79090ea4ab2fc8ff3d5c573c9bca40769f7d7ee28435731f52ce",
       "id": "lincoln-inner-gatehouse"
     },
     {
       "model": "3d-assets/lincoln/lincoln-inner-west-gate/model.glb",
-      "model_sha256": "3ce02de186ebc2ab9a6b13271f421f912d923bae1520d56ee08ddff72dbe0149",
+      "model_sha256": "f62b561201e4d98b116ea7a5a13a9fabc7e4d8f4f222ae680224600cad729356",
       "descriptor": "3d-assets/lincoln/lincoln-inner-west-gate/asset.json",
-      "descriptor_sha256": "21c91e91d01e0ecd6d4ff9c0cbe3075a0272a68e01e18d8bce58acb0260b1155",
+      "descriptor_sha256": "cde9d3efb3626b0edf7b1b56315f630d9a6d534da45f17eaade4296199c70658",
       "id": "lincoln-inner-west-gate"
     },
     {
       "model": "3d-assets/lincoln/lincoln-keep-annex-cone-turret/model.glb",
-      "model_sha256": "38358348a57ef75017ae83f7dbb159f97fd0f0dccfeae6ac6901fcd95591f594",
+      "model_sha256": "bee5f3f2835d50d0b86f3d9f36292c7fdf585328f2cd5e3bd8e1b5a46abe2ac6",
       "descriptor": "3d-assets/lincoln/lincoln-keep-annex-cone-turret/asset.json",
-      "descriptor_sha256": "9c938b2344879252cc75338be7c708d9bbf5920d93ba2e9fb6d0a8d57d920be5",
+      "descriptor_sha256": "4f347cb735ab5de08b8acca235874eb9d7c788f59dbaabd5e11f026bb193ee15",
       "id": "lincoln-keep-annex-cone-turret"
     },
     {
       "model": "3d-assets/lincoln/lincoln-keep-annex-round-turret/model.glb",
-      "model_sha256": "74e35095d1d6677fbfe9fd77dad791618ea802ccdc36180b01d4e983d8d12ff0",
+      "model_sha256": "76783e4d9e6a220b7b7376dfe69246d305940201660358afb70514e5eac26fe3",
       "descriptor": "3d-assets/lincoln/lincoln-keep-annex-round-turret/asset.json",
-      "descriptor_sha256": "fe4106ae6288355bfb8012b7f243edfdd3d1ff999f2265275a32f29e3d7a7417",
+      "descriptor_sha256": "c9121026d5144863b02f3243af5dab905399b993224c492049f5d7ef86078104",
       "id": "lincoln-keep-annex-round-turret"
     },
     {
+      "model": "3d-assets/lincoln/lincoln-bush-keep-north/model.glb",
+      "model_sha256": "9b37b0a07d22355346487295295d5fc56893a481f9dbafd37659be15be9c5fb8",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-keep-north/asset.json",
+      "descriptor_sha256": "6c401189a28c0c6a2cd48def98f5126ed46b71043f3d6849669c69787d7d1a6f",
+      "id": "lincoln-bush-keep-north"
+    },
+    {
       "model": "3d-assets/lincoln/lincoln-keep-annex/model.glb",
-      "model_sha256": "318c0d785f5e391f7d41ea2499600cc0e1a4542206002644051a3a441066afdb",
+      "model_sha256": "1b7f7ad238dc69412315cbc01986e6d1727a75c6fde7ae5326ec6e003872d3bb",
       "descriptor": "3d-assets/lincoln/lincoln-keep-annex/asset.json",
-      "descriptor_sha256": "a091795b32afbed361348a0be03f3547d482c24763acf8545427e7420a2ab0a8",
+      "descriptor_sha256": "7a1b6342e52331f53d644cb2a4ee14d1b521c267c8e53f30a9ffd0d4217c6e90",
       "id": "lincoln-keep-annex"
     },
     {
+      "model": "3d-assets/lincoln/lincoln-bush-north-bailey-crates/model.glb",
+      "model_sha256": "fa85210104f5524b6e49149af5e4922875a105f38325d523c7908f3b8ff5a1a8",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-north-bailey-crates/asset.json",
+      "descriptor_sha256": "670746ba009a0e2ba07a85d5abec564c922386b5ba8ea1fd094dd120cd303ab8",
+      "id": "lincoln-bush-north-bailey-crates"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-tree-north-bailey-east/model.glb",
+      "model_sha256": "013a1024b217435f133da6cc5118ad458b430c414dc8e98c76a7082d9ef9da19",
+      "descriptor": "3d-assets/lincoln/lincoln-tree-north-bailey-east/asset.json",
+      "descriptor_sha256": "d81246af0b44a9a3695dbeec1dd743389c16b57ad253eee968d5abee15078f00",
+      "id": "lincoln-tree-north-bailey-east"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-tree-north-bailey-autumn/model.glb",
+      "model_sha256": "c99bb59c82797e5c451e4b10a1e7af61dc3dbd482e926a5f6091f0c859e89897",
+      "descriptor": "3d-assets/lincoln/lincoln-tree-north-bailey-autumn/asset.json",
+      "descriptor_sha256": "20e043d6b29e44c659d60659e2c8664d90d5b73b7167a8616fc12f1fa7bbba31",
+      "id": "lincoln-tree-north-bailey-autumn"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-tree-north-bailey-rim/model.glb",
+      "model_sha256": "b91f024b044f4a86a81ae2b6fec211f976a0f86f1325a157a1ca66a67484a97d",
+      "descriptor": "3d-assets/lincoln/lincoln-tree-north-bailey-rim/asset.json",
+      "descriptor_sha256": "0862875f82e0746fef0b3deea3c72c1d41f1a4518b633b26310003a40ed20e43",
+      "id": "lincoln-tree-north-bailey-rim"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-north-rim-west/model.glb",
+      "model_sha256": "db08e6caf5a495461bf2341caf67b43a08c9e697ee6c9ad94acdecd2268ed13f",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-north-rim-west/asset.json",
+      "descriptor_sha256": "3fff81c9c17823a5b8dd02746c5c914c5c19426979210b78bd57e62fa2f0d058",
+      "id": "lincoln-bush-north-rim-west"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-north-curtain-west/model.glb",
+      "model_sha256": "a403c3f941f491e0ba4ffe337c4742942fc351687e833501d5ce7bcfbd748fcd",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-north-curtain-west/asset.json",
+      "descriptor_sha256": "6dc819f49e89b5561c4bf4aaa8dede61591a5d2f15cb0fbe3791753b4309728e",
+      "id": "lincoln-bush-north-curtain-west"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-tree-north-curtain-west/model.glb",
+      "model_sha256": "9a3f7473b4afee6e6ba6fc83b788390a42413d5d4b64fb4dc2a1b112e5bc3346",
+      "descriptor": "3d-assets/lincoln/lincoln-tree-north-curtain-west/asset.json",
+      "descriptor_sha256": "bf2e21e45a5948f7ca796e00c189c2421a29b5f13d12c2574d9dcbe63ddaa997",
+      "id": "lincoln-tree-north-curtain-west"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-north-hall/model.glb",
+      "model_sha256": "2610151b75521b78cce2fdfa2899b436d9e761f969b76562b8567d70815af761",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-north-hall/asset.json",
+      "descriptor_sha256": "8655badac1b8a529776114c7c1b9989ba36fd7e9568d66db12befe76d0d89812",
+      "id": "lincoln-bush-north-hall"
+    },
+    {
       "model": "3d-assets/lincoln/lincoln-north-hall-stair/model.glb",
-      "model_sha256": "106fd2b4ab1ddc92af6929dd65254253808c9804c18744d3c0336368d2bc2ed5",
+      "model_sha256": "9775e6656887be74429379ae00298da372ab97e5a1feed52e80d39346532eb83",
       "descriptor": "3d-assets/lincoln/lincoln-north-hall-stair/asset.json",
-      "descriptor_sha256": "370f20da9ae0bcc868dcc215b1a430cad1f793ca095be6e78921806e430d41dc",
+      "descriptor_sha256": "120700d2e458fe98e19f62b253f3cdfba18865a0b6076c9dc4cd3062668c6d88",
       "id": "lincoln-north-hall-stair"
     },
     {
+      "model": "3d-assets/lincoln/lincoln-tree-north-plateau-east/model.glb",
+      "model_sha256": "b8e5cbcf8b613188d2825761b7e7bfc830297d186b4bb47da509e38e950aee8a",
+      "descriptor": "3d-assets/lincoln/lincoln-tree-north-plateau-east/asset.json",
+      "descriptor_sha256": "6389aeded238b313af51d602de40f81bfbdc3d34f13914896d94605c36eddf08",
+      "id": "lincoln-tree-north-plateau-east"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-tree-north-plateau-red/model.glb",
+      "model_sha256": "d21b9864598a4a08ad978d80e58008d489a1f59dc8acc7567a301206f076e3ff",
+      "descriptor": "3d-assets/lincoln/lincoln-tree-north-plateau-red/asset.json",
+      "descriptor_sha256": "114d8ac055b31cee5b4687d452e38599198e2cb805f403be8f3231a50320f297",
+      "id": "lincoln-tree-north-plateau-red"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-tree-north-plateau-west/model.glb",
+      "model_sha256": "7ab7a0c0388500926849e5d7800be5d3c2c6ff5b0914e55fcff2066a27493485",
+      "descriptor": "3d-assets/lincoln/lincoln-tree-north-plateau-west/asset.json",
+      "descriptor_sha256": "f600d3449f6ecaec619b57a0275a4eb51cd8c47575221672dc9f04ddfd81c765",
+      "id": "lincoln-tree-north-plateau-west"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-north-ridge-autumn/model.glb",
+      "model_sha256": "40a98d42d96aeffbe7bc36deab6b79fe20756ffe48c8dceb32dc9a90cb0aa269",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-north-ridge-autumn/asset.json",
+      "descriptor_sha256": "0d8cb4d0a71a15cefc4869ba2a16086757d041bf41b6c323e1b3dff0cdca4079",
+      "id": "lincoln-bush-north-ridge-autumn"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-tree-north-ridge-bare/model.glb",
+      "model_sha256": "580bd246f2f99ab24421be061f07e25fe64793f3d6117f3f17a772c807b942bc",
+      "descriptor": "3d-assets/lincoln/lincoln-tree-north-ridge-bare/asset.json",
+      "descriptor_sha256": "c363415d12017265056e2df2fa0f834a6db3fa6f859b0ccec8e0f588b607f9a1",
+      "id": "lincoln-tree-north-ridge-bare"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-north-ridge-green/model.glb",
+      "model_sha256": "dbe6802661c93f31f88a8d69c2275b5075fcbc9b62b37676b0f134b457df33b4",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-north-ridge-green/asset.json",
+      "descriptor_sha256": "a0cdc845a88220538252e52d42f2903108d22f1b1db4365bb604d35efea47553",
+      "id": "lincoln-bush-north-ridge-green"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-tree-north-ridge-edge/model.glb",
+      "model_sha256": "ec26148446416d39f8d8d81b90b53750ceef3a3dbee3bffacc1af394d13d33ba",
+      "descriptor": "3d-assets/lincoln/lincoln-tree-north-ridge-edge/asset.json",
+      "descriptor_sha256": "ff93a9c36cbd9795508d88e303f914b15eef132f04241fe9c3fa5dfd05790801",
+      "id": "lincoln-tree-north-ridge-edge"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-north-ridge-west/model.glb",
+      "model_sha256": "ce84853e4484c34966780cc95878441fc4c413312f232450093b1b03e7c40505",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-north-ridge-west/asset.json",
+      "descriptor_sha256": "dba8b031550755498713eb414be4e18d4f31e9227553bf44226cdb71830aa0be",
+      "id": "lincoln-bush-north-ridge-west"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-tree-north-ridge-west/model.glb",
+      "model_sha256": "37f49222ed42d75a7f3b8ac35e45625e3675443b40ee31990a668eb2ba63862d",
+      "descriptor": "3d-assets/lincoln/lincoln-tree-north-ridge-west/asset.json",
+      "descriptor_sha256": "b5fcf03383ea12dab709cdede613dc2ae8ce9c79e1caab47e3f5453f30994ac3",
+      "id": "lincoln-tree-north-ridge-west"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-tree-northeast-curtain/model.glb",
+      "model_sha256": "833315459f3bd0226685a5c077aaaac45c9867b49a3d187bf1c6fbf40207d28e",
+      "descriptor": "3d-assets/lincoln/lincoln-tree-northeast-curtain/asset.json",
+      "descriptor_sha256": "b5ace649b98f61e5ec127661eb5c6cbda0c4adde9507272994ce8a2cb70a5455",
+      "id": "lincoln-tree-northeast-curtain"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-northeast-curtain-foot/model.glb",
+      "model_sha256": "758fcfc95f8f80e4a20f7a1e9b85e44209bb6dbd3f0b182a0d62998e28db431b",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-northeast-curtain-foot/asset.json",
+      "descriptor_sha256": "e7b31813fd1dfee62c54965c405f2c064977f6670e545fae27781a48ef1b57c6",
+      "id": "lincoln-bush-northeast-curtain-foot"
+    },
+    {
       "model": "3d-assets/lincoln/lincoln-northeast-curtain-wall/model.glb",
-      "model_sha256": "801f17829606e37c72b23fe2e6594243dfe3ce62d6da1fee2702437ee6eafb15",
+      "model_sha256": "166129b0635c9a42495aa90cd391abde68f1cf6848c5d355ba65ceded060e9b2",
       "descriptor": "3d-assets/lincoln/lincoln-northeast-curtain-wall/asset.json",
-      "descriptor_sha256": "44fcea1f7d5bbf6af695f95aa520f1d4c23a3424665f0f9e1205a6c09e64e3cf",
+      "descriptor_sha256": "366bc9bd1c2ff544bee6498912c058ae75521d5cbf1daaadb2e69780f215d28c",
       "id": "lincoln-northeast-curtain-wall"
     },
     {
+      "model": "3d-assets/lincoln/lincoln-tree-northeast-forest-edge/model.glb",
+      "model_sha256": "519ae25c7323dfe0a0c4b0c80fd717de6bfc00fb3f5eef7f9e28ff83574500d1",
+      "descriptor": "3d-assets/lincoln/lincoln-tree-northeast-forest-edge/asset.json",
+      "descriptor_sha256": "574470a07e3c62013bb4bd650af5ada7e023395ea1377af3a74dbcc51e30878b",
+      "id": "lincoln-tree-northeast-forest-edge"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-tree-northeast-forest-south/model.glb",
+      "model_sha256": "22900053fc1bec14c00acf8d74fbf6fd04600623fb39c830547532def16cdbe4",
+      "descriptor": "3d-assets/lincoln/lincoln-tree-northeast-forest-south/asset.json",
+      "descriptor_sha256": "49eefa02498ddc1ea295a52ac52ffc586d3f8efb9a7164076f3646faea0952e6",
+      "id": "lincoln-tree-northeast-forest-south"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-tree-northeast-forest-west/model.glb",
+      "model_sha256": "ceb4a2bd47b316f734491371752bc969903aaa26e7bbcded78ee87a6d0cf4718",
+      "descriptor": "3d-assets/lincoln/lincoln-tree-northeast-forest-west/asset.json",
+      "descriptor_sha256": "26520827593ee96ed6d368470f3d4bc7160b2fa2387bfde5a44d5917aa001570",
+      "id": "lincoln-tree-northeast-forest-west"
+    },
+    {
       "model": "3d-assets/lincoln/lincoln-northeast-square-tower/model.glb",
-      "model_sha256": "6f836e3044decc0affa1f187d2a077357b904423fa474cd4fd70189c8400551d",
+      "model_sha256": "f26611ab507639fc43f47cb4f3cf9888a08a689955ef851b403348660f88ac66",
       "descriptor": "3d-assets/lincoln/lincoln-northeast-square-tower/asset.json",
-      "descriptor_sha256": "62ecf2478928aebdb36310502672006d338926d242b1d20d0166bbdb73eb448f",
+      "descriptor_sha256": "1ad49b96eb78dd51ecf36bc741eb8adc810eb0627598a477e6f9adf56516b160",
       "id": "lincoln-northeast-square-tower"
     },
     {
+      "model": "3d-assets/lincoln/lincoln-bush-northeast-tower-stair/model.glb",
+      "model_sha256": "334233230b3ef8f19201eb511f5fd6e235bbdbc8f360cdc232a053e278b410cc",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-northeast-tower-stair/asset.json",
+      "descriptor_sha256": "f01fd7fa61501b8b99949424b769186c17196bc09231b725410a515601fad924",
+      "id": "lincoln-bush-northeast-tower-stair"
+    },
+    {
       "model": "3d-assets/lincoln/lincoln-northeast-tower-stair/model.glb",
-      "model_sha256": "d89009e232394aa7c90ae0c4a17fd19ea0f97a732600c6b895a4da99f957cd5b",
+      "model_sha256": "d8bd423d61aa83b9bb154a5cf3426971e1db8ef756b8d0e01e5f8ac393084594",
       "descriptor": "3d-assets/lincoln/lincoln-northeast-tower-stair/asset.json",
-      "descriptor_sha256": "0fd315196f3df0a2b6a93ffa165fa97d3a3f16e230ec5e6c7c212ef8b5647189",
+      "descriptor_sha256": "5d339f39b475d66163a4469da6573e0200439184716beed737453dbae2960c5f",
       "id": "lincoln-northeast-tower-stair"
     },
     {
       "model": "3d-assets/lincoln/lincoln-northeast-yard-props/model.glb",
-      "model_sha256": "79482c7a4583b5455f40965300f7cb640a6cbd6676e89c0937de96a820b278ae",
+      "model_sha256": "dfbe4dfa46345c4bb93462febbfce7ef1325bf2dcf987a91f380eae7c492b0ba",
       "descriptor": "3d-assets/lincoln/lincoln-northeast-yard-props/asset.json",
-      "descriptor_sha256": "0c67b9deb5d60233992210c8d2b4d2a25274748a402213743925d771c6582163",
+      "descriptor_sha256": "813e9753ef1d36c5ac3a0dc73f26d72fc38d0411a0b5cf487c0fb229011a8b88",
       "id": "lincoln-northeast-yard-props"
     },
     {
       "model": "3d-assets/lincoln/lincoln-northeast-yard-hutches/model.glb",
-      "model_sha256": "bac3622f330c07c43d23a7f4d0bb2f363df4b392e604d376c753d82665811e45",
+      "model_sha256": "a77ced69bcc3390ab8711cf3b173519cbd5705d9ab66417fea1db22e3303b308",
       "descriptor": "3d-assets/lincoln/lincoln-northeast-yard-hutches/asset.json",
-      "descriptor_sha256": "ad5c3c34fa34adabddc165005fad0e6b37824cde1ca3bd4873a4f3cc95821339",
+      "descriptor_sha256": "489af1435edca2bbfaec30bae35d5759a4ae86bc1ec133690ca3ac6509729be0",
       "id": "lincoln-northeast-yard-hutches"
     },
     {
       "model": "3d-assets/lincoln/lincoln-north-curtain-wall-east/model.glb",
-      "model_sha256": "0449b0a8dc444386a46655f08bd8d0f20792268445c009d6284e5b45485ffc53",
+      "model_sha256": "28b7adf5ec7f3670987b887933fcf04d2588c93d5a8b65d2da08f88016be9d03",
       "descriptor": "3d-assets/lincoln/lincoln-north-curtain-wall-east/asset.json",
-      "descriptor_sha256": "506439bb7e037f059d80f0c26fa86184874c1607cbd622f3610fb7c1047c6c42",
+      "descriptor_sha256": "e02de839ebdb53eebdf0e3b55a5a67837c388c52be3ec1110d13683d25fbac86",
       "id": "lincoln-north-curtain-wall-east"
     },
     {
       "model": "3d-assets/lincoln/lincoln-north-curtain-wall-west/model.glb",
-      "model_sha256": "9efdc5b96f06a7e3882b752233f8aeddc9c1a58a6558661045006e0419eead6a",
+      "model_sha256": "4219ab34e0529b6c9db23cae81c0538555a32372b4ed46e93506fbcb0d184df7",
       "descriptor": "3d-assets/lincoln/lincoln-north-curtain-wall-west/asset.json",
-      "descriptor_sha256": "e2c7250904a35f2802e5f0457cc1e357b0ab25dcaa9108c6f18d4d127d223e79",
+      "descriptor_sha256": "d5d086e2af1ab19ff551fda04ae807f707a1f29080f2bc1fc2c2632fb5ad74ad",
       "id": "lincoln-north-curtain-wall-west"
     },
     {
       "model": "3d-assets/lincoln/lincoln-north-outer-plateau/model.glb",
-      "model_sha256": "d5987fa81ff1b3bc0582c7b68be6b09811fa71770fbdb6480ace5c130d7e7f45",
+      "model_sha256": "f6737251d8a4e0c88d71f24b11aff8f93f982504b9b5363dbf4d860a4402ae01",
       "descriptor": "3d-assets/lincoln/lincoln-north-outer-plateau/asset.json",
-      "descriptor_sha256": "cecfd385ba2698aed638362131335c7a73d6f4aecea771ebb8f45937dd0ffd00",
+      "descriptor_sha256": "f1e0f4eef14b6596df64ce6f81a2d489795389dad8f73fb8ef45a0474872e1d4",
       "id": "lincoln-north-outer-plateau"
     },
     {
       "model": "3d-assets/lincoln/lincoln-north-rock-ridge/model.glb",
-      "model_sha256": "872d91db8136bc4954e837ccb9dd4865914fdf4bc882b97b74cc6552ffb3c631",
+      "model_sha256": "5545f23b7693095a5970be0a9faf1797bc6970b3b1c94d0080d2d104c319da02",
       "descriptor": "3d-assets/lincoln/lincoln-north-rock-ridge/asset.json",
-      "descriptor_sha256": "d0e105f7831142b189ae251c208c94d5d670b9881beeee10ee9552e6c0a3d472",
+      "descriptor_sha256": "9cfd7c84c6f24aa599ef7370c076e7761582bc478e4b5751fefa65a45b6f1b6b",
       "id": "lincoln-north-rock-ridge"
     },
     {
+      "model": "3d-assets/lincoln/lincoln-tree-stream-north-east/model.glb",
+      "model_sha256": "d8dc348fadf28d55d1470f52d6e6da41d1ba91248390afc1415329e574e2bd30",
+      "descriptor": "3d-assets/lincoln/lincoln-tree-stream-north-east/asset.json",
+      "descriptor_sha256": "a631885d03bae27a27beca7ea5dd9c8fe6eef20c18aef5aa68ef8f9320056f85",
+      "id": "lincoln-tree-stream-north-east"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-stream-north-east-bank/model.glb",
+      "model_sha256": "2a98e37267bbc966f4006e2536955c168becd41d7ae29fc484dd48a41cd21709",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-stream-north-east-bank/asset.json",
+      "descriptor_sha256": "074bc6ed15e803a07f15d9bda244dffc5a03df4a7ca4d46677a8ae74c13cdbf1",
+      "id": "lincoln-bush-stream-north-east-bank"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-tree-stream-north-west/model.glb",
+      "model_sha256": "c249268978bc527f43906fe5b5c7f436002702ec67595a2920c8acaa92ccfb2b",
+      "descriptor": "3d-assets/lincoln/lincoln-tree-stream-north-west/asset.json",
+      "descriptor_sha256": "5868c80df28ea39840fb4bf67f5c8dd06e86f12d3f124a40d6707c7effd5640d",
+      "id": "lincoln-tree-stream-north-west"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-stream-north-west-bank/model.glb",
+      "model_sha256": "8c686642663dba52424c52b8b7ed85189a6dc79ea7062ded3de65cbb0efc1041",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-stream-north-west-bank/asset.json",
+      "descriptor_sha256": "e28b6ff5329b90b1e767b2db772563b9a2de1787de2212049a051a3b169019ee",
+      "id": "lincoln-bush-stream-north-west-bank"
+    },
+    {
       "model": "3d-assets/lincoln/lincoln-north-hall/model.glb",
-      "model_sha256": "9b57117d06d627d8b7b4e04b8efd436577928ef7373aa75ca0c370d1b3f459f9",
+      "model_sha256": "559769fdc87c6a61e74363834af19cdea2a6831f7e34a0f6bbc902c8583a9c75",
       "descriptor": "3d-assets/lincoln/lincoln-north-hall/asset.json",
-      "descriptor_sha256": "1a3f3933eca8fd59fb479881bf7d8acb3dcee6fbe41dc060a7306c7d89952cfe",
+      "descriptor_sha256": "980a262edbe3c407b445e0d01b224d4b30408d9d8f20b6796657c3188ca87555",
       "id": "lincoln-north-hall"
     },
     {
+      "model": "3d-assets/lincoln/lincoln-bush-pond-south/model.glb",
+      "model_sha256": "d78d460c4aca06584c641f0ca777ebb4640554500f312efb1c8ba00081630897",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-pond-south/asset.json",
+      "descriptor_sha256": "c9feb5b10f9b33b3cd28d65008a815d64aaeeeb3c6815e4e4d832ab8305e1ab6",
+      "id": "lincoln-bush-pond-south"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-ravine-bridge/model.glb",
+      "model_sha256": "57a175bf67a46dc53a2166ba0ec8683095af1242fd1c67d2b064543484e01d50",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-ravine-bridge/asset.json",
+      "descriptor_sha256": "a7e85f022881a49bd3c5ff6ba38331580c7e1ae1e6cc3c82f191f52939914a14",
+      "id": "lincoln-bush-ravine-bridge"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-round-tower-northeast/model.glb",
+      "model_sha256": "d5dfc932d943d10385196a017dce8826e470618d1caabae2414ee857895aaca3",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-round-tower-northeast/asset.json",
+      "descriptor_sha256": "0aa69656fe3cc623b655a5ecc06b608561718a44e8458a2e3fb1e9b9a1242456",
+      "id": "lincoln-bush-round-tower-northeast"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-round-tower-north/model.glb",
+      "model_sha256": "e4178bea3664e426be3c14ef103b1bf606cf5cbc65c667a6f52b771b900066c8",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-round-tower-north/asset.json",
+      "descriptor_sha256": "170b4c56164c9f85a7103414711099f6720be1880115669873fd65f146aa36d4",
+      "id": "lincoln-bush-round-tower-north"
+    },
+    {
       "model": "3d-assets/lincoln/lincoln-southeast-corner-turret/model.glb",
-      "model_sha256": "9296da844f453c515f1117fec13180866907773fb57d99a5f895c5f71e30f7ec",
+      "model_sha256": "ede7abaea33ef92378124f18b646a2fbaf514fea7ad4a1a029be88c2f9636adb",
       "descriptor": "3d-assets/lincoln/lincoln-southeast-corner-turret/asset.json",
-      "descriptor_sha256": "17dd1e321b8bf63bb1907e41dc4701779a4a58410f06f2e2a3460083f83a6e41",
+      "descriptor_sha256": "4ad58d02e5fb8f13c23946a370307487a9674e933bd18de2fcd0401feab87c2d",
       "id": "lincoln-southeast-corner-turret"
     },
     {
       "model": "3d-assets/lincoln/lincoln-southeast-curtain-wall/model.glb",
-      "model_sha256": "669b0fb19eba1d2151da1cfc2aba1139a67ad4b5575dd013bf5236f5b265f75e",
+      "model_sha256": "087a79d7bef02b24a00ccea5814ce669ecdefc02bc14463c7064606523f404b0",
       "descriptor": "3d-assets/lincoln/lincoln-southeast-curtain-wall/asset.json",
-      "descriptor_sha256": "4e827402054350078192c311dc07819f0552885e3932dd8fc85cc503a6187bc4",
+      "descriptor_sha256": "30d4dd278c357024e591817c36f111b1fb92f7ad814cd7ec76d43714d2c898ba",
       "id": "lincoln-southeast-curtain-wall"
     },
     {
       "model": "3d-assets/lincoln/lincoln-southeast-rock-outcrop/model.glb",
-      "model_sha256": "34a7e49804711179f961bce20f6d43f3364df52ad0ed47c9839209d6e399befe",
+      "model_sha256": "b6ba5c852ff7a565f951141dc2dc37b839928555b0f3c691b5367eb2439ee2f9",
       "descriptor": "3d-assets/lincoln/lincoln-southeast-rock-outcrop/asset.json",
-      "descriptor_sha256": "4ae3a1e4ea94ecc10d58cf8cd31244338a14eac8997397f593d04b69b016e1fc",
+      "descriptor_sha256": "a15a6c8fb68714c29ee79fa2ddf40fddcae3e408b7e96b2027fc112b7ef45d0b",
       "id": "lincoln-southeast-rock-outcrop"
     },
     {
       "model": "3d-assets/lincoln/lincoln-southeast-small-rocks/model.glb",
-      "model_sha256": "a4330e6cb7570bf9c388f19a4c5d8f17d2f930bf6a15df35aaf5fb663b356a9b",
+      "model_sha256": "2d8a3aab2e3051cce070ca6f107efeb38112c78de1cb1775b9d8cc4ab444f74a",
       "descriptor": "3d-assets/lincoln/lincoln-southeast-small-rocks/asset.json",
-      "descriptor_sha256": "dd686735d19658cdcd0e6cbca5c89d4d96c7d9bba02300536246f705939c1283",
+      "descriptor_sha256": "46b6db70802e49d1c41ff004f0f0ceb4bd7a1efa987365d1faacc1704f6ecf48",
       "id": "lincoln-southeast-small-rocks"
     },
     {
       "model": "3d-assets/lincoln/lincoln-southeast-lean-to/model.glb",
-      "model_sha256": "c452f002b8efbf3f86231880dc482122396edc35125594bbfbde26198666fee4",
+      "model_sha256": "e2943ee69340576fdb833f18573b0b422529aa8a89a03b840580da5d4405f4ab",
       "descriptor": "3d-assets/lincoln/lincoln-southeast-lean-to/asset.json",
-      "descriptor_sha256": "73312d70f3e3e8cb17df4fe4dc8c14493df5539542c03df6ab9632233f192271",
+      "descriptor_sha256": "e92d0dc4ea61430523527ed730d6a7bee7b7bcf7faa3d41cbab56736fe9f193a",
       "id": "lincoln-southeast-lean-to"
     },
     {
+      "model": "3d-assets/lincoln/lincoln-bush-south-bank/model.glb",
+      "model_sha256": "34afb91d98c7978b3dc6ba79329b39ed241966405d989cc7894c30f68c877a32",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-south-bank/asset.json",
+      "descriptor_sha256": "fdb57e69efbdfcb153dc249efa5431b14ff2301ec6f2d8e3bf13bfb9fd3fc710",
+      "id": "lincoln-bush-south-bank"
+    },
+    {
       "model": "3d-assets/lincoln/lincoln-south-curtain-wall-angle/model.glb",
-      "model_sha256": "9a9a31e6a97c8f602e7a366dc5a959061d63279e03c232be27c7e24dbdcf93a5",
+      "model_sha256": "2e2060fde869925d9f2f5eab1ef94f2678b01d9e7e255b0967d95cc8575dc897",
       "descriptor": "3d-assets/lincoln/lincoln-south-curtain-wall-angle/asset.json",
-      "descriptor_sha256": "2016f7dd3e4c848aaa8cea55b7f129aa99e0cdb39fbbbd6b86af87b54d884ce6",
+      "descriptor_sha256": "02227b6b40844de3f3b231e47c07b865fd76b2b89f7c975250482471bdc930f6",
       "id": "lincoln-south-curtain-wall-angle"
     },
     {
+      "model": "3d-assets/lincoln/lincoln-bush-south-curtain-stair/model.glb",
+      "model_sha256": "70a0c13d007720890a851778febbfdd113b3edece45c58bd789ed0a7c68661b8",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-south-curtain-stair/asset.json",
+      "descriptor_sha256": "a8db276811de315213ebb30889d3c931881b88be4e57f2c635f7cd48974a5f03",
+      "id": "lincoln-bush-south-curtain-stair"
+    },
+    {
       "model": "3d-assets/lincoln/lincoln-south-curtain-wall-central/model.glb",
-      "model_sha256": "43122b1a731fc0d58f8a9b41a8e61b6b07430c26264e1a9df3facafb8ca1c86b",
+      "model_sha256": "83338d88450a9db3fdb2dfcb9a8cdf285fb1bd97a65ee7829255e31164db3414",
       "descriptor": "3d-assets/lincoln/lincoln-south-curtain-wall-central/asset.json",
-      "descriptor_sha256": "2082c49c5b3eb2cd645f803a68da896c968ad94d5f47e055be7a84fe5f3e87da",
+      "descriptor_sha256": "8360f6ffe370c9d192f636fd70723d550b4533c4e6d78d07417ce0d22d55083f",
       "id": "lincoln-south-curtain-wall-central"
     },
     {
       "model": "3d-assets/lincoln/lincoln-south-wall-cone-turret/model.glb",
-      "model_sha256": "0b4f4048509301c0176e2478f954c69defef63299344df4efd6348725edd739e",
+      "model_sha256": "c92d9f7d5c5b42d6040f9144592ca49bf3b6dae6b3659f0d86e1db8d61b2780e",
       "descriptor": "3d-assets/lincoln/lincoln-south-wall-cone-turret/asset.json",
-      "descriptor_sha256": "f5013b05988fcb8879ae3fdd40fccce890626c3e2a055d701716a7506e80886b",
+      "descriptor_sha256": "9374f280596b4c95302126500e985f3c71b32285c93e68386c2242929d8b1e3d",
       "id": "lincoln-south-wall-cone-turret"
     },
     {
       "model": "3d-assets/lincoln/lincoln-south-wall-stair/model.glb",
-      "model_sha256": "d6bdb00e55582a8a2fbc416d33a24b738769e64955fe2a74a6839c0ab7798ffa",
+      "model_sha256": "02fcdc1e76f43816b4717cb7fc3b38fcc6958364448bc4e8842a8b929ac06abf",
       "descriptor": "3d-assets/lincoln/lincoln-south-wall-stair/asset.json",
-      "descriptor_sha256": "e0b410deb9ba40cf7e51d1d1df9a34c5a806babdf493fda28fbf7beb36ee1c99",
+      "descriptor_sha256": "c28898fb016d383a79f88aa3a6d796820e121cbede794dda7c11f00c579a9bf2",
       "id": "lincoln-south-wall-stair"
     },
     {
       "model": "3d-assets/lincoln/lincoln-south-curtain-wall-west/model.glb",
-      "model_sha256": "5aa1f4699662005e6a16db1f8cd9b45aab3dc79971d882f809585af7e661c714",
+      "model_sha256": "e0b06dab88ce8fc915fb1056bc2074e87db1363ab47aaabd6f94e6b137408757",
       "descriptor": "3d-assets/lincoln/lincoln-south-curtain-wall-west/asset.json",
-      "descriptor_sha256": "5c7af84222d459ed736d14b2aae354bc9dcd13ae5f5057d49318de4064a98590",
+      "descriptor_sha256": "4fd539baf351dd7d0e8fd5282ee3726a53423d29940ed19ab324e2c033f30316",
       "id": "lincoln-south-curtain-wall-west"
     },
     {
       "model": "3d-assets/lincoln/lincoln-south-gate-drawbridge/model.glb",
-      "model_sha256": "7b5b2bd31fd9d8f4ba0523de55391842e3d64ad92d96ee97684f3fc5e4bef613",
+      "model_sha256": "11bfac36ded30f043c0a64b6609f12c62ad853bccc1452d375b1d14f74f8df29",
       "descriptor": "3d-assets/lincoln/lincoln-south-gate-drawbridge/asset.json",
-      "descriptor_sha256": "89b73e4d438543d9dc25c0337024b882af062aee77291cca5cba666bd41a9869",
+      "descriptor_sha256": "c7474c884c37307727acaf5287b86b493e661c90a883aa24efba5d70a107158e",
       "id": "lincoln-south-gate-drawbridge"
     },
     {
       "model": "3d-assets/lincoln/lincoln-south-gatehouse-west-tower/model.glb",
-      "model_sha256": "32136386c3ea67d2d5d812f10ac84b131ba76f13bbc090e2609abd8ba45dc067",
+      "model_sha256": "c926b78377213c4b08641d791c52ea817d97a0380d91322dbce424addfe2d720",
       "descriptor": "3d-assets/lincoln/lincoln-south-gatehouse-west-tower/asset.json",
-      "descriptor_sha256": "f7744f74cad1753af65e016d2bb8168f8e4419ea901d273f3afdb76a6d637087",
+      "descriptor_sha256": "32ee9de514a324e4c1525578682587d96f8313317dc34776e68fc780a6c18e06",
       "id": "lincoln-south-gatehouse-west-tower"
     },
     {
       "model": "3d-assets/lincoln/lincoln-south-gatehouse/model.glb",
-      "model_sha256": "17c0b0020d8f4561fdf4a9bd2fd1cc5ec6e98acc22f69f096f2c3a376945edf0",
+      "model_sha256": "88004f15ca9b5a03fea39671c0fe2fc5a50a3d6dd8b682ee446b86ca67ba4e02",
       "descriptor": "3d-assets/lincoln/lincoln-south-gatehouse/asset.json",
-      "descriptor_sha256": "3abfec11a70c198f89cde09ca55379ddb7513b761c19a0c3977dd3980d7de91e",
+      "descriptor_sha256": "da6478a9e5c3ba3c7ee9e03e713bd469d3312624c0c3744e12bbb0c4cc7fef8d",
       "id": "lincoln-south-gatehouse"
     },
     {
       "model": "3d-assets/lincoln/lincoln-south-bank-plateau/model.glb",
-      "model_sha256": "433e5d1d43aba1c821e61e246f9c1db38c654ffd61d0438ad4fd5cadb27b535e",
+      "model_sha256": "74650ae349c1ea7b033f1167bc6b79a418ebcc0a0bf5109b1a4fd8ee75b10350",
       "descriptor": "3d-assets/lincoln/lincoln-south-bank-plateau/asset.json",
-      "descriptor_sha256": "01e7511c30b33bb8a44b436e02f619b4546ae21cb0c92a832cb02163c704f37c",
+      "descriptor_sha256": "c7302a52b41fb4dd7bede5790d40b20138f5984f4d9dedd1ed66b9a27962c623",
       "id": "lincoln-south-bank-plateau"
     },
     {
       "model": "3d-assets/lincoln/lincoln-south-ravine-cliff-ledge/model.glb",
-      "model_sha256": "7e4e51d682cbd1f2153419e9876db8673e236e6bcf311aabca795de0e544586a",
+      "model_sha256": "027739b61f6299f16b542a54b3acbfb31c348fab0d5721830ae0233501f81260",
       "descriptor": "3d-assets/lincoln/lincoln-south-ravine-cliff-ledge/asset.json",
-      "descriptor_sha256": "05cd7af440b2d543e915bb6ac175702ff40f6e5afd3a7f779b4679e956276638",
+      "descriptor_sha256": "977ded0dc8004c2b007db065ff0a7181a3ee9bf3c4d0e6bf79252ef5035cf33b",
       "id": "lincoln-south-ravine-cliff-ledge"
     },
     {
       "model": "3d-assets/lincoln/lincoln-south-wall-cottage/model.glb",
-      "model_sha256": "3e8097e717e7b0b7fe1b362c923d6d162a12eb4a55e64e1a12cf5abd54e036ce",
+      "model_sha256": "3979bbcbbf65a36ed9704f178d67e123db2080328bd3a9d602fa554e7ce3fdec",
       "descriptor": "3d-assets/lincoln/lincoln-south-wall-cottage/asset.json",
-      "descriptor_sha256": "f678187b7217a386e4f394f3595732d603a2f1a4f061114bd677ba318d570456",
+      "descriptor_sha256": "ac2efea95cd98f0139d05ebb23b61496018d8040124857584e8ba5b55664c4d3",
       "id": "lincoln-south-wall-cottage"
     },
     {
       "model": "3d-assets/lincoln/lincoln-south-wall-lean-to/model.glb",
-      "model_sha256": "a01940165259affc7946d5aca5dc5c23c4533f7cfea329a471126aaa9c08dd37",
+      "model_sha256": "5583f8be617488f8c3e23f9de4006b2a81b6a04a76fdc56e1d88f5ab21682e5e",
       "descriptor": "3d-assets/lincoln/lincoln-south-wall-lean-to/asset.json",
-      "descriptor_sha256": "989fa32023e9f903577cd3cc4bc36a4d24432470837d2d27a6959f9822a86714",
+      "descriptor_sha256": "14c83d73cc6de575c49950117cd8e61b640bf19a2660380e87b24eb50832d497",
       "id": "lincoln-south-wall-lean-to"
     },
     {
       "model": "3d-assets/lincoln/lincoln-south-wall-thatched-store/model.glb",
-      "model_sha256": "df5c917b4fc7fc2cba8f382309dfa69752f21afa3a39e4752c69ce963397ef27",
+      "model_sha256": "3811d3966cfb452b4f206b22d87ee0a57a4d2d27de6c5fd1ded6cd009705771e",
       "descriptor": "3d-assets/lincoln/lincoln-south-wall-thatched-store/asset.json",
-      "descriptor_sha256": "31209c6703f8c3b4473f0955e9181f761f71a84ffc7aa5672f340b3f9a10fd4b",
+      "descriptor_sha256": "3cbe0ace6a4f9eec66331c76fe273cbf5bf152da3591ccc812b3bc4558841561",
       "id": "lincoln-south-wall-thatched-store"
     },
     {
+      "model": "3d-assets/lincoln/lincoln-tree-southwest-autumn-thicket/model.glb",
+      "model_sha256": "0dcd398a912c13f4cd1f8a1a2e21f3079e076a4c2864c27014b247e0a064afc5",
+      "descriptor": "3d-assets/lincoln/lincoln-tree-southwest-autumn-thicket/asset.json",
+      "descriptor_sha256": "b8ee298a02e727ab3118941b692d227e40c65eb58646f7227d7d4d558766d58f",
+      "id": "lincoln-tree-southwest-autumn-thicket"
+    },
+    {
       "model": "3d-assets/lincoln/lincoln-southwest-cliff-lower-ledges/model.glb",
-      "model_sha256": "4828c255bd9f0a0945401bdaba649a4e3daabc0ba41745041f831b92093a707c",
+      "model_sha256": "1d863e92b3c2b05fc9e70d85a7625775a5633a0c2923eacfa26f62c771c88d93",
       "descriptor": "3d-assets/lincoln/lincoln-southwest-cliff-lower-ledges/asset.json",
-      "descriptor_sha256": "1ed4cf3d67eb1bffe5a5f310484df72922f8ca899d3a0bae36480bab83793aeb",
+      "descriptor_sha256": "1714f2d0e354fcf9c92a09b1c60090d4ddff4cfd6217098106717b87065d146e",
       "id": "lincoln-southwest-cliff-lower-ledges"
     },
     {
       "model": "3d-assets/lincoln/lincoln-southwest-cliff-upper-rocks/model.glb",
-      "model_sha256": "436d43d49dd29db0d130a9330198e060a5337c4a5d3df1a76a73826d978ead00",
+      "model_sha256": "347571405672e3a2a226bcf09be10db0bcc9a219ba73379d4cc516cea83d0467",
       "descriptor": "3d-assets/lincoln/lincoln-southwest-cliff-upper-rocks/asset.json",
-      "descriptor_sha256": "ed00f87fa658e60ba273afb1cd075993f6d72a0c98c3ff4f597d72c2346aa1bb",
+      "descriptor_sha256": "97f2a28a9c7160c5d25aee5fcffa37f894f1f6151dc5fe5533b48a255aaaea6e",
       "id": "lincoln-southwest-cliff-upper-rocks"
     },
     {
+      "model": "3d-assets/lincoln/lincoln-bush-southwest-cliff-east/model.glb",
+      "model_sha256": "d086d995e8fd159f4a1d5afb2ef9d5b6211333686ce965959e893373b2e5039e",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-southwest-cliff-east/asset.json",
+      "descriptor_sha256": "a43af50a71e5155e7990570897737b7a5577f24bb94a3ee9dd28cfe50c2713f6",
+      "id": "lincoln-bush-southwest-cliff-east"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-southwest-cliff-ledge/model.glb",
+      "model_sha256": "2f2c22872a5cc3df7834f8407cfd0b348e2f473905343de2270bff951d79a93f",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-southwest-cliff-ledge/asset.json",
+      "descriptor_sha256": "d8589f79a76312feaae16cc4b0344d47696b6cb8c7229ad04dd2a68b30437e60",
+      "id": "lincoln-bush-southwest-cliff-ledge"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-southwest-cliff-lower/model.glb",
+      "model_sha256": "58b9022ca7ae45d0f5dac5d5a5d9e398ab7fdab9389bd4a1e36dcd7adbb96238",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-southwest-cliff-lower/asset.json",
+      "descriptor_sha256": "0530708d0d411ae22b5f97b9be3f387b123ee7618345f38b55bd4f5d981a24bb",
+      "id": "lincoln-bush-southwest-cliff-lower"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-southwest-cliff-upper/model.glb",
+      "model_sha256": "b306c904a36ab8961ab26c650575a8226f3dd74e3bb2ad3f40dc1cfa44c7b62c",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-southwest-cliff-upper/asset.json",
+      "descriptor_sha256": "0225877b9d2606823665ad4b340337955f63669fcd62f2482b6d44bcca325f5e",
+      "id": "lincoln-bush-southwest-cliff-upper"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-southwest-cliff-foot/model.glb",
+      "model_sha256": "52d14cf23e00f227f8bf3c5fb2a65a3ab60e8bd419f93c0cf2df234ee4c5ff77",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-southwest-cliff-foot/asset.json",
+      "descriptor_sha256": "a8ecb6e6bcf885a9057068def375b513d35e73cf13ea5062c23c5cd98632f09a",
+      "id": "lincoln-bush-southwest-cliff-foot"
+    },
+    {
       "model": "3d-assets/lincoln/lincoln-southwest-cliff-road/model.glb",
-      "model_sha256": "beb297ea43310f3a161c5b94b7e1c0e2c1fe385dd73c9b7efbfb867a4c14be6e",
+      "model_sha256": "c5c4c6dbdcab9ce8b3dcac57d1e5779a43e287f2341541675a33c07f78887761",
       "descriptor": "3d-assets/lincoln/lincoln-southwest-cliff-road/asset.json",
-      "descriptor_sha256": "6211c5a85849f15c55cb926333a8f43c7e1591c96eb8ec3bde55b50c1d314827",
+      "descriptor_sha256": "e7837d8b932134c6abfa74c0e0379366b528415385d464b162f4a2a8b097f16b",
       "id": "lincoln-southwest-cliff-road"
     },
     {
+      "model": "3d-assets/lincoln/lincoln-tree-southwest-green/model.glb",
+      "model_sha256": "51c523540efa263ac7773b1e9a924ec95375f6f1a0f625fb0c805c4c18559c9b",
+      "descriptor": "3d-assets/lincoln/lincoln-tree-southwest-green/asset.json",
+      "descriptor_sha256": "3620254a901da1accf493189c98cc61d3224c5cbecb390cb678e620a85e2d054",
+      "id": "lincoln-tree-southwest-green"
+    },
+    {
       "model": "3d-assets/lincoln/lincoln-southwest-ravine-bridge/model.glb",
-      "model_sha256": "05ee1710a327f1eb6d604afb2a0b1734c6d092859302f81222a8380b10b664bf",
+      "model_sha256": "7f0ce8f5bbd8ef53c58a5f49db4f6ec20808bbe086b856cd4589a6b02225088e",
       "descriptor": "3d-assets/lincoln/lincoln-southwest-ravine-bridge/asset.json",
-      "descriptor_sha256": "3134c38dbe87b5fb080d06c578eb7b7c67463d37dd04568738b6e95a0b734eb3",
+      "descriptor_sha256": "027208d13b2cc9896b4ec1fcef2150f996a839628aaa860941d892582f8d57ac",
       "id": "lincoln-southwest-ravine-bridge"
     },
     {
+      "model": "3d-assets/lincoln/lincoln-bush-southwest-road/model.glb",
+      "model_sha256": "ae51c533e49d4ee7b7c98c8a29a2b54fa6d09abf21dc6247e4ef6c555e69961e",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-southwest-road/asset.json",
+      "descriptor_sha256": "8899d1f798c5d96f426f158917d288a5fe8a75b00b7ea079e1c55bfec431d667",
+      "id": "lincoln-bush-southwest-road"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-southwest-road-pair/model.glb",
+      "model_sha256": "7c71c8e88ad6bcb6f5998bf2b84f4f9ed36de6ee2428245b7a3dab45033c64bf",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-southwest-road-pair/asset.json",
+      "descriptor_sha256": "08902e4e462a0fe9d673d437eeb29de1ad8d837bced47647fc47f9f05832ca4a",
+      "id": "lincoln-bush-southwest-road-pair"
+    },
+    {
       "model": "3d-assets/lincoln/lincoln-southwest-road-slope/model.glb",
-      "model_sha256": "7c746e1f4ebdd3cc4a53a35734efef1f24e8cf587b64d3dad67064240946c383",
+      "model_sha256": "72b42d48409943ffbe093bc15958a1025138a8147af180f387ee5a5abafb759f",
       "descriptor": "3d-assets/lincoln/lincoln-southwest-road-slope/asset.json",
-      "descriptor_sha256": "aa76c2802b1ddd49af5ab006594b4a642f3d09b3a1158e2004af4c2876b12857",
+      "descriptor_sha256": "f483415fbd28bdf1730f8192fea723587181cc665be378563c086d33d43b8d1b",
       "id": "lincoln-southwest-road-slope"
     },
     {
+      "model": "3d-assets/lincoln/lincoln-bush-southwest-thicket-edge/model.glb",
+      "model_sha256": "cf7bcbadfa51b353dded87f002f9c074e3e3e8781df92e19743204fe27231d76",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-southwest-thicket-edge/asset.json",
+      "descriptor_sha256": "28450fed8a2b779472e2cc62f87b37781db3479f7c92c8e40f8ba1680d405844",
+      "id": "lincoln-bush-southwest-thicket-edge"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-stump-bridge/model.glb",
+      "model_sha256": "0bc5e8cb0de99eaf059900c182d59118c7592742bba0db7851fa0e1c19342087",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-stump-bridge/asset.json",
+      "descriptor_sha256": "3be3e4a3f09061c68e7a7b0e17522559d05a88b616880e23ef867bea0ce9bd90",
+      "id": "lincoln-bush-stump-bridge"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-stream-bend/model.glb",
+      "model_sha256": "d758b1fda4966a96d72c288c91a14756430bd38f66f34a325f7077cd737f30db",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-stream-bend/asset.json",
+      "descriptor_sha256": "c3cb7c0b6e05fa2683e99e8b27747f21f6a60d6f800b552eee2a194cb7e2269d",
+      "id": "lincoln-bush-stream-bend"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-stream-bend-small/model.glb",
+      "model_sha256": "2c3e4efef1530e94e88d475a0a5adac20babc733366f549416e772a376f5bbdf",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-stream-bend-small/asset.json",
+      "descriptor_sha256": "2ece0c9de783da31a4bc6d1fc39f67d342ad655d0dad4394d4cbea7f054acf61",
+      "id": "lincoln-bush-stream-bend-small"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-stream-central/model.glb",
+      "model_sha256": "f6de7f83274db205603ec1f99b68b9a2bacead54508b1ce70d0058e0be23289f",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-stream-central/asset.json",
+      "descriptor_sha256": "0e0a252c1158f4d543ae0e0c2a205b3abaf92d801286fae24428ba595f68d2a4",
+      "id": "lincoln-bush-stream-central"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-stream-east-bank/model.glb",
+      "model_sha256": "3575f59c78334ae0f8040f2bb2d6f569bc53517bc6e1291f0e5fcc7c8ea1cb47",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-stream-east-bank/asset.json",
+      "descriptor_sha256": "1f11db3652b8adc4ba133c9d2a402fa6c593ab93906ab8e274a91325f44e8e17",
+      "id": "lincoln-bush-stream-east-bank"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-stream-north/model.glb",
+      "model_sha256": "e95980b451e711fbaf5ae11777d4ac68dff1e45a62f47dfa359472deeb4090ff",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-stream-north/asset.json",
+      "descriptor_sha256": "fce468c62f19774da8241f32a7eb300be8f099f5e45ab396243f454872491c4f",
+      "id": "lincoln-bush-stream-north"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-stream-west-bank/model.glb",
+      "model_sha256": "cd82f23fdadbf3a386d9583dc2bdca103d4150a11086db4a9e9299e63866b6da",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-stream-west-bank/asset.json",
+      "descriptor_sha256": "83a172d33b2fedf4366a4c28fd98caa96cf2ec17cd1dd733ed4607d2908bfe60",
+      "id": "lincoln-bush-stream-west-bank"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-stream-west-front/model.glb",
+      "model_sha256": "e2af562f5fa1304791cbfbfc0d16cc157e5e1116017e8975803e59b8f76c532a",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-stream-west-front/asset.json",
+      "descriptor_sha256": "3a6f6d8f1c914cd6f577d14ac096182accb003b66b7e0ec1ca2164ae8982c0b2",
+      "id": "lincoln-bush-stream-west-front"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-stream-west-edge/model.glb",
+      "model_sha256": "3a2e5969c8412223114ce4ada88182407fc74b9b649a55be329acc9358be7e80",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-stream-west-edge/asset.json",
+      "descriptor_sha256": "e434fe7c6341e8ced6cdcac11ceda26d96795381c02d70d62f13d2f0af8e0760",
+      "id": "lincoln-bush-stream-west-edge"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-tree-stream-west/model.glb",
+      "model_sha256": "17db7603e5959840a8229857e886c10b76f1f99db75f126d69da8b85c8c8b7cb",
+      "descriptor": "3d-assets/lincoln/lincoln-tree-stream-west/asset.json",
+      "descriptor_sha256": "ca1663218ea4106b84ec807bed339d5c904827551d361324f580737370ae2cec",
+      "id": "lincoln-tree-stream-west"
+    },
+    {
       "model": "3d-assets/lincoln/lincoln-stream-south-tree-stump/model.glb",
-      "model_sha256": "941d780b0d4986ecdc5761b8935fdf110598c3291eacb6b871266fa60c0339a1",
+      "model_sha256": "6a27d4ce2e9961857c9d17bc9c78183b465cc76b4a0621960b289a88697ff12c",
       "descriptor": "3d-assets/lincoln/lincoln-stream-south-tree-stump/asset.json",
-      "descriptor_sha256": "9d6dbfec87142f465a9e89cf1e91ff707083b1cd57981edb219be27a71fa8005",
+      "descriptor_sha256": "3eb73331c752df7834e3b9f886685b3c4cf656370f94c8d5010b231d1fcc0d22",
       "id": "lincoln-stream-south-tree-stump"
     },
     {
       "model": "3d-assets/lincoln/lincoln-stream-west-rock-outcrop/model.glb",
-      "model_sha256": "f870902b8616adc7ebf5ecf42170512dba3198272e34e1665e46d458e984fe26",
+      "model_sha256": "d890fbcc3d011c95499de58e8bbc78f31d26e44dae685f3adf7becca99e92e19",
       "descriptor": "3d-assets/lincoln/lincoln-stream-west-rock-outcrop/asset.json",
-      "descriptor_sha256": "fe6a623cb980a63a1fecaf24ed5acf607186a92ad732d0b895542059c0f61cf1",
+      "descriptor_sha256": "4aa467c2ba7994e186269cbda4e54be883d7c28f77fe17002e4d6b865fb24e9a",
       "id": "lincoln-stream-west-rock-outcrop"
     },
     {
+      "model": "3d-assets/lincoln/lincoln-tree-behind-great-hall/model.glb",
+      "model_sha256": "4a9dbaf1737c39724f4b991b0976b1f7f5375ba4ba2a9ece7808faf761276962",
+      "descriptor": "3d-assets/lincoln/lincoln-tree-behind-great-hall/asset.json",
+      "descriptor_sha256": "255026f10dd10dbdadb93965257b7f495ed3d07e4fa931badaebd4480e165d2d",
+      "id": "lincoln-tree-behind-great-hall"
+    },
+    {
       "model": "3d-assets/lincoln/lincoln-village-barn-barrels/model.glb",
-      "model_sha256": "ed15d462d3cd531b8c60bcf28e30015e393e55a0725eacd9442ab2329deb94b2",
+      "model_sha256": "1bec2a541d64f159f71dca9d94bd6c64d320f0093d5e4d004308f76cd60a79fb",
       "descriptor": "3d-assets/lincoln/lincoln-village-barn-barrels/asset.json",
-      "descriptor_sha256": "e973159d31d27a997918590f0da949b8bcd080c979a7cd381d31fdc14b5d547c",
+      "descriptor_sha256": "cc3d70946d63500864b4d970ae1e8e0e0289957582f23264191980857e2079c4",
       "id": "lincoln-village-barn-barrels"
     },
     {
       "model": "3d-assets/lincoln/lincoln-village-barn-cart/model.glb",
-      "model_sha256": "6293c187e7bc25b9c331ba770260a9f4d4a0d9bfd4bbae99a171dc8024efa1c5",
+      "model_sha256": "a72ed24bb06803202712fc26eb6693732c6260d196b640a4b4b8f7bb5623f81d",
       "descriptor": "3d-assets/lincoln/lincoln-village-barn-cart/asset.json",
-      "descriptor_sha256": "2ea3dcf6a6384eb5eac04653129bf162095f91f2227a4ff09533cbc124596890",
+      "descriptor_sha256": "02519c2a6c4749ff523c80b6fdca7cc08c9940d1ad6f84b5eadfdf8366bba7c4",
       "id": "lincoln-village-barn-cart"
     },
     {
+      "model": "3d-assets/lincoln/lincoln-bush-village-bridge-east/model.glb",
+      "model_sha256": "af3c7ef82874153def3cd9d0c597dbb641035065de828b9e24977a956df29b5e",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-village-bridge-east/asset.json",
+      "descriptor_sha256": "a4c34c827b0a3780836a51662267d039460fce82eaf4bf812392bff5da306d4a",
+      "id": "lincoln-bush-village-bridge-east"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-village-bridge-north/model.glb",
+      "model_sha256": "1aef09b17a44ce52175d78d126439e1c404520621d43a7dc7eebf94d74d88144",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-village-bridge-north/asset.json",
+      "descriptor_sha256": "d7aeb0de9dafb938a42c5b0a2b65601121ccddea9188126818aa686911b9f906",
+      "id": "lincoln-bush-village-bridge-north"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-village-bridge-thicket/model.glb",
+      "model_sha256": "3846a1014849a54f789e723b3d9515a1f473960cf57fe5b3180b06e0befadbd8",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-village-bridge-thicket/asset.json",
+      "descriptor_sha256": "f489fe77eebb2aab6f24f6ddd631e03edceb69d0f6dcb9868c6579929e865d32",
+      "id": "lincoln-bush-village-bridge-thicket"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-village-bridge-stump/model.glb",
+      "model_sha256": "e8b3fa272f83c375870a73bb4a3f470e0802c3c555d96e83e9aebc72222d5ad9",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-village-bridge-stump/asset.json",
+      "descriptor_sha256": "c3edcfc933a67c4debe1b1fbeff792acefaa4ccbe5c3166566c5545375aa8372",
+      "id": "lincoln-bush-village-bridge-stump"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-village-cottage-shrub/model.glb",
+      "model_sha256": "f51ae50fc5099ff9b9c71ccd99e871acf6571e56a6a5c7940b1b4722674f2db6",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-village-cottage-shrub/asset.json",
+      "descriptor_sha256": "9ee01a9404d65807658a56532f0060165345e2bd01c543c387e62c259c77d1e8",
+      "id": "lincoln-bush-village-cottage-shrub"
+    },
+    {
       "model": "3d-assets/lincoln/lincoln-village-ladder-cottage-rear-stone-wall/model.glb",
-      "model_sha256": "ee2b98c5e7a5c641720a961d35a7a80bf32a065061a63560a4c01831a713e7e9",
+      "model_sha256": "1c4ac1b994cc9ad7bcf866c185c7b2a3ed2be8cc6955d65a67f5328e1fbfcddf",
       "descriptor": "3d-assets/lincoln/lincoln-village-ladder-cottage-rear-stone-wall/asset.json",
-      "descriptor_sha256": "7aeff02ccc39ef8782f7c6afe5c141870d4e9bad685eaebe50decdc040ae0b56",
+      "descriptor_sha256": "bd661076797ef41c5a1c42a56949fa3cec0e1bb5ce8e45663f86e9036b9f23e6",
       "id": "lincoln-village-ladder-cottage-rear-stone-wall"
     },
     {
       "model": "3d-assets/lincoln/lincoln-village-field-wattle-fence/model.glb",
-      "model_sha256": "409e028af46b59b8a9eecfc7ac9fe5f55bc8ede1852652770b8bac40854457af",
+      "model_sha256": "ecd55c7c4f4fe8f1d122b51e84c0be69bef84b09ed1f81206b7aa21a420ecdf1",
       "descriptor": "3d-assets/lincoln/lincoln-village-field-wattle-fence/asset.json",
-      "descriptor_sha256": "556bfd28c1e6262964b944ec8d4d35c30b9b13859e87b16f0ee1199ed62450db",
+      "descriptor_sha256": "79a9ade5c9f43cdc23c61fcc7fd985784bd9f44e259aacede29e926c37604380",
       "id": "lincoln-village-field-wattle-fence"
     },
     {
       "model": "3d-assets/lincoln/lincoln-village-longhouse-props/model.glb",
-      "model_sha256": "8a9d74db6021df493857fa84863edc4aab7257a687d6cf8db6c70dd845126147",
+      "model_sha256": "921c4e43de348ac1e3a2ed9999400d81eac77b73e38b6107ac9be42653e3c086",
       "descriptor": "3d-assets/lincoln/lincoln-village-longhouse-props/asset.json",
-      "descriptor_sha256": "44cc069f7349e3223618a78091aace11a5a8954d23b98b465db0bc24c531b0c2",
+      "descriptor_sha256": "fc5a9e8e4acad8f5a15d0468b1689c5494878714e87261665710c20fc6db01d2",
       "id": "lincoln-village-longhouse-props"
     },
     {
       "model": "3d-assets/lincoln/lincoln-village-north-rail-fence/model.glb",
-      "model_sha256": "5bac4342262eeed33fd47bd5f1d01468828966f32173dfbcd3b799627d78852d",
+      "model_sha256": "368491e9b75269aaa9a9b61f75711f8ddfa6955c1f42ba29e8d170176c9ad721",
       "descriptor": "3d-assets/lincoln/lincoln-village-north-rail-fence/asset.json",
-      "descriptor_sha256": "4a87dc43a9e3253659fb60cffe8b96820aa27841a65466ac1ccb23053fca4cba",
+      "descriptor_sha256": "217cd3374f2573ba6f5fa5210fb53c2296dd14d7470f3daf6b3644c6da5c47dc",
       "id": "lincoln-village-north-rail-fence"
     },
     {
+      "model": "3d-assets/lincoln/lincoln-tree-village-northwest/model.glb",
+      "model_sha256": "4003d239b5cc82f1f37fa252af3f21f3b54168e44d8b31f6afdb70bd200f5210",
+      "descriptor": "3d-assets/lincoln/lincoln-tree-village-northwest/asset.json",
+      "descriptor_sha256": "559de6820ffe20a7107de4ba139aedbdc41e922a2f75e6002b07fdf139a2a3fa",
+      "id": "lincoln-tree-village-northwest"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-village-northwest/model.glb",
+      "model_sha256": "251f0907addbf1e1bc503ff5d50a6c56d465b25062c185e389435f32626f1897",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-village-northwest/asset.json",
+      "descriptor_sha256": "c9648429dc48fb8d864c6878b7f4acffde2e98d3b557b6c349fc0b9409054540",
+      "id": "lincoln-bush-village-northwest"
+    },
+    {
       "model": "3d-assets/lincoln/lincoln-village-northwest-cottage/model.glb",
-      "model_sha256": "c324408aa962aafd66dc9f6fdee9f8363c69741511257421de93835303bd5598",
+      "model_sha256": "872f3c614e1165b5c8de7c0718f7e3df411a978890a4207cfb085b54343b2510",
       "descriptor": "3d-assets/lincoln/lincoln-village-northwest-cottage/asset.json",
-      "descriptor_sha256": "82c2036caa0aaab20890fe89d41a48b393c234689bba70f732d3a1aacb3f945c",
+      "descriptor_sha256": "c27d58608c474f05713a4a8666f6b51307e1033e5f24d699fadaed80d96cb6a8",
       "id": "lincoln-village-northwest-cottage"
     },
     {
       "model": "3d-assets/lincoln/lincoln-village-open-barn/model.glb",
-      "model_sha256": "f6ccb21aa22ca9b085a7e0d7f724459c054aa16f424d5b1105e9d99909b37306",
+      "model_sha256": "625c1edb96b74b921a1f638c8a97362639ea796569150576e06b1680954efb26",
       "descriptor": "3d-assets/lincoln/lincoln-village-open-barn/asset.json",
-      "descriptor_sha256": "cf6583a55ac4b4eed950f97ef4f39da047051fa2b53d71ded7f9c85e152a54cf",
+      "descriptor_sha256": "ab618bd469d9c2acdc3204e1137ca32b34738c7284ce23db19f507e0c34bb301",
       "id": "lincoln-village-open-barn"
     },
     {
+      "model": "3d-assets/lincoln/lincoln-village-pond-landing-stage/model.glb",
+      "model_sha256": "27be29909e0a1067877bd82246f4d029903994ffd749ce647aae3d6f85133e69",
+      "descriptor": "3d-assets/lincoln/lincoln-village-pond-landing-stage/asset.json",
+      "descriptor_sha256": "9f30ac002cd11d3619b3489eeaf9e6162d0dd774679431881f7215740d042099",
+      "id": "lincoln-village-pond-landing-stage"
+    },
+    {
       "model": "3d-assets/lincoln/lincoln-village-stone-footbridge/model.glb",
-      "model_sha256": "471b4befa0ec9a2aebfcbd486dc01b8eb85f0d3475b346509c1ab3ffe2570891",
+      "model_sha256": "539bc5cc3a7232ae62fa8499ee31a3f965b19d12bf45d7337a3fbcba38472650",
       "descriptor": "3d-assets/lincoln/lincoln-village-stone-footbridge/asset.json",
-      "descriptor_sha256": "e25f6153dbdaa17ee1f7efeea79a36abbe4b152b4475b660f9c2031cbbfbe02c",
+      "descriptor_sha256": "5a5acbed7a87f78e2a0fd72b42697c56b0202bf63f148ee43c871c481ca73dfb",
       "id": "lincoln-village-stone-footbridge"
     },
     {
       "model": "3d-assets/lincoln/lincoln-village-stream-boat/model.glb",
-      "model_sha256": "50dff639531b3e0572481e692b5971ff780f8a75791ac66f36ed9502366649c9",
+      "model_sha256": "20f87cd8295b8b0e8cf5e8ac5f267ce04777b5fdd5a685a67b14041c26d3efa0",
       "descriptor": "3d-assets/lincoln/lincoln-village-stream-boat/asset.json",
-      "descriptor_sha256": "7f8a98aec04de49c71c67f324e9b218cf08c519ba92671726d4518dfc281b0b3",
+      "descriptor_sha256": "c4ba2ef5570a64eba0a65eaeab5f6c06898733c96441feeb01376509a071680b",
       "id": "lincoln-village-stream-boat"
     },
     {
       "model": "3d-assets/lincoln/lincoln-village-ladder-cottage/model.glb",
-      "model_sha256": "71d5b83b33afe7b0d913770bf76af605c8aea5fc4aa55c79e0ab4dd9a638ed0e",
+      "model_sha256": "2cb30226bf8b9175ff7d6b2d567780969d09d7d4161bd406515a616be42269f6",
       "descriptor": "3d-assets/lincoln/lincoln-village-ladder-cottage/asset.json",
-      "descriptor_sha256": "1901644ff21905293c387569dd7dc8f1687f34c18bc9189062f446789ad89aa1",
+      "descriptor_sha256": "836d4a5bbfcc0f298f45eb6d6cb64deb51b56b24b9d1f1fbbc13bdecaac64d19",
       "id": "lincoln-village-ladder-cottage"
     },
     {
       "model": "3d-assets/lincoln/lincoln-village-longhouse/model.glb",
-      "model_sha256": "845db9ad185d78fc78dc41d09f3151b3b6b07b3e5cc4bd6319c1387f95e344bc",
+      "model_sha256": "f5ae6f1ebaed764c819e91181153a8940c1968f665fe09a82ebedd752549c6f6",
       "descriptor": "3d-assets/lincoln/lincoln-village-longhouse/asset.json",
-      "descriptor_sha256": "e1066eca39aa2b09a5e3384870e72abbb7e3d16b5b9e3ee77b685e8ddb625077",
+      "descriptor_sha256": "dcea65796a4e910647783aece007a0a74f838924bb72151783d798798d1ae940",
       "id": "lincoln-village-longhouse"
     },
     {
       "model": "3d-assets/lincoln/lincoln-village-west-cottage/model.glb",
-      "model_sha256": "5b77cfa1cf89b205536911203ce6b824db1af69d7d8277729a78c0d8c11d5ffc",
+      "model_sha256": "cf18192f28fbc68cf7da01a02e2074c5b0c2d1f465af2bd8426e0b06a9344fd4",
       "descriptor": "3d-assets/lincoln/lincoln-village-west-cottage/asset.json",
-      "descriptor_sha256": "e51f0283c0f59755cd4fa69535c170cd9ac859f5a01878b8038039d4db4523f2",
+      "descriptor_sha256": "3638e6c0f1cf28269059aad45053dbbd1457e28374582642b0448cde85d283d9",
       "id": "lincoln-village-west-cottage"
     },
     {
       "model": "3d-assets/lincoln/lincoln-village-west-yard-props/model.glb",
-      "model_sha256": "b35de8f6b4663a3a556124fb7f30961aefd08c85599bc5f9ca47a2c7c3eeccef",
+      "model_sha256": "ffa5ac37e5dc8ba84cf3c5a64178e8b1bcdc91b94ebf98d67b7dd51c79e06ff9",
       "descriptor": "3d-assets/lincoln/lincoln-village-west-yard-props/asset.json",
-      "descriptor_sha256": "5e032e9a5559ffd7e7ab635041407f223006e00982f2d91a8b16da9fbe37cdd7",
+      "descriptor_sha256": "acdd1f7d57d61099ac53db0ef540f7d56bd82779d3117e374351ef8be3b7cf01",
       "id": "lincoln-village-west-yard-props"
     },
     {
       "model": "3d-assets/lincoln/lincoln-south-wall-walk-step/model.glb",
-      "model_sha256": "db858ff22d7d745594be7263a21ceab90bbad99a9006e37260b574765386f021",
+      "model_sha256": "fc2c3bbd4a94ccbe44e2274cb37f347649bda16e4c0baa933954ef3ab5f0293c",
       "descriptor": "3d-assets/lincoln/lincoln-south-wall-walk-step/asset.json",
-      "descriptor_sha256": "7ac755b1b9671e995a1c6ffd5147f89d21060e3eacae79398f4f638610c9a173",
+      "descriptor_sha256": "73562b1ac7ebda64a16850ab48b22cac7bd10f0dc64f7bbff5dde4480da2de34",
       "id": "lincoln-south-wall-walk-step"
     },
     {
+      "model": "3d-assets/lincoln/lincoln-bush-west-hillside/model.glb",
+      "model_sha256": "4b2dcb1d0a51be180fee9fde57f91c328921ea176b575b5156af924230e17fc9",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-west-hillside/asset.json",
+      "descriptor_sha256": "9dcfdfec7f85ab91eb5513fb2adf05ad6876cd514f377e643b74b0827029a033",
+      "id": "lincoln-bush-west-hillside"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-west-hillside-rock/model.glb",
+      "model_sha256": "4a23887c038dd1b7e40c7297ce8eb9825f541b3b48fe717524f0f9da4a457744",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-west-hillside-rock/asset.json",
+      "descriptor_sha256": "2ac508edf691e690cb2c88d69f9c6270be0aa495767fb0fe140700812e5cf27e",
+      "id": "lincoln-bush-west-hillside-rock"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-tree-west-hillside/model.glb",
+      "model_sha256": "722738283b2e91dac1e9e84646981df6965155129f61dfea7413d2e68ecb3f2d",
+      "descriptor": "3d-assets/lincoln/lincoln-tree-west-hillside/asset.json",
+      "descriptor_sha256": "9ffb4bd880935c48174b8bb9baa90fefbc3140629ba9410a14ce034b0815d6ee",
+      "id": "lincoln-tree-west-hillside"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-west-edge-hillside/model.glb",
+      "model_sha256": "d56043b26aeabcf70199aa3144aa7f15febbb36a66dd2e4d7a1f103eef11fc3a",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-west-edge-hillside/asset.json",
+      "descriptor_sha256": "216633d003296d642bef1b0a65bec2a81e5dec2cf0739c3bed2cca1c96c249a3",
+      "id": "lincoln-bush-west-edge-hillside"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-west-edge-north/model.glb",
+      "model_sha256": "0e9028a41883d204a1add1642867cd9161e7d6fc911f3ecd83098feb86dbfe96",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-west-edge-north/asset.json",
+      "descriptor_sha256": "518594920f011aa2f817dcca9c789b174d24f63ce122a4d0089a3fb0f3365481",
+      "id": "lincoln-bush-west-edge-north"
+    },
+    {
       "model": "3d-assets/lincoln/lincoln-west-edge-rocks-north/model.glb",
-      "model_sha256": "f3f3db72196cb6ab89f36a4c963347454dd795bf4a5efda3e61283095658e791",
+      "model_sha256": "511000e9deb5da88de1592d8c133eca65fe4defbac9814046b86574f424bf2a9",
       "descriptor": "3d-assets/lincoln/lincoln-west-edge-rocks-north/asset.json",
-      "descriptor_sha256": "8e716c6c9697ea15e58fb082004ea5743a7cafcfeadf8e55dc11b64b7428b2a5",
+      "descriptor_sha256": "0b6007fb3be91b91a89e1070105b86ed9e45279fddb19bea88453cb836a1a122",
       "id": "lincoln-west-edge-rocks-north"
     },
     {
+      "model": "3d-assets/lincoln/lincoln-bush-west-edge-south/model.glb",
+      "model_sha256": "318db1dc9a5a2c9405bc49efc18e38d18ddd43b76d59a83acdd8d98eb10746e4",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-west-edge-south/asset.json",
+      "descriptor_sha256": "7a334e1beecd5b1f302968edf3957b2bd6191ba110646e8555c658e53abea50d",
+      "id": "lincoln-bush-west-edge-south"
+    },
+    {
       "model": "3d-assets/lincoln/lincoln-west-edge-rocks-south/model.glb",
-      "model_sha256": "d69cdc9c12c3654b83359c3db084ea73794c683bdfef7b0f7b9404508c7de0aa",
+      "model_sha256": "d351e9d117f244a7c1023b852eb9c02c36a3941e845ccd654dc91a5d4330715a",
       "descriptor": "3d-assets/lincoln/lincoln-west-edge-rocks-south/asset.json",
-      "descriptor_sha256": "87fd624a215d7d987395ffb6761727324a717017250b044510bc815e61b02b15",
+      "descriptor_sha256": "4a9dc848700a2d7ad92ed70f860555e786c74701c551d586565a2cc20c1e3d5e",
       "id": "lincoln-west-edge-rocks-south"
     },
     {
+      "model": "3d-assets/lincoln/lincoln-tree-west-outer-bailey/model.glb",
+      "model_sha256": "c5698be3428987e71bf90efe99c00d82eab4ee28fdd7366d908b1e7cbfc4c1fa",
+      "descriptor": "3d-assets/lincoln/lincoln-tree-west-outer-bailey/asset.json",
+      "descriptor_sha256": "ea4adf12874be45051931beaad61b4735ce4d3ca602add1c752f95baecd59fe0",
+      "id": "lincoln-tree-west-outer-bailey"
+    },
+    {
       "model": "3d-assets/lincoln/lincoln-west-round-tower/model.glb",
-      "model_sha256": "bb22f85f6db4b6a4cf7d8a039ba791bec19191bc8cdd8215fbf5d95b234682ea",
+      "model_sha256": "307d0cefbda3e185cc5677a64a370eaec1f43dff2d3b3c18c6b93c541b01ac1c",
       "descriptor": "3d-assets/lincoln/lincoln-west-round-tower/asset.json",
-      "descriptor_sha256": "cc8960cde4534541d3f987409ccb34ae7b78c191f01b3d5ee7264e295876e557",
+      "descriptor_sha256": "c0a16f7531da75c3359af89442c9c01adf21ea651f8d22268b4e89740bdf71d0",
       "id": "lincoln-west-round-tower"
     },
     {
       "model": "3d-assets/lincoln/lincoln-west-slate-tower/model.glb",
-      "model_sha256": "7608aae532f6bb101f283e64d47f4171dc108a0c416b99a02c7aff6c60c43d5c",
+      "model_sha256": "42f65e2257d7af4c7e46cad3b0a8856c89e7ad24a71d3113019ae714f8308276",
       "descriptor": "3d-assets/lincoln/lincoln-west-slate-tower/asset.json",
-      "descriptor_sha256": "5248173dab8fcba553da2da70859b93d4f80d8276b80f30b5ae6050a83142fa1",
+      "descriptor_sha256": "93bf872eb4498aba2637a761209b2883a0371f31f0d5429613690b449a067022",
       "id": "lincoln-west-slate-tower"
     },
     {
+      "model": "3d-assets/lincoln/lincoln-bush-stream-west-fern/model.glb",
+      "model_sha256": "3bb7f06497555a9a936fb6eb022757b1019894e28106674e0e17a48029c14123",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-stream-west-fern/asset.json",
+      "descriptor_sha256": "82adbc7c7149991ecc9cf74d50964a13f4c957ec06f93bcad0ff7d71f5184a96",
+      "id": "lincoln-bush-stream-west-fern"
+    },
+    {
       "model": "3d-assets/lincoln/lincoln-west-tower-hall/model.glb",
-      "model_sha256": "9992ac1df07bf35c1774bb40d6cdbd27777035aba8bd2738308e3d7455a67966",
+      "model_sha256": "f532f976148a2b3e3f2094210c99d5eab9b9635fe7caf312145923310df596d3",
       "descriptor": "3d-assets/lincoln/lincoln-west-tower-hall/asset.json",
-      "descriptor_sha256": "a8229157b297b054d9c9a80d339da8fa935dfaa559a53089a9509a81d7e45b05",
+      "descriptor_sha256": "b4f7748b75748dc7359e4d103a423a682100b572c048f8116f0a73bf477aeb22",
       "id": "lincoln-west-tower-hall"
     },
     {
       "model": "3d-assets/lincoln/lincoln-west-tower-terrace/model.glb",
-      "model_sha256": "cc41967fd655643cfbfa4bb624debe44a19af92e64f9a72b27be845fd5728fb1",
+      "model_sha256": "b6b73f48af129f79445d77dfdd656a3bc025d675a5226c9f679d7472595f8bd2",
       "descriptor": "3d-assets/lincoln/lincoln-west-tower-terrace/asset.json",
-      "descriptor_sha256": "eddb36d507282ec3d0cb61db9e1bddf67b7139e4ec80b59f51f1eb503ca59f64",
+      "descriptor_sha256": "250275f65af5259af9d65f97fc42a466a73a9d4be1a4ca8b942a5c5b660eb603",
       "id": "lincoln-west-tower-terrace"
     },
     {
       "model": "3d-assets/lincoln/lincoln-west-tower-hillside/model.glb",
-      "model_sha256": "0239ee693baca59f3c31d48ac221b143aecd63ad9dd4804f39f54ee272329a94",
+      "model_sha256": "935c106499be050049daea531c63dcb9ce8486f3448fef395c520caaf934d611",
       "descriptor": "3d-assets/lincoln/lincoln-west-tower-hillside/asset.json",
-      "descriptor_sha256": "d0054d9ff710db54e4b98d35449bff17033d41aa402125369d07101ef8022ec7",
+      "descriptor_sha256": "19df642f975e1817263eb164d1f58eaead2499727e26b12ee57ee1eb59c5b964",
       "id": "lincoln-west-tower-hillside"
     },
     {
+      "model": "3d-assets/lincoln/lincoln-bush-west-tower-north/model.glb",
+      "model_sha256": "531bdb2340cfb0fa4e8430579a7a04702f2fb932d9f8b012eb46102abdc18b6e",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-west-tower-north/asset.json",
+      "descriptor_sha256": "b94c19ce96b914d8f4349b60d967f0923c67575302b6e67ec12807b4fc13f13f",
+      "id": "lincoln-bush-west-tower-north"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-bush-west-tower-northwest/model.glb",
+      "model_sha256": "1dd87e25a9297d0e7ac65f2ff4c06176b83ff485e38d364af5309403c96bec97",
+      "descriptor": "3d-assets/lincoln/lincoln-bush-west-tower-northwest/asset.json",
+      "descriptor_sha256": "86e052461e5238bbf9e460995b1b6af49dabc9eba6556cf84beeb64eb4993844",
+      "id": "lincoln-bush-west-tower-northwest"
+    },
+    {
       "model": "3d-assets/lincoln/lincoln-west-upper-curtain-wall/model.glb",
-      "model_sha256": "4e8c69de92410f5a9e423e7cb1f8e840ecaefbf4652d2389062d2f292c10f5ef",
+      "model_sha256": "301894157510caf67d121e87d8ba03540dcc2572f39d80abe01f95cf0d5c5fff",
       "descriptor": "3d-assets/lincoln/lincoln-west-upper-curtain-wall/asset.json",
-      "descriptor_sha256": "21cf8d2c20fef1e5346834b143b17c3df4ddb03d431d1d00f5693c6492663157",
+      "descriptor_sha256": "d50329b0a375ff404974319a61cf083584916d5f01f5778240a9ad40fd97083c",
       "id": "lincoln-west-upper-curtain-wall"
     },
     {
@@ -850,9 +1473,9 @@
       "id": "lincoln-archery-target-east",
       "name": "Archery target (east)",
       "transform": {
-        "dx": 2381,
-        "dy": 1180.499984963647,
-        "dz": 219.9999955153179,
+        "dx": 2383,
+        "dy": 1178.6995767013996,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -863,9 +1486,9 @@
       "id": "lincoln-archery-target-east-middle",
       "name": "Archery target (east-middle)",
       "transform": {
-        "dx": 2306.5,
-        "dy": 1162.499963307153,
-        "dz": 219.9999955153179,
+        "dx": 2309,
+        "dy": 1160.345130738166,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -876,9 +1499,9 @@
       "id": "lincoln-archery-target-west",
       "name": "Archery target (west)",
       "transform": {
-        "dx": 2116,
-        "dy": 1154.0000114276875,
-        "dz": 219.9999955153179,
+        "dx": 2117,
+        "dy": 1154.0357899383046,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -889,9 +1512,9 @@
       "id": "lincoln-archery-target-west-middle",
       "name": "Archery target (west-middle)",
       "transform": {
-        "dx": 2210,
-        "dy": 1153.24999302117,
-        "dz": 219.9999955153179,
+        "dx": 2212,
+        "dy": 1152.8886370656028,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -902,9 +1525,9 @@
       "id": "lincoln-garden-fountain",
       "name": "Castle garden fountain",
       "transform": {
-        "dx": 916.22509765625,
-        "dy": 1555.787574442057,
-        "dz": 389.9999931861788,
+        "dx": 916,
+        "dy": 1555.539295384037,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -915,9 +1538,9 @@
       "id": "lincoln-garden",
       "name": "Castle garden ground and bench",
       "transform": {
-        "dx": 979.7153930664062,
-        "dy": 1542.1161224203402,
-        "dz": 379.999953619629,
+        "dx": 928,
+        "dy": 1529.1547793118887,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -928,9 +1551,9 @@
       "id": "lincoln-garden-north-wall",
       "name": "Castle garden northern boundary wall",
       "transform": {
-        "dx": 921.9010009765625,
-        "dy": 1475.67437795454,
-        "dz": 219.9999705167814,
+        "dx": 933,
+        "dy": 1474.6650178585394,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -941,9 +1564,9 @@
       "id": "lincoln-castle-hill-east-slope",
       "name": "Castle hill eastern slope",
       "transform": {
-        "dx": 2663.353515625,
-        "dy": 1442.0005679815574,
-        "dz": -0.00012049830244285266,
+        "dx": 2715,
+        "dy": 1399.5265046965524,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -954,9 +1577,9 @@
       "id": "lincoln-castle-hill-inner-bailey-plateau",
       "name": "Castle hill inner bailey plateau",
       "transform": {
-        "dx": 1641.7138671875,
-        "dy": 1783.5423703658219,
-        "dz": -0.00014713234233958763,
+        "dx": 1620,
+        "dy": 1792.99994003337,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -967,9 +1590,9 @@
       "id": "lincoln-castle-hill-keep-plateau",
       "name": "Castle hill keep and great hall plateau",
       "transform": {
-        "dx": 1259.468017578125,
-        "dy": 1199.1428995447718,
-        "dz": 0.00015689244876705404,
+        "dx": 1213,
+        "dy": 1212.5405864461113,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -980,9 +1603,9 @@
       "id": "lincoln-castle-hill-north-bailey-plateau",
       "name": "Castle hill northern bailey plateau",
       "transform": {
-        "dx": 2271.00048828125,
-        "dy": 1065.5282266868028,
-        "dz": 0.0001293409325224265,
+        "dx": 2449,
+        "dy": 960.1669544516511,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -993,9 +1616,9 @@
       "id": "lincoln-castle-hill-west-plateau",
       "name": "Castle hill western tower plateau",
       "transform": {
-        "dx": 665.1474609375,
-        "dy": 1578.2919075369466,
-        "dz": -0.0000881498467958899,
+        "dx": 598,
+        "dy": 1647.8851016365552,
+        "dz": 0,
         "rot_deg": 0
       },
       "patches": {
@@ -1011,9 +1634,9 @@
       "id": "lincoln-castle-inner-rock-spur",
       "name": "Castle inner rock spur",
       "transform": {
-        "dx": 1324.98681640625,
-        "dy": 1467.1371071980511,
-        "dz": 219.9425738769594,
+        "dx": 1419,
+        "dy": 1494.166616694475,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1024,9 +1647,9 @@
       "id": "lincoln-courtyard-shed",
       "name": "Courtyard timber shed with ladder and barrel",
       "transform": {
-        "dx": 1861.5,
-        "dy": 1491.2500029209593,
-        "dz": 217.49996687477807,
+        "dx": 1855,
+        "dy": 1511.9474862213574,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1037,9 +1660,9 @@
       "id": "lincoln-east-corner-turret",
       "name": "Eastern curtain corner turret",
       "transform": {
-        "dx": 2886,
-        "dy": 1176.0000145578508,
-        "dz": 219.9999955153179,
+        "dx": 2900,
+        "dy": 1165.5073186653256,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1050,9 +1673,9 @@
       "id": "lincoln-east-curtain-wall-middle",
       "name": "Eastern curtain wall middle run",
       "transform": {
-        "dx": 2747.39208984375,
-        "dy": 1230.7030467418065,
-        "dz": 219.9999705167814,
+        "dx": 2786,
+        "dy": 1209.099127828005,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1063,9 +1686,9 @@
       "id": "lincoln-east-curtain-wall-south",
       "name": "Eastern curtain wall south run",
       "transform": {
-        "dx": 2502.95458984375,
-        "dy": 1392.2265682641842,
-        "dz": 219.9999705167814,
+        "dx": 2515,
+        "dy": 1401.8208104419566,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1076,9 +1699,9 @@
       "id": "lincoln-east-gate-arch",
       "name": "Eastern gate arch and wall walk",
       "transform": {
-        "dx": 2431.03515625,
-        "dy": 1554.8993431589088,
-        "dz": 219.9999955153179,
+        "dx": 2433,
+        "dy": 1554.965718947686,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1090,8 +1713,8 @@
       "name": "Eastern gate northern round tower",
       "transform": {
         "dx": 2365,
-        "dy": 1481.5118065008608,
-        "dz": 219.9999705167814,
+        "dy": 1484.9893937128581,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1102,9 +1725,9 @@
       "id": "lincoln-east-gate-south-tower",
       "name": "Eastern gate southern round tower",
       "transform": {
-        "dx": 2501,
-        "dy": 1629.0093116614726,
-        "dz": 194.9999715945529,
+        "dx": 2502,
+        "dy": 1634.6928436004812,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1115,9 +1738,9 @@
       "id": "lincoln-east-curtain-wall-lower",
       "name": "Eastern lower curtain wall",
       "transform": {
-        "dx": 2413.699951171875,
-        "dy": 1734.5500365829485,
-        "dz": 167.9999772582827,
+        "dx": 2411,
+        "dy": 1746.5402486889352,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1128,9 +1751,9 @@
       "id": "lincoln-east-slate-tower",
       "name": "Eastern slate-roof square tower",
       "transform": {
-        "dx": 2569.50390625,
-        "dy": 1294.062938128697,
-        "dz": 204.99999866183447,
+        "dx": 2584,
+        "dy": 1302.5920869532256,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1141,9 +1764,9 @@
       "id": "lincoln-hall-northwest-rocks",
       "name": "Great hall northwestern hillside rocks",
       "transform": {
-        "dx": 944.8123168945312,
-        "dy": 881.928873997083,
-        "dz": -0.000013033032362459145,
+        "dx": 966,
+        "dy": 880.4398297988557,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1154,9 +1777,9 @@
       "id": "lincoln-great-hall-slate-spire",
       "name": "Great hall slate spire",
       "transform": {
-        "dx": 1115.0716552734375,
-        "dy": 1389.48849696048,
-        "dz": 359.99999947921197,
+        "dx": 1112,
+        "dy": 1390.3492817149356,
+        "dz": 0,
         "rot_deg": 0
       },
       "patches": {
@@ -1172,9 +1795,9 @@
       "id": "lincoln-hall-south-terrace",
       "name": "Great hall southern terrace and corner turret",
       "transform": {
-        "dx": 1300.6787109375,
-        "dy": 1542.0207597364642,
-        "dz": 399.9999827556556,
+        "dx": 1262,
+        "dy": 1554.392142511335,
+        "dz": 0,
         "rot_deg": 0
       },
       "patches": {
@@ -1190,9 +1813,9 @@
       "id": "lincoln-hall-approach-ramp",
       "name": "Great hall stepped approach ramp",
       "transform": {
-        "dx": 1295.9332275390625,
-        "dy": 1571.4784468223233,
-        "dz": 213.99997177538802,
+        "dx": 1299,
+        "dy": 1615.1912447645457,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1203,9 +1826,9 @@
       "id": "lincoln-great-hall",
       "name": "Great hall with revealed interiors",
       "transform": {
-        "dx": 1342.0968017578125,
-        "dy": 1386.110473431648,
-        "dz": 359.99992448360246,
+        "dx": 1347,
+        "dy": 1393.2171638966909,
+        "dz": 0,
         "rot_deg": 0
       },
       "patches": {
@@ -1222,9 +1845,9 @@
       "id": "lincoln-keep",
       "name": "Great keep with round towers and spire turret",
       "transform": {
-        "dx": 1659,
-        "dy": 1161.6421192522002,
-        "dz": 219.99994551824489,
+        "dx": 1651,
+        "dy": 1160.345130738166,
+        "dz": 0,
         "rot_deg": 0
       },
       "patches": {
@@ -1240,9 +1863,9 @@
       "id": "lincoln-south-angle-bastion",
       "name": "Half-round angle bastion (corner piece)",
       "transform": {
-        "dx": 1812,
-        "dy": 1999.5000601176155,
-        "dz": 191.03499121684874,
+        "dx": 1809,
+        "dy": 2005.223221483257,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1253,9 +1876,9 @@
       "id": "lincoln-hall-keep-north-wall",
       "name": "Hall-to-keep northern wall walk",
       "transform": {
-        "dx": 1360.259033203125,
-        "dy": 1218.395519156139,
-        "dz": 419.9999618946092,
+        "dx": 1379,
+        "dy": 1219.9970801186748,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1266,9 +1889,9 @@
       "id": "lincoln-bailey-hay-cart",
       "name": "Inner bailey hay cart",
       "transform": {
-        "dx": 1862.348876953125,
-        "dy": 1600.9999890973857,
-        "dz": 219.9999955153179,
+        "dx": 1873,
+        "dy": 1600.8518338557694,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1279,9 +1902,9 @@
       "id": "lincoln-bailey-shingle-cottage",
       "name": "Inner bailey shingle-roof cottage",
       "transform": {
-        "dx": 1641.295166015625,
-        "dy": 1654.4484628601328,
-        "dz": 219.9999705167814,
+        "dx": 1621,
+        "dy": 1653.0472895637147,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1292,9 +1915,9 @@
       "id": "lincoln-bailey-thatched-cottage",
       "name": "Inner bailey thatched cottage",
       "transform": {
-        "dx": 1415.918212890625,
-        "dy": 1699.949626199972,
-        "dz": 219.9999955153179,
+        "dx": 1427,
+        "dy": 1698.9334044717984,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1305,9 +1928,9 @@
       "id": "lincoln-bailey-trough",
       "name": "Inner bailey water trough",
       "transform": {
-        "dx": 1824.5,
-        "dy": 1654.7500946091318,
-        "dz": 219.9999955153179,
+        "dx": 1825,
+        "dy": 1654.768018872768,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1318,9 +1941,9 @@
       "id": "lincoln-bailey-well",
       "name": "Inner bailey well",
       "transform": {
-        "dx": 1740,
-        "dy": 1821.9999982632733,
-        "dz": 219.9999955153179,
+        "dx": 1741,
+        "dy": 1824.5466440326775,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1331,9 +1954,9 @@
       "id": "lincoln-inner-gatehouse",
       "name": "Inner gatehouse with twin round towers",
       "transform": {
-        "dx": 2141.1083984375,
-        "dy": 1453.9335064638951,
-        "dz": 219.9999705167814,
+        "dx": 2134,
+        "dy": 1467.7821006223269,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1344,9 +1967,9 @@
       "id": "lincoln-inner-west-gate",
       "name": "Inner western gatehouse with cone turret",
       "transform": {
-        "dx": 1085.5,
-        "dy": 1675.2491507097473,
-        "dz": 219.9999955153179,
+        "dx": 1070,
+        "dy": 1674.2696177087034,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1357,9 +1980,9 @@
       "id": "lincoln-keep-annex-cone-turret",
       "name": "Keep annex eastern cone turret",
       "transform": {
-        "dx": 1945,
-        "dy": 1452.0000665574744,
-        "dz": 351.99999282450864,
+        "dx": 1946,
+        "dy": 1454.5898425862529,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1370,9 +1993,9 @@
       "id": "lincoln-keep-annex-round-turret",
       "name": "Keep annex southwestern round turret",
       "transform": {
-        "dx": 1718.98828125,
-        "dy": 1489.0016281011224,
-        "dz": 219.9999705167814,
+        "dx": 1712,
+        "dy": 1506.785298294198,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1383,9 +2006,9 @@
       "id": "lincoln-keep-annex",
       "name": "Keep southern annex and raised terrace",
       "transform": {
-        "dx": 1777.361328125,
-        "dy": 1364.7615551747303,
-        "dz": 219.99994551824489,
+        "dx": 1792,
+        "dy": 1443.1183138592319,
+        "dz": 0,
         "rot_deg": 0
       },
       "patches": {
@@ -1401,9 +2024,9 @@
       "id": "lincoln-north-hall-stair",
       "name": "North hall external stair",
       "transform": {
-        "dx": 2076.3212890625,
-        "dy": 886.0539052162751,
-        "dz": 219.9999705167814,
+        "dx": 2076,
+        "dy": 886.1755941623661,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1414,9 +2037,9 @@
       "id": "lincoln-northeast-curtain-wall",
       "name": "Northeastern curtain wall",
       "transform": {
-        "dx": 2841.949951171875,
-        "dy": 1039.2749918424572,
-        "dz": 219.9999705167814,
+        "dx": 2859,
+        "dy": 1004.3323400506816,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1427,9 +2050,9 @@
       "id": "lincoln-northeast-square-tower",
       "name": "Northeastern square tower with cone turret",
       "transform": {
-        "dx": 2702.35009765625,
-        "dy": 864.3999944109265,
-        "dz": 219.9999705167814,
+        "dx": 2716,
+        "dy": 863.8061131446754,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1440,9 +2063,9 @@
       "id": "lincoln-northeast-tower-stair",
       "name": "Northeastern tower wooden stair",
       "transform": {
-        "dx": 2683.7529296875,
-        "dy": 952.2644546878331,
-        "dz": 219.9999955153179,
+        "dx": 2691,
+        "dy": 954.4311900881406,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1453,9 +2076,9 @@
       "id": "lincoln-northeast-yard-props",
       "name": "Northeastern yard barrel and log",
       "transform": {
-        "dx": 2746.912109375,
-        "dy": 1014.3513032566407,
-        "dz": 219.9999955153179,
+        "dx": 2744,
+        "dy": 1011.2152572868941,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1466,9 +2089,9 @@
       "id": "lincoln-northeast-yard-hutches",
       "name": "Northeastern yard hutches",
       "transform": {
-        "dx": 2582.5,
-        "dy": 914.499991673179,
-        "dz": 219.9999955153179,
+        "dx": 2582,
+        "dy": 924.0316389615352,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1479,9 +2102,9 @@
       "id": "lincoln-north-curtain-wall-east",
       "name": "Northern curtain wall east run",
       "transform": {
-        "dx": 2435.914306640625,
-        "dy": 778.1921982039055,
-        "dz": 219.9999955153179,
+        "dx": 2442,
+        "dy": 771.460306892157,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1492,9 +2115,9 @@
       "id": "lincoln-north-curtain-wall-west",
       "name": "Northern curtain wall west run",
       "transform": {
-        "dx": 1999.77197265625,
-        "dy": 843.5031036775785,
-        "dz": 219.99994551824489,
+        "dx": 2071,
+        "dy": 802.4334344551135,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1505,9 +2128,9 @@
       "id": "lincoln-north-outer-plateau",
       "name": "Northern outer plateau beyond the curtain wall",
       "transform": {
-        "dx": 2415.4873046875,
-        "dy": 449.0083704051121,
-        "dz": 0.00004260922668123881,
+        "dx": 2273,
+        "dy": 476.64201860771925,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1518,9 +2141,9 @@
       "id": "lincoln-north-rock-ridge",
       "name": "Northern rock ridge",
       "transform": {
-        "dx": 2079.593994140625,
-        "dy": 232.69968716266555,
-        "dz": -0.14401938848082932,
+        "dx": 2080,
+        "dy": 232.8720331585247,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1531,9 +2154,9 @@
       "id": "lincoln-north-hall",
       "name": "Northern tiled-roof hall against the curtain wall",
       "transform": {
-        "dx": 1895.6292724609375,
-        "dy": 952.4946694489075,
-        "dz": 219.9999705167814,
+        "dx": 1906,
+        "dy": 962.4612601970553,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1544,9 +2167,9 @@
       "id": "lincoln-southeast-corner-turret",
       "name": "Southeastern corner turret",
       "transform": {
-        "dx": 2358,
-        "dy": 1829.9999612106117,
-        "dz": 175.99999641225432,
+        "dx": 2361,
+        "dy": 1832.003137705241,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1557,9 +2180,9 @@
       "id": "lincoln-southeast-curtain-wall",
       "name": "Southeastern curtain wall",
       "transform": {
-        "dx": 2155.5,
-        "dy": 1847.999982867106,
-        "dz": 172.90000289552626,
+        "dx": 2193,
+        "dy": 1853.2254658502297,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1570,9 +2193,9 @@
       "id": "lincoln-southeast-rock-outcrop",
       "name": "Southeastern rock outcrop",
       "transform": {
-        "dx": 2825.62939453125,
-        "dy": 2194.5681408681635,
-        "dz": 219.94272386817843,
+        "dx": 2824,
+        "dy": 2207.1221270788255,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1583,9 +2206,9 @@
       "id": "lincoln-southeast-small-rocks",
       "name": "Southeastern small rock pair",
       "transform": {
-        "dx": 2275.51708984375,
-        "dy": 2182.0068729253994,
-        "dz": 219.94277386525144,
+        "dx": 2274,
+        "dy": 2183.0319167520815,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1596,9 +2219,9 @@
       "id": "lincoln-southeast-lean-to",
       "name": "Southeastern wall lean-to shed",
       "transform": {
-        "dx": 2375.383544921875,
-        "dy": 1694.9840450395698,
-        "dz": 219.9999955153179,
+        "dx": 2378,
+        "dy": 1695.4919458536922,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1609,9 +2232,9 @@
       "id": "lincoln-south-curtain-wall-angle",
       "name": "Southern curtain angled run to the door turret",
       "transform": {
-        "dx": 1877,
-        "dy": 1922.0000252215896,
-        "dz": 172.92978865177534,
+        "dx": 1901,
+        "dy": 1911.1566859216855,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1622,9 +2245,9 @@
       "id": "lincoln-south-curtain-wall-central",
       "name": "Southern curtain wall central run",
       "transform": {
-        "dx": 1557.5,
-        "dy": 2018.9999785538353,
-        "dz": 164.7999895955233,
+        "dx": 1562,
+        "dy": 2029.887008246352,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1635,9 +2258,9 @@
       "id": "lincoln-south-wall-cone-turret",
       "name": "Southern curtain wall cone turret",
       "transform": {
-        "dx": 1921.5,
-        "dy": 1896.0000406177567,
-        "dz": 316.9999918335351,
+        "dx": 1922,
+        "dy": 1906.568074430877,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1648,9 +2271,9 @@
       "id": "lincoln-south-wall-stair",
       "name": "Southern curtain wall stair",
       "transform": {
-        "dx": 1822.5,
-        "dy": 1927.4999734916391,
-        "dz": 175.03560287085475,
+        "dx": 1848,
+        "dy": 1902.5530393764197,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1661,9 +2284,9 @@
       "id": "lincoln-south-curtain-wall-west",
       "name": "Southern curtain wall west run",
       "transform": {
-        "dx": 897,
-        "dy": 1888.4999965858901,
-        "dz": 217.99996260347143,
+        "dx": 880,
+        "dy": 1898.5380043219625,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1674,9 +2297,9 @@
       "id": "lincoln-south-gate-drawbridge",
       "name": "Southern gate drawbridge",
       "transform": {
-        "dx": 1081.5,
-        "dy": 2132.291407131462,
-        "dz": 213.99997177538802,
+        "dx": 1110,
+        "dy": 2097.5690277357753,
+        "dz": 0,
         "rot_deg": 0
       },
       "patches": {
@@ -1692,9 +2315,9 @@
       "id": "lincoln-south-gatehouse-west-tower",
       "name": "Southern gatehouse western tower",
       "transform": {
-        "dx": 1039.7801513671875,
-        "dy": 2007.742280690659,
-        "dz": 203.51708547618924,
+        "dx": 1023,
+        "dy": 2003.5024921742038,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1705,9 +2328,9 @@
       "id": "lincoln-south-gatehouse",
       "name": "Southern gatehouse: gate block, east round tower and cone stair turret",
       "transform": {
-        "dx": 1206.458740234375,
-        "dy": 2056.5000586798587,
-        "dz": 211.6947067327808,
+        "dx": 1247,
+        "dy": 2048.2414542095853,
+        "dz": 0,
         "rot_deg": 0
       },
       "patches": {
@@ -1725,9 +2348,9 @@
       "id": "lincoln-south-bank-plateau",
       "name": "Southern ravine bank plateau",
       "transform": {
-        "dx": 1772,
-        "dy": 2075.9936756171437,
-        "dz": -0.00012280334137259862,
+        "dx": 1570,
+        "dy": 2146.323024825614,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1738,9 +2361,9 @@
       "id": "lincoln-south-ravine-cliff-ledge",
       "name": "Southern ravine cliff ledge below the curtain wall",
       "transform": {
-        "dx": 1894.04150390625,
-        "dy": 2031.2954632748722,
-        "dz": -0.000035016251049776316,
+        "dx": 1852,
+        "dy": 2008.0911036650123,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1751,9 +2374,9 @@
       "id": "lincoln-south-wall-cottage",
       "name": "Southern wall cottage",
       "transform": {
-        "dx": 1599.3828125,
-        "dy": 1960.0029649625876,
-        "dz": 219.9999955153179,
+        "dx": 1604,
+        "dy": 1952.4541893389608,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1764,9 +2387,9 @@
       "id": "lincoln-south-wall-lean-to",
       "name": "Southern wall lean-to shed",
       "transform": {
-        "dx": 2097.50927734375,
-        "dy": 1805.670714024285,
-        "dz": 219.9999955153179,
+        "dx": 2098,
+        "dy": 1806.765774505795,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1777,9 +2400,9 @@
       "id": "lincoln-south-wall-thatched-store",
       "name": "Southern wall thatched store",
       "transform": {
-        "dx": 2235.4755859375,
-        "dy": 1775.7915266763614,
-        "dz": 219.9999705167814,
+        "dx": 2234,
+        "dy": 1762.0268124704135,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1790,9 +2413,9 @@
       "id": "lincoln-southwest-cliff-lower-ledges",
       "name": "Southwestern castle cliff lower rock ledges",
       "transform": {
-        "dx": 326.9296875,
-        "dy": 1735.768606443575,
-        "dz": -0.00004363109743311431,
+        "dx": 275,
+        "dy": 1755.143895234201,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1803,9 +2426,9 @@
       "id": "lincoln-southwest-cliff-upper-rocks",
       "name": "Southwestern castle cliff upper rock faces",
       "transform": {
-        "dx": 590.927001953125,
-        "dy": 1881.5301186643812,
-        "dz": -0.00002108114327801565,
+        "dx": 601,
+        "dy": 1877.3156761769737,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1816,9 +2439,9 @@
       "id": "lincoln-southwest-cliff-road",
       "name": "Southwestern cliff-foot road ledge",
       "transform": {
-        "dx": 364.06982421875,
-        "dy": 1937.6316635118712,
-        "dz": -0.00003585960740064162,
+        "dx": 364,
+        "dy": 1937.5412019938335,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1829,9 +2452,9 @@
       "id": "lincoln-southwest-ravine-bridge",
       "name": "Southwestern ravine stone bridge",
       "transform": {
-        "dx": 610.3570556640625,
-        "dy": 2072.8201007204098,
-        "dz": -0.00001577213458775858,
+        "dx": 616,
+        "dy": 2066.5959001728193,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1842,9 +2465,9 @@
       "id": "lincoln-southwest-road-slope",
       "name": "Southwestern road slope",
       "transform": {
-        "dx": 471.05804443359375,
-        "dy": 2269.1778882528893,
-        "dz": 0.0004117758010469164,
+        "dx": 558,
+        "dy": 2235.8009488963776,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1855,9 +2478,9 @@
       "id": "lincoln-stream-south-tree-stump",
       "name": "Streamside southern tree stump",
       "transform": {
-        "dx": 488.67864990234375,
-        "dy": 888.7275611975374,
-        "dz": -0.0000026897882292071402,
+        "dx": 489,
+        "dy": 888.4698999077704,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1868,9 +2491,9 @@
       "id": "lincoln-stream-west-rock-outcrop",
       "name": "Streamside western rock outcrop",
       "transform": {
-        "dx": 204.006103515625,
-        "dy": 1053.435020081564,
-        "dz": -0.000009690361155255628,
+        "dx": 203,
+        "dy": 1055.3806428859248,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1881,9 +2504,9 @@
       "id": "lincoln-village-barn-barrels",
       "name": "Village barn barrels",
       "transform": {
-        "dx": 302.5,
-        "dy": 677.3864895984833,
-        "dz": -0.0000021466190583254536,
+        "dx": 300,
+        "dy": 676.8201948942343,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1894,9 +2517,9 @@
       "id": "lincoln-village-barn-cart",
       "name": "Village barn handcart",
       "transform": {
-        "dx": 204.5,
-        "dy": 590.7493512640568,
-        "dz": -0.2129503261936583,
+        "dx": 200,
+        "dy": 592.5044587506305,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1907,9 +2530,9 @@
       "id": "lincoln-village-ladder-cottage-rear-stone-wall",
       "name": "Village dry-stone wall behind the ladder cottage",
       "transform": {
-        "dx": 200.06390380859375,
-        "dy": 222.1722630093455,
-        "dz": -0.00001032052417276085,
+        "dx": 208,
+        "dy": 225.4155394859611,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1920,9 +2543,9 @@
       "id": "lincoln-village-field-wattle-fence",
       "name": "Village field wattle fence",
       "transform": {
-        "dx": 651.907958984375,
-        "dy": 196.09935605950943,
-        "dz": -0.0000326705939325311,
+        "dx": 594,
+        "dy": 157.73351999653767,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1933,9 +2556,9 @@
       "id": "lincoln-village-longhouse-props",
       "name": "Village longhouse yard tub, stone cart, pallet, stool, barrel and log pile",
       "transform": {
-        "dx": 549.9872436523438,
-        "dy": 419.83036484696345,
-        "dz": -0.000004297958528169531,
+        "dx": 560,
+        "dy": 418.13722209991255,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1946,9 +2569,9 @@
       "id": "lincoln-village-north-rail-fence",
       "name": "Village northern rail fence",
       "transform": {
-        "dx": 284,
-        "dy": 56.784062822712634,
-        "dz": -0.00001079265919644324,
+        "dx": 256,
+        "dy": 27.53166894485021,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1959,9 +2582,9 @@
       "id": "lincoln-village-northwest-cottage",
       "name": "Village northwestern thatched cottage",
       "transform": {
-        "dx": 39.67782211303711,
-        "dy": 319.3491834366691,
-        "dz": -0.000011842433719312826,
+        "dx": 39,
+        "dy": 323.49711010198996,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1972,9 +2595,9 @@
       "id": "lincoln-village-open-barn",
       "name": "Village open thatched barn and plank lean-to",
       "transform": {
-        "dx": 283.6575012207031,
-        "dy": 600.8954647151836,
-        "dz": -0.000019766663633083213,
+        "dx": 284,
+        "dy": 593.6516116233327,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1985,9 +2608,9 @@
       "id": "lincoln-village-stone-footbridge",
       "name": "Village stone footbridge over the stream",
       "transform": {
-        "dx": 725.0137939453125,
-        "dy": 633.7503598932976,
-        "dz": -47.92040709017427,
+        "dx": 718,
+        "dy": 628.6397742407464,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -1998,9 +2621,9 @@
       "id": "lincoln-village-stream-boat",
       "name": "Village stream punt",
       "transform": {
-        "dx": 458.14398193359375,
-        "dy": 655.9886997164956,
-        "dz": -49.14913515660776,
+        "dx": 459,
+        "dy": 703.2047109663824,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -2011,9 +2634,9 @@
       "id": "lincoln-village-ladder-cottage",
       "name": "Village thatched cottage with roof ladder",
       "transform": {
-        "dx": 269.2405700683594,
-        "dy": 281.01018125666013,
-        "dz": -0.000020398388200863535,
+        "dx": 254,
+        "dy": 307.4369698841607,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -2024,9 +2647,9 @@
       "id": "lincoln-village-longhouse",
       "name": "Village thatched longhouse with stone chimney",
       "transform": {
-        "dx": 502.20660400390625,
-        "dy": 374.9862027877028,
-        "dz": -0.000020479588815168757,
+        "dx": 492,
+        "dy": 386.59051810060504,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -2037,9 +2660,9 @@
       "id": "lincoln-village-west-cottage",
       "name": "Village western thatched cottage",
       "transform": {
-        "dx": 35.55807876586914,
-        "dy": 555.1954540756327,
-        "dz": -0.000020866906924433647,
+        "dx": 26,
+        "dy": 564.9727898057803,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -2050,9 +2673,9 @@
       "id": "lincoln-village-west-yard-props",
       "name": "Village western yard log stack, cart and chopping block",
       "transform": {
-        "dx": 14.5,
+        "dx": 16,
         "dy": 661.333631112756,
-        "dz": -0.00000415193569710098,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -2063,9 +2686,9 @@
       "id": "lincoln-south-wall-walk-step",
       "name": "Wall-walk step block between door turret and southeast curtain",
       "transform": {
-        "dx": 1968.5,
-        "dy": 1866.7500229301177,
-        "dz": 168.99999371420597,
+        "dx": 1971,
+        "dy": 1872.1534882498142,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -2076,9 +2699,9 @@
       "id": "lincoln-west-edge-rocks-north",
       "name": "Western map-edge northern rocks",
       "transform": {
-        "dx": 16.967529296875,
-        "dy": 1176.120863304084,
-        "dz": -0.000011782147150485953,
+        "dx": 19,
+        "dy": 1173.5373887742403,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -2089,9 +2712,9 @@
       "id": "lincoln-west-edge-rocks-south",
       "name": "Western map-edge southern rocks",
       "transform": {
-        "dx": 21.266357421875,
-        "dy": 1330.1209552318826,
-        "dz": -0.000010279578178906117,
+        "dx": 29,
+        "dy": 1322.667262225512,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -2102,9 +2725,9 @@
       "id": "lincoln-west-round-tower",
       "name": "Western round tower with red scale roof",
       "transform": {
-        "dx": 471.08245849609375,
-        "dy": 1559.1992059652066,
-        "dz": 219.9999705167814,
+        "dx": 470,
+        "dy": 1546.3620724024202,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -2115,9 +2738,9 @@
       "id": "lincoln-west-slate-tower",
       "name": "Western slate cone tower",
       "transform": {
-        "dx": 719,
-        "dy": 1741.9998086566486,
-        "dz": 211.99996386207806,
+        "dx": 738,
+        "dy": 1735.0687199619142,
+        "dz": 0,
         "rot_deg": 0
       },
       "patches": {
@@ -2133,9 +2756,9 @@
       "id": "lincoln-west-tower-hall",
       "name": "Western tower complex tiled hall and revealed ground floor",
       "transform": {
-        "dx": 650.5,
-        "dy": 1613.4999224505202,
-        "dz": 219.9999705167814,
+        "dx": 599,
+        "dy": 1642.722913709396,
+        "dz": 0,
         "rot_deg": 0
       },
       "patches": {
@@ -2151,9 +2774,9 @@
       "id": "lincoln-west-tower-terrace",
       "name": "Western tower fortified terrace",
       "transform": {
-        "dx": 442.31439208984375,
-        "dy": 1684.6231204914307,
-        "dz": 94.99996965600488,
+        "dx": 420,
+        "dy": 1693.771216544639,
+        "dz": 0,
         "rot_deg": 0
       },
       "patches": {
@@ -2170,9 +2793,9 @@
       "id": "lincoln-west-tower-hillside",
       "name": "Western tower hillside volumes and boulders",
       "transform": {
-        "dx": 466.171142578125,
-        "dy": 1345.4758877022844,
-        "dz": -0.00003543181414665075,
+        "dx": 437,
+        "dy": 1319.2258036074059,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -2183,9 +2806,9 @@
       "id": "lincoln-west-upper-curtain-wall",
       "name": "Western upper curtain wall to the hall terrace",
       "transform": {
-        "dx": 998.4163818359375,
-        "dy": 1621.7385021575128,
-        "dz": 387.99998527286886,
+        "dx": 1008,
+        "dy": 1608.3083275283332,
+        "dz": 0,
         "rot_deg": 0
       },
       "assets": [
@@ -2623,6 +3246,1163 @@
           }
         }
       }
+    },
+    {
+      "id": "lincoln-tree-east-field",
+      "name": "Eastern field lone tree",
+      "transform": {
+        "dx": 2626,
+        "dy": 2128.0408360501633,
+        "dz": 215.94348299619026,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-tree-east-field"
+      ]
+    },
+    {
+      "id": "lincoln-bush-east-field-edge",
+      "name": "Eastern field map-edge bush",
+      "transform": {
+        "dx": 2882,
+        "dy": 2158.0816218374302,
+        "dz": 240.8555745647889,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-east-field-edge"
+      ]
+    },
+    {
+      "id": "lincoln-bush-east-slope-edge",
+      "name": "Eastern slope map-edge bush",
+      "transform": {
+        "dx": 2911.5,
+        "dy": 1354.7998655924205,
+        "dz": 215.9420580796093,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-east-slope-edge"
+      ]
+    },
+    {
+      "id": "lincoln-bush-east-slope-middle",
+      "name": "Eastern slope middle bush",
+      "transform": {
+        "dx": 2897.5,
+        "dy": 1603.1450193346964,
+        "dz": 215.9420080825363,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-east-slope-middle"
+      ]
+    },
+    {
+      "id": "lincoln-bush-east-slope-north",
+      "name": "Eastern slope northern bushes",
+      "transform": {
+        "dx": 2882,
+        "dy": 1242.3209102774179,
+        "dz": 215.94128312497756,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-east-slope-north"
+      ]
+    },
+    {
+      "id": "lincoln-bush-east-slope-rock",
+      "name": "Eastern slope rock bush",
+      "transform": {
+        "dx": 2487,
+        "dy": 1769.8703582108662,
+        "dz": 215.94195808546326,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-east-slope-rock"
+      ]
+    },
+    {
+      "id": "lincoln-bush-field-fence-east",
+      "name": "Field wattle-fence eastern bushes",
+      "transform": {
+        "dx": 801.5,
+        "dy": 206.5345332700936,
+        "dz": -23.053392570124863,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-field-fence-east"
+      ]
+    },
+    {
+      "id": "lincoln-bush-field-fence-west",
+      "name": "Field wattle-fence western bushes",
+      "transform": {
+        "dx": 474.5,
+        "dy": 106.15776419631148,
+        "dz": -23.874908538522376,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-field-fence-west"
+      ]
+    },
+    {
+      "id": "lincoln-tree-garden-east",
+      "name": "Garden eastern small tree",
+      "transform": {
+        "dx": 1008.5,
+        "dy": 1468.6001752173372,
+        "dz": 215.9997047047964,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-tree-garden-east"
+      ]
+    },
+    {
+      "id": "lincoln-bush-garden-northwest",
+      "name": "Garden northwestern shrub",
+      "transform": {
+        "dx": 787.5,
+        "dy": 1617.871482311362,
+        "dz": 385.9996273800478,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-garden-northwest"
+      ]
+    },
+    {
+      "id": "lincoln-bush-garden-southwest",
+      "name": "Garden southwestern shrubs",
+      "transform": {
+        "dx": 850,
+        "dy": 1629.7421059709025,
+        "dz": 385.9996523785843,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-garden-southwest"
+      ]
+    },
+    {
+      "id": "lincoln-bush-garden-bed",
+      "name": "Garden wall flower bed",
+      "transform": {
+        "dx": 1076.5,
+        "dy": 1548.423642787176,
+        "dz": 385.9996773771208,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-garden-bed"
+      ]
+    },
+    {
+      "id": "lincoln-tree-garden-west",
+      "name": "Garden western small tree",
+      "transform": {
+        "dx": 932,
+        "dy": 1499.4744392636767,
+        "dz": 215.99967970625988,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-tree-garden-west"
+      ]
+    },
+    {
+      "id": "lincoln-bush-bailey-cottage-west",
+      "name": "Inner bailey cottage western shrub",
+      "transform": {
+        "dx": 1232,
+        "dy": 1757.7213483317296,
+        "dz": 215.94195808546326,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-bailey-cottage-west"
+      ]
+    },
+    {
+      "id": "lincoln-bush-bailey-rock",
+      "name": "Inner bailey rock-spur bushes",
+      "transform": {
+        "dx": 1502.5,
+        "dy": 1598.0234410673372,
+        "dz": 238.14403330685622,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-bailey-rock"
+      ]
+    },
+    {
+      "id": "lincoln-bush-bailey-shed",
+      "name": "Inner bailey shed bush",
+      "transform": {
+        "dx": 1721,
+        "dy": 1581.3353914890104,
+        "dz": 228.07409783223048,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-bailey-shed"
+      ]
+    },
+    {
+      "id": "lincoln-bush-keep-north",
+      "name": "Keep northern bush",
+      "transform": {
+        "dx": 1893.5,
+        "dy": 1029.4373017558478,
+        "dz": 215.9421080766823,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-keep-north"
+      ]
+    },
+    {
+      "id": "lincoln-bush-north-bailey-crates",
+      "name": "North bailey crate-side bush",
+      "transform": {
+        "dx": 2584,
+        "dy": 898.0739444172186,
+        "dz": 215.94295802692358,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-north-bailey-crates"
+      ]
+    },
+    {
+      "id": "lincoln-tree-north-bailey-east",
+      "name": "North bailey eastern tree",
+      "transform": {
+        "dx": 2509,
+        "dy": 915.1675304603093,
+        "dz": 215.94293302838707,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-tree-north-bailey-east"
+      ]
+    },
+    {
+      "id": "lincoln-tree-north-bailey-autumn",
+      "name": "North bailey large autumn tree",
+      "transform": {
+        "dx": 2282,
+        "dy": 882.9866156015696,
+        "dz": 215.94215807375534,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-tree-north-bailey-autumn"
+      ]
+    },
+    {
+      "id": "lincoln-tree-north-bailey-rim",
+      "name": "North bailey rim autumn tree",
+      "transform": {
+        "dx": 2288,
+        "dy": 789.6266881205224,
+        "dz": 215.9423330635109,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-tree-north-bailey-rim"
+      ]
+    },
+    {
+      "id": "lincoln-bush-north-rim-west",
+      "name": "North bailey rim western bush",
+      "transform": {
+        "dx": 2029.5,
+        "dy": 348.0755115545222,
+        "dz": -15.380169909469112,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-north-rim-west"
+      ]
+    },
+    {
+      "id": "lincoln-bush-north-curtain-west",
+      "name": "North curtain western bush",
+      "transform": {
+        "dx": 1953.5,
+        "dy": 1083.96669263583,
+        "dz": 215.9423580620474,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-north-curtain-west"
+      ]
+    },
+    {
+      "id": "lincoln-tree-north-curtain-west",
+      "name": "North curtain western tree",
+      "transform": {
+        "dx": 2082,
+        "dy": 847.8389550444576,
+        "dz": 215.94295802692358,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-tree-north-curtain-west"
+      ]
+    },
+    {
+      "id": "lincoln-bush-north-hall",
+      "name": "North hall bush",
+      "transform": {
+        "dx": 2015,
+        "dy": 1009.5988527935348,
+        "dz": 215.94133312205057,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-north-hall"
+      ]
+    },
+    {
+      "id": "lincoln-tree-north-plateau-east",
+      "name": "North outer plateau large eastern tree",
+      "transform": {
+        "dx": 2637.5,
+        "dy": 669.531741193258,
+        "dz": 215.94298302546008,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-tree-north-plateau-east"
+      ]
+    },
+    {
+      "id": "lincoln-tree-north-plateau-red",
+      "name": "North outer plateau red autumn tree",
+      "transform": {
+        "dx": 2572,
+        "dy": 589.5222393715412,
+        "dz": 215.94220807082834,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-tree-north-plateau-red"
+      ]
+    },
+    {
+      "id": "lincoln-tree-north-plateau-west",
+      "name": "North outer plateau western autumn tree",
+      "transform": {
+        "dx": 2473,
+        "dy": 623.086403263063,
+        "dz": 215.94380797716485,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-tree-north-plateau-west"
+      ]
+    },
+    {
+      "id": "lincoln-bush-north-ridge-autumn",
+      "name": "North ridge autumn bush",
+      "transform": {
+        "dx": 2479,
+        "dy": 398.71019100136886,
+        "dz": 215.94225806790135,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-north-ridge-autumn"
+      ]
+    },
+    {
+      "id": "lincoln-tree-north-ridge-bare",
+      "name": "North ridge bare-branched tree",
+      "transform": {
+        "dx": 2555,
+        "dy": 326.0221907417073,
+        "dz": 215.94305802106962,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-tree-north-ridge-bare"
+      ]
+    },
+    {
+      "id": "lincoln-bush-north-ridge-green",
+      "name": "North ridge dark green bushes",
+      "transform": {
+        "dx": 2653.5,
+        "dy": 471.38208743042,
+        "dz": 215.9414331161966,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-north-ridge-green"
+      ]
+    },
+    {
+      "id": "lincoln-tree-north-ridge-edge",
+      "name": "North ridge map-edge autumn tree",
+      "transform": {
+        "dx": 2218.5,
+        "dy": 287.1638925370027,
+        "dz": 215.94308301960612,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-tree-north-ridge-edge"
+      ]
+    },
+    {
+      "id": "lincoln-bush-north-ridge-west",
+      "name": "North ridge western bush",
+      "transform": {
+        "dx": 1876,
+        "dy": 158.42545958787545,
+        "dz": -4.000030669500973,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-north-ridge-west"
+      ]
+    },
+    {
+      "id": "lincoln-tree-north-ridge-west",
+      "name": "North ridge western tree",
+      "transform": {
+        "dx": 1789.5,
+        "dy": 133.19362770416083,
+        "dz": -4.000029107092441,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-tree-north-ridge-west"
+      ]
+    },
+    {
+      "id": "lincoln-tree-northeast-curtain",
+      "name": "Northeastern curtain autumn tree",
+      "transform": {
+        "dx": 2883,
+        "dy": 1014.0429499087782,
+        "dz": 215.94290802985057,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-tree-northeast-curtain"
+      ]
+    },
+    {
+      "id": "lincoln-bush-northeast-curtain-foot",
+      "name": "Northeastern curtain foot bush",
+      "transform": {
+        "dx": 2740,
+        "dy": 1274.597747953272,
+        "dz": 215.91155986506973,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-northeast-curtain-foot"
+      ]
+    },
+    {
+      "id": "lincoln-tree-northeast-forest-edge",
+      "name": "Northeastern forest map-edge tree",
+      "transform": {
+        "dx": 2889.5,
+        "dy": 457.9933626608985,
+        "dz": 215.94303302253311,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-tree-northeast-forest-edge"
+      ]
+    },
+    {
+      "id": "lincoln-tree-northeast-forest-south",
+      "name": "Northeastern forest southern tree",
+      "transform": {
+        "dx": 2862,
+        "dy": 621.9674671022566,
+        "dz": 215.94300802399658,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-tree-northeast-forest-south"
+      ]
+    },
+    {
+      "id": "lincoln-tree-northeast-forest-west",
+      "name": "Northeastern forest western tree",
+      "transform": {
+        "dx": 2813.5,
+        "dy": 500.0749475872653,
+        "dz": 215.94383297570135,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-tree-northeast-forest-west"
+      ]
+    },
+    {
+      "id": "lincoln-bush-northeast-tower-stair",
+      "name": "Northeastern tower stair bush",
+      "transform": {
+        "dx": 2785.5,
+        "dy": 1026.0468852791112,
+        "dz": 212.50363437563806,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-northeast-tower-stair"
+      ]
+    },
+    {
+      "id": "lincoln-tree-stream-north-east",
+      "name": "Northern stream eastern autumn tree",
+      "transform": {
+        "dx": 1508,
+        "dy": 150.9730618896193,
+        "dz": -4.000029497694574,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-tree-stream-north-east"
+      ]
+    },
+    {
+      "id": "lincoln-bush-stream-north-east-bank",
+      "name": "Northern stream eastern bank shrub",
+      "transform": {
+        "dx": 1320,
+        "dy": 156.2254662765246,
+        "dz": -46.919918786874454,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-stream-north-east-bank"
+      ]
+    },
+    {
+      "id": "lincoln-tree-stream-north-west",
+      "name": "Northern stream western autumn tree",
+      "transform": {
+        "dx": 1302,
+        "dy": 116.67696139268924,
+        "dz": -51.510043816664385,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-tree-stream-north-west"
+      ]
+    },
+    {
+      "id": "lincoln-bush-stream-north-west-bank",
+      "name": "Northern stream western bank bush",
+      "transform": {
+        "dx": 1116,
+        "dy": 154.4015849307461,
+        "dz": -7.05977732365567,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-stream-north-west-bank"
+      ]
+    },
+    {
+      "id": "lincoln-bush-pond-south",
+      "name": "Pond southern bush",
+      "transform": {
+        "dx": 422.5,
+        "dy": 883.135050909805,
+        "dz": -4.000184957343482,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-pond-south"
+      ]
+    },
+    {
+      "id": "lincoln-bush-ravine-bridge",
+      "name": "Ravine bridge small bush",
+      "transform": {
+        "dx": 974.5,
+        "dy": 2051.9691409126285,
+        "dz": 215.94350799472676,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-ravine-bridge"
+      ]
+    },
+    {
+      "id": "lincoln-bush-round-tower-northeast",
+      "name": "Round tower northeastern bush",
+      "transform": {
+        "dx": 1950.5,
+        "dy": 286.77582522761844,
+        "dz": -4.000858355420662,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-round-tower-northeast"
+      ]
+    },
+    {
+      "id": "lincoln-bush-round-tower-north",
+      "name": "Round tower northern bush",
+      "transform": {
+        "dx": 1905.5,
+        "dy": 191.4040916992343,
+        "dz": -13.134576373506105,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-round-tower-north"
+      ]
+    },
+    {
+      "id": "lincoln-bush-south-bank",
+      "name": "Southern bank bush",
+      "transform": {
+        "dx": 1033,
+        "dy": 2394.0285064093814,
+        "dz": 199.84967517780615,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-south-bank"
+      ]
+    },
+    {
+      "id": "lincoln-bush-south-curtain-stair",
+      "name": "Southern curtain stair bush",
+      "transform": {
+        "dx": 2003.5,
+        "dy": 1778.0604863927178,
+        "dz": 215.9423580620474,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-south-curtain-stair"
+      ]
+    },
+    {
+      "id": "lincoln-tree-southwest-autumn-thicket",
+      "name": "Southwestern autumn thicket",
+      "transform": {
+        "dx": 140,
+        "dy": 2181.65244861866,
+        "dz": -4.000459941245069,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-tree-southwest-autumn-thicket"
+      ]
+    },
+    {
+      "id": "lincoln-bush-southwest-cliff-east",
+      "name": "Southwestern cliff eastern bush",
+      "transform": {
+        "dx": 740.5,
+        "dy": 1950.6761864062582,
+        "dz": 116.7294162965464,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-southwest-cliff-east"
+      ]
+    },
+    {
+      "id": "lincoln-bush-southwest-cliff-ledge",
+      "name": "Southwestern cliff ledge bush",
+      "transform": {
+        "dx": 636,
+        "dy": 1845.3233861863407,
+        "dz": 210.9278516268662,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-southwest-cliff-ledge"
+      ]
+    },
+    {
+      "id": "lincoln-bush-southwest-cliff-lower",
+      "name": "Southwestern cliff lower bush",
+      "transform": {
+        "dx": 424,
+        "dy": 1919.838471053739,
+        "dz": 83.18409264423252,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-southwest-cliff-lower"
+      ]
+    },
+    {
+      "id": "lincoln-bush-southwest-cliff-upper",
+      "name": "Southwestern cliff upper bush",
+      "transform": {
+        "dx": 432.5,
+        "dy": 1883.2861363674676,
+        "dz": 106.87310581564844,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-southwest-cliff-upper"
+      ]
+    },
+    {
+      "id": "lincoln-bush-southwest-cliff-foot",
+      "name": "Southwestern cliff-foot bush",
+      "transform": {
+        "dx": 175.5,
+        "dy": 1863.988145963772,
+        "dz": -1.1661571201564902,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-southwest-cliff-foot"
+      ]
+    },
+    {
+      "id": "lincoln-tree-southwest-green",
+      "name": "Southwestern green tree",
+      "transform": {
+        "dx": 71,
+        "dy": 2036.8316801721228,
+        "dz": -4.001229818049083,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-tree-southwest-green"
+      ]
+    },
+    {
+      "id": "lincoln-bush-southwest-road",
+      "name": "Southwestern road bush",
+      "transform": {
+        "dx": 375.5,
+        "dy": 2249.784115065389,
+        "dz": 161.24448524581757,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-southwest-road"
+      ]
+    },
+    {
+      "id": "lincoln-bush-southwest-road-pair",
+      "name": "Southwestern road bush pair",
+      "transform": {
+        "dx": 201,
+        "dy": 1975.224865788816,
+        "dz": -4.000412678386983,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-southwest-road-pair"
+      ]
+    },
+    {
+      "id": "lincoln-bush-southwest-thicket-edge",
+      "name": "Southwestern thicket edge bush",
+      "transform": {
+        "dx": 285.5,
+        "dy": 2143.673034473684,
+        "dz": -3.999650613625627,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-southwest-thicket-edge"
+      ]
+    },
+    {
+      "id": "lincoln-bush-stump-bridge",
+      "name": "Stone footbridge bush",
+      "transform": {
+        "dx": 254.5,
+        "dy": 1078.1213522075136,
+        "dz": -4.000227142373839,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-stump-bridge"
+      ]
+    },
+    {
+      "id": "lincoln-bush-stream-bend",
+      "name": "Stream bend bush",
+      "transform": {
+        "dx": 1023,
+        "dy": 551.3349107700534,
+        "dz": -20.54911730319576,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-stream-bend"
+      ]
+    },
+    {
+      "id": "lincoln-bush-stream-bend-small",
+      "name": "Stream bend small shrub",
+      "transform": {
+        "dx": 1212,
+        "dy": 498.8451050452113,
+        "dz": -4.0001044933040975,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-stream-bend-small"
+      ]
+    },
+    {
+      "id": "lincoln-bush-stream-central",
+      "name": "Stream central bush thicket",
+      "transform": {
+        "dx": 1073.5,
+        "dy": 381.78387474666226,
+        "dz": -49.27663081761482,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-stream-central"
+      ]
+    },
+    {
+      "id": "lincoln-bush-stream-east-bank",
+      "name": "Stream eastern bank bush",
+      "transform": {
+        "dx": 1303,
+        "dy": 483.9322927417212,
+        "dz": -3.9992998529102515,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-stream-east-bank"
+      ]
+    },
+    {
+      "id": "lincoln-bush-stream-north",
+      "name": "Stream northern bush thicket",
+      "transform": {
+        "dx": 1007,
+        "dy": 128.50763179856858,
+        "dz": -4.000024810468979,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-stream-north"
+      ]
+    },
+    {
+      "id": "lincoln-bush-stream-west-bank",
+      "name": "Stream western bank bush",
+      "transform": {
+        "dx": 841,
+        "dy": 451.8783180781847,
+        "dz": -50.134993066416364,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-stream-west-bank"
+      ]
+    },
+    {
+      "id": "lincoln-bush-stream-west-front",
+      "name": "Stream western front bush",
+      "transform": {
+        "dx": 133.5,
+        "dy": 933.5418611535139,
+        "dz": -51.51101563477113,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-stream-west-front"
+      ]
+    },
+    {
+      "id": "lincoln-bush-stream-west-edge",
+      "name": "Stream western map-edge bushes",
+      "transform": {
+        "dx": 64.5,
+        "dy": 965.2960245010769,
+        "dz": -51.51101875958819,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-stream-west-edge"
+      ]
+    },
+    {
+      "id": "lincoln-tree-stream-west",
+      "name": "Stream western spreading tree",
+      "transform": {
+        "dx": 202,
+        "dy": 864.1953357288643,
+        "dz": -51.511003135502875,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-tree-stream-west"
+      ]
+    },
+    {
+      "id": "lincoln-tree-behind-great-hall",
+      "name": "Tree behind the great hall",
+      "transform": {
+        "dx": 1338.5,
+        "dy": 1115.4438700968933,
+        "dz": 215.9423580620474,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-tree-behind-great-hall"
+      ]
+    },
+    {
+      "id": "lincoln-bush-village-bridge-east",
+      "name": "Village bridge eastern bush",
+      "transform": {
+        "dx": 859,
+        "dy": 651.4735356966017,
+        "dz": -12.778526124046229,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-village-bridge-east"
+      ]
+    },
+    {
+      "id": "lincoln-bush-village-bridge-north",
+      "name": "Village bridge northern bush",
+      "transform": {
+        "dx": 680.5,
+        "dy": 590.7947920730403,
+        "dz": -6.053111647623482,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-village-bridge-north"
+      ]
+    },
+    {
+      "id": "lincoln-bush-village-bridge-thicket",
+      "name": "Village bridge southern thicket",
+      "transform": {
+        "dx": 661,
+        "dy": 896.231246095455,
+        "dz": -3.9985897382325755,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-village-bridge-thicket"
+      ]
+    },
+    {
+      "id": "lincoln-bush-village-bridge-stump",
+      "name": "Village bridge stump-side bush",
+      "transform": {
+        "dx": 529,
+        "dy": 899.926024970729,
+        "dz": -4.00018730095628,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-village-bridge-stump"
+      ]
+    },
+    {
+      "id": "lincoln-bush-village-cottage-shrub",
+      "name": "Village cottage-side shrub",
+      "transform": {
+        "dx": 113,
+        "dy": 329.622237082999,
+        "dz": -9.439455978608354,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-village-cottage-shrub"
+      ]
+    },
+    {
+      "id": "lincoln-tree-village-northwest",
+      "name": "Village northwestern autumn tree",
+      "transform": {
+        "dx": 148.5,
+        "dy": 176.34174132519524,
+        "dz": -3.9992381377732475,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-tree-village-northwest"
+      ]
+    },
+    {
+      "id": "lincoln-bush-village-northwest",
+      "name": "Village northwestern round bush",
+      "transform": {
+        "dx": 133.5,
+        "dy": 225.2385023742285,
+        "dz": -4.000845465550276,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-village-northwest"
+      ]
+    },
+    {
+      "id": "lincoln-village-pond-landing-stage",
+      "name": "Village pond landing stage and mooring pole",
+      "transform": {
+        "dx": 516,
+        "dy": 611.4980167391341,
+        "dz": -50.78756423786828,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-village-pond-landing-stage"
+      ]
+    },
+    {
+      "id": "lincoln-bush-west-hillside",
+      "name": "Western hillside bush pair",
+      "transform": {
+        "dx": 240,
+        "dy": 1642.5968837307055,
+        "dz": 91.07850548072672,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-west-hillside"
+      ]
+    },
+    {
+      "id": "lincoln-bush-west-hillside-rock",
+      "name": "Western hillside rock bush",
+      "transform": {
+        "dx": 235,
+        "dy": 1736.7933702036378,
+        "dz": 94.19271066545949,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-west-hillside-rock"
+      ]
+    },
+    {
+      "id": "lincoln-tree-west-hillside",
+      "name": "Western hillside tree",
+      "transform": {
+        "dx": 277.5,
+        "dy": 1509.4800993052183,
+        "dz": -4.0003193244772115,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-tree-west-hillside"
+      ]
+    },
+    {
+      "id": "lincoln-bush-west-edge-hillside",
+      "name": "Western map-edge hillside bush",
+      "transform": {
+        "dx": 46.5,
+        "dy": 1599.7301670454249,
+        "dz": -4.0003376827774595,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-west-edge-hillside"
+      ]
+    },
+    {
+      "id": "lincoln-bush-west-edge-north",
+      "name": "Western map-edge northern bush",
+      "transform": {
+        "dx": 84.5,
+        "dy": 1170.6273565662784,
+        "dz": 5.143218040628085,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-west-edge-north"
+      ]
+    },
+    {
+      "id": "lincoln-bush-west-edge-south",
+      "name": "Western map-edge southern bush",
+      "transform": {
+        "dx": 32,
+        "dy": 1328.2110409214843,
+        "dz": 11.913219750525366,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-west-edge-south"
+      ]
+    },
+    {
+      "id": "lincoln-tree-west-outer-bailey",
+      "name": "Western outer bailey autumn tree",
+      "transform": {
+        "dx": 895,
+        "dy": 1782.0574571502295,
+        "dz": 215.94275803863152,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-tree-west-outer-bailey"
+      ]
+    },
+    {
+      "id": "lincoln-bush-stream-west-fern",
+      "name": "Western stream fern tuft",
+      "transform": {
+        "dx": 61,
+        "dy": 941.916973337421,
+        "dz": -52.89351594889848,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-stream-west-fern"
+      ]
+    },
+    {
+      "id": "lincoln-bush-west-tower-north",
+      "name": "Western tower northern bush",
+      "transform": {
+        "dx": 845.5,
+        "dy": 1521.665797911485,
+        "dz": 215.99965470772338,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-west-tower-north"
+      ]
+    },
+    {
+      "id": "lincoln-bush-west-tower-northwest",
+      "name": "Western tower northwestern bush",
+      "transform": {
+        "dx": 674,
+        "dy": 1479.805920722631,
+        "dz": 215.9423830605839,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-bush-west-tower-northwest"
+      ]
     }
   ]
 }
