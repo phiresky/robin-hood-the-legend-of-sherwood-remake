@@ -72,6 +72,67 @@ fn full_editor_archive_constructs_native_map_without_base_datadir() {
             .unwrap();
     assert!(minimap.width > 0 && minimap.height > 0);
     let mut assets = LevelAssets::new();
+    let animations = loaded.proto.animations.clone();
+    let mut banks = Vec::new();
+    let mut frame_offset = 0u32;
+    for bank in animations
+        .iter()
+        .map(|animation| animation.sprite.frame_profile_name.clone())
+        .collect::<std::collections::BTreeSet<_>>()
+    {
+        use robin_assets::custom_sprites::{
+            build_hackable_cache_with_reader, decode_png_rgba_bytes, hackable_manifest_hash,
+            validate_cache_frames,
+        };
+        let root = format!("Data/Animations/Day/{bank}.rhs.d");
+        let bytes = files.read_shared(&format!("{root}/manifest.json")).unwrap();
+        let mut cache = build_hackable_cache_with_reader(
+            hackable_manifest_hash(&bytes),
+            serde_json::from_slice(&bytes).unwrap(),
+            |relative, legacy| -> Result<_, String> {
+                let path = format!("{root}/{}", relative.trim_start_matches("./"));
+                let bytes = files
+                    .read_shared(&path)
+                    .map_err(|error| error.to_string())?;
+                let (width, height, pixels) = decode_png_rgba_bytes(&bytes, &path)?;
+                Ok((
+                    robin_assets::frame_holder::FrameHolder::pack_runtime_rgba_sprite(
+                        width, height, &pixels, legacy,
+                    ),
+                    None,
+                ))
+            },
+            |error| error,
+        )
+        .unwrap();
+        validate_cache_frames(&bank, &cache).unwrap();
+        for profile in &mut cache.profiles {
+            for script in std::sync::Arc::make_mut(&mut profile.info.scripts) {
+                for frame in &mut script.frame_ids {
+                    *frame += frame_offset;
+                }
+            }
+        }
+        frame_offset += cache.frames.len() as u32;
+        banks.push((
+            format!("Animations/Day/{bank}.rhs"),
+            cache
+                .profiles
+                .into_iter()
+                .map(|profile| (profile.name, profile.info))
+                .collect::<Vec<_>>(),
+        ));
+    }
+    let resources = robin_engine::sprite_script::MissionResourceEnvironment::default()
+        .with_parsed_rhs(
+            banks
+                .iter()
+                .map(|(path, profiles)| (path.as_str(), 0, profiles.as_slice())),
+        )
+        .unwrap();
+    assets.sprite_scriptor = Arc::new(robin_engine::sprite_script::SpriteScriptor::with_resources(
+        Arc::new(resources),
+    ));
     let mut profiles = robin_engine::profiles::ProfileManager::new();
     let mut campaign = robin_engine::campaign::Campaign::new();
     let index = campaign
@@ -101,6 +162,57 @@ fn full_editor_archive_constructs_native_map_without_base_datadir() {
     let grid = engine.fast_grid();
     assert!(!grid.level.blocks.is_empty());
     assert!(!grid.level.sectors.is_empty());
+    let sim = robin_engine::sim_rng::SimulationContext::with_seed(0);
+    for raw in &animations {
+        let entity = engine
+            .entities_iter()
+            .find(|entity| {
+                let sprite = entity.sprite();
+                sprite.frame_profile_name == raw.sprite.frame_profile_name
+                    && sprite.position_iface.map_position().x
+                        == raw.sprite.position_x as f32 + sprite.center.x
+                    && sprite.position_iface.map_position().y
+                        == raw.sprite.position_y as f32 + sprite.center.y
+            })
+            .expect("packaged scenery did not spawn at its exported anchor");
+        assert_eq!(entity.is_active(), raw.active);
+        let mut sprite = entity.sprite().clone();
+        assert_eq!(
+            sprite.position_iface.get_position().z,
+            raw.sprite.elevation as f32
+        );
+        assert!(
+            !sprite.current_scripts().is_empty(),
+            "scenery spawned without its packaged profile"
+        );
+        let script = &sprite.current_scripts()[sprite.current_row as usize];
+        let expected: std::collections::BTreeSet<_> = script.frame_ids.iter().copied().collect();
+        let ticks = 2 + script
+            .delays
+            .iter()
+            .map(|&delay| usize::from(delay) + 1)
+            .sum::<usize>()
+            * 2;
+        assert!(
+            ticks < 200_000,
+            "acceptance animation requires an excessive playback duration"
+        );
+        let anchor = sprite.position_iface.get_position();
+        let mut seen = std::collections::BTreeSet::new();
+        for _ in 0..ticks {
+            seen.insert(sprite.bank_id_for(sprite.current_row, sprite.current_frame));
+            sprite.increment_frame(&sim, robin_engine::sprite::FrameProgression::Default);
+            assert_eq!(sprite.position_iface.get_position(), anchor);
+        }
+        assert_eq!(seen, expected, "packaged scenery skipped authored frames");
+    }
+    if !animations.is_empty() {
+        eprintln!(
+            "{} placed scenery effects load and play {} packaged frames without a base datadir",
+            animations.len(),
+            frame_offset
+        );
+    }
     for region in &background.appearance_regions {
         assert!(
             region

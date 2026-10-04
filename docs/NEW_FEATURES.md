@@ -1,5 +1,11 @@
 # Post-port Features
 
+- **Compiled scenery construction order.** Editor-authored animations now register
+  their construction group alongside map controls, allowing maps containing effects
+  to complete native loading. ZIP acceptance decodes packaged sprite banks and
+  checks their placement and frame playback without a base datadir. Editor
+  previews use the native loader's action/direction row ordering.
+
 - **Live placed scenery previews.** Pinned animation assets now play in the map
   viewport, following asset moves, rotations, elevations and copies. Their
   billboards can be selected and dragged like model assets, contribute to view

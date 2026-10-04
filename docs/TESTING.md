@@ -322,6 +322,19 @@ A real six-frame candle profile was extracted to
 verifies all six frames in `scenery-candle-native-20261004.sprites.vq.zst`.
 These artifacts test resource authoring and decoding, not rendered animation.
 
+The candle asset also passes offline library staging and a fresh export from the
+staged runtime catalog (`scenery-candle-staged-export-20261004`): all 15 archive
+entries match the pre-publication export exactly. Three independent placements
+exercise rotation and elevation. Run `full_editor_archive_constructs_native_map_without_base_datadir`
+in the `robin_rs` integration test `editor_mod_export`, with `--ignored --nocapture`,
+`RUST_MIN_STACK=16777216` and `ROBIN_EDITOR_MAP_ZIP` pointing at that directory's
+`editor-scenery-library.zip`. It mounts only the ZIP, decodes all pinned frames,
+constructs the engine, verifies each effect's anchor/elevation, and advances cloned
+native sprites through all six frames. Its gradient ground is diagnostic artwork;
+this does not certify native rendering, occlusion or full-engine frame scheduling.
+The ordinary level-data regression covers animation-only, mixed control/animation,
+and empty construction groups.
+
 `app/src/scenery-frames.test.ts` checks the initial sentinel tick, inclusive frame
 delays, looping and the maximum unsigned delay. The browser fixture
 `tests/scenery-live.html` checks a two-frame placed asset: GPU-projected pixels,

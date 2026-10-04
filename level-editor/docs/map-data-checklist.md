@@ -334,8 +334,18 @@ cannot provide complete animated sequences. Use a complete PNG bank for animatio
 The six-frame candle profile under `work/map-compile/scenery-candle-profile-20261004.rhs.d`
 was authored into a standalone asset in `scenery-candle-asset-20261004`; the native
 sprite family encoder verifies all six frames. It has no level-specific placement
-metadata. This asset remains an authoring artifact, not a published or rendered
-parity claim. Native rendered placement checks remain open.
+metadata. Offline publication and re-export from the runtime catalog preserve all
+15 ZIP entries exactly. The `scenery-candle-staged-export-20261004` archive loads
+three independently moved/rotated/elevated copies into the native engine without
+a base datadir; cloned native sprites visit all six frames without anchor drift.
+This exposed and fixed missing animation construction-order metadata, which could
+prevent maps containing effects from loading. Empty and mixed control/animation
+groups have regression coverage. The export uses diagnostic ground artwork;
+native rendered placement and full-engine scheduling checks remain open.
+The validated `authored-candle-cluster` asset is installed in the local main library
+with its six frames and pinned manifest. Publication retained a rollback receipt
+in `work/map-compile/scenery-candle-promotion-20261004`; a fresh export from that
+main catalog also succeeds. No remote library deployment was performed.
 
 **Live placed scenery:** the viewport now loads verified pinned banks for placed
 asset parts, animating their initial row at 25 ticks per second with the runtime's
@@ -1003,7 +1013,7 @@ sampled Rust queries. Equivalent evidence across all maps remains unfinished.
 | Surface materials | Transform asset-local material polygons; rebuild ground, obstacle and receiving-surface links independently. Preserve receiving defaults, footprints and overlap priority. | Compiler/native tests pass; all nine imported map families have published material definitions; full geometry and receiving-material coverage remain unverified |
 | Light/shadow regions | Transform asset-local planar contours, resolve ordinary or traversal receiving layers and preserve ambience filters. Conflicting anchored receivers receive separate runtime layers. | Published definitions exist for all five towns and Sherwood; unrestricted query equivalence and full placement coverage remain unverified |
 | Environmental sound sources | Transform asset-local emitter polylines; retain sample IDs, timing, volume falloff, acoustic altitude, noise-covering distance and ambience filters. Global emitters need no position. | Current published-library exports include emitters in all ten saved maps, including Wychford. Native construction is verified; audible playback and complete ownership/coverage review remain outstanding |
-| Animated scenery / effects | Transform asset-owned billboard anchors and masking polylines; export sprite references, pinned manifests/frames and display flags into native map animations. | Standalone authoring, resource publication, static palette previews, ZIP packaging and native resource decoding tested; real library definitions, live scene preview and rendered verification unfinished |
+| Animated scenery / effects | Transform asset-owned billboard anchors and masking polylines; export sprite references, pinned manifests/frames and display flags into native map animations. | Standalone authoring, offline publication, palette/live previews, ZIP-only native construction and frame playback tested; full native compositing, shadows and other action rows remain unverified |
 | Interactive patches / state changes | Asset-local transitions compile initial/applied movement contours, sight-obstacle references and door links, trigger zones and fresh state bindings across affected navigation areas. | Movement, sight, door and mask switching plus paired baked color/depth states pass compiler/native fixtures; sampled switch-state routes pass in seven maps. Complete asset authoring and real-map visual coverage remain unfinished |
 | Map settings | Scene identity/export bounds; terrain assets supply forest behaviour and default material. Ambience is selected by the mission. | Compiler/runtime tests pass; environment defaults are published for all nine imported map families |
 | Resource banks and references | Package generated resources and resolve shared sprite/audio/profile dependencies. | Baked images and pinned scenery banks package independently; unpinned shared resources use the base installation |

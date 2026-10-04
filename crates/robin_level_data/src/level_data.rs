@@ -3415,6 +3415,12 @@ impl LoadedLevel {
                     );
                 }
             }
+            if !geometry.animations.is_empty() {
+                level
+                    .proto
+                    .element_chunk_order
+                    .push(ProtoElementChunk::Animation);
+            }
             level.proto.animations = geometry.animations;
             level.proto.sound_sources = geometry.sound_sources;
             level.proto.lifts = geometry.lifts;
@@ -5967,6 +5973,22 @@ mod tests {
             animation
         );
         assert!(loaded.mission.soldiers.is_empty());
+        assert_eq!(
+            loaded.proto.element_chunk_order,
+            vec![ProtoElementChunk::Animation]
+        );
+        let mut with_transition: serde_json::Value = serde_json::from_slice(include_bytes!(
+            "../../robin_engine/tests/fixtures/asset-appearance-only.level.json"
+        ))
+        .unwrap();
+        with_transition["asset_geometry"]["animations"] = serde_json::json!([animation]);
+        let mixed = LoadedLevel::hackable_from_json(&serde_json::to_vec(&with_transition).unwrap())
+            .unwrap();
+        assert!(!mixed.proto.patches.is_empty());
+        assert_eq!(
+            mixed.proto.element_chunk_order,
+            vec![ProtoElementChunk::Patch, ProtoElementChunk::Animation]
+        );
         for field in ["frame_profile_name", "profile_name"] {
             let mut invalid = descriptor.clone();
             invalid["asset_geometry"]["animations"][0]["sprite"][field] = " ".into();
@@ -5980,13 +6002,10 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("animations");
-        assert!(
-            LoadedLevel::hackable_from_json(&serde_json::to_vec(&descriptor).unwrap())
-                .unwrap()
-                .proto
-                .animations
-                .is_empty()
-        );
+        let empty =
+            LoadedLevel::hackable_from_json(&serde_json::to_vec(&descriptor).unwrap()).unwrap();
+        assert!(empty.proto.animations.is_empty());
+        assert!(empty.proto.element_chunk_order.is_empty());
     }
 
     #[test]

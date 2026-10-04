@@ -34,7 +34,11 @@ export async function validateSceneryManifest(
     center_x: number;
     center_y: number;
     preview: string;
-    rows: { frames: { path: string; delay: number; offsetX: number; offsetY: number }[] }[];
+    rows: {
+      action: number;
+      direction: number;
+      frames: { path: string; delay: number; offsetX: number; offsetY: number }[];
+    }[];
   }[] = [];
   for (const entry of list(manifest.profiles, "sprite profiles")) {
     const profile = record(entry);
@@ -75,7 +79,11 @@ export async function validateSceneryManifest(
       if (!uint(direction)) throw new Error("invalid sprite direction");
       slots.push(direction);
       directions.set(row.action_id, slots);
-      const validatedRow: (typeof result.rows)[number] = { frames: [] };
+      const validatedRow: (typeof result.rows)[number] = {
+        action: row.action_id,
+        direction,
+        frames: [],
+      };
       result.rows.push(validatedRow);
       for (const item of list(row.frames, "sprite frames")) {
         const frame = record(item);
@@ -125,6 +133,12 @@ export async function validateSceneryManifest(
     for (const slots of directions.values())
       if (slots.sort((a, b) => a - b).some((direction, index) => direction !== index))
         throw new Error("sprite action has duplicate or missing directions");
+    // Runtime rows keep first-seen action order, with directions sorted within each action.
+    const actions = new Map([...directions.keys()].map((action, index) => [action, index]));
+    result.rows.sort(
+      (a, b) => actions.get(a.action)! - actions.get(b.action)! || a.direction - b.direction,
+    );
+    result.preview = result.rows[0]!.frames[0]!.path;
   }
   return { profiles };
 }
