@@ -1,4 +1,5 @@
 """Assemble current workers for private full-scene review, without publication."""
+import argparse
 import json
 import math
 import shutil
@@ -26,15 +27,29 @@ def signature(obj):
                        uv={layer.name: [list(v.uv) for v in layer.data] for layer in obj.data.uv_layers}))
 
 
-def main():
-    destination = OUT / 'integration-review'
+def main(destination=None, texture_decisions=None):
+    explicit_destination = destination is not None
+    destination = destination or OUT / 'integration-review'
+    if explicit_destination and destination.exists():
+        raise ValueError("Explicit staging destination already exists")
     if (destination / 'scene.blend').exists():
         destination.rename(destination.with_name('integration-review-archive-'+uuid.uuid4().hex[:8]))
-    destination.mkdir(exist_ok=True)
+    destination.mkdir(parents=True, exist_ok=True)
     shutil.copy2(reviewed_catalog(), destination / 'catalog.json')
     catalog = json.loads((destination / 'catalog.json').read_text())
+    selected = {}
+    models = {group['id']: (tree_workspace(group['wood_mask']) if 'wood_mask' in group
+              else scenery_workspace(group['id'])) / 'model.blend'
+              for group in catalog['groups'] if not group.get('state_only')}
+    if texture_decisions:
+        from approved_texture_stage import select, inspect, geometry, appearance
+        selected = select(texture_decisions, models)
+        shutil.copy2(texture_decisions, destination / 'texture-decisions.json')
     acquire()
     try:
+        if selected:
+            inspect(selected, models)
+            write_json(destination / 'selected-texture-approvals.json', selected)
         bpy.ops.wm.open_mainfile(filepath=str(OUT / 'forest-v4-input.blend'))
         bpy.context.preferences.filepaths.save_version = 0
         scene = bpy.data.scenes['Croisement02 Refinement']
@@ -68,32 +83,57 @@ def main():
             if audit['status'] != 'PASS' or audit['model_sha256'] != model_hash:
                 raise ValueError('Worker changed during staging: ' + group['id'])
             names = [r['object'] for r in audit['objects']]
+            texture = selected.get(group['id'])
+            geometry_model_hash = model_hash
+            if texture:
+                if set(names) != set(texture['objects']):
+                    raise ValueError('Texture scope differs from audited asset: ' + group['id'])
+                model = Path(texture['model'])
+                model_hash = sha(model)
             old_objects = [o for o in collection.all_objects if o.type == 'MESH' and o.get('asset_group') == group['id']]
             with bpy.data.libraries.load(str(model), link=False) as (source, target):
                 if not set(names) <= set(source.objects):
                     raise ValueError('Audited objects missing from model')
-                target.objects = names
+                target.objects = list(names)
             imported = list(target.objects)
             for obj in imported:
                 collection.objects.link(obj)
             bpy.context.view_layer.update()
             evidence = []
-            for obj in imported:
+            for original_name, obj in zip(names, imported):
+                if texture:
+                    reference = texture['objects'][original_name]
+                    if geometry(obj) != reference['geometry'] or appearance(obj) != reference['appearance']:
+                        raise ValueError('Imported approved texture or geometry changed: ' + original_name)
                 before = signature(obj)
                 matrix = obj.matrix_world.copy()
-                obj.parent = None
-                obj.matrix_world = matrix
+                if texture:
+                    # Retain the reviewed transform chain. Flattening it forces
+                    # a matrix decomposition and changes float32 rotations.
+                    ancestor = obj.parent
+                    while ancestor is not None:
+                        if ancestor.type == 'MESH':
+                            raise ValueError('Texture receiver has a mesh parent outside its scope')
+                        if ancestor.name not in scene.objects:
+                            collection.objects.link(ancestor)
+                        ancestor = ancestor.parent
+                else:
+                    obj.parent = None
+                    obj.matrix_world = matrix
                 obj.hide_render = False
                 if obj.get('asset_group') != group['id'] or signature(obj) != before:
                     raise ValueError('Imported asset scope or surface changed')
                 evidence.append(dict(source_node=obj['source_node'], component=obj.get('projection_component'),
-                                     surface_sha256=before, matrix_world=[list(r) for r in matrix]))
+                                     surface_sha256=before, matrix_world=[list(r) for r in matrix],
+                                     imported_name=obj.name,
+                                     texture_appearance_sha256=appearance(obj) if texture else None,
+                                     texture_geometry_sha256=geometry(obj) if texture else None))
             if {o['source_node'] for o in imported} != expected_parts:
                 raise ValueError('Imported ownership differs from current catalog: ' + group['id'])
             for obj in old_objects:
                 bpy.data.objects.remove(obj, do_unlink=True)
             decision = latest.get(group['id'], {})
-            approved = decision.get('decision') == 'approved' and decision.get('model_sha256') == model_hash
+            approved = decision.get('decision') == 'approved' and decision.get('model_sha256') == geometry_model_hash
             correction_path = worker / 'inspection/feedback-revision-1.json'
             if not approved and decision.get('decision') == 'approved' and correction_path.exists():
                 correction = json.loads(correction_path.read_text())
@@ -101,7 +141,9 @@ def main():
                             and correction['before_model_sha256'] == decision['model_sha256']
                             and correction['before_geometry_sha256'] == correction['geometry_sha256'])
             records.append(dict(id=group['id'], worker=str(worker), model_sha256=model_hash,
-                role='geometry approved' if approved else 'unapproved candidate', objects=evidence))
+                role='geometry and texture approved' if texture else ('geometry approved' if approved else 'unapproved candidate'),
+                geometry_model_sha256=geometry_model_hash, texture_approval=texture['decision']['review_revision'] if texture else None,
+                objects=evidence))
             print('STAGED', group['id'], flush=True)
         # Only the working collection is part of this review; baseline reference
         # objects elsewhere in the file must not double the visible geometry.
@@ -114,7 +156,22 @@ def main():
             raise ValueError('Full-scene native part reconciliation failed')
         model = destination / 'scene.blend'
         bpy.ops.wm.save_as_mainfile(filepath=str(model))
-        report = dict(status='private integration review; not published', model_sha256=sha(model),
+        if selected:
+            bpy.ops.wm.open_mainfile(filepath=str(model))
+            scene = bpy.data.scenes['Croisement02 Refinement']
+            bpy.context.window.scene = scene
+            for record in records:
+                if not record.get('texture_approval'):
+                    continue
+                for evidence in record['objects']:
+                    obj = bpy.data.objects[evidence['imported_name']]
+                    if (appearance(obj) != evidence['texture_appearance_sha256'] or
+                            geometry(obj) != evidence['texture_geometry_sha256']):
+                        raise ValueError('Saved integration changed approved asset: ' + record['id'])
+            if len([r for r in records if r.get('texture_approval')]) != len(selected):
+                raise ValueError('Not every selected texture was staged')
+            select(texture_decisions, models)
+        report = dict(approved_textures=len(selected), approved_texture_import_preservation='PASS' if selected else 'not requested', status='private integration review; not published', model_sha256=sha(model),
             catalog_sha256=sha(destination / 'catalog.json'), assets=records,
             native_parts=sum(p.startswith('building-') for p in parts),
             authored_parts=sum(p.startswith(('foliage-', 'scenery-')) for p in parts),
@@ -165,4 +222,8 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--output', type=Path, help='Fresh isolated destination')
+    parser.add_argument('--approved-textures', type=Path, help='Strict texture decisions file')
+    args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else [])
+    main(args.output, args.approved_textures)
