@@ -244,7 +244,7 @@
       "model": "3d-assets/derby/derby-upper-gatehouse/model.glb",
       "model_sha256": "db30b2e76a1b710ea488ea9b582f3b0960c994d7326b2ab211603aad27cd1691",
       "descriptor": "3d-assets/derby/derby-upper-gatehouse/asset.json",
-      "descriptor_sha256": "f21ec707cf7943475ef5986479a062c1870168427539a5464dbfb2e19b77c84e",
+      "descriptor_sha256": "cc30d50e6a7801db5542a42b932bea672bfe0fc447c0bbfe5cfbb0f18311f028",
       "id": "derby-upper-gatehouse"
     },
     {
@@ -272,7 +272,7 @@
       "model": "3d-assets/derby/derby-keep-main-hall/model.glb",
       "model_sha256": "721311bf83222e0aad0ce8d53c433fcc644a6a36b035c8f57cbfdcee75eae1f5",
       "descriptor": "3d-assets/derby/derby-keep-main-hall/asset.json",
-      "descriptor_sha256": "4f974dce02fc4402bbda087049a23cc33b0c4ba063884d4f89802a002168a6b0",
+      "descriptor_sha256": "ba8683a8dd02f13522efb419bb1db7d4375659c20aa3d65be4920149bd9c7262",
       "id": "derby-keep-main-hall"
     },
     {

@@ -4194,3 +4194,30 @@ native apply/reset. Reopening and compiling the published scene reproduces the
 tested baseline exactly (`work/map-compile/nottingham-tower-state-KurPT1`). These
 bindings complete the currently modeled Nottingham appearance controls, not the
 unrecovered masks, animation or rendered-state coverage.
+
+### Full Lincoln archive and current control audit
+
+The full browser bake and Rust mod-loader check now pass for
+`work/map-compile/lincoln-plateau-state-gaTztD/editor-lincoln-current.zip`.
+The 152,115,399-byte ZIP includes the editable scene, color/depth/minimap and
+three appearance regions with 48 states. Without a base datadir, Rust constructs
+546 sight obstacles, 86 door projections and 69,920 grid blocks and validates
+the appearance references against eleven controls. The descriptor contains ten
+lifts and 33 light sectors, but zero explicit masks. This proves archive loading;
+it does not prove mask coverage, animated effects or rendered gameplay parity.
+
+A fresh ten-scene export snapshot in
+`work/map-compile/published-controls-audit-20261004` passes native apply/reset for
+all 60 compiled controls. Wychford still omits 47 unavailable control/traversal
+assemblies, and Derby/Leicester retain 98/203 unbound appearance-part warnings.
+These omissions prevent a full-parity claim even though the exports load.
+
+### Derby hall and upper-gatehouse reveals
+
+Two additional appearance-only controls are published for the keep hall and
+upper gatehouse. They retain asset-local activation geometry and receiving
+height. The baseline and independent one-unit moves pass native apply/reset for
+all four controls (`work/map-compile/derby-appearance-controls-lwHfaC`). The west
+tower's existing mask control remains intact. The remaining 43 appearance-part
+warnings belong to the east hall's unbound sight-state change; it requires its
+physical state semantics rather than another appearance-only control.

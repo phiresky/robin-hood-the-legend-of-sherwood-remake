@@ -561,3 +561,22 @@ reveal. Both the baseline and one-unit tower move compile without missing
 appearance bindings, retain the receiving sector/layer, and pass native apply/reset
 for all ten controls. A fresh compile of the published scene matches the tested
 baseline exactly. This does not verify animated sprites or unrecovered masks.
+
+The full Lincoln browser archive now passes
+`full_editor_archive_constructs_native_map_without_base_datadir` with
+`ROBIN_EDITOR_MAP_ZIP=level-editor/work/map-compile/lincoln-plateau-state-gaTztD/editor-lincoln-current.zip`
+(use an absolute path when invoking Cargo). The 152,115,399-byte archive decodes
+color, depth, minimap and its embedded editor scene, and constructs 546 sight
+obstacles, 86 door projections and 69,920 grid blocks without base game files.
+Three appearance regions contain 48 states, referencing eleven native controls;
+the descriptor retains ten lifts and 33 light sectors. It contains no explicit
+masks. This is archive/loading validation, not full-map rendered-state parity.
+
+`work/map-compile/published-controls-audit-20261004` exports all ten saved scenes
+from current pinned assets. Native apply/reset passes all 60 compiled controls
+in that snapshot. Best-effort omissions remain: Wychford reports 47 omitted
+control/traversal assemblies; Derby and Leicester report 98/203 unbound
+appearance-part warnings. These are part warnings, not distinct asset counts.
+`work/map-compile/derby-appearance-controls-lwHfaC` subsequently adds two Derby
+reveals: all four controls pass baseline and independent hall/gatehouse moves,
+leaving the east hall's sight-state appearance unfinished.

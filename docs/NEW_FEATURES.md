@@ -2439,3 +2439,7 @@ control away; the gate's appearance follows the same local control.
 Nottingham's east gate tower now carries its own appearance-only reveal control,
 with a local waypoint at the receiving floor's height. Its visual binding moves
 with the tower independently of the neighboring gateway's door permissions.
+
+Derby's keep hall and upper gatehouse now have asset-local reveal controls.
+Their trigger locations and activation contours move with each asset; they do
+not change navigation or door rights.
