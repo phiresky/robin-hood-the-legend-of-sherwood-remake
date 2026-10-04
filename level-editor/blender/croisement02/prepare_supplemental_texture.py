@@ -74,7 +74,8 @@ def main(original, packet, review_path, output):
     write(output / 'review-manifest.json', dict(version=1, items=[item]))
     write(output / 'decisions.json', dict(version=1, decisions=[decision]))
     result = prepare(output / 'review-manifest.json', asset, output / 'experiment', output / 'decisions.json')
-    attach_references(output / 'experiment')
+    if asset.startswith('croisement02-tree-'):
+        attach_references(output / 'experiment')
     print(json.dumps(result), flush=True)
 
 

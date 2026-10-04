@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(ROOT / 'level-editor/refinement'))
 sys.path.insert(0, str(ROOT / 'level-editor/refinement/blender'))
-from catalog import OUT, tree_workspace
+from catalog import OUT, tree_workspace, scenery_workspace
 from review_evidence import sha
 from render_slots import acquire, release
 from refinement_review import render_review
@@ -21,8 +21,9 @@ from refinement_workspace import _geometry
 
 
 def main(number, output, camera_source="supplemental", resolution_factor=1, fit_complete=False):
-    asset = f'croisement02-tree-{number:02d}'
-    worker = tree_workspace(number)
+    is_tree = str(number).isdigit()
+    asset = f'croisement02-tree-{int(number):02d}' if is_tree else str(number)
+    worker = tree_workspace(int(number)) if is_tree else scenery_workspace(asset)
     records = [r for r in json.loads((OUT / 'user-feedback.json').read_text())['records'] if r['asset_id'] == asset]
     decision = records[-1]
     if decision['decision'] != 'approved' or sha(worker / 'model.blend') != decision['model_sha256']:
@@ -123,7 +124,7 @@ def main(number, output, camera_source="supplemental", resolution_factor=1, fit_
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('tree', type=int)
+    parser.add_argument('tree', help='Tree mask number or full scenery asset ID')
     parser.add_argument('output', type=Path)
     parser.add_argument('--camera-source', choices=('supplemental', 'original'), default='supplemental')
     parser.add_argument('--resolution-factor', type=int, default=1, help='New render resolution; never resamples an image')
