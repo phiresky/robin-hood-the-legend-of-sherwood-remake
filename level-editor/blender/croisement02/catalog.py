@@ -37,6 +37,9 @@ def bank_workspace(asset):
 
 
 def scenery_workspace(asset):
+    from rock_candidates import selected_workspace as rock_workspace
+    rock=rock_workspace(OUT,asset,reviewed_catalog())
+    if rock is not None:return rock
     from central_candidates import selected_workspace as central_workspace
     central=central_workspace(OUT,asset,reviewed_catalog())
     if central is not None:return central
