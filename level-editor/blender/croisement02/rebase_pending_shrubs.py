@@ -37,11 +37,11 @@ def main(base, destination, indices):
     nodes = []
     workers = {}
     domains = []
-    for index, relative in [(81,'southwest81-v1'),(65,'north65-66-v1'),(66,'north65-66-v1'),(54,'northwest54-v1'),(57,'west-complements-v1'),(60,'west-complements-v1'),(62,'forest-clumps-v3'),(63,'forest-clumps-v3'),(64,'forest-clumps-v3')]:
+    for index, relative in [(81,'southwest81-v1'),(65,'north65-66-v1'),(66,'north65-66-v1'),(54,'northwest54-v1'),(57,'west-complements-v1'),(60,'west-complements-v1'),(62,'forest-clumps-v3'),(63,'forest-clumps-v3'),(64,'forest-clumps-v3'),(77,'south77-v2'),(78,'southwest-small-v1'),(84,'southwest-small-v1'),(83,'southwest-thicket83-v1'),(74,'east-south-clumps-v1'),(85,'east-south-clumps-v1'),(86,'east-south-clumps-v1'),(87,'east87-v2'),(88,'east-south-clumps-v1'),(89,'south-boundary89-v1'),(90,'east-south-clumps-v1'),(93,'oak-base93-v2'),(22,'north-fringe22-v1')]:
         if index not in indices:continue
         source = OUT/'understory-candidates'/relative
-        asset = 'croisement02-northwest-boundary-shrub-54' if index==54 else f'croisement02-shrub-{index:02}'
-        node = f'foliage-shrub-{index:03}'
+        asset = 'croisement02-canopy-fringe-22' if index==22 else 'croisement02-northwest-boundary-shrub-54' if index==54 else f'croisement02-shrub-{index:02}'
+        node = 'foliage-fringe-022' if index==22 else f'foliage-shrub-{index:03}'
         group = next(g for g in read(source/'catalog.json')['groups'] if g['id'] == asset)
         if any(g['id'] == asset for g in catalog['groups']) or node in catalog['canonical_owners']:
             raise ValueError('Candidate is already integrated')
@@ -67,6 +67,7 @@ def main(base, destination, indices):
         manifest['projections']['exterior']['occluder_constraints'].append(next(c for c in constraints if c['source_node'] == node))
         nodes.append(node); domains.append(domain)
         round_number=7 if index==54 else 9 if index in (57,60) else 11 if index==62 else 13 if index==63 else 8 if index in (62,64) else 1
+        round_number={77:16,78:12,83:18,84:12,74:15,85:15,86:15,87:20,88:15,89:17,90:15,93:22,22:21}.get(index,round_number)
         worker=OUT/f'understory-round-{round_number}/assets'/asset
         refit=OUT/'understory-round-2/assets'/asset
         if (refit/'inspection/refit-evidence.json').exists():worker=refit
@@ -104,6 +105,6 @@ if __name__ == '__main__':
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--base',type=Path,default=OUT/'fence-integration')
     parser.add_argument('--destination',type=Path,default=OUT/'understory-candidates/fence-rebase-v1')
-    parser.add_argument('--indices',type=int,nargs='+',choices=[81,65,66,54,57,60,62,63,64],default=[81,65,66])
+    parser.add_argument('--indices',type=int,nargs='+',choices=[81,65,66,54,57,60,62,63,64,77,78,83,84,74,85,86,87,88,89,90,93,22],default=[81,65,66])
     args=parser.parse_args()
     main(args.base.resolve(),args.destination.resolve(),args.indices)
