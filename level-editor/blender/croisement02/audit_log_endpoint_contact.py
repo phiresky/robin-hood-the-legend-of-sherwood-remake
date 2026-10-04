@@ -18,7 +18,7 @@ def sha(path):
 
 
 def main():
-    candidate = OUT / 'log-trap-state-candidate-v8'
+    candidate = OUT / (sys.argv[sys.argv.index('--candidate')+1] if '--candidate' in sys.argv else 'log-trap-state-candidate-v8')
     manifest = json.loads((candidate / 'manifest.json').read_text())
     bank = OUT / 'terrain-bank-candidate/assets/croisement02-north-woodland-bank'
     audit = json.loads((bank / 'inspection/saved-model-audit.json').read_text())
