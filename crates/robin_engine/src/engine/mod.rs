@@ -2642,6 +2642,14 @@ mod campaign_lifecycle_tests {
         campaign.values[CampaignValue::Score] = 13;
 
         let mut engine = EngineInner::new_with_campaign(campaign);
+        engine
+            .control
+            .sim_config
+            .exclude_starting_dead_soldiers_from_preserved_lives = false;
+        engine
+            .control
+            .sim_config
+            .exclude_required_kills_from_preserved_lives = false;
         engine.mission_domain.mission_stat.living_soldier_count = 2;
         engine.mission_domain.mission_stat.total_soldier_count = 5;
         engine.mission_domain.mission_stat.new_peasant_count = 99;
@@ -2744,8 +2752,8 @@ mod campaign_lifecycle_tests {
         assert_eq!(campaign.values[CampaignValue::LivingSoldiers], 9);
         assert_eq!(campaign.values[CampaignValue::DeadSoldiers], 12);
         assert_eq!(campaign.values[CampaignValue::Score], 1013);
-        assert_eq!(engine.mission_domain.mission_stat.living_soldier_count, 4);
-        assert_eq!(engine.mission_domain.mission_stat.total_soldier_count, 9);
+        assert_eq!(engine.mission_domain.mission_stat.living_soldier_count, 2);
+        assert_eq!(engine.mission_domain.mission_stat.total_soldier_count, 3);
     }
 
     #[test]

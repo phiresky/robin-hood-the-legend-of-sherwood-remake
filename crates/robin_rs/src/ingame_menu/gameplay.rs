@@ -813,11 +813,12 @@ mod tests {
 
     #[test]
     fn standalone_pages_cover_every_gameplay_option_once() {
-        assert_eq!(standalone_page_count(), 4);
+        assert_eq!(standalone_page_count(), 5);
         assert_eq!(standalone_visible_option_range(0), 0..12);
         assert_eq!(standalone_visible_option_range(1), 12..24);
         assert_eq!(standalone_visible_option_range(2), 24..36);
         assert_eq!(standalone_visible_option_range(3), 36..48);
+        assert_eq!(standalone_visible_option_range(4), 48..50);
 
         let covered: Vec<_> = (0..standalone_page_count())
             .flat_map(standalone_visible_option_range)
@@ -943,7 +944,7 @@ mod tests {
         assert_eq!(
             authoritative,
             [
-                0, 2, 4, 6, 16, 18, 19, 20, 21, 22, 23, 24, 34, 35, 36, 37, 38, 39, 43,
+                0, 2, 4, 6, 16, 18, 19, 20, 21, 22, 23, 24, 34, 35, 36, 37, 38, 39, 43, 48, 49,
             ]
         );
 
@@ -1011,6 +1012,8 @@ mod tests {
                 "Reversible Background Patches (Next Launch)",
                 "WASD direct movement",
                 "Block Victory During Combat (Next Launch)",
+                "Exclude Starting Corpses",
+                "Exclude Required Kills",
             ]
         );
         let text = LocalizedGameplayText::for_locale("en-US");

@@ -937,7 +937,7 @@ mod tests {
         // Allied kill line is also conditional.
         assert!(!text.contains("allied"));
         // Soldier / peasants / score / length always render.
-        assert!(text.contains("0 of 0 enemy"));
+        assert!(text.contains("0% (saved 0 of 0)"));
         assert!(text.contains("0 new gang members"));
         assert!(text.contains("Score: 0"));
         assert!(text.contains("00:00"));
