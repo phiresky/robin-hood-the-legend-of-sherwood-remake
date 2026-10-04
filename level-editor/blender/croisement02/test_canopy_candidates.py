@@ -15,6 +15,7 @@ class CandidateTests(unittest.TestCase):
         self.model_hash=sha(self.worker/'model.blend')
         self.previous=self.root/'previous';self.previous.mkdir();(self.previous/'model.blend').write_bytes(b'original')
         records={'validation.json':dict(status='PASS'),
+            'inspection/prototype-preservation.json':{},
             'inspection/saved-model-audit.json':dict(status='PASS',model_sha256=self.model_hash),
             'inspection/source-coverage/report.json':dict(model_sha256=self.model_hash,intersection_over_union=.99),
             'inspection/actual-materials/opacity-bounds.json':dict(model_sha256=self.model_hash,crowns=[dict(depth_width_ratio=1.2)]),
@@ -52,6 +53,16 @@ class CandidateTests(unittest.TestCase):
         path=self.worker/'inspection/actual-materials/opacity-bounds.json'
         path.write_text(json.dumps(dict(model_sha256=self.model_hash,crowns=[dict(depth_width_ratio=.8)])))
         with self.assertRaisesRegex(ValueError,'source or volume limits'):
+            validate_worker(self.worker)
+
+    def test_changed_combined_root_evidence_is_rejected(self):
+        evidence=self.root/'root-proof.json';evidence.write_text('original')
+        proof=dict(non_crown_geometry_and_materials_preserved=True,
+            root_completion_base=dict(evidence_sha256={str(evidence):sha(evidence)}))
+        (self.worker/'inspection/prototype-preservation.json').write_text(json.dumps(proof))
+        validate_worker(self.worker)
+        evidence.write_text('changed')
+        with self.assertRaisesRegex(ValueError,'Combined root evidence changed'):
             validate_worker(self.worker)
 
 

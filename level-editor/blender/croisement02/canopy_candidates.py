@@ -52,6 +52,14 @@ def validate_worker(worker):
         raise ValueError('Failed cleanup source or volume limits')
     if not review.get('ready_for_geometry_review'):
         raise ValueError('Cleanup requires manual review')
+    preservation=json.loads((worker/'inspection/prototype-preservation.json').read_text())
+    root_base=preservation.get('root_completion_base')
+    if root_base:
+        if not preservation.get('non_crown_geometry_and_materials_preserved'):
+            raise ValueError('Combined crown candidate lost its root preservation proof')
+        for path,expected in root_base['evidence_sha256'].items():
+            if sha(Path(path))!=expected:
+                raise ValueError('Combined root evidence changed: '+path)
 
 
 def expose(worker):

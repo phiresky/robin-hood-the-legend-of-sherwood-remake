@@ -100,9 +100,12 @@ def main():
                     compared['camera_manifest_sha256']==sha(workspace/'inspection/actual-camera-manifest.json') and
                     all(sha(cleanup_comparison/name)==expected for name,expected in compared['sheets'].items())):
                 item['source_comparison_secondary']=str(cleanup_comparison/'comparison-0-3.png')
-                item['source_comparison_secondary_label']='Earlier approved geometry above; NEW cleanup candidate below, identical cameras (views0–3)'
+                preservation=json.loads((workspace/'inspection/prototype-preservation.json').read_text())
+                baseline_label=('Reviewed root addition with earlier crown' if preservation.get('root_completion_base')
+                                else 'Earlier approved geometry')
+                item['source_comparison_secondary_label']=baseline_label+' above; NEW cleanup candidate below, identical cameras (views0–3)'
                 item['source_trace']=str(cleanup_comparison/'comparison-4-7.png')
-                item['source_trace_label']='Earlier approved geometry above; NEW cleanup candidate below, identical cameras (views4–7)'
+                item['source_trace_label']=baseline_label+' above; NEW cleanup candidate below, identical cameras (views4–7)'
         review=workspace/'inspection/visual-review.json'
         full_crown=workspace/'inspection/full-crown'
         if (full_crown/'evidence.json').exists():

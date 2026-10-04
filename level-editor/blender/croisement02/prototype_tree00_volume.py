@@ -23,7 +23,7 @@ from audit_candidates import audit
 from render_tree import render_workspace
 
 
-def main(destination, mask=0, interior_clusters=600):
+def main(destination, mask=0, interior_clusters=600, root_completion_base=None):
     worker = destination / 'assets' / f'croisement02-tree-{mask:02}'
     if worker.exists():
         raise ValueError('Use a fresh prototype destination')
@@ -33,6 +33,12 @@ def main(destination, mask=0, interior_clusters=600):
     approval=decisions.get(old.name,{})
     if approval.get('decision')!='approved' or approval.get('model_sha256')!=old_hash:
         raise ValueError('Cleanup rollout requires a current, explicitly approved geometry base')
+    approved = old
+    root_base = None
+    if root_completion_base is not None:
+        from canopy_root_base import validate as validate_root_base
+        root_base = validate_root_base(root_completion_base, approved)
+        old = root_completion_base
     old_report = json.loads((old / 'inspection/refinement.json').read_text())
     cfg = json.loads((old / 'workspace.json').read_text())
     source_row = next(r for r in json.loads((OUT / 'forest-v4-sources/manifest.json').read_text()) if r['mask'] == mask)
@@ -51,6 +57,9 @@ def main(destination, mask=0, interior_clusters=600):
         objects = [o for o in bpy.data.collections[cfg['collection_name']].all_objects
                    if o.type == 'MESH' and o.get('asset_group') == old.name]
         crown = next(o for o in objects if o.get('projection_component') == 'crown')
+        from approved_texture_stage import geometry, appearance
+        preserved = {o.name: dict(geometry=geometry(o), appearance=appearance(o))
+                     for o in objects if o != crown}
         inspection = worker / 'inspection'
         local_source = inspection / 'source-packet'
         local_source.mkdir(parents=True)
@@ -99,11 +108,20 @@ def main(destination, mask=0, interior_clusters=600):
             raise ValueError('Prototype failed native-front coverage')
         if any(c['depth_width_ratio'] < 1.0 for c in bounds['crowns']):
             raise ValueError('Prototype has insufficient physical leaf depth')
-        if sha(old / 'model.blend') != old_hash:
+        if sha(approved / 'model.blend') != old_hash:
             raise ValueError('Approved model changed')
-        write_json(inspection / 'prototype-preservation.json', dict(previous_worker=str(old),
+        current = {o.name: dict(geometry=geometry(o), appearance=appearance(o))
+                   for o in bpy.data.collections[cfg['collection_name']].all_objects
+                   if o.type == 'MESH' and o.get('asset_group') == old.name
+                   and o.get('projection_component') != 'crown'}
+        if current != preserved:
+            raise ValueError('Crown cleanup changed the preserved wood or root geometry/materials')
+        if root_base is not None and validate_root_base(old, approved) != root_base:
+            raise ValueError('Root base changed during crown cleanup')
+        write_json(inspection / 'prototype-preservation.json', dict(previous_worker=str(approved),
             previous_model_sha256=old_hash, previous_model_unchanged=True, model_sha256=sha(worker / 'model.blend'),
-            approval='pending', texture_generation='not performed'))
+            approval='pending', texture_generation='not performed', root_completion_base=root_base,
+            non_crown_geometry_and_materials_preserved=True, preserved_non_crown=preserved))
     finally:
         release()
 
@@ -113,5 +131,7 @@ if __name__ == '__main__':
     parser.add_argument('destination', type=Path)
     parser.add_argument('--mask',type=int,default=0,help='Native wood mask; one isolated candidate per invocation')
     parser.add_argument('--interior-clusters', type=int, default=600, help='Private inferred volume density experiment')
+    parser.add_argument('--root-completion-base', type=Path, help='Reviewed private tree15 root addition to preserve')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
-    main(args.destination.resolve(),args.mask,args.interior_clusters)
+    main(args.destination.resolve(),args.mask,args.interior_clusters,
+         args.root_completion_base.resolve() if args.root_completion_base else None)
