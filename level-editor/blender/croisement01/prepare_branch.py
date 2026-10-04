@@ -38,16 +38,23 @@ def tube(name,trace):
 
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--revision',type=int,choices=[1,2,3,4],default=1)
+    parser=argparse.ArgumentParser();parser.add_argument('--revision',type=int,choices=[1,2,3,4,5,6,7,8,9,10],default=1)
     args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
     main_trace=MAIN;twig_trace=TWIG;fork_trace=None
     if args.revision>=2:
         main_trace=[(1038,338,7,7),(1058,337,12,12),(1082,340,13,13),(1102,333,13,13),(1122,326,13,13),(1141,320,12,12),(1163,318,10,10),(1181,319,10,9),(1193,314,11,7),(1198,309,12,4)]
         fork_trace=[(1179,322,9,5),(1194,331,6,4),(1206,335,4,3),(1218,338,3,1.5)]
-    if args.revision==4:
+    if args.revision in (4,7,8,9,10):
         main_trace=[(1030,338,3,3),(1038,339,8,8),(1058,339,15,15),(1082,343,16,16),(1102,337,16,16),(1122,326,15,15),(1141,322,14,14),(1163,320,12,12),(1181,325,12,12),(1193,317,11,7),(1198,311,12,3)]
         twig_trace=[(1102,331,12,5),(1111,317,14,4.6),(1122,304,17,4),(1135,288,20,2.2)]
         fork_trace=[(1181,330,9,7),(1194,340,8,8),(1206,346,6,6),(1219,352,3,2)]
+    if args.revision==7:
+        fork_trace=[(1179,322,9,5),(1194,331,6,4),(1206,335,4,3),(1218,338,3,1.5)]
+    if args.revision==9:
+        fork_trace=[(1179,327,9,7),(1194,336,8,8),(1206,341,7,7),(1218,346,4,3)]
+    if args.revision==10:
+        main_trace=[(1030,338,3,3),(1038,339,8,8),(1058,339,15,15),(1082,343,16,16),(1102,337,16,16),(1122,326,15,15),(1141,322,14,14),(1163,320,12,12),(1181,322,12,12),(1198,335,10,10),(1218,345,6,5)]
+        fork_trace=[(1183,321,12,7),(1194,316,15,6),(1199,310,17,3)]
     if args.revision>=3:
         def smooth(trace):
             result=[]
@@ -89,18 +96,25 @@ def main():
     prepare(workspace,asset_id=asset,scene_name='Croisement01 Refinement',collection_name='Croisement01 Working',
         source_path=OUT/'baseline/covered.png',grouping_manifest=OUT/'catalog.json',
         inventory_path=OUT/'grouped-inventory/inventory.json',review_path=review,
-        source_mask_manifest=masks,width=256,height=256,framing_padding=1.16,
+        source_mask_manifest=masks,width=256,height=256,framing_padding=1.4 if args.revision>=6 else 1.16,
         lighting=dict(toward_sun=[-.6,-.4,.7],ambient=.22,diffuse=.78,shadow_epsilon=.05))
     original=next(o for o in bpy.data.collections['Croisement01 Working'].all_objects if o.type=='MESH' and o.get('asset_group')==asset)
     body=tube('Continuous main branch',main_trace);twig=tube('Upward twig union operand',twig_trace)
     bpy.context.view_layer.objects.active=body;body.select_set(True)
-    mod=body.modifiers.new('Continuous branch joint','BOOLEAN');mod.operation='UNION';mod.solver='EXACT';mod.object=twig
-    bpy.ops.object.modifier_apply(modifier=mod.name);bpy.data.objects.remove(twig,do_unlink=True)
+    def volume(obj):
+        bm=bmesh.new();bm.from_mesh(obj.data);value=abs(bm.calc_volume(signed=True));bm.free();return value
+    def union(operand,label):
+        before=volume(body)
+        mod=body.modifiers.new(label,'BOOLEAN');mod.operation='UNION';mod.solver='EXACT';mod.object=operand
+        bpy.context.view_layer.objects.active=body
+        bpy.ops.object.modifier_apply(modifier=mod.name)
+        after=volume(body)
+        if after<before*.98:raise ValueError(f'Union removed main wood volume: {before} -> {after}')
+        bpy.data.objects.remove(operand,do_unlink=True)
+    union(twig,'Continuous branch joint')
     if fork_trace:
         fork=tube('Right source fork union operand',fork_trace)
-        mod=body.modifiers.new('Continuous right fork','BOOLEAN');mod.operation='UNION';mod.solver='EXACT';mod.object=fork
-        bpy.context.view_layer.objects.active=body
-        bpy.ops.object.modifier_apply(modifier=mod.name);bpy.data.objects.remove(fork,do_unlink=True)
+        union(fork,'Continuous right fork')
     mesh=body.data.copy();bpy.data.objects.remove(body,do_unlink=True)
     inverse=original.matrix_world.inverted()
     for vert in mesh.vertices:vert.co=inverse@vert.co
@@ -111,12 +125,40 @@ def main():
             p=original.matrix_world@mesh.vertices[mesh.loops[loop].vertex_index].co
             uv.data[loop].uv=(p.x/1408,1-(-p.y*SIN-p.z*COS)/960);ownership.data[loop].color=(0,1,1,1)
     original.data=mesh
+    contact=None
+    if args.revision>=5:
+        from mathutils.bvhtree import BVHTree
+        terrain_nodes={'ground'}|{f'building-{i:03d}' for i in list(range(10))+list(range(76,81))}
+        vertices=[];faces=[]
+        for obj in bpy.data.collections['Croisement01 Working'].all_objects:
+            if obj.type!='MESH' or obj.get('source_node') not in terrain_nodes:continue
+            offset=len(vertices);vertices.extend(obj.matrix_world@v.co for v in obj.data.vertices)
+            faces.extend(tuple(offset+i for i in f.vertices) for f in obj.data.polygons)
+        if not faces:raise ValueError('Missing archived terrain support')
+        support=BVHTree.FromPolygons(vertices,faces)
+        original_world=[original.matrix_world@v.co for v in mesh.vertices]
+        def displacement(point,height):
+            t=max(0,min(1,(point.x-1140)/50)) if args.revision>=6 else 1
+            weight=t*t*(3-2*t)
+            return Vector((0,-height*weight*COS/SIN,height*weight))
+        def gaps(height):
+            result=[]
+            for p in original_world:
+                q=p+displacement(p,height);hit=support.ray_cast(Vector((q.x,q.y,10000)),Vector((0,0,-1)),20000)[0]
+                if hit is None:raise ValueError('Missing terrain below candidate vertex')
+                result.append(q.z-hit.z)
+            return result
+        before=gaps(0);height=next((i*.25 for i in range(481) if min(gaps(i*.25))>=-.1),None)
+        if height is None:raise ValueError('No contact translation found within declared search interval')
+        offset=Vector((0,-height*COS/SIN,height))
+        for vert,p in zip(mesh.vertices,original_world):vert.co=inverse@(p+displacement(p,height))
+        contact=dict(status='provisional archived terrain support; joint visual review still required',maximum_translation_world=list(offset),translation_profile='smooth right bank ramp from x1140 to1190' if args.revision>=6 else 'uniform translation',minimum_vertex_gap_before=min(before),minimum_vertex_gap_after=min(gaps(height)),source_projection_drift=abs(offset.y*SIN+offset.z*COS))
     bm=bmesh.new();bm.from_mesh(mesh)
     topology=dict(vertices=len(bm.verts),faces=len(bm.faces),nonmanifold_edges=sum(not e.is_manifold for e in bm.edges),degenerate_faces=sum(f.calc_area()<1e-8 for f in bm.faces));bm.free()
     if topology['nonmanifold_edges'] or topology['degenerate_faces']:raise ValueError(topology)
     validate(workspace);modified(workspace)
     inspection=workspace/'inspection';inspection.mkdir(exist_ok=True)
-    (inspection/'construction.json').write_text(json.dumps(dict(status='private candidate; self-review pending',main_trace=main_trace,twig_trace=twig_trace,fork_trace=fork_trace,topology=topology,model_sha256=sha(workspace/'model.blend'),limitations=['Native source traces approximate centerlines. Radius, hidden depth and twig height are inferred.','Independent native source coverage, ground contacts and actual material review pending.']),indent=2)+'\n')
+    (inspection/'construction.json').write_text(json.dumps(dict(status='private candidate; self-review pending',main_trace=main_trace,twig_trace=twig_trace,fork_trace=fork_trace,contact=contact,topology=topology,model_sha256=sha(workspace/'model.blend'),limitations=['Native source traces approximate centerlines. Radius, hidden depth and twig height are inferred.','Independent native source coverage, ground contacts and actual material review pending.']),indent=2)+'\n')
     import render_candidate
     sys.argv=['render_candidate','--',str(workspace)];render_candidate.main()
     import audit_native_coverage

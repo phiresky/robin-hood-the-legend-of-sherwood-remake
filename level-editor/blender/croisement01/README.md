@@ -60,3 +60,13 @@ revision both failed actual material review, and the fitted silhouette narrowed
 the stump base implausibly. Occupancy pixels alone do not establish a separate
 plant. Do not promote these experiments, treat fit scores as validation, or use
 them as approved texture inputs.
+
+`audit_native_coverage.py` casts independent pixel-center rays through the saved
+mesh against the native occupancy domain and reports archived terrain support.
+Its percentage is diagnostic: foreground grass and shadows must be classified
+from the artwork rather than claimed as wood to increase the score.
+`render_terrain_contact.py` preserves saved asset materials and shows the asset
+against neutral archived terrain at four frozen cameras. That terrain remains
+provisional. For the fallen branch, bank 078 intersects a naive zero-height
+placement; later private revisions preserve the native projection while raising
+only the bank-facing end. Union operations reject loss of main wood volume.
