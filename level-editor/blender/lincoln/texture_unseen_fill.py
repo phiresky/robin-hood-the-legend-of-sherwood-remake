@@ -20,7 +20,7 @@ Targets live in textures/unseen/targets.json: `id`, `assets` (asset groups displ
 `patches` (applied patch names; [] = covered state), `receivers` (the objects that motivated
 the target; they must be displayed, and every displayed object of the target's assets
 receives) and optional `prompt_suffix`. An object is displayed for a patch set
-when every patch in its `reveal_show_when_applied` is applied and none in
+when any patch in its `reveal_show_when_applied` is applied and none in
 `reveal_hide_when_applied` is.
 
 Packets: 8 orthographic views chosen greedily from 48 candidates (12 azimuths x 4 elevations) to
@@ -115,7 +115,9 @@ def patch_list(value):
 def displayed(obj, patches):
     show = patch_list(obj.get('reveal_show_when_applied'))
     hide = patch_list(obj.get('reveal_hide_when_applied')) or []
-    return (show is None or set(show) <= patches) and not set(hide) & patches
+    if show is not None and not show:
+        raise ValueError('Empty revealed receiver trigger list')
+    return (show is None or bool(set(show) & patches)) and not set(hide) & patches
 
 
 # ---------------------------------------------------------------- cameras
