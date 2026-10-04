@@ -97,7 +97,8 @@ pub(super) fn lcid_to_iso(lcid: &str) -> &str {
         "1046" => "pt-BR",
         "1049" => "ru-RU",
         "1054" => "th-TH",
-        "2047" => "und",
+        // The 2047 pack is the game's neutral, multi-language resource set.
+        "2047" => "mul",
         "2052" => "zh-CN",
         "2070" => "pt-PT",
         "3082" => "es-ES",
@@ -177,7 +178,7 @@ mod tests {
     #[test]
     fn locale_names_preserve_known_mappings_and_borrow_unknown_input() {
         assert_eq!(lcid_to_iso("1033"), "en-US");
-        assert_eq!(lcid_to_iso("2047"), "und");
+        assert_eq!(lcid_to_iso("2047"), "mul");
         let unknown = String::from("9999");
         let mapped = lcid_to_iso(&unknown);
         assert_eq!(mapped, "9999");

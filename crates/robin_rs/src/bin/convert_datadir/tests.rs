@@ -842,9 +842,9 @@ fn locale_detection_preserves_every_installed_pack() {
     assert_eq!(identities[0], ("1033", "en-US"));
     assert!(identities.contains(&("1031", "de-DE")));
     assert!(identities.contains(&("1036", "fr-FR")));
-    assert!(identities.contains(&("2047", "und")));
+    assert!(identities.contains(&("2047", "mul")));
     assert_eq!(identities.len(), 4);
-    assert_eq!(lcid_to_iso("2047"), "und");
+    assert_eq!(lcid_to_iso("2047"), "mul");
 }
 
 #[test]
