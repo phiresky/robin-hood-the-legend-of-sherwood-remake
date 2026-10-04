@@ -46,3 +46,17 @@ AI texture generation uses the authorized Sunburst/OpenRouter workflow only
 after explicit approval of the applicable geometry. Sparse source inputs must
 include actual supplementary reference images. Geometry approval and texture
 approval remain separate, and no approval carries over from another map.
+
+## Private construction experiments
+
+`plan_tree_groups.py` records a source association proposal for 27 tree groups;
+this is not the final catalog or an approval. `prepare_branch.py` constructs a
+connected bent branch and twig from the mask 70 source trace, then saves the
+shared packet and actual material views. It refuses to overwrite a candidate.
+
+The stump source split and silhouette fitting scripts are diagnostic experiments.
+Their outputs remain HOLD: the tall grass interpretation and flattened grass
+revision both failed actual material review, and the fitted silhouette narrowed
+the stump base implausibly. Occupancy pixels alone do not establish a separate
+plant. Do not promote these experiments, treat fit scores as validation, or use
+them as approved texture inputs.

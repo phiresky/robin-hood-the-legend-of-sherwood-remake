@@ -21,7 +21,7 @@ from refinement_workspace import prepare, modified, validate
 SIN, COS = math.sin(math.radians(35)), math.cos(math.radians(35))
 
 
-def stump(obj, record, index):
+def stump(obj, record, index, profile=None):
     """One closed, connected stump; no stacked cylinders or hidden caps."""
     points = record['points']
     native = [Vector((p['x'], -p['y']/SIN, p['z_top']/COS)) for p in points]
@@ -45,7 +45,11 @@ def stump(obj, record, index):
     vertices = []
     bottom = min(p['z_bottom'] for p in points)/COS
     lower_center=Vector((583,-695/SIN,0)) if index==55 else center.copy()
-    for fraction, radius in [(0,.78),(.15,.80),(.6,.90),(1,1)]:
+    sections=[(0,.78),(.15,.80),(.6,.90),(1,1)]
+    if profile is not None:
+        lower_center=Vector((profile[0],-profile[1]/SIN,0))
+        sections=[(0,profile[2]),(.2,profile[3]),(.6,profile[4]),(1,1)]
+    for fraction, radius in sections:
         axis_center=lower_center.lerp(center,fraction)
         for p in ring:
             vertices.append((axis_center.x+(p.x-center.x)*radius,
@@ -62,6 +66,14 @@ def stump(obj, record, index):
     mesh.from_pydata([matrix@Vector(v) for v in vertices],[],faces)
     for material in obj.data.materials:
         mesh.materials.append(material)
+    uv=mesh.uv_layers.new(name='Source UV')
+    ownership=mesh.color_attributes.new(name='Source ownership',type='FLOAT_COLOR',domain='CORNER')
+    mesh.color_attributes.active_color=ownership
+    for face in mesh.polygons:
+        for loop in face.loop_indices:
+            point=vertices[mesh.loops[loop].vertex_index]
+            uv.data[loop].uv=(point[0]/1408,1-(-point[1]*SIN-point[2]*COS)/960)
+            ownership.data[loop].color=(0,1,1,1)
     mesh.update()
     obj.data = mesh
     bm = bmesh.new();bm.from_mesh(mesh)
@@ -100,11 +112,17 @@ def main():
     bpy.ops.wm.open_mainfile(filepath=str(OUT/'croisement01-grouped.blend'))
     bpy.context.preferences.filepaths.save_version=0
     workspace=OUT/'props-round-1/assets'/asset
-    prepare(workspace,asset_id=asset,scene_name='Croisement01 Refinement',collection_name='Croisement01 Working',
-        source_path=OUT/'baseline/covered.png',grouping_manifest=OUT/'catalog.json',
-        inventory_path=OUT/'grouped-inventory/inventory.json',review_path=review,
-        source_mask_manifest=masks,width=256,height=256,framing_padding=1.16,
-        lighting=dict(toward_sun=[-.6,-.4,.7],ambient=.22,diffuse=.78,shadow_epsilon=.05))
+    if (workspace/'workspace.json').exists():
+        if (workspace/'inspection/refinement.json').exists():
+            raise FileExistsError('Completed candidate is immutable; use a fresh round for changes')
+        bpy.ops.wm.open_mainfile(filepath=str(workspace/'model.blend'))
+        validate(workspace)
+    else:
+        prepare(workspace,asset_id=asset,scene_name='Croisement01 Refinement',collection_name='Croisement01 Working',
+            source_path=OUT/'baseline/covered.png',grouping_manifest=OUT/'catalog.json',
+            inventory_path=OUT/'grouped-inventory/inventory.json',review_path=review,
+            source_mask_manifest=masks,width=256,height=256,framing_padding=1.16,
+            lighting=dict(toward_sun=[-.6,-.4,.7],ambient=.22,diffuse=.78,shadow_epsilon=.05))
     level=json.loads((OUT/'baseline/Croisement01.rhp.json').read_text())
     reports=[]
     for obj in bpy.data.collections['Croisement01 Working'].all_objects:
