@@ -23,11 +23,13 @@ from audit_candidates import audit
 from render_tree import render_workspace
 
 
-def main(destination, mask=0, interior_clusters=600, root_completion_base=None, branch_clumps=False):
+def main(destination, mask=0, interior_clusters=600, root_completion_base=None, branch_clumps=False, approved_base=None):
     worker = destination / 'assets' / f'croisement02-tree-{mask:02}'
     if worker.exists():
         raise ValueError('Use a fresh prototype destination')
-    old = tree_workspace(mask)
+    old = approved_base or tree_workspace(mask)
+    if old.name != worker.name:
+        raise ValueError('Approved base asset does not match the requested crown')
     old_hash = sha(old / 'model.blend')
     decisions={r['asset_id']:r for r in json.loads((OUT/'user-feedback.json').read_text())['records']}
     approval=decisions.get(old.name,{})
@@ -139,6 +141,8 @@ if __name__ == '__main__':
     parser.add_argument('--interior-clusters', type=int, default=600, help='Private inferred volume density experiment')
     parser.add_argument('--root-completion-base', type=Path, help='Reviewed private tree15 root addition to preserve')
     parser.add_argument('--branch-clumps', action='store_true', help='Private irregular branch-scale volume experiment')
+    parser.add_argument('--approved-base', type=Path, help='Explicit approved original when a pending candidate is already selected')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
     main(args.destination.resolve(),args.mask,args.interior_clusters,
-         args.root_completion_base.resolve() if args.root_completion_base else None,args.branch_clumps)
+         args.root_completion_base.resolve() if args.root_completion_base else None,args.branch_clumps,
+         args.approved_base.resolve() if args.approved_base else None)
