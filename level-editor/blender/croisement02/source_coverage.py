@@ -29,6 +29,20 @@ def audit(workspace,objects):
         native=next(r for r in json.loads(inventory.read_text())['masks'] if r['index']==report['wood_domain_mask'])
         native=dict(native,png=str((inventory.parent/native['png']).resolve()))
     paste(np.asarray(Image.open(OUT/'baseline/masks'/native['png']).convert('L'))>0,*native['box_top_left'])
+    physical_authority=packet.get('physical_silhouette_authority')
+    if physical_authority:
+        if 'coverage_domain_mask' in report:raise ValueError('Competing physical and ownership coverage authorities')
+        path=packet_path.parent/'complete-source.png'
+        if sha(path)!=physical_authority['sha256'] or not physical_authority.get('reason'):
+            raise ValueError('Physical silhouette proof is stale or unexplained')
+        expected[:]=False
+        paste(np.asarray(Image.open(path).convert('RGBA'))[:,:,3]>127,x,y)
+    observed_expected=None
+    observed_path=packet_path.parent/'observed-source.png'
+    if observed_path.exists():
+        saved=expected.copy();expected[:]=False
+        paste(np.asarray(Image.open(observed_path).convert('RGBA'))[:,:,3]>127,x,y)
+        observed_expected=expected.copy();expected[:]=saved
     coverage_domain=None
     if 'coverage_domain_mask' in report:
         # A mixed native mask can contain another receiver's rock or bark.
@@ -69,6 +83,12 @@ def audit(workspace,objects):
     Image.fromarray(expected.astype('uint8')*255).save(destination/'expected.png')
     result=dict(model_sha256=sha(workspace/'model.blend'),source_packet_sha256=sha(packet_path),source_crop=[left,top,right,bottom],expected_pixels=int(expected.sum()),rendered_pixels=int(actual.sum()),missing_pixels=int(missing.sum()),extra_pixels=int(extra.sum()),intersection_over_union=float(intersection.sum()/np.count_nonzero(expected|actual)),legend='Red: native coverage missed. Cyan: rendered coverage outside assigned native masks. Crossed foliage edges and mask-derived wood thickness can differ.',status='measurement; requires visual review')
     if coverage_domain is not None:result['coverage_domain']=coverage_domain
+    if physical_authority:result['physical_silhouette_authority']=physical_authority
+    if observed_expected is not None:
+        observed=observed_expected[top:bottom,left:right]
+        result['observed_source_coverage']=dict(expected_pixels=int(observed.sum()),missing_pixels=int((observed&~actual).sum()),
+            recall=float((observed&actual).sum()/observed.sum()) if observed.any() else None,
+            source_rgba_sha256=sha(observed_path),semantics='Separate observed-source recall; inferred silhouette outside observed pixels is not source evidence')
     (destination/'report.json').write_text(json.dumps(result,indent=2)+'\n')
     for obj in copies+[camera]:bpy.data.objects.remove(obj,do_unlink=True)
     bpy.data.cameras.remove(data);bpy.data.scenes.remove(scene)

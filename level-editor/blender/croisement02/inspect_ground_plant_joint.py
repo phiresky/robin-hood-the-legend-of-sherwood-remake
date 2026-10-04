@@ -22,13 +22,14 @@ def worker(index):
     return OUT/'ground-plant-candidates'/batch/'assets'/f'croisement02-ground-plant-{index}'
 
 
-def run(label,indices):
+def run(label,indices,include_bank=None,context_workers=()):
     destination=OUT/'ground-plant-candidates/joint-v2'/label;destination.mkdir(parents=True,exist_ok=False)
     bpy.ops.wm.read_factory_settings(use_empty=True);scene=bpy.context.scene
     collection=bpy.data.collections.new('Ground plant joint review');scene.collection.children.link(collection)
     records=[];plant_objects=[]
-    inputs=[(worker(i),'private plant') for i in indices]
-    if min(indices)>=117:inputs.append((scenery_workspace('croisement02-north-woodland-bank'),'selected bank context'))
+    inputs=[(worker(i),'private plant') for i in indices]+[(p,'selected neighbouring vegetation') for p in context_workers]
+    if include_bank is None:include_bank=min(indices)>=117
+    if include_bank:inputs.append((scenery_workspace('croisement02-north-woodland-bank'),'selected bank context'))
     for workspace,role in inputs:
         model=workspace/'model.blend';digest=sha(model)
         audit=json.loads((workspace/'inspection/saved-model-audit.json').read_text())
@@ -51,7 +52,7 @@ def run(label,indices):
         records.append(dict(workspace=str(workspace),model_sha256=digest,role=role,objects=bindings))
     points=[obj.matrix_world@v.co for obj in plant_objects for v in obj.data.vertices]
     center=Vector([(min(p[i] for p in points)+max(p[i] for p in points))/2 for i in range(3)])
-    if max(indices)<117:
+    if not include_bank:
         bpy.ops.mesh.primitive_plane_add(size=500,location=(center.x,center.y,0))
         floor=bpy.context.object;floor.name='Neutral ground contact guide (not source artwork)'
         mat=bpy.data.materials.new('Neutral contact plane');mat.diffuse_color=(.15,.16,.12,1);floor.data.materials.append(mat)
