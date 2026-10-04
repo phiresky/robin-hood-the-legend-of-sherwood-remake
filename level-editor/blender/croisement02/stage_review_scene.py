@@ -17,6 +17,7 @@ from catalog import OUT, reviewed_catalog, tree_workspace, scenery_workspace
 from evidence_io import sha, write_json, digest
 from render_slots import acquire, release
 from tree_geometry import SIN, RAY
+from catalog_schema import source_for_part
 
 
 def signature(obj):
@@ -39,7 +40,7 @@ def main():
         scene = bpy.data.scenes['Croisement02 Refinement']
         bpy.context.window.scene = scene
         collection = bpy.data.collections['Croisement02 Working']
-        owners = {f"building-{p['obstacle']:03}": group for group in catalog['groups'] for p in group['parts']}
+        owners = {source_for_part(p): group for group in catalog['groups'] for p in group['parts']}
         for obj in list(collection.all_objects):
             if obj.type == 'MESH' and obj.get('source_node') in owners:
                 group = owners[obj['source_node']]
@@ -58,6 +59,10 @@ def main():
                 records.append(dict(id=group['id'], role='unrefined context proxy', parts=group['parts']))
                 continue
             audit = json.loads(audit_path.read_text())
+            expected_parts = {source_for_part(p) for p in group['parts']}
+            if {r['source_node'] for r in audit['objects']} != expected_parts:
+                records.append(dict(id=group['id'], role='unrefined context proxy; prior worker source ownership is stale', parts=group['parts']))
+                continue
             model = worker / 'model.blend'
             model_hash = sha(model)
             if audit['status'] != 'PASS' or audit['model_sha256'] != model_hash:
@@ -83,7 +88,7 @@ def main():
                     raise ValueError('Imported asset scope or surface changed')
                 evidence.append(dict(source_node=obj['source_node'], component=obj.get('projection_component'),
                                      surface_sha256=before, matrix_world=[list(r) for r in matrix]))
-            if {o['source_node'] for o in imported} != {f"building-{p['obstacle']:03}" for p in group['parts']}:
+            if {o['source_node'] for o in imported} != expected_parts:
                 raise ValueError('Imported ownership differs from current catalog: ' + group['id'])
             for obj in old_objects:
                 bpy.data.objects.remove(obj, do_unlink=True)
@@ -110,7 +115,9 @@ def main():
         model = destination / 'scene.blend'
         bpy.ops.wm.save_as_mainfile(filepath=str(model))
         report = dict(status='private integration review; not published', model_sha256=sha(model),
-            catalog_sha256=sha(destination / 'catalog.json'), assets=records, native_parts=len(parts),
+            catalog_sha256=sha(destination / 'catalog.json'), assets=records,
+            native_parts=sum(p.startswith('building-') for p in parts),
+            authored_parts=sum(p.startswith(('foliage-', 'scenery-')) for p in parts),
             remaining=['Terrain still retains its source artwork; foreground removal and hidden-ground completion are pending.',
                        'Unrefined context proxies and unapproved candidates are included for spatial review only.',
                        'Mask-only shrubs/grass, remaining boundary trees, and animated mission states are not yet integrated.'])

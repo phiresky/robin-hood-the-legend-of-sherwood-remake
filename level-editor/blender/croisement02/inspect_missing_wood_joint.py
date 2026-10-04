@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(ROOT / 'level-editor/refinement'))
 sys.path.insert(0, str(ROOT / 'level-editor/refinement/blender'))
-from catalog import OUT, tree_workspace
+from catalog import OUT, tree_workspace, scenery_workspace
 from evidence_io import sha, write_json
 from render_slots import acquire, release
 from stage_review_scene import signature
@@ -19,7 +19,11 @@ from tree_geometry import SIN, COS, RAY
 
 
 def inspect(stem, neighbour, extra_neighbours=()):
-    suffix = ''.join(f'-{n:02}' for n in extra_neighbours)
+    asset=f'croisement02-supplemental-wood-{stem:02}'
+    candidate=scenery_workspace(asset)
+    integrated=(candidate/'inspection/authored-integration.json').exists()
+    if not integrated:candidate=OUT/f'missing-wood-round-1/assets/{asset}'
+    suffix = ''.join(f'-{n:02}' for n in extra_neighbours) + ('-integrated' if integrated else '')
     destination = OUT / f'missing-wood-review/joint-{stem:02}-{neighbour:02}{suffix}'
     destination.mkdir(exist_ok=False)
     bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -31,7 +35,7 @@ def inspect(stem, neighbour, extra_neighbours=()):
     records = []
     latest = {r['asset_id']: r for r in json.loads((OUT/'user-feedback.json').read_text())['records']}
     inputs = [(tree_workspace(n), 'approved neighbour') for n in (neighbour, *extra_neighbours)]
-    inputs.append((OUT / f'missing-wood-round-1/assets/croisement02-supplemental-wood-{stem:02}', 'unapproved supplemental stem'))
+    inputs.append((candidate, 'unapproved supplemental stem'))
     for worker, role in inputs:
         model = worker / 'model.blend'; original_hash = sha(model)
         if role == 'approved neighbour':

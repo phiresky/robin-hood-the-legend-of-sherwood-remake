@@ -10,6 +10,9 @@ from evidence_io import sha, write_json
 
 
 def main():
+    current = OUT / 'ownership-revision/catalog.json'
+    if current.exists() and json.loads(current.read_text()).get('version') == 2:
+        raise ValueError('Initial ownership migration is superseded by the canonical authored-scenery catalog; revise the current catalog instead of rebuilding the historical one')
     source = OUT / 'catalog.json'
     catalog = json.loads(source.read_text())
     original = {g['id']: json.loads(json.dumps(g)) for g in catalog['groups']}

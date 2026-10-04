@@ -8,6 +8,7 @@ sys.path.insert(0,str(Path(__file__).parent));sys.path.insert(0,str(ROOT/'level-
 from catalog import OUT,tree_workspace,scenery_workspace,reviewed_catalog
 from evidence_io import sha
 from build_review_gallery import build
+from catalog_schema import source_for_part
 
 
 def main():
@@ -18,12 +19,16 @@ def main():
                 reason='Classified as patch-controlled obstacle metadata. Visible mission sprites and state integration remain under review; these volumes are not permanent scenery.'))
             continue
         tree='wood_mask' in group
+        stem=bool(group.get('authored_scenery') and 'native_wood_mask' in group)
         workspace=OUT/('forest-v4-round-1' if tree else 'scenery-round-1')/'assets'/group['id']
         if tree:workspace=tree_workspace(group['wood_mask'])
         if not tree:workspace=scenery_workspace(group['id'])
         report_path=workspace/'inspection/refinement.json'
         if not report_path.exists():
             missing.append(dict(id=group['id'],name=group['name'],status='in progress',reason='Worker geometry/review packet is still being built.'));continue
+        scope=json.loads((workspace/'workspace.json').read_text())
+        if set(scope['part_ids'])!={source_for_part(p) for p in group['parts']}:
+            missing.append(dict(id=group['id'],name=group['name'],status='ownership revision pending',reason='Previous worker owns a different source-part set. A fresh workspace is required; the old geometry packet is withheld.'));continue
         report=json.loads(report_path.read_text())
         if tree and report['crown'].get('geometry_version') not in ('native-leaf-clusters-v5','native-leaf-clusters-v6'):
             missing.append(dict(id=group['id'],name=group['name'],status='in progress',reason='Replacing the rejected large-shell prototype with small, full-depth leaf clusters.'));continue
@@ -39,12 +44,15 @@ def main():
         actual=workspace/'inspection/actual-materials';evidence=actual/'evidence.json';coverage=workspace/'inspection/source-coverage/report.json'
         if evidence.exists() and json.loads(evidence.read_text())['model_sha256']==model_hash:
             item['stored_material_textured']=str(actual/'sheet.png');item['stored_material_audit']=str(evidence)
-            if tree and coverage.exists() and json.loads(coverage.read_text()).get('model_sha256')==model_hash:
-                metrics=json.loads(coverage.read_text());bounds=json.loads((actual/'opacity-bounds.json').read_text())
+            if (tree or stem) and coverage.exists() and json.loads(coverage.read_text()).get('model_sha256')==model_hash:
+                metrics=json.loads(coverage.read_text())
+                bounds=json.loads((actual/'opacity-bounds.json').read_text()) if tree else None
                 item['projection_errors']=str(coverage.parent/'difference.png');item['projection_errors_label']='Native-mask comparison: red missing, cyan extra'
                 item['source_comparison']=str(coverage.parent/'render.png');item['source_comparison_label']='Saved geometry rendered from the original map camera'
-                ratio=min(r['depth_width_ratio'] for r in bounds['crowns'])
-                item['notes'].append(f"Visible depth/width {ratio:.3f}; source silhouette IoU {metrics['intersection_over_union']:.3f}.")
+                if tree:
+                    ratio=min(r['depth_width_ratio'] for r in bounds['crowns'])
+                    item['notes'].append(f"Visible depth/width {ratio:.3f}; source silhouette IoU {metrics['intersection_over_union']:.3f}.")
+                else:item['notes'].append(f"Authored standalone stem; source silhouette IoU {metrics['intersection_over_union']:.3f}.")
         audit_path=workspace/'inspection/saved-model-audit.json'
         audited=False
         if audit_path.exists():
@@ -59,7 +67,20 @@ def main():
             if technical:
                 values=json.loads(coverage.read_text());bounds=json.loads((actual/'opacity-bounds.json').read_text())
                 technical=values['intersection_over_union']>=.95 and min(v['depth_width_ratio'] for v in bounds['crowns'])>=1.
+        elif stem:
+            technical=technical and coverage.exists() and json.loads(coverage.read_text()).get('model_sha256')==model_hash and json.loads(coverage.read_text())['intersection_over_union']>=.95
         elif 'state' in group['id']:technical=False
+        joint_path=workspace/'inspection/joint-neighbourhood.json'
+        if stem and joint_path.exists():
+            joint=json.loads(joint_path.read_text())
+            if (joint['model_sha256']==model_hash
+                    and sha(Path(joint['evidence']))==joint['evidence_sha256']
+                    and sha(Path(joint['sheet']))==joint['sheet_sha256']
+                    and all((Path(r['worker'])/'model.blend').exists()
+                            and sha(Path(r['worker'])/'model.blend')==r['model_sha256']
+                            for r in json.loads(Path(joint['evidence']).read_text())['inputs'])):
+                item['source_comparison_secondary']=joint['sheet']
+                item['source_comparison_secondary_label']='Source and oblique views with approved neighbouring trees; lower row hides foliage'
         review=workspace/'inspection/visual-review.json'
         full_crown=workspace/'inspection/full-crown'
         if (full_crown/'evidence.json').exists():
@@ -82,6 +103,8 @@ def main():
                 current_review=current_review and packet.exists() and sha(packet)==reviewed['self_review_packet_sha256']
             if reviewed.get('full_crown_evidence_sha256'):
                 current_review=current_review and 'stored_material_states' in item and sha(full_crown/'evidence.json')==reviewed['full_crown_evidence_sha256']
+            if reviewed.get('joint_neighbourhood_sha256'):
+                current_review=current_review and joint_path.exists() and sha(joint_path)==reviewed['joint_neighbourhood_sha256'] and 'source_comparison_secondary' in item
             if reviewed.get('preservation_evidence'):
                 preservation=Path(reviewed['preservation_evidence'])
                 current_review=current_review and preservation.exists() and sha(preservation)==reviewed['preservation_evidence_sha256']
@@ -118,7 +141,7 @@ def main():
         items.append(item)
     missing.extend([
         dict(id='croisement02-terrain-integration',name='Terrain integration',status='pending',reason='Full-scene gap audit, foreground-domain removal and terrain texture completion remain required before publication.'),
-        dict(id='croisement02-mask-only-scenery',name='Mask-only scenery',status='pending',reason='Undergrowth, small grass sprites and wood masks 09/22/44 without native obstacle assignments are inventoried but not yet separate completed 3D assets. Mask 21 is now identified with native obstacle 132.'),
+        dict(id='croisement02-mask-only-scenery',name='Mask-only scenery',status='pending',reason='Undergrowth and small grass sprites remain pending. Authored stems09/44 have separate review candidates. Mask22 is a northern foliage fragment, not automatically a missing trunk; its ownership remains under review. Mask21 belongs to native obstacle132.'),
         dict(id='croisement02-animation-and-mission-states',name='Animation and mission states',status='pending',reason='All 15 animation sequences and 129 mission patches are preserved as source evidence. Candidates show synchronized first-frame foliage; full state/animation integration is pending.')])
     data=dict(map='Croisement02',items=items,without_packets=missing,status_counts=dict(Counter(i['status'] for i in items)),
               policy='No geometry or texture approval is implied. Only the two explicitly selected Leicester trees are reference assets.')

@@ -242,3 +242,20 @@ parts and renders eight oblique scene views. This private review assembly is
 not a publication. The first integrated review remains on hold for foreground
 removal, missing mask-only scenery, pronounced oblique foliage layering,
 terrain completion and mission/animation state integration.
+
+
+`prepare_missing_wood.py` reconstructs native mask09/44 stems as separate
+unapproved authored scenery. `inspect_missing_wood_joint.py` compares them with
+approved08/45; `--extended` includes07 too. Joint source/oblique views support44
+beneath45's crown. Stem09 remains a slender bare companion beside07/08; no
+exclusive crown pixels are inferred. Mask22 is a northern foliage fragment,
+not automatically a missing trunk.
+
+`integrate_missing_wood.py` freezes a fresh version2 catalog and inventory with
+150 native parts plus `foliage-wood-009` and `foliage-wood-044`. Its source domains
+400/401 exclude foreground leaves, and prepare terrain exclusions and scoped
+foreign occlusion rules. Fresh `authored-stems-round-1` workers preserve the
+reviewed stem geometry; geometry approval and subsequent texture fill remain
+separate. The main gallery/staging select these workers and reject historical
+packets whose source-part sets differ from current ownership. Full terrain
+cleanup is still required; preparing its exclusions does not rebake terrain.

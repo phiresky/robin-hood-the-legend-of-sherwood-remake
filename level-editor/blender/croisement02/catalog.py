@@ -9,6 +9,10 @@ def reviewed_catalog():
     return revised if revised.exists() else OUT/'catalog.json'
 
 def scenery_workspace(asset):
+    authored=OUT/'authored-stems-round-1/assets'/asset
+    if (authored/'inspection/authored-integration.json').exists():return authored
+    source_revised=OUT/'scenery-round-3/assets'/asset
+    if (source_revised/'inspection/rock-ownership-revision.json').exists():return source_revised
     replacement=OUT/'scenery-round-2/assets'/asset
     if any((replacement/'inspection'/receipt).exists() for receipt in ('feedback-revision-1.json','relief-revision.json')):
         return replacement
