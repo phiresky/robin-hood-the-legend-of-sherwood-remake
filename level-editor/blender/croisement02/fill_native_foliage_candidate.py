@@ -17,10 +17,12 @@ from refinement_review import _tile
 from render_multiview_asset import render
 
 
-def main(experiment, donor_dir, output, conditioned=None, conditioned_threshold=.7):
+def main(experiment, donor_dir, output, conditioned=None, conditioned_threshold=.7, donor_world_scale=1.):
     require(not output.exists(), 'Use a fresh candidate directory')
     require(math.isfinite(conditioned_threshold) and -1 <= conditioned_threshold <= 1,
             'Conditioned projection threshold must be finite and in [-1, 1]')
+    require(math.isfinite(donor_world_scale) and donor_world_scale > 0,
+            'Donor world scale must be finite and positive')
     evidence = {str(p): sha(p) for p in [donor_dir / 'donor.png', donor_dir / 'donor-mask.png',
                 donor_dir / 'tile.png', donor_dir / 'donor-provenance.json', donor_dir / 'donor-validation.json']}
     from PIL import Image
@@ -89,7 +91,7 @@ def main(experiment, donor_dir, output, conditioned=None, conditioned_threshold=
             # Use a nondegenerate face plane: source-camera projection collapses
             # side-facing surfaces into repeated stripes.
             axis = int(np.argmax(np.abs(np.asarray(normal))))
-            scaled = positions * [1., sin, cos]
+            scaled = positions * [1., sin, cos] / donor_world_scale
             axes = [(1, 2), (0, 2), (0, 1)][axis]
             x = np.floor(scaled[:, axes[0]]).astype(int) % width
             y = np.floor(scaled[:, axes[1]]).astype(int) % height
@@ -139,6 +141,7 @@ def main(experiment, donor_dir, output, conditioned=None, conditioned_threshold=
                       evidence_sha256=evidence, physical_foliage=report,
                       donor_method='texture-synthesis 0.8.3, masked same-asset native donor, seed40',
                       sampling='Native pixel scale in dominant face tangent plane',
+                      donor_world_scale=donor_world_scale,
                       conditioned_front_samples=conditioned_samples,
                       conditioned_front_threshold=conditioned_threshold if conditioned else None,
                       transparent_bounces=256, approval='pending actual eight-view review',
@@ -156,6 +159,9 @@ if __name__ == '__main__':
     parser.add_argument('--conditioned', type=Path)
     parser.add_argument('--conditioned-threshold', type=float, default=.7,
                         help='Diagnostic projection-normal threshold; default preserves prior candidates')
+    parser.add_argument('--donor-world-scale', type=float, default=1.,
+                        help='World-space texture wavelength multiplier; does not change source RGB or geometry')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
     main(args.experiment.resolve(), args.donor_dir.resolve(), args.output.resolve(),
-         args.conditioned.resolve() if args.conditioned else None, args.conditioned_threshold)
+         args.conditioned.resolve() if args.conditioned else None, args.conditioned_threshold,
+         args.donor_world_scale)
