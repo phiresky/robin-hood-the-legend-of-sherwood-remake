@@ -11,7 +11,7 @@ from audit_log_endpoint_contact import planar_triangle,overlap,sha
 
 
 def main():
-    base=OUT/'log-trap-state-candidate-v9'
+    base=OUT/(sys.argv[sys.argv.index('--candidate')+1] if '--candidate' in sys.argv else 'log-trap-state-candidate-v9')
     report=json.loads((base/'dense-contact-audit.json').read_text())
     assert sha(base/'worker.blend')==report['model_sha256']
     bank=OUT/'terrain-bank-candidate/assets/croisement02-north-woodland-bank'
@@ -19,7 +19,8 @@ def main():
     audit=json.loads((bank/'inspection/saved-model-audit.json').read_text())
     names=[r['object']for r in audit['objects']if r['source_node']in[f'building-{i:03d}'for i in range(5)]]
     bpy.ops.wm.open_mainfile(filepath=str(base/'worker.blend'))
-    logs=[bpy.data.objects[f'applied log {i:02d}']for i in(4,5)]
+    indices=[int(v) for v in sys.argv[sys.argv.index('--indices')+1].split(',')] if '--indices' in sys.argv else [4,5]
+    logs=[bpy.data.objects[f'applied log {i:02d}']for i in indices]
     with bpy.data.libraries.load(str(bank/'model.blend'),link=False)as(src,dst):dst.objects=names
     for obj in dst.objects:bpy.context.scene.collection.objects.link(obj)
     bpy.context.view_layer.update()
@@ -32,7 +33,7 @@ def main():
     records=[]
     for obj in logs:
         obj.data.calc_loop_triangles()
-        for delta in (0,.1,.25,.5,1,2,4,8,16,32,48):
+        for delta in ([float(v) for v in sys.argv[sys.argv.index('--deltas')+1].split(',')] if '--deltas' in sys.argv else (0,.1,.25,.5,1,2,4,8,16,32,48)):
             shift=Vector((0,-COS/SIN*delta,delta));minimum=min(v.co.z+delta for v in obj.data.vertices)
             for triangle in obj.data.loop_triangles:
                 plane=planar_triangle([obj.matrix_world@obj.data.vertices[i].co+shift for i in triangle.vertices])

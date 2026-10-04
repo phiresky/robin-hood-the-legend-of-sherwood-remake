@@ -7,7 +7,7 @@ from catalog import OUT
 
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
 def main():
-    joint=OUT/'log-state-foreground-joint-v2';m=json.loads((joint/'manifest.json').read_text());root=OUT/'state-target-evidence/log-trap';reference=root/'native-order-reference';box=m['camera']['bbox'];w=box[2]-box[0];h=box[3]-box[1];scale=m['camera']['ortho_scale'];yy,xx=np.mgrid[:512,:512];ix=np.floor(w/2+(xx+.5-256)*scale/512).astype(int);iy=np.floor(h/2+(yy+.5-256)*scale/512).astype(int);valid=(ix>=0)&(ix<w)&(iy>=0)&(iy<h)
+    joint=OUT/'log-state-foreground-joint-v3';m=json.loads((joint/'manifest.json').read_text());root=OUT/'state-target-evidence/log-trap';reference=root/'native-order-reference';box=m['camera']['bbox'];w=box[2]-box[0];h=box[3]-box[1];scale=m['camera']['ortho_scale'];yy,xx=np.mgrid[:512,:512];ix=np.floor(w/2+(xx+.5-256)*scale/512).astype(int);iy=np.floor(h/2+(yy+.5-256)*scale/512).astype(int);valid=(ix>=0)&(ix<w)&(iy>=0)&(iy<h)
     def project(alpha):
         result=np.zeros((512,512),bool);result[valid]=alpha[iy[valid],ix[valid]];return result
     expected=project(np.array(Image.open(reference/'visible-log-phase0.png'))>0);raw=project(np.array(Image.open(root/'tick-089.png'))[:,:,3]>0)
