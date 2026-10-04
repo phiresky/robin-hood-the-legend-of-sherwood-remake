@@ -38,22 +38,44 @@ def tube(name,trace):
 
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--revision',type=int,choices=[1,2],default=1)
+    parser=argparse.ArgumentParser();parser.add_argument('--revision',type=int,choices=[1,2,3],default=1)
     args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
     main_trace=MAIN;twig_trace=TWIG;fork_trace=None
-    if args.revision==2:
+    if args.revision>=2:
         main_trace=[(1038,338,7,7),(1058,337,12,12),(1082,340,13,13),(1102,333,13,13),(1122,326,13,13),(1141,320,12,12),(1163,318,10,10),(1181,319,10,9),(1193,314,11,7),(1198,309,12,4)]
         fork_trace=[(1179,322,9,5),(1194,331,6,4),(1206,335,4,3),(1218,338,3,1.5)]
+    if args.revision==3:
+        def smooth(trace):
+            result=[]
+            for i in range(len(trace)-1):
+                a=Vector(trace[max(0,i-1)]);b=Vector(trace[i]);c=Vector(trace[i+1]);d=Vector(trace[min(len(trace)-1,i+2)])
+                for j in range(4):
+                    t=j/4
+                    result.append(tuple(.5*((2*b)+(-a+c)*t+(2*a-5*b+4*c-d)*t*t+(-a+3*b-3*c+d)*t*t*t)))
+            result.append(trace[-1]);return result
+        main_trace=smooth(main_trace);twig_trace=smooth(twig_trace);fork_trace=smooth(fork_trace)
     asset='croisement01-east-fallen-branch';workspace=OUT/f'branch-round-{args.revision}/assets'/asset
     if workspace.exists():raise FileExistsError(workspace)
-    directory=OUT/'branch-domains';directory.mkdir(exist_ok=True)
+    directory=OUT/f'branch-domains-v{args.revision}';directory.mkdir(exist_ok=True)
     inv=json.loads((OUT/'baseline/masks/manifest.json').read_text())
     for row in inv['masks']:row['png']=str(OUT/'baseline/masks'/row['png'])
     inventory=directory/'native-masks.json';inventory.write_text(json.dumps(inv,indent=2)+'\n')
+    assigned_mask=70
+    if args.revision==3:
+        from PIL import Image, ImageDraw
+        native=next(row for row in inv['masks'] if row['index']==70)
+        domain=Image.open(native['png']).convert('L');draw=ImageDraw.Draw(domain)
+        grass_polygons=[[(1075,343),(1080,346),(1080,337),(1084,344),(1087,346),(1087,341),(1093,348),(1090,362),(1075,362)],
+                        [(1185,339),(1187,329),(1190,338),(1194,331),(1194,337),(1199,336),(1206,346),(1200,359),(1184,359)]]
+        for polygon in grass_polygons:draw.polygon([(x-1028,y-284) for x,y in polygon],fill=0)
+        domain.save(directory/'wood-domain.png')
+        inv['masks'].append(dict(native,index=200,png=str(directory/'wood-domain.png')))
+        inventory.write_text(json.dumps(inv,indent=2)+'\n');assigned_mask=200
+        (directory/'ownership-review.json').write_text(json.dumps(dict(status='private semantic ownership correction; visual verification pending',native_mask=70,grass_exclusions=grass_polygons,reason='Bright foreground grass crosses lower bark in native artwork. Those observed foreground pixels are not wood texture.',domain_sha256=sha(directory/'wood-domain.png')),indent=2)+'\n')
     masks=directory/'east-fallen-branch.json'
     masks.write_text(json.dumps(dict(version=1,mask_inventory=str(inventory),projections=dict(exterior=dict(
         state='Initial static source',source_sha256=sha(OUT/'baseline/covered.png'),
-        assignments=[dict(reviewed=True,asset_group=asset,mask_indices=[70])]))),indent=2)+'\n')
+        assignments=[dict(reviewed=True,asset_group=asset,mask_indices=[assigned_mask])]))),indent=2)+'\n')
     review=directory/'grouping-review.json'
     review.write_text(json.dumps(dict(status='reviewed',reviewer='Codex',asset_id=asset,
         catalog_sha256=sha(OUT/'catalog.json'),inventory_sha256=sha(OUT/'grouped-inventory/inventory.json'),
