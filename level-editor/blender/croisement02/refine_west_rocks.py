@@ -15,7 +15,7 @@ from catalog import OUT, reviewed_catalog
 from evidence_io import sha, write_json
 from refinement_workspace import prepare, modified
 from render_slots import acquire, release
-from revise_relief import sculpt
+from rock_profile_geometry import build
 from audit_candidates import audit
 from render_tree import render_workspace
 
@@ -87,14 +87,14 @@ def main():
             lighting=dict(toward_sun=[-.45,-.55,.70],ambient=.22,diffuse=.78,shadow_epsilon=.05))
         objects=[o for o in bpy.data.collections['Croisement02 Working'].all_objects
                  if o.type=='MESH' and o.get('asset_group')==asset]
-        parts=[sculpt(o) for o in objects]
+        parts=[build(o) for o in objects]
         modified(worker)
         (worker/'inspection').mkdir(exist_ok=True)
         report=dict(asset_id=asset,model_sha256=sha(worker/'model.blend'),parts=parts,
             status='geometry/source candidate; visual review pending',
             source_ownership_review=str(source_review),
             limitations=['Hidden surfaces await texture fill after geometry approval.',
-                'Crest/source silhouette and the western boundary boulder still require geometry refinement; rejected raster-driven crest deformations are archived.',
+                'Source-supported crests are retained by closed profiles; hidden lower shapes and rounded depth are inferred.',
                 'Foreground native56/61 vegetation is excluded from rock texture; joint coverage still requires its geometry.',
                 'Neighboring coarse proxies cannot occlude observed rock pixels; rock self-occlusion remains active.'])
         write_json(worker/'inspection/refinement.json',report)
