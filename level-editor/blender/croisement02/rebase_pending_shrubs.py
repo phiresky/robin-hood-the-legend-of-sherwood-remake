@@ -1,4 +1,5 @@
 """Merge isolated shrubs81/65/66 onto the fenced catalog without registering them."""
+import argparse
 import copy
 import json
 from pathlib import Path
@@ -15,27 +16,28 @@ def read(path):
     return json.loads(path.read_text())
 
 
-def main():
-    base = OUT/'fence-integration'
-    destination = OUT/'understory-candidates/fence-rebase-v1'
+def main(base, destination, indices):
+    inventory_path=base/'inventory/inventory.json'
+    if not inventory_path.exists():inventory_path=base/'inventory.json'
     previous_hash = sha(reviewed_catalog())
     previous = read(reviewed_catalog())
     if previous != read(base/'catalog.json'):
         raise ValueError('Current catalog differs from fenced integration base')
     grouping = read(OUT/'ownership-revision/grouping-review.json')
-    if grouping['catalog_sha256'] != previous_hash or grouping['inventory_sha256'] != sha(base/'inventory.json'):
+    if grouping['catalog_sha256'] != previous_hash or grouping['inventory_sha256'] != sha(inventory_path):
         raise ValueError('Canonical inventory binding differs')
     catalog = copy.deepcopy(previous)
-    inventory = read(base/'inventory.json')
+    inventory = read(inventory_path)
     manifest = read(base/'source-masks.json')
     mask_path = Path(manifest['mask_inventory'])
     masks = read(mask_path)
     for row in masks['masks']:
         row['png'] = str((mask_path.parent/row['png']).resolve())
-    inputs = {str(base/'catalog.json'):sha(base/'catalog.json'), str(base/'inventory.json'):sha(base/'inventory.json'), str(base/'source-masks.json'):sha(base/'source-masks.json')}
+    inputs = {str(base/'catalog.json'):sha(base/'catalog.json'), str(inventory_path):sha(inventory_path), str(base/'source-masks.json'):sha(base/'source-masks.json')}
     nodes = []
     domains = []
     for index, relative in [(81, 'southwest81-v1'), (65, 'north65-66-v1'), (66, 'north65-66-v1')]:
+        if index not in indices:continue
         source = OUT/'understory-candidates'/relative
         asset = f'croisement02-shrub-{index:02}'
         node = f'foliage-shrub-{index:03}'
@@ -92,4 +94,9 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--base',type=Path,default=OUT/'fence-integration')
+    parser.add_argument('--destination',type=Path,default=OUT/'understory-candidates/fence-rebase-v1')
+    parser.add_argument('--indices',type=int,nargs='+',choices=[81,65,66],default=[81,65,66])
+    args=parser.parse_args()
+    main(args.base.resolve(),args.destination.resolve(),args.indices)

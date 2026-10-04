@@ -9,9 +9,14 @@ from catalog import OUT,tree_workspace,scenery_workspace,reviewed_catalog
 from evidence_io import sha
 from build_review_gallery import build
 from catalog_schema import source_for_part
+from audit_native_mask_backlog import audit as audit_native_masks
 
 
 def main():
+    backlog=audit_native_masks(OUT)
+    backlog_path=OUT/'understory-review/native-mask-backlog.json'
+    backlog_path.write_text(json.dumps(backlog,indent=2)+'\n')
+    if backlog['inputs']['ownership-revision/catalog.json']!=sha(reviewed_catalog()):raise ValueError('Catalog changed after native-mask audit')
     catalog=json.loads(reviewed_catalog().read_text());items=[];missing=[]
     for group in catalog['groups']:
         if group.get('state_only'):
@@ -166,7 +171,7 @@ def main():
         items.append(item)
     missing.extend([
         dict(id='croisement02-terrain-integration',name='Terrain integration',status='pending',reason='Full-scene gap audit, foreground-domain removal and terrain texture completion remain required before publication.'),
-        dict(id='croisement02-mask-only-scenery',name='Mask-only scenery',status='pending',reason='Most undergrowth and small grass sprites remain pending. Authored stems09/44, shrubs55/58/59 and the overlapping western56/61 bank have separate review candidates. Mask22 is a northern foliage fragment, not automatically a missing trunk; its ownership remains under review. Mask21 belongs to native obstacle132.'),
+        dict(id='croisement02-mask-only-scenery',name='Mask-only scenery',status='pending',reason=f"Current ownership audit: {backlog['summary']['missing_foliage_domains']} native foliage source domains remain outside the {len(catalog['groups'])}-group catalog. This counts source domains, not future assets: some combine into clumps or need mixed-material splits. Every native mask is classified in understory-review/native-mask-backlog.json. Mask22 is a foliage fragment; applied-only masks138–141 remain state assets.",evidence=str(backlog_path),evidence_sha256=sha(backlog_path)),
         dict(id='croisement02-animation-and-mission-states',name='Animation and mission states',status='pending',reason='All 15 animation sequences and 129 mission patches are preserved as source evidence. Candidates show synchronized first-frame foliage; full state/animation integration is pending.')])
     data=dict(map='Croisement02',items=items,without_packets=missing,status_counts=dict(Counter(i['status'] for i in items)),
               policy='No geometry or texture approval is implied. Only the two explicitly selected Leicester trees are reference assets.')

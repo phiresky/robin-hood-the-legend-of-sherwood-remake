@@ -152,11 +152,13 @@ def build(obj, packet):
             p=np.asarray(vertex.co);d=float(np.dot(p-center,ray));vertex.co=p+ray*d*(scale-1)
         obj.data.update();bounds=measure(obj)
     minimum=min(v.co.z for v in obj.data.vertices)
-    if minimum<.5:
-        for v in obj.data.vertices:v.co+=RAY*((.5-minimum)/SIN)
+    minimum_target=float(packet.get('minimum_elevation',.5))
+    if minimum<minimum_target:
+        for v in obj.data.vertices:v.co+=RAY*((minimum_target-minimum)/SIN)
     result.update(geometry_version='native-shrub-leaf-volume-v2',native_mask=packet['native_mask'],
         source_projection_preserved=True,observed_leaf_pixels=int(known_alpha.sum()),inferred_covered_pixels=int((alpha&~known_alpha).sum()),
         leaf_clusters=len(tiles),opacity_bounds=measure(obj),minimum_z=min(v.co.z for v in obj.data.vertices),
+        minimum_elevation_target=minimum_target,support_evidence=packet.get('support_evidence'),
         inferred_donor_alpha='irregular silhouette and luminance cut' if packet.get('irregular_inferred_alpha') else 'native crop alpha',
         source_fragment_layout='jittered Delaunay triangles' if packet.get('irregular_source_fragments') else 'regular source patches',
         method=('Irregular source-facing microtriangles on an uneven round envelope' if packet.get('irregular_source_fragments') else 'Small observed front cutouts on a round world volume')+'; source-clipped interior leaves and one-sided inferred rear volume',

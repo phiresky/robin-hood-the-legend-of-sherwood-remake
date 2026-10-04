@@ -21,6 +21,11 @@ def main():
     bank = scenery_workspace('croisement02-north-woodland-bank')
     trees = [tree_workspace(i) for i in (12, 13, 14)]
     shrubs = [OUT / f'understory-round-1/assets/croisement02-shrub-{i}' for i in (65, 66)]
+    refit=OUT/'understory-round-2/assets/croisement02-shrub-66'
+    if (refit/'inspection/refit-evidence.json').exists():
+        receipt=json.loads((refit/'inspection/refit-evidence.json').read_text())
+        if receipt['model_sha256']!=sha(refit/'model.blend'):raise ValueError('Refitted shrub66 model changed')
+        shrubs[1]=refit
     workers = [bank, *trees, *shrubs]
     hashes = [sha(w / 'model.blend') for w in workers]
     decisions = {r['asset_id']: r for r in json.loads((OUT/'user-feedback.json').read_text())['records']}
@@ -99,7 +104,7 @@ def main():
         scene.render.resolution_y = height
         scene.render.filepath = str(destination/name)
         bpy.ops.render.render(write_still=True)
-        cameras.append(dict(image=name, matrix=[list(row) for row in camera.matrix_world], ortho_scale=scale))
+        cameras.append(dict(image=name, matrix=[list(row) for row in camera.matrix_world], ortho_scale=scale, hidden_for_contact=[o.name for o in meshes if o.hide_render]))
 
     crop = (1010, 35, 1360, 320)
     left, top, right, bottom = crop
@@ -129,6 +134,19 @@ def main():
             image = Image.open(destination/name).convert('RGBA')
             sheet.paste(image, ((i%4)*512, (i//4)*384), image)
         sheet.save(destination/f'{worker.name}-sheet.png')
+        crowns=[o for o in meshes if o.get('projection_component')=='crown' and o.get('asset_group','').startswith('croisement02-tree-')]
+        for obj in crowns:obj.hide_render=True
+        contact=Image.new('RGB',(2048,408),'#454545')
+        ImageDraw.Draw(contact).text((4,4),'Low-angle bank contact diagnostic; neighbouring tree crowns hidden, approved wood unchanged',fill='white')
+        for i in range(4):
+            angle=math.pi*2*i/4
+            direction=Vector((math.sin(angle)*math.cos(.25),-math.cos(angle)*math.cos(.25),math.sin(.25)))
+            name=f'{worker.name}-contact-{i}.png'
+            render(name,center,direction,scale,512,384)
+            image=Image.open(destination/name).convert('RGBA')
+            contact.paste(image,(i*512,24),image)
+        contact.save(destination/f'{worker.name}-contact-sheet.png')
+        for obj in crowns:obj.hide_render=False
     combined = Image.new('RGB', (2048,1536))
     for i, worker in enumerate(shrubs):
         combined.paste(Image.open(destination/f'{worker.name}-sheet.png'), (0,i*768))

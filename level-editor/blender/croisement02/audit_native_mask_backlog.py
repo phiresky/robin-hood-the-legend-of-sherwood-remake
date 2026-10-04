@@ -52,7 +52,7 @@ NOTES = {
     52: 'Current rock domain excludes foreground81 and83. Approved stump106 is disjoint.',
     54: 'Northwest boundary shrub; required foreground/contact companion for rocks50/51/53. Infer off-map continuation.',
     55: 'Existing approved geometry retained. Repeated foliage rows flagged; texture API held pending separate geometry revision.',
-    56: 'One integrated western bank with61; isolated round5 microfragment revision awaits donor cleanup and renewed joint evidence.',
+    56: 'One integrated western bank with61; round5 microfragment and donor-alpha revision has current independent rock/contact review, user geometry decision pending.',
     57: 'Mixed rock and foliage: reviewed rock350 belongs west rocks; complementary foliage351 still needs authored geometry.',
     58: 'Existing approved geometry retained. Repeated foliage rows flagged; texture API held pending separate geometry revision.',
     59: 'Existing approved geometry retained. Repeated foliage rows flagged; texture API held pending separate geometry revision.',
@@ -61,13 +61,13 @@ NOTES = {
     62: 'Overlaps wood3/4, shrub63, canopy133 and covered-state137; resolve shared pixels and state behavior before authoring.',
     63: 'Overlaps wood5, shrub62, canopies130/133 and covered-state136; resolve shared pixels and state behavior before authoring.',
     64: 'Mixed exposed birch trunks and foliage; reconcile existing tree00/01 wood before assigning a leaf domain.',
-    65: 'Isolated domain415=native65 minus canopy134 (47pixels). Microfragments and donor alpha under review; joint with bank/tree14 pending.',
-    66: 'Isolated domain416=native66. Joint with current bank and trees12/13 plus donor cleanup pending.',
+    65: 'Isolated domain415=native65 minus canopy134 (47pixels). Microfragments and donor alpha reviewed; support lift onto bank solved along camera ray. Current bank/tree14 joint review pending.',
+    66: 'Isolated domain416=native66. Donor cleanup reviewed; source-preserving support lift onto44-unit bank plateau solved. Fitted camera packet and renewed trees12/13 joint pending.',
     70: 'Narrow foliage fragments around existing wood; source ownership first, no duplicate trunk.',
     73: 'Northern boundary foliage silhouette; infer missing continuation without inventing source-observed pixels.',
     75: 'Mixed foliage and upright fence95: subtract reviewed fence domain431, not the whole overlapping native box.',
     76: 'Substantial wattle fence within native foliage cutout; partition approved fence pixels before authoring foliage.',
-    81: 'Isolated native-only domain414; southwest rock contact reviewed. Donor cleanup and current joint receipt required before integration.',
+    81: 'Authored native-only domain414 with final donor cleanup and independently reviewed southwest rock/source/contact evidence. User geometry decision remains separate.',
     83: 'Foreground fringe overlaps southwest rock52 by121pixels; rock excludes this native plant.',
     85: 'Foreground foliage overlaps fence95; excluded from its observed wood domain.',
     87: 'Foreground foliage overlaps fence94; excluded from its observed wood domain.',
@@ -92,6 +92,7 @@ def audit(out):
     canopy_path = out / 'forest-v4-sources/manifest.json'
     native = read(manifest_path)['masks']
     level = read(level_path)
+    catalog_hash=sha(catalog_path)
     catalog = read(catalog_path)
     groups = {g['id']: g for g in catalog['groups']}
     ids = {m['index'] for m in native}
@@ -157,6 +158,8 @@ def audit(out):
         if index in (65, 66, 81):
             record['candidate_domain'] = {65:415,66:416,81:414}[index]
             worker = out / f'understory-round-1/assets/croisement02-shrub-{index:02}'
+            refit = out / f'understory-round-2/assets/croisement02-shrub-{index:02}'
+            if (refit/'inspection/refit-evidence.json').exists():worker=refit
             record['candidate_worker'] = str(worker)
             record['candidate_model_sha256'] = sha(worker/'model.blend') if (worker/'model.blend').exists() else None
         if index in (94, 95):
@@ -184,6 +187,7 @@ def audit(out):
             'Applied-only patch masks are state assets, never permanent scenery. Initial old-state masks136/137 disappear when their patches apply.',
             'This mask census does not cover unmasked painted remnants, whole-map terrain repairs, animation phase completion, export or publication checks.',
         ], records=records)
+    if sha(catalog_path)!=catalog_hash:raise ValueError('Catalog changed during native-mask audit')
     return report
 
 
