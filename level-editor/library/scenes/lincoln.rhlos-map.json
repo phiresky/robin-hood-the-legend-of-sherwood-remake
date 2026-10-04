@@ -14,7 +14,7 @@
       "id": "lincoln-terrain",
       "role": "ground",
       "model": "3d-assets/lincoln/lincoln-terrain/model.glb",
-      "model_sha256": "65833a88068a695dc1f6415bf8e5a653ca4679597b5ece7ba6740a80ae3fa2d4",
+      "model_sha256": "6ea2a5cd28df52d2b3b1e7c69c125f7cddc57d96bef4b466963073f784983b8a",
       "descriptor": "3d-assets/lincoln/lincoln-terrain/asset.json",
       "descriptor_sha256": "5be7e9ca3e761641523e84443791fb785d8e0f26fcc5a23c6d5b537cb779020b"
     }
