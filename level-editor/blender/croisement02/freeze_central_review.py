@@ -24,7 +24,7 @@ def freeze(index,version,root_review):
     group=next(g for g in json.loads((batch/'catalog.json').read_text())['groups'] if g['id']==worker.name)
     files=[worker/'model.blend',worker/'workspace.json',worker/'validation.json',sheet,inspection/'refinement.json',inspection/'saved-model-audit.json',inspection/'source-coverage/report.json',inspection/'actual-materials/opacity-bounds.json',inspection/'visual-review.json',joint_path,preservation,root_review,batch/f'domain-{DOMAINS[index]}.png',batch/f'shrub-{index:02}/partition.json',batch/f'shrub-{index:02}/support.json',batch/'scope-derivation.json']
     files.extend(joint/n for n in ('sheet.png','evidence.json','native-scale-context.png','source-overlay.png'))
-    for name in ('support-preservation.json','prior-source-render-comparison.json'):
+    for name in ('support-preservation.json','prior-source-render-comparison.json','appearance-preservation.json'):
         path=inspection/name
         if path.exists():files.append(path)
     files.extend(batch/f'shrub-{index:02}'/n for n in ('complete-source.png','observed-source.png'))
