@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import bpy
+import numpy as np
 from mathutils import Vector
 from mathutils.bvhtree import BVHTree
 
@@ -15,6 +16,37 @@ from tree_geometry import SIN, COS
 
 def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def planar_triangle(points):
+    a, b, c = points
+    normal = np.cross(np.array(b,dtype=np.float64)-np.array(a,dtype=np.float64), np.array(c,dtype=np.float64)-np.array(a,dtype=np.float64))
+    if abs(normal[2]) < 1e-8:
+        return None
+    return (list(points) if normal[2] > 0 else [a,c,b], normal, float(np.dot(normal,np.array(a,dtype=np.float64))))
+
+
+def overlap(subject, clip):
+    """Convex triangle clipping, retaining all extrema of linear height gaps."""
+    points = [(p.x,p.y) for p in subject]
+    for a,b in zip(clip,clip[1:]+clip[:1]):
+        if not points:
+            break
+        def side(p):
+            return (b.x-a.x)*(p[1]-a.y)-(b.y-a.y)*(p[0]-a.x)
+        result = []
+        previous = points[-1]
+        previous_side = side(previous)
+        for current in points:
+            current_side = side(current)
+            if (current_side >= 0) != (previous_side >= 0):
+                t = previous_side/(previous_side-current_side)
+                result.append((previous[0]+t*(current[0]-previous[0]), previous[1]+t*(current[1]-previous[1])))
+            if current_side >= 0:
+                result.append(current)
+            previous,previous_side = current,current_side
+        points = result
+    return points
 
 
 def main():
@@ -38,6 +70,15 @@ def main():
         vertices.extend(obj.matrix_world @ v.co for v in obj.data.vertices)
         faces.extend(tuple(offset + j for j in p.vertices) for p in obj.data.polygons)
     bvh = BVHTree.FromPolygons(vertices, faces)
+    bank_triangles = []
+    for obj in dst.objects:
+        obj.data.calc_loop_triangles()
+        exact_worst = None
+        negligible_overlap_count = 0
+        for triangle in obj.data.loop_triangles:
+            plane = planar_triangle([obj.matrix_world @ obj.data.vertices[i].co for i in triangle.vertices])
+            if plane:
+                bank_triangles.append(plane)
     records = []
     for index, obj in enumerate(logs):
         obj.data.calc_loop_triangles()
@@ -65,8 +106,32 @@ def main():
         ax, ay, bx, by, radius, za, zb = manifest['surveys']['applied'][index]
         # The algebraic source-ray lift must preserve both source endpoints.
         endpoint_error = max(abs(-(-(y+441+z*COS)/SIN)*SIN-z*COS-(y+441)) for y,z in [(ay,za),(by,zb)])
-        records.append(dict(object=obj.name, samples=len(clearances), minimum_clearance=min(clearances), maximum_clearance=max(clearances), penetrating_samples=sum(x < -.05 for x in clearances), worst=worst, native_uv_projection_error_pixels=uv_error, endpoint_source_ray_error_pixels=endpoint_error))
-    report = dict(status='HOLD' if any(r['minimum_clearance'] < -.05 or r['minimum_clearance'] > 1.05 for r in records) else 'sampled support pass; source and foreground review still required', model_sha256=manifest['model_sha256'], bank_model_sha256=audit['model_sha256'], records=records, limitations=['Dense surface samples do not prove continuous mesh collision absence.', 'Independent endpoints remain unapproved geometric hypotheses; no motion identities inferred.'])
+        exact_minimum = min((obj.matrix_world @ v.co).z for v in obj.data.vertices)
+        exact_worst = None
+        negligible_overlap_count = 0
+        for triangle in obj.data.loop_triangles:
+            plane = planar_triangle([obj.matrix_world @ obj.data.vertices[i].co for i in triangle.vertices])
+            if plane is None:
+                continue
+            points,normal,offset = plane
+            for bank_points,bank_normal,bank_offset in bank_triangles:
+                if any(max(p[axis] for p in points) < min(p[axis] for p in bank_points) or max(p[axis] for p in bank_points) < min(p[axis] for p in points) for axis in (0,1)):
+                    continue
+                intersection = overlap(points,bank_points)
+                intersection_area = abs(sum(a[0]*b[1]-b[0]*a[1] for a,b in zip(intersection,intersection[1:]+intersection[:1])))/2
+                # Subpixel floating-point corner slivers are not volumetric penetration.
+                if intersection_area < 1e-5:
+                    negligible_overlap_count += bool(intersection)
+                    continue
+                for x,y in intersection:
+                    log_z = (offset-normal[0]*x-normal[1]*y)/normal[2]
+                    bank_z = (bank_offset-bank_normal[0]*x-bank_normal[1]*y)/bank_normal[2]
+                    if log_z-bank_z < exact_minimum:
+                        exact_minimum = log_z-bank_z
+                        hit = bvh.ray_cast(Vector((x,y,500)),Vector((0,0,-1)),1000)
+                        exact_worst = dict(x=x,y=y,log_z=log_z,bank_z=bank_z,overlap_area=intersection_area,log_normal_z_ratio=float(abs(normal[2])/np.linalg.norm(normal)),bank_normal_z_ratio=float(abs(bank_normal[2])/np.linalg.norm(bank_normal)),ray_bank_z=hit[0].z if hit[0] is not None else None)
+        records.append(dict(object=obj.name, samples=len(clearances), minimum_clearance=min(clearances), exact_piecewise_surface_minimum_clearance=exact_minimum, exact_worst=exact_worst, ignored_corner_slivers=negligible_overlap_count, maximum_clearance=max(clearances), penetrating_samples=sum(x < -.05 for x in clearances), worst=worst, native_uv_projection_error_pixels=uv_error, endpoint_source_ray_error_pixels=endpoint_error))
+    report = dict(status='HOLD' if any(r['exact_piecewise_surface_minimum_clearance'] < -.05 or r['exact_piecewise_surface_minimum_clearance'] > 1.05 for r in records) else 'sampled support pass; source and foreground review still required', model_sha256=manifest['model_sha256'], bank_model_sha256=audit['model_sha256'], records=records, projected_overlap_area_tolerance=1e-5, limitations=['Triangle-overlap extrema check continuous clearance against bank height surfaces and the ground plane; this does not prove stable balance or log-to-log contacts.', 'Independent endpoints remain unapproved geometric hypotheses; no motion identities inferred.'])
     (candidate / 'dense-contact-audit.json').write_text(json.dumps(report, indent=2)+'\n')
     print(json.dumps(report, indent=2))
 

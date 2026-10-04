@@ -34,7 +34,7 @@ def main():
             if obj.get('state_endpoint'):
                 obj.hide_render = obj not in logs
         with bpy.data.libraries.load(str(bank/'model.blend'), link=False) as (src,dst):
-            dst.objects = names
+            dst.objects = list(names)
         for obj in dst.objects:
             scene.collection.objects.link(obj)
         bpy.context.view_layer.update()
