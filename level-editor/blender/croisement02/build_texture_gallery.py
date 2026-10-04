@@ -47,8 +47,8 @@ def attach_aligned_comparisons(manifest):
 
 
 def main():
-    roots = sorted({review.parent.parent for review in
-                    (OUT / 'texture-fill-round-1').rglob('texture-review.json')})
+    roots = sorted({review.parent.parent for round_root in OUT.glob('texture-fill-round-*')
+                    for review in round_root.rglob('texture-review.json')})
     if not roots:
         raise ValueError('No manually reviewed texture experiments exist')
     result = collect(roots[0], OUT / 'texture-review', 'Croisement02', roots[1:])
