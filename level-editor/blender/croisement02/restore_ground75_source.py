@@ -84,11 +84,18 @@ def main():
             dst.objects = ['Croisement02 Terrain']
         obj = dst.objects[0]
         scene.collection.objects.link(obj)
+        parent = obj.parent
+        while parent is not None:
+            if parent.name not in scene.objects:
+                scene.collection.objects.link(parent)
+            parent = parent.parent
         bpy.context.view_layer.update()
-        transform = obj.matrix_world.copy()
-        obj.parent = None
-        obj.matrix_world = transform
-        bpy.context.view_layer.update()
+        # Retain the exact source hierarchy. Matrix assignment after detaching
+        # can decompose a nearly right-angle rotation with measurable drift.
+        source_geometry = {key:value for key,value in geometry_data(obj).items() if key != 'uv'}
+        expected_geometry = json.loads((baseline / 'validation.json').read_text())['geometry_signature']
+        if digest(source_geometry) != expected_geometry:
+            raise ValueError('Imported ground differs from frozen source geometry/transform')
         before = geometry(obj)
         write_json(output / 'geometry-before.json', geometry_data(obj))
         material(obj, output / 'observed-neutral.png')
@@ -126,6 +133,7 @@ def main():
             raise ValueError('Frozen ground model changed')
         write_json(output / 'validation.json', dict(status='PASS', source_model_sha256=model_hash,
             model_sha256=sha(output / 'model.blend'), geometry_uv_signature=before,
+            frozen_geometry_signature=expected_geometry,
             geometry_uv_unchanged=True, restored_source_pixels=783,
             existing_known_pixels_unchanged=True, all_other_rgb_unchanged=True,
             foliage75_overlap=0, authored_or_animated_foreign_overlap=0,
