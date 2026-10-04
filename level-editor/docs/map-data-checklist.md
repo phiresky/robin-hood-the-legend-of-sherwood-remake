@@ -4069,3 +4069,22 @@ and all ten lifts. Eight native tests pass, including all 24 Lincoln lift routes
 six ground crossings and 32 other receiving crossings. Reopening the published
 document and compiling exclusively from its pinned assets reproduces the tested
 geometry exactly. The tower light and visual-state/mask gaps above remain open.
+
+### Bound sloped light attachments before neighboring floors
+
+The Lincoln tower's missing light was an ambiguous attachment: its broad segment
+intersected the intended stair at height 371.4914 and another floor at 340.001.
+Recovery now restricts each finite segment to halfway between its intended
+intersection and any other receiving floor above/below it. The bounds remain
+inside the intended surface's elevation range. Only the resulting local segment
+enters the asset definition; the compiler still resolves the placed geometry and
+rejects missing or ambiguous receivers. Equal-height overlaps remain ambiguous.
+
+The updated tower definition is published. Evidence is under
+`work/map-compile/lincoln-bounded-light-recovery-20261004`. Baseline and a one-pixel
+independent tower move export all 33 light regions and ten lifts without omitted
+light warnings. Other baseline gameplay geometry is unchanged. Rust loads both
+exports and verifies all 33 light contours/layers for ambience masks 1, 2 and 4.
+Synthetic stacked-floor recovery also compiles after translation, vertical movement
+and four rotations. This resolves the tower-light omission above, not the remaining
+visual-state/mask coverage gaps or complete rendered lighting parity.

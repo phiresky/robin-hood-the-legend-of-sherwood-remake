@@ -3,6 +3,7 @@ import type { Vec3 } from "../../shared/src/scene.ts";
 import type { AssetLightRegion } from "../../shared/src/asset-gameplay.ts";
 import { heightPlane, planeHeight, type HeightPlane } from "../../shared/src/gameplay-plane.ts";
 import { partitionRecoverySurfaces } from "./recovery-surface-partition.ts";
+import { distanceToPolygon } from "./recovery-elevation.ts";
 import { fixedClipping } from "../../shared/src/fixed-polygon-boolean.ts";
 import earcut, { flatten } from "earcut";
 
@@ -254,8 +255,31 @@ export function recoverLightField(
           const y = triangle.reduce((sum, p) => sum + p[1], 0) / 3;
           const z = planeHeight(plane, [x, y]);
           const heights = area.polygon.points.map((point) => planeHeight(plane, point));
-          const low = Math.min(...heights),
+          let low = Math.min(...heights),
             high = Math.max(...heights);
+          // Keep placement tolerance without searching through adjacent floors.
+          // Only these finite endpoints survive into the reusable asset definition.
+          if (high - low > 1e-7) {
+            for (const obstacle of obstacles) {
+              if (!Array.isArray(obstacle.projection_area)) continue;
+              if (
+                motionSectors &&
+                obstacle.projection_area[0] === motionSectors[areaIndex] &&
+                obstacle.projection_area[1] === light.layer
+              )
+                continue;
+              const footprint = obstacle.points.map((p): Point => [p.x, p.y - p.z_top]);
+              if (distanceToPolygon([x, y], footprint) > 1e-7) continue;
+              const other = planeHeight(
+                heightPlane(
+                  obstacle.points.slice(0, 3).map((p): Vec3 => [p.x, p.y - p.z_top, p.z_top]),
+                ),
+                [x, y],
+              );
+              if (other < z - 1e-4) low = Math.max(low, (other + z) / 2);
+              if (other > z + 1e-4) high = Math.min(high, (other + z) / 2);
+            }
+          }
           receivingAreas.set(key, {
             size,
             point: [x, y + z, z],

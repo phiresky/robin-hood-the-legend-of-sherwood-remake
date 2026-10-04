@@ -2049,7 +2049,12 @@ function compileAssetGameplayAttempt(
                     : [];
                 });
                 if (new Set(matches.map(({ area }) => area.sector)).size !== 1) {
-                  const message = `${light.id}: receiving segment ${index} must intersect exactly one walkable surface`;
+                  const candidates = matches.map(({ area, point }) => ({
+                    sector: area.sector,
+                    layer: area.layer,
+                    height: point[2],
+                  }));
+                  const message = `${light.id}: receiving segment ${index} must intersect exactly one walkable surface; intersections ${JSON.stringify(candidates)}`;
                   if (!options.bestEffort) throw new Error(message);
                   warnings.push(`Light receiver omitted: ${message}.`);
                   return [];

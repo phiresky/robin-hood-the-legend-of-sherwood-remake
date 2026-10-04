@@ -11,6 +11,66 @@ import { fixedClipping } from "../../shared/src/fixed-polygon-boolean.ts";
 import { assetCompilerFixture } from "../../shared/test-fixtures/asset-gameplay.ts";
 import type { LightSector, MotionArea, SightObstacle } from "../../shared/src/level.ts";
 import { heightPlane } from "../../shared/src/gameplay-plane.ts";
+import { lightReceiverIntersection } from "../../shared/src/light-receiver-segment.ts";
+import { compileAssetGameplay } from "../../shared/src/compile-asset-gameplay.ts";
+
+test("sloped light attachment stops before neighboring floors in either direction", () => {
+  const { hut, document, assets } = assetCompilerFixture();
+  const points: [number, number][] = [
+    [0, 0],
+    [100, 0],
+    [100, 100],
+    [0, 100],
+  ];
+  const supports: SightObstacle[] = [0, 1, 2].map((sector) => ({
+    ...hut.parts[0]!.obstacle_local_game!,
+    projection_area: [sector, sector === 0 ? 1 : 2],
+    points: points.map(([x, y]) => {
+      const z = sector === 0 ? 10 + x : sector === 1 ? 20 : 100;
+      return { x, y: y + z, z_bottom: 0, z_top: z };
+    }),
+  }));
+  const area: MotionArea = {
+    is_lift: true,
+    state_id: 0,
+    flags: 0,
+    skeleton_segments: [],
+    obstacles: [],
+    polygon: { points },
+  };
+  const { region } = recoverLightField(
+    { layer: 1, ambience: 4, polygon: { points } },
+    "stair",
+    supports,
+    [area],
+    [0],
+  );
+  assert.equal(region.receiverSegments!.length, 1);
+  const segment = region.receiverSegments![0]!;
+  assert.ok(lightReceiverIntersection(segment, [1, 0, 10]));
+  assert.equal(lightReceiverIntersection(segment, [0, 0, 20]), undefined);
+  assert.equal(lightReceiverIntersection(segment, [0, 0, 100]), undefined);
+  assert.ok(segment[0][2] > 20);
+  assert.ok(segment[1][2] < 100);
+  hut.gameplay = {
+    version: 1,
+    collision: "none",
+    doors: [],
+    surfaces: supports.map((support, i) => ({
+      id: `floor-${i}`,
+      node: "building-999",
+      polygon: support.points.map((p) => [p.x, p.y]),
+      height: support.points.map((p) => p.z_top),
+    })),
+    lights: [{ ...region, node: "building-999" }],
+  };
+  for (const angle of [0, 90, 180, 270]) {
+    document.groups[0]!.transform = { dx: 800, dy: 800, dz: 20, rot_deg: angle };
+    const compiled = compileAssetGameplay(document, assets, [0, 0, 2000, 2000]);
+    assert.equal(compiled.light_sectors!.length, 1, `rotation ${angle}`);
+    assert.equal(compiled.light_sectors![0]!.ambience, 4);
+  }
+});
 
 test("flat light fields retain receiving anchors and reject absent navigation", () => {
   const light: LightSector = {

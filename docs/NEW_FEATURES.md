@@ -2404,3 +2404,8 @@ asset frames before publishing; this check also covers previously prepared
 publication manifests. Best-effort map export remains available with warnings.
 Ambient recovery accepts published draft review metadata and empty traversal
 collections without treating them as additional sound behavior.
+
+Sloped light recovery now bounds each attachment segment before neighboring
+receiving floors. The local segment still follows its asset when moved or rotated,
+without binding the asset to a preassigned runtime layer. Ambiguous light warnings
+include the candidate sectors, layers and intersection heights.

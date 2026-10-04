@@ -509,3 +509,10 @@ Gameplay-preserving asset publication is covered by
 `level-editor/refinement` (21 tests). Ambient recovery after draft publication is
 covered by `node --test pipeline/src/author-ambient-sound-asset.test.ts` from
 `level-editor`. These checks do not certify complete map gameplay coverage.
+
+`pipeline/src/recover-light-region.test.ts` also checks that sloped light segments
+exclude upper and lower floors and compile after translation, elevation changes
+and four rotations. The ignored native test
+`recovered_light_exports_preserve_contours_layers_and_ambience` checks actual
+loaded shadow sectors against exported contours/layers under ambience masks 1, 2
+and 4; set `ROBIN_ASSET_MAP_DIAGNOSTICS` to a diagnostic export directory.
