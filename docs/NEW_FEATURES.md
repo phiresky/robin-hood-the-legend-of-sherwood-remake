@@ -1,5 +1,11 @@
 # Post-port Features
 
+- **Reusable scenery profile extraction.** An offline authoring command selects
+  one complete sprite profile from a multi-profile PNG bank or a preview atlas,
+  producing a self-contained PNG bank for pinned scenery assets. Frame timing,
+  offsets, directions, profile centers and color-key semantics are preserved.
+  Preview atlases remain previews; extraction cannot restore omitted frames.
+
 - **Spatially indexed receiving boundaries.** Native loading of editor maps
   narrows edge intersections and receiving-plane queries with spatial bounds.
   Exact intersection tests, subpixel probes and receiver precedence are retained,

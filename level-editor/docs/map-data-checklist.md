@@ -313,6 +313,30 @@ and then `exported_scenery_spawns_and_advances_frames_without_moving_its_anchor`
 (`robin_engine --lib`). The first native test writes decoded profile metadata
 used by the second; neither native test reads source level data.
 
+One-time profile extraction now supports complete multi-profile PNG banks and
+the editor's WebP preview atlases. From `level-editor`, run:
+
+```sh
+pnpm --filter pipeline exec node src/extract-scenery-profile.ts \
+  --bank /path/to/source.rhs.d --profile 'Selected profile' \
+  --out /path/to/new-effect.rhs.d
+```
+
+The new bank contains only that profile and its frames, preserving delays,
+directions, offsets, centers, sound IDs and pixel-format semantics. PNG inputs
+retain their exact bytes; atlas inputs are cropped without resizing. Paths,
+frame bounds and native metadata are validated before output creation. Pin these
+files as resources when using the standalone effect authoring command above.
+The compiler requires neither the input bank nor any source level afterward.
+
+The library's game-data atlases intentionally retain preview frames only; they
+cannot provide complete animated sequences. Use a complete PNG bank for animation.
+The six-frame candle profile under `work/map-compile/scenery-candle-profile-20261004.rhs.d`
+was authored into a standalone asset in `scenery-candle-asset-20261004`; the native
+sprite family encoder verifies all six frames. It has no level-specific placement
+metadata. This asset remains an authoring artifact, not a published or rendered
+parity claim. Live viewport previews and rendered placement checks remain open.
+
 **Interior connections:** multiple entrances in an asset-local room remain
 connected automatically, including after moving or duplicating the asset. Distinct
 rooms in one asset retain their authored separation. The Assets inspector can

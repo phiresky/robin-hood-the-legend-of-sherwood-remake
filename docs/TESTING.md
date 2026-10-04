@@ -311,6 +311,17 @@ both datadir v23 and mission v14 round trips and reject the preceding formats.
 
 ## GPU execution
 
+Scenery profile authoring tests run with
+`pnpm --filter pipeline exec node --test src/extract-scenery-profile.test.ts`
+from `level-editor`. They verify exact atlas crop pixels, lossless copying of
+complete PNG sequences, timing/offset preservation and rejection of malformed
+resources. The existing standalone authoring suites check placement and export.
+A real six-frame candle profile was extracted to
+`work/map-compile/scenery-candle-profile-20261004.rhs.d` and authored into
+`work/map-compile/scenery-candle-asset-20261004`. The native sprite family encoder
+verifies all six frames in `scenery-candle-native-20261004.sprites.vq.zst`.
+These artifacts test resource authoring and decoding, not rendered animation.
+
 Shader translation tests remain in the normal client suite. GPU execution is
 an explicit separate gate:
 
