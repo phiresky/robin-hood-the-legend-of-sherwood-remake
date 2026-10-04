@@ -18,8 +18,9 @@ from stage_review_scene import signature
 from tree_geometry import SIN, COS, RAY
 
 
-def inspect(stem, neighbour):
-    destination = OUT / f'missing-wood-review/joint-{stem:02}-{neighbour:02}'
+def inspect(stem, neighbour, extra_neighbours=()):
+    suffix = ''.join(f'-{n:02}' for n in extra_neighbours)
+    destination = OUT / f'missing-wood-review/joint-{stem:02}-{neighbour:02}{suffix}'
     destination.mkdir(exist_ok=False)
     bpy.ops.wm.read_factory_settings(use_empty=True)
     bpy.context.preferences.filepaths.save_version = 0
@@ -29,8 +30,9 @@ def inspect(stem, neighbour):
     scene.collection.children.link(collection)
     records = []
     latest = {r['asset_id']: r for r in json.loads((OUT/'user-feedback.json').read_text())['records']}
-    for worker, role in [(tree_workspace(neighbour), 'approved neighbour'),
-            (OUT / f'missing-wood-round-1/assets/croisement02-supplemental-wood-{stem:02}', 'unapproved supplemental stem')]:
+    inputs = [(tree_workspace(n), 'approved neighbour') for n in (neighbour, *extra_neighbours)]
+    inputs.append((OUT / f'missing-wood-round-1/assets/croisement02-supplemental-wood-{stem:02}', 'unapproved supplemental stem'))
+    for worker, role in inputs:
         model = worker / 'model.blend'; original_hash = sha(model)
         if role == 'approved neighbour':
             decision = latest[worker.name]
@@ -113,7 +115,10 @@ def inspect(stem, neighbour):
 if __name__ == '__main__':
     acquire()
     try:
-        inspect(9, 8)
-        inspect(44, 45)
+        if '--extended' in sys.argv:
+            inspect(9, 8, (7,))
+        else:
+            inspect(9, 8)
+            inspect(44, 45)
     finally:
         release()
