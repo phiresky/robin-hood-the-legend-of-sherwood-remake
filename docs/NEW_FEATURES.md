@@ -1,5 +1,13 @@
 # Post-port Features
 
+- **Wall export follows source deformation.** The editor derives spline source
+  measurements from its loaded asset models before export, including source
+  rotation, trimming and cross-section straightening. Physical volumes and
+  walkable surfaces use those measurements while retaining asset-local gameplay
+  definitions and original editor resource pins. Invalid source sections warn
+  without discarding valid paths that use the same asset. Exact subdivision
+  endpoints prevent floating-point clipping from dropping a terminal wall band.
+
 - **Mission preload for packaged scenery.** Compiled maps load their referenced
   custom Day animation banks from mod directories or ZIPs before creating effects.
   Scenery selection is independent of the character roster; unrelated animation

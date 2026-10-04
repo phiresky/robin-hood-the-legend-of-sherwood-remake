@@ -311,6 +311,19 @@ both datadir v23 and mission v14 round trips and reject the preceding formats.
 
 ## GPU execution
 
+Wall source calibration is checked with:
+`pnpm --filter pipeline exec node --test ../app/src/wall-gameplay.test.ts ../shared/src/wall-section-profile.test.ts`
+from `level-editor`. The renderer/collision comparison exercises 24 combinations
+of source rotation, straightening, curvature and reflection, with a transformed
+source frame, trimmed repetitions and sloping paths. It checks every rendered
+vertex against exported physical volumes at the existing 0.002 horizontal and
+0.001 vertical tolerances. This catches a floating-point endpoint error that
+could discard the final collision subdivision. Additional checks retain valid
+paths when another source section has a gap, reject invalid profile metadata,
+and reopen the editor document using unchanged asset pins before recompiling.
+These are geometry comparisons; they do not certify native traversal or complete
+scene compositing for the newly calibrated walls.
+
 Scenery profile authoring tests run with
 `pnpm --filter pipeline exec node --test src/extract-scenery-profile.test.ts`
 from `level-editor`. They verify exact atlas crop pixels, lossless copying of
