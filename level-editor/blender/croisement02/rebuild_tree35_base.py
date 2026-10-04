@@ -1,5 +1,6 @@
 """Replace foliage-derived oak root flares with inferred grounded round roots."""
 import argparse,json,math,sys
+import numpy as np
 from pathlib import Path
 import bpy,bmesh
 from mathutils import Vector,Matrix
@@ -13,6 +14,7 @@ from refinement_workspace import _geometry
 from render_slots import acquire,release
 from source_projection_bake import bake
 from render_multiview_asset import render
+from tree_geometry import SIN,RAY
 
 
 def tube(path,n=24):
@@ -66,7 +68,24 @@ def append_mesh(bm,geometry):
     mesh=bpy.data.meshes.new('Private root primitive');mesh.from_pydata(geometry[0],[],geometry[1]);mesh.update();bm.from_mesh(mesh);bpy.data.meshes.remove(mesh)
 
 
-def main(solid_only=False,output_name="candidate-v13"):
+def source_silhouette_preflight(objects,directory):
+    """Check observed bark coverage before spending time on the source bake."""
+    x,y,width,height=1326,708,208,175
+    scene=bpy.data.scenes.new('Root source silhouette preflight')
+    for obj in objects:
+        if obj.type!='MESH' or obj.get('asset_group')!='croisement02-tree-35':continue
+        copy=obj.copy();copy.parent=None;copy.matrix_world=obj.matrix_world.copy();copy.hide_render=False;scene.collection.objects.link(copy)
+    target=Vector((x+width/2,-(y+height/2)/SIN,0));data=bpy.data.cameras.new('Root native preflight');data.type='ORTHO';data.sensor_fit='HORIZONTAL';data.ortho_scale=width;data.clip_end=20000
+    camera=bpy.data.objects.new(data.name,data);scene.collection.objects.link(camera);camera.location=target+RAY*5000;camera.rotation_euler=(target-camera.location).to_track_quat('-Z','Y').to_euler();scene.camera=camera
+    scene.render.engine='CYCLES';scene.cycles.samples=8;scene.cycles.transparent_max_bounces=64;scene.render.resolution_x=width;scene.render.resolution_y=height;scene.render.resolution_percentage=100;scene.render.film_transparent=True;scene.render.image_settings.file_format='PNG';scene.render.image_settings.color_mode='RGBA';scene.render.filepath=str(directory/'source-silhouette-preflight.png');bpy.ops.render.render(write_still=True,scene=scene.name)
+    mask=np.asarray(Image.open(OUT/'tree35-root-research/source-domain-v1/confirmed-wood.png').convert('L').crop((x,y,x+width,y+height)))>0
+    alpha=np.asarray(Image.open(scene.render.filepath).convert('RGBA'))[:,:,3]>0;missing=int((mask&~alpha).sum())
+    write_json(directory/'source-silhouette-preflight.json',dict(confirmed_wood_pixels=int(mask.sum()),uncovered_confirmed_wood_pixels=missing,maximum=200,render_sha256=sha(Path(scene.render.filepath))))
+    bpy.data.scenes.remove(scene)
+    if missing>200:raise ValueError(f'Observed bark silhouette regressed: {missing} uncovered pixels; source bake held')
+
+
+def main(solid_only=False,output_name="candidate-v14"):
     original=tree_workspace(35);directory=OUT/'tree35-root-research'/output_name;directory.mkdir(exist_ok=False);original_hash=sha(original/'model.blend');bpy.ops.wm.open_mainfile(filepath=str(original/'model.blend'));bpy.context.preferences.filepaths.save_version=0
     objects=list(bpy.data.collections['Croisement02 Working'].all_objects);wood=[o for o in objects if o.type=='MESH' and o.get('asset_group')==original.name and o.get('projection_component')!='crown'];outside={o.name:_geometry(o,protect_appearance=True) for o in objects if o.type=='MESH' and o not in wood};records=[]
     for obj in wood:
@@ -77,7 +96,7 @@ def main(solid_only=False,output_name="candidate-v13"):
         boundary=[e for e in bm.edges if e.is_boundary]
         if part!=90:bmesh.ops.holes_fill(bm,edges=boundary,sides=0)
         if part==90:
-            base=[(1406,-1430,.05,26,28),(1406,-1430,3,25,27),(1406,-1430,8,24,26),(1405,-1430,16,22,24),(1405,-1430,27,20,22),(1405,-1430,45,19,21),(1407,-1430,65,22,24)]
+            base=[(1406,-1430,.05,26,28),(1406,-1430,3,25,27),(1406,-1430,8,27,29),(1405,-1430,16,28,30),(1405,-1430,27,30,32),(1405,-1430,45,30,32),(1407,-1430,65,29,31)]
             paths=[]
             bridge_base(bm,base,cut)
         else:
@@ -113,6 +132,7 @@ def main(solid_only=False,output_name="candidate-v13"):
         # avoid an artificial visible seam between native source owners.
         obj.data.normals_split_custom_set_from_vertices([surface_normals[normal_tree.find(v.co)[1]] for v in obj.data.vertices])
     records=[dict(part=int(o['source_node'].split('-')[-1]),vertices=len(o.data.vertices),faces=len(o.data.polygons),min_z=min(v.co.z for v in o.data.vertices),method='Continuous angular buttress loft, partitioned by internal x+z=1384 plane') for o in wood]
+    if not solid_only:source_silhouette_preflight(objects,directory)
     cfg=json.loads((original/'workspace.json').read_text());domain=OUT/'tree35-root-research/source-domain-v1'
     if not solid_only:
         bake('Croisement02',cfg['source_path'],directory/'source-ownership.json',receiver_nodes=sorted({o['source_node'] for o in wood}),receiver_object_names=[o.name for o in wood],occluder_nodes=sorted({o['source_node'] for o in wood}),projection_label='exterior',preserve_authored=False,source_mask_manifest=str(domain/'source-masks.json'),provenance_directory=str(directory/'source-provenance'))
@@ -135,7 +155,7 @@ def main(solid_only=False,output_name="candidate-v13"):
     write_json(directory/'evidence.json',dict(status='private reconstructed roots; self-review pending',solid_only_preview=solid_only,model_sha256=sha(directory/'model.blend'),original_model=str(original/'model.blend'),original_model_sha256=original_hash,outside_appearance_fingerprints=outside,root_geometry=records,source_domain_sha256=sha(domain/'source-review.json'),crown_and_other_owner_appearance_unchanged=True,reference_assets=['leicester-southeast-cottage-tree','leicester-moat-bank-tree'],limitations=['Old low flares discarded. New rounded buttresses are continuous angular stem profiles, inferred from grounded trunk construction rather than foliage silhouettes.','Actual visible wood above cut retained before union; modest smoothing also relaxes inherited upper collars.','Gray hidden wood requires new approval and fill; no prior texture approval transferred.','No canonical or approved files changed.']))
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--solid-only',action='store_true');parser.add_argument('--output-name',default='candidate-v13');args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--solid-only',action='store_true');parser.add_argument('--output-name',default='candidate-v14');args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
     acquire()
     try:main(args.solid_only,args.output_name)
     finally:release()
