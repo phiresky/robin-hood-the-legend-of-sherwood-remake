@@ -82,6 +82,8 @@ def main():
         write_json(DEST/f'shrub-{native}/support.json',support_report)
         reports[native]['opacity_bounds']=support_report['current_opacity_bounds'];reports[native]['support_evidence']=str(DEST/f'shrub-{native}/support.json')
         reports[native]['minimum_z']=min(v.co.z for v in obj.data.vertices)
+        reports[native].pop('minimum_elevation_target',None)
+        reports[native]['inferred_crown_center_z']=250.
     visibility={o:o.hide_render for o in collection.all_objects if o.type=='MESH'}
     for o in visibility:o.hide_render=False
     inventory(DEST/'inventory',collection_name='Croisement02 Working',map_name='Croisement02',source_path=source,patch_manifest=OUT/'source-states/layers.json')

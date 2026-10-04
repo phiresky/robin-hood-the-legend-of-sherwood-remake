@@ -17,8 +17,9 @@ from stage_review_scene import signature
 
 
 def worker(index):
-    rounds={77:16,78:12,83:18,84:12,74:15,85:15,86:15,87:20,88:15,89:17,90:15}
-    return OUT/f'understory-round-{rounds[index]}/assets/croisement02-shrub-{index}'
+    rounds={77:16,78:12,83:18,84:12,74:15,85:15,86:15,87:20,88:15,89:17,90:15,93:22,22:21}
+    asset=f'croisement02-canopy-fringe-{index}' if index==22 else f'croisement02-shrub-{index}'
+    return OUT/f'understory-round-{rounds[index]}/assets'/asset
 
 
 def run(label,indices,include_bank=None,context_workers=()):
@@ -26,13 +27,20 @@ def run(label,indices,include_bank=None,context_workers=()):
     bpy.ops.wm.read_factory_settings(use_empty=True);scene=bpy.context.scene
     collection=bpy.data.collections.new('Ground plant joint review');scene.collection.children.link(collection)
     records=[];plant_objects=[]
-    inputs=[(worker(i),'private plant') for i in indices]+[(p,'selected neighbouring vegetation') for p in context_workers]
+    inputs=[(worker(i),'private plant') for i in indices]+[(p,'private reviewed tree35 lower-geometry candidate; canopy remains held' if p==OUT/'tree35-root-research/candidate-v14' else 'selected unchanged neighbouring scenery') for p in context_workers]
     if include_bank is None:include_bank=False
     if include_bank:inputs.append((scenery_workspace('croisement02-north-woodland-bank'),'selected bank context'))
     for workspace,role in inputs:
         model=workspace/'model.blend';digest=sha(model)
-        audit=json.loads((workspace/'inspection/saved-model-audit.json').read_text())
-        if audit['status']!='PASS' or audit['model_sha256']!=digest:raise ValueError('Stale worker audit')
+        if workspace==OUT/'tree35-root-research/candidate-v14':
+            proof=json.loads((workspace/'reopened-verification.json').read_text())
+            if proof['status']!='PASS' or proof['model_sha256']!=digest:raise ValueError('Private root35 preservation proof changed')
+            old=OUT/'forest-v4-round-1/assets/croisement02-tree-35'
+            if sha(old/'model.blend')!=proof['original_model_sha256']:raise ValueError('Root35 baseline changed')
+            audit=json.loads((old/'inspection/saved-model-audit.json').read_text())
+        else:
+            audit=json.loads((workspace/'inspection/saved-model-audit.json').read_text())
+            if audit['status']!='PASS' or audit['model_sha256']!=digest:raise ValueError('Stale worker audit')
         names=[r['object'] for r in audit['objects']]
         with bpy.data.libraries.load(str(model),link=False) as (src,dst):dst.objects=names
         for obj in dst.objects:
@@ -105,14 +113,21 @@ def run(label,indices,include_bank=None,context_workers=()):
         limitation='Contact review only. New plants remain unselected; wider neighboring vegetation/terrain ownership review is still required.'))
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('index',type=int,choices=[74,77,78,83,86,87,88,89,90]);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:])
-    contexts={74:['east-rail-fence'],77:['southwest-field-wattle-fence'],78:['southwest-log-pile'],83:['southwest-rock-outcrop','shrub-81'],86:['logging-clearing-log','logging-clearing-stumps','north-kindling-bundle'],87:['east-upright-rail-fence-94'],88:['woodcutters-shed'],89:['supplemental-wood-44'],90:['supplemental-wood-44']}
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('index',type=int,choices=[22,74,77,78,83,85,86,87,88,89,90]);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:])
+    contexts={22:[],74:['east-rail-fence'],77:['southwest-field-wattle-fence'],78:['southwest-log-pile'],83:['southwest-rock-outcrop','shrub-81'],85:['east-upright-rail-fence-95','southeast-stone-wall-and-gate'],86:['logging-clearing-log','logging-clearing-stumps','north-kindling-bundle'],87:['east-upright-rail-fence-94'],88:['woodcutters-shed'],89:['supplemental-wood-44'],90:['supplemental-wood-44']}
     neighbours=[scenery_workspace('croisement02-'+s) for s in contexts[args.index]]
+    if args.index==22:
+        proof=json.loads((OUT/'understory-candidates/north-fringe22-audit/evidence.json').read_text())
+        for row in proof['selected_crowns']:
+            path=Path(row['worker'])
+            if sha(path/'model.blend')!=row['model_sha256']:raise ValueError('Fringe scaffold neighbour changed')
+            neighbours.append(path)
+    if args.index==85:neighbours += [OUT/'tree35-root-research/candidate-v14']
     if args.index==87:neighbours += [tree_workspace(i) for i in (39,40)]
     if args.index==88:neighbours += [tree_workspace(i) for i in (39,40,47)]
     if args.index==83:neighbours += [tree_workspace(i) for i in (29,30)]
     if args.index in (89,90):neighbours += [tree_workspace(i) for i in (43,45,46)]
     target=worker(args.index);label=f'native-{args.index}-'+sha(target/'model.blend')[:8]+'-'+sha(neighbours[0]/'model.blend')[:8]
     acquire()
-    try:run(label,[83,84] if args.index==83 else [args.index],False,neighbours)
+    try:run(label,[83,84] if args.index==83 else [85,93] if args.index==85 else [args.index],False,neighbours)
     finally:release()
