@@ -193,6 +193,9 @@ fn verify_map_patch_camera_alignment(gpu: GpuContext, oversized_atlas: bool) {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
+    if let Ok(root) = std::env::var("SCENERY_LIBRARY_EXPORT_DIR") {
+        verify_library_scenery_pixels(gpu.clone(), std::path::Path::new(&root));
+    }
     if let Ok(root) = std::env::var("SCENERY_DEPTH_EXPORT_DIR") {
         verify_exported_depth_pixels(gpu.clone(), std::path::Path::new(&root));
     }
@@ -460,6 +463,98 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
     crate::ingame_menu::resources::verify_menu_gpu_ownership(&mut menu_renderer, &mut menu_peer);
     verify_deferred_menu_surfaces(&mut renderer);
     verify_managed_surface_rectangles(&mut renderer);
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+fn verify_library_scenery_pixels(gpu: GpuContext, root: &std::path::Path) {
+    use robin_assets::frame_holder::FrameHolder;
+    use robin_engine::sprite_variant::SpriteVariant;
+    let bank = root.join("Data/Animations/Day/candle-cluster.rhs.d");
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(bank.join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(manifest["pixel_format"], "legacy_color_keys");
+    let frames = manifest["profiles"][0]["rows"][0]["frames"]
+        .as_array()
+        .unwrap();
+    assert_eq!(frames.len(), 6);
+    let mut holder = FrameHolder::new();
+    let mut renderer =
+        Renderer::with_optional_surface(gpu, None, None, 96, 64, TextureScaleMode::Nearest);
+    let mut distinct = std::collections::BTreeSet::new();
+    for frame in frames {
+        let path = bank.join(frame["file"].as_str().unwrap());
+        let (width, height, pixels) = robin_assets::custom_sprites::decode_png_rgba_bytes(
+            &std::fs::read(&path).unwrap(),
+            path.to_str().unwrap(),
+        )
+        .unwrap();
+        assert!(width > 0 && height > 0);
+        let id = holder.append_runtime_sprite(FrameHolder::pack_runtime_rgba_sprite(
+            width, height, &pixels, true,
+        ));
+        assert_eq!(
+            renderer.ensure_sprite_cached(&holder, id, SpriteVariant::Day, 0, 0),
+            Some((width, height))
+        );
+        for (x, y, zoom) in [(7, 9, 1), (-9, -5, 1), (4, 3, 2)] {
+            renderer.begin_gpu_frame_clear();
+            renderer.render_gpu_rect(0, 0, 96, 64, [255, 0, 255, 255]);
+            assert!(renderer.render_cached_sprite_subpixel(
+                id,
+                SpriteVariant::Day,
+                0,
+                0,
+                x as f32,
+                y as f32,
+                f32::from(width) * zoom as f32,
+                f32::from(height) * zoom as f32
+            ));
+            let actual = renderer.try_capture_frame_rgba().unwrap();
+            assert_eq!((actual.0, actual.1), (96, 64));
+            let mut opaque = 0;
+            for sy in 0..64i32 {
+                for sx in 0..96i32 {
+                    let mut expected = [255, 0, 255, 255];
+                    let dx = sx - x;
+                    let dy = sy - y;
+                    if dx >= 0
+                        && dy >= 0
+                        && dx < i32::from(width) * zoom
+                        && dy < i32::from(height) * zoom
+                    {
+                        let index = ((dy / zoom) * i32::from(width) + dx / zoom) as usize * 4;
+                        let rgba = &pixels[index..index + 4];
+                        let color = ((u16::from(rgba[0]) >> 3) << 11)
+                            | ((u16::from(rgba[1]) >> 2) << 5)
+                            | (u16::from(rgba[2]) >> 3);
+                        if rgba[3] >= 128 && color != 0x07c0 && color != 0x001f {
+                            // A literal matching the ambient shadow color is
+                            // shifted one RGB565 step to keep it opaque.
+                            let color = if color == 0 { 1 } else { color };
+                            let (r, g, b) = robin_util::color::rgb565_to_rgb8(color);
+                            expected = [r, g, b, 255];
+                            opaque += 1;
+                        }
+                    }
+                    let index = (sy * 96 + sx) as usize * 4;
+                    assert_eq!(
+                        &actual.2[index..index + 4],
+                        &expected,
+                        "frame {} at screen ({sx}, {sy}), origin ({x}, {y}), zoom {zoom}",
+                        id
+                    );
+                }
+            }
+            assert!(opaque > 0, "test did not draw any scenery pixels");
+            if x == 7 {
+                distinct.insert(actual.2);
+            }
+        }
+    }
+    assert!(
+        distinct.len() > 1,
+        "animation frames produce identical rendered images"
+    );
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

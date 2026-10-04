@@ -355,6 +355,13 @@ Day-only editor export path.
 The production-preload suite passes ten ordinary checks; the separately enabled
 published-candle ZIP check also passes, installing six frames and their profile
 with an empty character roster and no base datadir.
+Native GPU acceptance now compares all six packaged candle frames against their
+source pixels through the runtime sprite cache and draw path. Eighteen images
+cover 1x/2x zoom and clipping at a negative origin; every pixel matches on Vulkan
+and headless EGL/OpenGL. Frame dimensions vary, and opaque colors matching the
+ambient shadow key retain the required one-step RGB565 adjustment. This proves
+frame upload, transparency, clipping and scaling for this asset; whole-scene
+ordering, fog, masks and shadow-enabled effects remain separate open checks.
 
 **Live placed scenery:** the viewport now loads verified pinned banks for placed
 asset parts, animating their initial row at 25 ticks per second with the runtime's

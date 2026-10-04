@@ -342,6 +342,21 @@ with no characters and skips an unrelated malformed bank. Run
 `SCENERY_LIBRARY_ZIP` pointing at the candle archive to verify all six frames
 through the production preload, without manually injecting profiles.
 
+For native pixel comparisons, set `SCENERY_LIBRARY_EXPORT_DIR` to the extracted
+`scenery-candle-main-export-20261004` directory when running the GPU contract gate
+below. It decodes each of the six packaged PNG frames, installs native runtime
+sprites, and compares every rendered pixel against the source's RGB565 color/key
+semantics at 1x and 2x zoom and a clipped negative origin. Individual frame sizes
+may differ from the profile's nominal dimensions. It also requires distinct
+rendered animation images and accounts for the native one-step color adjustment
+that distinguishes opaque pixels from the ambient shadow key.
+This checks sprite-cache uploads and drawing, not
+entity ordering, fog, masks or whole-scene appearance.
+The six-frame fixture passes both Vulkan and OpenGL. On systems without
+`xvfb-run`, the OpenGL gate also runs directly with `EGL_PLATFORM=surfaceless`
+and `WGPU_BACKEND=gl` when headless EGL is available. The sandbox may require
+explicit GPU access for adapter discovery.
+
 `app/src/scenery-frames.test.ts` checks the initial sentinel tick, inclusive frame
 delays, looping and the maximum unsigned delay. The browser fixture
 `tests/scenery-live.html` checks a two-frame placed asset: GPU-projected pixels,
