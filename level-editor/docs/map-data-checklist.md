@@ -4183,3 +4183,14 @@ drafts; explicit gateway ownership reduces pending appearance bindings from two
 to one (`work/map-compile/nottingham-gate-owner-recovery-20261004`). Other draft
 geometry was not published. Older mask/light coverage totals are not superseded
 by this scan, which did not supply the additional reviewed recovery recipes.
+
+### Nottingham east-tower reveal
+
+The remaining east-tower appearance now has an independent asset-local control.
+It retains the activation point at its receiving height and carries no movement,
+sight-obstacle or door-rights changes. Published baseline and one-unit tower-move
+exports have ten controls with no missing appearance-binding warnings; both pass
+native apply/reset. Reopening and compiling the published scene reproduces the
+tested baseline exactly (`work/map-compile/nottingham-tower-state-KurPT1`). These
+bindings complete the currently modeled Nottingham appearance controls, not the
+unrecovered masks, animation or rendered-state coverage.

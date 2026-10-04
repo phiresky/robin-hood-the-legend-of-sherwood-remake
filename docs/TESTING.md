@@ -555,3 +555,9 @@ The CDP runner converts only individual download chunks to JSON arrays; converti
 the entire archive with `Array.from` failed after Lincoln's 45 appearance renders
 and packaging completed. That failed harness run produced no saved ZIP and does
 not count as a successful native archive round trip.
+
+`work/map-compile/nottingham-tower-state-KurPT1` covers the independent east-tower
+reveal. Both the baseline and one-unit tower move compile without missing
+appearance bindings, retain the receiving sector/layer, and pass native apply/reset
+for all ten controls. A fresh compile of the published scene matches the tested
+baseline exactly. This does not verify animated sprites or unrecovered masks.

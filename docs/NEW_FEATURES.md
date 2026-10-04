@@ -2435,3 +2435,7 @@ errors include the last reported stage.
 Nottingham's castle gateway now owns its three portcullis lanes and permission
 control. Moving the courtyard floor independently no longer carries the gate
 control away; the gate's appearance follows the same local control.
+
+Nottingham's east gate tower now carries its own appearance-only reveal control,
+with a local waypoint at the receiving floor's height. Its visual binding moves
+with the tower independently of the neighboring gateway's door permissions.
