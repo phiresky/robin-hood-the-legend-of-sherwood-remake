@@ -118,6 +118,13 @@ def main():
                 item['notes']+=reviewed.get('notes',[])
                 if reviewed.get('ready_for_geometry_review') and technical:
                     item['status']='ready-for-user';item['technical_eligible']=True
+        bank_receipt=workspace/'inspection/bank-candidate.json'
+        if bank_receipt.exists():
+            bank=json.loads(bank_receipt.read_text())
+            item['source_comparison_secondary']=bank['ramp_detail']
+            item['source_comparison_secondary_label']='Northeast ramp: source, side and rear; actual texture left, solid geometry right'
+            item['projection_errors']=bank['source_difference']
+            item['projection_errors_label']=f"Independent bank source coverage: red missed pixels ({bank['source_coverage']['missing_known_pixels']} remaining pixels)"
         ownership=workspace/'inspection/bark-ownership.json'
         if not ownership.exists():
             reports=[p for p in (workspace/'projection').glob('*/ownership.json') if p.parent.name!='input']

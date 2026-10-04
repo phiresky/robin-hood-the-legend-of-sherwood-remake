@@ -1,5 +1,6 @@
 """Explicit ownership after reviewing all six source-artwork survey sheets."""
 import json
+import hashlib
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
 OUT=ROOT/'level-editor/work/croisement02-refinement'
@@ -8,7 +9,36 @@ def reviewed_catalog():
     revised=OUT/'ownership-revision/catalog.json'
     return revised if revised.exists() else OUT/'catalog.json'
 
+def bank_workspace(asset):
+    """Select the reviewed bank only while its scope and evidence remain current."""
+    if asset!='croisement02-north-woodland-bank':return None
+    worker=OUT/'terrain-bank-candidate/assets'/asset
+    path=worker/'inspection/bank-candidate.json'
+    if not path.exists():return None
+    receipt=json.loads(path.read_text())
+    group=next(g for g in json.loads(reviewed_catalog().read_text())['groups'] if g['id']==asset)
+    parts=sorted(f"building-{p['obstacle']:03}" for p in group['parts'] if 'obstacle' in p)
+    expected=[f'building-{i:03}' for i in range(5)]
+    if (parts!=expected or len(group['parts'])!=5 or receipt.get('part_ids')!=expected
+            or receipt.get('asset_id')!=asset):
+        raise ValueError('Bank candidate ownership differs from native parts0–4')
+    for relative,expected_hash in receipt['files'].items():
+        file=OUT/'terrain-bank-candidate'/relative
+        if not file.is_file() or hashlib.sha256(file.read_bytes()).hexdigest()!=expected_hash:
+            raise ValueError('Bank candidate evidence changed: '+relative)
+    model_hash=hashlib.sha256((worker/'model.blend').read_bytes()).hexdigest()
+    audit=json.loads((worker/'inspection/saved-model-audit.json').read_text())
+    review=json.loads((worker/'inspection/visual-review.json').read_text())
+    if (model_hash!=receipt['model_sha256'] or audit['status']!='PASS'
+            or audit['model_sha256']!=model_hash or review['model_sha256']!=model_hash
+            or sorted(r['source_node'] for r in audit['objects'])!=expected):
+        raise ValueError('Bank candidate model/audit/review binding differs')
+    return worker
+
+
 def scenery_workspace(asset):
+    bank=bank_workspace(asset)
+    if bank is not None:return bank
     western=OUT/'understory-round-4/assets'/asset
     if (western/'inspection/shrub-candidate.json').exists():return western
     shrub=OUT/'understory-round-1/assets'/asset
