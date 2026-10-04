@@ -30,9 +30,17 @@ The diagnostic descriptor contains 3,877 sight/receiving obstacles. The audit
 script's final summary initially failed on an absent optional control array after
 writing the successful descriptor; that reporting bug is corrected.
 
-Full-map compilation and native traversal remain separate checks. These changes
-do not add deformation for wall-owned masks, lighting, sounds, material regions
-or stateful geometry, and do not repair unresolved passages in placed assets.
+The full current Wychford scene also compiles with its wall included
+(`work/map-compile/wychford-wall-calibration-PNsV4t`): 21,323 sight/receiving
+obstacles, two controls and two traversals. Native construction and apply/reset
+of both controls pass in 22.07 seconds. The standalone test binary requires the
+same `RUST_MIN_STACK=33554432` configured for Cargo tests; omitting it caused a
+test-thread stack overflow before this successful run. The tower entrance and
+control waypoint height mismatches listed below remain explicit omissions.
+
+Native traversal remains a separate check. These changes do not add deformation
+for wall-owned masks, lighting, sounds, material regions or stateful geometry,
+and do not repair unresolved passages in placed assets.
 
 ## Current library state compilation (2026-10-04)
 
