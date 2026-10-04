@@ -5,6 +5,7 @@ import bpy,bmesh
 import numpy as np
 from PIL import Image,ImageDraw
 from mathutils import Vector
+from mathutils.bvhtree import BVHTree
 ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(Path(__file__).parent)]
 from catalog import OUT
 from scenery_geometry import Mesh
@@ -13,7 +14,7 @@ from log_trap_state_candidate import point,sha,material
 from render_slots import acquire,release
 
 def main():
-    root=OUT/'state-target-evidence';dest=OUT/'north-cart-initial-candidate-v2';dest.mkdir(exist_ok=False);manifest=json.loads((root/'north-cart/manifest.json').read_text());part=manifest['parts'][0];frame=part['frames'][0];source=Path(frame['image']);rgba=np.array(Image.open(source).convert('RGBA'));height,width=rgba.shape[:2];domain=Image.new('L',(width,height));polygon=[(99,41),(144,0),(204,9),(211,89),(180,122),(176,144),(149,151),(132,128),(90,120),(94,90)];ImageDraw.Draw(domain).polygon(polygon,fill=255);owned=(np.array(domain)>0)&(rgba[:,:,3]>0)&~np.all(rgba[:,:,:3]==[0,0,255],axis=2);rgba[:,:,3]=owned.astype(np.uint8)*255;imagepath=dest/'cart-owned-source.png';Image.fromarray(rgba).save(imagepath);Image.fromarray(owned.astype(np.uint8)*255).save(dest/'cart-source-domain.png')
+    root=OUT/'state-target-evidence';dest=OUT/'north-cart-initial-candidate-v3';dest.mkdir(exist_ok=False);manifest=json.loads((root/'north-cart/manifest.json').read_text());part=manifest['parts'][0];frame=part['frames'][0];source=Path(frame['image']);rgba=np.array(Image.open(source).convert('RGBA'));height,width=rgba.shape[:2];domain=Image.new('L',(width,height));polygon=[(99,41),(144,0),(204,9),(211,89),(180,122),(176,144),(149,151),(132,128),(90,120),(94,90)];ImageDraw.Draw(domain).polygon(polygon,fill=255);owned=(np.array(domain)>0)&(rgba[:,:,3]>0)&~np.all(rgba[:,:,:3]==[0,0,255],axis=2);rgba[:,:,3]=owned.astype(np.uint8)*255;imagepath=dest/'cart-owned-source.png';Image.fromarray(rgba).save(imagepath);Image.fromarray(owned.astype(np.uint8)*255).save(dest/'cart-source-domain.png')
     bpy.ops.wm.read_factory_settings(use_empty=True);scene=bpy.context.scene;scene.render.engine='CYCLES';scene.cycles.samples=12;scene.cycles.use_denoising=False;scene.view_settings.view_transform='Standard';scene.render.film_transparent=True;scene.render.image_settings.file_format='PNG';scene.render.image_settings.color_mode='RGBA';scene.render.resolution_x=scene.render.resolution_y=512;scene.world=bpy.data.worlds.new('World');scene.world.use_nodes=True;scene.world.node_tree.nodes['Background'].inputs[0].default_value=(.15,.15,.15,1)
     mat=material(imagepath);gray=bpy.data.materials.new('Unobserved cart structure');gray.use_nodes=True;gray.node_tree.nodes.get('Principled BSDF').inputs['Base Color'].default_value=(.17,.17,.17,1)
     # Axle centers and wheel radii are an explicit source survey, not target pivot bounds.
@@ -72,6 +73,23 @@ def main():
                 for a,b in [(0,stride),(2*stride,3*stride),(0,2*stride),(stride,3*stride)]:m.faces.append((a+i,a+i+1,b+i+1,b+i))
             for i in [0,n]:m.faces.append((i,stride+i,3*stride+i,2*stride+i))
             build(f'Canopy curtain {side} {start}',m)
+    # Project source paint only onto the first physical surface seen by its camera.
+    # Subdivision permits partially concealed boards to retain visible native regions.
+    for obj in objects:
+        bm=bmesh.new();bm.from_mesh(obj.data);maximum=max(e.calc_length()for e in bm.edges);cuts=min(16,max(0,math.ceil(maximum/6)-1))
+        if cuts:bmesh.ops.subdivide_edges(bm,edges=list(bm.edges),cuts=cuts,use_grid_fill=True)
+        bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces));assert all(e.is_manifold for e in bm.edges),obj.name;bm.to_mesh(obj.data);bm.free();obj.data.update()
+        uv=obj.data.uv_layers.get('Native target projection')
+        for face in obj.data.polygons:
+            for loop in face.loop_indices:
+                p=obj.data.vertices[obj.data.loops[loop].vertex_index].co;uv.data[loop].uv=((p.x-left)/width,1-(-p.y*SIN-p.z*COS-top)/height)
+    vertices=[];faces=[]
+    for obj in objects:
+        start=len(vertices);vertices.extend(v.co.copy()for v in obj.data.vertices);faces.extend(tuple(start+i for i in face.vertices)for face in obj.data.polygons)
+    bvh=BVHTree.FromPolygons(vertices,faces);visible_faces=0;hidden_faces=0
+    for obj in objects:
+        for face in obj.data.polygons:
+            center=face.center;hit=bvh.ray_cast(center+RAY*2000,-RAY,4000);visible=face.normal.dot(RAY)>.05 and hit[0]is not None and(hit[0]-center).length<.05;face.material_index=0 if visible else 1;visible_faces+=visible;hidden_faces+=not visible
     camera_data=bpy.data.cameras.new('Review camera');camera_data.type='ORTHO';camera_data.clip_end=10000;camera=bpy.data.objects.new('Review camera',camera_data);scene.collection.objects.link(camera);scene.camera=camera;lightdata=bpy.data.lights.new('Sun','SUN');lightdata.energy=2;light=bpy.data.objects.new('Sun',lightdata);scene.collection.objects.link(light);light.rotation_euler=(.6,-.5,-.4)
     bpy.ops.wm.save_as_mainfile(filepath=str(dest/'worker.blend'));acquire()
     try:
@@ -80,5 +98,5 @@ def main():
             for mode in ['actual','solid']:
                 scene.view_layers[0].material_override=gray if mode=='solid'else None;scene.render.filepath=str(dest/f'{view}-{mode}.png');bpy.ops.render.render(write_still=True)
     finally:release()
-    report=dict(status='first unapproved cart-only hypothesis; source and solid review required',model_sha256=sha(dest/'worker.blend'),source_sha256=sha(source),source_frame=frame,source_position=part['position'],cart_domain_polygon=polygon,cart_source_pixels=int(owned.sum()),objects=[o.name for o in objects],limitations=['Horses, harness and source shadows remain separate preserved sources; no actor geometry claim.','Four wheels, ten spokes, barrel roof depth and hidden body inferred; source-facing geometry must be reviewed.','Initial target source only; mobile approach, collapse, debris and applied endpoint missing.','No terrain support claim, state approval, generated textures or scene integration.']);(dest/'manifest.json').write_text(json.dumps(report,indent=2)+'\n')
+    report=dict(status='first unapproved cart-only hypothesis; source and solid review required',model_sha256=sha(dest/'worker.blend'),source_sha256=sha(source),source_frame=frame,source_position=part['position'],cart_domain_polygon=polygon,cart_source_pixels=int(owned.sum()),source_visibility=dict(visible_faces=visible_faces,hidden_faces=hidden_faces,method='Whole-cart first-hit BVH along exact source camera; hidden surfaces unknown'),objects=[o.name for o in objects],limitations=['Horses, harness and source shadows remain separate preserved sources; no actor geometry claim.','Four wheels, ten spokes, barrel roof depth and hidden body inferred; source-facing geometry must be reviewed.','Initial target source only; mobile approach, collapse, debris and applied endpoint missing.','No terrain support claim, state approval, generated textures or scene integration.']);(dest/'manifest.json').write_text(json.dumps(report,indent=2)+'\n')
 if __name__=='__main__':main()
