@@ -10,6 +10,10 @@ from catalog_schema import source_for_part
 
 
 def selected_workspace(out, mask, catalog_path):
+    from wood_revision_candidates import selected_workspace as wood_revision
+    wood = wood_revision(out, mask, catalog_path)
+    if wood is not None:
+        return wood
     receipt = out / 'canopy-cleanup-selections' / f'tree-{mask:02}.json'
     if not receipt.exists():
         return None
