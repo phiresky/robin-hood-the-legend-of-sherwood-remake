@@ -31,7 +31,7 @@ def build(obj, packet):
     palette_img=np.zeros((1,len(palette),4),np.uint8);palette_img[0,:,:3]=palette;palette_img[:,:,3]=255
     Image.fromarray(palette_img).save(directory/'native-palette.png')
     mats.append(material(obj.name+' inferred rooted blades',directory/'native-palette.png',False));one_sided(mats[2])
-    blade_count=85 if grass else 11
+    blade_count=85 if grass else 23
     skeletons=[]
     for b in range(blade_count):
         angle=math.tau*(b/blade_count)+rng.uniform(-.15,.15)
@@ -46,22 +46,28 @@ def build(obj, packet):
     vertices=[];faces=[];uvs=[];slots=[];known=[]
     def triangle(points,coords,slot,owns=False,reverse=False):
         pts=list(points);uv=list(coords)
+        if slot==2:
+            # Span the interior of one palette texel. A constant UV point
+            # renders in Cycles but defeats triangle-based opacity audits.
+            u=uv[0][0];du=.4/len(palette)
+            uv=[(u-du,.1),(u+du,.1),(u,.9)]
         normal=np.cross(pts[1]-pts[0],pts[2]-pts[0]);front=np.dot(normal,ray)>0
         if front==reverse:pts.reverse();uv.reverse()
         k=len(vertices);vertices.extend([list(p) for p in pts]);uvs.extend(uv)
         faces.append((k,k+1,k+2));slots.append(slot);known.append(owns)
     def screen_uv(p):return ((p[0]-x0)/w,1-(-p[1]*SIN-p[2]*COS-y0)/h)
     def source_point(x,y):
-        # Place each native pixel near the closest projected rooted blade.
-        # Its hidden depth is inferred; the one-pixel fragment retains the
-        # exact source coordinate and never bridges separate blade depths.
-        nearest=int(np.argmin(np.sum((projected-[x,y])**2,axis=1)))
-        z=max(ground+.5,samples[nearest,2]+(projected[nearest,1]-y)*.25/COS)
+        # A smooth, low-curvature front envelope preserves the source texel
+        # footprint without stretching it across unrelated frond depths.
+        vertical=(bottom-y)/height
+        cross=(x-cx)/width
+        rise=max(0.,bottom-y)*.55/COS
+        bulge=height*.085*math.cos(cross*math.pi)*math.sin(vertical*math.pi)
+        z=max(ground+.5,ground+.5+rise+bulge)
         return np.array([x,(-y-z*COS)/SIN,z])
     for y,x in zip(yy,xx):
         xy=[(x,y),(x+1,y),(x+1,y+1),(x,y+1)]
-        center=source_point(x0+x+.5,y0+y+.5)
-        points=[center+np.array([a-x-.5,-(b-y-.5)*SIN,-(b-y-.5)*COS]) for a,b in xy]
+        points=[source_point(x0+a,y0+b) for a,b in xy]
         coords=[(a/w,1-b/h) for a,b in xy]
         for face in [(0,1,2),(0,2,3)]:
             pts=[points[i] for i in face];uv=[coords[i] for i in face]
@@ -85,16 +91,23 @@ def build(obj, packet):
                 # Paired leaflets follow each fern rachis, with real tapered
                 # outlines rather than a rectangular texture donor.
                 for sign in [-1,1]:
-                    start=centers[j];tip=start+side*sign*length*.25*(1-t)+outward*length*.11
-                    mid=(start+tip)/2+np.array([0,0,.7]);r=length*.037*(1-t)
+                    start=centers[j];tip=start+side*sign*length*.38*(1-t)+outward*length*.11
+                    mid=(start+tip)/2+np.array([0,0,.7]);r=length*.065*(1-t)
                     leaf=[start,mid-outward*r,tip,mid+outward*r]
-                    for face in [(0,1,2),(0,2,3)]:
-                        tri=[leaf[i] for i in face]
-                        triangle(tri,[screen_uv(p) for p in tri],1)
-                        triangle(tri,[uvcolor]*3,2,reverse=True)
+                    leaf_color=int(rng.integers(len(palette)))
+                    leaf_uv=((leaf_color+.5)/len(palette),.5)
+                    # Transverse paired leaf surfaces keep inferred reverse
+                    # foliage visible above the plant, rather than assigning
+                    # every unknown back to a downward-facing horizontal face.
+                    transverse=[start,(start+tip)/2+np.array([0,0,r*1.5]),tip,(start+tip)/2-np.array([0,0,r*1.5])]
+                    for surface in [leaf,transverse]:
+                        for face in [(0,1,2),(0,2,3)]:
+                            tri=[surface[i] for i in face]
+                            triangle(tri,[screen_uv(p) for p in tri],1)
+                            triangle(tri,[leaf_uv]*3,2,reverse=True)
     result=replace_mesh(obj,vertices,faces,uvs,mats,slots,known)
     obj['projection_component']='crown';obj['projection_preserve']=True;obj['foliage_physical_opacity']=True
-    result.update(geometry_version='native-rooted-ground-plants-v4',native_mask=packet['native_mask'],
+    result.update(geometry_version='auditable-transverse-leaf-rooted-ground-plants-v9',native_mask=packet['native_mask'],
                   plant_kind='dry grass' if grass else 'fern',references=[],ground_z=ground,
                   minimum_z=min(v.co.z for v in obj.data.vertices),root_world=root.tolist(),
                   blade_count=blade_count,source_projection_preserved=True,opacity_bounds=measure(obj),

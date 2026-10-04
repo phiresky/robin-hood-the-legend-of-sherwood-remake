@@ -1,4 +1,5 @@
 """Build private native fern candidates with distinct source ownership."""
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -15,12 +16,13 @@ from refinement_workspace import prepare,modified
 from ground_plant_geometry import build
 
 def main():
-    directory=OUT/'fern-candidates-v1';directory.mkdir(exist_ok=False)
+    parser=argparse.ArgumentParser();parser.add_argument('--round',default='v1');parser.add_argument('--masks',nargs='+',type=int,default=[35,76]);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
+    directory=OUT/f'fern-candidates-{args.round}';directory.mkdir(exist_ok=False)
     level=json.loads((OUT/'baseline/Croisement03.rhp.json').read_text());source=OUT/'baseline/covered.png';rgb=Image.open(source).convert('RGBA');sw,sh=rgb.size
     baseline_catalog=json.loads((OUT/'catalog.json').read_text());native=json.loads((OUT/'baseline/masks/manifest.json').read_text())
     for row in native['masks']:row['png']=str(OUT/'baseline/masks'/row['png'])
     write_json(directory/'mask-inventory.json',native)
-    for index in [35,76]:
+    for index in args.masks:
         branch=directory/f'fern-{index:02}';branch.mkdir();node=f'foliage-fern-{index:03}';asset=f'croisement03-fern-{index:02}';name=f'North Woodland Fern {index:02}'
         m=level['masks'][index];x,y=m['box_top_left'];w,h=m['box_size'];im=rgb.crop((x,y,x+w,y+h));alpha=Image.open(OUT/f'baseline/masks/{index:06}.png').convert('L');im.putalpha(alpha);im.save(branch/'observed-source.png');im.save(branch/'complete-source.png')
         packet=dict(directory=str(branch),native_bbox=[x,y,w,h],bbox=[x,y,w,h],native_mask=index,plant_kind='fern',ground_z=0,source_sha256=sha(source),source_note='Own native fern RGBA only; rear leaflet colors are inferred from its own observed palette. Ground contact is a local hypothesis pending joint view.')
