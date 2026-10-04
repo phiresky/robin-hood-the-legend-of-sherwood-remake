@@ -38,13 +38,17 @@ def tube(name,trace):
 
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--revision',type=int,choices=[1,2,3],default=1)
+    parser=argparse.ArgumentParser();parser.add_argument('--revision',type=int,choices=[1,2,3,4],default=1)
     args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
     main_trace=MAIN;twig_trace=TWIG;fork_trace=None
     if args.revision>=2:
         main_trace=[(1038,338,7,7),(1058,337,12,12),(1082,340,13,13),(1102,333,13,13),(1122,326,13,13),(1141,320,12,12),(1163,318,10,10),(1181,319,10,9),(1193,314,11,7),(1198,309,12,4)]
         fork_trace=[(1179,322,9,5),(1194,331,6,4),(1206,335,4,3),(1218,338,3,1.5)]
-    if args.revision==3:
+    if args.revision==4:
+        main_trace=[(1030,338,3,3),(1038,339,8,8),(1058,339,15,15),(1082,343,16,16),(1102,337,16,16),(1122,326,15,15),(1141,322,14,14),(1163,320,12,12),(1181,325,12,12),(1193,317,11,7),(1198,311,12,3)]
+        twig_trace=[(1102,331,12,5),(1111,317,14,4.6),(1122,304,17,4),(1135,288,20,2.2)]
+        fork_trace=[(1181,330,9,7),(1194,340,8,8),(1206,346,6,6),(1219,352,3,2)]
+    if args.revision>=3:
         def smooth(trace):
             result=[]
             for i in range(len(trace)-1):
@@ -61,7 +65,7 @@ def main():
     for row in inv['masks']:row['png']=str(OUT/'baseline/masks'/row['png'])
     inventory=directory/'native-masks.json';inventory.write_text(json.dumps(inv,indent=2)+'\n')
     assigned_mask=70
-    if args.revision==3:
+    if args.revision>=3:
         from PIL import Image, ImageDraw
         native=next(row for row in inv['masks'] if row['index']==70)
         domain=Image.open(native['png']).convert('L');draw=ImageDraw.Draw(domain)
@@ -114,6 +118,8 @@ def main():
     inspection=workspace/'inspection';inspection.mkdir(exist_ok=True)
     (inspection/'construction.json').write_text(json.dumps(dict(status='private candidate; self-review pending',main_trace=main_trace,twig_trace=twig_trace,fork_trace=fork_trace,topology=topology,model_sha256=sha(workspace/'model.blend'),limitations=['Native source traces approximate centerlines. Radius, hidden depth and twig height are inferred.','Independent native source coverage, ground contacts and actual material review pending.']),indent=2)+'\n')
     import render_candidate
-    sys.argv=['render_candidate','--',str(workspace)];render_candidate.main();release()
+    sys.argv=['render_candidate','--',str(workspace)];render_candidate.main()
+    import audit_native_coverage
+    sys.argv=['audit_native_coverage','--',str(workspace),'--mask','70'];audit_native_coverage.main();release()
 
 if __name__=='__main__':main()
