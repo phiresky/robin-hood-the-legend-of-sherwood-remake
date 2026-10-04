@@ -13,13 +13,14 @@ from render_slots import acquire,release
 
 
 def main():
-    base=OUT/'rock-trap-state-candidate-v5'
+    base=OUT/'rock-trap-state-candidate-v8'
     shrub=OUT/'understory-round-11/assets/croisement02-shrub-62'
     audit=json.loads((shrub/'inspection/saved-model-audit.json').read_text())
     assert sha(shrub/'model.blend')==audit['model_sha256']=='5ce1f4150a51ef0cf294ff42b2b9daa2022ac6ffb586d18f7346e48b6ac38ecb'
     model=json.loads((base/'manifest.json').read_text())
     assert sha(base/'worker.blend')==model['model_sha256']
-    dest=OUT/'rock-state-shrub-joint-v1';dest.mkdir(exist_ok=False)
+    contact=json.loads((base/'contact-audit.json').read_text());assert contact['status'].startswith('surface clearance pass');assert contact['model_sha256']==model['model_sha256'];assert len(contact['saved_reopened_receiver_proof'])==5
+    dest=OUT/'rock-state-shrub-joint-v2';dest.mkdir(exist_ok=False)
     acquire()
     try:
         bpy.ops.wm.open_mainfile(filepath=str(base/'worker.blend'))
@@ -40,7 +41,7 @@ def main():
                 scene.camera.location=target+direction*3000;scene.camera.rotation_euler=(target-scene.camera.location).to_track_quat('-Z','Y').to_euler()
                 scene.render.filepath=str(dest/f'{"joint" if with_shrub else "rocks"}-{view}-actual.png');bpy.ops.render.render(write_still=True)
         assert sha(base/'worker.blend')==model['model_sha256'];assert sha(shrub/'model.blend')==audit['model_sha256']
-        (dest/'manifest.json').write_text(json.dumps(dict(status='unapproved initial-state interaction diagnostic',rock_model_sha256=model['model_sha256'],shrub_model_sha256=audit['model_sha256'],bank_model_sha256=model['bank_model_sha256'],source_manifest_sha256=sha(OUT/'state-target-evidence/rock-trap/manifest.json'),objects=names,limitations=['Shrub geometry and initial boulder geometry remain held for review.','No runtime visibility parity claim from static joint alone.','Native source RGB, state timing and source frames preserved; no model saved.']),indent=2)+'\n')
+        (dest/'manifest.json').write_text(json.dumps(dict(status='unapproved initial-state interaction diagnostic',rock_model_sha256=model['model_sha256'],contact_audit_sha256=sha(base/'contact-audit.json'),shrub_model_sha256=audit['model_sha256'],bank_model_sha256=model['bank_model_sha256'],source_manifest_sha256=sha(OUT/'state-target-evidence/rock-trap/manifest.json'),objects=names,limitations=['Shrub geometry and initial boulder geometry remain held for review.','No runtime visibility parity claim from static joint alone.','Native source RGB, state timing and source frames preserved; no model saved.']),indent=2)+'\n')
     finally:release()
 
 
