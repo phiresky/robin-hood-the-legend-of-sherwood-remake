@@ -52,6 +52,211 @@ fn actor_ticks_cross_compiled_walkway_seams_and_update_height() {
     }
 }
 
+#[test]
+fn actor_ticks_follow_compiled_routes_around_wall_ends() {
+    let a = MapPoint::new(250., 150.);
+    let b = MapPoint::new(250., 250.);
+    for (source, goal) in [(a, b), (b, a)] {
+        let samples = tick_compiled_route(
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/asset-spline-wall.level.json"
+            )),
+            0,
+            0,
+            source,
+            goal,
+        );
+        assert!(
+            samples.iter().any(|point| point.x < 101. || point.x > 399.),
+            "actor never passed the wall end"
+        );
+    }
+}
+
+#[test]
+fn actor_ticks_follow_curved_and_rising_compiled_walkways() {
+    for (bytes, layer, sector, a, b) in [
+        (
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/asset-spline-curved-walkway.level.json"
+            ))
+            .as_slice(),
+            1,
+            2,
+            MapPoint::new(125.32, 158.32),
+            MapPoint::new(394.32, 250.37),
+        ),
+        (
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/asset-spline-rising-walkway.level.json"
+            ))
+            .as_slice(),
+            0,
+            0,
+            MapPoint::new(125.41611, 158.50731),
+            MapPoint::new(394.36096, 232.79567),
+        ),
+    ] {
+        for (source, goal) in [(a, b), (b, a)] {
+            tick_compiled_route(bytes, layer, sector, source, goal);
+        }
+    }
+}
+
+fn tick_compiled_route(
+    bytes: &[u8],
+    layer: u16,
+    sector: u16,
+    source: MapPoint,
+    goal: MapPoint,
+) -> Vec<MapPoint> {
+    let (mut engine, mut assets) = compiled_walkway(bytes);
+    let grid = &engine.world.fast_grid;
+    let half = grid.try_move_box_half_diagonal(0).unwrap();
+    assert!(!grid.is_reachable_thick(source, goal, layer, half));
+    let sector_index =
+        grid.level.sector_number_map[&crate::sector::SectorNumber::new(sector as i16)];
+    let handle = crate::position_interface::SectorHandle::new(sector)
+        .unwrap()
+        .with_arena_index(crate::fast_find_grid::SectorIndex::new(sector_index as u32).unwrap());
+    let receiver = engine
+        .get_projection_area_index(&assets, handle, layer, source)
+        .expect("fixture source must have authored receiving geometry");
+    let owner = walking_pc(&mut engine, &mut assets, source, layer, handle);
+    engine.set_obstacle_and_material(&assets, owner, Some(receiver));
+    let action = OrderType::WalkingUpright;
+    let mut movement = SequenceElement::new_movement(1, Command::Move, Some(owner), action);
+    let crate::sequence::SequenceElementData::Movement {
+        destination,
+        layer: target_layer,
+        sector: target_sector,
+        ..
+    } = &mut movement.data
+    else {
+        unreachable!()
+    };
+    *destination = goal;
+    *target_layer = layer;
+    *target_sector = Some(handle);
+    let sequence = engine.t_launch_in_progress(&assets, movement);
+    let sim = crate::sim_rng::test_context();
+    let outcome = engine.try_dispatch_move_path(
+        TickCtx::new(&sim, &assets),
+        owner,
+        crate::sequence::SequenceElementRef::new(sequence, 0),
+        goal,
+        action,
+    );
+    assert!(
+        matches!(outcome, MovePathOutcome::Pending),
+        "dispatch {outcome:?}; actor position {:?}, box {:?}",
+        engine.ent(owner).element_data().position_map(),
+        engine.ent(owner).position_iface().get_move_box_map()
+    );
+    // Exercise the real queued request, path handoff and order postprocessing.
+    for _ in 0..2 {
+        engine.hourglass_phase_paths(TickCtx::new(&sim, &assets));
+    }
+    assert!(engine.orders.pending_path_requests.waiting.is_empty());
+    assert!(engine.orders.pending_path_requests.in_flight.is_none());
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap()
+            .orders
+            .len()
+            > 1
+    );
+    engine.select_sequence_element(owner, Some((sequence, 0)));
+    let mut previous = source;
+    let mut samples = vec![];
+    let mut worst_height = (0., source, 0., 0., None, None);
+    for _ in 0..2000 {
+        engine.t_tick_actor_owner_envelopes(&assets);
+        let element = engine.ent(owner).element_data();
+        let position = element.position_map();
+        assert!(
+            engine
+                .world
+                .fast_grid
+                .is_reachable_thick(previous, position, layer, half),
+            "actor crossed collision: {previous:?} -> {position:?}"
+        );
+        assert_eq!(element.layer(), layer);
+        let receiver = engine
+            .get_projection_area_index(&assets, handle, layer, position)
+            .expect("actor left authored receiving geometry");
+        let height = assets.environment.static_sight_obstacles[usize::from(receiver)]
+            .compute_top_z_from_projection(position.x, position.y);
+        let delta = (element.position().z - height).abs();
+        if delta > worst_height.0 {
+            worst_height = (
+                delta,
+                position,
+                element.position().z,
+                height,
+                engine.ent(owner).position_iface().get_obstacle(),
+                Some(receiver),
+            );
+        }
+        samples.push(position);
+        previous = position;
+        if (position - goal).length() < 0.01 {
+            break;
+        }
+    }
+    assert!(worst_height.0 < 0.001, "height mismatch: {worst_height:?}");
+    assert!(
+        (previous - goal).length() < 0.01,
+        "actor stopped at {previous:?}, expected {goal:?}"
+    );
+    samples
+}
+
+fn walking_pc(
+    engine: &mut EngineInner,
+    assets: &mut LevelAssets,
+    source: MapPoint,
+    layer: u16,
+    sector: crate::position_interface::SectorHandle,
+) -> crate::element::EntityId {
+    let action = OrderType::WalkingUpright;
+    let script = crate::sprite_script::SpriteScript {
+        action_id: action as u16,
+        action_done: 2,
+        average_speed: 1.,
+        hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+        sum_distance: 3,
+        frame_ids: vec![1, 2, 3],
+        delays: vec![0; 3],
+        distances: vec![1; 3],
+        offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
+        sound_ids: vec![0; 3],
+    };
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
+    conversion[action as usize] = 0;
+    let mut pc = crate::engine::test_support::actors::unbound_pc(Posture::Upright);
+    pc.element.sprite =
+        crate::sprite::Sprite::new(Arc::new(vec![script; 16]), Arc::new(conversion));
+    pc.element.active = true;
+    pc.element.set_sector(Some(sector));
+    pc.element.set_layer(layer);
+    pc.element.sprite.position_iface.configure_for_actor(
+        crate::position_interface::PathfinderIndex::new(0).unwrap(),
+        crate::coordinates::MoveBoxHalfDiagonal::new(6., 4.),
+        source,
+    );
+    pc.actor.action_state = ActionState::Moving;
+    let owner = engine.add_test_entity(Entity::Pc(pc));
+    crate::engine::complete_test_runtime_fixture(engine, assets);
+    owner
+}
+
 fn tick_walkway_crossing(
     mut engine: EngineInner,
     mut assets: LevelAssets,
@@ -72,37 +277,7 @@ fn tick_walkway_crossing(
         .unwrap();
     assert_ne!(start_receiver, end_receiver);
     let action = OrderType::WalkingUpright;
-    let script = crate::sprite_script::SpriteScript {
-        action_id: action as u16,
-        action_done: 2,
-        average_speed: 1.,
-        hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
-        sum_distance: 3,
-        frame_ids: vec![1, 2, 3],
-        delays: vec![0; 3],
-        distances: vec![1; 3],
-        offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
-        sound_ids: vec![0; 3],
-    };
-    let mut conversion = crate::engine::test_support::unmapped_conversion();
-    conversion[action as usize] = 0;
-    let mut pc = crate::engine::test_support::actors::unbound_pc(Posture::Upright);
-    pc.element.sprite =
-        crate::sprite::Sprite::new(Arc::new(vec![script; 16]), Arc::new(conversion));
-    pc.element.active = true;
-    pc.element.set_position_map(source);
-    pc.element.set_sector(Some(handle));
-    pc.element.set_layer(layer);
-    pc.element
-        .sprite
-        .position_iface
-        .set_move_box(crate::coordinates::MoveBox::from_corners(
-            MapVec::new(-6., -4.),
-            MapVec::new(6., 4.),
-        ));
-    pc.actor.action_state = ActionState::Moving;
-    let owner = engine.add_test_entity(Entity::Pc(pc));
-    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    let owner = walking_pc(&mut engine, &mut assets, source, layer, handle);
     engine.set_obstacle_and_material(&assets, owner, Some(start_receiver));
     let mut movement = SequenceElement::new_movement(1, Command::MoveOk, Some(owner), action);
     let order_id = engine.orders.allocate_order_id();

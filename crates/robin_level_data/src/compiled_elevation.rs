@@ -77,14 +77,50 @@ fn rounded(point: Point) -> Result<(i16, i16), String> {
 }
 
 fn projected_coordinate(value: f32) -> f64 {
-    let value = f64::from(value);
-    // Stored world Y and height can accumulate float32 cancellation error at
-    // an authored integer pixel boundary.
-    if (value - value.round()).abs() < 0.001 {
-        value.round()
-    } else {
-        value
+    f64::from(value)
+}
+
+fn side_probe_distance(middle: Point, normal: Point, edges: &[Edge]) -> f64 {
+    // Stay inside even a subpixel overlap or gap. Crossing a neighboring edge
+    // while sampling would emit duplicate receiver swaps at both boundaries.
+    let mut distance = 1e-4f64;
+    for &(a, b) in edges {
+        if (0..2)
+            .any(|i| middle[i] + distance < a[i].min(b[i]) || middle[i] - distance > a[i].max(b[i]))
+        {
+            continue;
+        }
+        let direction = subtract(b, a);
+        let determinant = cross(normal, direction);
+        if determinant.abs() <= EPS {
+            continue;
+        }
+        let offset = subtract(a, middle);
+        let along_edge = cross(offset, normal) / determinant;
+        let crossing = (cross(offset, direction) / determinant).abs();
+        if (-EPS..=1. + EPS).contains(&along_edge) && crossing > EPS {
+            distance = distance.min(crossing * 0.25);
+        }
     }
+    distance
+}
+
+fn coordinate_key(value: f64) -> u32 {
+    let value = value as f32;
+    let bits = if value == 0. { 0 } else { value.to_bits() };
+    if bits & 0x8000_0000 != 0 {
+        !bits
+    } else {
+        bits ^ 0x8000_0000
+    }
+}
+
+fn coordinate_from_key(key: u32) -> f32 {
+    f32::from_bits(if key & 0x8000_0000 != 0 {
+        key ^ 0x8000_0000
+    } else {
+        !key
+    })
 }
 
 /// Only an actual receiver change inside one walkable area creates a bond.
@@ -201,15 +237,21 @@ pub(crate) fn derive(geometry: &CompiledAssetGeometry) -> Result<Vec<RawElevatio
                 if a[0] > b[0] || (a[0] == b[0] && a[1] > b[1]) {
                     std::mem::swap(&mut a, &mut b);
                 }
-                let point_a = rounded(a)?;
-                let point_b = rounded(b)?;
+                rounded(a)?;
+                rounded(b)?;
+                let point_a = a.map(coordinate_key);
+                let point_b = b.map(coordinate_key);
                 if point_a == point_b {
                     continue;
                 }
                 let direction = subtract(b, a);
                 let length = direction[0].hypot(direction[1]);
-                let normal = [-direction[1] / length * 1e-4, direction[0] / length * 1e-4];
+                let unit_normal = [-direction[1] / length, direction[0] / length];
                 let middle = interpolate(a, b, 0.5);
+                // A fixed probe can jump across a thin overlap or gap and emit
+                // duplicate receiver swaps for its two nearby boundaries.
+                let distance = side_probe_distance(middle, unit_normal, &edges);
+                let normal = unit_normal.map(|value| value * distance);
                 let left = owner([middle[0] + normal[0], middle[1] + normal[1]]);
                 let right = owner([middle[0] - normal[0], middle[1] - normal[1]]);
                 let (Some(left), Some(right)) = (left, right) else {
@@ -224,8 +266,7 @@ pub(crate) fn derive(geometry: &CompiledAssetGeometry) -> Result<Vec<RawElevatio
                 }
                 if let Some(previous) = output.insert(key, (left, right)) {
                     if previous != (left, right) {
-                        // Multiple changes within one native pixel cannot use
-                        // a single, fixed pair of receivers safely.
+                        // Coincident boundaries cannot have conflicting receivers.
                         output.remove(&key);
                         ambiguous.insert(key);
                     }
@@ -236,17 +277,24 @@ pub(crate) fn derive(geometry: &CompiledAssetGeometry) -> Result<Vec<RawElevatio
     if !ambiguous.is_empty() {
         tracing::warn!(
             count = ambiguous.len(),
-            "omitted ambiguous subpixel elevation boundaries"
+            "omitted ambiguous coincident elevation boundaries"
         );
     }
     Ok(output
         .into_iter()
         .map(
             |((layer, point_a, point_b), (left_obstacle_index, right_obstacle_index))| {
+                let a = point_a.map(coordinate_from_key);
+                let b = point_b.map(coordinate_from_key);
+                let point_a = (a[0].round() as i16, a[1].round() as i16);
+                let point_b = (b[0].round() as i16, b[1].round() as i16);
+                let integral = a == [f32::from(point_a.0), f32::from(point_a.1)]
+                    && b == [f32::from(point_b.0), f32::from(point_b.1)];
                 RawElevationLine {
                     layer,
                     point_a,
                     point_b,
+                    precise_points: (!integral).then_some([a, b]),
                     left_obstacle_index,
                     right_obstacle_index,
                 }
@@ -278,6 +326,111 @@ mod tests {
             (lines[0].left_obstacle_index, lines[0].right_obstacle_index),
             (1, 0)
         );
+    }
+
+    #[test]
+    fn generated_seams_retain_fractional_endpoints() {
+        let mut geometry = fixture();
+        geometry.motion_data.layers[0][0].polygon.points =
+            vec![(0, 0), (100, 0), (100, 100), (0, 100)];
+        for (obstacle, (left, right)) in geometry
+            .sight_obstacles
+            .iter_mut()
+            .zip([(0., 50.25), (50.25, 100.)])
+        {
+            obstacle.points = [(left, 0.), (right, 0.), (right, 100.), (left, 100.)]
+                .into_iter()
+                .map(|(x, y)| crate::level_data::RawObstaclePoint {
+                    x,
+                    y,
+                    z_bottom: 0.,
+                    z_top: 0.,
+                })
+                .collect();
+        }
+        let lines: Vec<_> = derive(&geometry)
+            .unwrap()
+            .into_iter()
+            .filter(|line| {
+                line.left_obstacle_index != u16::MAX && line.right_obstacle_index != u16::MAX
+            })
+            .collect();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].map_endpoints(), [[50.25, 0.], [50.25, 100.]]);
+        assert_eq!(lines[0].point_a, (50, 0));
+    }
+
+    #[test]
+    fn distinct_subpixel_seams_do_not_merge_or_disappear() {
+        let mut geometry = fixture();
+        geometry.motion_data.layers[0][0].polygon.points =
+            vec![(0, 0), (100, 0), (100, 100), (0, 100)];
+        geometry
+            .sight_obstacles
+            .push(geometry.sight_obstacles[0].clone());
+        for (obstacle, (left, right)) in geometry.sight_obstacles.iter_mut().zip([
+            (0., 50.125),
+            (50.125, 50.375),
+            (50.375, 100.),
+        ]) {
+            obstacle.points = [(left, 0.), (right, 0.), (right, 100.), (left, 100.)]
+                .into_iter()
+                .map(|(x, y)| crate::level_data::RawObstaclePoint {
+                    x,
+                    y,
+                    z_bottom: 0.,
+                    z_top: 0.,
+                })
+                .collect();
+        }
+        let lines = derive(&geometry).unwrap();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].point_a, lines[1].point_a);
+        assert_eq!(lines[0].point_b, lines[1].point_b);
+        assert_eq!(lines[0].map_endpoints(), [[50.125, 0.], [50.125, 100.]]);
+        assert_eq!(lines[1].map_endpoints(), [[50.375, 0.], [50.375, 100.]]);
+    }
+
+    #[test]
+    fn nearly_coincident_edges_preserve_overlap_and_gap_ownership() {
+        for overlap in [false, true] {
+            let mut geometry = fixture();
+            geometry.motion_data.layers[0][0].polygon.points =
+                vec![(0, 0), (100, 0), (100, 100), (0, 100)];
+            let boundary = 50.00002;
+            let ranges = if overlap {
+                [(0., boundary, 2.), (50., 100., 1.)]
+            } else {
+                [(0., 50., 2.), (boundary, 100., 1.)]
+            };
+            for (obstacle, (left, right, height)) in geometry.sight_obstacles.iter_mut().zip(ranges)
+            {
+                obstacle.points = [(left, 0.), (right, 0.), (right, 100.), (left, 100.)]
+                    .into_iter()
+                    .map(|(x, y)| crate::level_data::RawObstaclePoint {
+                        x,
+                        y: y + height,
+                        z_bottom: height,
+                        z_top: height,
+                    })
+                    .collect();
+            }
+            let lines = derive(&geometry).unwrap();
+            if overlap {
+                assert_eq!(lines.len(), 1);
+                assert_eq!(lines[0].map_endpoints(), [[boundary, 0.], [boundary, 100.]]);
+                assert_ne!(lines[0].left_obstacle_index, u16::MAX);
+                assert_ne!(lines[0].right_obstacle_index, u16::MAX);
+            } else {
+                assert_eq!(lines.len(), 2);
+                for line in lines {
+                    assert!(
+                        line.left_obstacle_index == u16::MAX
+                            || line.right_obstacle_index == u16::MAX
+                    );
+                }
+            }
+        }
     }
 
     #[test]

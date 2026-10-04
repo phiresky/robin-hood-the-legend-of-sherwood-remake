@@ -1495,9 +1495,21 @@ pub struct RawLightSector {
 pub struct RawElevationLine {
     pub point_a: (i16, i16),
     pub point_b: (i16, i16),
+    /// Generated receiving seams may lie between integer map coordinates.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub precise_points: Option<[[f32; 2]; 2]>,
     pub right_obstacle_index: u16,
     pub left_obstacle_index: u16,
     pub layer: u16,
+}
+
+impl RawElevationLine {
+    pub fn map_endpoints(&self) -> [[f32; 2]; 2] {
+        self.precise_points.unwrap_or([
+            [f32::from(self.point_a.0), f32::from(self.point_a.1)],
+            [f32::from(self.point_b.0), f32::from(self.point_b.1)],
+        ])
+    }
 }
 
 /// Mask type bitmask constants.
@@ -2911,7 +2923,11 @@ impl LoadedLevel {
                 geometry.elevation_lines = crate::compiled_elevation::derive(&geometry)?;
             }
             for (index, line) in geometry.elevation_lines.iter().enumerate() {
-                if line.point_a == line.point_b
+                let [a, b] = line.map_endpoints();
+                if a == b
+                    || a.iter().chain(&b).any(|v| {
+                        !v.is_finite() || *v < f32::from(i16::MIN) || *v > f32::from(i16::MAX)
+                    })
                     || usize::from(line.layer) >= geometry.motion_data.layers.len()
                     || line.right_obstacle_index == line.left_obstacle_index
                 {
@@ -4950,6 +4966,7 @@ fn read_elevation_lines(
         lines.push(RawElevationLine {
             point_a: (ax, ay),
             point_b: (bx, by),
+            precise_points: None,
             right_obstacle_index,
             left_obstacle_index,
             layer,
@@ -5959,6 +5976,14 @@ mod tests {
             ("layer", serde_json::json!(65535)),
             ("left_obstacle_index", serde_json::json!(0)),
             ("right_obstacle_index", serde_json::json!(65534)),
+            (
+                "precise_points",
+                serde_json::json!([[400.25, 300.0], [400.25, 300.0]]),
+            ),
+            (
+                "precise_points",
+                serde_json::json!([[400.25, 300.0], [40000.0, 400.0]]),
+            ),
         ] {
             let mut invalid = descriptor.clone();
             invalid["asset_geometry"]["elevation_lines"][0][field] = value;
@@ -5967,6 +5992,17 @@ mod tests {
                 "accepted invalid {field}"
             );
         }
+        let mut fractional = descriptor.clone();
+        let line = &mut fractional["asset_geometry"]["elevation_lines"][0];
+        line["point_a"] = serde_json::json!([400, 300]);
+        line["point_b"] = serde_json::json!([400, 300]);
+        line["precise_points"] = serde_json::json!([[400.125, 300.0], [400.375, 300.0]]);
+        let loaded =
+            LoadedLevel::hackable_from_json(&serde_json::to_vec(&fractional).unwrap()).unwrap();
+        assert_eq!(
+            loaded.proto.elevation_lines[0].map_endpoints(),
+            [[400.125, 300.], [400.375, 300.]]
+        );
         descriptor["asset_geometry"]["sight_obstacles"][0]["projection_area"] =
             serde_json::Value::Null;
         assert!(

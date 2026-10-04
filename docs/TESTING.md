@@ -197,6 +197,14 @@ use `ROBINHOOD_DATA_DIR` and fail if the checkout fixture is absent.
 
 ## Editor-generated map routes
 
+The regular `engine::movement::tests::compiled_navigation` engine unit tests
+run queued path requests, native order postprocessing and actor movement ticks.
+They check routes around wall ends and across curved, rising and rotated
+walkways in both directions, including collision clearance and receiving height
+at every tick. These fixtures use a synthetic walking animation. The level-data
+`compiled_elevation` tests additionally cover fractional seams, tiny overlaps,
+gaps and legacy integer endpoint validation.
+
 For editor-generated navigation, the ignored integration test
 `library_exports_route_between_collision_connected_samples` reads a complete
 `diagnostics.json` batch from `ROBIN_ASSET_MAP_DIAGNOSTICS`. It samples numbered

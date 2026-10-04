@@ -692,6 +692,14 @@ fn installed_mission_keeps_browser_decoded_raw_images_for_later_decodes() {
 fn shipping_levels_retain_authored_receiving_planes() {
     let anchors = [[10., 0., 2.], [10., 10., 3.], [0., 0., 2.]];
     let mut level = LoadedLevel::empty();
+    let endpoints = [[5.125, 0.], [5.125, 10.]];
+    level.proto.elevation_lines.push(
+        serde_json::from_value(serde_json::json!({
+            "point_a": [5, 0], "point_b": [5, 10], "precise_points": endpoints,
+            "right_obstacle_index": 0, "left_obstacle_index": 65535, "layer": 0
+        }))
+        .unwrap(),
+    );
     level.proto.sight_obstacles.push(
         serde_json::from_value(serde_json::json!({
             "points": [
@@ -709,6 +717,10 @@ fn shipping_levels_retain_authored_receiving_planes() {
     datadir.levels.insert("fixture".into(), level.clone());
     let restored = decode_native(&encode_native(&datadir)).unwrap();
     assert_eq!(
+        restored.levels["fixture"].proto.elevation_lines[0].map_endpoints(),
+        endpoints
+    );
+    assert_eq!(
         restored.levels["fixture"].proto.sight_obstacles[0].initial_active,
         Some(false)
     );
@@ -720,6 +732,10 @@ fn shipping_levels_retain_authored_receiving_planes() {
     mission.levels.insert("fixture".into(), level);
     let encoded = zstd_compress_with_window(&encode_mission_native(&mission), 30).unwrap();
     let restored = decode_mission_compressed(&encoded).unwrap();
+    assert_eq!(
+        restored.levels["fixture"].proto.elevation_lines[0].map_endpoints(),
+        endpoints
+    );
     assert_eq!(
         restored.levels["fixture"].proto.sight_obstacles[0].initial_active,
         Some(false)
@@ -992,10 +1008,10 @@ fn native_shipping_format_roundtrips_and_rejects_legacy_payloads() {
     datadir.locales.insert("de-DE".into(), german);
 
     let encoded = encode_native(&datadir);
-    assert_eq!(&encoded[..8], b"RHDDNA21");
+    assert_eq!(&encoded[..8], b"RHDDNA22");
     let mut previous_version = encoded.clone();
-    previous_version[..8].copy_from_slice(b"RHDDNA20");
-    previous_version[8..12].copy_from_slice(&20u32.to_le_bytes());
+    previous_version[..8].copy_from_slice(b"RHDDNA21");
+    previous_version[8..12].copy_from_slice(&21u32.to_le_bytes());
     assert!(decode_native(&previous_version).is_err());
     assert_eq!(&encoded[..8], &SHIPPING_DATADIR_MAGIC);
     let decoded = decode_native(&encoded).expect("decode native shipping datadir");
@@ -1137,10 +1153,10 @@ fn mission_payload_roundtrips_independently() {
         .audio_durations_ms
         .insert("sounds/arrow.opus".into(), 1_234);
     let encoded = encode_mission_native(&mission);
-    assert_eq!(&encoded[..8], b"RHMISN12");
+    assert_eq!(&encoded[..8], b"RHMISN13");
     let mut previous_version = encoded.clone();
-    previous_version[..8].copy_from_slice(b"RHMISN11");
-    previous_version[8..12].copy_from_slice(&11u32.to_le_bytes());
+    previous_version[..8].copy_from_slice(b"RHMISN12");
+    previous_version[8..12].copy_from_slice(&12u32.to_le_bytes());
     assert!(
         decode_mission_compressed(&zstd_compress_with_window(&previous_version, 30).unwrap())
             .is_err()

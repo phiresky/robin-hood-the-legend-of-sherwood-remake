@@ -2458,9 +2458,10 @@ impl EngineInner {
             };
             let left = to_idx(raw.left_obstacle_index);
             let right = to_idx(raw.right_obstacle_index);
+            let [a, b] = raw.map_endpoints();
             let line = crate::fast_find_grid::GridLine::new_elevation(
-                MapPoint::new(raw.point_a.0 as f32, raw.point_a.1 as f32),
-                MapPoint::new(raw.point_b.0 as f32, raw.point_b.1 as f32),
+                MapPoint::new(a[0], a[1]),
+                MapPoint::new(b[0], b[1]),
                 left,
                 right,
             );
@@ -2470,10 +2471,10 @@ impl EngineInner {
             }
             tracing::trace!(
                 layer = raw.layer,
-                ax = raw.point_a.0,
-                ay = raw.point_a.1,
-                bx = raw.point_b.0,
-                by = raw.point_b.1,
+                ax = a[0],
+                ay = a[1],
+                bx = b[0],
+                by = b[1],
                 left_obstacle = ?left,
                 right_obstacle = ?right,
                 "loading elevation line"

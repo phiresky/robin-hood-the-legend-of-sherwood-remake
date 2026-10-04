@@ -1,5 +1,12 @@
 # Post-port Features
 
+- **Fractional receiving-surface seams.** Generated elevation boundaries retain
+  subpixel endpoints and distinguish tiny overlaps from gaps, preventing duplicate
+  receiver switches while walking over sloped terrain. Actor-tick tests traverse
+  curved and rising walkways in both directions through queued pathfinding.
+  Integer level files remain readable. Packed datadirs advance to version 22 and
+  mission payloads to version 13; regenerate older packed data.
+
 - **Focused routing for graph-free maps.** Editor-generated maps now use a
   deterministic Euclidean A* search for visibility routes, avoiding unnecessary
   expansion across distant parts of the same movement area. Visibility checks
