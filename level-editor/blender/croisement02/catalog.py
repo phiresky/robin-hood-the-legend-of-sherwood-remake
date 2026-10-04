@@ -37,6 +37,9 @@ def bank_workspace(asset):
 
 
 def scenery_workspace(asset):
+    from fence_candidates import selected_workspace as selected_fence_workspace
+    fence=selected_fence_workspace(OUT,asset,reviewed_catalog())
+    if fence is not None:return fence
     from stem_candidates import selected_workspace
     joined_stem=selected_workspace(OUT,asset,reviewed_catalog())
     if joined_stem is not None:return joined_stem
