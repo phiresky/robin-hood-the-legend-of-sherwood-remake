@@ -123,7 +123,7 @@ def main():
         modified(worker);bpy.ops.wm.save_as_mainfile(filepath=str(worker/'model.blend'),compress=True)
         (worker/'inspection').mkdir(exist_ok=True)
         write_json(worker/'inspection/refinement.json',dict(asset_id=worker.name,mask=native,crown=reports[native],source_packet=str(DEST/f'shrub-{native}/partition.json'),model_sha256=sha(worker/'model.blend'),status='private oak-base foliage candidate; actual fence/log/tree joint pending',limitations=['Hidden foliage volume is inferred from the same native leaf palette.','Only observed leaf complement is source evidence; excluded existing wood, canopies and initial trap targets remain with their owners.','Visible twigs have source patches, not independent inferred trunk geometry.','No approved geometry changed; no user approval or texture completion claimed.']))
-        audit(worker);render_workspace(worker,384,release_slot=False)
+        audit(worker);render_workspace(worker,384,release_slot=False,transparent_bounces=256)
         print('FOREST CLUMP',native,worker,flush=True)
 if __name__=='__main__':
     acquire()

@@ -37,7 +37,7 @@ def main(base, destination, indices):
     nodes = []
     workers = {}
     domains = []
-    for index, relative in [(81,'southwest81-v1'),(65,'north65-66-v1'),(66,'north65-66-v1'),(54,'northwest54-v1'),(57,'west-complements-v1'),(60,'west-complements-v1'),(62,'forest-clumps-v3'),(63,'forest-clumps-v3'),(64,'forest-clumps-v3'),(77,'south77-v2'),(78,'southwest-small-v1'),(84,'southwest-small-v1'),(83,'southwest-thicket83-v1'),(74,'east-south-clumps-v1'),(85,'east-south-clumps-v1'),(86,'east-south-clumps-v1'),(87,'east87-v2'),(88,'east-south-clumps-v1'),(89,'south-boundary89-v1'),(90,'east-south-clumps-v1'),(93,'oak-base93-v2'),(22,'north-fringe22-v1')]:
+    for index, relative in [(81,'southwest81-v1'),(65,'north65-66-v1'),(66,'north65-66-v1'),(54,'northwest54-v1'),(57,'west-complements-v1'),(60,'west-complements-v1'),(62,'forest-clumps-v3'),(63,'forest-clumps-v3'),(64,'forest-clumps-v3'),(77,'south77-v2'),(78,'southwest-small-v1'),(84,'southwest-small-v1'),(83,'southwest-thicket83-v1'),(74,'east-south-clumps-v1'),(85,'east-south-clumps-v1'),(86,'east-south-clumps-v1'),(87,'east87-v2'),(88,'east-south-clumps-v1'),(89,'south-boundary89-v1'),(90,'east-south-clumps-v1'),(93,'oak-base93-v2'),(22,'north-fringe22-v1'),(76,'native76-clumps-v1')]:
         if index not in indices:continue
         source = OUT/'understory-candidates'/relative
         asset = 'croisement02-canopy-fringe-22' if index==22 else 'croisement02-northwest-boundary-shrub-54' if index==54 else f'croisement02-shrub-{index:02}'
@@ -68,7 +68,7 @@ def main(base, destination, indices):
         nodes.append(node); domains.append(domain)
         round_number=7 if index==54 else 9 if index in (57,60) else 11 if index==62 else 13 if index==63 else 8 if index in (62,64) else 1
         round_number={77:16,78:12,83:18,84:12,74:15,85:15,86:15,87:20,88:15,89:17,90:15,93:22,22:21}.get(index,round_number)
-        worker=OUT/f'understory-round-{round_number}/assets'/asset
+        worker=source/'assets'/asset if index==76 else OUT/f'understory-round-{round_number}/assets'/asset
         refit=OUT/'understory-round-2/assets'/asset
         if (refit/'inspection/refit-evidence.json').exists():worker=refit
         workers[asset]=str(worker)

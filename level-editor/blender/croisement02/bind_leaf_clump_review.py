@@ -7,7 +7,7 @@ sys.path.insert(0,str(Path(__file__).parent));sys.path.insert(0,str(ROOT/'level-
 from catalog import OUT
 from evidence_io import sha,write_json
 
-SPECS={77:(16,'south77-v2'),78:(12,'southwest-small-v1'),83:(18,'southwest-thicket83-v1'),84:(12,'southwest-small-v1'),74:(15,'east-south-clumps-v1'),85:(15,'east-south-clumps-v1'),86:(15,'east-south-clumps-v1'),87:(20,'east87-v2'),88:(15,'east-south-clumps-v1'),89:(17,'south-boundary89-v1'),90:(15,'east-south-clumps-v1')}
+SPECS={77:(16,'south77-v2'),78:(12,'southwest-small-v1'),83:(18,'southwest-thicket83-v1'),84:(12,'southwest-small-v1'),74:(15,'east-south-clumps-v1'),85:(15,'east-south-clumps-v1'),86:(15,'east-south-clumps-v1'),87:(20,'east87-v2'),88:(15,'east-south-clumps-v1'),89:(17,'south-boundary89-v1'),90:(15,'east-south-clumps-v1'),93:(22,'oak-base93-v2')}
 
 def main(index,joint):
     round_number,proposal=SPECS[index];worker=OUT/f'understory-round-{round_number}/assets/croisement02-shrub-{index}';inspection=worker/'inspection';mh=sha(worker/'model.blend');source=OUT/'understory-candidates'/proposal;packet_folder=source/f'shrub-{index}'
@@ -31,6 +31,12 @@ def main(index,joint):
     write_json(inspection/'joint-neighbourhood.json',receipt)
     preservation=source/'source-rgb-validation.json'
     review=dict(reviewer='Codex',status='Native source, all eight isolated views and exact neighbourhood views manually reviewed; new user review pending',ready_for_geometry_review=True,model_sha256=mh,sheet_sha256=sha(inspection/'actual-materials/sheet.png'),joint_neighbourhood_sha256=sha(inspection/'joint-neighbourhood.json'),support_evidence_sha256=sha(inspection/'support-evidence.json'),preservation_evidence=str(preservation),preservation_evidence_sha256=sha(preservation),limitations=['Hidden volume and any beyond-map continuation are inferred from the same native foliage.','Diagnostic ground plane is a contact aid; complete terrain integration remains separate.','Existing neighbouring texture/geometry artifacts are preserved and not approved by this review.','No user approval, final texture approval or publication implied.'])
+    if index==93:
+        budget=inspection/'render-budget-evidence.json'
+        report=json.loads(budget.read_text())
+        if report['model_sha256']!=mh or evidence['transparent_bounces']<256:raise ValueError('Dense foliage render budget evidence changed')
+        review['render_budget_evidence_sha256']=sha(budget)
+        review['limitations'].append('Private corrected tree35 lower geometry is context only; its legacy crown remains separately held.')
     fill=inspection/'inferred-fill-evidence.json'
     if fill.exists():review['inferred_fill_evidence_sha256']=sha(fill)
     write_json(inspection/'visual-review.json',review);print(worker)

@@ -13,7 +13,9 @@ def selected_workspace(out,asset,catalog_path):
     forest_round={'croisement02-shrub-62':11,'croisement02-shrub-63':13,'croisement02-shrub-64':8}.get(asset)
     clump_round={f'croisement02-shrub-{i}':r for i,r in [(77,16),(78,12),(83,18),(84,12),(74,15),(85,15),(86,15),(87,20),(88,15),(89,17),(90,15),(93,22)]}.get(asset)
     if asset=='croisement02-canopy-fringe-22':clump_round=21
+    if asset=='croisement02-shrub-76':clump_round=1
     refit=out/(f'understory-round-{clump_round}/assets' if clump_round else f'understory-round-{forest_round}/assets' if forest_round else 'understory-round-7/assets' if northwest else 'understory-round-9/assets' if western else 'understory-round-2/assets')/asset
+    if asset=='croisement02-shrub-76':refit=out/'understory-candidates/native76-clumps-v1/assets'/asset
     candidate=refit/'inspection/shrub-candidate.json'
     proof=refit/'inspection'/('support-evidence.json' if northwest or western or forest_round or clump_round else 'refit-evidence.json')
     if candidate.exists() and proof.exists():

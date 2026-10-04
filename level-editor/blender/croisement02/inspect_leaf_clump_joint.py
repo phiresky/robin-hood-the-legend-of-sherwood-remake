@@ -17,7 +17,7 @@ from stage_review_scene import signature
 
 
 def worker(index):
-    rounds={77:16,78:12,83:18,84:12,74:15,85:15,86:15,87:20,88:15,89:17,90:15,93:22,22:21}
+    rounds={77:16,78:12,83:18,84:12,74:15,85:15,86:15,87:20,88:15,89:17,90:15,93:22,22:23}
     asset=f'croisement02-canopy-fringe-{index}' if index==22 else f'croisement02-shrub-{index}'
     return OUT/f'understory-round-{rounds[index]}/assets'/asset
 
@@ -63,7 +63,7 @@ def run(label,indices,include_bank=None,context_workers=()):
         bpy.ops.mesh.primitive_plane_add(size=500,location=(center.x,center.y,0))
         floor=bpy.context.object;floor.name='Neutral ground contact guide (not source artwork)'
         mat=bpy.data.materials.new('Neutral contact plane');mat.diffuse_color=(.15,.16,.12,1);floor.data.materials.append(mat)
-    scene.render.engine='CYCLES';scene.cycles.samples=8;scene.cycles.transparent_max_bounces=64
+    scene.render.engine='CYCLES';scene.cycles.samples=8;scene.cycles.transparent_max_bounces=256 if any(i in (22,93) for i in indices) else 64
     scene.render.resolution_x=640;scene.render.resolution_y=640;scene.render.resolution_percentage=100
     scene.render.film_transparent=True;scene.render.image_settings.file_format='PNG';scene.render.image_settings.color_mode='RGBA'
     scene.view_settings.view_transform='Standard';scene.view_settings.look='None'
@@ -109,11 +109,11 @@ def run(label,indices,include_bank=None,context_workers=()):
     sheet.save(destination/'sheet.png')
     for r in records:
         if sha(Path(r['workspace'])/'model.blend')!=r['model_sha256']:raise ValueError('Worker changed during joint render')
-    write_json(destination/'evidence.json',dict(status='private grouped placement; manual review pending',inputs=records,workers=[dict(path=r['workspace'],model_sha256=r['model_sha256']) for r in records],views=views,sheet_sha256=sha(destination/'sheet.png'),
+    write_json(destination/'evidence.json',dict(status='private grouped placement; manual review pending',transparent_bounces=scene.cycles.transparent_max_bounces,inputs=records,workers=[dict(path=r['workspace'],model_sha256=r['model_sha256']) for r in records],views=views,sheet_sha256=sha(destination/'sheet.png'),
         limitation='Contact review only. New plants remain unselected; wider neighboring vegetation/terrain ownership review is still required.'))
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('index',type=int,choices=[22,74,77,78,83,85,86,87,88,89,90]);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:])
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('index',type=int,choices=[22,74,77,78,83,85,86,87,88,89,90]);parser.add_argument('--revision',default='');args=parser.parse_args(sys.argv[sys.argv.index('--')+1:])
     contexts={22:[],74:['east-rail-fence'],77:['southwest-field-wattle-fence'],78:['southwest-log-pile'],83:['southwest-rock-outcrop','shrub-81'],85:['east-upright-rail-fence-95','southeast-stone-wall-and-gate'],86:['logging-clearing-log','logging-clearing-stumps','north-kindling-bundle'],87:['east-upright-rail-fence-94'],88:['woodcutters-shed'],89:['supplemental-wood-44'],90:['supplemental-wood-44']}
     neighbours=[scenery_workspace('croisement02-'+s) for s in contexts[args.index]]
     if args.index==22:
@@ -128,6 +128,8 @@ if __name__=='__main__':
     if args.index==83:neighbours += [tree_workspace(i) for i in (29,30)]
     if args.index in (89,90):neighbours += [tree_workspace(i) for i in (43,45,46)]
     target=worker(args.index);label=f'native-{args.index}-'+sha(target/'model.blend')[:8]+'-'+sha(neighbours[0]/'model.blend')[:8]
+    if args.index==85:label += '-93'+sha(worker(93)/'model.blend')[:8]+'-35'+sha(neighbours[-1]/'model.blend')[:8]+'-b256'
+    if args.revision:label += '-'+args.revision
     acquire()
     try:run(label,[83,84] if args.index==83 else [85,93] if args.index==85 else [args.index],False,neighbours)
     finally:release()
