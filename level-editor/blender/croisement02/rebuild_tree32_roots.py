@@ -15,14 +15,15 @@ from refinement_workspace import _geometry
 from tree_geometry import SIN,COS,RAY
 
 
-def loft(rows,ground,cut,n=48):
+def loft(rows,ground,cut,n=48,ground_start=715,depth_adjust=None):
     vertices=[];faces=[]
     kernel=np.array([1,2,3,2,1],float);kernel/=kernel.sum()
     centers=np.convolve(np.pad([r[1] for r in rows],2,mode='edge'),kernel,mode='valid')
     radii=np.convolve(np.pad([r[2] for r in rows],2,mode='edge'),kernel,mode='valid')
     for (y,_,_),cx,radius in zip(rows,centers,radii):
         center=Vector((cx,-ground/SIN,(ground-y)/COS));depth=center.dot(RAY)
-        if y>=715:depth+=max(0.,(.25+radius*RAY.z-center.z)/RAY.z)
+        if y>=ground_start:depth+=max(0.,(.25+radius*RAY.z-center.z)/RAY.z)
+        if depth_adjust:depth=depth_adjust(y,cx,radius,depth)
         for j in range(n):
             angle=math.tau*j/n;source=Vector((cx+radius*math.cos(angle),-y*SIN,-y*COS));d=depth+radius*math.sin(angle)
             d=min(d,(cut-.25-source.z)/RAY.z)
@@ -45,13 +46,15 @@ def check(mesh):
 
 
 def main():
-    old=tree_workspace(32);out=OUT/'tree32-root-research/continuous-fork-v2';out.mkdir(parents=True,exist_ok=False);old_hash=sha(old/'model.blend')
+    old=tree_workspace(32);out=OUT/'tree32-root-research/continuous-fork-v4';
+    out.mkdir(parents=True,exist_ok=False);old_hash=sha(old/'model.blend')
     bpy.ops.wm.open_mainfile(filepath=str(old/'model.blend'));bpy.context.view_layer.update();bpy.context.preferences.filepaths.save_version=0
     objects=list(bpy.data.collections['Croisement02 Working'].all_objects);wood={int(o['source_node'].split('-')[-1]):o for o in objects if o.type=='MESH' and o.get('asset_group')==old.name and o.get('projection_component')!='crown'}
     if set(wood)!={80,81,82}:raise ValueError('Unexpected native wood owners')
     protected={o.name:_geometry(o,protect_appearance=True) for o in objects if o.type=='MESH' and o not in wood.values()}
     cut=100.;junction=dict(method='Closed union of original upper80 aboveZ75 and native-profile fork; no single-loop assumption')
-    upper_positions=[wood[80].matrix_world@v.co for v in wood[80].data.vertices if (wood[80].matrix_world@v.co).z>120]
+    reference_mesh=wood[80].data.copy()
+    for v in reference_mesh.vertices:v.co=wood[80].matrix_world@v.co
     record=next(r for r in json.loads((OUT/'baseline/masks/manifest.json').read_text())['masks'] if r['index']==32)
     mask=np.asarray(Image.open(OUT/'baseline/masks'/record['png']).convert('L'))>0;ox,oy=record['box_top_left']
     ground=next(r['ground_y'] for r in json.loads((OUT/'forest-v4-sources/manifest.json').read_text()) if r['mask']==32)
@@ -62,8 +65,9 @@ def main():
             xs=np.where(mask[y-oy])[0]+ox;xs=xs[(xs>=1035)&(xs<=1115)]
             if role=='left-root':xs=xs[xs<=round(1084-min(1.,(y-714)/14)*12)]
             elif role=='right-root':xs=xs[xs>=round(1070+min(1.,(y-714)/14)*3)];xs=xs[xs<=1095] if y>=728 else xs
-            if len(xs)<2:continue
-            left,right=float(xs.min())-.5,float(xs.max())+.5;rows.append((y,(left+right)/2,(right-left)/2))
+            if not len(xs):continue
+            margin=1.15 if y>=720 else .5
+            left,right=float(xs.min())-margin,float(xs.max())+margin;rows.append((y,(left+right)/2,(right-left)/2))
         profiles[role]=rows;add_mesh(bm,loft(rows,ground,cut))
     retained=bmesh.new();retained.from_mesh(wood[80].data);bmesh.ops.transform(retained,matrix=wood[80].matrix_world,verts=list(retained.verts))
     bmesh.ops.bisect_plane(retained,geom=list(retained.verts)+list(retained.edges)+list(retained.faces),dist=.0001,plane_co=(0,0,75),plane_no=(0,0,1),clear_inner=True)
@@ -92,17 +96,26 @@ def main():
         bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces));mesh=bpy.data.meshes.new(f'Tree32 continuous wood owner{part}');bm.to_mesh(mesh);bm.free();obj.data=mesh;obj.parent=None;obj.matrix_world=Matrix.Identity(4);mesh.materials.append(neutral)
         for f in mesh.polygons:f.use_smooth=True
         mesh.normals_split_custom_set_from_vertices([normal_values[normals.find(v.co)[1]] for v in mesh.vertices]);reports[part]=check(mesh)
-    surface=BVHTree.FromPolygons([v.co for v in combined.vertices],[list(f.vertices) for f in combined.polygons]);distances=[surface.find_nearest(p)[3] for p in upper_positions]
-    junction['upper_vertex_to_surface_distance']=dict(samples=len(distances),maximum=max(distances),p95=float(np.quantile(distances,.95)))
-    if max(distances)>1.5:raise ValueError('Upper wood surface drift exceeds private prototype tolerance')
+    reference_obj=bpy.data.objects.new('Original upper wood exterior union diagnostic',reference_mesh);bpy.context.scene.collection.objects.link(reference_obj)
+    bpy.ops.object.select_all(action='DESELECT');reference_obj.select_set(True);bpy.context.view_layer.objects.active=reference_obj
+    modifier=reference_obj.modifiers.new('Original exterior union diagnostic','REMESH');modifier.mode='VOXEL';modifier.voxel_size=.6;bpy.ops.object.modifier_apply(modifier=modifier.name)
+    surface=BVHTree.FromPolygons([v.co for v in combined.vertices],[list(f.vertices) for f in combined.polygons]);reference_surface=BVHTree.FromPolygons([v.co for v in reference_obj.data.vertices],[list(f.vertices) for f in reference_obj.data.polygons])
+    distances=[surface.find_nearest(v.co)[3] for v in reference_obj.data.vertices if v.co.z>120]+[reference_surface.find_nearest(v.co)[3] for v in combined.vertices if v.co.z>120]
+    junction['upper_exterior_to_surface_distance']=dict(samples=len(distances),maximum=max(distances),p95=float(np.quantile(distances,.95)),reference='Independent voxel union of original80 exterior excludes hidden internal tube caps',reference_voxel_size=.6)
+    bpy.data.objects.remove(reference_obj,do_unlink=True)
+    if max(distances)>1.5:raise ValueError('Upper exterior drift exceeds private prototype tolerance: '+str(junction))
     if protected!={o.name:_geometry(o,protect_appearance=True) for o in objects if o.type=='MESH' and o not in wood.values()}:raise ValueError('Crown or other asset changed')
     bpy.ops.wm.save_as_mainfile(filepath=str(out/'model.blend'))
     if sha(old/'model.blend')!=old_hash:raise ValueError('Approved input changed')
     write_json(out/'evidence.json',dict(model_sha256=sha(out/'model.blend'),previous_worker=str(old),previous_model_sha256=old_hash,status='Private unprojected geometry; requires source and solid review',source_profiles=profiles,upper_junction=junction,full_geometry=full_report,parts=reports,preserved_appearance=protected,source_ray_support=True,partition='Native80 aboveZ45,81/82 belowZ45 partitioned atX1072; internal faces only',limitations=['No source32 pixels reclassified as leaves.','Hidden root volume and internal native-owner split are geometric inference.','Upper80 shape has bounded voxel-union deviation; crown and other assets exactly preserved; no approval inherited.']))
     (out/'recipe.py').write_text(Path(__file__).read_text())
     import inspect_tree07_base
-    previous=sys.argv;sys.argv=[sys.argv[0],'--','--mask','32','--model',str(out/'model.blend'),'--output-name','continuous-fork-v2-review','--solid-only']
+    previous=sys.argv;sys.argv=[sys.argv[0],'--','--mask','32','--model',str(out/'model.blend'),'--output-name','continuous-fork-v4-review','--solid-only']
     try:inspect_tree07_base.main()
+    finally:sys.argv=previous
+    import audit_tree32_roots
+    sys.argv=[sys.argv[0],'--','--worker',str(out),'--preservation-base',str(old),'--output',str(out/'inspection')]
+    try:audit_tree32_roots.main(release_slot=False)
     finally:sys.argv=previous
 
 if __name__=='__main__':
