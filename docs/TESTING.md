@@ -173,6 +173,28 @@ No licensed data is fetched or assumed present on public CI.
 The regular font tests read the checked-in Arial fixture relative to
 `CARGO_MANIFEST_DIR`, so their behavior does not depend on the shell directory.
 
+### Multiplayer story lifecycle
+
+```sh
+cargo test -p robin_rs --lib modal_session_
+```
+
+These ordinary tests join two mission sessions through controlled in-process
+channels, starting from an authoritative snapshot at frame 133. They exercise
+the production mission network drain, effect admission, modal batch lifecycle,
+UI dismissal gate and reconnect recovery. A schedule matrix independently
+delays message delivery and surface polling, duplicates control messages,
+suspends the client and varies which player acknowledges first. Consecutive
+occurrences of the same text must open and complete exactly once on both peers.
+Catch-up past a scroll's source frame must still present that outstanding scroll;
+advancing the client cursor cannot substitute for its acknowledgement.
+Reconnect cases discard an in-flight acknowledgement and then a completion plus
+the next opening; recovery must succeed without another click or simulation tick.
+
+The tests need no sockets, sleeps, display, saved player profile or external game
+data. The renderer-free surface adapter checks lifecycle state, not graphical
+scroll layout or input-device dispatch.
+
 ### Legacy Linux save fixtures
 
 The five Linux i386 v48 save-parser cases are ignored in the ordinary engine

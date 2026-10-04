@@ -1449,6 +1449,9 @@ fn validate_preflighted_content(
 }
 
 #[cfg(test)]
+mod story_regression;
+
+#[cfg(test)]
 mod tests {
     use super::{
         MultiplayerAdmissionEvent, MultiplayerSessionError, attach_snapshot_spellforge_runtime,
