@@ -6,7 +6,7 @@ from PIL import Image
 from mathutils import Vector
 from mathutils.bvhtree import BVHTree
 ROOT=Path(__file__).resolve().parents[3]
-sys.path[:0]=[str(Path(__file__).parent),str(ROOT/'level-editor/refinement')]
+sys.path[:0]=[str(Path(__file__).parent),str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender')]
 from catalog import OUT,tree_workspace
 from tree_geometry import SIN,RAY
 from evidence_io import sha,write_json
