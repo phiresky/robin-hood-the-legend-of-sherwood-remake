@@ -100,8 +100,8 @@ def main():
             if (joint['model_sha256']==model_hash
                     and sha(Path(joint['evidence']))==joint['evidence_sha256']
                     and sha(Path(joint['sheet']))==joint['sheet_sha256']
-                    and all((Path(r.get('worker',r.get('path')))/'model.blend').exists()
-                            and sha(Path(r.get('worker',r.get('path')))/'model.blend')==r['model_sha256']
+                    and all((Path(r.get('worker',r.get('path',r.get('workspace'))))/'model.blend').exists()
+                            and sha(Path(r.get('worker',r.get('path',r.get('workspace'))))/'model.blend')==r['model_sha256']
                             for r in neighbours)):
                 item['source_comparison_secondary']=joint['sheet']
                 item['source_comparison_secondary_label']=joint.get('label','Source and oblique views with approved neighbouring trees; lower row hides foliage' if stem else 'Joint source and oblique review with neighbouring geometry')
