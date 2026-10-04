@@ -79,7 +79,7 @@ NOTES = {
     96: 'Stone wall returns share two existing groups; group name east-rail-fence does not mean native94/95.',
     97: 'Stone wall/gate partition shares two existing groups; exact source-domain split remains in worker evidence.',
     108: 'Two physical groups share native source context; preserve existing stump/log partition.',
-    110: 'Small stump beside shed included by historical shed source mapping; explicit retained geometry needs verification.',
+    110: 'Small stump beside shed is explicitly retained as building139, a flared stump with separate cut cap; checked refinement receipt and all eight actual-material views.',
     125: 'North woodland bank parts0–4: audited authored receiver420 explicitly retains native125/126; not the northeast oak root bank.',
     126: 'North woodland bank parts0–4: audited authored receiver420 explicitly retains native125/126; not the northeast oak root bank.',
 }
@@ -142,8 +142,6 @@ def audit(out):
         status = 'existing_group' if existing else 'pending_authored_foliage' if plant else 'pending_fence' if index in (94, 95) else 'owner_reconciliation'
         if index in (65, 66, 81) and not existing:
             status = 'isolated_foliage_candidate'
-        if index == 110:
-            status = 'existing_group_geometry_check'
         x, y = native_row['box_top_left']; w, h = native_row['box_size']
         record = dict(native_mask=index, layer=native_row['layer'], layer_index=native_row['layer_index'],
             mask_type=native_row['mask_type'], bbox=[x, y, w, h], kind=kind,
@@ -169,6 +167,8 @@ def audit(out):
     missing = [r['native_mask'] for r in records if r['missing_foliage_domain']]
     evidence_paths = [out/'animation-references/composite-frame-0.png',
         out/'authored-stem-integration/source-classifications.json',
+        out/'scenery-round-1/assets/croisement02-woodcutters-shed/inspection/refinement.json',
+        out/'scenery-round-1/assets/croisement02-woodcutters-shed/inspection/actual-materials/sheet.png',
         *[out/f'understory-review/{name}' for name in ('masks-54-73.png', 'masks-74-93.png', 'masks-94-123.png', 'masks-124-141.png', '47-48-gameplay-layer-source.png')]]
     report = dict(version=1, map='Croisement02', purpose='Exhaustive native-mask ownership and geometry backlog; does not grant any approval.',
         inputs={str(p.relative_to(out)): sha(p) for p in (manifest_path, level_path, catalog_path, canopy_path)},
