@@ -14,9 +14,10 @@
       "id": "lincoln-terrain",
       "role": "ground",
       "model": "3d-assets/lincoln/lincoln-terrain/model.glb",
-      "model_sha256": "6ea2a5cd28df52d2b3b1e7c69c125f7cddc57d96bef4b466963073f784983b8a",
+      "model_sha256": "cd26d3bc86d76ebe3ee80433aecc85d54a19c1cb4b176e1d5adcabc616559e15",
       "descriptor": "3d-assets/lincoln/lincoln-terrain/asset.json",
-      "descriptor_sha256": "5be7e9ca3e761641523e84443791fb785d8e0f26fcc5a23c6d5b537cb779020b"
+      "descriptor_sha256": "c893f5a04907d6c2f56a4f7b7024a0528fdf0afa866f3ebdeb7befa449eff4aa",
+      "resources": []
     }
   ],
   "assetSources": [
@@ -106,10 +107,11 @@
     },
     {
       "model": "3d-assets/lincoln/lincoln-castle-inner-rock-spur/model.glb",
-      "model_sha256": "65d0dc7bc34c066483c539cc920c57ee3018f15e96307d8f6da09b382b1893d5",
+      "model_sha256": "256b6a3aa3260647404f2f9dba73d29691f916e957787de3797eca6f8026d10a",
       "descriptor": "3d-assets/lincoln/lincoln-castle-inner-rock-spur/asset.json",
-      "descriptor_sha256": "d71e1ef0878689eed72039753fde6933d819ed2e62c965d9f23d0aa669dbb9a6",
-      "id": "lincoln-castle-inner-rock-spur"
+      "descriptor_sha256": "9e777a3622210573ead54784968493c35eecce271fabe13fbd473e32bc5e6566",
+      "id": "lincoln-castle-inner-rock-spur",
+      "resources": []
     },
     {
       "model": "3d-assets/lincoln/lincoln-courtyard-shed/model.glb",
@@ -274,10 +276,11 @@
     },
     {
       "model": "3d-assets/lincoln/lincoln-great-hall-slate-spire/model.glb",
-      "model_sha256": "e2d17cbee4273dae8a674f588beaf340cc5a3d4ad72e9991299b5c6483c06dbc",
+      "model_sha256": "a3a653a3860988e5bcc8f0bddee06f61ea06b70abdf63897972fad731fbdfcd4",
       "descriptor": "3d-assets/lincoln/lincoln-great-hall-slate-spire/asset.json",
-      "descriptor_sha256": "688625115ade42b00e47e48ae1cff0d3c404369e8f900d8cd04f9e36458ca665",
-      "id": "lincoln-great-hall-slate-spire"
+      "descriptor_sha256": "19999e500519159da673fb2b0edfa86358e33fca2a5df392393da9b25b339211",
+      "id": "lincoln-great-hall-slate-spire",
+      "resources": []
     },
     {
       "model": "3d-assets/lincoln/lincoln-hall-south-terrace/model.glb",
@@ -295,10 +298,11 @@
     },
     {
       "model": "3d-assets/lincoln/lincoln-great-hall/model.glb",
-      "model_sha256": "a21bea3d3f255dd29ea49b19e1548dee641d7f077a487fefde0c055a456bbfa3",
+      "model_sha256": "7a25c2e357b42682614697ace4128ecfc3f9559cf70feb701a6dc34510773908",
       "descriptor": "3d-assets/lincoln/lincoln-great-hall/asset.json",
-      "descriptor_sha256": "c084fed3ca2e3e41f730c27906f6599cf2641490300cbd367819bfad2e3b558a",
-      "id": "lincoln-great-hall"
+      "descriptor_sha256": "2593b79d2a2ac2869618aa5fa2de3a9f744a17fabb3015fd3b8a0434fa2ed921",
+      "id": "lincoln-great-hall",
+      "resources": []
     },
     {
       "model": "3d-assets/lincoln/lincoln-keep/model.glb",
@@ -1461,6 +1465,46 @@
       "model": "3d-assets/lincoln-light-region-29/model.glb",
       "descriptor_sha256": "d42b3e0a037be2f5e798a27f5fd9c2b43996e038752b5233ab99277ff9090a7f",
       "model_sha256": "b7982c38cfdf5d8b1c15efe5284c64abce47a00732be612aa478497d73d662bc"
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-village-barn-tool/model.glb",
+      "model_sha256": "b61689b30d870009575ddf07b59ab5cd0f9a164692f6a3a28ac0f35bb336c60f",
+      "descriptor": "3d-assets/lincoln/lincoln-village-barn-tool/asset.json",
+      "descriptor_sha256": "5b60bebd5ef67c0f01c85b664d5956b5e746e8447211bc8f37ca647055be1ee9",
+      "id": "lincoln-village-barn-tool",
+      "resources": []
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-village-longhouse-loose-log/model.glb",
+      "model_sha256": "bb3bc3c9c565a72edc1ad89642a064cbcc630ee8ba4c703626ff0466734aefb4",
+      "descriptor": "3d-assets/lincoln/lincoln-village-longhouse-loose-log/asset.json",
+      "descriptor_sha256": "4957e6d10e39497f75ce2c8111f227450565f4f60bac6f908498041813076dd0",
+      "id": "lincoln-village-longhouse-loose-log",
+      "resources": []
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-village-longhouse-path-poles/model.glb",
+      "model_sha256": "f8b1737b2f30c5b4dedaa041afceb3ca5b4e4f92a250a8a664f1ff595b7ac991",
+      "descriptor": "3d-assets/lincoln/lincoln-village-longhouse-path-poles/asset.json",
+      "descriptor_sha256": "3d2bc19aefe6d270f5c9b1c61a3f7302d0009b8adef6568ef3cbebd355dba4f9",
+      "id": "lincoln-village-longhouse-path-poles",
+      "resources": []
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-village-pond-loose-plank/model.glb",
+      "model_sha256": "35598ff757d47a52ef343b9cb39f3df0660d479ac18f83703f9c32b942ea8768",
+      "descriptor": "3d-assets/lincoln/lincoln-village-pond-loose-plank/asset.json",
+      "descriptor_sha256": "33ef91d897ac056d3aaa292bc2c1232d7ad43903b8909420dad6bd3984178756",
+      "id": "lincoln-village-pond-loose-plank",
+      "resources": []
+    },
+    {
+      "model": "3d-assets/lincoln/lincoln-village-pond-south-stake/model.glb",
+      "model_sha256": "f4c02e8946290d16256d9e91f5ded1a9757570408dfea0739d8fe54bedc539f0",
+      "descriptor": "3d-assets/lincoln/lincoln-village-pond-south-stake/asset.json",
+      "descriptor_sha256": "a64bf80f938d942c59bcf5de4aa0ba509e3fd9a0d4d3f96e962f483f9e128446",
+      "id": "lincoln-village-pond-south-stake",
+      "resources": []
     }
   ],
   "sceneMetadata": {
@@ -1784,7 +1828,8 @@
       },
       "patches": {
         "lincoln-great-hall-slate-spire": {
-          "appearance-1": "patch-011"
+          "appearance-1": "patch-010",
+          "appearance-2": "patch-011"
         }
       },
       "assets": [
@@ -4402,6 +4447,71 @@
       },
       "assets": [
         "lincoln-bush-west-tower-northwest"
+      ]
+    },
+    {
+      "id": "lincoln-village-barn-tool",
+      "name": "Small tool beside the barn handcart",
+      "transform": {
+        "dx": 180.79220581054688,
+        "dy": 628.3190979616342,
+        "dz": 0.12273771201314652,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-village-barn-tool"
+      ]
+    },
+    {
+      "id": "lincoln-village-longhouse-loose-log",
+      "name": "Loose log east of the longhouse yard",
+      "transform": {
+        "dx": 736,
+        "dy": 470.7117129687692,
+        "dz": 0.2639605479042774,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-village-longhouse-loose-log"
+      ]
+    },
+    {
+      "id": "lincoln-village-longhouse-path-poles",
+      "name": "Two poles lying along the longhouse path",
+      "transform": {
+        "dx": 676.5100708007812,
+        "dy": 429.394429846505,
+        "dz": 0.04086263157803726,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-village-longhouse-path-poles"
+      ]
+    },
+    {
+      "id": "lincoln-village-pond-loose-plank",
+      "name": "Loose plank west of the landing stage",
+      "transform": {
+        "dx": 432.5,
+        "dy": 651.6382848854121,
+        "dz": 0.40943799311577,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-village-pond-loose-plank"
+      ]
+    },
+    {
+      "id": "lincoln-village-pond-south-stake",
+      "name": "Stake on the southern pond bank",
+      "transform": {
+        "dx": 315,
+        "dy": 928.9346952491761,
+        "dz": -0.00019630612075336202,
+        "rot_deg": 0
+      },
+      "assets": [
+        "lincoln-village-pond-south-stake"
       ]
     }
   ]
