@@ -17,7 +17,8 @@ from stage_review_scene import signature
 
 
 def worker(index):
-    batch='east-grass-v7' if index<=115 else 'west-grass-north-ferns-v7' if index<=119 else 'north-ferns-v7'
+    batch=(f'plant-{index}-v8' if index in (113,114,115,118,119,122,123) else
+           'east-grass-v7' if index<=115 else 'west-grass-north-ferns-v7' if index<=119 else 'north-ferns-v7')
     return OUT/'ground-plant-candidates'/batch/'assets'/f'croisement02-ground-plant-{index}'
 
 
@@ -81,6 +82,16 @@ def run(label,indices):
             native=original.transform((640,640),Image.Transform.EXTENT,box,Image.Resampling.NEAREST)
             native.save(destination/'native-source.png')
             Image.alpha_composite(native,Image.open(destination/'source-plants.png').convert('RGBA')).save(destination/'source-overlay.png')
+            rendered=Image.open(destination/'source-plants.png').convert('RGBA')
+            scale=rendered.width/(box[2]-box[0])
+            layer=rendered.transform(original.size,Image.Transform.AFFINE,(scale,0,-box[0]*scale,0,scale,-box[1]*scale),Image.Resampling.BICUBIC)
+            native_scale=Image.alpha_composite(original,layer);native_scale.save(destination/'native-scale-full-context.png')
+            native_crop=[max(0,math.floor(box[0])-30),max(0,math.floor(box[1])-30),min(original.width,math.ceil(box[2])+30),min(original.height,math.ceil(box[3])+30)]
+            native_scale.crop(native_crop).save(destination/'native-scale-context.png')
+            write_json(destination/'native-scale-evidence.json',dict(status='Display-only: one native map pixel per output pixel',
+                crop_box=native_crop,source_render_sha256=sha(destination/'source-plants.png'),
+                images={n:sha(destination/n) for n in ['native-scale-full-context.png','native-scale-context.png']},
+                note='Resampled review display only; no texture generation or frozen technical input is resized.'))
             write_json(destination/'source-framing.json',dict(native_source_box=box,source_sha256=sha(OUT/'animation-references/composite-frame-0.png'),
                 images={n:sha(destination/n) for n in ['native-source.png','source-plants.png','source-overlay.png']},
                 note='Native artwork with exact-camera plant overlay; floor/bank suppressed only for this source comparison.'))
