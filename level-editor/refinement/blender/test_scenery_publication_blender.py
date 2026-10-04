@@ -24,10 +24,18 @@ def check():
             obj=bpy.data.objects.new(name,mesh);collection.objects.link(obj)
             for key,value in {'asset_group':name,'asset_name':group,'part_name':part,'source_node':source}.items():obj[key]=value
             if source.startswith('building-'):obj['source_obstacle']=0
+        image=bpy.data.images.new('Fixture / unsafe atlas',width=2,height=2)
+        image.pixels[:]=[.2,.4,.1,1.]*4;image.pack()
+        material=bpy.data.materials.new('Foliage');material.use_nodes=True
+        texture=material.node_tree.nodes.new('ShaderNodeTexImage');texture.image=image
+        material.node_tree.links.new(texture.outputs['Color'],material.node_tree.nodes.get('Principled BSDF').inputs['Base Color'])
+        bpy.data.objects['oak'].data.materials.append(material)
+        bpy.data.objects['oak'].data.uv_layers.new(name='UVMap')
         obstacle={'points':[{'x':x,'y':y,'z_bottom':0,'z_top':100}for x,y in [(-1,-1),(1,-1),(1,1),(-1,1)]],'opaque':True,'solid':True,'mouse':True,'projection_area':[0,0],'show_shadow_polygon':False,'default_material':0,'material_indices':[]}
         level={'sight_obstacles':[obstacle]};level_path=root/'level.json';level_path.write_text(json.dumps(level));catalog_path=root/'catalog.json';catalog_path.write_text(json.dumps(catalog))
         export_asset_library('Fixture',root/'assets',level_path,catalog=catalog)
         report=export_editor('Fixture',root/'fixture.rhlos-map.json',catalog=catalog,level=level)
+        assert image.name=='Fixture / unsafe atlas'
         (root/'stage.json').write_text(json.dumps({'map':report,'generated_materials':{}}))
         verify(root,catalog_path)
         entries={entry['id']:entry for entry in json.loads((root/'assets/index.json').read_text())['assets']}

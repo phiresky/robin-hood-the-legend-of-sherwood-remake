@@ -1,6 +1,7 @@
 """Export refined geometry using stable editor part IDs and named asset parents."""
 from contextlib import contextmanager
 import json
+import hashlib
 import math
 import struct
 import tempfile
@@ -15,6 +16,22 @@ from mathutils import Matrix, Vector
 from patch_material_export import export_states
 from catalog_schema import is_scenery_node, source_for_part
 from publication_contract import publication_parts, validate_export_records
+
+
+@contextmanager
+def safe_external_image_names():
+    """Packed image display names must not become filesystem paths in glTF."""
+    renamed = []
+    try:
+        for image in bpy.data.images:
+            if '/' in image.name or '\\' in image.name or image.name in ('.', '..'):
+                original = image.name
+                renamed.append((image, original))
+                image.name = 'texture-' + hashlib.sha256(original.encode()).hexdigest()[:24]
+        yield
+    finally:
+        for image, original in renamed:
+            image.name = original
 
 
 def projection_metadata(source):
@@ -446,10 +463,11 @@ def _export_editor(map_name, output_path, asset_id=None, *, standalone_pivot=Non
                     piece[metadata_key] = value
         bpy.context.window.scene = scene
         bpy.context.view_layer.update()
-        bpy.ops.export_scene.gltf(filepath=str(export_path), export_format="GLTF_SEPARATE" if export_directory else "GLB",
-            use_active_scene=True, export_yup=False, export_extras=True,
-            export_animations=False, export_cameras=False, export_lights=False,
-            export_image_format="AUTO")
+        with safe_external_image_names():
+            bpy.ops.export_scene.gltf(filepath=str(export_path), export_format="GLTF_SEPARATE" if export_directory else "GLB",
+                use_active_scene=True, export_yup=False, export_extras=True,
+                export_animations=False, export_cameras=False, export_lights=False,
+                export_image_format="AUTO")
         # Blender names are globally unique, even across scenes. Strip only our
         # export aliases in the JSON chunk; binary accessor offsets stay intact.
         if export_directory:
