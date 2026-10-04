@@ -37,7 +37,7 @@ def main(base, destination, indices):
     nodes = []
     workers = {}
     domains = []
-    for index, relative in [(81,'southwest81-v1'),(65,'north65-66-v1'),(66,'north65-66-v1'),(54,'northwest54-v1'),(57,'west-complements-v1'),(60,'west-complements-v1'),(62,'forest-clumps-v1'),(63,'forest-clumps-v1'),(64,'forest-clumps-v1')]:
+    for index, relative in [(81,'southwest81-v1'),(65,'north65-66-v1'),(66,'north65-66-v1'),(54,'northwest54-v1'),(57,'west-complements-v1'),(60,'west-complements-v1'),(62,'forest-clumps-v3'),(63,'forest-clumps-v3'),(64,'forest-clumps-v3')]:
         if index not in indices:continue
         source = OUT/'understory-candidates'/relative
         asset = 'croisement02-northwest-boundary-shrub-54' if index==54 else f'croisement02-shrub-{index:02}'
@@ -66,7 +66,7 @@ def main(base, destination, indices):
         constraints = incoming['projections']['exterior']['occluder_constraints']
         manifest['projections']['exterior']['occluder_constraints'].append(next(c for c in constraints if c['source_node'] == node))
         nodes.append(node); domains.append(domain)
-        round_number=7 if index==54 else 6 if index in (57,60) else 8 if index in (62,63,64) else 1
+        round_number=7 if index==54 else 9 if index in (57,60) else 11 if index==62 else 13 if index==63 else 8 if index in (62,64) else 1
         worker=OUT/f'understory-round-{round_number}/assets'/asset
         refit=OUT/'understory-round-2/assets'/asset
         if (refit/'inspection/refit-evidence.json').exists():worker=refit

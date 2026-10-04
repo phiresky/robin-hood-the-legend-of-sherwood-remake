@@ -37,6 +37,10 @@ def main():
         remaining_non_grass_domains=len(pending),remaining_grass_fern_domains=sum(r['missing_foliage_domain'] and 111<=i<=123 for i,r in rows.items()),
         pending_by_owner=dict(Counter(owner for _,indices,owner,_ in BATCHES for i in indices if i in pending)),batches=records,
         restrictions=['Reserved IDs are proposals until exact reviewed source masks exist.','Ground receiver460 remains separate; next northern batch uses470–477.','Existing authored source ownership and approved assets stay intact; geometry decisions do not imply texture approval.','Native mask count is not a future object count: mixed domains can split, nearby clumps can combine.'])
+    mixed=OUT/'mixed-wood-audit/east-followup/source-splits.json'
+    if mixed.exists():
+        split=json.loads(mixed.read_text())
+        report['mixed_source_reservations']=dict(evidence=str(mixed),evidence_sha256=sha(mixed),records=[dict(native_mask=r['native'],unassigned_uncertain_pixels=r['uncertain_pixels'],ground_pixels_not_foliage=r['ground_pixels'],existing_mixed_owner_pixels=r['prior_mixed_pixels']) for r in split['records']],meaning='These source-classification reservations remain unresolved even after a leaf complement receives geometry; catalog coverage alone does not settle them.')
     target=OUT/'understory-review/remaining-foliage-plan.json';target.write_text(json.dumps(report,indent=2)+'\n')
     print(json.dumps({k:v for k,v in report.items() if k not in ('batches','restrictions')},indent=2))
 

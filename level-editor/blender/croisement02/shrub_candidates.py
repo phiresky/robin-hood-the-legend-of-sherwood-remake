@@ -9,9 +9,10 @@ from evidence_io import sha,write_json
 
 def selected_workspace(out,asset,catalog_path):
     northwest=asset=='croisement02-northwest-boundary-shrub-54'
-    refit=out/('understory-round-7/assets' if northwest else 'understory-round-2/assets')/asset
+    western=asset in ('croisement02-shrub-57','croisement02-shrub-60')
+    refit=out/('understory-round-7/assets' if northwest else 'understory-round-9/assets' if western else 'understory-round-2/assets')/asset
     candidate=refit/'inspection/shrub-candidate.json'
-    proof=refit/'inspection'/('support-evidence.json' if northwest else 'refit-evidence.json')
+    proof=refit/'inspection'/('support-evidence.json' if northwest or western else 'refit-evidence.json')
     if candidate.exists() and proof.exists():
         receipt=json.loads(candidate.read_text())
         group=next(g for g in json.loads(catalog_path.read_text())['groups'] if g['id']==asset)
@@ -24,7 +25,7 @@ def selected_workspace(out,asset,catalog_path):
                 or audit['status']!='PASS' or not review['ready_for_geometry_review']
                 or review['sheet_sha256']!=sha(refit/'inspection/actual-materials/sheet.png')):
             raise ValueError('Refitted shrub review changed')
-        if northwest and review.get('support_evidence_sha256')!=sha(proof):raise ValueError('Northwest shrub support evidence changed')
+        if (northwest or western) and review.get('support_evidence_sha256')!=sha(proof):raise ValueError('Shrub support evidence changed')
         coverage=json.loads((refit/'inspection/source-coverage/report.json').read_text())
         bounds=json.loads((refit/'inspection/actual-materials/opacity-bounds.json').read_text())
         if coverage['model_sha256']!=model_hash or bounds['model_sha256']!=model_hash or coverage['intersection_over_union']<.95 or min(c['depth_width_ratio'] for c in bounds['crowns'])<1:
@@ -37,7 +38,9 @@ def selected_workspace(out,asset,catalog_path):
         for row in json.loads(Path(joint['evidence']).read_text())['workers']:
             if sha(Path(row['path'])/'model.blend')!=row['model_sha256']:raise ValueError('Refitted shrub neighbour changed')
         return refit
-    path=out/'understory-candidates/west-bank-v5/selection.json'
+    path=out/'understory-candidates/west-bank-v7/selection.json'
+    if not path.exists():path=out/'understory-candidates/west-bank-v6/selection.json'
+    if not path.exists():path=out/'understory-candidates/west-bank-v5/selection.json'
     if asset!='croisement02-west-shrub-bank' or not path.exists():return None
     receipt=json.loads(path.read_text())
     group=next(g for g in json.loads(catalog_path.read_text())['groups'] if g['id']==asset)
@@ -47,11 +50,12 @@ def selected_workspace(out,asset,catalog_path):
     return Path(receipt['workspace'])
 
 
-def register(out,catalog_path):
+def register(out,catalog_path,round_number=5):
+    if round_number not in (5,6,7):raise ValueError('Only reviewed bank revisions5/6/7 are supported')
     asset='croisement02-west-shrub-bank'
-    worker=out/'understory-round-5/assets'/asset
-    previous=out/'understory-round-4/assets'/asset
-    directory=out/'understory-candidates/west-bank-v5'
+    worker=out/f'understory-round-{round_number}/assets'/asset
+    previous=out/f'understory-round-{round_number-1}/assets'/asset
+    directory=out/f'understory-candidates/west-bank-v{round_number}'
     revision=json.loads((directory/'revision.json').read_text())
     if sha(previous/'model.blend')!=revision['previous_model_sha256']:raise ValueError('Previous selected worker changed')
     model_hash=sha(worker/'model.blend')
@@ -80,6 +84,14 @@ def register(out,catalog_path):
     files=[previous/'model.blend',worker/'model.blend',worker/'workspace.json',worker/'validation.json',
         *[worker/'inspection'/name for name in ('visual-review.json','saved-model-audit.json','refinement.json','source-coverage/report.json','actual-materials/sheet.png','actual-materials/opacity-bounds.json')],
         joint_path,Path(joint['evidence']),Path(joint['sheet']),preservation,directory/'revision.json',*dependencies]
+    if round_number>=6:
+        proof=worker/'inspection/support-evidence.json'
+        if review.get('support_evidence_sha256')!=sha(proof):raise ValueError('Bank support evidence changed')
+        files.append(proof)
+    if round_number==7:
+        proof=worker/'inspection/inferred-fill-evidence.json'
+        if review.get('inferred_fill_evidence_sha256')!=sha(proof):raise ValueError('Bank inferred fill evidence changed')
+        files.append(proof)
     write_json(directory/'selection.json',dict(workspace=str(worker),model_sha256=model_hash,group=group,files={str(p):sha(p) for p in files},status='Reviewed geometry revision candidate; no user approval or publication implied'))
     write_json(worker/'inspection/shrub-candidate.json',dict(model_sha256=model_hash,status='Reviewed replacement geometry candidate; native domain413 unchanged'))
     print(worker)
