@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { wallSplineFixture } from "../test-fixtures/wall-spline.ts";
+import { wallSplineFixture, wallMaterialFixture } from "../test-fixtures/wall-spline.ts";
 import { wallSplineGameplay } from "./wall-spline-gameplay.ts";
 import { compileAssetGameplay } from "./compile-asset-gameplay.ts";
 import { validateAssetGameplay } from "./asset-gameplay.ts";
@@ -374,6 +374,26 @@ test("wall masks deform coverage, front boundaries and obstacle ownership togeth
     probed.descriptors[0]!.gameplay!.masks!.some((mask) => mask.receiverPolyline!.length > 2),
   );
   assert.ok(compileAssetGameplay(document, assets, bounds).masks!.length > 0);
+});
+
+test("a surviving mask probe retains a cropped repeat when its point anchor is trimmed", () => {
+  const { document, asset, assets, bounds } = wallMaterialFixture();
+  const mask = asset.gameplay!.masks![0]!;
+  const local = (x: number, z: number) => sceneToGame(document.camera, [x, 0, z]);
+  mask.anchor = local(49, 0);
+  mask.receiverSegment = [local(-49, -10), local(-40, 10)];
+  document.splines![0]!.points = [
+    [100, 200, 0],
+    [345, 200, 0],
+  ];
+  const generated = wallSplineGameplay(document, assets, false);
+  assert.deepEqual(generated.warnings, []);
+  assert.equal(generated.descriptors[0]!.gameplay!.masks!.length, 3);
+  assert.equal(compileAssetGameplay(document, assets, bounds).masks!.length, 3);
+  delete mask.receiverSegment;
+  const pointOnly = wallSplineGameplay(document, assets, true);
+  assert.equal(pointOnly.descriptors[0]!.gameplay!.masks!.length, 2);
+  assert.ok(pointOnly.warnings.some((warning) => warning.includes("cropped receiving anchor")));
 });
 
 test("wall collision follows moved paths, crops repeats and participates in terrain navigation", () => {

@@ -353,13 +353,13 @@ export function wallSplineGameplay(
             ? Math.min(end, start + (end - start) * (length / run.repeatLength - repeat))
             : end;
           const anchorSource = source(mask.node, mask.anchor);
-          if (run && (anchorSource[axis] < start || anchorSource[axis] > limit)) {
+          const anchorCropped = run && (anchorSource[axis] < start || anchorSource[axis] > limit);
+          if (anchorCropped && !mask.receiverSegment && !mask.receiverPolyline) {
             warnings.push(
               `Wall spline ${path.id}, mask ${mask.id}, repeat ${repeat}: cropped receiving anchor; mask omitted.`,
             );
             continue;
           }
-          const anchor = warp(anchorSource, repeat);
           const receiver = (mask.receiverPolyline ?? mask.receiverSegment)?.map((p) =>
             source(mask.node, p),
           );
@@ -374,6 +374,9 @@ export function wallSplineGameplay(
             );
             continue;
           }
+          // An explicit probe selects the layer. Keep its representative anchor
+          // inside the surviving span so export-frame checks do not discard it.
+          const anchor = warp(anchorCropped ? receiverFragments[0]![0]! : anchorSource, repeat);
           let boundaryMissing = false;
           const boundary = (points: Vec3[] | undefined, closed = true): Vec3[] | undefined => {
             if (!points) return undefined;

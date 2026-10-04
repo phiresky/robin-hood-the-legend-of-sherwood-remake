@@ -4,6 +4,18 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Cropped mask anchors with surviving probes (2026-10-05)
+
+A cropped wall repeat now retains its mask when the authored point anchor is
+trimmed but an explicit receiving probe survives. The generated anchor moves
+to that surviving probe for export-frame checks; layer selection still requires
+the probe to intersect exactly one receiving layer. No nearest-surface fallback
+is introduced. A three-repeat regression retains the shortened final mask;
+removing the probe correctly restores the cropped-anchor warning and omission.
+Point-only cropped anchors and disconnected probes/boundaries remain open.
+The complete editor suite passes 745 tests with two skipped (44.6 seconds);
+app typechecking and targeted lint also pass.
+
 ## Bend-preserving mask receiver probes (2026-10-05)
 
 Mask definitions now accept a finite `receiverPolyline` instead of a straight
