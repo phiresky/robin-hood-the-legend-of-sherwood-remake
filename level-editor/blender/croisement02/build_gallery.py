@@ -20,6 +20,8 @@ def main():
             continue
         tree='wood_mask' in group
         stem=bool(group.get('authored_scenery') and 'native_wood_mask' in group)
+        shrub=bool(group.get('authored_scenery') and 'native_foliage_mask' in group)
+        foliage=tree or shrub
         workspace=OUT/('forest-v4-round-1' if tree else 'scenery-round-1')/'assets'/group['id']
         if tree:workspace=tree_workspace(group['wood_mask'])
         if not tree:workspace=scenery_workspace(group['id'])
@@ -32,6 +34,8 @@ def main():
         report=json.loads(report_path.read_text())
         if tree and report['crown'].get('geometry_version') not in ('native-leaf-clusters-v5','native-leaf-clusters-v6'):
             missing.append(dict(id=group['id'],name=group['name'],status='in progress',reason='Replacing the rejected large-shell prototype with small, full-depth leaf clusters.'));continue
+        if shrub and report['crown'].get('geometry_version')!='native-shrub-leaf-volume-v2':
+            missing.append(dict(id=group['id'],name=group['name'],status='in progress',reason='Current round-volume shrub geometry is not prepared.'));continue
         model=workspace/'model.blend';model_hash=sha(model)
         if report['model_sha256']!=model_hash:
             missing.append(dict(id=group['id'],name=group['name'],status='in progress',reason='Candidate is being revised; previous evidence is withheld.'));continue
@@ -44,12 +48,12 @@ def main():
         actual=workspace/'inspection/actual-materials';evidence=actual/'evidence.json';coverage=workspace/'inspection/source-coverage/report.json'
         if evidence.exists() and json.loads(evidence.read_text())['model_sha256']==model_hash:
             item['stored_material_textured']=str(actual/'sheet.png');item['stored_material_audit']=str(evidence)
-            if (tree or stem) and coverage.exists() and json.loads(coverage.read_text()).get('model_sha256')==model_hash:
+            if (foliage or stem) and coverage.exists() and json.loads(coverage.read_text()).get('model_sha256')==model_hash:
                 metrics=json.loads(coverage.read_text())
-                bounds=json.loads((actual/'opacity-bounds.json').read_text()) if tree else None
+                bounds=json.loads((actual/'opacity-bounds.json').read_text()) if foliage else None
                 item['projection_errors']=str(coverage.parent/'difference.png');item['projection_errors_label']='Native-mask comparison: red missing, cyan extra'
                 item['source_comparison']=str(coverage.parent/'render.png');item['source_comparison_label']='Saved geometry rendered from the original map camera'
-                if tree:
+                if foliage:
                     ratio=min(r['depth_width_ratio'] for r in bounds['crowns'])
                     item['notes'].append(f"Visible depth/width {ratio:.3f}; source silhouette IoU {metrics['intersection_over_union']:.3f}.")
                 else:item['notes'].append(f"Authored standalone stem; source silhouette IoU {metrics['intersection_over_union']:.3f}.")
@@ -62,7 +66,7 @@ def main():
             if audited:item['stored_material_audit']=str(audit_path)
         current_actual=bool(evidence.exists() and json.loads(evidence.read_text())['model_sha256']==model_hash)
         technical=audited and current_actual
-        if tree:
+        if foliage:
             technical=technical and coverage.exists() and json.loads(coverage.read_text()).get('model_sha256')==model_hash
             if technical:
                 values=json.loads(coverage.read_text());bounds=json.loads((actual/'opacity-bounds.json').read_text())
@@ -141,7 +145,7 @@ def main():
         items.append(item)
     missing.extend([
         dict(id='croisement02-terrain-integration',name='Terrain integration',status='pending',reason='Full-scene gap audit, foreground-domain removal and terrain texture completion remain required before publication.'),
-        dict(id='croisement02-mask-only-scenery',name='Mask-only scenery',status='pending',reason='Undergrowth and small grass sprites remain pending. Authored stems09/44 have separate review candidates. Mask22 is a northern foliage fragment, not automatically a missing trunk; its ownership remains under review. Mask21 belongs to native obstacle132.'),
+        dict(id='croisement02-mask-only-scenery',name='Mask-only scenery',status='pending',reason='Most undergrowth and small grass sprites remain pending. Authored stems09/44 and shrubs55/58/59 have separate review candidates. Mask22 is a northern foliage fragment, not automatically a missing trunk; its ownership remains under review. Mask21 belongs to native obstacle132.'),
         dict(id='croisement02-animation-and-mission-states',name='Animation and mission states',status='pending',reason='All 15 animation sequences and 129 mission patches are preserved as source evidence. Candidates show synchronized first-frame foliage; full state/animation integration is pending.')])
     data=dict(map='Croisement02',items=items,without_packets=missing,status_counts=dict(Counter(i['status'] for i in items)),
               policy='No geometry or texture approval is implied. Only the two explicitly selected Leicester trees are reference assets.')

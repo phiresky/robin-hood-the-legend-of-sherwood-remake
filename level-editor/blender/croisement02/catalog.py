@@ -9,6 +9,8 @@ def reviewed_catalog():
     return revised if revised.exists() else OUT/'catalog.json'
 
 def scenery_workspace(asset):
+    shrub=OUT/'understory-round-1/assets'/asset
+    if (shrub/'inspection/shrub-candidate.json').exists():return shrub
     authored=OUT/'authored-stems-round-1/assets'/asset
     if (authored/'inspection/authored-integration.json').exists():return authored
     source_revised=OUT/'scenery-round-3/assets'/asset

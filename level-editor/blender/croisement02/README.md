@@ -259,3 +259,19 @@ reviewed stem geometry; geometry approval and subsequent texture fill remain
 separate. The main gallery/staging select these workers and reject historical
 packets whose source-part sets differ from current ownership. Full terrain
 cleanup is still required; preparing its exclusions does not rebake terrain.
+
+
+`prepare_shrubs.py` prepares isolated authored clumps55/58/59 from their native
+leaf silhouettes. `shrub_geometry.py` uses small front patches and a rounded
+world-space leaf volume. Source-covered front pixels and rear leaves are
+explicitly inferred from the same shrub's visible palette. Conservative
+foreground exclusions separate observed ownership;58/59 have no duplicate
+observed pixels. `refine_shrubs.py -- 55 58 59` rebuilds unapproved candidates.
+
+The final shrub recipe erodes only inferred interior coverage to prevent
+source-edge aliasing and adds one-sided rear leaf surfaces to fill hidden
+volume without changing the source silhouette. `integrate_shrubs.py` refuses
+catalog drift or absent manual/hash-bound reviews before registering the three
+new authored sources. Native silhouette and alpha-covered depth checks run
+before gallery readiness. This registers geometry candidates, not user
+approval, texture approval or finished terrain placement.
