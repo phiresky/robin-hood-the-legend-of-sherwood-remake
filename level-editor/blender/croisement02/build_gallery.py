@@ -105,13 +105,18 @@ def main():
                             for r in neighbours)):
                 item['source_comparison_secondary']=joint['sheet']
                 item['source_comparison_secondary_label']=joint.get('label','Source and oblique views with approved neighbouring trees; lower row hides foliage' if stem else 'Joint source and oblique review with neighbouring geometry')
-                if group.get('native_foliage_mask') in (67,68,69,70,71,72,73,92):
+                if group.get('native_foliage_mask') in (67,68,69,70,71,72,73,79,80,82,92):
                     native_context=Path(joint['sheet']).parent/'native-scale-context.png'
                     if not native_context.exists():raise ValueError('Central foliage native-scale context missing')
                     item['source_trace']=str(native_context)
                     item['source_trace_label']='Isolated plant material over native artwork; covered fronts may overpaint foreground'
                     item['notes'].append('Hidden leaf arrangement reuses only this plant native palette; no observed rear artwork or AI texture is claimed. Small native-pixel fragments remain coarse when magnified.')
                     item['notes'].append(f"Observed source leaf pixels: {report['crown']['observed_leaf_pixels']}; covered and rear arrangement is inferred.")
+                    if group.get('native_foliage_mask')!=73 and not report['crown'].get('inferred_branch_support'):
+                        item['notes'].append('Leaf-only shrub hypothesis: lower leaves can clear the terrain; roots and connecting stems are unobserved and are not proven by transparent mesh corners.')
+                    if report['crown'].get('inferred_branch_support'):
+                        item['notes'].append('Small branched supports are inferred from the leaf arrangement. Existing observed leaf geometry and UVs are unchanged; support backs use only this plant native warm palette.')
+                    if group.get('native_foliage_mask')==80:item['notes'].append('West map-edge continuation is inferred from this clump own native edge artwork; off-map pixels are not observed evidence.')
                     if group.get('native_foliage_mask')==68:item['notes'].append('The shown tree07 neighbour retains an earlier floating-wood limitation. This leaf-group candidate does not claim that trunk correction.')
                     if group.get('native_foliage_mask') in (69,70,71):item['notes'].append('Shown mature tree31/32 canopy curtains and wood support remain separate corrections. Isolated native-scale overlays are context views, not full-scene parity evidence.')
 

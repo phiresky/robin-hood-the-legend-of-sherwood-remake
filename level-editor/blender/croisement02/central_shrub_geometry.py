@@ -39,7 +39,7 @@ def build(obj,packet):
         for name,bvh in support:
             p,n,f,d=bvh.ray_cast(Vector((x,y,1000)),Vector((0,0,-1)))
             if p is not None:hits.append((p.z,name))
-        if packet['native_mask'] in (68,69,70,71,72) and not hits:
+        if packet['native_mask'] in (68,69,70,71,72,79,80,82) and not hits:
             return (0.,'ground-plane; central source context outside bank')
         if not hits:raise ValueError(f'Plant{packet["native_mask"]} support outside bank at {x},{y}; inspect before assuming ground')
         return max(hits)
@@ -60,6 +60,9 @@ def build(obj,packet):
                minimum_elevation=min(v.co.z for v in obj.data.vertices),clearance=.5,projection_delta=[0,0],
                limitation='Center support on exact bank; low leaf intersections require grouped oblique review.')
     write_json(Path(packet['directory'])/'support.json',proof)
+    if packet.get('inferred_branch_support'):
+        from central_support_geometry import append_support
+        result['inferred_branch_support']=append_support(obj,packet,terrain)
     result.update(minimum_z=proof['minimum_elevation'],opacity_bounds=measure(obj),support=proof,references=[],
                   native_only=True,source_projection_preserved=True)
     return result

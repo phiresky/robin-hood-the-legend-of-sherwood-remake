@@ -19,6 +19,7 @@ from refinement_workspace import prepare,modified
 from central_shrub_geometry import build,load_support
 from audit_candidates import audit
 from render_tree import render_workspace
+from central_candidates import DOMAINS
 
 CHOSEN={73:[]}
 DIRECTORY=OUT/'understory-candidates/native-73-v1'
@@ -61,7 +62,7 @@ def main():
             observed_domain=domain,excluded_foreground=exclusions,observed_pixels=int(observed.sum()),
             complete_native_pixels=int(full.sum()),source_sha256=sha(source),
             ownership_note='Complete physical clump follows native silhouette; covered regions have inferred appearance only. Source evidence excludes the explicitly listed overlapping foreground masks.',**GEOMETRY_OPTIONS)
-        if index in (69,71,72):packet['cluster_count']=max(450,int(full.sum()/5))
+        if index in (69,71,72,79,80,82):packet['cluster_count']=max(450,int(full.sum()/5))
         if index==68:packet['physical_silhouette_authority']=dict(sha256=sha(packet_dir/'complete-source.png'),reason='Native68 minus exposed wood7; leaf-only physical silhouette, observed source separately excludes131/133; no source ownership implied for covered leaves')
         write_json(packet_dir/'partition.json',packet);packets[index]=packet
     sheet=Image.new('RGB',(512*len(CHOSEN),1000),'#888888');draw=ImageDraw.Draw(sheet);validation=[]
@@ -116,6 +117,21 @@ def main():
             Image.fromarray(complete).save(folder/'complete-source.png');Image.fromarray(observed).save(folder/'observed-source.png')
             packet.update(native_bbox=[packet['native_bbox'][0],-extension,old.shape[1],old.shape[0]+extension],bbox=[packet['native_bbox'][0],-extension,old.shape[1],old.shape[0]+extension],inferred_front_image='complete-source.png',inferred_map_edge_completion=True,inferred_extension_pixels=extension)
             write_json(folder/'partition.json',packet)
+        if index==80:
+            # The west image edge cuts through a leafy volume. Complete only
+            # the hidden side using this clump's own edge pixels and palette.
+            folder=Path(packet['directory']);old=np.asarray(Image.open(folder/'complete-source.png').convert('RGBA'));known=np.asarray(Image.open(folder/'observed-source.png').convert('RGBA'));extension=35
+            complete=np.zeros((old.shape[0],old.shape[1]+extension,4),dtype=np.uint8);observed=np.zeros_like(complete);complete[:,extension:]=old;observed[:,extension:]=known
+            yy=np.flatnonzero(old[:,0,3]>127);center=float(yy.mean());radius=float(np.ptp(yy))/2+1
+            rng=np.random.default_rng(80080)
+            for column in range(extension):
+                fraction=(column+.5)/extension
+                donor=old[:,min(old.shape[1]-1,extension-1-column)].copy()
+                for row in range(old.shape[0]):
+                    if abs(row-center)<radius*np.sqrt(max(0,1-(1-fraction)**2))*(.9+.1*rng.random()):complete[row,column]=donor[row]
+            Image.fromarray(complete).save(folder/'complete-source.png');Image.fromarray(observed).save(folder/'observed-source.png')
+            x,y,w,h=packet['native_bbox'];packet.update(native_bbox=[x-extension,y,w+extension,h],bbox=[x-extension,y,w+extension,h],inferred_front_image='complete-source.png',inferred_map_edge_completion=True,inferred_extension_pixels=extension)
+            write_json(folder/'partition.json',packet)
         reports[index]=build(obj,packet)
     visibility={o:o.hide_render for o in collection.all_objects if o.type=='MESH'}
     for o in visibility:o.hide_render=False
@@ -163,9 +179,12 @@ def main():
 
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('mask',type=int,choices=[73,92,67,68,69,70,71,72]);parser.add_argument('--version',default='v1')
-    args=parser.parse_args(sys.argv[sys.argv.index('--')+1:]);CHOSEN={args.mask:{67:[134],68:[131,133],69:[131],70:[131],71:[131],72:[128,131]}.get(args.mask,[])};FIRST_DOMAIN={73:470,92:471,67:472,68:473,69:474,70:475,71:476,72:477}[args.mask]
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('mask',type=int,choices=sorted(DOMAINS));parser.add_argument('--version',default='v1');parser.add_argument('--inferred-support',action='store_true')
+    args=parser.parse_args(sys.argv[sys.argv.index('--')+1:]);CHOSEN={args.mask:{67:[134],68:[131,133],69:[131],70:[131],71:[131],72:[128,131],79:[445],80:[445],82:[130]}.get(args.mask,[])};FIRST_DOMAIN=DOMAINS[args.mask]
     DIRECTORY=OUT/f'understory-candidates/native-{args.mask}-{args.version}'
+    if args.inferred_support:
+        if args.mask!=71:raise ValueError('Support derivative is scoped to native71')
+        GEOMETRY_OPTIONS['inferred_branch_support']=True
     acquire()
     try:main()
     finally:release()
