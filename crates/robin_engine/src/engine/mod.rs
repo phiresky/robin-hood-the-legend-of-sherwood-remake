@@ -1120,7 +1120,7 @@ impl EngineInner {
                 .control
                 .sim_config
                 .exclude_starting_dead_soldiers_from_preserved_lives
-                && self.is_baseline_dead_npc(id)
+                && self.is_baseline_dead_npc(EntityId::Soldier(id))
             {
                 continue;
             }
