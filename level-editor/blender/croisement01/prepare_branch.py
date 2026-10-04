@@ -1,5 +1,6 @@
 """Native mask 70 curved fallen branch construction; private review candidate."""
 import sys
+import argparse
 import json
 import math
 from pathlib import Path
@@ -37,7 +38,13 @@ def tube(name,trace):
 
 
 def main():
-    asset='croisement01-east-fallen-branch';workspace=OUT/'branch-round-1/assets'/asset
+    parser=argparse.ArgumentParser();parser.add_argument('--revision',type=int,choices=[1,2],default=1)
+    args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
+    main_trace=MAIN;twig_trace=TWIG;fork_trace=None
+    if args.revision==2:
+        main_trace=[(1038,338,7,7),(1058,337,12,12),(1082,340,13,13),(1102,333,13,13),(1122,326,13,13),(1141,320,12,12),(1163,318,10,10),(1181,319,10,9),(1193,314,11,7),(1198,309,12,4)]
+        fork_trace=[(1179,322,9,5),(1194,331,6,4),(1206,335,4,3),(1218,338,3,1.5)]
+    asset='croisement01-east-fallen-branch';workspace=OUT/f'branch-round-{args.revision}/assets'/asset
     if workspace.exists():raise FileExistsError(workspace)
     directory=OUT/'branch-domains';directory.mkdir(exist_ok=True)
     inv=json.loads((OUT/'baseline/masks/manifest.json').read_text())
@@ -59,10 +66,15 @@ def main():
         source_mask_manifest=masks,width=256,height=256,framing_padding=1.16,
         lighting=dict(toward_sun=[-.6,-.4,.7],ambient=.22,diffuse=.78,shadow_epsilon=.05))
     original=next(o for o in bpy.data.collections['Croisement01 Working'].all_objects if o.type=='MESH' and o.get('asset_group')==asset)
-    body=tube('Continuous main branch',MAIN);twig=tube('Upward twig union operand',TWIG)
+    body=tube('Continuous main branch',main_trace);twig=tube('Upward twig union operand',twig_trace)
     bpy.context.view_layer.objects.active=body;body.select_set(True)
     mod=body.modifiers.new('Continuous branch joint','BOOLEAN');mod.operation='UNION';mod.solver='EXACT';mod.object=twig
     bpy.ops.object.modifier_apply(modifier=mod.name);bpy.data.objects.remove(twig,do_unlink=True)
+    if fork_trace:
+        fork=tube('Right source fork union operand',fork_trace)
+        mod=body.modifiers.new('Continuous right fork','BOOLEAN');mod.operation='UNION';mod.solver='EXACT';mod.object=fork
+        bpy.context.view_layer.objects.active=body
+        bpy.ops.object.modifier_apply(modifier=mod.name);bpy.data.objects.remove(fork,do_unlink=True)
     mesh=body.data.copy();bpy.data.objects.remove(body,do_unlink=True)
     inverse=original.matrix_world.inverted()
     for vert in mesh.vertices:vert.co=inverse@vert.co
@@ -78,7 +90,7 @@ def main():
     if topology['nonmanifold_edges'] or topology['degenerate_faces']:raise ValueError(topology)
     validate(workspace);modified(workspace)
     inspection=workspace/'inspection';inspection.mkdir(exist_ok=True)
-    (inspection/'construction.json').write_text(json.dumps(dict(status='private candidate; self-review pending',main_trace=MAIN,twig_trace=TWIG,topology=topology,model_sha256=sha(workspace/'model.blend'),limitations=['Native source traces approximate centerlines. Radius, hidden depth and twig height are inferred.','Independent native source coverage, ground contacts and actual material review pending.']),indent=2)+'\n')
+    (inspection/'construction.json').write_text(json.dumps(dict(status='private candidate; self-review pending',main_trace=main_trace,twig_trace=twig_trace,fork_trace=fork_trace,topology=topology,model_sha256=sha(workspace/'model.blend'),limitations=['Native source traces approximate centerlines. Radius, hidden depth and twig height are inferred.','Independent native source coverage, ground contacts and actual material review pending.']),indent=2)+'\n')
     import render_candidate
     sys.argv=['render_candidate','--',str(workspace)];render_candidate.main();release()
 
