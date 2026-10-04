@@ -22,7 +22,8 @@ def material(imagepath):
 def main():
     source=OUT/'state-target-evidence/log-trap';manifest=json.loads((source/'manifest.json').read_text());dest=OUT/(sys.argv[sys.argv.index('--candidate')+1] if '--candidate' in sys.argv else 'log-trap-state-candidate-v10');dest.mkdir(exist_ok=False);box=manifest['bbox'];left,top,right,bottom=box
     # Endpoint centers are surveyed in their own native sprite coordinates.
-    initial=json.loads((source/'covered-cylinder-fit.json').read_text())['survey']
+    initial_path=source/(sys.argv[sys.argv.index('--initial-survey')+1] if '--initial-survey' in sys.argv else 'covered-cylinder-fit.json')
+    initial=json.loads(initial_path.read_text())['survey']
     support_path=source/(sys.argv[sys.argv.index('--survey')+1] if '--survey' in sys.argv else 'applied-coherent-bank-slopes-v4.json')
     terminal=json.loads(support_path.read_text())['survey']
     rendering='--no-render' not in sys.argv
@@ -70,7 +71,7 @@ def main():
                 for col,view in enumerate(['source','oblique']):
                     image=Image.open(dest/f'{name}-{view}-actual.png').convert('RGBA');sheet.paste(image,(col*512,row*512),image)
             sheet.save(dest/'comparison.png')
-        report=dict(status='candidate requires self-review and geometry refinement',source_manifest_sha256=sha(source/'manifest.json'),model_sha256=sha(dest/'worker.blend'),support_manifest_sha256=sha(support_path),surveys=dict(initial=initial,applied=terminal),geometry=audits,limitations=['Applied full-log slopes use audited bank support with fixed source endpoints; contacts and foreground visibility still require actual geometry review.','Covered and applied log counts are independent hypotheses, not matched physical identities or an animation rig.','Endpoint candidates only; per-log correspondence and native transition geometry (last target reaches terminal at tick87) not implemented.','Log end centers and radii inferred from native source; terminal fragments not assigned fabricated identities.','Native atlas RGB on source-facing solid surfaces; unobserved sides intentionally gray, no texture generation requested.','No permanent catalog or scene integration; source shadow patch remains separate ground state.'])
+        report=dict(status='candidate requires self-review and geometry refinement',source_manifest_sha256=sha(source/'manifest.json'),model_sha256=sha(dest/'worker.blend'),support_manifest_sha256=sha(support_path),initial_survey_sha256=sha(initial_path),surveys=dict(initial=initial,applied=terminal),geometry=audits,limitations=['Applied full-log slopes use audited bank support with fixed source endpoints; contacts and foreground visibility still require actual geometry review.','Covered and applied log counts are independent hypotheses, not matched physical identities or an animation rig.','Endpoint candidates only; per-log correspondence and native transition geometry (last target reaches terminal at tick87) not implemented.','Log end centers and radii inferred from native source; terminal fragments not assigned fabricated identities.','Native atlas RGB on source-facing solid surfaces; unobserved sides intentionally gray, no texture generation requested.','No permanent catalog or scene integration; source shadow patch remains separate ground state.'])
         (dest/'manifest.json').write_text(json.dumps(report,indent=2)+'\n')
     finally:
         if rendering:release()

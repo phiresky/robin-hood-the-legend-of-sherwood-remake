@@ -9,11 +9,12 @@ from log_trap_state_candidate import sha
 from render_slots import acquire,release
 
 def main():
-    base=OUT/'log-trap-state-candidate-v14';dest=base/'endpoint-orbit';dest.mkdir(exist_ok=False);report=json.loads((base/'dense-contact-audit.json').read_text());assert report['status'].startswith('sampled support pass');assert sha(base/'worker.blend')==report['model_sha256'];acquire()
+    base=OUT/(sys.argv[sys.argv.index('--candidate')+1] if '--candidate' in sys.argv else 'log-trap-state-candidate-v14');dest=base/'endpoint-orbit';dest.mkdir(exist_ok=False);report=json.loads((base/'dense-contact-audit.json').read_text());assert report['status'].startswith('sampled support pass');assert sha(base/'worker.blend')==report['model_sha256'];acquire()
     try:
         bpy.ops.wm.open_mainfile(filepath=str(base/'worker.blend'));scene=bpy.context.scene;scene.cycles.samples=12;scene.cycles.use_denoising=False;scene.render.resolution_x=scene.render.resolution_y=512
         solid=bpy.data.materials.new('Private endpoint solid review');solid.use_nodes=True;solid.node_tree.nodes.get('Principled BSDF').inputs['Base Color'].default_value=(.25,.25,.25,1);records=[]
-        for state in ['covered','applied']:
+        for state in ([sys.argv[sys.argv.index('--state')+1]] if '--state' in sys.argv else ['covered','applied']):
+            assert state in ('covered','applied')
             logs=[o for o in scene.objects if o.get('state_endpoint')==state]
             for o in scene.objects:
                 if o.get('state_endpoint'):o.hide_render=o not in logs

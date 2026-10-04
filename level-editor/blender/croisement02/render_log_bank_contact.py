@@ -16,9 +16,11 @@ from render_slots import acquire, release
 
 def main():
     base = OUT/(sys.argv[sys.argv.index('--candidate')+1] if '--candidate' in sys.argv else 'log-trap-state-candidate-v10')
-    dest = base/'bank-review'
+    state = sys.argv[sys.argv.index('--state')+1] if '--state' in sys.argv else 'applied'
+    assert state in ('covered', 'applied')
+    dest = base/('bank-review' if state == 'applied' else 'covered-bank-review')
     dest.mkdir(exist_ok=False)
-    report = json.loads((base/'dense-contact-audit.json').read_text())
+    report = json.loads((base/('dense-contact-audit.json' if state == 'applied' else 'covered-contact-audit.json')).read_text())
     assert report['status'].startswith('sampled support pass')
     assert sha(base/'worker.blend') == report['model_sha256']
     bank = OUT/'terrain-bank-candidate/assets/croisement02-north-woodland-bank'
@@ -29,7 +31,7 @@ def main():
     try:
         bpy.ops.wm.open_mainfile(filepath=str(base/'worker.blend'))
         scene = bpy.context.scene
-        logs = [o for o in scene.objects if o.get('state_endpoint') == 'applied']
+        logs = [o for o in scene.objects if o.get('state_endpoint') == state]
         for obj in scene.objects:
             if obj.get('state_endpoint'):
                 obj.hide_render = obj not in logs
@@ -47,7 +49,7 @@ def main():
             for obj in dst.objects:
                 obj.hide_render = not enabled
             for view,direction in [('source',RAY),('oblique',Vector((-1,-1,.8)).normalized())]:
-                target = point(518,559.5,0) if view == 'source' else point(518,550,25)
+                target = (point(570,507,0) if view == 'source' else point(570,505,90)) if state == 'covered' else (point(518,559.5,0) if view == 'source' else point(518,550,25))
                 scene.camera.location = target+direction*3000
                 scene.camera.rotation_euler = (target-scene.camera.location).to_track_quat('-Z','Y').to_euler()
                 scene.camera.data.ortho_scale = 307.2 if view == 'source' else 400
@@ -64,7 +66,7 @@ def main():
                         slot.material = material
         assert sha(base/'worker.blend') == report['model_sha256']
         assert sha(bank/'model.blend') == report['bank_model_sha256']
-        (dest/'manifest.json').write_text(json.dumps(dict(status='unapproved physical support review; foreground crowns deliberately absent',log_model_sha256=report['model_sha256'],bank_model_sha256=report['bank_model_sha256'],receiver_objects=names),indent=2)+'\n')
+        (dest/'manifest.json').write_text(json.dumps(dict(status='unapproved physical support review; foreground crowns deliberately absent',state=state, log_model_sha256=report['model_sha256'],bank_model_sha256=report['bank_model_sha256'],receiver_objects=names),indent=2)+'\n')
     finally:
         release()
 
