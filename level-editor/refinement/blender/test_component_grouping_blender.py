@@ -59,6 +59,22 @@ def run():
         sync_asset_names(path)
         assert objects[1]['asset_name'] == 'East annex'
         assert objects[1].name.startswith('East annex / Wall')
+        # An unrelated publication must preserve detached state meshes exactly.
+        detached = objects[1]
+        world = detached.matrix_world.copy(); detached.parent = None; detached.matrix_world = world
+        detached.name = 'Retained revealed state'
+        bpy.context.view_layer.update()
+        before = (detached.name, detached.parent, [list(row) for row in detached.matrix_world])
+        reconcile_asset_groups(path, preserve_objects=[detached])
+        assert before == (detached.name, detached.parent, [list(row) for row in detached.matrix_world])
+        detached['asset_group'] = 'house'
+        try:
+            reconcile_asset_groups(path, preserve_objects=[detached])
+        except ValueError as error:
+            assert 'ownership' in str(error)
+        else:
+            raise AssertionError('Preserved object silently changed ownership')
+        detached['asset_group'] = 'annex'
         # Validation must fail before relabeling or reparenting anything.
         value['groups'][0]['parts'][0]['components'].append('missing')
         path.write_text(json.dumps(value))

@@ -74,6 +74,9 @@ def stage(plan_path, lossy=True):
     def outside_state():
         return {o.name:(_geometry(o),_materials(o)) for o in collection.all_objects
             if o.type=='MESH' and o.get('source_node') not in selected_nodes}
+    untouched_objects = [o for o in collection.all_objects
+                         if o.type == 'MESH' and o.get('source_node') not in selected_nodes
+                         and o.get('source_node') != 'ground']
     outside_before=outside_state()
     imports=[]
     binding_objects=[]
@@ -114,7 +117,7 @@ def stage(plan_path, lossy=True):
     canonical_after={o.get('source_node') for o in collection.all_objects
                      if o.type=='MESH' and o.get('source_node')!='ground'}
     validate_coverage(canonical_after,expected)
-    grouping=reconcile_asset_groups(plan['catalog'])
+    grouping=reconcile_asset_groups(plan['catalog'], preserve_objects=untouched_objects)
     for result, objects in binding_objects:
         for state in result['state_bindings']:
             for row in state['objects']:

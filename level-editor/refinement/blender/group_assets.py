@@ -21,7 +21,7 @@ def _renamed_part(obj, group, part):
     return new_prefix + suffix
 
 
-def reconcile_asset_groups(catalog_path):
+def reconcile_asset_groups(catalog_path, *, preserve_objects=()):
     """Apply revised ownership by stable source_node without moving geometry.
 
     Includes hidden retained originals and every refined mesh component sharing
@@ -60,6 +60,14 @@ def reconcile_asset_groups(catalog_path):
     for obj in obsolete:
         if any(child not in meshes for child in obj.children):
             raise ValueError(f"Obsolete group contains unclassified children: {obj.name}")
+    preserve_objects = set(preserve_objects)
+    if not preserve_objects <= set(meshes):
+        raise ValueError('Preserved grouping objects must be catalog meshes')
+    for obj in preserve_objects:
+        group, _ = index.owner_for(obj['source_node'], obj.get('projection_component'))
+        if obj.get('asset_group') != group['id']:
+            raise ValueError('Preserved object would change catalog ownership: ' + obj.name)
+    preserved_parents = {obj.parent for obj in preserve_objects}
     matrices = {obj: obj.matrix_world.copy() for obj in meshes}
     visibility = {obj: (obj.hide_render, obj.hide_viewport) for obj in meshes}
     created, removed, moves, renamed = [], [], [], 0
@@ -75,10 +83,13 @@ def reconcile_asset_groups(catalog_path):
                 parents[identifier] = parent
                 created.append(identifier)
             parent = parents[identifier]
-            parent.name = group["name"]
+            if parent not in preserved_parents:
+                parent.name = group["name"]
             parent["asset_group"], parent["asset_name"] = identifier, group["name"]
         bpy.context.view_layer.update()
         for obj in meshes:
+            if obj in preserve_objects:
+                continue
             group, part = index.owner_for(obj["source_node"], obj.get("projection_component"))
             target = parents[group["id"]]
             if obj.parent != target or obj.get("asset_group") != group["id"]:
