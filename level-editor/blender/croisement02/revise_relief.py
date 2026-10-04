@@ -3,6 +3,7 @@ import argparse
 import json
 import sys
 import uuid
+import math
 from pathlib import Path
 import bpy
 import bmesh
@@ -67,12 +68,30 @@ def sculpt(obj):
     bm.normal_update()
     inverse = obj.matrix_world.inverted()
     normal_matrix = obj.matrix_world.to_3x3().inverted().transposed()
+    west = min(p.x for p in world)
+    middle_y = (min(p.y for p in world) + max(p.y for p in world)) * .5
+    middle_z = (min(p.z for p in world) + max(p.z for p in world)) * .5
+    half_y = spans[1] * .5
+    half_z = spans[2] * .5
     for vertex in bm.verts:
         p = obj.matrix_world @ vertex.co
         normal = (normal_matrix @ vertex.normal).normalized()
         wave = noise.noise_vector(p*.06+Vector((3.1,7.3,11.7))).x
         envelope = min(1., max(0., p.z) / 8.)
         p += normal * (wave * min(.8, radius * .12) * envelope)
+        if extension and p.x < 0:
+            # A squared prism is only a visibility proxy. Complete its unseen
+            # return as a rounded rock body, continuously joined at the map
+            # edge. This cube-to-ellipsoid mapping preserves all in-map points.
+            t = min(1., p.x / west)
+            y = max(-1., min(1., (p.y-middle_y)/half_y))
+            z = max(-1., min(1., (p.z-middle_z)/half_z))
+            p.x *= math.sqrt(max(.25, 1.-.38*y*y-.32*z*z))
+            p.y = middle_y + (p.y-middle_y)*math.sqrt(1.-.6*t*t)
+            p.z = middle_z + (p.z-middle_z)*math.sqrt(1.-.6*t*t)
+            # Restrained asymmetry on the inferred cap avoids a manufactured
+            # ellipsoid; this fades to zero exactly at the source boundary.
+            p += normal * noise.noise_vector(p*.027+Vector((9,3,5))).x * (3.*t*t)
         p.z = max(0., p.z)
         vertex.co = inverse @ p
     bmesh.ops.recalc_face_normals(bm, faces=list(bm.faces))
@@ -85,6 +104,7 @@ def sculpt(obj):
         raise ValueError('Rock must remain a closed surface: ' + str(result))
     result.update(source_node=obj['source_node'], edge_radius=radius,
                   inferred_west_extension=extension,
+                  inferred_return_shape='rounded asymmetric cap; source-side points untouched',
                   method='Surveyed relief with rounded exposed corners and low-amplitude inferred weathering')
     return result
 
