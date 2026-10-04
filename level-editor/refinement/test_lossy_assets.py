@@ -288,6 +288,22 @@ class LossyAssetsTest(unittest.TestCase):
         self.assertEqual(self.derived, ['house'])
         self.assertEqual(lossy_assets.verify_derivatives(self.root), [])
 
+    def test_singular_density_keeps_lossless_source_and_builds_its_preview(self):
+        source = self.root / 'derby/house/model.glb'
+        original = source.read_bytes()
+        successful = self.fake_derive
+        def fail(*args):
+            successful(*args)
+            raise np.linalg.LinAlgError('Singular matrix')
+        with patch.object(self, 'fake_derive', fail):
+            report = self.refresh(previews=True)
+        self.assertIn('Singular matrix', report['refused']['house'][0])
+        self.assertEqual(source.read_bytes(), original)
+        self.assertFalse((source.parent / 'lossy.glb').exists())
+        self.assertFalse((source.parent / 'lossy.glb.receipt.json').exists())
+        self.assertEqual(self.previews, ['derby/house/model.glb'])
+        self.assertEqual(lossy_assets.verify_derivatives(self.root), [])
+
     def test_scoped_refresh_does_not_publish_while_an_unselected_lossy_asset_is_stale(self):
         self.refresh()
         index_path = self.root/'index.json'

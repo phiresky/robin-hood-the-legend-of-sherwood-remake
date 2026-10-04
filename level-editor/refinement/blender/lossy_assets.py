@@ -1902,7 +1902,17 @@ def refresh_derivatives(root, work, *, lossy=True, previews=True, ids=None, sett
             asset_work = work / Path(model).with_suffix('')
             if asset_work.exists():
                 shutil.rmtree(asset_work)
-            row = summary_row(derive(entry['id'], (root / model).resolve(strict=True), root / target, args, asset_work))
+            try:
+                row = summary_row(derive(entry['id'], (root / model).resolve(strict=True), root / target, args, asset_work))
+            except np.linalg.LinAlgError as error:
+                # A degenerate surface can make density fitting singular. Keep
+                # its lossless model; never publish a partial/stale derivative.
+                (root / target).unlink(missing_ok=True)
+                (root / (target + '.receipt.json')).unlink(missing_ok=True)
+                entry.pop('lossy_model', None)
+                report['refused'][entry['id']] = ['Numerical density fitting failed: ' + str(error)]
+                log(f'LOSSY REFUSED {entry["id"]}: {report["refused"][entry["id"]][0]}')
+                continue
             report['derived'].append(row)
             log(f'LOSSY {model}: {json.dumps(row)}')
         entry['lossy_model'] = target
