@@ -15,9 +15,12 @@ from render_slots import acquire,release
 
 
 def main():
-    base=OUT/'mixed-wood-audit/boundary-roles76-93-v1';ledger=json.loads((base/'proposal.json').read_text())
+    base=Path(sys.argv[sys.argv.index('--')+1]) if '--' in sys.argv else OUT/'mixed-wood-audit/boundary-roles76-93-v1';ledger=json.loads((base/'proposal.json').read_text())
     destination=base/'receiver-coverage';destination.mkdir(exist_ok=False);results=[]
     for row in ledger['records']:
+        row=dict(row)
+        row.setdefault('receiver',row.get('role'))
+        row.setdefault('native_mask',75)
         if row['receiver']=='ground':
             results.append(dict(row,status='Terrain source-role restoration pending',note='Source ground pixels stay with ground; no foliage geometry claimed'));continue
         mask_path=Path(row['mask'])
@@ -25,7 +28,8 @@ def main():
         mask=np.asarray(Image.open(mask_path).convert('L'))>0;yy,xx=np.nonzero(mask)
         left,right=max(0,int(xx.min())-4),min(1792,int(xx.max())+5);top,bottom=max(0,int(yy.min())-4),min(1152,int(yy.max())+5)
         receiver=row['receiver']
-        if receiver=='wood35':worker=OUT/'tree35-root-research/candidate-v14';asset='croisement02-tree-35'
+        if receiver in ('cap95','existing95'):asset='croisement02-east-upright-rail-fence-95';worker=scenery_workspace(asset)
+        elif receiver=='wood35':worker=OUT/'tree35-root-research/candidate-v14';asset='croisement02-tree-35'
         elif receiver=='wattle99':asset='croisement02-southwest-path-wattle-fence';worker=scenery_workspace(asset)
         else:asset='croisement02-shrub-'+receiver.removeprefix('foliage');worker=scenery_workspace(asset)
         digest=sha(worker/'model.blend');bpy.ops.wm.open_mainfile(filepath=str(worker/'model.blend'))
