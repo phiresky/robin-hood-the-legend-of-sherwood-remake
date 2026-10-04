@@ -17,8 +17,10 @@ from refinement_review import _tile
 from render_multiview_asset import render
 
 
-def main(experiment, donor_dir, output, conditioned=None):
+def main(experiment, donor_dir, output, conditioned=None, conditioned_threshold=.7):
     require(not output.exists(), 'Use a fresh candidate directory')
+    require(math.isfinite(conditioned_threshold) and -1 <= conditioned_threshold <= 1,
+            'Conditioned projection threshold must be finite and in [-1, 1]')
     evidence = {str(p): sha(p) for p in [donor_dir / 'donor.png', donor_dir / 'donor-mask.png',
                 donor_dir / 'tile.png', donor_dir / 'donor-provenance.json', donor_dir / 'donor-validation.json']}
     from PIL import Image
@@ -91,7 +93,7 @@ def main(experiment, donor_dir, output, conditioned=None):
             # camera. Its projection remains well conditioned at either sign.
             if material.get('foliage_card_sides') != 'paired-one-sided':
                 facing = abs(facing)
-            if continuation is not None and facing >= .7:
+            if continuation is not None and facing >= conditioned_threshold:
                 sx = np.floor(positions[:, 0] - conditioned_proof['origin'][0]).astype(int)
                 sy = np.floor(-positions[:, 1] * sin - positions[:, 2] * cos - conditioned_proof['origin'][1]).astype(int)
                 take = (sx >= 0) & (sy >= 0) & (sx < continuation.shape[1]) & (sy < continuation.shape[0])
@@ -130,7 +132,7 @@ def main(experiment, donor_dir, output, conditioned=None):
                       donor_method='texture-synthesis 0.8.3, masked same-asset native donor, seed40',
                       sampling='Native pixel scale in dominant face tangent plane',
                       conditioned_front_samples=conditioned_samples,
-                      conditioned_front_threshold=.7 if conditioned else None,
+                      conditioned_front_threshold=conditioned_threshold if conditioned else None,
                       transparent_bounces=256, approval='pending actual eight-view review',
                       preflight=preflight_report)
         (output / 'validation.json').write_text(json.dumps(result, indent=2) + '\n')
@@ -144,6 +146,8 @@ if __name__ == '__main__':
     parser.add_argument('donor_dir', type=Path)
     parser.add_argument('output', type=Path)
     parser.add_argument('--conditioned', type=Path)
+    parser.add_argument('--conditioned-threshold', type=float, default=.7,
+                        help='Diagnostic projection-normal threshold; default preserves prior candidates')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
     main(args.experiment.resolve(), args.donor_dir.resolve(), args.output.resolve(),
-         args.conditioned.resolve() if args.conditioned else None)
+         args.conditioned.resolve() if args.conditioned else None, args.conditioned_threshold)
