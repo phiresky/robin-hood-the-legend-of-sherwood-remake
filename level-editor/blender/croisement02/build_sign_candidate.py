@@ -30,6 +30,7 @@ def face_image(vertices,face,p,frame,source,dest,is_board):
  if is_board and frame==13:known &= np.abs(coords[:,0]-p[8])>p[4]/2+.7
  if not is_board and frame!=13:known &= (pts[:,:,2].ravel()<p[2]-1)|(pts[:,:,2].ravel()>p[2]+p[1]+1)
  rgb[known]=sample[known,:3];Image.fromarray(np.flipud(rgb.reshape(size,size,3))).save(dest)
+ Image.fromarray(np.flipud(known.reshape(size,size).astype('uint8')*255)).save(dest.with_name(dest.stem+'-ownership.png'))
  return dict(frame=frame,known_texels=int(known.sum()),unknown_texels=int((~known).sum()),image_sha256=sha(dest),source_sha256=f['image_sha256'],scope='Exact nearest native RGB on visible face hypothesis; hidden or outside source remains neutral gray')
 
 
