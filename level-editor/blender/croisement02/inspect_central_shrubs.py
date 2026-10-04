@@ -10,6 +10,7 @@ from render_slots import acquire,release
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('mask',type=int);parser.add_argument('--version',required=True)
     parser.add_argument('--review-suffix',default='',help='Fresh evidence directory suffix for an interrupted review; worker stays unchanged')
+    parser.add_argument('--wood-only',action='store_true',help='Supplemental context excluding neighbouring crowns; never full-scene evidence')
     args=parser.parse_args(sys.argv[sys.argv.index('--')+1:]);index=args.mask
     if index not in (67,68,69,70,71,72,73,75,79,80,82,91,92):raise ValueError('Reviewed native candidates only')
     joint.worker=lambda i:OUT/f'understory-candidates/native-{i}-{args.version}/assets/croisement02-shrub-{i:02}'
@@ -18,5 +19,5 @@ if __name__=='__main__':
     if index in (79,80):contexts.append(scenery_workspace('croisement02-ground-plant-116'))
     if index==75:contexts.append(scenery_workspace('croisement02-east-upright-rail-fence-95'))
     acquire()
-    try:joint.run(f'native-shrub-{index}-{args.version}{args.review_suffix}',[index],include_bank=index in (67,68,73,92),context_workers=contexts)
+    try:joint.run(f'native-shrub-{index}-{args.version}{args.review_suffix}',[index],include_bank=index in (67,68,73,92),context_workers=contexts,context_wood_only=args.wood_only)
     finally:release()

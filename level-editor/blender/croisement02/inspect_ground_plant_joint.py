@@ -22,7 +22,7 @@ def worker(index):
     return OUT/'ground-plant-candidates'/batch/'assets'/f'croisement02-ground-plant-{index}'
 
 
-def run(label,indices,include_bank=None,context_workers=()):
+def run(label,indices,include_bank=None,context_workers=(),context_wood_only=False):
     destination=OUT/'ground-plant-candidates/joint-v2'/label;destination.mkdir(parents=True,exist_ok=False)
     bpy.ops.wm.read_factory_settings(use_empty=True);scene=bpy.context.scene
     collection=bpy.data.collections.new('Ground plant joint review');scene.collection.children.link(collection)
@@ -36,7 +36,8 @@ def run(label,indices,include_bank=None,context_workers=()):
         if audit['status']!='PASS' or audit['model_sha256']!=digest:raise ValueError('Stale worker audit')
         names=[r['object'] for r in audit['objects']]
         with bpy.data.libraries.load(str(model),link=False) as (src,dst):dst.objects=names
-        for obj in dst.objects:
+        selected=[o for o in dst.objects if not (context_wood_only and role=='selected neighbouring vegetation' and o.get('projection_component')=='crown')]
+        for obj in selected:
             collection.objects.link(obj)
             parent=obj.parent
             while parent:
@@ -44,7 +45,7 @@ def run(label,indices,include_bank=None,context_workers=()):
                 parent=parent.parent
         bpy.context.view_layer.update()
         bindings=[]
-        for obj in dst.objects:
+        for obj in selected:
             before=signature(obj);matrix=obj.matrix_world.copy();obj.parent=None;obj.matrix_world=matrix;obj.hide_render=False
             if signature(obj)!=before:raise ValueError('Placement changed during append')
             bindings.append(dict(name=obj.name,source_node=obj.get('source_node'),signature=before))
@@ -102,7 +103,7 @@ def run(label,indices,include_bank=None,context_workers=()):
     sheet.save(destination/'sheet.png')
     for r in records:
         if sha(Path(r['workspace'])/'model.blend')!=r['model_sha256']:raise ValueError('Worker changed during joint render')
-    write_json(destination/'evidence.json',dict(status='private grouped placement; manual review pending',inputs=records,views=views,sheet_sha256=sha(destination/'sheet.png'),
+    write_json(destination/'evidence.json',dict(status='private grouped placement; manual review pending',inputs=records,views=views,sheet_sha256=sha(destination/'sheet.png'),context_wood_only=context_wood_only,
         limitation='Contact review only. New plants remain unselected; wider neighboring vegetation/terrain ownership review is still required.'))
 
 if __name__=='__main__':
