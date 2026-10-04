@@ -4,6 +4,23 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Automatic curved-wall lighting attachment (2026-10-05)
+
+Unanchored spline lights now find matching asset-local receiving planes before
+deformation. Their generated fragments derive finite probes from overlaps with
+those same deformed surfaces, including the exported contour's quantization.
+This avoids requiring independently tessellated light and walking triangles to
+have identical planes. Source ownership stays local to each wall span/repeat;
+missing overlaps warn and omit only the affected light fragment.
+
+The previously failing curved/rising case now matches explicit-probe output.
+All 16 focused editor tests pass, including clipped overlap, reversed winding,
+fractional origins and golden export equality. Typechecking and targeted lint
+pass. The new golden fixture also passes native shadow queries for ambience
+masks 1, 2 and 4: the wall-top layer receives shadow while the terrain underneath
+and points outside the light remain unaffected. This closes the specific
+automatic plane-matching gap described below, not every lighting/visual case.
+
 ## Spline lighting receiving segments (2026-10-05)
 
 Authored receiving segments now clip and subdivide at the wall's deformation
@@ -19,11 +36,11 @@ The golden fixture now includes both a point and segment probe and
 still matches the descriptor validated by native lighting queries. Typechecking
 and targeted lint pass.
 
-A remaining automatic-binding gap was reproduced by removing the explicit
+An automatic-binding gap was reproduced by removing the explicit
 probe from the curved/rising wall case in `wall-spline-gameplay.test.ts`: exact
 plane matching finds no receiver for its first light fragment. Explicit probes
-work, but unanchored curved lighting needs attachment derived from source
-surface ownership rather than equality of independently tessellated planes.
+worked; source-surface attachment described above subsequently fixed the
+unanchored case without requiring equality of independently tessellated planes.
 
 ## Spline lighting point anchors (2026-10-05)
 

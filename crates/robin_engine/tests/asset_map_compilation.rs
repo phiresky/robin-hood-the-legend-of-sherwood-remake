@@ -2058,6 +2058,67 @@ fn spline_lighting_repeats_and_filters_by_mission_ambience() {
 }
 
 #[test]
+fn automatic_curved_wall_lighting_stays_on_the_elevated_layer() {
+    use robin_engine::coordinates::MapPoint;
+    for ambience in [1, 2, 4] {
+        let mut loaded = LoadedLevel::hackable_from_json(include_bytes!(
+            "fixtures/asset-spline-auto-light.level.json"
+        ))
+        .unwrap();
+        loaded.mission.header.ambiance = ambience;
+        let lights = loaded.proto.light_sectors.clone();
+        assert!(lights.len() > 12);
+        let mut assets = LevelAssets::new();
+        let engine = construct_loaded(loaded, &mut assets);
+        let ground_layer = assets
+            .environment
+            .static_sight_obstacles
+            .iter()
+            .find(|obstacle| {
+                obstacle.projection_area_ref().is_some()
+                    && obstacle
+                        .obstacle_points
+                        .iter()
+                        .all(|point| point.z_top == 0.)
+            })
+            .unwrap()
+            .projection_area_ref()
+            .unwrap()
+            .layer
+            .get();
+        for light in lights {
+            assert_ne!(light.layer, ground_layer);
+            let count = light.polygon.points.len() as f32;
+            let x = light
+                .polygon
+                .points
+                .iter()
+                .map(|&(x, _)| x as f32)
+                .sum::<f32>()
+                / count;
+            let y = light
+                .polygon
+                .points
+                .iter()
+                .map(|&(_, y)| y as f32)
+                .sum::<f32>()
+                / count;
+            let point = MapPoint::new(x, y);
+            assert_eq!(
+                engine.fast_grid().is_in_shadow_sector(point, light.layer),
+                ambience != 2
+            );
+            assert!(!engine.fast_grid().is_in_shadow_sector(point, ground_layer));
+            assert!(
+                !engine
+                    .fast_grid()
+                    .is_in_shadow_sector(MapPoint::new(20., 20.), light.layer)
+            );
+        }
+    }
+}
+
+#[test]
 fn spline_sounds_load_at_repeated_positions_with_acoustic_settings() {
     let mut loaded = LoadedLevel::hackable_from_json(include_bytes!(
         "fixtures/asset-spline-material.level.json"

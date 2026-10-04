@@ -3,6 +3,7 @@ import type { GameplayAssetDescriptor } from "../src/asset-gameplay.ts";
 import type { Level3D } from "../src/level3d.ts";
 import { createTerrainGrid } from "../src/authored-terrain.ts";
 import { sceneToGame } from "../src/geometry.ts";
+import { splineCurve } from "../src/spline-sampling.ts";
 
 export function wallSplineFixture() {
   const camera = { kind: "oblique-orthographic" as const, elevation_deg: 35 };
@@ -147,5 +148,29 @@ export function wallMaterialFixture() {
       },
     },
   ];
+  return fixture;
+}
+
+export function wallAutomaticLightFixture() {
+  const fixture = wallSplineFixture();
+  const { asset, document } = fixture;
+  const top = [
+    [-50, -10, 40],
+    [50, -10, 40],
+    [50, 10, 40],
+    [-50, 10, 40],
+  ].map(([x, y, z]) => sceneToGame(document.camera, [x!, y!, z!]));
+  asset.gameplay!.surfaces = [
+    { id: "top", node: "body", polygon: top.map(([x, y]) => [x, y]), height: top[0]![2] },
+  ];
+  asset.gameplay!.lights = [{ id: "shadow", node: "body", polygon: top, ambiences: 5 }];
+  const path = document.splines![0]!;
+  path.curved = true;
+  path.points = [
+    [100, 200, 20],
+    [240, 240, 60],
+    [400, 200, 80],
+  ];
+  path.repeatLength = splineCurve(path, document.camera).getLength();
   return fixture;
 }

@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { BoxGeometry, Group, Mesh, MeshBasicMaterial, Vector3 } from "three";
-import { wallSplineFixture, wallMaterialFixture } from "../../shared/test-fixtures/wall-spline.ts";
+import {
+  wallSplineFixture,
+  wallMaterialFixture,
+  wallAutomaticLightFixture,
+} from "../../shared/test-fixtures/wall-spline.ts";
 import { wallSplineGameplay } from "../../shared/src/wall-spline-gameplay.ts";
 import { sceneToGame } from "../../shared/src/geometry.ts";
 import { heightPlane, planeHeight } from "../../shared/src/gameplay-plane.ts";
@@ -38,6 +42,20 @@ test("wall materials match the fixture exercised by native material queries", as
     await readFile(
       new URL(
         "../../../crates/robin_engine/tests/fixtures/asset-spline-material.level.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(compileMap(f.document, f.bounds, f.assets).descriptor, expected);
+});
+
+test("automatic curved wall lighting matches the native elevated shadow fixture", async () => {
+  const f = wallAutomaticLightFixture();
+  const expected = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/asset-spline-auto-light.level.json",
         import.meta.url,
       ),
       "utf8",

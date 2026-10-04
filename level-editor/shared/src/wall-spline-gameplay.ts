@@ -5,6 +5,7 @@ import type { LevelSpline } from "./splines.ts";
 import type { ProjectionAssetDescriptor } from "./projection-assets.ts";
 import type {
   AssetGameplay,
+  AssetLightRegion,
   AssetWalkableSurface,
   GameplayAssetDescriptor,
 } from "./asset-gameplay.ts";
@@ -17,6 +18,7 @@ import { heightPlane, planeHeight } from "./gameplay-plane.ts";
 import { matchesWallSource, wallSectionAt } from "./wall-section-profile.ts";
 import { quantizeGeneratedMotionPolygon } from "./motion-quantization.ts";
 import { clipSplinePolyline } from "./clip-spline-polyline.ts";
+import { splineLightReceivers } from "./spline-light-receivers.ts";
 
 type Vertex = number[];
 function clip(vertices: Vertex[], axis: number, boundary: number, above: boolean) {
@@ -78,6 +80,7 @@ export function wallSplineGameplay(
     const out = generated.gameplay!;
     let materialSequence = 0;
     let lightGroupSequence = 0;
+    let lightSequence = 0;
     function append(
       assetId: string | undefined,
       run: LevelSpline | undefined,
@@ -359,7 +362,44 @@ export function wallSplineGameplay(
           true,
         );
       }
+      const automaticLights: { light: AssetLightRegion; sources: Set<string>; repeat: number }[] =
+        [];
+      const surfaceOrigins = new Map<string, { source: string; repeat: number }>();
+      const sourceProjectionPlane = (points: Vec3[]) =>
+        heightPlane(
+          points.map((point): Vec3 => {
+            const [x, y, z] = sceneToGame(document.camera, point);
+            return [x, y - z, z];
+          }),
+        );
+      const sourcePlanes = data.lights?.some(
+        (light) => !light.receivers && !light.receiverSegments && !light.receiverPolylines,
+      )
+        ? data.surfaces.map((surface) => ({
+            id: surface.id,
+            plane: sourceProjectionPlane(
+              surface.polygon.map(([x, y], i) =>
+                source(surface.node, [
+                  x,
+                  y,
+                  typeof surface.height === "number" ? surface.height : surface.height[i]!,
+                ]),
+              ),
+            ),
+          }))
+        : [];
       for (const light of data.lights ?? []) {
+        const explicit = light.receivers || light.receiverSegments || light.receiverPolylines;
+        const sourcePlane = !explicit
+          ? sourceProjectionPlane(light.polygon.map((p) => source(light.node, p)))
+          : undefined;
+        const sourceReceivers = new Set(
+          sourcePlane
+            ? sourcePlanes
+                .filter(({ plane }) => plane.every((n, i) => Math.abs(n - sourcePlane[i]!) < 1e-7))
+                .map(({ id }) => id)
+            : [],
+        );
         const group = `light-group-${lightGroupSequence++}`;
         const cropped = new Set<number>();
         pieces(
@@ -425,7 +465,7 @@ export function wallSplineGameplay(
             )
               return;
             out.lights!.push({
-              id: `light-${out.lights!.length}`,
+              id: `light-${lightSequence++}`,
               node: "$root",
               polygon,
               ambiences: light.ambiences,
@@ -446,6 +486,12 @@ export function wallSplineGameplay(
                   }
                 : {}),
             });
+            if (sourceReceivers.size)
+              automaticLights.push({
+                light: out.lights!.at(-1)!,
+                sources: sourceReceivers,
+                repeat,
+              });
           },
         );
       }
@@ -531,6 +577,8 @@ export function wallSplineGameplay(
                     }
                   : {}),
               });
+              if (target === out.surfaces)
+                surfaceOrigins.set(target.at(-1)!.id, { source: surface.id, repeat });
             },
           );
       };
@@ -539,6 +587,22 @@ export function wallSplineGameplay(
         appendSurface(surface, out.movementBlockers!);
       for (const surface of data.movementClearances ?? [])
         appendSurface(surface, out.movementClearances!);
+      const omittedLights = new Set<AssetLightRegion>();
+      for (const { light, sources, repeat } of automaticLights) {
+        const candidates = out.surfaces.filter((surface) => {
+          const origin = surfaceOrigins.get(surface.id);
+          return origin?.repeat === repeat && sources.has(origin.source);
+        });
+        const probes = splineLightReceivers(light, candidates, imageOrigin);
+        if (probes.length) light.receiverSegments = probes;
+        else {
+          warnings.push(
+            `Wall spline ${path.id}, light ${light.id}: no deformed source receiver overlaps the exported contour; light region omitted.`,
+          );
+          omittedLights.add(light);
+        }
+      }
+      out.lights = out.lights!.filter((light) => !omittedLights.has(light));
       // Trimming may remove every owner of a source material region.
       out.materials = out.materials!.filter(
         (region) =>

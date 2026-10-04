@@ -217,6 +217,11 @@ test("wall lighting follows repeated and turned paths and preserves ambience fil
   assert.ok(
     bentCompiled.light_sectors!.every((light) => light.layer !== ground.projection_area![1]),
   );
+  delete asset.gameplay!.lights[0]!.receiverSegments;
+  assert.deepEqual(
+    compileAssetGameplay(document, assets, bounds).light_sectors,
+    bentCompiled.light_sectors,
+  );
 });
 
 test("wall spatial sounds repeat and crop with their acoustic rules intact", () => {
