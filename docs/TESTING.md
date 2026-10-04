@@ -549,3 +549,9 @@ data is unchanged; independent one-unit moves of the arch and floor prove the
 control follows only the arch. Native apply/reset passes all nine controls in
 each of the three fixtures. This is placement/permission coverage, not animated
 portcullis rendering or arbitrary-placement traversal certification.
+
+The full-library browser fixture retains its generated ZIP as a `Uint8Array`.
+The CDP runner converts only individual download chunks to JSON arrays; converting
+the entire archive with `Array.from` failed after Lincoln's 45 appearance renders
+and packaging completed. That failed harness run produced no saved ZIP and does
+not count as a successful native archive round trip.

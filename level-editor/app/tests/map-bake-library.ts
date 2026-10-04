@@ -55,7 +55,7 @@ try {
   const { compiled, pixels, appearance } = baked;
   result.textContent = "RUNNING encoding images and packaging ZIP";
   const archive = await worker.package(compiled, pixels, appearance);
-  (window as unknown as { __bakeZip: number[] }).__bakeZip = Array.from(archive);
+  (window as unknown as { __bakeZip: Uint8Array }).__bakeZip = archive;
   const obstacles =
     compiled.descriptor.asset_geometry?.sight_obstacles.length ??
     compiled.descriptor.volumes.length;
