@@ -25,8 +25,10 @@ repaired and published. Native baseline construction and all eleven control
 apply/reset checks pass. Moving the hall/spire leaves unresolved neighboring
 receivers. The completed fresh ten-map descriptor batch passes native construction
 and apply/reset for all 70 compiled controls, but retains omissions. Five Lincoln
-props lack gameplay definitions; Wychford needs the separate calibrated-wall
-check. This is not a rendered ZIP round-trip or full feature-coverage pass.
+props lack gameplay definitions. The separate calibrated Wychford export also
+passes native construction and both control apply/reset checks, retaining its
+tower-control and church-traversal height mismatches. This is not a rendered ZIP
+round-trip or full feature-coverage pass.
 
 | Map information | How the editor constructs it | Current evidence / gap |
 |---|---|---|

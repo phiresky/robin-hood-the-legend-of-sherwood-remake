@@ -4,6 +4,22 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Fresh calibrated Wychford construction (2026-10-05)
+
+The current scene with model-calibrated walls exports to
+`work/map-compile/wychford-wall-calibration-QcegIB`. Native construction passes
+with 146 areas, 21,323 sight/receiving obstacles, 30 doors, 57,456 grid blocks and
+36,983 elevation boundaries (8.69 seconds). Both compiled controls apply/reset
+(8.45 seconds). The church-side traversal endpoint remains at height 134.10
+above a receiving floor at 88.33; the west-tower control remains at 196.70 above
+a floor at 88.21. These are unresolved placement/attachment omissions.
+
+The full-library browser bake fixture was also corrected to forward the
+calibrated descriptors supplied by the viewport to its export worker. It had
+captured the uncalibrated input map instead, so previous browser checks using
+that fixture cannot certify spline-wall gameplay. App typechecking passes;
+this correction has not yet been verified by a new rendered ZIP round trip.
+
 ## Fresh ten-map native construction and controls (2026-10-05)
 
 After repairing Lincoln's spire bindings, the completed descriptor batch at

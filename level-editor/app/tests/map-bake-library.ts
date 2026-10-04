@@ -46,7 +46,10 @@ try {
       ({ stage, completed, total }) => {
         result.textContent = `RUNNING ${stage}${total ? `: ${Math.round((completed / total) * 100)}%` : ""}`;
       },
-      (bounds) => exportWorker.compile(candidate.document, bounds, assets),
+      (bounds, calibratedAssets) => {
+        if (!calibratedAssets) throw new Error("Library bake requires calibrated asset definitions");
+        return exportWorker.compile(candidate.document, bounds, calibratedAssets);
+      },
     );
   } finally {
     clearInterval(heartbeat);
