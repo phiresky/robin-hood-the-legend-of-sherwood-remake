@@ -1,8 +1,15 @@
 import unittest
+import contextlib
+import hashlib
+import io
+import json
+from pathlib import Path
+import tempfile
 import numpy as np
 from shapely import union_all
 from shapely.geometry import Polygon, box
 from native_occlusion_proof import ObservedOcclusion, opaque_footprint
+from prove_hidden_native_fronts import main as prove
 
 
 class OcclusionProofTests(unittest.TestCase):
@@ -43,6 +50,38 @@ class OcclusionProofTests(unittest.TestCase):
             proof = authority.prove(target, 5)
             self.assertEqual(proof['hidden'], full_remainder.is_empty)
             self.assertAlmostEqual(proof['uncovered_area'], full_remainder.area, places=12)
+
+    def test_checkpoint_resume_preserves_proof_and_rejects_changed_inputs(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source, worker, output = root / 'source', root / 'worker', root / 'proof'
+            source.mkdir(); worker.mkdir()
+            (worker / 'model.blend').write_bytes(b'fixed synthetic worker')
+            np.savez(source / 'physical-alpha.npz', alpha=np.ones((1, 1), bool))
+            sha = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+            payload = dict(worker=str(worker), model_sha256=sha(worker / 'model.blend'),
+                alpha_sha256=sha(source / 'physical-alpha.npz'), ray=[0, 0, 1], sin=1, cos=0,
+                native_viewport=[-10, -10, 10, 10],
+                images={'leaf': dict(binary_alpha=True, alpha_key='alpha', extension='REPEAT')},
+                triangles=[dict(polygon=0, slot=0, image='leaf', points=[[0, 0, 10], [3, 0, 10], [0, 3, 10]],
+                                uv=[[0, 0], [1, 0], [0, 1]]),
+                           dict(polygon=1, slot=5, image='leaf', points=[[.2, .2, 0], [.8, .2, 0], [.2, .8, 0]],
+                                uv=[[0, 0], [1, 0], [0, 1]])])
+            (source / 'input.json').write_text(json.dumps(payload))
+            with contextlib.redirect_stdout(io.StringIO()):
+                prove(source, output, True)
+            completed = (output / 'evidence.json').read_bytes()
+            self.assertEqual(json.loads(completed)['hidden_polygons'], [1])
+            # Simulate interruption after the last checkpoint but before final evidence.
+            (output / 'evidence.json').unlink()
+            with contextlib.redirect_stdout(io.StringIO()):
+                prove(source, output, True, True)
+            self.assertEqual((output / 'evidence.json').read_bytes(), completed)
+            (output / 'evidence.json').unlink()
+            payload['native_viewport'][0] = -11
+            (source / 'input.json').write_text(json.dumps(payload))
+            with self.assertRaisesRegex(ValueError, 'Checkpoint inputs'):
+                prove(source, output, True, True)
 
 
 if __name__ == '__main__':
