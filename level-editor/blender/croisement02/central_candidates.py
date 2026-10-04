@@ -14,6 +14,12 @@ def validate_record(record,group):
     if record.get('user_approval') is not None:raise ValueError('New geometry cannot inherit approval')
     for filename,digest in record['files'].items():
         if sha(Path(filename))!=digest:raise ValueError('Central foliage evidence changed: '+filename)
+    scope_path=worker.parents[1]/'scope-derivation.json'
+    if scope_path.exists():
+        if str(scope_path) not in record['files']:raise ValueError('Scoped source derivation not frozen')
+        scope=json.loads(scope_path.read_text())
+        if scope['targets']!=[group['id']] or sha(Path(scope['source']))!=scope['source_sha256']:
+            raise ValueError('Scoped source scene or target changed')
     model=sha(worker/'model.blend')
     audit=json.loads((worker/'inspection/saved-model-audit.json').read_text());coverage=json.loads((worker/'inspection/source-coverage/report.json').read_text())
     review=json.loads((worker/'inspection/visual-review.json').read_text());geometry=json.loads((worker/'inspection/refinement.json').read_text())['crown']
