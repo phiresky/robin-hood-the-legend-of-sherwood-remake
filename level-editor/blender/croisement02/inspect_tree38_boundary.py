@@ -12,7 +12,7 @@ from render_slots import acquire,release
 from render_multiview_asset import render
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--mask',type=int,choices=(7,31,32,38),default=7);parser.add_argument('--model',type=Path);parser.add_argument('--output-name',default='contour-prototype-v1-review');parser.add_argument('--solid-only',action='store_true');args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
+    parser=argparse.ArgumentParser();parser.add_argument('--mask',type=int,choices=(38,),default=38);parser.add_argument('--model',type=Path);parser.add_argument('--output-name',default='contour-prototype-v1-review');parser.add_argument('--solid-only',action='store_true');args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
     worker=tree_workspace(args.mask);bank=scenery_workspace('croisement02-north-woodland-bank') if args.mask==7 else OUT/'ground-receiver-review-v5';support_asset=bank.name if args.mask==7 else 'croisement02-ground-receiver';out=OUT/f'tree{args.mask:02d}-root-research'/args.output_name;out.mkdir(parents=True,exist_ok=False)
     hashes={str(w):sha(w/'model.blend') for w in (worker,bank)}
     model=args.model.resolve() if args.model else worker/'model.blend';model_hash=sha(model)
