@@ -22,7 +22,7 @@ def bvh(objects):
     return BVHTree.FromPolygons(vertices,faces)
 
 def main():
-    old=tree_workspace(7);bank=scenery_workspace('croisement02-north-woodland-bank');out=OUT/'tree07-root-research/continuous-stem-v4';out.mkdir(parents=True,exist_ok=False)
+    old=tree_workspace(7);bank=scenery_workspace('croisement02-north-woodland-bank');out=OUT/'tree07-root-research/continuous-stem-v5';out.mkdir(parents=True,exist_ok=False)
     hashes={str(w):sha(w/'model.blend') for w in (old,bank)}
     bpy.ops.wm.open_mainfile(filepath=str(bank/'model.blend'));bpy.context.view_layer.update()
     support=bvh([o for o in bpy.data.collections['Croisement02 Working'].all_objects if o.type=='MESH' and o.get('asset_group')==bank.name])
@@ -35,7 +35,7 @@ def main():
     canvas=Image.new('L',(1792,1152));canvas.paste(Image.open(OUT/'baseline/masks'/row['png']).convert('L'),tuple(row['box_top_left']));mask=np.asarray(canvas)>0
     ground=next(r['ground_y'] for r in json.loads((OUT/'forest-v4-sources/manifest.json').read_text()) if r['mask']==7)
     vertices=[tuple(p) for p in boundary];profiles=[];n=len(angles);rows=[]
-    for y in range(445,530):
+    for y in range(435,530):
         xs=np.where(mask[y])[0];xs=xs[(xs>=735)&(xs<=790)]
         if not len(xs):continue
         left,right=float(xs.min())-.45,float(xs.max())+.45;cx=(left+right)/2;radius=(right-left)/2
@@ -55,6 +55,7 @@ def main():
             else:
                 point=source+RAY*d;target=max(0.,(point.z-41.949)/RAY.z)
                 d-=target*fade*(-wave)
+            if y<445:d=min(d,(junction['cut']-.25-source.z)/RAY.z)
             vertices.append(tuple(source+RAY*d))
         profiles.append(dict(source_y=y,left=left,right=right,rear_support_fade=fade))
     faces=[tuple(reversed(range(n)))]
