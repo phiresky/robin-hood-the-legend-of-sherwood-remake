@@ -22,7 +22,7 @@ def main():
                                ('Native comparison','inspection/native-source/comparison.png')]:
             path=worker/relative
             if path.exists():images.append(f'<figure><figcaption>{label}</figcaption><a href="../{path.relative_to(OUT)}"><img src="../{path.relative_to(OUT)}"></a></figure>')
-        fragments.append(f'<article id="{group["id"]}"><h2>{html.escape(group["name"])} — {html.escape(revision)}</h2><p>{html.escape(record["status"])}</p>'+''.join(images)+'<ul>'+''.join('<li>'+html.escape(t)+'</li>' for t in record.get('findings',record.get('limitations',[record.get('finding','')])))+'</ul></article>')
+        fragments.append(f'<article id="{group["id"]}-{revision}"><h2>{html.escape(group["name"])} — {html.escape(revision)}</h2><p>{html.escape(record["status"])}</p>'+''.join(images)+'<ul>'+''.join('<li>'+html.escape(t)+'</li>' for t in record.get('findings',record.get('limitations',[record.get('finding','')])))+'</ul></article>')
     sheets=sorted((OUT/'source-survey').glob('masks-*.jpg'))
     survey=''.join(f'<a href="../source-survey/{p.name}">{p.stem}</a> ' for p in sheets)
     body=''.join(fragments) or '<p>Geometry workers are being prepared. No candidate has passed self-review yet.</p>'
