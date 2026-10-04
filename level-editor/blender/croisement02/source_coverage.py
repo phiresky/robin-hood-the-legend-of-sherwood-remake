@@ -14,8 +14,9 @@ from tree_geometry import SIN,COS,RAY
 def audit(workspace,objects):
     report=json.loads((workspace/'inspection/refinement.json').read_text())
     if 'mask' not in report:return None
-    row=next(r for r in json.loads((OUT/'forest-v4-sources/manifest.json').read_text()) if r['mask']==report['mask'])
-    packet_path=Path(report.get('source_packet',row['packet']));packet=json.loads(packet_path.read_text());expected=np.zeros((1152,1792),dtype=bool)
+    if 'source_packet' in report:packet_path=Path(report['source_packet'])
+    else:packet_path=Path(next(r['packet'] for r in json.loads((OUT/'forest-v4-sources/manifest.json').read_text()) if r['mask']==report['mask']))
+    packet=json.loads(packet_path.read_text());expected=np.zeros((1152,1792),dtype=bool)
     def paste(alpha,x,y):
         h,w=alpha.shape;left,top=max(0,x),max(0,y);right,bottom=min(1792,x+w),min(1152,y+h)
         if right>left and bottom>top:expected[top:bottom,left:right]|=alpha[top-y:bottom-y,left-x:right-x]

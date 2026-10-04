@@ -17,6 +17,13 @@ least as large as visible width, and verify actual alpha-covered geometry rather
 than transparent mesh bounds. Check all eight actual-material views. Gray in the
 separate source-only sheets means unobserved surface, not a finished material.
 
+Complete assets beyond the map boundary rather than terminating their geometry
+at the source-image edge. Preserve the observed in-map silhouette and artwork;
+mark extrapolated trunks, branches, crowns and materials as inferred. Review
+the entire completed asset from all eight directions, using supplemental wider
+cameras when the frozen packet clips the added geometry. This applies to other
+edge-clipped scenery as well as trees.
+
 This map supplies its own RGB, wood outlines and leaf coverage. Native canopy
 masks 128–135 correspond to the eight canopy animation clusters; animation
 frames alone contain only changing pixels and are not complete crown masks.
@@ -78,10 +85,16 @@ accurate material description. The repair recipe uses masonry and the gallery
 shows the corrected name. Foreground underbrush masks are excluded from affected
 scenery receivers rather than projected onto masonry or wood.
 
-Three state groups retain native geometry pending effective-state review. The
+Patch-controlled obstacle groups retain native metadata for state integration;
+they must not become permanently visible buildings or fences without artwork
+evidence. `state_inventory.py` audits the nine native patches and their old/new
+mask and obstacle sets. `review_ownership.py` writes a separate revised catalog:
+obstacle 144 leaves tree 03, rock 133 joins the northwest outcrop, and obstacle
+132 is identified as northern wood mask 21. Frozen worker catalogs and approved
+groups remain unchanged. The
 complete 15 animation sequences, nine native patches and 129 mission patches
 remain source evidence; a synchronized first frame does not implement animation
-or prove every mission state. Mask-only undergrowth/grass, four unassigned wood
+or prove every mission state. Mask-only undergrowth/grass, three unassigned wood
 masks, terrain foreground removal and full-scene gap checks remain integration
 work. Their absence is shown in the gallery, not hidden by the native-part count.
 
@@ -139,11 +152,19 @@ Run `python3 level-editor/blender/croisement02/self_review_packet.py <ids>` to
 assemble current eight-view and source-comparison boards. This command never
 grants readiness; manual observations belong in hash-bound visual-review records.
 
-Remaining self-review TODOs: separate tree 03's obstacle 144 state ownership
-(patch-006 removes it); reconsider cropped/disconnected crown grouping on
-20/23/24/40; and improve inferred bark on 41. Tree 23's current canopy belongs
-to a separate patch left of its map-edge trunks; do not treat that assignment
-as evidence of the trunks' actual crown.
+`revise_tree03.py` removes obstacle 144 in a new frozen worker and passed source
+and eight-view self-review. `revise_relief.py` reconstructs closed shared-vertex
+rock volumes, rounds exposed corners, and uses the revised ownership catalog.
+`complete_boundary_crowns.py` adds inferred off-map continuations to 24/40;
+`complete_north_tree23.py` replaces an incorrectly associated in-map crown with
+an inferred crown above its northern trunks. These completions still require
+full-crown visual review. `prepare_tree21.py` replaces the former bank with its
+native wood silhouette and an inferred northern crown. Its bark excludes
+foreground canopy 134. The revised tree 23 wood uses row-span sweeps to retain
+the small visible root edges that a simplified skeleton missed.
+Remaining self-review TODOs include boundary tree 20 and inferred bark on 41.
+Tree 23's former canopy
+lay left of its map-edge trunks and is not evidence of their actual crown.
 These candidates remain in progress even where silhouette and depth metrics pass.
 Preserve frozen inventories and cameras; corrected ownership needs a new worker,
 and extra inspection views must be explicitly recorded.
@@ -186,3 +207,11 @@ and self-review packet select this replacement only after its receipt exists.
 
 Trees 00/05/18/27/46 passed the subsequent source and eight-view geometry review.
 Texture completion and integrated ground contact remain separate work.
+
+`stage_review_scene.py` combines current hash-validated workers into
+`integration-review/scene.blend`, retaining geometry approvals separately from
+unapproved candidates and hidden state metadata. It reconciles all 150 native
+parts and renders eight oblique scene views. This private review assembly is
+not a publication. The first integrated review remains on hold for foreground
+removal, missing mask-only scenery, pronounced oblique foliage layering,
+terrain completion and mission/animation state integration.

@@ -10,7 +10,7 @@ from evidence_io import sha
 
 
 def fill(workspace,objects,mask,*,receiver_only=False,donor_mapping='tiled'):
-    if donor_mapping not in ('tiled','aperiodic-vertical'):raise ValueError('Unknown bark donor mapping')
+    if donor_mapping not in ('tiled','aperiodic-vertical','continuous-grain'):raise ValueError('Unknown bark donor mapping')
     rows=json.loads((OUT/'baseline/masks/manifest.json').read_text())['masks']
     row=next(r for r in rows if r['index']==mask)
     x,y=row['box_top_left'];w,h=row['box_size']
@@ -55,6 +55,16 @@ def fill(workspace,objects,mask,*,receiver_only=False,donor_mapping='tiled'):
             ix=np.floor(x*.75+2*np.sin(z*.071)).astype(int)%donor_rgb.shape[1]
             iy=np.floor(z*.3+3*np.sin(x*.31)+9*np.sin(z*.013)).astype(int)%donor_rgb.shape[0]
         colors[unknown,:3]=donor_rgb[iy[unknown],ix[unknown]]
+        if donor_mapping=='continuous-grain':
+            # A tiny observed donor cannot support repeated knots. Smoothly
+            # interpolate its own palette into explicitly inferred long grain.
+            x,z=positions[unknown,0],positions[unknown,2]
+            sx=(.5+.27*np.sin(x*.67+.20*np.sin(z*.017))+.21*np.sin(x*1.091+z*.003))*(donor_rgb.shape[1]-1)
+            sy=(.5+.30*np.sin(z*.009+x*.041)+.18*np.sin(x*.113+z*.006))*(donor_rgb.shape[0]-1)
+            x0=np.floor(sx).astype(int);y0=np.floor(sy).astype(int)
+            x1=np.minimum(x0+1,donor_rgb.shape[1]-1);y1=np.minimum(y0+1,donor_rgb.shape[0]-1)
+            tx=(sx-x0)[:,None];ty=(sy-y0)[:,None]
+            colors[unknown,:3]=(1-ty)*((1-tx)*donor_rgb[y0,x0]+tx*donor_rgb[y0,x1])+ty*((1-tx)*donor_rgb[y1,x0]+tx*donor_rgb[y1,x1])
         filled[0]+=int(unknown.sum())
         return unknown
     report=bake(config['map_name'],config['source_path'],workspace/'inspection/bark-ownership.json',

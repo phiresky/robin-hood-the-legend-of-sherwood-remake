@@ -56,7 +56,7 @@ def revise(mask,redo=False):
         assignment=next(a for a in m['projections']['exterior']['assignments'] if a.get('asset_group')==w.name)
         assignment.update(exclude_mask_indices=exclusions,exclusions_reviewed=True,exclusion_reason='Reviewed visible wood uses native wood coverage minus foreground shrub and canopy alpha. Coarse neighboring proxy volumes cannot establish visible bark ownership.')
         write_json(path,m)
-        report['bark']=fill(w,objects,mask,receiver_only=True,donor_mapping='aperiodic-vertical')
+        report['bark']=fill(w,objects,mask,receiver_only=True,donor_mapping='continuous-grain' if mask==41 else 'aperiodic-vertical')
         stage=w/('.modified-visible-bark-'+uuid.uuid4().hex[:8]);_render(cfg,stage,w/'input/views.json');validate(w)
         (w/'history').mkdir(exist_ok=True);(w/'modified').rename(w/'history'/stage.name);stage.rename(w/'modified')
         bpy.ops.wm.save_as_mainfile(filepath=str(w/'model.blend'));report['model_sha256']=sha(w/'model.blend')

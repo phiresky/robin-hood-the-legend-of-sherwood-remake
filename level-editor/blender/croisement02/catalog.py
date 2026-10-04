@@ -4,6 +4,16 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
 OUT=ROOT/'level-editor/work/croisement02-refinement'
 
+def reviewed_catalog():
+    revised=OUT/'ownership-revision/catalog.json'
+    return revised if revised.exists() else OUT/'catalog.json'
+
+def scenery_workspace(asset):
+    replacement=OUT/'scenery-round-2/assets'/asset
+    if any((replacement/'inspection'/receipt).exists() for receipt in ('feedback-revision-1.json','relief-revision.json')):
+        return replacement
+    return OUT/'scenery-round-1/assets'/asset
+
 def tree_workspace(mask):
     asset=f'croisement02-tree-{mask:02}'
     replacement=OUT/'forest-v4-round-2/assets'/asset
