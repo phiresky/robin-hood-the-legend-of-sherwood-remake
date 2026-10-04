@@ -11,9 +11,17 @@ from evidence_io import sha,write_json
 
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('feedback',type=Path);args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('feedback',type=Path)
+    parser.add_argument('--approve-ready',action='store_true',help='Bind a blanket user approval to all currently ready gallery items')
+    args=parser.parse_args()
+    user_text=args.feedback.read_text().strip()
+    lines=user_text.splitlines()
+    if args.approve_ready:
+        items=json.loads((OUT/'gallery/evidence.json').read_text())['items']
+        lines=[f"{item['id']}: approved [review {item['review_revision'][:16]}]"
+               for item in items if item['status']=='ready-for-user']
     records=[]
-    for line in args.feedback.read_text().splitlines():
+    for line in lines:
         match=re.fullmatch(r'(croisement02-[\w-]+): (approved|needs refinement|feedback)(?: — (.*?))? \[review ([0-9a-f]{16})\]',line)
         if not match:continue
         asset,decision,note,prefix=match.groups();found=[]
@@ -44,6 +52,8 @@ def main():
                 if (model.parent/name).exists() and not (archive/name).exists():shutil.copy2(model.parent/name,archive/name)
         write_json(archive/'gallery-item.json',item)
         record=dict(asset_id=asset,decision=decision,note=note or '',exact_user_text=line,scope='geometry',review_revision=item['review_revision'],model_sha256=model_hash,archive=str(archive),solid_sha256=item['images']['solid']['sha256'],textured_sha256=item['images']['textured']['sha256'])
+        if args.approve_ready:
+            record.update(exact_user_text=user_text,scope_resolution='All ready-for-user items in the current gallery; in-progress items excluded')
         write_json(archive/'decision.json',record);records.append(record)
     if not records:raise ValueError('No gallery decisions in input')
     target=OUT/'user-feedback.json';old=json.loads(target.read_text()) if target.exists() else {'records':[]}

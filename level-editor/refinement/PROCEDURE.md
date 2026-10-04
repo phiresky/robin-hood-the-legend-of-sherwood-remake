@@ -474,6 +474,22 @@ outputs use the suffix `-openrouter` so previous raw results stay intact.
 Returned dimensions and PNG format are checked before composing or baking;
 unsupported sizing must fail rather than resize an approved projection packet.
 
+When an asset has very little observed texture, attach supplementary textured
+examples to the generation request, in addition to the target sheet and aligned
+solid lighting sheet. Do not rely on naming an example in the prompt: the image
+must actually be included. Record each example's asset ID, image hash and role.
+Describe these extra images as material/texture references only; they must not
+replace the target geometry, camera layout, lighting or protected source pixels.
+Use only references permitted by the user. For Croisement02 trees, the permitted
+examples are `leicester-southeast-cottage-tree` and `leicester-moat-bank-tree`;
+do not use other tree assets. Their gray unknown patches are not material cues.
+Pass `--auxiliary-references <manifest.json>` with the target `input_sha256`,
+`lighting_sha256`, and `references` entries containing `source: "material"`,
+`file`, `sha256`, `asset_id`, and `role`. These images are appended after the
+target and lighting images, included in cache identity, and archived with the
+request. Existing `input`/`lighting` explanatory crops retain their exact-pixel
+validation; material examples are explicitly distinguished from target evidence.
+
 ### Single planar atlas exception
 
 A reviewed planar background can use one exact existing atlas instead of eight

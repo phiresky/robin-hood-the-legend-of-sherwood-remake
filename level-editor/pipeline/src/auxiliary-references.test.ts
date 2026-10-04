@@ -8,6 +8,28 @@ import sharp from "sharp";
 import { auxiliaryReferences } from "./refinement/auxiliary-references.ts";
 
 const sha = (bytes: Buffer) => crypto.createHash("sha256").update(bytes).digest("hex");
+test("Material examples carry distinct provenance and reject stale image bytes", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "texture-material-"));
+  try {
+    const input = await sharp({ create: { width: 8, height: 8, channels: 4, background: "gray" } }).png().toBuffer();
+    const example = await sharp({ create: { width: 16, height: 12, channels: 4, background: "green" } }).png().toBuffer();
+    const file = path.join(directory, "references.json");
+    const reference = { file: "example.png", sha256: sha(example), source: "material", asset_id: "permitted-tree", role: "Leaf and bark texture character" };
+    await fs.writeFile(path.join(directory, "example.png"), example);
+    await fs.writeFile(file, JSON.stringify({ input_sha256: sha(input), lighting_sha256: sha(input), references: [reference] }));
+    const loaded = await auxiliaryReferences(file, input, input);
+    assert.deepEqual(loaded.images, [example]);
+    assert.deepEqual(loaded.evidence?.references, [reference]);
+    assert.match(loaded.instructions, /Image 3.*permitted-tree/);
+    assert.match(loaded.instructions, /do not copy its shape/);
+    assert.match(loaded.instructions, /protected source pixels/);
+    await fs.writeFile(path.join(directory, "example.png"), input);
+    await assert.rejects(auxiliaryReferences(file, input, input), /hash changed/);
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("Auxiliary crop evidence binds exact approved pixels and rejects altered artwork", async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "texture-auxiliary-"));
   try {

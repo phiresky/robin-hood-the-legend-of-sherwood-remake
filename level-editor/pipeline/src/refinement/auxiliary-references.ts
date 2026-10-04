@@ -4,15 +4,23 @@ import crypto from "node:crypto";
 import sharp from "sharp";
 
 const sha = (bytes: Buffer) => crypto.createHash("sha256").update(bytes).digest("hex");
-type Reference = {
+type CropReference = {
   file: string;
   sha256: string;
   source: "input" | "lighting";
   crop: { left: number; top: number; width: number; height: number };
   scale: number;
 };
+type MaterialReference = {
+  file: string;
+  sha256: string;
+  source: "material";
+  asset_id: string;
+  role: string;
+};
+type Reference = CropReference | MaterialReference;
 
-/** Explanatory crops may magnify approved pixels, never introduce new artwork. */
+/** Keep target-bound crops distinct from supplementary material examples. */
 export async function auxiliaryReferences(
   file: string | null,
   input: Buffer,
@@ -34,10 +42,25 @@ export async function auxiliaryReferences(
     !manifest.references.length ||
     manifest.references.length > 4
   )
-    throw new Error("Supply one to four explanatory crop references");
+    throw new Error("Supply one to four supplementary references");
   const images: Buffer[] = [];
   const records = [];
+  const descriptions: string[] = [];
   for (const reference of manifest.references) {
+    if (reference.source === "material") {
+      if (!reference.asset_id?.trim() || !reference.role?.trim())
+        throw new Error("Material examples require an asset ID and material role");
+      const image = await fs.readFile(path.resolve(path.dirname(file), reference.file));
+      if (sha(image) !== reference.sha256) throw new Error("Material reference hash changed");
+      const metadata = await sharp(image).metadata();
+      if (metadata.format !== "png" || !metadata.width || !metadata.height ||
+          Math.max(metadata.width, metadata.height) > 3840)
+        throw new Error("Material reference must be a PNG no larger than 3840 pixels per edge");
+      images.push(image);
+      records.push(reference);
+      descriptions.push(`Image ${images.length + 2} is a supplementary material example from ${reference.asset_id}: ${reference.role}. Use its texture character and material detail only; do not copy its shape, proportions, camera, lighting, background, or gray unknown patches.`);
+      continue;
+    }
     if (reference.source !== "input" && reference.source !== "lighting")
       throw new Error("Auxiliary crop source must be input or lighting");
     const { left, top, width, height } = reference.crop;
@@ -76,18 +99,14 @@ export async function auxiliaryReferences(
       throw new Error("Auxiliary reference is not an exact magnified approved crop");
     images.push(image);
     records.push({ ...reference, source_sha256: sha(source) });
+    descriptions.push(`Image ${images.length + 2} is a ${reference.scale}x crop of the ${reference.source === "input" ? "first" : "second"} image at full-sheet pixel box (${reference.crop.left},${reference.crop.top},${reference.crop.width},${reference.crop.height}).`);
   }
   return {
     images,
     evidence: { manifest_sha256: sha(bytes), references: records },
     instructions:
-      " Additional references are magnified explanatory crops, not replacement views. " +
-      records
-        .map(
-          (r, i) =>
-            `Image ${i + 3} is a ${r.scale}x crop of the ${r.source === "input" ? "first" : "second"} image at full-sheet pixel box (${r.crop.left},${r.crop.top},${r.crop.width},${r.crop.height}).`,
-        )
-        .join(" ") +
-      " Return only the complete first image at its original dimensions and eight-view layout.",
+      " Additional references are explanatory examples, not replacement views. " +
+      descriptions.join(" ") +
+      " Preserve target geometry, protected source pixels, and the second image's calibrated lighting. Return only the complete first image at its original dimensions and eight-view layout.",
   };
 }
