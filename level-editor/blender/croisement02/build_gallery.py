@@ -120,7 +120,11 @@ def main():
                     if report['crown'].get('inferred_branch_support'):
                         item['notes'].append('Small branched supports are inferred from the leaf arrangement. Existing observed leaf geometry and UVs are unchanged; support backs use only this plant native warm palette.')
                     if group.get('native_foliage_mask')==80:item['notes'].append('West map-edge continuation is inferred from this clump own native edge artwork; off-map pixels are not observed evidence.')
-                    if group.get('native_foliage_mask') in (75,91):item['notes'].append('Only the reviewed clear-leaf complement is assigned. Excluded mixed tree/fence owners and uncertain branch or ground pixels remain unresolved; they are not all declared bark.')
+                    if group.get('native_foliage_mask') in (75,91):
+                        item['notes'].append('Leaf ownership follows a reviewed source partition. Other mixed wood/fence/ground receivers have separate evidence and coverage checks; the original mixed mask is not treated as all foliage or all bark.')
+                        source_packet=json.loads(Path(report['source_packet']).read_text())
+                        inferred_owners=source_packet.get('source_role_review',{}).get('record',{}).get('inferred_owner_boundary_pixels',0)
+                        if inferred_owners:item['notes'].append(f'{inferred_owners} source pixels have explicitly inferred leaf ownership; their dark native RGB is preserved, not brightened or generated.')
                     if group.get('native_foliage_mask')==68:item['notes'].append('The shown tree07 neighbour retains an earlier floating-wood limitation. This leaf-group candidate does not claim that trunk correction.')
                     if group.get('native_foliage_mask') in (69,70,71):item['notes'].append('Shown mature tree31/32 canopy curtains and wood support remain separate corrections. Isolated native-scale overlays are context views, not full-scene parity evidence.')
 
