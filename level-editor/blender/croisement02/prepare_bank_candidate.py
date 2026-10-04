@@ -72,6 +72,48 @@ def sculpt_bank_base(points):
     return vertices,faces
 
 
+def sculpt_northeast_ramp(points):
+    """Retain native crest heights and shape the low toe from bank mask125."""
+    inventory=json.loads((OUT/'review-mask-inventory.json').read_text())['masks']
+    row=next(r for r in inventory if r['index']==125)
+    alpha=np.asarray(Image.open(row['png']).convert('L'))>0
+    ox,oy=row['box_top_left'];foot=np.full(1792,-1.)
+    for x in range(alpha.shape[1]):
+        yy=np.flatnonzero(alpha[:,x])
+        if len(yy):foot[ox+x]=oy+int(yy.max())+1.5
+    high_a,high_b,low_b,low_a=points
+    steps=192;rows=8;vertices=[]
+    for v in range(rows+1):
+        t=v/rows
+        for u in range(steps+1):
+            f=u/steps
+            high={k:high_a[k]*(1-f)+high_b[k]*f for k in high_a}
+            low={k:low_a[k]*(1-f)+low_b[k]*f for k in low_a}
+            p={k:high[k]*(1-t)+low[k]*t for k in high}
+            x=int(round(low['x']))
+            observed=max(foot[max(0,x-1):min(1792,x+2)])
+            extension=max(0.,observed-(low['y']-low['z_top']))
+            if extension>35:raise ValueError('Unexpected ramp source-foot extension')
+            # The upper three quarters retain their surveyed slope. The toe
+            # broadens smoothly to the visible soil/rock contact at ground.
+            blend=max(0.,(t-.625)/.375)
+            blend=blend*blend*(3-2*blend)
+            p['y']+=extension*blend
+            vertices.append((p['x'],-p['y']/SIN,p['z_top']/COS))
+    faces=[]
+    for v in range(rows):
+        for u in range(steps):
+            i=v*(steps+1)+u;faces.append((i,i+1,i+steps+2,i+steps+1))
+    boundary=list(range(steps+1))+[v*(steps+1)+steps for v in range(1,rows+1)]+[rows*(steps+1)+u for u in range(steps-1,-1,-1)]+[v*(steps+1) for v in range(rows-1,0,-1)]
+    lower=[]
+    for i in boundary:
+        lower.append(len(vertices));x,y,z=vertices[i];vertices.append((x,y,-.1))
+    for i,top in enumerate(boundary):
+        n=(i+1)%len(boundary);faces.append((top,boundary[n],lower[n],lower[i]))
+    faces.append(tuple(reversed(lower)))
+    return vertices,faces
+
+
 def prepare_domains():
     DEST.mkdir(exist_ok=True)
     level = json.loads((OUT/'baseline/Croisement02.rhp.json').read_text())
@@ -160,10 +202,10 @@ def build():
             if obj.type!='MESH' or obj.get('asset_group')!=ASSET:continue
             index=int(obj['source_node'].split('-')[-1])
             points=footprint(index,level,extend=True)
-            vertices,faces=sculpt_bank_base(points) if index==0 else mesh_data(points)
+            vertices,faces=(sculpt_bank_base(points) if index==0 else sculpt_northeast_ramp(points) if index==3 else mesh_data(points))
             result=replace_mesh(obj,vertices,faces,materials=list(obj.data.materials))
             if result['nonmanifold_edges']:raise ValueError(result)
-            result.update(source_node=obj['source_node'],native_top_heights=[p['z_top'] for p in footprint(index,level)],inferred_boundary_extension=index==0,escarpment_base_source_trace=index==0)
+            result.update(source_node=obj['source_node'],native_top_heights=[p['z_top'] for p in footprint(index,level)],inferred_boundary_extension=index==0,escarpment_base_source_trace=index in {0,3})
             parts.append(result)
         modified(WORKER)
         (WORKER/'inspection').mkdir(exist_ok=True)
