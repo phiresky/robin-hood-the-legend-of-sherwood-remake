@@ -17,6 +17,7 @@ thiserror.workspace = true
 num_enum = "0.7"
 json-patch = "4.2"
 serde_ignored = "0.1"
+rstar = "0.13"
 
 [dev-dependencies]
 robin_test_support.workspace = true

@@ -1,11 +1,60 @@
 //! Receiving-plane boundaries rebuilt from placed, compiled asset geometry.
 use crate::level_data::{CompiledAssetGeometry, RawElevationLine};
+use rstar::{
+    AABB, RTree,
+    primitives::{GeomWithData, Rectangle},
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 type Point = [f64; 2];
 type Edge = (Point, Point);
 const EPS: f64 = 1e-7;
+
+type BoundsIndex = RTree<GeomWithData<Rectangle<Point>, usize>>;
+
+fn bounds(points: impl IntoIterator<Item = Point>) -> Edge {
+    let mut low = [f64::INFINITY; 2];
+    let mut high = [f64::NEG_INFINITY; 2];
+    for point in points {
+        for axis in 0..2 {
+            low[axis] = low[axis].min(point[axis]);
+            high[axis] = high[axis].max(point[axis]);
+        }
+    }
+    (low, high)
+}
+
+fn bounds_index(boxes: impl IntoIterator<Item = Edge>) -> BoundsIndex {
+    RTree::bulk_load(
+        boxes
+            .into_iter()
+            .enumerate()
+            .map(|(index, (low, high))| {
+                GeomWithData::new(Rectangle::from_corners(low, high), index)
+            })
+            .collect(),
+    )
+}
+
+fn candidates(
+    index: Option<&BoundsIndex>,
+    count: usize,
+    (low, high): Edge,
+    padding: f64,
+) -> Vec<usize> {
+    let Some(index) = index else {
+        return (0..count).collect();
+    };
+    let envelope = AABB::from_corners(low.map(|v| v - padding), high.map(|v| v + padding));
+    let mut matches: Vec<_> = index
+        .locate_in_envelope_intersecting(envelope)
+        .map(|entry| entry.data)
+        .collect();
+    // Preserve receiver tie-breaking and edge-processing order exactly.
+    matches.sort_unstable();
+    matches
+}
 
 #[derive(Serialize, Deserialize)]
 struct Receiver {
@@ -80,11 +129,11 @@ fn projected_coordinate(value: f32) -> f64 {
     f64::from(value)
 }
 
-fn side_probe_distance(middle: Point, normal: Point, edges: &[Edge]) -> f64 {
+fn side_probe_distance(middle: Point, normal: Point, edges: impl IntoIterator<Item = Edge>) -> f64 {
     // Stay inside even a subpixel overlap or gap. Crossing a neighboring edge
     // while sampling would emit duplicate receiver swaps at both boundaries.
     let mut distance = 1e-4f64;
-    for &(a, b) in edges {
+    for (a, b) in edges {
         if (0..2)
             .any(|i| middle[i] + distance < a[i].min(b[i]) || middle[i] - distance > a[i].max(b[i]))
         {
@@ -221,6 +270,13 @@ pub(crate) fn lift_connections(
 /// Edges are split at every intersection so partial contacts and overlapping
 /// planes cannot assign an unrelated receiver to the whole edge.
 pub(crate) fn derive(geometry: &CompiledAssetGeometry) -> Result<Vec<RawElevationLine>, String> {
+    derive_with_spatial_index(geometry, true)
+}
+
+fn derive_with_spatial_index(
+    geometry: &CompiledAssetGeometry,
+    indexed: bool,
+) -> Result<Vec<RawElevationLine>, String> {
     let mut groups = BTreeMap::<(u16, u16), Vec<Receiver>>::new();
     for (index, obstacle) in geometry.sight_obstacles.iter().enumerate() {
         let Some(topology) = obstacle.projection_area else {
@@ -236,6 +292,7 @@ pub(crate) fn derive(geometry: &CompiledAssetGeometry) -> Result<Vec<RawElevatio
                     || !p.y.is_finite()
                     || !p.z_top.is_finite()
                     || !p.z_bottom.is_finite()
+                    || !(p.y - p.z_top).is_finite()
             })
         {
             return Err(format!(
@@ -370,12 +427,26 @@ pub(crate) fn derive(geometry: &CompiledAssetGeometry) -> Result<Vec<RawElevatio
                 })
             })
             .collect();
+        let area_edges: Vec<Edge> = (0..area_polygon.len())
+            .map(|i| (area_polygon[i], area_polygon[(i + 1) % area_polygon.len()]))
+            .collect();
+        let edge_index = indexed.then(|| bounds_index(edges.iter().map(|&(a, b)| bounds([a, b]))));
+        let area_index =
+            indexed.then(|| bounds_index(area_edges.iter().map(|&(a, b)| bounds([a, b]))));
+        let receiver_index = indexed.then(|| {
+            bounds_index(
+                receivers
+                    .iter()
+                    .map(|receiver| bounds(receiver.polygon.iter().copied())),
+            )
+        });
         let owner = |point| -> Option<u16> {
             if !contains(area_polygon, point) {
                 return None;
             }
             let mut best: Option<&Receiver> = None;
-            for receiver in receivers {
+            for index in candidates(receiver_index.as_ref(), receivers.len(), (point, point), 0.) {
+                let receiver = &receivers[index];
                 if contains(&receiver.polygon, point)
                     && best.is_none_or(|previous| receiver.maximum_height > previous.maximum_height)
                 {
@@ -386,15 +457,12 @@ pub(crate) fn derive(geometry: &CompiledAssetGeometry) -> Result<Vec<RawElevatio
         };
         for edge in &edges {
             let mut cuts = vec![0., 1.];
-            for other in &edges {
-                split_at(*edge, *other, &mut cuts);
+            let envelope = bounds([edge.0, edge.1]);
+            for index in candidates(edge_index.as_ref(), edges.len(), envelope, 2. * EPS) {
+                split_at(*edge, edges[index], &mut cuts);
             }
-            for i in 0..area_polygon.len() {
-                split_at(
-                    *edge,
-                    (area_polygon[i], area_polygon[(i + 1) % area_polygon.len()]),
-                    &mut cuts,
-                );
+            for index in candidates(area_index.as_ref(), area_edges.len(), envelope, 2. * EPS) {
+                split_at(*edge, area_edges[index], &mut cuts);
             }
             cuts.sort_by(f64::total_cmp);
             // A parameter-space epsilon can erase a distinct float32 endpoint
@@ -420,7 +488,12 @@ pub(crate) fn derive(geometry: &CompiledAssetGeometry) -> Result<Vec<RawElevatio
                 let middle = interpolate(a, b, 0.5);
                 // A fixed probe can jump across a thin overlap or gap and emit
                 // duplicate receiver swaps for its two nearby boundaries.
-                let distance = side_probe_distance(middle, unit_normal, &edges);
+                let nearby = candidates(edge_index.as_ref(), edges.len(), (middle, middle), 1e-4);
+                let distance = side_probe_distance(
+                    middle,
+                    unit_normal,
+                    nearby.into_iter().map(|index| edges[index]),
+                );
                 let normal = unit_normal.map(|value| value * distance);
                 let left = owner([middle[0] + normal[0], middle[1] + normal[1]]);
                 let right = owner([middle[0] - normal[0], middle[1] - normal[1]]);
@@ -593,6 +666,70 @@ pub(crate) fn derive(geometry: &CompiledAssetGeometry) -> Result<Vec<RawElevatio
 mod tests {
     use super::*;
 
+    // Every seam regression also checks that candidate pruning preserves the
+    // exhaustive result, including precise endpoints and receiver ordering.
+    fn derive(geometry: &CompiledAssetGeometry) -> Result<Vec<RawElevationLine>, String> {
+        let indexed = super::derive(geometry)?;
+        assert_eq!(
+            serde_json::to_value(&indexed).unwrap(),
+            serde_json::to_value(derive_with_spatial_index(geometry, false)?).unwrap()
+        );
+        Ok(indexed)
+    }
+
+    fn assert_index_matches_exhaustive(geometry: &CompiledAssetGeometry) {
+        let start = std::time::Instant::now();
+        let indexed = derive_with_spatial_index(geometry, true).unwrap();
+        let indexed_time = start.elapsed();
+        let start = std::time::Instant::now();
+        let exhaustive = derive_with_spatial_index(geometry, false).unwrap();
+        eprintln!(
+            "{} boundaries: indexed {indexed_time:?}, exhaustive {:?}",
+            indexed.len(),
+            start.elapsed()
+        );
+        assert_eq!(
+            serde_json::to_value(indexed).unwrap(),
+            serde_json::to_value(exhaustive).unwrap()
+        );
+    }
+
+    #[test]
+    fn spatial_index_preserves_fixture_boundaries_and_order() {
+        for name in [
+            "asset-multi-plane-region",
+            "asset-lift",
+            "asset-lift-light",
+            "asset-sight-transition",
+            "asset-terrain-interior",
+            "asset-terrain-transition",
+            "asset-terrain-passage",
+            "asset-projection-material",
+            "asset-projection-volume",
+            "asset-terrain-receiver",
+        ] {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../robin_engine/tests/fixtures")
+                .join(format!("{name}.level.json"));
+            let document: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+            let geometry: CompiledAssetGeometry =
+                serde_json::from_value(document["asset_geometry"].clone()).unwrap();
+            assert_index_matches_exhaustive(&geometry);
+        }
+    }
+
+    #[test]
+    #[ignore = "requires ROBIN_COMPILED_GEOMETRY pointing to an exported level descriptor"]
+    fn exported_spatial_index_matches_exhaustive_boundaries() {
+        let path = std::env::var("ROBIN_COMPILED_GEOMETRY").unwrap();
+        let document: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        let geometry: CompiledAssetGeometry =
+            serde_json::from_value(document["asset_geometry"].clone()).unwrap();
+        assert_index_matches_exhaustive(&geometry);
+    }
+
     fn fixture() -> CompiledAssetGeometry {
         let document: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -600,6 +737,44 @@ mod tests {
         )))
         .unwrap();
         serde_json::from_value(document["asset_geometry"].clone()).unwrap()
+    }
+
+    #[test]
+    fn indexed_receivers_preserve_ties_at_translated_coordinates() {
+        for offset in [-30_000i16, 0, 30_000] {
+            let mut geometry = fixture();
+            geometry
+                .sight_obstacles
+                .extend(geometry.sight_obstacles.clone());
+            for obstacle in &mut geometry.sight_obstacles {
+                for point in &mut obstacle.points {
+                    point.x += f32::from(offset);
+                    point.y += f32::from(offset);
+                }
+            }
+            for point in &mut geometry.motion_data.layers[0][0].polygon.points {
+                point.0 += offset;
+                point.1 += offset;
+            }
+            let lines = derive(&geometry).unwrap();
+            assert_eq!(lines.len(), 1);
+            assert_eq!(
+                BTreeSet::from([lines[0].left_obstacle_index, lines[0].right_obstacle_index]),
+                BTreeSet::from([0, 1])
+            );
+        }
+    }
+
+    #[test]
+    fn overflowing_projection_is_rejected_before_spatial_indexing() {
+        let mut geometry = fixture();
+        geometry.sight_obstacles[0].points[0].y = f32::MAX;
+        geometry.sight_obstacles[0].points[0].z_top = -f32::MAX;
+        assert!(
+            super::derive(&geometry)
+                .unwrap_err()
+                .contains("invalid receiving polygon")
+        );
     }
 
     #[test]

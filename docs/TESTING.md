@@ -603,3 +603,26 @@ baseline used CPU profiling, so these are diagnostic timings, not a controlled
 benchmark. Precision and clipping rules are unchanged.
 Native construction and apply/reset pass both controls in the updated Wychford
 descriptor; that diagnostic took 176.82 seconds and does not certify all routes.
+
+Receiving-boundary indexing is checked against exhaustive construction in the
+level-data seam regressions and ten native geometry fixtures. The comparison
+includes precise endpoints, receiver identities and output ordering. To compare
+a larger exported descriptor, set `ROBIN_COMPILED_GEOMETRY` to its absolute path
+and run `cargo test -p robin_level_data exported_spatial_index_matches_exhaustive_boundaries
+-- --ignored --nocapture`. This prints both timings; the exhaustive scan can take
+several minutes on densely triangulated terrain.
+
+For `wychford-control-audit-SHbyM9/wychford.level.json`, all 28,749 boundaries
+match exactly: indexed construction took 5.17 seconds, exhaustive construction
+296.18 seconds. Native construction plus applying/resetting both controls takes
+6.86 seconds with indexing, compared with the previous 176.82-second run. These
+are debug diagnostic timings, not controlled benchmarks. The exhaustive test's
+candidate enumeration also allocates lists that the former implementation did
+not, so its timing must not be treated as the previous loader's timing.
+The native map-compilation suite passes 61 tests (five data-dependent tests
+ignored).
+Fourteen ordinary actor-navigation tests also pass (five data-dependent tests
+ignored), including the stair rotation sweep. Re-running the historical ten-map
+`published-controls-audit-20261004` snapshot passes all 60 control apply/reset
+checks in 7.47 seconds. That snapshot predates the latest Derby/Leicester/Wychford
+asset updates and must not be described as a fresh library export.

@@ -4259,3 +4259,20 @@ only for the baseline. This preserves exact geometry and does not repair the
 reported placement gaps. Compiler and authored-terrain suites pass 120 tests.
 The updated Wychford descriptor also passes native construction and apply/reset
 for its two controls; that run took 176.82 seconds. Full traversal remains unverified.
+
+### Spatially indexed native receiving boundaries
+
+Native loading now indexes receiving polygons and boundary edges, narrowing
+intersection and side-probe candidates before applying the existing exact tests.
+Candidate order remains stable so equal-height receivers keep their precedence.
+All seam regressions also compare complete output with exhaustive scans; ten
+geometry fixtures cover terrain, interiors, lifts, materials and switched sight.
+This improves construction cost without changing geometry or repairing missing
+asset definitions. Traversal and rendered parity remain separate requirements.
+
+Wychford's current descriptor (`wychford-control-audit-SHbyM9`) produces exactly
+the same 28,749 boundaries with either strategy. Indexed construction takes
+5.17 seconds; native loading and apply/reset of both controls takes 6.86 seconds
+instead of the earlier 176.82 seconds. These are debug diagnostic timings.
+All 61 ordinary native map-compilation tests pass, including rotated walkways,
+terrain ramps, roof jumps, door links and lift registration.

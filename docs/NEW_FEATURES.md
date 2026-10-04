@@ -1,5 +1,11 @@
 # Post-port Features
 
+- **Spatially indexed receiving boundaries.** Native loading of editor maps
+  narrows edge intersections and receiving-plane queries with spatial bounds.
+  Exact intersection tests, subpixel probes and receiver precedence are retained,
+  so dense editable terrain does not require scanning every triangle for every
+  boundary. Regression tests compare complete results against exhaustive scans.
+
 - **Lift endpoints independent of map orientation.** Editor exports carry low/high
   door identities derived from placed 3D landing heights, with stable door order
   for equal-height entrances. Horizontal projected entrances no longer invalidate
