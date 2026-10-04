@@ -12,7 +12,7 @@ if __name__=='__main__':
     args=parser.parse_args(sys.argv[sys.argv.index('--')+1:]);index=args.mask
     if index not in (67,68,69,70,71,72,73,79,80,82,92):raise ValueError('Reviewed native candidates only')
     joint.worker=lambda i:OUT/f'understory-candidates/native-{i}-{args.version}/assets/croisement02-shrub-{i:02}'
-    neighbours={67:[11],68:[7],69:[31,32],70:[32],71:[32],72:[34],79:[24,25],80:[26,28],82:[24,25]}.get(index,[])
+    neighbours={67:[11],68:[7],69:[31,32],70:[32],71:[32],72:[34],79:[25],80:[24],82:[26,28]}.get(index,[])
     acquire()
     try:joint.run(f'native-shrub-{index}-{args.version}',[index],include_bank=index in (67,68,73,92),context_workers=[tree_workspace(i) for i in neighbours])
     finally:release()
