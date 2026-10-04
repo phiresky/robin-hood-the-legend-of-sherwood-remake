@@ -52,11 +52,11 @@ def scoped_material(original,wood,phase,box):
 
 
 def main():
-    base=OUT/'log-trap-state-candidate-v12';support=json.loads((base/'dense-contact-audit.json').read_text());assert support['status'].startswith('sampled support pass');assert sha(base/'worker.blend')==support['model_sha256']
+    base=OUT/(sys.argv[sys.argv.index('--candidate')+1] if '--candidate' in sys.argv else 'log-trap-state-candidate-v12');support=json.loads((base/'dense-contact-audit.json').read_text());assert support['status'].startswith('sampled support pass');assert sha(base/'worker.blend')==support['model_sha256']
     source=OUT/'state-target-evidence/log-trap';source_manifest=json.loads((source/'manifest.json').read_text());box=source_manifest['bbox']
     reference=source/'native-order-reference';reference_hash=sha(reference/'manifest.json')
     animation=next(r for r in json.loads((OUT/'animation-references/manifest.json').read_text())['animations']if r['index']==2)
-    dest=OUT/'log-state-appearance-proof-v4';dest.mkdir(exist_ok=False);(dest/'renderer.py').write_bytes(Path(__file__).read_bytes())
+    dest=OUT/(sys.argv[sys.argv.index('--output')+1] if '--output' in sys.argv else 'log-state-appearance-proof-v4');dest.mkdir(exist_ok=False);(dest/'renderer.py').write_bytes(Path(__file__).read_bytes())
     for phase in(0,6):crop_frame(animation['frames'][phase],box).save(dest/f'native-canopy-phase-{phase:02d}.png')
     selected=[];bindings=[]
     for index in(26,29,30):
