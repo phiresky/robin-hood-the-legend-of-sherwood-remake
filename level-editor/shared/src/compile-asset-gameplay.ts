@@ -178,6 +178,11 @@ export function compileAssetGameplay(
   const omitted = new Set<string>();
   const fixedTransitions = new Set<string>();
   const omissions: string[] = [];
+  // Terrain is independent of omitted asset controls and traversal assemblies.
+  // Share it across retries of this export, but never across editor documents.
+  let preparedTerrain: { value: ReturnType<typeof terrainGameplay> } | undefined;
+  const getTerrain = (scene: Level3D) =>
+    (preparedTerrain ??= { value: terrainGameplay(scene) }).value;
   for (;;) {
     try {
       const scenerySources: CompiledScenerySource[] = [];
@@ -189,6 +194,7 @@ export function compileAssetGameplay(
         omitted,
         fixedTransitions,
         scenerySources,
+        getTerrain,
       );
       if (omissions.length) result.warnings = [...omissions, ...(result.warnings ?? [])];
       options.onSceneryCompiled?.(scenerySources);
@@ -249,6 +255,7 @@ function compileAssetGameplayAttempt(
   omitted: ReadonlySet<string>,
   fixedTransitions: ReadonlySet<string>,
   scenerySources: CompiledScenerySource[],
+  getTerrain: (document: Level3D) => ReturnType<typeof terrainGameplay>,
 ): CompiledAssetGeometry {
   const warnings: string[] = [];
   ({ document, descriptors } = normalizeGameplayStateViews(document, descriptors));
@@ -265,7 +272,7 @@ function compileAssetGameplayAttempt(
     }),
   };
   let placements = instances(document, descriptors);
-  const terrain = terrainGameplay(document);
+  const terrain = getTerrain(document);
   const walls = wallSplineGameplay(document, descriptors, !!options.bestEffort);
   warnings.push(...walls.warnings);
   for (const descriptor of walls.descriptors)

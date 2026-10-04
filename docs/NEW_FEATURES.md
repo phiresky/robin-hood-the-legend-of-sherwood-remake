@@ -2448,3 +2448,7 @@ Derby's east-hall reveal now switches its owned sight volumes alongside its
 appearance while keeping permanent navigation unchanged. Leicester's remaining
 modeled reveals now have local controls too; the three-part moat reveal joins
 through explicit contacts and separates when an asset moves away.
+
+Best-effort export now reuses generated terrain across retries that omit
+unavailable controls or traversal assemblies. Each new export regenerates terrain,
+so subsequent editor changes remain authoritative.

@@ -574,8 +574,8 @@ masks. This is archive/loading validation, not full-map rendered-state parity.
 
 `work/map-compile/published-controls-audit-20261004` exports all ten saved scenes
 from current pinned assets. Native apply/reset passes all 60 compiled controls
-in that snapshot. Best-effort omissions remain: Wychford reports 47 omitted
-control/traversal assemblies; Derby and Leicester report 98/203 unbound
+in that snapshot. Best-effort omissions remain: Wychford reports 25 doors, 15 masks,
+five jumps, one lift and one control omitted; Derby and Leicester report 98/203 unbound
 appearance-part warnings. These are part warnings, not distinct asset counts.
 `work/map-compile/derby-appearance-controls-lwHfaC` subsequently adds two Derby
 reveals: all four controls pass baseline and independent hall/gatehouse moves,
@@ -593,3 +593,13 @@ doors and lifts are unchanged. The joint move leaves three independent light
 regions without receivers; this is a warning-bearing placement test, not a
 complete lighting-placement pass. Published Derby and Leicester scenes compile
 exactly to their tested baselines. Animated effects and mask coverage remain open.
+
+The compiler/terrain suites pass 120 tests, including best-effort retry input
+preservation and terrain edits between exports. Wychford's profiled baseline
+(`work/map-compile/wychford-control-audit-JQmg56`) and terrain-reuse result
+(`work/map-compile/wychford-control-audit-SHbyM9`) have byte-identical descriptors
+and warning lists. Observed compile time fell from 128.75 to 77.84 seconds; the
+baseline used CPU profiling, so these are diagnostic timings, not a controlled
+benchmark. Precision and clipping rules are unchanged.
+Native construction and apply/reset pass both controls in the updated Wychford
+descriptor; that diagnostic took 176.82 seconds and does not certify all routes.

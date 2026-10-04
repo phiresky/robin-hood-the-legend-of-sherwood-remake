@@ -3,6 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { compileAssetGameplay } from "./compile-asset-gameplay.ts";
 import { validateAssetGameplay } from "./asset-gameplay.ts";
+import { createTerrainGrid } from "./authored-terrain.ts";
 import { IDENTITY_TRANSFORM } from "./level3d.ts";
 import {
   assetCompilerFixture,
@@ -18,6 +19,7 @@ import {
   soundAssetCompilerFixture,
   movementTransitionCompilerFixture,
   terrainTransitionCompilerFixture,
+  unavailableTerrainControlCompilerFixture,
   sightTransitionCompilerFixture,
   lightAssetCompilerFixture,
   jumpAssetCompilerFixture,
@@ -37,6 +39,21 @@ import {
 } from "../test-fixtures/asset-gameplay.ts";
 
 import { heightPlane, planeHeight } from "./gameplay-plane.ts";
+
+test("best-effort terrain retries preserve input and subsequent terrain edits", () => {
+  const { document, assets } = unavailableTerrainControlCompilerFixture();
+  document.terrain = createTerrainGrid([1000, 1000, 100, 100], 100, 17);
+  const original = structuredClone(document);
+  const compile = () => compileAssetGameplay(document, assets, bounds, { bestEffort: true });
+  const baseline = compile();
+  assert.ok(baseline.warnings?.some((warning) => warning.includes("control omitted")));
+  assert.deepEqual(document, original);
+  for (const vertex of document.terrain.vertices) vertex.position[2] += 16;
+  const changed = compile();
+  assert.notDeepEqual(changed.sight_obstacles, baseline.sight_obstacles);
+  document.terrain = structuredClone(original.terrain!);
+  assert.deepEqual(compile(), baseline);
+});
 
 test("mask receiving segments bind slopes without moving their pixels or boundary rules", () => {
   const { document, assets, hut } = maskAssetCompilerFixture();

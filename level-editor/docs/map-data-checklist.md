@@ -4208,8 +4208,8 @@ it does not prove mask coverage, animated effects or rendered gameplay parity.
 
 A fresh ten-scene export snapshot in
 `work/map-compile/published-controls-audit-20261004` passes native apply/reset for
-all 60 compiled controls. Wychford still omits 47 unavailable control/traversal
-assemblies, and Derby/Leicester retain 98/203 unbound appearance-part warnings.
+all 60 compiled controls. Wychford still omits 25 doors, 15 masks, five jumps,
+one lift and one control, and Derby/Leicester retain 98/203 unbound appearance-part warnings.
 These omissions prevent a full-parity claim even though the exports load.
 
 ### Derby hall and upper-gatehouse reveals
@@ -4242,3 +4242,20 @@ light-region receivers left behind by their supporting assets. These checks do
 not certify light attachment after arbitrary moves, animated state sequences,
 unrecovered masks or rendered gameplay. The previous ten-map audit remains a
 historical snapshot rather than a claim that its omissions have all been fixed.
+
+### Best-effort terrain reuse
+
+Wychford's updated pinned assets compile successfully with two controls. Its
+remaining omission breakdown is 25 doors, 15 masks, five jumps, one lift and one
+control; many endpoints have no floor at their placed height. These counts must
+not be described as 47 missing controls or assemblies.
+
+Profiling showed terrain generation repeated during fallback retries. Compilation
+now reuses terrain within one export, rebuilding it for every subsequent export.
+The descriptor and all warnings are byte-identical before and after this change
+(`work/map-compile/wychford-control-audit-JQmg56` and `wychford-control-audit-SHbyM9`).
+Observed compile time dropped from 128.75 to 77.84 seconds, with profiling enabled
+only for the baseline. This preserves exact geometry and does not repair the
+reported placement gaps. Compiler and authored-terrain suites pass 120 tests.
+The updated Wychford descriptor also passes native construction and apply/reset
+for its two controls; that run took 176.82 seconds. Full traversal remains unverified.
