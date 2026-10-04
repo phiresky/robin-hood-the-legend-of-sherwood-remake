@@ -14,7 +14,7 @@ from log_trap_state_candidate import point,sha,material
 from render_slots import acquire,release
 
 def main():
-    root=OUT/'state-target-evidence';dest=OUT/'north-cart-initial-candidate-v3';dest.mkdir(exist_ok=False);manifest=json.loads((root/'north-cart/manifest.json').read_text());part=manifest['parts'][0];frame=part['frames'][0];source=Path(frame['image']);rgba=np.array(Image.open(source).convert('RGBA'));height,width=rgba.shape[:2];domain=Image.new('L',(width,height));polygon=[(99,41),(144,0),(204,9),(211,89),(180,122),(176,144),(149,151),(132,128),(90,120),(94,90)];ImageDraw.Draw(domain).polygon(polygon,fill=255);owned=(np.array(domain)>0)&(rgba[:,:,3]>0)&~np.all(rgba[:,:,:3]==[0,0,255],axis=2);rgba[:,:,3]=owned.astype(np.uint8)*255;imagepath=dest/'cart-owned-source.png';Image.fromarray(rgba).save(imagepath);Image.fromarray(owned.astype(np.uint8)*255).save(dest/'cart-source-domain.png')
+    root=OUT/'state-target-evidence';dest=OUT/(sys.argv[sys.argv.index('--candidate')+1] if '--candidate' in sys.argv else 'north-cart-initial-candidate-v5');dest.mkdir(exist_ok=False);manifest=json.loads((root/'north-cart/manifest.json').read_text());part=manifest['parts'][0];frame=part['frames'][0];source=Path(frame['image']);rgba=np.array(Image.open(source).convert('RGBA'));height,width=rgba.shape[:2];domain=Image.new('L',(width,height));polygon=[(99,41),(144,0),(204,9),(211,89),(180,122),(176,144),(149,151),(132,128),(90,120),(94,90)];ImageDraw.Draw(domain).polygon(polygon,fill=255);owned=(np.array(domain)>0)&(rgba[:,:,3]>0)&~np.all(rgba[:,:,:3]==[0,0,255],axis=2);rgba[:,:,3]=owned.astype(np.uint8)*255;imagepath=dest/'cart-owned-source.png';Image.fromarray(rgba).save(imagepath);Image.fromarray(owned.astype(np.uint8)*255).save(dest/'cart-source-domain.png')
     bpy.ops.wm.read_factory_settings(use_empty=True);scene=bpy.context.scene;scene.render.engine='CYCLES';scene.cycles.samples=12;scene.cycles.use_denoising=False;scene.view_settings.view_transform='Standard';scene.render.film_transparent=True;scene.render.image_settings.file_format='PNG';scene.render.image_settings.color_mode='RGBA';scene.render.resolution_x=scene.render.resolution_y=512;scene.world=bpy.data.worlds.new('World');scene.world.use_nodes=True;scene.world.node_tree.nodes['Background'].inputs[0].default_value=(.15,.15,.15,1)
     mat=material(imagepath);gray=bpy.data.materials.new('Unobserved cart structure');gray.use_nodes=True;gray.node_tree.nodes.get('Principled BSDF').inputs['Base Color'].default_value=(.17,.17,.17,1)
     # Axle centers and wheel radii are an explicit source survey, not target pivot bounds.
@@ -60,6 +60,24 @@ def main():
         for a,b in [(0,2*stride),(stride,3*stride),(0,stride),(2*stride,3*stride)]:m.faces.append((a+i,a+i+1,b+i+1,b+i))
     for i in [0,n]:m.faces.append((i,stride+i,3*stride+i,2*stride+i))
     build('Closed barrel canopy',m)
+    # Native end cloth closes the shallow arch above its horizontal eave line.
+    # Give this valance thickness, keeping the opening below the eaves separate.
+    for end in [-7,length+7]:
+        m=Mesh();n=16
+        for depth in [-.5,.5]:
+            for row in [0,1]:
+                for i in range(n+1):
+                    angle=math.pi*i/n
+                    rise=13*math.sin(angle) if row==0 else -1
+                    m.vertices.append(tuple(front+u*(end+depth)+v*(4.6+31.4*math.cos(angle))+Vector((0,0,74+rise))))
+        stride=n+1
+        for i in range(n):
+            for a,b in [(0,stride),(2*stride,3*stride),(0,2*stride),(stride,3*stride)]:m.faces.append((a+i,a+i+1,b+i+1,b+i))
+        for i in [0,n]:m.faces.append((i,stride+i,3*stride+i,2*stride+i))
+        build(f'Closed canopy end valance {end}',m)
+    # A continuous cloth valance joins the roof eaves to the hanging side curtains.
+    for side,across in [(-1,-27),(1,36)]:
+        box(f'Canopy side valance {side}',front+u*length/2+v*across+Vector((0,0,67)),length+14,.8,14)
     # Hanging fabric has finite thickness; folds and hidden reverse fabric are hypotheses.
     for side,across in [(-1,-27),(1,36)]:
         for start,end in [(-4,20),(56,80)]:
