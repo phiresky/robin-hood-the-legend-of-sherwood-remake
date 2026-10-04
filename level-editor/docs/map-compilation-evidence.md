@@ -4,6 +4,21 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Fresh ten-map native construction and controls (2026-10-05)
+
+After repairing Lincoln's spire bindings, the completed descriptor batch at
+`work/map-compile/published-mask-probes-20261005` passes native geometry
+construction for all ten maps (9.09 seconds). All 70 compiled controls apply and
+reset (9.04 seconds): Croisement01/02/03 have 6/9/9, Derby 5, Leicester 12,
+Lincoln 11, Nottingham 10, Sherwood 0, Wychford 2 and York 6.
+
+This checks best-effort descriptor loading and compiled controls, not complete
+feature coverage or rendered ZIP round trips. Five recently added Lincoln props
+lack gameplay definitions. Wychford in this generic batch lacks model-derived
+wall calibration and omits one traversal, one control, fifteen masks and
+twenty-five doors. A separate calibrated-wall audit is required; these omissions
+must not be mistaken for a full-map pass.
+
 ## Lincoln spire appearance binding repair (2026-10-05)
 
 A fresh published-map audit stopped at Lincoln: the spire model now exposes

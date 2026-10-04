@@ -23,7 +23,10 @@ possible route, control state or feature category.
 A fresh all-map batch exposed stale Lincoln spire appearance bindings, now
 repaired and published. Native baseline construction and all eleven control
 apply/reset checks pass. Moving the hall/spire leaves unresolved neighboring
-receivers; the fresh all-map audit remains incomplete.
+receivers. The completed fresh ten-map descriptor batch passes native construction
+and apply/reset for all 70 compiled controls, but retains omissions. Five Lincoln
+props lack gameplay definitions; Wychford needs the separate calibrated-wall
+check. This is not a rendered ZIP round-trip or full feature-coverage pass.
 
 | Map information | How the editor constructs it | Current evidence / gap |
 |---|---|---|
