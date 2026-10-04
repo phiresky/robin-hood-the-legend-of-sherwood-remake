@@ -33,6 +33,9 @@ def freeze(index,version,root_review):
         files.append(source_roles);roles=json.loads(source_roles.read_text());authority=Path(roles['authority'])
         if sha(authority)!=roles['authority_sha256']:raise ValueError('Mixed source authority changed')
         files.append(authority)
+        review=json.loads(authority.read_text());evidence=Path(review['evidence']);original_domain=Path(roles['record']['domain_path'])
+        if sha(evidence)!=review['evidence_sha256'] or sha(original_domain)!=roles['record']['domain_sha256']:raise ValueError('Mixed source split evidence changed')
+        files.extend([evidence,original_domain])
     for dependency in json.loads((joint/'evidence.json').read_text())['inputs']:
         path=Path(dependency['workspace'])/'model.blend'
         if sha(path)!=dependency['model_sha256']:raise ValueError('Joint dependency changed')
