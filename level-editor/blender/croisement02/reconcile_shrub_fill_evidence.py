@@ -1,6 +1,7 @@
 """Reconcile selected foliage appearance evidence without manufacturing approvals."""
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -63,10 +64,29 @@ def run(destination):
                          appearance='Own-native inferred leaf textures; no API required by recipe',
                          images=images, evidence=bindings,
                          user_approval='Not assessed by this audit'))
+    wanted = {image['packed_sha256'] for row in rows for image in row['images']
+              if image.get('packed_sha256')}
+    image_names = {re.sub(r'\.\d+$', '', image['name'])
+                   for row in rows for image in row['images']}
+    image_files = {}
+    for folder in OUT.glob('understory*'):
+        for path in folder.rglob('*.png'):
+            if path.name not in image_names:
+                continue
+            digest = sha(path)
+            if digest in wanted:
+                image_files.setdefault(digest, []).append(str(path))
+    for row in rows:
+        for image in row['images']:
+            if image.get('packed_sha256') not in image_files:
+                row['errors'].append('No byte-identical recipe PNG found: ' + image['name'])
+        row['status'] = 'HOLD' if row['errors'] else 'PASS'
     if sha(catalog_path) != catalog_hash:
         raise ValueError('Catalog changed during audit; rerun against current selection')
     report = dict(status='PASS' if all(r['status'] == 'PASS' for r in rows) else 'HOLD',
                   catalog_sha256=catalog_hash, registered_foliage_groups=len(rows), records=rows,
+                  packed_image_recipe_files=image_files,
+                  unique_packed_images=len(wanted), matched_recipe_images=len(image_files),
                   limitations=['Evidence reconciliation only; no new visual or user approval.',
                                'Packed image binding does not itself prove attractive inferred appearance.',
                                'Ground union, registered group count and source ownership do not prove full scene completion.',
