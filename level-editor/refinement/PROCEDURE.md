@@ -490,6 +490,20 @@ target and lighting images, included in cache identity, and archived with the
 request. Existing `input`/`lighting` explanatory crops retain their exact-pixel
 validation; material examples are explicitly distinguished from target evidence.
 
+If a supplementary example causes the generator to copy its object layout,
+reject the raw result even when local source protection passes. A protected
+composite can still contain black holes where the generated object moved away
+from the target. Retry in a fresh experiment with exact, observed material crops
+instead of whole-object examples; record the parent image hash, crop coordinates,
+crop hash and known-pixel evidence. Inspect every generated view and the actual
+baked mesh before making it reviewable.
+
+Texture fill cannot repair repeated foliage planes, opaque rectangular leaf
+patches or stepped branch joins. Compare the baked model with its approved
+baseline using identical cameras and lighting. If the problem is geometric,
+retain the approval and fill evidence, develop a separate geometry candidate,
+and obtain approval for that revision before generating its texture.
+
 ### Single planar atlas exception
 
 A reviewed planar background can use one exact existing atlas instead of eight
