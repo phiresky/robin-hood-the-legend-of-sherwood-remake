@@ -27,6 +27,60 @@ def signature(obj):
                        uv={layer.name: [list(v.uv) for v in layer.data] for layer in obj.data.uv_layers}))
 
 
+def render_review(scene, destination, model_hash):
+    scene.render.engine = 'CYCLES'
+    scene.cycles.samples = 4
+    scene.cycles.transparent_max_bounces = 64
+    scene.render.resolution_x = 1024
+    scene.render.resolution_y = 768
+    scene.render.resolution_percentage = 100
+    scene.render.film_transparent = False
+    scene.render.image_settings.file_format = 'PNG'
+    scene.view_settings.view_transform = 'Standard'
+    scene.view_settings.look = 'None'
+    data = bpy.data.cameras.new('Integration review camera')
+    data.type = 'ORTHO'
+    data.ortho_scale = 2450
+    data.clip_end = 20000
+    camera = bpy.data.objects.new(data.name, data)
+    scene.collection.objects.link(camera)
+    scene.camera = camera
+    center = Vector((896, -576 / SIN, 80))
+    views = []
+    for index in range(8):
+        angle = index * math.tau / 8
+        direction = Vector((math.sin(angle) * math.cos(math.radians(30)),
+                            -math.cos(angle) * math.cos(math.radians(30)), math.sin(math.radians(30))))
+        camera.location = center + direction * 5000
+        camera.rotation_euler = (center - camera.location).to_track_quat('-Z', 'Y').to_euler()
+        # Include inferred off-map geometry at every rotation, not just map bounds.
+        rotation = camera.rotation_euler.to_matrix()
+        right, up = rotation.col[0], rotation.col[1]
+        extent_x = extent_y = 0.0
+        for obj in scene.objects:
+            if obj.type != 'MESH' or obj.hide_render:
+                continue
+            for corner in obj.bound_box:
+                delta = obj.matrix_world @ Vector(corner) - center
+                extent_x = max(extent_x, abs(delta.dot(right)))
+                extent_y = max(extent_y, abs(delta.dot(up)))
+        aspect = scene.render.resolution_x / scene.render.resolution_y
+        data.ortho_scale = max(2 * extent_x, 2 * extent_y * aspect) * 1.08
+        path = destination / f'view-{index}.png'
+        scene.render.filepath = str(path)
+        bpy.ops.render.render(write_still=True, scene=scene.name)
+        views.append(dict(image=path.name, sha256=sha(path), location=list(camera.location),
+                          rotation=list(camera.rotation_euler), ortho_scale=data.ortho_scale))
+    sheet = Image.new('RGB', (2048, 768))
+    for index in range(8):
+        im = Image.open(destination / f'view-{index}.png').convert('RGB')
+        im.thumbnail((512, 384))
+        sheet.paste(im, (index % 4 * 512, index // 4 * 384))
+    sheet.save(destination / 'sheet.png')
+    write_json(destination / 'render-evidence.json', dict(model_sha256=model_hash,
+        views=views, sheet_sha256=sha(destination / 'sheet.png'), visual_review='pending'))
+
+
 def main(destination=None, texture_decisions=None):
     explicit_destination = destination is not None
     destination = destination or OUT / 'integration-review'
@@ -179,44 +233,7 @@ def main(destination=None, texture_decisions=None):
                        'Unrefined context proxies and unapproved candidates are included for spatial review only.',
                        'Mask-only shrubs/grass, remaining boundary trees, and animated mission states are not yet integrated.'])
         write_json(destination / 'assembly.json', report)
-        scene.render.engine = 'CYCLES'
-        scene.cycles.samples = 4
-        scene.cycles.transparent_max_bounces = 64
-        scene.render.resolution_x = 1024
-        scene.render.resolution_y = 768
-        scene.render.resolution_percentage = 100
-        scene.render.film_transparent = False
-        scene.render.image_settings.file_format = 'PNG'
-        scene.view_settings.view_transform = 'Standard'
-        scene.view_settings.look = 'None'
-        data = bpy.data.cameras.new('Integration review camera')
-        data.type = 'ORTHO'
-        data.ortho_scale = 2450
-        data.clip_end = 20000
-        camera = bpy.data.objects.new(data.name, data)
-        scene.collection.objects.link(camera)
-        scene.camera = camera
-        center = Vector((896, -576 / SIN, 80))
-        views = []
-        for index in range(8):
-            angle = index * math.tau / 8
-            direction = Vector((math.sin(angle) * math.cos(math.radians(30)),
-                                -math.cos(angle) * math.cos(math.radians(30)), math.sin(math.radians(30))))
-            camera.location = center + direction * 5000
-            camera.rotation_euler = (center - camera.location).to_track_quat('-Z', 'Y').to_euler()
-            path = destination / f'view-{index}.png'
-            scene.render.filepath = str(path)
-            bpy.ops.render.render(write_still=True, scene=scene.name)
-            views.append(dict(image=path.name, sha256=sha(path), location=list(camera.location),
-                              rotation=list(camera.rotation_euler), ortho_scale=data.ortho_scale))
-        sheet = Image.new('RGB', (2048, 768))
-        for index in range(8):
-            im = Image.open(destination / f'view-{index}.png').convert('RGB')
-            im.thumbnail((512, 384))
-            sheet.paste(im, (index % 4 * 512, index // 4 * 384))
-        sheet.save(destination / 'sheet.png')
-        write_json(destination / 'render-evidence.json', dict(model_sha256=report['model_sha256'],
-            views=views, sheet_sha256=sha(destination / 'sheet.png'), visual_review='pending'))
+        render_review(scene, destination, report['model_sha256'])
     finally:
         release()
 
@@ -225,5 +242,25 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, help='Fresh isolated destination')
     parser.add_argument('--approved-textures', type=Path, help='Strict texture decisions file')
+    parser.add_argument('--render-existing', type=Path, help='Render a pinned private stage into a fresh --output directory')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else [])
-    main(args.output, args.approved_textures)
+    if args.render_existing:
+        if args.output is None or args.output.exists():
+            raise ValueError('Rerender requires a fresh output directory')
+        report = json.loads((args.render_existing / 'assembly.json').read_text())
+        model = args.render_existing / 'scene.blend'
+        if sha(model) != report['model_sha256']:
+            raise ValueError('Pinned integration model changed')
+        acquire()
+        try:
+            bpy.ops.wm.open_mainfile(filepath=str(model))
+            scene = bpy.data.scenes['Croisement02 Refinement']
+            bpy.context.window.scene = scene
+            args.output.mkdir(parents=True)
+            write_json(args.output / 'source-stage.json', dict(stage=str(args.render_existing.resolve()),
+                assembly_sha256=sha(args.render_existing / 'assembly.json'), model_sha256=sha(model)))
+            render_review(scene, args.output, report['model_sha256'])
+        finally:
+            release()
+    else:
+        main(args.output, args.approved_textures)
