@@ -73,7 +73,11 @@ def prepare(stage, scope_path, output, *, map_name="leicester", live=False, migr
     model = scene_metadata(asset_library, staged_document)
     nodes = model["nodes"]
     map_node = next(node for node in nodes if node.get("name") == "map")
-    groups = [nodes[index] for index in map_node["children"] if nodes[index].get("name") != "ground"]
+    ungrouped_assets = {obj['node'].split(':', 2)[1] for obj in document['objects']
+                        if not obj.get('group') and obj['node'].startswith('asset:')}
+    groups = [nodes[index] for index in map_node["children"]
+              if nodes[index].get("name") != "ground"
+              and nodes[index].get('extras', {}).get('asset_group') not in ungrouped_assets]
     part_names = {nodes[index]["name"] for group in groups for index in group.get("children", [])}
     if migration_path is not None and not live:
         migration = json.loads(Path(migration_path).read_text())
