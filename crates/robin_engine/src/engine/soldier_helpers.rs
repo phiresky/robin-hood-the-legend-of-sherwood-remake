@@ -1004,9 +1004,6 @@ impl EngineInner {
         // Pick the unlocked door nearest to first_pos by maximum norm of
         // (door.point_in - first_pos).
         let (point_out, point_mid, out_layer, out_sector_handle) = {
-            if self.scripts.mission.is_none() {
-                return;
-            }
             let mut best_idx = None;
             let mut minimum_distance = u16::MAX;
             for &di in door_indices {
@@ -1332,7 +1329,7 @@ impl EngineInner {
             if !same_sector {
                 let path = {
                     let level = self.world.fast_grid.level.clone();
-                    self.scripts.mission.as_ref().and_then(|_| {
+                    {
                         let exact_graph =
                             self.script_domains.interactables.doors.iter().any(|door| {
                                 door.sector_out_index.is_some() || door.sector_in_index.is_some()
@@ -1366,7 +1363,7 @@ impl EngineInner {
                                     .and_then(|candidate| candidate.lift_type)
                             },
                         )
-                    })
+                    }
                 };
                 if let Some(path) = path
                     && !path.is_empty()

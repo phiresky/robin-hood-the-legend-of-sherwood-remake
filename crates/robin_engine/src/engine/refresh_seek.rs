@@ -957,14 +957,12 @@ impl crate::engine::EngineInner {
         };
 
         let (path_src_pos, path_src_sector) = {
-            let adapted = self.scripts.mission.as_ref().and_then(|_| {
-                door_source.and_then(|(door_handle, door_direction)| {
-                    crate::engine::movement::adapt_source_to_current_door_with_identity(
-                        &self.script_domains.interactables.doors,
-                        door_handle,
-                        door_direction,
-                    )
-                })
+            let adapted = door_source.and_then(|(door_handle, door_direction)| {
+                crate::engine::movement::adapt_source_to_current_door_with_identity(
+                    &self.script_domains.interactables.doors,
+                    door_handle,
+                    door_direction,
+                )
             });
             match adapted {
                 Some((adj, sector, _layer)) => (adj, sector),
@@ -975,25 +973,23 @@ impl crate::engine::EngineInner {
         let owner_auth = self.get_entity(owner).map(|e| e.actor_auth_info());
         let level = self.world.fast_grid.level.clone();
         let gate_path = {
-            self.scripts.mission.as_ref().and_then(|_| {
-                find_seek_gate_path(
-                    &self.script_domains.interactables.doors,
-                    path_src_pos,
-                    path_src_sector,
-                    resolved.destination,
-                    target_sector,
-                    owner_auth.as_ref(),
-                    false,
-                    &|sector| self.building_sector_is_authorized(sector),
-                    &|sector| {
-                        level
-                            .sectors
-                            .iter()
-                            .find(|candidate| candidate.sector_number == sector)
-                            .and_then(|candidate| candidate.lift_type)
-                    },
-                )
-            })
+            find_seek_gate_path(
+                &self.script_domains.interactables.doors,
+                path_src_pos,
+                path_src_sector,
+                resolved.destination,
+                target_sector,
+                owner_auth.as_ref(),
+                false,
+                &|sector| self.building_sector_is_authorized(sector),
+                &|sector| {
+                    level
+                        .sectors
+                        .iter()
+                        .find(|candidate| candidate.sector_number == sector)
+                        .and_then(|candidate| candidate.lift_type)
+                },
+            )
         };
 
         let Some(gate_path) = gate_path else {
@@ -1079,9 +1075,6 @@ impl crate::engine::EngineInner {
         let Some(goal_sector) = goal_sector else {
             return false;
         };
-        if self.scripts.mission.is_none() {
-            return false;
-        }
         let Some((owner_pos, owner_layer, Some(owner_sector))) = self.get_entity(owner).map(|e| {
             (
                 e.element_data().position_map(),

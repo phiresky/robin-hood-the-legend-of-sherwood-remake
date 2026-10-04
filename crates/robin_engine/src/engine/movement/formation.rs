@@ -918,27 +918,25 @@ impl EngineInner {
                     .get_entity(approach_owner)
                     .map(|entity| entity.actor_auth_info());
                 let level = &self.world.fast_grid.level;
-                self.scripts.mission.as_ref().and_then(|_| {
-                    find_group_move_gate_path(
-                        &self.script_domains.interactables.doors,
-                        approach_owner,
-                        pc_pos,
-                        *src_sector,
-                        source_line_midpoint,
-                        source_line_sector_number,
-                        Some(source_line_sector_idx),
-                        source_line.layer,
-                        approach_auth.as_ref(),
-                        &|sector| self.building_sector_is_authorized(sector),
-                        &|sector| {
-                            level
-                                .sectors
-                                .iter()
-                                .find(|candidate| candidate.sector_number == sector)
-                                .and_then(|candidate| candidate.lift_type)
-                        },
-                    )
-                })
+                find_group_move_gate_path(
+                    &self.script_domains.interactables.doors,
+                    approach_owner,
+                    pc_pos,
+                    *src_sector,
+                    source_line_midpoint,
+                    source_line_sector_number,
+                    Some(source_line_sector_idx),
+                    source_line.layer,
+                    approach_auth.as_ref(),
+                    &|sector| self.building_sector_is_authorized(sector),
+                    &|sector| {
+                        level
+                            .sectors
+                            .iter()
+                            .find(|candidate| candidate.sector_number == sector)
+                            .and_then(|candidate| candidate.lift_type)
+                    },
+                )
             };
             let Some(gate_path) = gate_path else {
                 self.hero_speaking(
@@ -1271,14 +1269,12 @@ impl EngineInner {
             .get_entity(*pc_id)
             .and_then(current_door_for_route_source);
         let (pc_pos, path_src_sector, _path_src_layer) = {
-            let adapted = self.scripts.mission.as_ref().and_then(|_| {
-                door_source.and_then(|(door_handle, door_direction)| {
-                    adapt_source_to_current_door_with_identity(
-                        &self.script_domains.interactables.doors,
-                        door_handle,
-                        door_direction,
-                    )
-                })
+            let adapted = door_source.and_then(|(door_handle, door_direction)| {
+                adapt_source_to_current_door_with_identity(
+                    &self.script_domains.interactables.doors,
+                    door_handle,
+                    door_direction,
+                )
             });
             match adapted {
                 Some((adj, sector, layer)) => (adj, sector, layer),
@@ -1345,47 +1341,45 @@ impl EngineInner {
         let pc_auth = self.get_entity(*pc_id).map(|e| e.actor_auth_info());
         let level = &self.world.fast_grid.level;
         let mut door_goal_info = door_goal.and_then(|door_idx| {
-            self.scripts.mission.as_ref().and_then(|_| {
-                let path = crate::gate::find_path_into_door_with_sector_index(
-                    &self.script_domains.interactables.doors,
-                    (pc_pos.x, pc_pos.y),
-                    u16::from(path_src_sector),
-                    path_src_sector.arena_index(),
-                    crate::gate::DoorIndex::new(door_idx).expect("valid door index"),
-                    pc_auth.as_ref(),
-                    false,
-                    &|sector| self.building_sector_is_authorized(sector),
-                    &|sector| {
-                        level
-                            .sectors
-                            .iter()
-                            .find(|candidate| candidate.sector_number == sector)
-                            .and_then(|candidate| candidate.lift_type)
-                    },
-                )?;
-                let terminal = path
-                    .last()
-                    .copied()
-                    .expect("path into a door must contain the goal door");
-                assert_eq!(
-                    terminal.door_index,
-                    crate::gate::DoorIndex::new(door_idx).expect("valid door index"),
-                    "path into door {door_idx} ended at {}",
-                    terminal.door_index
-                );
-                let door = self
-                    .script_domains
-                    .interactables
-                    .doors
-                    .get(usize::from(terminal.door_index))
-                    .expect("terminal door path index must resolve");
-                let (point, sector, layer) = if terminal.direct {
-                    (door.point_out, door.sector_out, door.layer_out)
-                } else {
-                    (door.point_in, door.sector_in, door.layer_in)
-                };
-                Some((door_idx, path, (point.x, point.y), u16::from(sector), layer))
-            })
+            let path = crate::gate::find_path_into_door_with_sector_index(
+                &self.script_domains.interactables.doors,
+                (pc_pos.x, pc_pos.y),
+                u16::from(path_src_sector),
+                path_src_sector.arena_index(),
+                crate::gate::DoorIndex::new(door_idx).expect("valid door index"),
+                pc_auth.as_ref(),
+                false,
+                &|sector| self.building_sector_is_authorized(sector),
+                &|sector| {
+                    level
+                        .sectors
+                        .iter()
+                        .find(|candidate| candidate.sector_number == sector)
+                        .and_then(|candidate| candidate.lift_type)
+                },
+            )?;
+            let terminal = path
+                .last()
+                .copied()
+                .expect("path into a door must contain the goal door");
+            assert_eq!(
+                terminal.door_index,
+                crate::gate::DoorIndex::new(door_idx).expect("valid door index"),
+                "path into door {door_idx} ended at {}",
+                terminal.door_index
+            );
+            let door = self
+                .script_domains
+                .interactables
+                .doors
+                .get(usize::from(terminal.door_index))
+                .expect("terminal door path index must resolve");
+            let (point, sector, layer) = if terminal.direct {
+                (door.point_out, door.sector_out, door.layer_out)
+            } else {
+                (door.point_in, door.sector_in, door.layer_in)
+            };
+            Some((door_idx, path, (point.x, point.y), u16::from(sector), layer))
         });
 
         let door_far_side_is_building = door_goal_info.as_ref().map(|(_, _, _, sector, _)| {
@@ -1455,27 +1449,25 @@ impl EngineInner {
                 return;
             };
             let level = &self.world.fast_grid.level;
-            self.scripts.mission.as_ref().and_then(|_| {
-                find_group_move_gate_path(
-                    &self.script_domains.interactables.doors,
-                    *pc_id,
-                    pc_pos,
-                    path_src_sector,
-                    resolved_dest,
-                    goal_sector,
-                    pc_goal_sector_index,
-                    pc_effective_layer,
-                    pc_auth.as_ref(),
-                    &|sector| self.building_sector_is_authorized(sector),
-                    &|sector| {
-                        level
-                            .sectors
-                            .iter()
-                            .find(|candidate| candidate.sector_number == sector)
-                            .and_then(|candidate| candidate.lift_type)
-                    },
-                )
-            })
+            find_group_move_gate_path(
+                &self.script_domains.interactables.doors,
+                *pc_id,
+                pc_pos,
+                path_src_sector,
+                resolved_dest,
+                goal_sector,
+                pc_goal_sector_index,
+                pc_effective_layer,
+                pc_auth.as_ref(),
+                &|sector| self.building_sector_is_authorized(sector),
+                &|sector| {
+                    level
+                        .sectors
+                        .iter()
+                        .find(|candidate| candidate.sector_number == sector)
+                        .and_then(|candidate| candidate.lift_type)
+                },
+            )
         };
 
         match path {
@@ -1695,9 +1687,8 @@ impl EngineInner {
                     .map(|sector| (sector.sector_number, index, sector.layer))
             });
         let clicked_sector_door_index = selected_grid_sector.and_then(|sector| sector.door_index);
-        let clicked_polygon_door_index = self.scripts.mission.as_ref().and_then(|_| {
-            door_click_polygon_at(&self.script_domains.interactables.doors, click_point)
-        });
+        let clicked_polygon_door_index =
+            door_click_polygon_at(&self.script_domains.interactables.doors, click_point);
         let exact_recorded_goal_is_non_door = goal_override.is_some()
             && goal_sector_index_override
                 .and_then(|index| self.world.fast_grid.level.sectors.get(usize::from(index)))

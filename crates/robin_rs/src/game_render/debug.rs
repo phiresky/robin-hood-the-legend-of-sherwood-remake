@@ -69,9 +69,6 @@ pub(crate) fn render_debug_doors(
     if !dev.debug.door_display {
         return;
     }
-    if !engine.has_mission_geometry() {
-        return;
-    }
 
     let view = host.viewport().view_position;
     let zoom = host.viewport().zoom_factor;

@@ -18,6 +18,26 @@ with it. Global indices and connections are rebuilt after placement.
 with Derby/York. “Partial” identifies a remaining gap. “Planned” describes the
 intended construction, not functionality available today.
 
+**Unscripted map traversal:** exported maps deliberately run without a mission
+script VM. Gate routes, jump selection, lockpicking validation, door hover/overlays,
+patch clicks/ownership, building AI door lists, corpse door-blocking checks, lift
+fall destinations, reinforcement entrances and patch animation progression now
+use the loaded map domains independently of that VM. Compiled walking lifts
+derive receiving-plane boundaries at shared entrances on both approach layers.
+Their approach points are extended along the authored passage direction when
+necessary to fit the stock 6×4 actor footprint. The search stays within the
+assigned movement area and avoids obstacles, stopping after 64 map units;
+unresolved approaches retain their authored position with a native load warning.
+This is derived during native descriptor compilation, without modifying assets
+or legacy binary maps. Eight actual actor routes cover both directions in four
+map-plane orientations, checking receiving surfaces and height on every interior
+tick. Full-map stair walks and all actor sizes remain unaudited.
+Validation also passes 4,293 engine unit tests, 68 level-data tests, 61 compiler
+integration tests and the existing 6,222 sampled actor crossings across all ten
+maps. Client door-hover/input tests pass. The core overlay manifest now declares
+packed-data schema 22, matching the earlier fractional-elevation format update;
+all 11 overlay tests pass.
+
 **Ordinary route consistency:** fresh best-effort exports of all ten saved maps
 are under `work/map-compile/route-sampling-HpYhrj`. A native collision flood-fill
 finds connected actor-sized samples within numbered motion sectors, then checks

@@ -31,10 +31,6 @@ impl EngineInner {
             tracing::warn!("REINFORCEMENT: no reinforcement doors on this level.");
             return;
         }
-        assert!(
-            self.scripts.mission.is_some(),
-            "reinforcement requires an installed mission script"
-        );
         let pick = crate::sim_rng::usize(
             tcx.sim,
             crate::sim_rng::RngSite::ReinforcementDoor,
@@ -45,14 +41,14 @@ impl EngineInner {
         // Snapshot canonical door geometry before touching entities or the
         // campaign.
         let door_snap = {
-            let Some(door) = self
+            let door = self
                 .script_domains
                 .interactables
                 .doors
                 .get(usize::from(door_index))
-            else {
-                return;
-            };
+                .unwrap_or_else(|| {
+                    panic!("reinforcement references missing map door {door_index}")
+                });
             let mut sector_out =
                 crate::position_interface::SectorHandle::from_number(door.sector_out);
             if let Some(index) = door.sector_out_index {
@@ -416,9 +412,7 @@ mod tests {
         let sim = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
         let mut assets = LevelAssets::new();
-        engine.scripts.mission = Some(crate::engine::test_support::asm::empty_mission_script(
-            "reinforcement",
-        ));
+        assert!(engine.scripts.mission.is_none());
         let profile = crate::profiles::CharacterProfile {
             filename: "Peasant".into(),
             profile_name: "Paysan A".into(),
@@ -508,8 +502,8 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "reinforcement requires an installed mission script")]
-    fn reinforcement_rejects_missing_mission_script() {
+    #[should_panic(expected = "reinforcement references missing map door 0")]
+    fn reinforcement_rejects_missing_map_door() {
         let sim_context = crate::sim_rng::test_context();
         let sim = &sim_context;
         let mut engine = EngineInner::new();

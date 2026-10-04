@@ -211,31 +211,29 @@ impl EngineInner {
         };
 
         let mut blocks = false;
-        if self.scripts.mission.is_some() {
-            for door in &self.script_domains.interactables.doors {
-                if !door.is_door() {
-                    continue;
-                }
-                let sq_in = {
-                    let dx = door.point_in.x - pos.x;
-                    let dy = door.point_in.y - pos.y;
-                    dx * dx + dy * dy
-                };
-                let sq_out = {
-                    let dx = door.point_out.x - pos.x;
-                    let dy = door.point_out.y - pos.y;
-                    dx * dx + dy * dy
-                };
-                if door.body_would_block(
-                    crate::sector::SectorNumber::new(u16::from(body_sector) as i16),
-                    door.sector_in,
-                    door.sector_out,
-                    sq_in,
-                    sq_out,
-                ) {
-                    blocks = true;
-                    break;
-                }
+        for door in &self.script_domains.interactables.doors {
+            if !door.is_door() {
+                continue;
+            }
+            let sq_in = {
+                let dx = door.point_in.x - pos.x;
+                let dy = door.point_in.y - pos.y;
+                dx * dx + dy * dy
+            };
+            let sq_out = {
+                let dx = door.point_out.x - pos.x;
+                let dy = door.point_out.y - pos.y;
+                dx * dx + dy * dy
+            };
+            if door.body_would_block(
+                crate::sector::SectorNumber::new(u16::from(body_sector) as i16),
+                door.sector_in,
+                door.sector_out,
+                sq_in,
+                sq_out,
+            ) {
+                blocks = true;
+                break;
             }
         }
 

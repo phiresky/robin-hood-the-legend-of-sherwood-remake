@@ -1004,10 +1004,6 @@ fn presentation_queries_preserve_fixed_world_results_and_snapshot_bytes() {
             view.fog_entity_is_hostile(pc),
             engine.fog_entity_is_hostile(pc)
         );
-        assert_eq!(
-            view.has_mission_geometry(),
-            engine.mission_script().is_some()
-        );
         assert_eq!(view.mission_won(), engine.mission().mission_won);
         assert_eq!(
             view.more_combat_gestures(),

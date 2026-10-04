@@ -1,5 +1,20 @@
 # Post-port Features
 
+- **Map interactions without mission scripts.** Gate routes, jump selection,
+  lockpicking validation, door hover/overlays, patch clicks, building AI door lists,
+  blocked-door corpse handling and lift fall destinations use loaded map data
+  even when no mission script VM is present. Patch animations follow map switch
+  state, and available campaign reinforcements can use map entrances.
+
+- **Receiving boundaries at stair entrances.** Compiled stair
+  connections generate receiver changes at shared navigation-area boundaries on
+  both approach layers. Separate unconnected layers and animation-driven ladder
+  or wall traversal do not acquire these walking boundaries. Native compilation
+  extends cramped walking-lift approach points along their authored direction
+  until a stock 6-by-4 actor fits, without crossing obstacles or leaving the
+  owning area. If no point fits within 64 map units, it keeps the authored point
+  and emits a warning. Binary level data is unchanged.
+
 - **Partial navigation cells at map edges.** Maps whose pixel dimensions are not
   multiples of 64 allocate the final partial grid cells and retain their exact
   image bounds. Actors can cross receiving-surface seams in the right and bottom

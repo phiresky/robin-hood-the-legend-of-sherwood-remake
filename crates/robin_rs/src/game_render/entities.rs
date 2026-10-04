@@ -674,9 +674,6 @@ pub(super) fn transition_crenel_climb_up_mask_position(
     {
         return None;
     }
-    if !engine.has_mission_geometry() {
-        return None;
-    }
     let door_index = entity.position_iface().get_door()?;
     let door = engine.doors().get(usize::from(door_index))?;
     let point_mid = door.point_mid;

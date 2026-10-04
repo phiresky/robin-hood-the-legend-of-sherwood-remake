@@ -107,7 +107,6 @@ fn set_stone_distraction_preview(engine: &Engine, host: &mut Host, center: MapPo
 }
 
 fn door_click_polygon_at(engine: &Engine, mouse_map: MapPoint) -> Option<u32> {
-    engine.mission_script()?;
     engine
         .doors()
         .iter()
@@ -622,13 +621,11 @@ fn patch_hover_feedback(
         .expect("same-frame mouse sector must identify an admitted grid sector")
         .sector_type
         .is_patch();
-    // `find_patch_for_grid_sector` returns `None` only when no
-    // mission script is loaded; in that state we can't evaluate
-    // patch doors and fall through to the default cursor logic.
+    // Map-owned patch doors remain available in unscripted missions.
     if is_patch && let Some(patch_idx) = engine.find_patch_for_grid_sector(patch_sector_idx) {
         let first_door = engine
-            .mission_script()
-            .and_then(|_| engine.patches().get(patch_idx as usize))
+            .patches()
+            .get(patch_idx as usize)
             .and_then(|p| p.door_indices.first().copied());
         // Door-cursor pointer freezes the cursor animation (no trajectory reject).
         return Some(HoverFeedback::door(
@@ -2204,6 +2201,54 @@ mod tests {
     use robin_engine::resource_ids::*;
 
     use crate::host::test_support::{add_selected_pc, fixture};
+
+    #[test]
+    fn compiled_door_hover_works_without_a_mission_script() {
+        use robin_engine::engine::{EngineArgs, LevelLoadArgs, SimConfig};
+        let (_, mut assets, _) = fixture();
+        let loaded = robin_engine::level_data::LoadedLevel::hackable_from_json(include_bytes!(
+            "../../robin_engine/tests/fixtures/asset-compiled.level.json"
+        ))
+        .unwrap();
+        let mut campaign = Campaign::default();
+        let mission = campaign
+            .force_next_mission_by_name(
+                std::sync::Arc::make_mut(&mut assets.profile_manager),
+                "door-hover",
+                "door-hover",
+                true,
+            )
+            .unwrap();
+        campaign.current_mission_idx = Some(mission);
+        let engine = Engine::new(EngineArgs {
+            campaign,
+            level: LevelLoadArgs {
+                assets: &mut assets,
+                level_directory: "",
+                progress: &mut |_| {},
+                loaded,
+                bg_pixel_dims: (2000., 2000.),
+            },
+            ground_mark_sprite: None,
+            titbit_row_frame_counts: vec![],
+            rng_seed: 0,
+            original_rng_replay: None,
+            sim_config: SimConfig {
+                script_enabled: false,
+                ..Default::default()
+            },
+        })
+        .unwrap();
+        assert!(engine.mission_script().is_none());
+        assert_eq!(
+            door_click_polygon_at(&engine, MapPoint::new(400., 350.)),
+            Some(0)
+        );
+        assert_eq!(
+            door_click_polygon_at(&engine, MapPoint::new(450., 350.)),
+            None
+        );
+    }
 
     #[test]
     fn stone_ground_cursor_publishes_only_eligible_landing_preview() {

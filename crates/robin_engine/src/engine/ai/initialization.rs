@@ -228,16 +228,6 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &mut LevelAssets,
     ) {
-        // Script loading is intentionally recoverable so incomplete developer
-        // data can still reach the renderer.  In that mode AI starts without
-        // door-derived views, houses, or rally points; make the degraded state
-        // explicit rather than silently manufacturing valid-looking caches.
-        if self.scripts.mission.is_none() {
-            tracing::warn!(
-                "Initializing AI without a mission script; door-derived AI state will be unavailable"
-            );
-        }
-
         // Reset global AI state
         // think-method recursion depth = 0
         self.ai.global.soldier_camps.clear();
@@ -922,33 +912,29 @@ impl EngineInner {
         // `DOOR_BUILDING_TRAP` whose inside sector is the building; excluding
         // it can select a farther ordinary door and changes the observable
         // door-fight RNG consumption.
-        // A missing script is the explicitly warned degraded-load path from
-        // `init_ai`; houses intentionally remain empty in that mode.
-        if self.scripts.mission.is_some() {
-            for (idx, door) in self.script_domains.interactables.doors.iter().enumerate() {
-                if !door_belongs_to_ai_house(door.door_type) {
-                    continue;
-                }
-                doors_by_building
-                    .entry(door.sector_in)
-                    .or_default()
-                    .push(idx as u32);
-
-                // Rally point: use the door's `point_out` directly
-                // (the sectorised "outside" position).
-                rally_points.push(DoorRallyPoint {
-                    position: Position {
-                        x: door.point_out.x,
-                        y: door.point_out.y,
-                        sector: crate::position_interface::SectorHandle::new(u16::from(
-                            door.sector_out,
-                        )),
-                        level: door.layer_out,
-                    },
-                    door_index: crate::gate::DoorIndex::new(idx as u32).expect("valid door index"),
-                    radius: AI_DOOR_RALLY_POINT_DISTANCE,
-                });
+        for (idx, door) in self.script_domains.interactables.doors.iter().enumerate() {
+            if !door_belongs_to_ai_house(door.door_type) {
+                continue;
             }
+            doors_by_building
+                .entry(door.sector_in)
+                .or_default()
+                .push(idx as u32);
+
+            // Rally point: use the door's `point_out` directly
+            // (the sectorised "outside" position).
+            rally_points.push(DoorRallyPoint {
+                position: Position {
+                    x: door.point_out.x,
+                    y: door.point_out.y,
+                    sector: crate::position_interface::SectorHandle::new(u16::from(
+                        door.sector_out,
+                    )),
+                    level: door.layer_out,
+                },
+                door_index: crate::gate::DoorIndex::new(idx as u32).expect("valid door index"),
+                radius: AI_DOOR_RALLY_POINT_DISTANCE,
+            });
         }
 
         // Collect occupants per building from the current entity set.

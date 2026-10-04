@@ -1772,24 +1772,20 @@ impl EngineInner {
                 }
                 let patch_idx = entity.as_fx().and_then(|fx| fx.fx.patch_index);
                 let (progression, in_transition) = if let Some(patch_idx) = patch_idx {
-                    if self.scripts.mission.is_none() {
-                        (FrameProgression::Default, false)
-                    } else {
-                        let patch = self
+                    let patch = self
                             .script_domains
                             .interactables
                             .patches
                             .get(usize::from(patch_idx))
                             .unwrap_or_else(|| panic!("FX {owner:?} references missing patch {patch_idx} at its live update slot"));
-                        (
-                            if patch.applied && patch.in_transition {
-                                FrameProgression::Reversed
-                            } else {
-                                FrameProgression::Default
-                            },
-                            patch.in_transition,
-                        )
-                    }
+                    (
+                        if patch.applied && patch.in_transition {
+                            FrameProgression::Reversed
+                        } else {
+                            FrameProgression::Default
+                        },
+                        patch.in_transition,
+                    )
                 } else {
                     (FrameProgression::Default, false)
                 };

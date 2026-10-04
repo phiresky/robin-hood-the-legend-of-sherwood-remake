@@ -1,0 +1,218 @@
+use super::*;
+
+fn placed_point(point: MapPoint, turn: u8) -> MapPoint {
+    if turn == 0 {
+        return point;
+    }
+    let (x, y) = (point.x - 400., point.y - 300.);
+    let (x, y) = match turn {
+        1 => (-y, x),
+        2 => (-x, -y),
+        3 => (y, -x),
+        _ => unreachable!(),
+    };
+    MapPoint::new(x + 900., y + 800.)
+}
+
+fn placed_stair_fixture(bytes: &[u8], turn: u8, lift_type: u8) -> Vec<u8> {
+    let mut document: serde_json::Value = serde_json::from_slice(bytes).unwrap();
+    let mut geometry: crate::level_data::CompiledAssetGeometry =
+        serde_json::from_value(document["asset_geometry"].clone()).unwrap();
+    let transform = |point: &mut (i16, i16)| {
+        let moved = placed_point(MapPoint::new(f32::from(point.0), f32::from(point.1)), turn);
+        *point = (moved.x as i16, moved.y as i16);
+    };
+    for area in geometry.motion_data.layers.iter_mut().flatten() {
+        for point in &mut area.polygon.points {
+            transform(point);
+        }
+        for obstacle in &mut area.obstacles {
+            for point in &mut obstacle.polygon.points {
+                transform(point);
+            }
+        }
+    }
+    for obstacle in &mut geometry.sight_obstacles {
+        for point in &mut obstacle.points {
+            let moved = placed_point(MapPoint::new(point.x, point.y - point.z_top), turn);
+            point.x = moved.x;
+            point.y = moved.y + point.z_top;
+        }
+    }
+    for lift in &mut geometry.lifts {
+        lift.lift_type = lift_type;
+        lift.direction = (lift.direction + i16::from(turn) * 4) % 16;
+        for door in &mut lift.doors {
+            transform(&mut door.point_in);
+            transform(&mut door.point_out);
+            transform(&mut door.point_mid);
+        }
+    }
+    document["asset_geometry"] = serde_json::to_value(geometry).unwrap();
+    serde_json::to_vec(&document).unwrap()
+}
+
+#[test]
+fn compiled_doors_and_patch_cursors_work_without_a_mission_script() {
+    let (mut engine, _) = compiled_walkway(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/asset-door-transition.level.json"
+    )));
+    assert!(engine.scripts.mission.is_none());
+    assert!(!engine.script_domains.interactables.doors.is_empty());
+    assert!(!engine.script_domains.interactables.patches.is_empty());
+    use crate::resource_ids::{RHMOUSE_DOOR_NO, RHMOUSE_DOOR_YES};
+    for locked in [false, true, false] {
+        engine.script_domains.interactables.doors[0].set_locked_pc(locked);
+        engine.script_domains.interactables.patches[0].locked = locked;
+        let expected = if locked {
+            RHMOUSE_DOOR_NO
+        } else {
+            RHMOUSE_DOOR_YES
+        };
+        assert_eq!(engine.choose_door_cursor(Some(0), None), expected);
+        assert_eq!(engine.choose_door_cursor(None, Some(0)), expected);
+    }
+    assert_eq!(engine.find_patch_for_door(0), Some(1));
+}
+
+#[test]
+fn compiled_buildings_keep_ai_door_lists_without_a_mission_script() {
+    let (mut engine, mut assets) = compiled_walkway(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/asset-interior.level.json"
+    )));
+    assert!(engine.scripts.mission.is_none());
+    engine.init_ai(&crate::sim_rng::test_context(), &mut assets);
+    assert!(!engine.ai.global.houses.is_empty());
+    assert!(!engine.ai.global.door_rally_points.is_empty());
+    assert!(
+        engine
+            .ai
+            .global
+            .houses
+            .iter()
+            .all(|house| !house.door_indices.is_empty())
+    );
+}
+
+#[test]
+fn queued_actor_routes_traverse_compiled_stairs_in_both_directions() {
+    let bytes = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/asset-lift.level.json"
+    ));
+    for (turn, reverse) in (0..4).flat_map(|turn| [false, true].map(|reverse| (turn, reverse))) {
+        let bytes = placed_stair_fixture(bytes, turn, 1);
+        let (mut engine, mut assets) = compiled_walkway(&bytes);
+        assert!(engine.scripts.mission.is_none());
+        let low = (placed_point(MapPoint::new(370., 350.), turn), 0, 0);
+        let high = (placed_point(MapPoint::new(430., 250.), turn), 1, 2);
+        let ((source, layer, sector), (goal, goal_layer, goal_sector)) =
+            if reverse { (high, low) } else { (low, high) };
+        let handle = |engine: &EngineInner, sector: u16| {
+            let index = engine.world.fast_grid.level.sector_number_map
+                [&crate::sector::SectorNumber::new(sector as i16)];
+            crate::position_interface::SectorHandle::new(sector)
+                .unwrap()
+                .with_arena_index(crate::fast_find_grid::SectorIndex::new(index as u32).unwrap())
+        };
+        let source_sector = handle(&engine, sector);
+        let destination_sector = handle(&engine, goal_sector);
+        let owner = walking_pc(&mut engine, &mut assets, source, layer, source_sector);
+        let receiver = engine.get_projection_area_index(&assets, source_sector, layer, source);
+        engine.set_obstacle_and_material(&assets, owner, receiver);
+        let authorization = engine.ent(owner).actor_auth_info();
+        let path = crate::gate::find_path_gates_with_sector_indices(
+            &engine.script_domains.interactables.doors,
+            (source.x, source.y),
+            sector,
+            source_sector.arena_index(),
+            (goal.x, goal.y),
+            goal_sector,
+            destination_sector.arena_index(),
+            Some(&authorization),
+            false,
+            &|_| true,
+            &|number| {
+                engine
+                    .world
+                    .fast_grid
+                    .level
+                    .sectors
+                    .iter()
+                    .find(|sector| sector.sector_number == number)
+                    .and_then(|sector| sector.lift_type)
+            },
+        )
+        .expect("stairs must have an authorized gate route");
+        assert_eq!(path.len(), 2);
+        let sim = crate::sim_rng::test_context();
+        engine
+            .launch_gate_movement_sequence(
+                TickCtx::new(&sim, &assets),
+                &mut vec![],
+                crate::engine::movement::GateRouteRequest {
+                    entity_id: owner,
+                    source_sector: Some(source_sector),
+                    gate_path: path,
+                    goal: crate::engine::movement::GoalShape::Point {
+                        point: goal,
+                        tolerance: 0.,
+                    },
+                    goal_layer,
+                    base_action: OrderType::WalkingUpright,
+                    move_after_last_door: true,
+                    speed_factor: 1.,
+                    initial_flags: crate::sequence::MoveFlags::empty(),
+                    prefix_elements: vec![],
+                    tail_elements: vec![],
+                    append_arrival_speech: false,
+                    append_recovery: false,
+                },
+            )
+            .expect("stairs route sequence");
+        let mut crossed_lift = false;
+        for _ in 0..300 {
+            engine.control.frame_counter += 1;
+            engine.t_hourglass_phase_sequences(&assets);
+            engine.hourglass_phase_paths(TickCtx::new(&sim, &assets));
+            engine.t_tick_actor_owner_envelopes(&assets);
+            let element = engine.ent(owner).element_data();
+            let position = element.position_map();
+            let current_sector = element.sector().expect("walking actor lost its sector");
+            crossed_lift |= current_sector.get() == 3 && element.layer() == 2;
+            // PassingDoor changes membership at the midpoint. Receiving-plane
+            // identity is directional at that exact contact; interior movement
+            // must already use the destination plane.
+            if !engine
+                .script_domains
+                .interactables
+                .doors
+                .iter()
+                .any(|door| door.point_mid == position)
+            {
+                assert_actor_receiver(
+                    &engine,
+                    &assets,
+                    owner,
+                    current_sector,
+                    element.layer(),
+                    position,
+                );
+            }
+            if (position - goal).length() < 0.01 && element.layer() == goal_layer {
+                break;
+            }
+        }
+        let element = engine.ent(owner).element_data();
+        assert!(crossed_lift, "actor never entered the stair sector");
+        assert!(
+            (element.position_map() - goal).length() < 0.01,
+            "actor stopped at {:?}, expected {goal:?}",
+            element.position_map()
+        );
+        assert_eq!(element.layer(), goal_layer);
+        assert_eq!(element.sector(), Some(destination_sector));
+    }
+}

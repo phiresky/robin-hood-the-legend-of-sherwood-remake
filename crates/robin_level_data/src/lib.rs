@@ -1,5 +1,6 @@
 //! Static profiles and level content decoded before simulation construction.
 
+mod compiled_approaches;
 mod compiled_elevation;
 mod compiled_masks;
 pub mod content_patch;

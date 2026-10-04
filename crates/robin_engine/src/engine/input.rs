@@ -2845,7 +2845,6 @@ impl EngineInner {
         &self,
         sector_idx: crate::fast_find_grid::SectorIndex,
     ) -> Option<u32> {
-        self.scripts.mission.as_ref()?;
         let raw = u32::from(sector_idx);
         let pos = self
             .script_domains
@@ -2874,10 +2873,8 @@ impl EngineInner {
     ///    `triggers_door` (applying the patch swaps this door's rights).
     ///
     /// Used by rendering to defer a door's polygon to the patch FX
-    /// path on either side of the wiring.  Returns `None` when no
-    /// mission script is loaded.
+    /// path on either side of the wiring, including unscripted maps.
     pub fn find_patch_for_door(&self, door_idx: u32) -> Option<u32> {
-        self.scripts.mission.as_ref()?;
         // Fast path: door_triggered link cached on the door.
         if let Some(door) = self
             .script_domains
@@ -2916,15 +2913,10 @@ impl EngineInner {
                     "choose_door_cursor: no door and no patch — selected patch must be set",
                 );
                 let patch_locked = self
-                    .scripts
-                    .mission
-                    .as_ref()
-                    .and_then(|_| {
-                        self.script_domains
-                            .interactables
-                            .patches
-                            .get(patch_idx as usize)
-                    })
+                    .script_domains
+                    .interactables
+                    .patches
+                    .get(patch_idx as usize)
                     .unwrap_or_else(|| panic!("choose_door_cursor: patch {patch_idx} not found"))
                     .is_locked();
                 return if patch_locked {
@@ -2937,15 +2929,10 @@ impl EngineInner {
 
         // Snapshot door state to avoid borrow conflicts with entity access.
         let door_state = self
-            .scripts
-            .mission
-            .as_ref()
-            .and_then(|_| {
-                self.script_domains
-                    .interactables
-                    .doors
-                    .get(door_idx as usize)
-            })
+            .script_domains
+            .interactables
+            .doors
+            .get(door_idx as usize)
             .map(|d| {
                 (
                     d.is_locked_pc(),

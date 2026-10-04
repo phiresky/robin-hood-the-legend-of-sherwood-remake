@@ -8,6 +8,10 @@ mod exported_receivers {
     include!("exported_receivers.rs");
 }
 
+mod compiled_lifts {
+    include!("compiled_lifts.rs");
+}
+
 fn compiled_walkway(bytes: &[u8]) -> (EngineInner, LevelAssets) {
     compiled_walkway_with_dimensions(bytes, (2000., 2000.))
 }
@@ -326,9 +330,13 @@ fn walking_pc(
     };
     let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[action as usize] = 0;
+    conversion[OrderType::WalkingStairs as usize] = 16;
+    let mut scripts = vec![script.clone(); 16];
+    let mut stairs = script;
+    stairs.action_id = OrderType::WalkingStairs as u16;
+    scripts.extend(vec![stairs; 16]);
     let mut pc = crate::engine::test_support::actors::unbound_pc(Posture::Upright);
-    pc.element.sprite =
-        crate::sprite::Sprite::new(Arc::new(vec![script; 16]), Arc::new(conversion));
+    pc.element.sprite = crate::sprite::Sprite::new(Arc::new(scripts), Arc::new(conversion));
     pc.element.active = true;
     pc.element.set_sector(Some(sector));
     pc.element.set_layer(layer);

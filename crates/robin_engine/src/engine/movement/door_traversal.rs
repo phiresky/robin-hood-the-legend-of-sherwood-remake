@@ -310,15 +310,10 @@ impl EngineInner {
         let first_jump: Option<usize> = if apply_to_jump {
             gate_path.iter().enumerate().find_map(|(i, step)| {
                 let is_jump = self
-                    .scripts
-                    .mission
-                    .as_ref()
-                    .and_then(|_| {
-                        self.script_domains
-                            .interactables
-                            .doors
-                            .get(usize::from(step.door_index))
-                    })
+                    .script_domains
+                    .interactables
+                    .doors
+                    .get(usize::from(step.door_index))
                     .map(|d| d.is_jump())
                     .unwrap_or(false);
                 if is_jump { Some(i) } else { None }
@@ -776,15 +771,10 @@ impl EngineInner {
                             })
                             .unwrap_or((None, 0.0, trailing_flags));
                         let point_in = {
-                            self.scripts
-                                .mission
-                                .as_ref()
-                                .and_then(|_| {
-                                    self.script_domains
-                                        .interactables
-                                        .doors
-                                        .get(usize::from(last_shot.door_index))
-                                })
+                            self.script_domains
+                                .interactables
+                                .doors
+                                .get(usize::from(last_shot.door_index))
                                 .map(|d| d.point_in)
                                 .unwrap_or(last_shot.exit)
                         };
@@ -864,15 +854,10 @@ impl EngineInner {
                     // not on which branch (building vs non-building)
                     // was selected.
                     let goal_door_pc_lockable = {
-                        self.scripts
-                            .mission
-                            .as_ref()
-                            .and_then(|_| {
-                                self.script_domains
-                                    .interactables
-                                    .doors
-                                    .get(usize::from(door_index))
-                            })
+                        self.script_domains
+                            .interactables
+                            .doors
+                            .get(usize::from(door_index))
                             .map(|d| d.locked_pc && d.unlockable)
                             .unwrap_or(false)
                     };
@@ -900,12 +885,11 @@ impl EngineInner {
                         level += 1;
 
                         let (dx, dy) = {
-                            let d = self.scripts.mission.as_ref().and_then(|_| {
-                                self.script_domains
-                                    .interactables
-                                    .doors
-                                    .get(usize::from(door_index))
-                            });
+                            let d = self
+                                .script_domains
+                                .interactables
+                                .doors
+                                .get(usize::from(door_index));
                             match d {
                                 Some(d) => {
                                     (d.point_out.x - d.point_in.x, d.point_out.y - d.point_in.y)
@@ -984,12 +968,11 @@ impl EngineInner {
                     // is emitted.
                     if goal_door_pc_lockable && has_lockpick {
                         let cam_pt = {
-                            let d = self.scripts.mission.as_ref().and_then(|_| {
-                                self.script_domains
-                                    .interactables
-                                    .doors
-                                    .get(usize::from(door_index))
-                            });
+                            let d = self
+                                .script_domains
+                                .interactables
+                                .doors
+                                .get(usize::from(door_index));
                             // Use the path-direction the gate was
                             // approached in.  When the goal door was
                             // excluded from `gate_path` the caller
@@ -1191,7 +1174,6 @@ impl EngineInner {
         gate_path: &[crate::gate::GatePathStep],
         base_action: OrderType,
     ) -> Option<Vec<GateShot>> {
-        self.scripts.mission.as_ref()?;
         let shots: Vec<GateShot> = gate_path
             .iter()
             .filter_map(|step| {

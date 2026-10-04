@@ -311,7 +311,6 @@ impl EngineInner {
             .get(&crate::sector::SectorNumber::new(lift_sector as i16))?;
         let gs = self.world.fast_grid.level.sectors.get(grid_idx)?;
         let door_idx = gs.lowest_door_index?;
-        self.scripts.mission.as_ref()?;
         let door = self
             .script_domains
             .interactables

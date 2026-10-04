@@ -74,9 +74,6 @@ impl<'world> PresentationView<'world> {
         Self { inner }
     }
 
-    pub fn has_mission_geometry(&self) -> bool {
-        self.inner.mission_script().is_some()
-    }
     pub fn mission_won(&self) -> bool {
         self.inner.mission().mission_won
     }

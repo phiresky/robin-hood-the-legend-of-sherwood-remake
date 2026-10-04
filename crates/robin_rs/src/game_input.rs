@@ -611,9 +611,7 @@ fn click_patch(
     let is_double = ctx.modifiers.double;
     let selected = ctx.selected(engine);
     let patch_idx = host.frontend.input.spatial_hit().selected_patch_idx?;
-    let patch = engine
-        .mission_script()
-        .and_then(|_| engine.patches().get(patch_idx as usize))?;
+    let patch = engine.patches().get(patch_idx as usize)?;
     {
         if patch.locked {
             // Locked patch: the first selected PC speaks "unable to do

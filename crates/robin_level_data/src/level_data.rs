@@ -2919,9 +2919,11 @@ impl LoadedLevel {
                         .ok_or("too many asset sectors")?;
                 }
             }
+            crate::compiled_approaches::derive(&mut geometry);
             if geometry.elevation_lines.is_empty() {
                 geometry.elevation_lines = crate::compiled_elevation::derive(&geometry)?;
             }
+            let stair_connections = crate::compiled_elevation::stair_connections(&geometry);
             for (index, line) in geometry.elevation_lines.iter().enumerate() {
                 let [a, b] = line.map_endpoints();
                 if a == b
@@ -2942,7 +2944,16 @@ impl LoadedLevel {
                         .get(usize::from(receiver))
                         .and_then(|obstacle| obstacle.projection_area)
                         .is_some_and(|(sector, layer)| {
-                            layer == line.layer && area_refs.contains(&(sector, layer))
+                            area_refs.contains(&(sector, layer))
+                                && (layer == line.layer
+                                    || stair_connections.get(&(sector, layer)).is_some_and(
+                                        |areas| {
+                                            areas.iter().any(|&(sector, layer)| {
+                                                layer == line.layer
+                                                    && area_refs.contains(&(sector, layer))
+                                            })
+                                        },
+                                    ))
                         });
                     if !valid_receiver {
                         return Err(format!(

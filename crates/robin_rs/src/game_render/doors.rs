@@ -42,9 +42,6 @@ pub(crate) fn render_door_overlays(
     renderer: &mut Renderer,
     shift_held: bool,
 ) {
-    if !engine.has_mission_geometry() {
-        return;
-    }
     let painter = DoorOverlayPainter {
         host,
         engine,

@@ -942,36 +942,40 @@ fn global_actor_freeze_also_stops_nonactor_animation() {
 }
 
 #[test]
-fn patch_fx_without_mission_vm_uses_default_progression_without_finalization() {
-    let mut engine = EngineInner::new();
-    assert!(engine.scripts.mission.is_none());
-    let fx = engine.add_test_entity(animated_fx(Some(
-        crate::patch::PatchIndex::new(0).expect("zero is a valid patch index"),
-    )));
+fn patch_fx_without_mission_vm_follows_map_state_and_finalizes() {
+    for applied in [false, true] {
+        let mut engine = EngineInner::new();
+        assert!(engine.scripts.mission.is_none());
+        let mut patch = crate::patch::Patch::new();
+        patch.active = true;
+        patch.applied = applied;
+        patch.in_transition = true;
+        engine.script_domains.interactables.patches.push(patch);
+        let mut entity = animated_fx(Some(crate::patch::PatchIndex::new(0).unwrap()));
+        entity.element_data_mut().sprite.current_frame = 1;
+        let fx = engine.add_test_entity(entity);
+        let sim = crate::sim_rng::test_context();
+        let assets = crate::engine::types::LevelAssets::new();
+        engine.tick_static_entity_hourglass_for(TickCtx::new(&sim, &assets), fx);
+        assert_eq!(
+            engine.ent(fx).sprite().current_frame,
+            if applied { 0 } else { 2 }
+        );
+        assert!(!engine.script_domains.interactables.patches[0].in_transition);
+    }
+}
 
+#[test]
+#[should_panic(expected = "references missing patch 0")]
+fn patch_fx_without_mission_vm_rejects_missing_map_patch() {
+    let mut engine = EngineInner::new();
+    let fx = engine.add_test_entity(animated_fx(Some(crate::patch::PatchIndex::new(0).unwrap())));
     engine.tick_static_entity_hourglass_for(
         TickCtx::new(
             &crate::sim_rng::test_context(),
             &crate::engine::types::LevelAssets::new(),
         ),
         fx,
-    );
-
-    assert_eq!(
-        engine
-            .world
-            .entities
-            .get(fx)
-            .expect("no-script patch FX remains installed")
-            .element_data()
-            .sprite
-            .current_frame,
-        1,
-        "no-script patch FX retains the legacy default frame progression"
-    );
-    assert!(
-        engine.script_domains.interactables.patches.is_empty(),
-        "the no-VM compatibility path must not invent or finalize a patch"
     );
 }
 

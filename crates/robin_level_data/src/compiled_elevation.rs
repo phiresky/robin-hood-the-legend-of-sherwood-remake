@@ -123,7 +123,26 @@ fn coordinate_from_key(key: u32) -> f32 {
     })
 }
 
-/// Only an actual receiver change inside one walkable area creates a bond.
+/// Stair entrances connect receiving surfaces across navigation layers.
+pub(crate) fn stair_connections(
+    geometry: &CompiledAssetGeometry,
+) -> BTreeMap<(u16, u16), BTreeSet<(u16, u16)>> {
+    let mut connections = BTreeMap::<_, BTreeSet<_>>::new();
+    for lift in &geometry.lifts {
+        if !matches!(lift.lift_type, 0 | 1) {
+            continue;
+        }
+        for door in &lift.doors {
+            let outside = (door.sector_out, door.layer_out);
+            let inside = (door.sector_in, door.layer_in);
+            connections.entry(outside).or_default().insert(inside);
+            connections.entry(inside).or_default().insert(outside);
+        }
+    }
+    connections
+}
+
+/// Only an actual receiver change inside connected walkable areas creates a bond.
 /// Edges are split at every intersection so partial contacts and overlapping
 /// planes cannot assign an unrelated receiver to the whole edge.
 pub(crate) fn derive(geometry: &CompiledAssetGeometry) -> Result<Vec<RawElevationLine>, String> {
@@ -189,14 +208,18 @@ pub(crate) fn derive(geometry: &CompiledAssetGeometry) -> Result<Vec<RawElevatio
     }
     let mut output = BTreeMap::new();
     let mut ambiguous = BTreeSet::new();
-    for ((sector, layer), receivers) in groups {
+    let connections = stair_connections(geometry);
+    for &topology @ (_, layer) in area_polygons.keys() {
         // Sight activation controls collision and visibility, not receiving
         // height lookup. Keep bonds for all registered planes in every state;
         // doors and motion obstacles control access to switched surfaces.
-        let area = area_polygons
-            .get(&(sector, layer))
-            .ok_or("elevation receiver has no motion area")?;
-        let edges: Vec<Edge> = receivers
+        let mut contexts = vec![topology];
+        contexts.extend(connections.get(&topology).into_iter().flatten().copied());
+        let receivers: Vec<_> = contexts
+            .iter()
+            .flat_map(|key| groups.get(key).into_iter().flatten())
+            .collect();
+        let mut edges: Vec<Edge> = receivers
             .iter()
             .flat_map(|receiver| {
                 (0..receiver.polygon.len()).map(|i| {
@@ -207,27 +230,45 @@ pub(crate) fn derive(geometry: &CompiledAssetGeometry) -> Result<Vec<RawElevatio
                 })
             })
             .collect();
-        let owner = |point| -> Option<u16> {
-            if !contains(area, point) {
-                return None;
+        if contexts.len() > 1 {
+            // A receiver may extend beyond its navigation area's contour.
+            // The ownership change at a stair entrance still occurs on the
+            // area boundary even when neither plane has an edge there.
+            for polygon in contexts.iter().filter_map(|key| area_polygons.get(key)) {
+                edges.extend(
+                    (0..polygon.len()).map(|i| (polygon[i], polygon[(i + 1) % polygon.len()])),
+                );
             }
+        }
+        let owner = |point| -> Option<(u16, bool)> {
+            let key = contexts.iter().find(|key| {
+                area_polygons
+                    .get(key)
+                    .is_some_and(|polygon| contains(polygon, point))
+            })?;
             let mut best: Option<&Receiver> = None;
-            for receiver in &receivers {
+            for receiver in groups.get(key).into_iter().flatten() {
                 if contains(&receiver.polygon, point)
                     && best.is_none_or(|previous| receiver.maximum_height > previous.maximum_height)
                 {
                     best = Some(receiver);
                 }
             }
-            Some(best.map_or(u16::MAX, |r| r.index))
+            Some((best.map_or(u16::MAX, |r| r.index), *key == topology))
         };
         for edge in &edges {
             let mut cuts = vec![0., 1.];
             for other in &edges {
                 split_at(*edge, *other, &mut cuts);
             }
-            for i in 0..area.len() {
-                split_at(*edge, (area[i], area[(i + 1) % area.len()]), &mut cuts);
+            for polygon in contexts.iter().filter_map(|key| area_polygons.get(key)) {
+                for i in 0..polygon.len() {
+                    split_at(
+                        *edge,
+                        (polygon[i], polygon[(i + 1) % polygon.len()]),
+                        &mut cuts,
+                    );
+                }
             }
             cuts.sort_by(f64::total_cmp);
             // A parameter-space epsilon can erase a distinct float32 endpoint
@@ -257,10 +298,10 @@ pub(crate) fn derive(geometry: &CompiledAssetGeometry) -> Result<Vec<RawElevatio
                 let normal = unit_normal.map(|value| value * distance);
                 let left = owner([middle[0] + normal[0], middle[1] + normal[1]]);
                 let right = owner([middle[0] - normal[0], middle[1] - normal[1]]);
-                let (Some(left), Some(right)) = (left, right) else {
+                let (Some((left, left_local)), Some((right, right_local))) = (left, right) else {
                     continue;
                 };
-                if left == right {
+                if left == right || (!left_local && !right_local) {
                     continue;
                 }
                 let key = (layer, point_a, point_b);
@@ -337,6 +378,55 @@ mod tests {
         )))
         .unwrap();
         serde_json::from_value(document["asset_geometry"].clone()).unwrap()
+    }
+
+    #[test]
+    fn stair_receivers_connect_on_both_approach_layers() {
+        let document: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../robin_engine/tests/fixtures/asset-lift.level.json"
+        )))
+        .unwrap();
+        let mut geometry: CompiledAssetGeometry =
+            serde_json::from_value(document["asset_geometry"].clone()).unwrap();
+        for lift_type in [0, 1] {
+            geometry.lifts[0].lift_type = lift_type;
+            let lines = derive(&geometry).unwrap();
+            assert_eq!(lines.len(), 4);
+            for (x, layers, receivers) in [
+                (390., [0, 2], BTreeSet::from([u16::MAX, 2])),
+                (410., [1, 2], BTreeSet::from([1, 2])),
+            ] {
+                for layer in layers {
+                    let line = lines
+                        .iter()
+                        .find(|line| line.layer == layer && line.map_endpoints()[0][0] == x)
+                        .unwrap();
+                    assert_eq!(
+                        BTreeSet::from([line.left_obstacle_index, line.right_obstacle_index,]),
+                        receivers
+                    );
+                }
+            }
+        }
+        let expected = serde_json::to_value(derive(&geometry).unwrap()).unwrap();
+        for point in &mut geometry.sight_obstacles[2].points {
+            point.x += if point.x < 400. { -10. } else { 10. };
+            point.z_top = (point.x - 390.) * 5.;
+            point.z_bottom = point.z_top;
+        }
+        assert_eq!(
+            serde_json::to_value(derive(&geometry).unwrap()).unwrap(),
+            expected
+        );
+        // Merely touching another layer does not connect it. Wall and ladder
+        // traversal use their own animation-driven height changes.
+        for lift_type in [2, 3] {
+            geometry.lifts[0].lift_type = lift_type;
+            assert!(derive(&geometry).unwrap().is_empty());
+        }
+        geometry.lifts.clear();
+        assert!(derive(&geometry).unwrap().is_empty());
     }
 
     #[test]

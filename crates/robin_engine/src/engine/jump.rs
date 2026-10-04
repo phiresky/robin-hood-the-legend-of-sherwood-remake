@@ -615,19 +615,7 @@ impl EngineInner {
             );
             return false;
         };
-        let Some(doors) = self
-            .scripts
-            .mission
-            .as_ref()
-            .map(|_| self.script_domains.interactables.doors.as_slice())
-        else {
-            tracing::warn!(
-                ?pc_entity,
-                jump_line_idx,
-                "jumpability query has no mission script"
-            );
-            return false;
-        };
+        let doors = self.script_domains.interactables.doors.as_slice();
         let pc_auth = entity.actor_auth_info();
         is_jumpable(
             &self.world.fast_grid,
@@ -659,11 +647,7 @@ impl EngineInner {
                 .get(&crate::sector::SectorNumber::new(
                     u16::from(sector_num) as i16
                 ))?;
-        let doors = self
-            .scripts
-            .mission
-            .as_ref()
-            .map(|_| self.script_domains.interactables.doors.as_slice())?;
+        let doors = self.script_domains.interactables.doors.as_slice();
         let pc_auth = entity.actor_auth_info();
         get_nearest_jumpable_jump_line(
             &self.world.fast_grid,
@@ -2219,6 +2203,53 @@ mod tests {
         // PC is in sector 0 (grid idx 0).  jl_a (idx 0) is in that
         // sector and has a jump gate — jumpable.
         assert!(is_jumpable(&grid, &doors, 0, 0, &pc, false));
+    }
+
+    #[test]
+    fn engine_jump_queries_use_map_gates_without_a_mission_script() {
+        let (grid, doors) = make_jumpable_fixture(false);
+        let source = crate::position_interface::SectorHandle::from_number(
+            grid.level.sectors[0].sector_number,
+        )
+        .with_arena_index(crate::fast_find_grid::SectorIndex::new(0).unwrap());
+        let mut engine = EngineInner::new();
+        engine.world.fast_grid = std::sync::Arc::new(grid);
+        engine.script_domains.interactables.doors = doors;
+        let mut pc = crate::engine::test_support::actors::unbound_pc(Posture::Upright);
+        pc.element.set_sector(Some(source));
+        pc.pc.has_jump = true;
+        let owner = engine.add_test_entity(crate::element::Entity::Pc(pc));
+        assert!(engine.scripts.mission.is_none());
+        assert!(engine.is_jumpable(0, owner, false));
+        assert_eq!(
+            engine.get_nearest_jumpable_jump_line(
+                owner,
+                0,
+                MapPoint::new(32., 0.),
+                MapPoint::new(32., 64.),
+                false,
+                None,
+            ),
+            Some(0)
+        );
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .pc_data_mut()
+            .unwrap()
+            .has_jump = false;
+        assert!(!engine.is_jumpable(0, owner, false));
+        assert_eq!(
+            engine.get_nearest_jumpable_jump_line(
+                owner,
+                0,
+                MapPoint::new(32., 0.),
+                MapPoint::new(32., 64.),
+                false,
+                None,
+            ),
+            None
+        );
     }
 
     #[test]

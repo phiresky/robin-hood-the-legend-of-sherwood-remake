@@ -249,14 +249,12 @@ impl EngineInner {
             || source_target_sector_identity_differs;
         let adapted_source = crosses_raw_topology
             .then(|| {
-                self.scripts.mission.as_ref().and_then(|_| {
-                    door_source.and_then(|(door_handle, door_direction)| {
-                        adapt_source_to_current_door(
-                            &self.script_domains.interactables.doors,
-                            door_handle,
-                            door_direction,
-                        )
-                    })
+                door_source.and_then(|(door_handle, door_direction)| {
+                    adapt_source_to_current_door(
+                        &self.script_domains.interactables.doors,
+                        door_handle,
+                        door_direction,
+                    )
                 })
             })
             .flatten();
@@ -315,47 +313,45 @@ impl EngineInner {
                 // terminal condition because a door sector is not an ordinary
                 // motion area.
                 let door_goal = ai_move_goal_door(self, goal_sector, goal_sector_index);
-                let gate_path = self.scripts.mission.as_ref().and_then(|_| {
-                    if let Some(door_index) = door_goal {
-                        crate::gate::find_path_into_door_with_sector_index(
-                            &self.script_domains.interactables.doors,
-                            (source.x, source.y),
-                            u16::from(source_sector),
-                            source_sector_index,
-                            door_index,
-                            auth.as_ref(),
-                            move_flags.contains(crate::sequence::MoveFlags::MAP),
-                            &|sector| self.building_sector_is_authorized(sector),
-                            &|sector| {
-                                level
-                                    .sectors
-                                    .iter()
-                                    .find(|candidate| candidate.sector_number == sector)
-                                    .and_then(|candidate| candidate.lift_type)
-                            },
-                        )
-                    } else {
-                        crate::gate::find_path_gates_with_sector_indices(
-                            &self.script_domains.interactables.doors,
-                            (source.x, source.y),
-                            u16::from(source_sector),
-                            source_sector_index,
-                            (dest.x, dest.y),
-                            u16::from(goal_sector),
-                            goal_sector_index,
-                            auth.as_ref(),
-                            move_flags.contains(crate::sequence::MoveFlags::MAP),
-                            &|sector| self.building_sector_is_authorized(sector),
-                            &|sector| {
-                                level
-                                    .sectors
-                                    .iter()
-                                    .find(|candidate| candidate.sector_number == sector)
-                                    .and_then(|candidate| candidate.lift_type)
-                            },
-                        )
-                    }
-                });
+                let gate_path = if let Some(door_index) = door_goal {
+                    crate::gate::find_path_into_door_with_sector_index(
+                        &self.script_domains.interactables.doors,
+                        (source.x, source.y),
+                        u16::from(source_sector),
+                        source_sector_index,
+                        door_index,
+                        auth.as_ref(),
+                        move_flags.contains(crate::sequence::MoveFlags::MAP),
+                        &|sector| self.building_sector_is_authorized(sector),
+                        &|sector| {
+                            level
+                                .sectors
+                                .iter()
+                                .find(|candidate| candidate.sector_number == sector)
+                                .and_then(|candidate| candidate.lift_type)
+                        },
+                    )
+                } else {
+                    crate::gate::find_path_gates_with_sector_indices(
+                        &self.script_domains.interactables.doors,
+                        (source.x, source.y),
+                        u16::from(source_sector),
+                        source_sector_index,
+                        (dest.x, dest.y),
+                        u16::from(goal_sector),
+                        goal_sector_index,
+                        auth.as_ref(),
+                        move_flags.contains(crate::sequence::MoveFlags::MAP),
+                        &|sector| self.building_sector_is_authorized(sector),
+                        &|sector| {
+                            level
+                                .sectors
+                                .iter()
+                                .find(|candidate| candidate.sector_number == sector)
+                                .and_then(|candidate| candidate.lift_type)
+                        },
+                    )
+                };
                 let Some(gate_path) = gate_path else {
                     // RHSequence::AppendMoveToSequence returns false when FindPathGates
                     // rejects a candidate. AI escape/defense searches deliberately

@@ -834,10 +834,6 @@ impl EngineInner {
         let Some(id) = door_id else {
             return false;
         };
-        assert!(
-            self.scripts.mission.is_some(),
-            "UnlockDoor command validation requires an installed mission script"
-        );
         self.script_domains
             .interactables
             .doors
@@ -2602,8 +2598,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "UnlockDoor command validation requires an installed mission script")]
-    fn pc_unlock_door_rejects_missing_mission_script() {
+    fn pc_unlock_door_uses_map_permissions_without_mission_script() {
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
         let actor = add_pc(&mut engine);
@@ -2613,6 +2608,13 @@ mod tests {
             FieldValue::DoorId(crate::gate::DoorIndex::new(0).expect("valid door index")),
         );
 
-        engine.check_sequence_element_validity(&assets, actor, &element, true);
+        assert!(engine.scripts.mission.is_none());
+        assert!(!engine.check_sequence_element_validity(&assets, actor, &element, true));
+        let mut door = crate::gate::Door::default();
+        door.set_unlockable(true);
+        engine.script_domains.interactables.doors.push(door);
+        assert!(engine.check_sequence_element_validity(&assets, actor, &element, true));
+        engine.script_domains.interactables.doors[0].set_unlockable(false);
+        assert!(!engine.check_sequence_element_validity(&assets, actor, &element, true));
     }
 }
