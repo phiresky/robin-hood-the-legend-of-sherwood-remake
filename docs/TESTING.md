@@ -322,6 +322,16 @@ A real six-frame candle profile was extracted to
 verifies all six frames in `scenery-candle-native-20261004.sprites.vq.zst`.
 These artifacts test resource authoring and decoding, not rendered animation.
 
+`app/src/scenery-frames.test.ts` checks the initial sentinel tick, inclusive frame
+delays, looping and the maximum unsigned delay. The browser fixture
+`tests/scenery-live.html` checks a two-frame placed asset: GPU-projected pixels,
+legacy transparency, frame offsets, native-coordinate placement, a live asset
+drag, copies sharing textures, hidden assets, bake isolation and resource disposal.
+Run it with `TEST_PAGE=scenery-live.html` through `app/tests/run-lifecycle.mjs`
+against the editor development server. `tests/scenery-preview.html` separately
+checks palette artwork. These checks do not certify native scenery compositing,
+shadow previews, other action rows or orientation-specific artwork.
+
 Shader translation tests remain in the normal client suite. GPU execution is
 an explicit separate gate:
 

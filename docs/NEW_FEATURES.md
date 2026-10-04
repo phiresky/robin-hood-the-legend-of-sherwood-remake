@@ -1,5 +1,12 @@
 # Post-port Features
 
+- **Live placed scenery previews.** Pinned animation assets now play in the map
+  viewport, following asset moves, rotations, elevations and copies. Their
+  billboards can be selected and dragged like model assets, contribute to view
+  framing, and stay out of baked map artwork. Copies share decoded resources;
+  unavailable banks produce a visible marker and warning. Frame delays and pixel
+  offsets follow runtime placement rules.
+
 - **Reusable scenery profile extraction.** An offline authoring command selects
   one complete sprite profile from a multi-profile PNG bank or a preview atlas,
   producing a self-contained PNG bank for pinned scenery assets. Frame timing,

@@ -258,8 +258,8 @@ GLB placement frame and an initial editor placement. Multiple effects may share
 one frame. The frame has no baked artwork or collision: runtime sprite animation
 is exported separately. Tests cover copying, rotation, elevation, deletion and
 save/reopen without changing other geometry or the original effect. This is an
-offline authoring primitive; live map-viewport previews and published effect assets
-are still required before treating standalone effects as a finished library feature.
+offline authoring primitive; live previews are implemented below, while published
+effect assets and native rendered acceptance remain required.
 
 Effect-only asset cards with pinned banks now show a representative static sprite
 frame, chosen from the first active effect (or the first effect if all are inactive).
@@ -335,7 +335,27 @@ The six-frame candle profile under `work/map-compile/scenery-candle-profile-2026
 was authored into a standalone asset in `scenery-candle-asset-20261004`; the native
 sprite family encoder verifies all six frames. It has no level-specific placement
 metadata. This asset remains an authoring artifact, not a published or rendered
-parity claim. Live viewport previews and rendered placement checks remain open.
+parity claim. Native rendered placement checks remain open.
+
+**Live placed scenery:** the viewport now loads verified pinned banks for placed
+asset parts, animating their initial row at 25 ticks per second with the runtime's
+sentinel tick, inclusive delays and frame offsets. Placement uses the compiler's
+integer coordinates. The live asset transform is used while dragging, before
+the document edit is committed. Effects can be selected and dragged, contribute
+to selection/framing bounds, follow copies and hidden placements, and remain
+outside all bake roots. Copies share textures; map retirement disposes them.
+Missing or invalid banks show a magenta marker and a warning.
+Animated scenery remains visible with gameplay helpers hidden, and independently
+authored assets appear in the default library selection.
+
+The browser fixture `tests/scenery-live.html` passes actual GPU pixel projection,
+legacy transparency, two-frame advancement/offsets, anchor placement, live drag,
+copy/resource sharing, hiding, bake exclusion and cleanup. Unit timing checks
+match the native two-frame acceptance sequence, including zero and maximum delays.
+The existing palette fixture also remains separate. This covers placed asset
+parts with pinned resources; background-only definitions, unpinned installed banks,
+shadow previews, other action rows, orientation-specific artwork and complete
+native compositing remain unfinished or unverified.
 
 **Interior connections:** multiple entrances in an asset-local room remain
 connected automatically, including after moving or duplicating the asset. Distinct

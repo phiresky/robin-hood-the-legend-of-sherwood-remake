@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { sceneryThumbnailFixture } from "../tests/scenery-thumbnail-fixture.ts";
 import {
   assetTags,
   assetType,
@@ -34,6 +35,21 @@ const entries = [
     asset_type: "Building",
   },
 ];
+test("animated scenery stays visible in the default library while empty gameplay frames stay hidden", async () => {
+  const { descriptor } = await sceneryThumbnailFixture();
+  const entry = {
+    id: descriptor.id,
+    name: descriptor.name,
+    source_map: descriptor.source_map,
+    descriptor: "fire/asset.json",
+    model: "fire/model.glb",
+    editor: descriptor,
+  };
+  assert.deepEqual(filterAssets([entry], "", "", REFINED_LEVELS_FILTER), [entry]);
+  descriptor.gameplay!.animations = [];
+  assert.deepEqual(filterAssets([entry], "", "", REFINED_LEVELS_FILTER), []);
+  assert.deepEqual(filterAssets([entry], "", "", REFINED_LEVELS_FILTER, true), [entry]);
+});
 test("type, source and multiword search combine over the shared library", () => {
   assert.equal(filterAssets(entries, "", "", "").length, 3);
   assert.deepEqual(

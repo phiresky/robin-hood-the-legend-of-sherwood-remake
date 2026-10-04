@@ -2,6 +2,7 @@ import { FramingBounds } from "./framing-bounds.ts";
 import { nearestSplineSection } from "./spline-insertion.ts";
 import { TerrainControls, type TerrainEditMode } from "./terrain-controls.ts";
 import { MissionLayer } from "./mission-layer.ts";
+import { SceneryLayer } from "./scenery-layer.ts";
 import { CHARACTER_DRAG_TYPE } from "./mission-character-catalog.ts";
 import { terrainContours } from "./terrain-contours.ts";
 import { TerrainLayer } from "./terrain-layer.ts";
@@ -528,6 +529,28 @@ export class EditorViewport {
   }
   private readonly splines = new SplineLayer();
   private readonly missionMarkers = new MissionLayer();
+  private readonly scenery = new SceneryLayer(
+    () => {
+      this.clippingBoundsDirty = true;
+      this.refreshSelectionBox();
+    },
+    (message) => this.bindings.onError?.(message),
+    (id) => {
+      const view = this.partViews.get(id);
+      if (!view) return undefined;
+      const matrix = new THREE.Matrix4();
+      let node: THREE.Object3D | null = view.rot;
+      while (node && node !== this.mapRoot) {
+        if (node.matrixAutoUpdate) node.updateMatrix();
+        matrix.premultiply(node.matrix);
+        node = node.parent;
+      }
+      return matrix;
+    },
+  );
+  setSceneryLibrary(root: FileSystemDirectoryHandle | null) {
+    this.scenery.setLibrary(root);
+  }
   private cancelMissionDrag: (() => void) | null = null;
   private missionPaletteDrag: { key: string; id: string } | null = null;
   private missionEdit: {
@@ -625,6 +648,7 @@ export class EditorViewport {
     this.mapRoot.add(this.workspaceFrame);
     this.mapRoot.add(this.missionMarkers.root);
     this.scene.add(this.missionMarkers.spritesRoot);
+    this.scene.add(this.scenery.root);
     this.missionMarkers.setVisible(true);
     this.mapRoot.add(
       this.terrain.root,
@@ -846,6 +870,7 @@ export class EditorViewport {
     this.cancelMissionDrag?.();
     this.missionEdit = null;
     this.missionMarkers.clear();
+    this.scenery.clear();
     this.cancelSplineGesture?.();
     this.pendingSplinePreview = null;
     this.splineMode = null;
@@ -1067,13 +1092,15 @@ export class EditorViewport {
       }
       this.entities?.update(camera, this.spriteOrientationLock);
       this.missionMarkers.update(camera, this.spriteOrientationLock);
+      this.scenery.update(performance.now());
       if (this.assetDisplayMode === "outline") {
         this.assetOutline.render(this.renderer, this.scene, camera, [
           this.objectsRoot,
+          this.scenery.root,
           ...this.splines.assetObjects(),
         ]);
       } else if (this.assetDisplayMode === "hidden") {
-        const objects = [this.objectsRoot, ...this.splines.assetObjects()];
+        const objects = [this.objectsRoot, this.scenery.root, ...this.splines.assetObjects()];
         const visible = objects.map((object) => object.visible);
         objects.forEach((object) => {
           object.visible = false;
@@ -1171,6 +1198,12 @@ export class EditorViewport {
   }
 
   private partOfHit(h: THREE.Intersection): Level3DObject | null {
+    if (typeof h.object.userData.sceneryPart === "string")
+      return (
+        this.bindings
+          .document()
+          ?.objects.find((part) => part.id === h.object.userData.sceneryPart) ?? null
+      );
     let node: THREE.Object3D | null = h.object;
     while (node && this.partViews.get(node.name)?.wrapper !== node) node = node.parent;
     return node
@@ -1396,7 +1429,7 @@ export class EditorViewport {
         const hits = this.raycaster
           .intersectObjects(
             [
-              ...(this.assetDisplayMode === "hidden" ? [] : [this.objectsRoot]),
+              ...(this.assetDisplayMode === "hidden" ? [] : [this.objectsRoot, this.scenery.root]),
               this.terrain.root,
               ...(this.groundNode ? [this.groundNode] : []),
             ],
@@ -1534,6 +1567,7 @@ export class EditorViewport {
     const box = new THREE.Box3();
     if (this.groundNode) box.expandByObject(this.groundNode);
     box.expandByObject(this.objectsRoot);
+    box.expandByObject(this.scenery.root);
     box.expandByObject(this.splines.root);
     box.expandByObject(this.terrain.root);
     // Initial camera framing is a viewport preference, never an authored boundary.
@@ -1634,6 +1668,7 @@ export class EditorViewport {
   syncViews(d: Level3D, rebuildFraming = true, splinePreview = false) {
     this.clippingBoundsDirty = true;
     this.missionMarkers.sync(d, this.missionEdit?.selected);
+    this.scenery.sync(d);
     if (this.terrain.sync(d))
       this.sunlight.setGround(this.terrain.root.children.length ? this.terrain.root : this.ground);
     this.workspaceFrame.visible = !!d.size;
@@ -2145,7 +2180,9 @@ export class EditorViewport {
     const hits =
       this.assetDisplayMode === "hidden" || this.terrainMode
         ? []
-        : this.raycaster.intersectObject(this.objectsRoot, true).filter(visibleSurface);
+        : this.raycaster
+            .intersectObjects([this.objectsRoot, this.scenery.root], true)
+            .filter(visibleSurface);
     for (const h of hits) {
       const part = this.partOfHit(h);
       if (!part) continue;
@@ -2223,6 +2260,18 @@ export class EditorViewport {
     }
     v.wrapper.updateWorldMatrix(true, true);
     this.selectionBox.box.setFromObject(v.wrapper, true);
+    const selected = this.bindings.selection();
+    for (const mesh of this.scenery.root.children) {
+      const part = this.bindings
+        .document()
+        ?.objects.find((part) => part.id === mesh.userData.sceneryPart);
+      if (
+        mesh.visible &&
+        part &&
+        (selected?.kind === "part" ? selected.id === part.id : selected?.id === part.group)
+      )
+        this.selectionBox.box.expandByObject(mesh);
+    }
     this.selectionBox.visible = true;
   }
 

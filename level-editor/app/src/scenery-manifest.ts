@@ -29,7 +29,13 @@ export async function validateSceneryManifest(
     throw new Error("invalid sprite pixel format");
   const names = new Set<string>();
   const images = new Set<string>();
-  const profiles: { name: string; center_x: number; center_y: number; preview: string }[] = [];
+  const profiles: {
+    name: string;
+    center_x: number;
+    center_y: number;
+    preview: string;
+    rows: { frames: { path: string; delay: number; offsetX: number; offsetY: number }[] }[];
+  }[] = [];
   for (const entry of list(manifest.profiles, "sprite profiles")) {
     const profile = record(entry);
     if (typeof profile.name !== "string" || !profile.name || names.has(profile.name))
@@ -44,11 +50,12 @@ export async function validateSceneryManifest(
       !finite(profile.center_y)
     )
       throw new Error("invalid sprite profile geometry");
-    const result = {
+    const result: (typeof profiles)[number] = {
       name: profile.name,
       center_x: profile.center_x,
       center_y: profile.center_y,
       preview: "",
+      rows: [],
     };
     profiles.push(result);
     const directions = new Map<number, number[]>();
@@ -68,6 +75,8 @@ export async function validateSceneryManifest(
       if (!uint(direction)) throw new Error("invalid sprite direction");
       slots.push(direction);
       directions.set(row.action_id, slots);
+      const validatedRow: (typeof result.rows)[number] = { frames: [] };
+      result.rows.push(validatedRow);
       for (const item of list(row.frames, "sprite frames")) {
         const frame = record(item);
         if (
@@ -82,6 +91,12 @@ export async function validateSceneryManifest(
         const path = row.path && row.path !== "." ? `${row.path}/${frame.file}` : frame.file;
         const bytes = files[path];
         if (!safeLibraryPath(path) || !bytes) throw new Error(`missing pinned frame ${path}`);
+        validatedRow.frames.push({
+          path,
+          delay: frame.delay,
+          offsetX: frame.offset_x,
+          offsetY: frame.offset_y,
+        });
         if (!result.preview) result.preview = path;
         if (images.has(path)) continue;
         // Reject impossible runtime dimensions before the PNG decoder allocates its pixel buffer.

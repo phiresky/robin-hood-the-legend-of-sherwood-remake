@@ -1,6 +1,7 @@
 import type { GameplayAssetDescriptor } from "../../shared/src/asset-gameplay.ts";
 import { safeLibraryPath } from "@rle/shared";
 import { validateSceneryManifest } from "./scenery-manifest.ts";
+import type { AssetSceneryAnimation } from "../../shared/src/asset-gameplay.ts";
 
 /** Static palette artwork for an effect-only asset; never enters map bake geometry. */
 export async function loadSceneryThumbnail(
@@ -12,8 +13,19 @@ export async function loadSceneryThumbnail(
   const animations = descriptor.gameplay?.animations ?? [];
   const animation = animations.find((entry) => entry.active) ?? animations[0];
   if (!animation?.resourceDirectory) return null;
+  const { files, profile, legacy } = await loadSceneryBank(descriptor, animation, read);
+  return { png: files[profile.preview]!, legacy };
+}
+
+/** Shared admission for palette and live previews of pinned scenery artwork. */
+export async function loadSceneryBank(
+  descriptor: GameplayAssetDescriptor,
+  animation: AssetSceneryAnimation,
+  read: (name: string) => Promise<Uint8Array>,
+) {
   const directory = animation.resourceDirectory;
-  if (!safeLibraryPath(directory)) throw new Error("Invalid scenery thumbnail resource directory");
+  if (!directory || !safeLibraryPath(directory))
+    throw new Error("Invalid scenery thumbnail resource directory");
   const files: Record<string, Uint8Array> = {};
   for (const pin of descriptor.resources ?? []) {
     if (!pin.path.startsWith(`${directory}/`)) continue;
@@ -36,7 +48,8 @@ export async function loadSceneryThumbnail(
   )
     throw new Error(`Missing profile or changed sprite center: ${animation.profile}`);
   return {
-    png: files[profile.preview]!,
+    files,
+    profile,
     legacy: (data as { pixel_format: string }).pixel_format === "legacy_color_keys",
   };
 }

@@ -1,7 +1,7 @@
 import { encode } from "fast-png";
 import type { GameplayAssetDescriptor } from "../../shared/src/asset-gameplay.ts";
 
-export async function sceneryThumbnailFixture(legacy = true) {
+export async function sceneryThumbnailFixture(legacy = true, animated = false) {
   const directory = "effects/fire.rhs.d";
   const manifest = {
     pixel_format: legacy ? "legacy_color_keys" : "rgba",
@@ -40,6 +40,26 @@ export async function sceneryThumbnailFixture(legacy = true) {
       }),
     ],
   ]);
+  if (animated) {
+    manifest.profiles[0]!.rows[0]!.frames.push({
+      file: "1.png",
+      delay: 4,
+      distance: 0,
+      offset_x: 3,
+      offset_y: -2,
+      sound_id: 65535,
+    });
+    files.set(`${directory}/manifest.json`, new TextEncoder().encode(JSON.stringify(manifest)));
+    files.set(
+      `${directory}/idle/1.png`,
+      encode({
+        width: 2,
+        height: 1,
+        channels: 4,
+        data: new Uint8Array([0, 0, 255, 255, 0, 0, 255, 255]),
+      }),
+    );
+  }
   const resources = await Promise.all(
     [...files].map(async ([path, bytes]) => ({
       path,
@@ -55,7 +75,7 @@ export async function sceneryThumbnailFixture(legacy = true) {
     name: "Fire",
     source_map: "Authored",
     model: "model.glb",
-    parts: [{ node: "effect", name: "Fire", scenery: true, gameplay_only: true }],
+    parts: [{ node: "scenery-effect", name: "Fire", scenery: true, gameplay_only: true }],
     resources,
     gameplay: {
       version: 1,
@@ -65,7 +85,7 @@ export async function sceneryThumbnailFixture(legacy = true) {
       animations: [
         {
           id: "fire",
-          node: "effect",
+          node: "scenery-effect",
           anchor: [0, 0, 0],
           file: "fire",
           profile: "burning",

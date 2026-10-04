@@ -226,6 +226,7 @@ export default function Editor3D(props: EditorProps) {
   createEffect(
     () => props.library(),
     (lib) => {
+      viewport.setSceneryLibrary(lib?.handle ?? null);
       session.beginLoad();
       mapLoadAbort?.abort();
       openAttempt++;
