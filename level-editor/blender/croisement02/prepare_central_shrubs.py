@@ -27,6 +27,7 @@ BASE=OUT/'ground-plant-integration'
 FIRST_DOMAIN=470
 GEOMETRY_OPTIONS={'curved_front':True,'irregular_source_fragments':True,'irregular_inferred_alpha':True}
 INHERIT_BASE_CATALOG=True
+MIXED_SOURCE_REVIEW=OUT/'understory-candidates/mixed75-91-source-v1/source-review.json'
 
 
 def main():
@@ -50,7 +51,7 @@ def main():
         full=canvas(index)
         source_role_review=None
         if index in (75,91):
-            authority=OUT/'understory-candidates/mixed75-91-source-v1/source-review.json'
+            authority=MIXED_SOURCE_REVIEW
             review=json.loads(authority.read_text())
             if sha(Path(review['evidence']))!=review['evidence_sha256']:raise ValueError('Mixed source split audit changed')
             chosen=next(r for r in review['records'] if r['native_mask']==index)
@@ -75,7 +76,7 @@ def main():
             observed_domain=domain,excluded_foreground=exclusions,observed_pixels=int(observed.sum()),
             complete_native_pixels=int(full.sum()),source_sha256=sha(source),
             ownership_note='Complete physical clump follows native silhouette; covered regions have inferred appearance only. Source evidence excludes the explicitly listed overlapping foreground masks.',**GEOMETRY_OPTIONS)
-        if index in (69,71,72,79,80,82):packet['cluster_count']=max(450,int(full.sum()/5))
+        if index in (69,71,72,79,80,82) and 'cluster_count' not in packet:packet['cluster_count']=max(450,int(full.sum()/5))
         if index==68:packet['physical_silhouette_authority']=dict(sha256=sha(packet_dir/'complete-source.png'),reason='Native68 minus exposed wood7; leaf-only physical silhouette, observed source separately excludes131/133; no source ownership implied for covered leaves')
         if source_role_review:
             packet['source_role_review']=source_role_review
@@ -196,9 +197,15 @@ def main():
 
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('mask',type=int,choices=sorted(DOMAINS));parser.add_argument('--version',default='v1');parser.add_argument('--inferred-support',action='store_true')
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('mask',type=int,choices=sorted(DOMAINS));parser.add_argument('--version',default='v1');parser.add_argument('--inferred-support',action='store_true');parser.add_argument('--clusters',type=int);parser.add_argument('--source-role-review',type=Path)
     args=parser.parse_args(sys.argv[sys.argv.index('--')+1:]);CHOSEN={args.mask:{67:[134],68:[131,133],69:[131],70:[131],71:[131],72:[128,131],79:[445],80:[445],82:[130]}.get(args.mask,[])};FIRST_DOMAIN=DOMAINS[args.mask]
     DIRECTORY=OUT/f'understory-candidates/native-{args.mask}-{args.version}'
+    if args.source_role_review:
+        if args.mask not in (75,91):raise ValueError('Explicit mixed source review is scoped to75/91')
+        MIXED_SOURCE_REVIEW=args.source_role_review.resolve()
+    if args.clusters is not None:
+        if not 50<=args.clusters<=10000:raise ValueError('Cluster count outside bounded review range')
+        GEOMETRY_OPTIONS['cluster_count']=args.clusters
     if args.inferred_support:
         if args.mask!=71:raise ValueError('Support derivative is scoped to native71')
         GEOMETRY_OPTIONS['inferred_branch_support']=True
