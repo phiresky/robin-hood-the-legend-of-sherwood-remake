@@ -50,6 +50,14 @@ def main():
         report['mixed_source_reservations']=dict(evidence=str(resolved),evidence_sha256=sha(resolved),
             inferred_source_roles_accepted=status['inferred_source_roles_accepted'],geometry_completion=status['geometry_completion'],
             receiver_holds=status['receiver_holds'],meaning='Source boundaries now have explicit reviewed inferred roles. Receiver geometry and ground restoration remain held until their exact coverage proofs pass; leaf catalog registration alone cannot complete these obligations.')
+    wood_edges=OUT/'mixed-wood-audit/foliage-splits.json'
+    if wood_edges.exists():
+        source=json.loads(wood_edges.read_text());edges=[]
+        for row in source['records']:
+            if sha(Path(row['domain_path']))!=row['domain_sha256']:raise ValueError('Mixed foliage source domain changed')
+            edge=Path(row['reserved_edge_path'])
+            edges.append(dict(native_mask=row['native_mask'],clear_foliage_domain=row['domain'],reserved_edge_pixels=row['reserved_existing_wood_edge_pixels'],reserved_edge_path=str(edge),reserved_edge_sha256=sha(edge),existing_owner=row['existing_wood_owner'],status='Boundary classification and receiver coverage pending; clear foliage registration does not settle these pixels'))
+        report['wattle_oak_boundary_reservations']=dict(evidence=str(wood_edges),evidence_sha256=sha(wood_edges),records=edges,geometry_completion=False)
     target=OUT/'understory-review/remaining-foliage-plan.json';target.write_text(json.dumps(report,indent=2)+'\n')
     print(json.dumps({k:v for k,v in report.items() if k not in ('batches','restrictions')},indent=2))
 
