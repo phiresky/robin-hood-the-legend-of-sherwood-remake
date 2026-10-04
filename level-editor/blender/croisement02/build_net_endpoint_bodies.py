@@ -13,7 +13,7 @@ from log_trap_state_candidate import point,material,sha
 from render_slots import acquire,release
 
 def main():
-    dest=OUT/'net-endpoint-bodies-v1';dest.mkdir(exist_ok=False)
+    dest=OUT/'net-endpoint-bodies-v2';dest.mkdir(exist_ok=False)
     source=OUT/'net-state-bindings-v1/manifest.json';assembly=json.loads(source.read_text())['assemblies'][0]
     bpy.ops.wm.read_factory_settings(use_empty=True);scene=bpy.context.scene;scene.render.engine='CYCLES';scene.cycles.samples=16;scene.cycles.use_denoising=False;scene.view_settings.view_transform='Standard';scene.render.film_transparent=True;scene.render.image_settings.file_format='PNG';scene.render.image_settings.color_mode='RGBA';scene.render.resolution_x=scene.render.resolution_y=512
     scene.world=bpy.data.worlds.new('World');scene.world.use_nodes=True;scene.world.node_tree.nodes['Background'].inputs[0].default_value=(.15,.15,.15,1)
@@ -30,12 +30,12 @@ def main():
             o['state_variant']=suffix;o['geometry_status']='unapproved endpoint body hypothesis; rigging incomplete';objects.append(o);return o
         # The bag has round horizontal sections, inferred depth equal to width.
         # Height follows the lifted silhouette above the native ground waypoint.
-        rings=[(56,1),(60,5),(71,10),(85,14),(98,13),(109,10),(119,6),(128,1)]
-        if suffix=='i':rings=[(47,1),(52,8),(63,17),(79,23),(96,22),(109,14),(119,7),(128,1)]
+        rings=[(56,1),(60,5),(71,10),(85,14),(98,10),(109,7),(116,3),(121,1)]
+        if suffix=='i':rings=[(47,1),(52,8),(63,16),(79,23),(96,17),(109,9),(116,3),(121,1)]
         center_y=-1113/SIN;m=Mesh();n=24
         for z,radius in rings:
             for i in range(n):
-                angle=i*math.tau/n;cx=1334 if suffix=='e' else 1335;m.vertices.append((cx+radius*math.cos(angle),center_y+radius*math.sin(angle),z))
+                angle=i*math.tau/n;cx=1334 if suffix=='e' else 1333;m.vertices.append((cx+radius*math.cos(angle),center_y+radius*math.sin(angle),z))
         m.faces.append(tuple(reversed(range(n))))
         for row in range(len(rings)-1):
             for i in range(n):j=(i+1)%n;m.faces.append((row*n+i,row*n+j,(row+1)*n+j,(row+1)*n+i))
