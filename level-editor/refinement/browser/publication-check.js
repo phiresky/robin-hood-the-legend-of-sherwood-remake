@@ -61,6 +61,8 @@
  await wait(()=>document.querySelector('.shared-library select[aria-label="Source level"]'),'Source level filter');
  const sourceFilter=document.querySelector('.shared-library select[aria-label="Source level"]');
  sourceFilter.value='';sourceFilter.dispatchEvent(new Event('change',{bubbles:true}));
+ const helperToggle=[...document.querySelectorAll('.shared-library label')].find(label=>label.textContent.includes('Show gameplay helpers'))?.querySelector('input');
+ if(helperToggle&&!helperToggle.checked)helperToggle.click();
  await wait(()=>document.querySelectorAll('.shared-library .asset-card button[aria-label^="Add "]').length===config.expected.assets.length,'published palette');
  window.__publicationPhase={phase:'map-ready',groundMeshes,groundTextures};
  await wait(()=>window.__publicationContinue,'map screenshot');
