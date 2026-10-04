@@ -4,6 +4,36 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Current library state compilation (2026-10-04)
+
+All ten saved library scenes compiled with the ordinary `compileMap` entry point,
+best-effort mode, their pinned asset descriptors and their authored states intact.
+No source-level records were read. The audit emitted descriptors only; it did not
+bake images or run the resulting maps in the game.
+Artifacts: `work/map-compile/current-map-states-20261004-xVEHqn/diagnostics.json`
+under `level-editor`.
+
+| Scene | Controls | Traversals |
+|---|---:|---:|
+| Wychford | 2 | 2 |
+| croisement01 | 6 | 0 |
+| croisement02 | 9 | 0 |
+| croisement03 | 9 | 0 |
+| derby | 5 | 12 |
+| leicester | 12 | 10 |
+| lincoln | 11 | 10 |
+| nottingham | 10 | 12 |
+| sherwood | 0 | 4 |
+| york | 6 | 21 |
+
+Wychford retains three concrete omissions: the church-side-tower traversal has no
+floor at its endpoint height; the keep-west-tower control has no receiving floor
+at its waypoint height; and the ridge-curtain wall source lacks spline calibration.
+That wall also uses source rotation and cross-section straightening, which need
+matching gameplay deformation support. The other nine descriptors report no
+omitted state controls or traversal assemblies. All maps still carry asset review
+warnings; successful compilation is not full gameplay acceptance.
+
 The target is **new maps that play well**, assembled from reusable assets and
 editor-authored terrain. Connections must follow the current placement of those
 assets. Existing maps are regression examples, not a requirement to reproduce
