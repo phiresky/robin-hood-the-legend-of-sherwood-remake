@@ -29,10 +29,10 @@ def main():
     add('gameplay-state-metadata','Four groups/eight invisible obstacle records142..149, linked to visible assemblies',['state-target-evidence/visual-completeness.json'],['Retain metadata state activation/collision/sight semantics separately from modeled targets.','Reconcile native9patches and129mission patch instances plus all visibility/background transitions.','Verify no invisible metadata group is counted as a completed visible model.'])
     optional={
         'log-trap': ['log-trap-state-candidate-v14/endpoint-orbit/self-review.json','log-late-settling-proof-v1/self-review.json'],
-        'rock-trap': ['rock-trap-state-candidate-v10/manifest.json','rock-trap-state-candidate-v10/contact-audit.json','rock-trap-state-candidate-v10/native-coverage-comparison.json'],
+        'rock-trap': ['rock-trap-state-candidate-v10/self-review.json','rock-trap-state-candidate-v11/pair-interpenetration.json','rock-trap-state-candidate-v12/manifest.json','rock-trap-state-candidate-v12/contact-audit.json','rock-trap-state-candidate-v12/self-review.json'],
         'net-rigging': ['net-state-source-review-v1/manifest.json','net-state-source-review-v1/script-call-bindings.json'],
-        'arrow-interaction-markers': ['net-state-source-review-v1/script-call-bindings.json'],
-        'mission-signposts': ['state-sign-candidate/candidate-v2/validation.json','state-sign-candidate/candidate-v2/self-review.json','state-sign-candidate/placement-audit.json'],
+        'arrow-interaction-markers': ['net-state-source-review-v1/script-call-bindings.json','net-state-source-review-v1/marker-presentation-contract.json'],
+        'mission-signposts': ['state-sign-candidate/candidate-v2/validation.json','state-sign-candidate/candidate-v2/self-review.json','state-sign-candidate/placement-audit.json','state-sign-candidate/five-instances-v1/assembly.json'],
     }
     for row in rows:
         for name in optional.get(row['id'],[]):
@@ -44,6 +44,8 @@ def main():
         if row['id']=='net-rigging':
             row['source_binding_progress']='All 10 target/marker associations reconcile to script-selected e/i body patch alternatives plus g leaf effect; target action160 is blank.'
             row['remaining'][0]='Preserve the reconciled mission target/patch identities through actual state export.'
+        if row['id']=='rock-trap':
+            row['private_candidate_review']='v10 rejected for folded shape; v11 has intersecting initial volumes; v12 removes intersections but self-review rejects implausible stack balance. Numerical support and source coverage do not imply geometry approval.'
         if row['id']=='map-animations':
             animations=json.loads((OUT/'animation-references/manifest.json').read_text())['animations']
             row['source_sequences']=[dict(index=a['index'],profile=a['profile'],frames=len(a['frames']),cycle_ticks=sum(f['delay']+1 for f in a['frames']),role='tree overlay requiring owned crown appearance' if 'Arbre' in a['profile'] else 'native butterfly visual effect; preserve effect presentation',source_frames=[dict(image=f['image'],sha256=sha(Path(f['image'])))for f in a['frames']]) for a in animations]
