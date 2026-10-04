@@ -25,6 +25,7 @@ def main():
     parser.add_argument('--rock-asset', default='croisement02-west-rock-outcrop')
     parser.add_argument('--crop', nargs=4, type=int, default=[-100,230,310,510])
     parser.add_argument('--output-name', default='west-rock-joint-review')
+    parser.add_argument('--exclude-secondary-crowns', action='store_true')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
     rock_worker = scenery_workspace(args.rock_asset)
     workers = [rock_worker, args.shrub_worker.resolve()]
@@ -59,11 +60,19 @@ def main():
                 raise ValueError('Shrub worker has no isolated Working collection')
             loaded.collections = ['Croisement02 Working']
         shrubs = [o for o in loaded.collections[0].all_objects
-                  if o.type == 'MESH' and o.get('asset_group') == workers[1].name]
+                  if o.type == 'MESH' and o.get('asset_group') == workers[1].name
+                  and not (args.exclude_secondary_crowns and o.get('projection_component') == 'crown')]
         if not shrubs:
-            raise ValueError('No authored shrub meshes found')
+            raise ValueError('No neighbouring meshes found')
+        # Linked parents must be evaluated before reading world transforms.
+        # Unparented authored shrubs worked without this, but native trunks
+        # retain their source hierarchy and need the dependency graph update.
+        scene.collection.children.link(loaded.collections[0])
+        bpy.context.view_layer.update()
+        transforms = {obj: obj.matrix_world.copy() for obj in shrubs}
+        scene.collection.children.unlink(loaded.collections[0])
         for obj in shrubs:
-            transform = obj.matrix_world.copy()
+            transform = transforms[obj]
             obj.parent = None
             obj.matrix_world = transform
             scene.collection.objects.link(obj)
@@ -120,8 +129,8 @@ def main():
         board.paste(source, (0, 24))
         board.paste(actual, (source.width, 24), actual)
         draw = ImageDraw.Draw(board)
-        draw.text((4, 4), 'Original source (negative coordinates are outside map)', fill='white')
-        draw.text((source.width + 4, 4), 'Saved rock and shrub materials together', fill='white')
+        draw.text((4, 4), 'Original source', fill='white')
+        draw.text((source.width + 4, 4), 'Saved model pair', fill='white')
         board.resize((board.width * 2, board.height * 2), Image.Resampling.NEAREST).save(destination / 'source-comparison.png')
         scale = max((hi - lo).length * 1.10, 100)
         for i in range(8):
