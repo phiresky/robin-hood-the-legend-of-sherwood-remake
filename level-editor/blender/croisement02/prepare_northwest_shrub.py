@@ -78,7 +78,7 @@ def main():
     collection=bpy.data.collections['Croisement02 Working'];objects=[];reports=[]
     for label,packet in zip(('west','east'),packets):
         obj=bpy.data.objects.new('Northwest Boundary Shrub54 '+label,bpy.data.meshes.new('Northwest Boundary Shrub54 '+label));collection.objects.link(obj)
-        for key,value in dict(source_node=NODE,asset_group=ASSET,asset_name='West Shrub Bank',part_name='Northwest foreground shrub lobes').items():obj[key]=value
+        for key,value in dict(source_node=NODE,asset_group=ASSET,asset_name='Northwest Boundary Shrub54',part_name='Northwest foreground shrub lobes').items():obj[key]=value
         reports.append(build(obj,packet));objects.append(obj)
     visibility={o:o.hide_render for o in collection.all_objects if o.type=='MESH'}
     for o in visibility:o.hide_render=False
