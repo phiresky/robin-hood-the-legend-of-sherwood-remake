@@ -4,6 +4,22 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Spline-wall material regions (2026-10-04)
+
+Wall compilation now deforms asset-local material contours and rebuilds their
+ground, obstacle and receiving-surface ownership for each repeated source span
+and corner. Vertical faces triangulate in their dominant plane. Trimming and
+integer-grid collapse omit unusable fragments with explicit collapse warnings;
+quantization uses the export image origin. Material IDs remain unique when
+trimming removes owners between wall spans. Source definitions stay unchanged.
+
+The focused wall/export suite passes 11 tests, including moved/trimmed repeats,
+turned and sloped paths, corners, ground registration, vertical faces, receiver
+ownership and fractional image origins. Editor typechecking and targeted lint
+pass. The full editor suite passes 734 tests with two skipped (91.64 seconds).
+Native material-query acceptance for these spline fixtures remains open;
+these checks do not establish complete wall traversal or visual parity.
+
 ## Wall source deformation (2026-10-04)
 
 Export now measures the pinned models already loaded by the editor and passes

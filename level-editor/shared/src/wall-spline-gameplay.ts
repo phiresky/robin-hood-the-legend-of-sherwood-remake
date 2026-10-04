@@ -15,6 +15,7 @@ import { splineCurve } from "./spline-sampling.ts";
 import { wallCorners, wallRuns } from "./wall-path.ts";
 import { heightPlane, planeHeight } from "./gameplay-plane.ts";
 import { matchesWallSource, wallSectionAt } from "./wall-section-profile.ts";
+import { quantizeGeneratedMotionPolygon } from "./motion-quantization.ts";
 
 type Vertex = number[];
 function clip(vertices: Vertex[], axis: number, boundary: number, above: boolean) {
@@ -40,6 +41,7 @@ export function wallSplineGameplay(
   document: Level3D,
   descriptors: ReadonlyMap<string, ProjectionAssetDescriptor>,
   bestEffort: boolean,
+  imageOrigin: readonly number[] = [0, 0],
 ) {
   const warnings: string[] = [],
     result: GameplayAssetDescriptor[] = [];
@@ -67,9 +69,11 @@ export function wallSplineGameplay(
         movementSolids: [],
         movementBlockers: [],
         movementClearances: [],
+        materials: [],
       },
     };
     const out = generated.gameplay!;
+    let materialSequence = 0;
     function append(
       assetId: string | undefined,
       run: LevelSpline | undefined,
@@ -97,14 +101,9 @@ export function wallSplineGameplay(
         throw new Error(`asset ${assetId} has stateful geometry; a static wall source is required`);
       for (const issue of data.draft?.issues ?? [])
         warnings.push(`Wall spline ${path.id}, asset ${assetId}: ${issue}`);
-      if (
-        data.masks?.length ||
-        data.lights?.length ||
-        data.sounds?.length ||
-        data.materials?.length
-      )
+      if (data.masks?.length || data.lights?.length || data.sounds?.length)
         warnings.push(
-          `Wall spline ${path.id}, asset ${assetId}: local masks, lighting, sound and material regions are not deformed; receiving surfaces keep their default materials.`,
+          `Wall spline ${path.id}, asset ${assetId}: local masks, lighting and sound regions are not deformed.`,
         );
       if (
         data.doors.length ||
@@ -190,8 +189,32 @@ export function wallSplineGameplay(
         // `end`, causing range filtering to remove an entire terminal band.
         (_, i) => (i === 0 ? start : i === bands ? end : start + ((end - start) * i) / bands),
       );
-      const pieces = (vertices: Vertex[], emit: (v: Vertex[], repeat: number) => void) => {
-        const indices = earcut(vertices.flatMap((v) => v.slice(0, 2)));
+      const pieces = (
+        vertices: Vertex[],
+        emit: (v: Vertex[], repeat: number) => void,
+        material = false,
+      ) => {
+        // Material contours can lie on vertical faces. Triangulate on their
+        // largest plane rather than discarding them in the ground projection.
+        let axes = [0, 1];
+        if (material) {
+          const normal = [0, 0, 0];
+          for (let i = 0; i < vertices.length; i++) {
+            const a = vertices[i]!,
+              b = vertices[(i + 1) % vertices.length]!;
+            for (let axis = 0; axis < 3; axis++)
+              normal[axis]! +=
+                (a[(axis + 1) % 3]! - b[(axis + 1) % 3]!) *
+                (a[(axis + 2) % 3]! + b[(axis + 2) % 3]!);
+          }
+          const largest = normal.map(Math.abs).indexOf(Math.max(...normal.map(Math.abs)));
+          axes = [0, 1, 2].filter((axis) => axis !== largest);
+        }
+        const indices = earcut(vertices.flatMap((v) => axes.map((axis) => v[axis]!)));
+        if (material && !indices.length)
+          warnings.push(
+            `Wall spline ${path.id}, asset ${assetId}: a degenerate material contour could not be triangulated and was omitted.`,
+          );
         for (let repeat = 0; repeat < repeats; repeat++)
           for (let t = 0; t < indices.length; t += 3) {
             const triangle = indices.slice(t, t + 3).map((i) => vertices[i]!);
@@ -208,7 +231,7 @@ export function wallSplineGameplay(
               if (b - a <= 1e-7) continue;
               const polygon = clip(clip(triangle, axis, a, true), axis, b, false);
               for (let j = 1; j + 1 < polygon.length; j++)
-                if (Math.abs(area(polygon[0]!, polygon[j]!, polygon[j + 1]!)) > 1e-7)
+                if (material || Math.abs(area(polygon[0]!, polygon[j]!, polygon[j + 1]!)) > 1e-7)
                   emit([polygon[0]!, polygon[j]!, polygon[j + 1]!], repeat);
             }
           }
@@ -252,6 +275,20 @@ export function wallSplineGameplay(
         }
       }
       stations = [...new Set(stations.filter((x) => x >= start && x <= end))].sort((a, b) => a - b);
+      const volumeRefs = new Map<string, Map<number, string[]>>();
+      const materialRefs = new Map<string, Map<number, string[]>>();
+      const remember = (
+        refs: Map<string, Map<number, string[]>>,
+        source: string,
+        repeat: number,
+        id: string,
+      ) => {
+        const repeats = refs.get(source) ?? new Map<number, string[]>();
+        const ids = repeats.get(repeat) ?? [];
+        ids.push(id);
+        repeats.set(repeat, ids);
+        refs.set(source, repeats);
+      };
       for (const volume of templates) {
         const points = volume.shape.points.map((p) => {
           const a = source(volume.node, [p.x, p.y, p.z_bottom]),
@@ -269,6 +306,7 @@ export function wallSplineGameplay(
           if (Math.abs(area(...(points.map((p) => [p.x, p.y]) as [Vertex, Vertex, Vertex]))) < 1e-5)
             return;
           const id = `volume-${out.volumes!.length}`;
+          remember(volumeRefs, volume.id, repeat, id);
           out.volumes!.push({
             id,
             node: "$root",
@@ -284,6 +322,40 @@ export function wallSplineGameplay(
           if (data.movementSolids?.includes(volume.id) ?? data.movementBlockers === undefined)
             out.movementSolids!.push(id);
         });
+      }
+      for (const region of data.materials ?? []) {
+        pieces(
+          region.polygon.map((p) => source(region.node, p)),
+          (vertices, repeat) => {
+            const world = vertices.map((p) => warp([p[0]!, p[1]!, p[2]!], repeat));
+            const projected = world.map(([x, y, z]): [number, number] => [
+              x - imageOrigin[0]!,
+              y - z - imageOrigin[1]!,
+            ]);
+            if (
+              !quantizeGeneratedMotionPolygon(
+                [projected],
+                Math.round,
+                `Wall spline ${path.id}, material ${region.id}`,
+                warnings,
+              )
+            )
+              return;
+            const id = `material-${materialSequence++}`;
+            remember(materialRefs, region.id, repeat, id);
+            out.materials!.push({
+              id,
+              node: "$root",
+              polygon: world,
+              material: region.material,
+              ground: region.ground,
+              obstacles: region.obstacles.flatMap(
+                (owner) => volumeRefs.get(owner)?.get(repeat) ?? [],
+              ),
+            });
+          },
+          true,
+        );
       }
       const surfaceSet = `span-${out.surfaces.length}`;
       const appendSurface = (surface: AssetWalkableSurface, target: AssetWalkableSurface[]) => {
@@ -327,7 +399,9 @@ export function wallSplineGameplay(
                   ? {
                       projectionMaterials: {
                         defaultMaterial: surface.projectionMaterials.defaultMaterial,
-                        regions: [],
+                        regions: surface.projectionMaterials.regions.flatMap(
+                          (id) => materialRefs.get(id)?.get(repeat) ?? [],
+                        ),
                       },
                     }
                   : {}),
@@ -340,6 +414,13 @@ export function wallSplineGameplay(
         appendSurface(surface, out.movementBlockers!);
       for (const surface of data.movementClearances ?? [])
         appendSurface(surface, out.movementClearances!);
+      // Trimming may remove every owner of a source material region.
+      out.materials = out.materials!.filter(
+        (region) =>
+          region.ground ||
+          region.obstacles.length ||
+          out.surfaces.some((surface) => surface.projectionMaterials?.regions.includes(region.id)),
+      );
       validateAssetGameplay(out, generated);
     }
     for (const run of wallRuns(path, document.camera)) {

@@ -285,7 +285,7 @@ function compileAssetGameplayAttempt(
   };
   let placements = instances(document, descriptors);
   const terrain = getTerrain(document);
-  const walls = wallSplineGameplay(document, descriptors, !!options.bestEffort);
+  const walls = wallSplineGameplay(document, descriptors, !!options.bestEffort, bounds);
   warnings.push(...walls.warnings);
   for (const descriptor of walls.descriptors)
     placements.push({

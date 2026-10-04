@@ -4,6 +4,118 @@ import { wallSplineFixture } from "../test-fixtures/wall-spline.ts";
 import { wallSplineGameplay } from "./wall-spline-gameplay.ts";
 import { compileAssetGameplay } from "./compile-asset-gameplay.ts";
 import { validateAssetGameplay } from "./asset-gameplay.ts";
+import { sceneToGame } from "./geometry.ts";
+
+test("spline materials retain vertical faces and receiver ownership after moving and repeating", () => {
+  const { document, asset, assets, bounds } = wallSplineFixture();
+  const local = (x: number, y: number, z: number) => sceneToGame(document.camera, [x, y, z]);
+  const top = [
+    [-50, -10],
+    [50, -10],
+    [50, 10],
+    [-50, 10],
+  ].map(([x, y]) => local(x!, y!, 40));
+  asset.gameplay!.materials = [
+    {
+      id: "face",
+      node: "body",
+      polygon: [local(-50, -10, 0), local(50, -10, 0), local(50, -10, 40), local(-50, -10, 40)],
+      material: 4,
+      ground: false,
+      obstacles: ["body-solid"],
+    },
+    { id: "top", node: "body", polygon: top, material: 2, ground: false, obstacles: [] },
+    {
+      id: "ground",
+      node: "body",
+      polygon: [local(-40, -8, 0), local(0, -8, 0), local(0, 8, 0), local(-40, 8, 0)],
+      material: 1,
+      ground: true,
+      obstacles: [],
+    },
+  ];
+  asset.gameplay!.surfaces = [
+    {
+      id: "walkway",
+      node: "body",
+      polygon: top.map(([x, y]) => [x, y]),
+      height: top[0]![2],
+      projectionMaterials: { defaultMaterial: 3, regions: ["top"] },
+    },
+  ];
+  document.splines![0]!.points = [
+    [130, 260, 0],
+    [345, 260, 0],
+  ];
+  const before = JSON.stringify([document, asset]);
+  const result = wallSplineGameplay(document, assets, false);
+  const generated = result.descriptors[0]!.gameplay!;
+  assert.ok(generated.materials!.some((region) => region.material === 4));
+  assert.ok(generated.materials!.some((region) => region.material === 2));
+  assert.equal(
+    new Set(generated.materials!.map((region) => region.id)).size,
+    generated.materials!.length,
+  );
+  for (const region of generated.materials!) {
+    assert.ok(region.polygon.every(([x]) => x >= 130 && x <= 345));
+    if (region.material === 4) {
+      assert.ok(region.obstacles.length > 0);
+      assert.ok(region.obstacles.every((id) => generated.volumes!.some((v) => v.id === id)));
+    } else if (!region.ground) {
+      assert.ok(
+        generated.surfaces.some((surface) =>
+          surface.projectionMaterials?.regions.includes(region.id),
+        ),
+      );
+    }
+  }
+  const compiled = compileAssetGameplay(document, assets, bounds);
+  assert.ok(compiled.material_sectors!.some((region) => region.material === 4));
+  assert.ok(compiled.material_sectors!.some((region) => region.material === 2));
+  assert.ok(compiled.sight_material_indices!.length > 0);
+  assert.ok(
+    compiled.sight_material_indices!.every(
+      (index) => compiled.material_sectors![index]!.material === 1,
+    ),
+  );
+  assert.equal(JSON.stringify([document, asset]), before);
+  for (const points of [
+    [
+      [130, 260, 0],
+      [130, 45, 0],
+    ],
+    [
+      [130, 260, 0],
+      [280, 190, 20],
+      [360, 290, 40],
+    ],
+  ]) {
+    document.splines![0]!.points = points.map(([x, y, z]) => [x!, y!, z!]);
+    document.splines![0]!.cornerAsset = "wall";
+    const turned = wallSplineGameplay(document, assets, false);
+    for (const descriptor of turned.descriptors)
+      validateAssetGameplay(descriptor.gameplay, descriptor);
+    for (const origin of [
+      [0, 0],
+      [0.3, -0.3],
+    ]) {
+      const result = compileAssetGameplay(document, assets, [
+        origin[0]!,
+        origin[1]!,
+        bounds[2],
+        bounds[3],
+      ]);
+      assert.ok(result.material_sectors!.some((region) => region.material === 2));
+      assert.ok(
+        result.sight_obstacles.some((obstacle) =>
+          obstacle.material_indices.some(
+            (index) => result.material_sectors![index]!.material === 2,
+          ),
+        ),
+      );
+    }
+  }
+});
 
 test("wall collision follows moved paths, crops repeats and participates in terrain navigation", () => {
   const { document, assets, bounds } = wallSplineFixture();

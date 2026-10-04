@@ -11,7 +11,7 @@ not certification of every library asset or gameplay case. Best-effort exports
 warn about omissions and preserve initial states where possible; warnings are
 not evidence that an omitted feature works.
 
-Latest validation (2026-10-04): 733 editor tests passed, two skipped; the game
+Latest validation (2026-10-04): 734 editor tests passed, two skipped; the game
 build and native stair/control checks passed. Wychford loads with its spline wall
 and passes control apply/reset. Its broader actor-crossing audit currently fails:
 a reduced shared-vertex case and a synthetic four-triangle fan both retain a
@@ -25,7 +25,7 @@ ambiguity alone does not explain this failure; traversal needs correction.
 | View/projectile masks and masking boundaries | Transform and rasterize local coverage; rebuild receiver, obstacle and state links. | Compiler/native state fixtures pass. Library coverage and complete visual integration remain incomplete. Depth alone does not replace these masks. |
 | Walkable regions and layers | Transform surfaces and heights; join matching boundaries, coplanar surfaces and authored multi-plane regions. | Synthetic joins and sampled map routes pass; complete connectivity/traversal remains open. |
 | Movement collision and openings | Intersect placed solids/contours with receiving planes; apply asset-owned clearances. | Compiler/runtime fixtures pass. Recovered geometry still needs review. |
-| Spline walls | Measure pinned source meshes and deform local surfaces/collision with source rotation, trimming, straightening and path placement. | Geometry comparisons pass 24 combinations; Wychford native loading/state checks pass. Traversal remains open. Stateful sources and deformed masks, lights, sounds and material regions remain unsupported with warnings. |
+| Spline walls | Measure pinned source meshes and deform local surfaces, collision and material contours with source rotation, trimming, straightening and path placement. | Geometry comparisons pass 24 combinations; Wychford native loading/state checks pass. Material ownership passes moved/repeated, turned, sloped, corner and fractional-origin compiler checks; native material queries remain open. Traversal remains open. Stateful sources and deformed masks, lights and sounds remain unsupported with warnings. |
 | Navigation graph and fast-find grid | Build fresh graph/spatial structures from compiled geometry. | Native initial/switch-state route checks pass; no source grid or graph bytes are copied. Full actor coverage remains open. |
 | Sight/physical obstacles | Transform local shapes, heights and physical/opaque flags. | Native initialization, apply and reset tested; asset ownership coverage remains incomplete. |
 | Projection/elevation receivers | Derive height planes and crossing boundaries from placed receiving surfaces. | Fractional seams, slopes, copies and sampled actor crossings tested; complete placement coverage remains open. |
