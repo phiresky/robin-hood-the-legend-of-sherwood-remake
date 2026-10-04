@@ -49,7 +49,7 @@ def register(directory,base,out):
     records={};new_nodes=[]
     for index,domain in [(94,430),(95,431)]:
         asset=f'croisement02-east-upright-rail-fence-{index}';node=f'scenery-upright-fence-{index:03}';worker=directory/'assets'/asset
-        group=next(g for g in proposal['groups'] if g['id']==asset)
+        group=copy.deepcopy(next(g for g in proposal['groups'] if g['id']==asset));group['native_scenery_mask']=index
         if not group.get('authored_scenery') or group['parts']!=[dict(node=node,name=f'Open wooden rail fence {index}',wood_domain_mask=domain)]:raise ValueError('Unexpected authored fence ownership')
         if asset in {g['id'] for g in catalog['groups']} or node in catalog['canonical_owners']:raise ValueError('Fence already registered')
         model_hash=sha(worker/'model.blend');review=json.loads((worker/'inspection/visual-review.json').read_text());audit=json.loads((worker/'inspection/saved-model-audit.json').read_text());topology=json.loads((worker/'inspection/fence-topology.json').read_text());coverage=topology['coverage'];validation=json.loads((worker/'validation.json').read_text())
