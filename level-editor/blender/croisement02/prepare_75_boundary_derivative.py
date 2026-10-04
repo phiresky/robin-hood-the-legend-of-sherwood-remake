@@ -6,6 +6,7 @@ from pathlib import Path
 import bpy
 import numpy as np
 from PIL import Image
+from mathutils import Vector
 
 HERE=Path(__file__).resolve().parent
 sys.path.insert(0,str(HERE))
@@ -44,7 +45,8 @@ def build(obj,packet):
     mats.extend([material(obj.name+' added observed boundary',directory/'added-native-leaves.png',True),material(obj.name+' inferred boundary backs',directory/'added-native-leaves.png',False)])
     for mat in mats[-2:]:one_sided(mat)
     known_vertices=sorted({v for p in old.polygons if old.materials[p.material_index].get('foliage_observed') for v in p.vertices})
-    points=np.array([vertices[i] for i in known_vertices]);screen=np.column_stack((points[:,0],-points[:,1]*SIN-points[:,2]*COS))
+    inverse=prior.matrix_world.inverted()
+    points=np.array([tuple(prior.matrix_world@Vector(vertices[i])) for i in known_vertices]);screen=np.column_stack((points[:,0],-points[:,1]*SIN-points[:,2]*COS))
     right=np.array([1.,0,0]);down=np.array([0.,-SIN,-COS]);ray=np.asarray(RAY)
     for sy,sx in zip(*np.nonzero(extra)):
         target=np.array([sx+.5,sy+.5]);near=int(np.argmin(np.sum((screen-target)**2,axis=1)))
@@ -52,8 +54,10 @@ def build(obj,packet):
         corners=[center+right*dx+down*dy for dx,dy in [(-.5,-.5),(.5,-.5),(.5,.5),(-.5,.5)]]
         if np.dot(np.cross(corners[1]-corners[0],corners[2]-corners[0]),ray)<0:corners.reverse()
         for back in (False,True):
-            pts=list(reversed(corners)) if back else corners
-            offset=len(vertices);vertices.extend(tuple(p) for p in pts);faces.append(tuple(range(offset,offset+4)));slots.append(start+back)
+            # Separate the back surface so transparent backface culling cannot
+            # choose a coincident rear triangle instead of the observed front.
+            pts=[p-ray*.02 for p in reversed(corners)] if back else corners
+            offset=len(vertices);vertices.extend(tuple(inverse@Vector(p)) for p in pts);faces.append(tuple(range(offset,offset+4)));slots.append(start+back)
             uvs.extend(((p[0]-x0)/w,1-(-p[1]*SIN-p[2]*COS-y0)/h) for p in pts)
             colors.extend([(0. if back else 1.,1.,1.,1.)]*4)
     mesh=bpy.data.meshes.new(obj.name+' exact boundary addition');mesh.from_pydata(vertices,[],faces);mesh.update()
@@ -75,7 +79,7 @@ def build(obj,packet):
 
 if __name__=='__main__':
     prep.CHOSEN={75:[]};prep.FIRST_DOMAIN=487
-    prep.DIRECTORY=prep.OUT/'understory-candidates/native-75-boundary-add-v22'
+    prep.DIRECTORY=prep.OUT/'understory-candidates/native-75-boundary-add-v23'
     prep.MIXED_SOURCE_REVIEW=prep.OUT/'understory-candidates/mixed75-91-source-v3/source-review.json'
     prep.build=build
     prep.acquire()
