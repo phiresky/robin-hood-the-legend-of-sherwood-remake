@@ -18,7 +18,7 @@ test("preview texture edge follows source texels: /8, multiple of 16, clamped 32
   assert.throws(() => previewTextureSize(0), /no texture/);
 });
 
-test("CLI writes a meshopt-compressed preview GLB deterministically; fingerprint is stable", async (t) => {
+test("internal generator returns deterministic meshopt preview bytes; standalone CLI is rejected", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "preview-model-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const doc = new Document();
@@ -39,21 +39,12 @@ test("CLI writes a meshopt-compressed preview GLB deterministically; fingerprint
   await new NodeIO().write(input, doc);
   const run = promisify(execFile);
   const script = new URL("./preview-model.ts", import.meta.url).pathname;
-  const first = JSON.parse(
-    (await run(process.execPath, [script, input, path.join(root, "a.glb")])).stdout
-      .trim()
-      .split("\n")
-      .at(-1)!,
-  );
-  const second = JSON.parse(
-    (await run(process.execPath, [script, input, path.join(root, "b.glb")])).stdout
-      .trim()
-      .split("\n")
-      .at(-1)!,
-  );
+  await assert.rejects(run(process.execPath, [script, input, path.join(root, "a.glb")]), /Internal module/);
+  const first = await generatePreview(input);
+  const second = await generatePreview(input);
   assert.equal(first.edge, null);
-  assert.equal(first.sha256, second.sha256);
-  const bytes = await fs.readFile(path.join(root, "a.glb"));
+  assert.deepEqual(first.bytes, second.bytes);
+  const bytes = Buffer.from(first.bytes);
   assert.equal(bytes.toString("ascii", 0, 4), "glTF");
   const json = JSON.parse(bytes.toString("utf8", 20, 20 + bytes.readUInt32LE(12)));
   assert.ok(json.extensionsUsed.includes("KHR_meshopt_compression"));

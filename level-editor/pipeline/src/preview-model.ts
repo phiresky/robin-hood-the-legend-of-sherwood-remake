@@ -1,9 +1,6 @@
 /**
- * Internal step of `refinement/blender/lossy_assets.py`: turn one model (normally the freshly
- * derived lossy.glb) into its browser preview GLB.
- *
- *   node src/preview-model.ts <input.glb> <output.glb>   -> writes output, prints JSON
- *   node src/preview-model.ts --fingerprint               -> prints the settings/tool fingerprint
+ * Internal preview implementation used by refinement/blender/lossy_assets.py.
+ * Preview generation is part of lossy derivation, with no standalone CLI.
  *
  * Geometry is simplified and meshopt-compressed (the editor's preview loader registers the
  * meshopt decoder); the texture is re-encoded as AVIF at `previewTextureSize`. Reading from a
@@ -152,17 +149,5 @@ export async function generatePreview(
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const [input, output] = process.argv.slice(2);
-  if (input === "--fingerprint") {
-    console.log(await previewFingerprint());
-  } else {
-    if (!input || !output)
-      throw new Error("Usage: node src/preview-model.ts <input.glb> <output.glb> | --fingerprint");
-    const { bytes, edge, texels } = await generatePreview(path.resolve(input));
-    if (bytes.length === 0) throw new Error(`Empty preview: ${input}`);
-    await fs.writeFile(output, bytes);
-    console.log(
-      JSON.stringify({ output, bytes: bytes.length, sha256: digest(bytes), edge, texels }),
-    );
-  }
+  throw new Error("Internal module; generate lossy models and previews with refinement/blender/lossy_assets.py");
 }

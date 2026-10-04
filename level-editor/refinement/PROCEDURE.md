@@ -733,11 +733,13 @@ example: `publication-2/stage-v7`.
 `refinement/blender/lossy_assets.py` derives browser display copies from the
 exact published GLB bytes; it never edits the originals.
 `stage_reviewed_publication.py` runs it by default once the staged catalog's
-model bytes are final (`--lossy`). Pass `--no-lossy` or plan `"lossy": false`
-to skip it. For each asset, it writes `<dir>/lossy.glb` with
+model bytes are final (`--lossy`). Its `--no-lossy` flag or plan `"lossy": false`
+skips both derivatives. For the standalone `refresh` command, pair `--no-lossy`
+with `--no-previews`. Previews cannot be generated without lossy derivation.
+For each asset, it writes `<dir>/lossy.glb` with
 `lossy.glb.receipt.json`, then `<dir>/preview.glb` with its receipt, and
 regenerates the asset index. Models refused by the static check keep no lossy
-model and are reported.
+model or preview and are reported.
 
 - **Atlas.** Smart UV islands are packed with `--pack-shape AABB` by default.
   `CONCAVE` is about 2% tighter but takes 30–100 s per pack. The atlas is sized
@@ -754,8 +756,8 @@ model and are reported.
   and lossy GLBs from eight oblique views and report colour differences, as
   evidence only. The structural check (same meshes, primitives and triangles)
   always runs.
-- **Previews** are built from the lossy model (or the model when there is none)
-  by `pipeline/src/preview-model.ts`: simplified, meshopt-compressed geometry
+- **Previews** are built only from a successfully derived lossy model
+  internally by `pipeline/src/preview-model.ts` (no standalone CLI): simplified, meshopt-compressed geometry
   and one AVIF texture. The texture edge follows the source texel count:
   `ceil(sqrt(texels)/8)` rounded up to a multiple of 16 and clamped to 32–512,
   about one texel per 8 map pixels. Previews show the covered state: nodes with

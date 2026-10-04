@@ -12,12 +12,13 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 
 HERE = Path(__file__).resolve()
 sys.path[:0] = [str(HERE.parents[1] / 'refinement'), str(HERE.parents[1] / 'refinement/blender')]
 from asset_index import write_asset_index, editor_descriptor
-from lossy_assets import write_preview, verify_derivatives
+from lossy_assets import verify_derivatives
 from promote_staged_publication import library_lock
 from promote_state_bundles import atomic
 
@@ -51,12 +52,15 @@ def stage(library, states, output):
                 if sha(states / asset.name / name) != integration['outputs'][asset.name][key]:
                     raise ValueError('State output changed: ' + asset.name)
                 shutil.copy2(states / asset.name / name, dst / name)
-            write_preview(dst / 'model.glb', 'derby/' + asset.name + '/model.glb', dst / 'preview.glb')
         else:
             for path in asset.iterdir():
                 if path.is_file():
                     os.link(path, dst / path.name)
     write_asset_index(target / '3d-assets')
+    subprocess.run(['blender', '--background', '--threads', '2', '--python-exit-code', '1',
+                    '--python', str(HERE.parents[1] / 'refinement/blender/lossy_assets.py'),
+                    '--', 'refresh', '--root', str(target / '3d-assets'),
+                    '--work', str(output / 'derivatives'), '--assets', *sorted(selected)], check=True)
     scene_path = library / 'scenes/derby.rhlos-map.json'
     scene = json.loads(scene_path.read_text())
     for ref in scene['assetSources']:

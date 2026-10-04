@@ -214,6 +214,7 @@ if __name__=='__main__':
     render_slots.release()
     from lossy_assets import refresh_derivatives
     out=Path(args.output)
-    previews=refresh_derivatives(out/'map-assets/3d-assets',out/'previews',lossy=False)
+    render_slots.acquire()
+    previews=refresh_derivatives(out/'map-assets/3d-assets',out/'previews')
     write(out/'preview-verification.json',previews)
     print('EXPORT AND HANDOFF CHECKS COMPLETE',flush=True)

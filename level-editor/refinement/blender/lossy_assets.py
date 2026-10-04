@@ -1470,7 +1470,7 @@ def preview_name(model_path):
     return 'preview.glb' if model_path.name == 'model.glb' else model_path.stem + '.preview.glb'
 
 
-PREVIEW_CLI = PIPELINE / 'src/preview-model.ts'
+PREVIEW_MODULE = PIPELINE / 'src/preview-model.ts'
 _preview_fingerprint = None
 
 
@@ -1478,7 +1478,9 @@ def preview_fingerprint():
     """Preview settings + installed tool versions (pipeline/src/preview-model.ts), cached per run."""
     global _preview_fingerprint
     if _preview_fingerprint is None:
-        _preview_fingerprint = subprocess.run(['node', str(PREVIEW_CLI), '--fingerprint'], cwd=PIPELINE, check=True,
+        _preview_fingerprint = subprocess.run(['node', '--input-type=module', '-e',
+            'const {previewFingerprint}=await import(process.argv[1]); console.log(await previewFingerprint());',
+            PREVIEW_MODULE.as_uri()], cwd=PIPELINE, check=True,
                                               capture_output=True, text=True).stdout.strip().splitlines()[-1]
     return _preview_fingerprint
 
@@ -1496,10 +1498,24 @@ def preview_current(root, source, preview):
 def write_preview(source_path, source_relative, output):
     """Preview GLB (simplified, meshopt, AVIF at the size rule) + receipt chained to `source`."""
     source_path, output = Path(source_path).resolve(strict=True), Path(output).resolve()
+    require(source_path.name == 'lossy.glb' or source_path.name.endswith('.lossy.glb'),
+            'Previews require a lossy model; run lossy derivation first')
+    receipt_path = Path(str(source_path) + '.receipt.json')
+    require(receipt_path.is_file(), 'Preview source lacks a lossy receipt')
+    receipt = json.loads(receipt_path.read_text())
+    require(receipt.get('source') and receipt.get('output') == sha(source_path),
+            'Preview source does not match its lossy receipt')
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_name(f'.{output.name}.{uuid.uuid4().hex}.tmp')
     try:
-        result = subprocess.run(['node', str(PREVIEW_CLI), str(source_path), str(temporary)], cwd=PIPELINE,
+        result = subprocess.run(['node', '--input-type=module', '-e',
+            'import fs from "node:fs/promises"; '
+            'const {generatePreview}=await import(process.argv[1]); '
+            'const {bytes,edge,texels}=await generatePreview(process.argv[2]); '
+            'if(!bytes.length)throw Error("Empty preview"); '
+            'await fs.writeFile(process.argv[3],bytes); '
+            'console.log(JSON.stringify({bytes:bytes.length,edge,texels}));',
+            PREVIEW_MODULE.as_uri(), str(source_path), str(temporary)], cwd=PIPELINE,
                                 capture_output=True, text=True)
         if result.returncode:
             raise RuntimeError(f'Preview failed for {source_relative}: {(result.stderr or result.stdout).strip()[-800:]}')
@@ -1709,9 +1725,9 @@ def main_library(args):
         preview = str(Path(model).parent / preview_name(Path(model)))
         reasons = static_check(root, model, quantize=not args.no_quantize)
         lossy_state = 'refused' if reasons else 'current' if not args.force and receipt_current(root, model, lossy, args) else 'derive'
-        # A re-derived lossy model always gets a new preview; a refused one previews the model.
-        preview_source = model if reasons else lossy
-        preview_state = ('derive' if lossy_state == 'derive' or args.force or not preview_current(root, preview_source, preview)
+        # Previews are only produced from successful lossy derivation.
+        preview_source = lossy
+        preview_state = ('refused' if reasons else 'derive' if lossy_state == 'derive' or args.force or not preview_current(root, preview_source, preview)
                          else 'current')
         plan.append({'id': entry['id'], 'map': entry['source_map'], 'model': model, 'lossy_model': lossy,
                      'preview_model': preview, 'preview_source': preview_source, 'state': lossy_state,
@@ -1719,7 +1735,7 @@ def main_library(args):
                      'preview_bytes_before': (root / entry['preview_model']).stat().st_size
                      if entry.get('preview_model') and (root / entry['preview_model']).exists() else None})
         counts = by_map.setdefault(entry['source_map'], {'derive': 0, 'current': 0, 'refused': 0, 'preview_derive': 0,
-                                                          'preview_current': 0, 'previews_before': 0,
+                                                          'preview_current': 0, 'preview_refused': 0, 'previews_before': 0,
                                                           'model_bytes': 0, 'preview_bytes_before': 0})
         counts[lossy_state] += 1
         counts['preview_' + preview_state] += 1
@@ -1851,9 +1867,9 @@ def verify_derivatives(root, *, index=None):
                 problems.append(f'{entry["id"]}: preview or receipt missing')
             else:
                 receipt = json.loads(receipt_path.read_text())
-                source = receipt.get('source_model', model)
-                if source not in (model, entry.get('lossy_model')) or receipt.get('source') != sha(root / source):
-                    problems.append(f'{entry["id"]}: preview receipt does not bind the current model or lossy model')
+                source = receipt.get('source_model')
+                if not entry.get('lossy_model') or source != entry['lossy_model'] or not (root / source).is_file() or receipt.get('source') != sha(root / source):
+                    problems.append(f'{entry["id"]}: preview receipt does not bind the current lossy model')
                 if receipt.get('output') != sha(root / entry['preview_model']):
                     problems.append(f'{entry["id"]}: preview bytes differ from its receipt')
     return problems
@@ -1867,9 +1883,10 @@ def refresh_derivatives(root, work, *, lossy=True, previews=True, ids=None, sett
     `<dir>/lossy.glb` + receipt and set `lossy_model`; entries refused by `static_check` keep no
     lossy model and are reported. `lossy=False` removes `lossy_model` fields instead, so nothing
     points at a stale derivative. Then each entry's `<dir>/preview.glb` is rebuilt when stale
-    from its lossy model (or its model without one) and `preview_model` set; the preview receipt
+    only from its lossy model and `preview_model` set; the preview receipt
     binds that source's bytes. Returns a report; index.json is rewritten atomically.
     """
+    require(lossy or not previews, 'Preview generation requires lossy derivation; use --no-previews with --no-lossy')
     root, work = Path(root).resolve(strict=True), Path(work)
     args = settings_args or default_settings()
     index_path = root / 'index.json'
@@ -1916,11 +1933,20 @@ def refresh_derivatives(root, work, *, lossy=True, previews=True, ids=None, sett
             report['derived'].append(row)
             log(f'LOSSY {model}: {json.dumps(row)}')
         entry['lossy_model'] = target
+    # Removing/refusing a lossy model invalidates any preview chained to it.
+    for entry in index['assets']:
+        if (ids is None or entry['id'] in ids) and not entry.get('lossy_model'):
+            previous = entry.pop('preview_model', None)
+            if previous:
+                (root / previous).unlink(missing_ok=True)
+                (root / (previous + '.receipt.json')).unlink(missing_ok=True)
     if previews:
         for entry in index['assets']:
             if ids is not None and entry['id'] not in ids:
                 continue
-            source = entry.get('lossy_model', entry['model'])
+            source = entry.get('lossy_model')
+            if source is None:
+                continue
             preview = str(Path(entry['model']).parent / preview_name(Path(entry['model'])))
             if not preview_current(root, source, preview):
                 info = write_preview(root / source, source, root / preview)

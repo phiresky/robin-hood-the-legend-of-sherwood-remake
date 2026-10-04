@@ -19,12 +19,12 @@ def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def glb(material, extra_materials=()):
+def glb(material, extra_materials=(), image_bytes=None):
     """One textured triangle; `material` is the glTF material JSON (extras are unreferenced)."""
     positions = struct.pack('<9f', 0, 0, 0, 1, 0, 0, 0, 1, 0)
     uvs = struct.pack('<6f', 0, 0, 1, 0, 0, 1)
     indices = struct.pack('<3H', 0, 1, 2) + b'\0\0'
-    image = b'\x89PNG fake'
+    image = image_bytes if image_bytes is not None else b'\x89PNG fake'
     body = positions + uvs + indices + image
     body += b'\0' * (-len(body) % 4)
     doc = {'asset': {'version': '2.0'}, 'scene': 0, 'scenes': [{'name': 'default', 'nodes': [0]}],
@@ -288,7 +288,7 @@ class LossyAssetsTest(unittest.TestCase):
         self.assertEqual(self.derived, ['house'])
         self.assertEqual(lossy_assets.verify_derivatives(self.root), [])
 
-    def test_singular_density_keeps_lossless_source_and_builds_its_preview(self):
+    def test_singular_density_keeps_source_without_building_a_preview(self):
         source = self.root / 'derby/house/model.glb'
         original = source.read_bytes()
         successful = self.fake_derive
@@ -301,7 +301,7 @@ class LossyAssetsTest(unittest.TestCase):
         self.assertEqual(source.read_bytes(), original)
         self.assertFalse((source.parent / 'lossy.glb').exists())
         self.assertFalse((source.parent / 'lossy.glb.receipt.json').exists())
-        self.assertEqual(self.previews, ['derby/house/model.glb'])
+        self.assertEqual(self.previews, [])
         self.assertEqual(lossy_assets.verify_derivatives(self.root), [])
 
     def test_scoped_refresh_does_not_publish_while_an_unselected_lossy_asset_is_stale(self):
@@ -442,9 +442,13 @@ class LossyAssetsTest(unittest.TestCase):
         (self.root / 'derby/house/model.glb').write_bytes(glb(dict(UNLIT, doubleSided=True)))
         self.refresh(previews=True)
         self.assertEqual((self.derived, self.previews), (['house'], ['derby/house/lossy.glb']))
-        # Without a lossy model the preview comes from the model itself.
-        self.refresh(previews=True, lossy=False)
-        self.assertEqual(self.previews, ['derby/house/model.glb'])
+        # Reject preview-only generation before removing any current derivatives.
+        before = {p.name: p.read_bytes() for p in (self.root / 'derby/house').iterdir()}
+        with self.assertRaisesRegex(ValueError, 'requires lossy derivation'):
+            self.refresh(previews=True, lossy=False)
+        self.assertEqual(before, {p.name: p.read_bytes() for p in (self.root / 'derby/house').iterdir()})
+        self.refresh(previews=False, lossy=False)
+        self.assertFalse((self.root / 'derby/house/preview.glb').exists())
         self.assertEqual(lossy_assets.verify_derivatives(self.root), [])
 
     def test_unreferenced_textured_materials_are_kept_untextured(self):
@@ -482,6 +486,47 @@ class LossyAssetsTest(unittest.TestCase):
         Path(str(preview) + '.receipt.json').write_text(json.dumps(
             {'source': 'f' * 64, 'source_model': 'derby/house/lossy.glb', 'output': sha(b'preview')}))
         self.assertTrue(lossy_assets.verify_derivatives(self.root))
+
+    def test_original_model_preview_receipt_is_rejected(self):
+        self.refresh(previews=True)
+        model = self.root / 'derby/house/model.glb'
+        preview = self.root / 'derby/house/preview.glb'
+        receipt = Path(str(preview) + '.receipt.json')
+        data = json.loads(receipt.read_text())
+        data.update(source_model='derby/house/model.glb', source=sha(model.read_bytes()))
+        receipt.write_text(json.dumps(data))
+        self.assertIn('house: preview receipt does not bind the current lossy model',
+                      lossy_assets.verify_derivatives(self.root))
+
+    def test_preview_writer_requires_a_receipted_lossy_source(self):
+        model = self.root / 'derby/house/model.glb'
+        output = model.with_name('preview.glb')
+        with self.assertRaisesRegex(ValueError, 'Previews require a lossy model'):
+            lossy_assets.write_preview(model, 'derby/house/model.glb', output)
+        source = model.with_name('lossy.glb')
+        source.write_bytes(b'lossy')
+        with self.assertRaisesRegex(ValueError, 'lacks a lossy receipt'):
+            lossy_assets.write_preview(source, 'derby/house/lossy.glb', output)
+        Path(str(source) + '.receipt.json').write_text(json.dumps({'source': 'original', 'output': 'stale'}))
+        with self.assertRaisesRegex(ValueError, 'does not match its lossy receipt'):
+            lossy_assets.write_preview(source, 'derby/house/lossy.glb', output)
+        self.assertFalse(output.exists())
+
+    def test_preview_writer_invokes_internal_module(self):
+        from io import BytesIO
+        from PIL import Image
+        png = BytesIO()
+        Image.new('RGB', (8, 8), (90, 80, 70)).save(png, format='PNG')
+        source = self.root / 'derby/house/lossy.glb'
+        source.write_bytes(glb(UNLIT, image_bytes=png.getvalue()))
+        Path(str(source) + '.receipt.json').write_text(json.dumps(
+            {'source': sha(source.read_bytes()), 'output': sha(source.read_bytes())}))
+        output = source.with_name('preview.glb')
+        info = lossy_assets.write_preview(source, 'derby/house/lossy.glb', output)
+        self.assertGreater(info['bytes'], 0)
+        receipt = json.loads(Path(str(output) + '.receipt.json').read_text())
+        self.assertEqual(receipt['source_model'], 'derby/house/lossy.glb')
+        self.assertEqual(receipt['output'], sha(output.read_bytes()))
 
     def test_library_publish_and_rollback_restore_the_previous_state(self):
         run = Path(self.temporary.name) / 'run'
