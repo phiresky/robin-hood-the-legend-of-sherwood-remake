@@ -29,6 +29,11 @@ def main(experiment, donor_dir, output, conditioned=None, conditioned_threshold=
     require(validation['status'] == 'PASS', 'Native donor ownership has not passed validation')
     require(sha(Path(provenance['source'])) == provenance['source_sha256'], 'Native source changed')
     require(sha(Path(validation['mask_source'])) == validation['mask_source_sha256'], 'Native mask changed')
+    if 'individual_partition' in provenance:
+        require(sha(Path(provenance['individual_partition'])) == provenance['individual_partition_sha256'],
+                'Individual crown partition changed')
+        require(sha(Path(provenance['partition_image'])) == provenance['partition_image_sha256'],
+                'Individual crown alpha changed')
     require(all(sha(donor_dir / name) == expected for name, expected in validation['files'].items()),
             'Native donor validation became stale')
     source = np.array(Image.open(donor_dir / 'donor.png').convert('RGB'))
@@ -58,6 +63,9 @@ def main(experiment, donor_dir, output, conditioned=None, conditioned_threshold=
     acquire()
     try:
         manifest, scene, names, _, preflight_report = preflight(experiment)
+        if 'approved_model_sha256' in provenance:
+            require(sha(experiment / 'approved-model.blend') == provenance['approved_model_sha256'],
+                    'Individual crown donor belongs to a different approved model')
         crowns = {name for name in names if any(m and m.get('foliage_physical_opacity')
                   for m in scene.objects[name].data.materials)}
         require(crowns, 'No physical foliage receivers')
