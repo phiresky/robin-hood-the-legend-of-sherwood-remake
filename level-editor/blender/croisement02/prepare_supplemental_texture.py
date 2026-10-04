@@ -32,8 +32,12 @@ def main(original, packet, review_path, output):
     asset = item['id']
     derivative_frames = read(packet / 'views.json')
     width, height = derivative_frames['tile_size']
+    check_size = (width * 4, height * 2)
+    padding = item.get('transport_padding')
+    if padding and check_size == (padding['content_box']['width'], padding['content_box']['height']):
+        check_size = (padding['width'], padding['height'])
     prepare(manifest_path, asset, output / 'check-only', manifest_path.parent / 'decisions.json',
-            check_only=True, check_only_atlas_size=(width * 4, height * 2))
+            check_only=True, check_only_atlas_size=check_size)
     derivation = read(packet / 'derivation.json')
     require(derivation['asset_id'] == asset and derivation['status'] == 'PASS', 'Invalid source derivative')
     require(derivation['model_sha256'] == item['revision']['model_sha256'], 'Derivative geometry differs')
