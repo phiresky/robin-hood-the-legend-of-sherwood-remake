@@ -5,7 +5,7 @@ import sys
 ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/'level-editor/refinement/blender'))
 from evidence_io import sha
-DOMAINS={73:470,92:471,67:472,68:473,69:474,70:475,71:476,72:477,79:490,80:491,82:492}
+DOMAINS={73:470,92:471,67:472,68:473,69:474,70:475,71:476,72:477,75:487,79:490,80:491,82:492,91:501}
 
 
 def validate_record(record,group):

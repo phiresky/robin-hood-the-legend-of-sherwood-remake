@@ -39,7 +39,7 @@ def build(obj,packet):
         for name,bvh in support:
             p,n,f,d=bvh.ray_cast(Vector((x,y,1000)),Vector((0,0,-1)))
             if p is not None:hits.append((p.z,name))
-        if packet['native_mask'] in (68,69,70,71,72,79,80,82) and not hits:
+        if packet['native_mask'] in (68,69,70,71,72,75,79,80,82,91) and not hits:
             return (0.,'ground-plane; central source context outside bank')
         if not hits:raise ValueError(f'Plant{packet["native_mask"]} support outside bank at {x},{y}; inspect before assuming ground')
         return max(hits)

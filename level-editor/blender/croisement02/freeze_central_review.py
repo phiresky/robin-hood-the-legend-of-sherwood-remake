@@ -28,6 +28,11 @@ def freeze(index,version,root_review):
         path=inspection/name
         if path.exists():files.append(path)
     files.extend(batch/f'shrub-{index:02}'/n for n in ('complete-source.png','observed-source.png'))
+    source_roles=batch/'source-role-review.json'
+    if source_roles.exists():
+        files.append(source_roles);roles=json.loads(source_roles.read_text());authority=Path(roles['authority'])
+        if sha(authority)!=roles['authority_sha256']:raise ValueError('Mixed source authority changed')
+        files.append(authority)
     for dependency in json.loads((joint/'evidence.json').read_text())['inputs']:
         path=Path(dependency['workspace'])/'model.blend'
         if sha(path)!=dependency['model_sha256']:raise ValueError('Joint dependency changed')

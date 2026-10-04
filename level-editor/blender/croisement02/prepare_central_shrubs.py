@@ -48,6 +48,19 @@ def main():
             parts=[dict(node=node,name=f'Native understory foliage {index:02}',foliage_domain_mask=domain)]))
         catalog['canonical_owners'][node]=asset
         full=canvas(index)
+        source_role_review=None
+        if index in (75,91):
+            authority=OUT/'understory-candidates/mixed75-91-source-v1/source-review.json'
+            review=json.loads(authority.read_text())
+            if sha(Path(review['evidence']))!=review['evidence_sha256']:raise ValueError('Mixed source split audit changed')
+            chosen=next(r for r in review['records'] if r['native_mask']==index)
+            if chosen['domain']!=domain or sha(Path(chosen['domain_path']))!=chosen['domain_sha256']:raise ValueError('Mixed source domain changed')
+            exact=np.asarray(Image.open(chosen['domain_path']).convert('L'))>0
+            if np.any(exact&~full) or int(exact.sum())!=chosen['observed_pixels']:raise ValueError('Mixed leaf domain outside native mask or count changed')
+            full=exact
+            source_role_review=dict(authority=str(authority),authority_sha256=sha(authority),record=chosen,
+                limitation='Only clear leaf pixels are assigned; excluded mixed owners and uncertain branch/ground pixels are not declared entirely bark.')
+            write_json(DIRECTORY/'source-role-review.json',source_role_review)
         if index==68:full &= ~canvas(7)
         observed=full.copy()
         for exclusion in exclusions:observed&=~canvas(exclusion)
@@ -64,6 +77,10 @@ def main():
             ownership_note='Complete physical clump follows native silhouette; covered regions have inferred appearance only. Source evidence excludes the explicitly listed overlapping foreground masks.',**GEOMETRY_OPTIONS)
         if index in (69,71,72,79,80,82):packet['cluster_count']=max(450,int(full.sum()/5))
         if index==68:packet['physical_silhouette_authority']=dict(sha256=sha(packet_dir/'complete-source.png'),reason='Native68 minus exposed wood7; leaf-only physical silhouette, observed source separately excludes131/133; no source ownership implied for covered leaves')
+        if source_role_review:
+            packet['source_role_review']=source_role_review
+            packet['physical_silhouette_authority']=dict(sha256=sha(packet_dir/'complete-source.png'),reason='Exact independently reviewed clear-leaf complement; original native mask includes reserved mixed owners, uncertain branches or bare ground and is not a physical foliage union')
+            packet['ownership_note']='Exact clear-leaf complement only; excluded mixed owners remain unchanged. Hidden volume uses own small native leaf patches, not nearest-edge unknown front wedges.'
         write_json(packet_dir/'partition.json',packet);packets[index]=packet
     sheet=Image.new('RGB',(512*len(CHOSEN),1000),'#888888');draw=ImageDraw.Draw(sheet);validation=[]
     source_rgb=np.asarray(rgb)
