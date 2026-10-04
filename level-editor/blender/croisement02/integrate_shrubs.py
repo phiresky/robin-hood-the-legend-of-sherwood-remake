@@ -30,9 +30,10 @@ def main(directory,workers_directory):
     grouping=json.loads((directory/'grouping-review.json').read_text())
     if grouping['catalog_sha256']!=sha(directory/'catalog.json') or grouping['inventory_sha256']!=sha(directory/'inventory/inventory.json'):
         raise ValueError('Candidate source inventory binding changed')
+    worker_map=json.loads((directory/'workers.json').read_text()) if (directory/'workers.json').exists() else {}
     records=[]
     for group in added:
-        worker=workers_directory/group['id']
+        worker=Path(worker_map[group['id']]) if group['id'] in worker_map else workers_directory/group['id']
         model_hash=sha(worker/'model.blend')
         review=json.loads((worker/'inspection/visual-review.json').read_text())
         audit=json.loads((worker/'inspection/saved-model-audit.json').read_text())
@@ -58,13 +59,13 @@ def main(directory,workers_directory):
         for dependency in evidence['workers']:
             if sha(Path(dependency['path'])/'model.blend')!=dependency['model_sha256']:
                 raise ValueError('Joint neighbour changed since review')
-        record=dict(model_sha256=model_hash,catalog_sha256=sha(directory/'catalog.json'),
+        record=dict(model_sha256=model_hash,catalog_sha256=sha(directory/'catalog.json'),workspace=str(worker),group=group,
                     status='reviewed geometry candidate; no user approval implied')
         records.append(dict(asset_id=worker.name,**record))
     if sha(reviewed_catalog())!=sha(directory/'previous-catalog.json'):
         raise ValueError('Concurrent canonical catalog change')
     for record in records:
-        write_json(workers_directory/record['asset_id']/'inspection/shrub-candidate.json',{k:v for k,v in record.items() if k!='asset_id'})
+        write_json(Path(record['workspace'])/'inspection/shrub-candidate.json',{k:v for k,v in record.items() if k!='asset_id'})
     write_json(OUT/'ownership-revision/catalog.json',catalog)
     write_json(OUT/'ownership-revision/grouping-review.json',json.loads((directory/'grouping-review.json').read_text()))
     write_json(directory/'integration.json',dict(status='reviewed shrub candidates integrated; user approval pending',groups=len(catalog['groups']),native_parts=sum(key.startswith('building-') for key in catalog['canonical_owners']),authored_parts=sum(key.startswith(('foliage-','scenery-')) for key in catalog['canonical_owners']),

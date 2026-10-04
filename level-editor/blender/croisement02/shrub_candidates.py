@@ -8,6 +8,28 @@ from evidence_io import sha,write_json
 
 
 def selected_workspace(out,asset,catalog_path):
+    refit=out/'understory-round-2/assets'/asset
+    candidate=refit/'inspection/shrub-candidate.json'
+    if candidate.exists() and (refit/'inspection/refit-evidence.json').exists():
+        receipt=json.loads(candidate.read_text())
+        group=next(g for g in json.loads(catalog_path.read_text())['groups'] if g['id']==asset)
+        if receipt.get('group')!=group or not group.get('authored_scenery') or 'native_foliage_mask' not in group:
+            raise ValueError('Refitted shrub ownership changed')
+        model_hash=sha(refit/'model.blend')
+        review=json.loads((refit/'inspection/visual-review.json').read_text())
+        audit=json.loads((refit/'inspection/saved-model-audit.json').read_text())
+        if (receipt['model_sha256']!=model_hash or review['model_sha256']!=model_hash or audit['model_sha256']!=model_hash
+                or audit['status']!='PASS' or not review['ready_for_geometry_review']
+                or review['sheet_sha256']!=sha(refit/'inspection/actual-materials/sheet.png')):
+            raise ValueError('Refitted shrub review changed')
+        joint_path=refit/'inspection/joint-neighbourhood.json'
+        if sha(joint_path)!=review['joint_neighbourhood_sha256']:raise ValueError('Refitted shrub joint receipt changed')
+        joint=json.loads(joint_path.read_text())
+        if sha(Path(joint['evidence']))!=joint['evidence_sha256'] or sha(Path(joint['sheet']))!=joint['sheet_sha256']:
+            raise ValueError('Refitted shrub joint evidence changed')
+        for row in json.loads(Path(joint['evidence']).read_text())['workers']:
+            if sha(Path(row['path'])/'model.blend')!=row['model_sha256']:raise ValueError('Refitted shrub neighbour changed')
+        return refit
     path=out/'understory-candidates/west-bank-v5/selection.json'
     if asset!='croisement02-west-shrub-bank' or not path.exists():return None
     receipt=json.loads(path.read_text())

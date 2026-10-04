@@ -35,6 +35,7 @@ def main(base, destination, indices):
         row['png'] = str((mask_path.parent/row['png']).resolve())
     inputs = {str(base/'catalog.json'):sha(base/'catalog.json'), str(inventory_path):sha(inventory_path), str(base/'source-masks.json'):sha(base/'source-masks.json')}
     nodes = []
+    workers = {}
     domains = []
     for index, relative in [(81, 'southwest81-v1'), (65, 'north65-66-v1'), (66, 'north65-66-v1')]:
         if index not in indices:continue
@@ -65,6 +66,10 @@ def main(base, destination, indices):
         constraints = incoming['projections']['exterior']['occluder_constraints']
         manifest['projections']['exterior']['occluder_constraints'].append(next(c for c in constraints if c['source_node'] == node))
         nodes.append(node); domains.append(domain)
+        worker=OUT/'understory-round-1/assets'/asset
+        refit=OUT/'understory-round-2/assets'/asset
+        if (refit/'inspection/refit-evidence.json').exists():worker=refit
+        workers[asset]=str(worker)
         for path in (source/'catalog.json', source/'inventory/inventory.json', source/'source-masks.json', Path(row['png'])):
             inputs[str(path)] = sha(path)
     receivers = {'ground', *catalog['canonical_owners']}
@@ -88,6 +93,7 @@ def main(base, destination, indices):
     write_json(destination/'grouping-review.json', dict(status='reviewed', reviewer='Codex',
         catalog_sha256=sha(destination/'catalog.json'), inventory_sha256=sha(destination/'inventory/inventory.json'),
         evidence='Merge only authored source ownership for shrubs81/65/66 onto the current fenced catalog. Existing group records, source nodes and observed domains are preserved. Geometry readiness and user decisions remain separate.'))
+    write_json(destination/'workers.json',workers)
     write_json(destination/'rebase.json', dict(status='private proposal only; canonical catalog unchanged',
         previous_catalog_sha256=previous_hash, groups=len(catalog['groups']), added_nodes=nodes, domains=domains, inputs=inputs))
     print(destination)
