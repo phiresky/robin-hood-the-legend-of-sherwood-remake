@@ -2058,6 +2058,41 @@ fn spline_lighting_repeats_and_filters_by_mission_ambience() {
 }
 
 #[test]
+fn spline_sounds_load_at_repeated_positions_with_acoustic_settings() {
+    let mut loaded = LoadedLevel::hackable_from_json(include_bytes!(
+        "fixtures/asset-spline-material.level.json"
+    ))
+    .unwrap();
+    loaded.mission.header.ambiance = 1;
+    assert_eq!(loaded.proto.sound_sources.len(), 3);
+    for (i, source) in loaded.proto.sound_sources.iter().enumerate() {
+        assert_eq!(
+            source.polyline.as_deref(),
+            Some([(150 + i as i16 * 100, 200)].as_slice())
+        );
+        assert_eq!(source.delayed_params, Some((10, 20, 2)));
+        assert_eq!(source.altitude, 3);
+        assert_eq!(source.noise_covering_distance, Some(15));
+    }
+    let mut assets = LevelAssets::new();
+    let engine = construct_loaded(loaded, &mut assets);
+    assert_eq!(
+        assets.audio.sound_source_required_ids,
+        [12].into_iter().collect()
+    );
+    let snapshot = serde_json::to_value(engine.capture_persisted_state().unwrap()).unwrap();
+    let sources = snapshot["feedback"]["sound_sim"]["sources"]["sources"]
+        .as_array()
+        .unwrap();
+    assert_eq!(sources.len(), 3);
+    for source in sources {
+        assert_eq!(source["delay_stepping"], 3);
+        assert_eq!(source["inner_volume"], 204);
+        assert_eq!(source["noise_covering_distance"], 15);
+    }
+}
+
+#[test]
 fn receiving_materials_keep_navigation_connected_and_ground_independent() {
     use robin_engine::{coordinates::MapPoint, element::GameMaterial};
     let mut assets = LevelAssets::new();

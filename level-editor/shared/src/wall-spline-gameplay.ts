@@ -16,6 +16,7 @@ import { wallCorners, wallRuns } from "./wall-path.ts";
 import { heightPlane, planeHeight } from "./gameplay-plane.ts";
 import { matchesWallSource, wallSectionAt } from "./wall-section-profile.ts";
 import { quantizeGeneratedMotionPolygon } from "./motion-quantization.ts";
+import { clipSplinePolyline } from "./clip-spline-polyline.ts";
 
 type Vertex = number[];
 function clip(vertices: Vertex[], axis: number, boundary: number, above: boolean) {
@@ -71,6 +72,7 @@ export function wallSplineGameplay(
         movementClearances: [],
         materials: [],
         lights: [],
+        sounds: [],
       },
     };
     const out = generated.gameplay!;
@@ -102,10 +104,8 @@ export function wallSplineGameplay(
         throw new Error(`asset ${assetId} has stateful geometry; a static wall source is required`);
       for (const issue of data.draft?.issues ?? [])
         warnings.push(`Wall spline ${path.id}, asset ${assetId}: ${issue}`);
-      if (data.masks?.length || data.sounds?.length)
-        warnings.push(
-          `Wall spline ${path.id}, asset ${assetId}: local masks and sound regions are not deformed.`,
-        );
+      if (data.masks?.length)
+        warnings.push(`Wall spline ${path.id}, asset ${assetId}: local masks are not deformed.`);
       if (
         data.doors.length ||
         data.lifts?.length ||
@@ -390,6 +390,39 @@ export function wallSplineGameplay(
             });
           },
         );
+      }
+      for (const sound of data.sounds ?? []) {
+        if (!sound.spatial) {
+          warnings.push(
+            `Wall spline ${path.id}, sound ${sound.id}: global emitters cannot be repeated along a wall; emitter omitted.`,
+          );
+          continue;
+        }
+        const points = sound.spatial.polyline.map((p) => source(sound.node, p));
+        for (let repeat = 0; repeat < repeats; repeat++) {
+          const fragments = run
+            ? clipSplinePolyline(
+                points,
+                axis,
+                start,
+                Math.min(end, start + (end - start) * (length / run.repeatLength - repeat)),
+                stations,
+              )
+            : [points];
+          if (fragments.length > 1) {
+            warnings.push(
+              `Wall spline ${path.id}, sound ${sound.id}, repeat ${repeat}: cropping produces disconnected emitter fragments; emitter omitted.`,
+            );
+            continue;
+          }
+          if (!fragments.length) continue;
+          out.sounds!.push({
+            ...sound,
+            id: `sound-${out.sounds!.length}`,
+            node: "$root",
+            spatial: { ...sound.spatial, polyline: fragments[0]!.map((p) => warp(p, repeat)) },
+          });
+        }
       }
       const surfaceSet = `span-${out.surfaces.length}`;
       const appendSurface = (surface: AssetWalkableSurface, target: AssetWalkableSurface[]) => {

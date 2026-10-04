@@ -179,6 +179,83 @@ test("wall lighting follows repeated and turned paths and preserves ambience fil
   assert.equal(unsupported.descriptors[0]!.gameplay!.lights!.length, 0);
 });
 
+test("wall spatial sounds repeat and crop with their acoustic rules intact", () => {
+  const { document, asset, assets, bounds } = wallSplineFixture();
+  asset.gameplay!.sounds = [
+    {
+      id: "wind",
+      node: "body",
+      sample: 12,
+      kind: 2,
+      active: true,
+      delay: [10, 20, 2],
+      altitude: 3,
+      ambiences: 5,
+      spatial: {
+        polyline: [
+          [-50, 0, 0],
+          [50, 0, 0],
+        ].map(([x, y, z]) => sceneToGame(document.camera, [x!, y!, z!])),
+        innerDistance: 10,
+        outerDistance: 60,
+        innerVolume: 80,
+        outerVolume: 0,
+        noiseCoveringDistance: 15,
+      },
+    },
+  ];
+  document.splines![0]!.points = [
+    [100, 200, 0],
+    [345, 200, 0],
+  ];
+  const before = JSON.stringify(asset);
+  const result = compileAssetGameplay(document, assets, bounds);
+  assert.equal(result.sound_sources!.length, 3);
+  assert.deepEqual(
+    result.sound_sources!.map((sound) => sound.polyline),
+    [
+      [
+        [100, 200],
+        [200, 200],
+      ],
+      [
+        [200, 200],
+        [300, 200],
+      ],
+      [
+        [300, 200],
+        [345, 200],
+      ],
+    ],
+  );
+  for (const sound of result.sound_sources!) {
+    assert.deepEqual(sound.delayed_params, [10, 20, 2]);
+    assert.equal(sound.altitude, 3);
+    assert.equal(sound.ambience_filter, 5);
+    assert.equal(sound.inner_volume, 80);
+    assert.equal(sound.noise_covering_distance, 15);
+  }
+  assert.equal(JSON.stringify(asset), before);
+  document.splines![0]!.curved = true;
+  document.splines![0]!.points = [
+    [100, 200, 0],
+    [220, 300, 20],
+    [345, 200, 40],
+  ];
+  const curved = wallSplineGameplay(document, assets, false);
+  assert.deepEqual(curved.warnings, []);
+  assert.ok(
+    curved.descriptors[0]!.gameplay!.sounds!.some((sound) => sound.spatial!.polyline.length > 2),
+  );
+  assert.ok(compileAssetGameplay(document, assets, bounds).sound_sources!.length > 0);
+  asset.gameplay!.sounds[0]!.spatial = undefined;
+  assert.ok(
+    wallSplineGameplay(document, assets, true).warnings.some((warning) =>
+      warning.includes("global emitters"),
+    ),
+  );
+});
+
 test("wall collision follows moved paths, crops repeats and participates in terrain navigation", () => {
   const { document, assets, bounds } = wallSplineFixture();
   const first = compileAssetGameplay(document, assets, bounds);

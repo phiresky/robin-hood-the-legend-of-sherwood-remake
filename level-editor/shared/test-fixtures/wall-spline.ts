@@ -125,5 +125,25 @@ export function wallMaterialFixture() {
       polygon: asset.gameplay!.materials[1]!.polygon.map((point) => [...point]),
     },
   ];
+  asset.gameplay!.sounds = [
+    {
+      id: "wind",
+      node: "body",
+      sample: 12,
+      kind: 2,
+      active: true,
+      delay: [10, 20, 2],
+      altitude: 3,
+      ambiences: 5,
+      spatial: {
+        polyline: [local(0, 0, 0)],
+        innerDistance: 10,
+        outerDistance: 60,
+        innerVolume: 80,
+        outerVolume: 0,
+        noiseCoveringDistance: 15,
+      },
+    },
+  ];
   return fixture;
 }

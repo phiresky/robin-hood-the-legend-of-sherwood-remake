@@ -4,6 +4,23 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Spline-wall spatial sounds (2026-10-04)
+
+Point and polyline emitters now follow repeated wall sections, source trimming,
+corners and path deformation. Polyline segments gain the shared wall sampling
+stations before deformation so curved paths retain their intermediate shape.
+Acoustic distances, volumes, altitude category, timing and ambience masks remain
+asset-owned. Cropping never connects disconnected surviving fragments; those
+cases currently omit the emitter with a warning. Global emitters likewise warn
+instead of being multiplied along the wall.
+
+The full editor suite passes 738 tests with two skipped (52.76 seconds), including
+reverse-direction clipping, bends, disconnected fragments, point emitters,
+partial repeats and curved paths. The golden export passes native construction
+with three independently placed emitters, one required sound sample, retained
+delay settings and converted runtime volume. All seven native spline integration
+tests pass. This validates construction and placement, not audible playback.
+
 ## Spline-wall same-plane lighting (2026-10-04)
 
 Wall-local light/shadow contours now follow repeated source spans and path
