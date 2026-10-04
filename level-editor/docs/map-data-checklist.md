@@ -56,6 +56,18 @@ independent and all-applied configurations, not every switch combination, actor
 movement tick, door permission or narrow passage. Missing authored geometry and
 unpublished state definitions remain outside this consistency check.
 
+**Actor receiving-surface crossings:** the current ten-map batch passes 6,170
+directed actor walks across 3,085 eligible receiver pairs, including 6,050 walks
+in Wychford. Each tick checks receiver identity and height; an exact boundary
+contact permits either receiver linked by that boundary. This audit exposed and
+now covers partial edge-grid cells, nearly coincident endpoint splits and
+collapsed ground slivers. `actor-receiver-crossing-report.json` records all ten
+maps and the completed run. Sherwood has zero eligible pairs under this sampler's
+rules. It checks one clear 24-unit perpendicular crossing per pair, on seams at
+least 16 units long, with interior endpoints. Ground-only boundaries, shorter
+seams, every point along an edge, state changes and real animation assets remain
+outside this test's coverage.
+
 **Exported depth PNG:** the fixture in `work/map-compile/export-depth-gpu` packages
 a known two-region 16-bit depth image and a pinned sprite through the normal ZIP
 exporter. The native map decoder, GPU upload and character masking pass reproduce
@@ -661,8 +673,8 @@ walkway and its rotated copy in both directions, using a synthetic walking
 animation; receiver identity and final height match the destination plane.
 Native construction derives static elevation boundaries from placed receiving
 polygons, including partial contacts and transitions to uncovered ground. All ten
-maps in the current diagnostic batch load with 4,856 fractional-capable boundaries
-in total (3,869 in Wychford and 147 in Leicester). The same batch passes 57
+maps in the current diagnostic batch load with 4,871 fractional-capable boundaries
+in total (3,881 in Wychford and 150 in Leicester). The same batch passes 57
 transition apply/reset checks and 372 directed lift-passage callbacks.
 Receiving planes remain registered when their sight obstacle is inactive; switches
 control collision and navigation access rather than removing height lookup.
@@ -672,12 +684,19 @@ including overlapping receiving planes with different heights; the same highest
 receiver and destination height remain valid in each state. Generated boundaries
 retain fractional endpoints instead of rounding them to native integer pixels.
 Side probes stay within narrow overlaps and gaps, avoiding duplicate receiver
-swaps across nearly coincident edges. Regression tests cover distinct subpixel
-seams, overlapping planes and uncovered gaps. Conflicting coincident boundaries
+swaps across nearly coincident edges. Splitting preserves distinct float32
+endpoints near vertices; collapsed ground slivers compose a direct transition
+between their outer receivers. Regression tests cover distinct subpixel
+seams, overlapping planes and uncovered gaps. Conflicting real receiver identities
 still produce warnings. Actor ticks now follow queued, postprocessed paths around
 wall ends and along curved and rising walkways in both directions; each movement
 step must clear collision and match the receiving height within 0.001 map units.
 Full-map actor traversal and animation playback remain unverified.
+Maps with dimensions that are not multiples of 64 now allocate partial edge cells
+and retain their exact pixel bounds. Walking regressions cover receiving-plane
+crossings inside the right and bottom strips. Wychford previously lost elevation
+callbacks in its bottom 32 pixels; York also gains its partial cells. The ten-map
+route audit still passes all 1,336 sampled routes after the sizing correction.
 Before physical reconciliation, Sherwood's main-library browser bake passed at
 1920×1088 with 115 sight obstacles and an
 8,246,241-byte ZIP. That archive loads in Rust with seven door projections and

@@ -4,7 +4,18 @@ use crate::engine::{Engine, EngineArgs, LevelLoadArgs, SimConfig};
 use crate::sequence::SequenceElement;
 use std::sync::Arc;
 
+mod exported_receivers {
+    include!("exported_receivers.rs");
+}
+
 fn compiled_walkway(bytes: &[u8]) -> (EngineInner, LevelAssets) {
+    compiled_walkway_with_dimensions(bytes, (2000., 2000.))
+}
+
+fn compiled_walkway_with_dimensions(
+    bytes: &[u8],
+    dimensions: (f32, f32),
+) -> (EngineInner, LevelAssets) {
     let loaded = crate::level_data::LoadedLevel::hackable_from_json(bytes).unwrap();
     let mut assets = LevelAssets::new();
     let mut profiles = crate::profiles::ProfileManager::new();
@@ -21,7 +32,7 @@ fn compiled_walkway(bytes: &[u8]) -> (EngineInner, LevelAssets) {
             level_directory: "",
             progress: &mut |_| {},
             loaded,
-            bg_pixel_dims: (2000., 2000.),
+            bg_pixel_dims: dimensions,
         },
         ground_mark_sprite: None,
         titbit_row_frame_counts: vec![],
@@ -49,6 +60,52 @@ fn actor_ticks_cross_compiled_walkway_seams_and_update_height() {
             "/tests/fixtures/asset-navigation-copies.level.json"
         )));
         tick_walkway_crossing(engine, assets, layer, sector_index, source, goal);
+    }
+}
+
+#[test]
+fn actor_crosses_receivers_in_partial_edge_grid_cells() {
+    let bytes = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/asset-navigation-copies.level.json"
+    ));
+    for (dimensions, layer, sector, a, b) in [
+        (
+            (420., 350.),
+            0,
+            0,
+            MapPoint::new(396., 320.),
+            MapPoint::new(404., 290.),
+        ),
+        (
+            (620., 319.),
+            1,
+            1,
+            MapPoint::new(510., 313.),
+            MapPoint::new(510., 300.),
+        ),
+    ] {
+        for (source, goal) in [(a, b), (b, a)] {
+            let (engine, assets) = compiled_walkway_with_dimensions(bytes, dimensions);
+            let grid = &engine.world.fast_grid.level;
+            assert_eq!(grid.grid_width, (dimensions.0 as u16).div_ceil(64));
+            assert_eq!(grid.grid_height, (dimensions.1 as u16).div_ceil(64) + 4);
+            assert!(
+                grid.map_bbox
+                    .contains_point(MapPoint::new(dimensions.0 - 1., dimensions.1 - 1.))
+            );
+            assert!(
+                !grid
+                    .map_bbox
+                    .contains_point(MapPoint::new(dimensions.0, dimensions.1 - 1.))
+            );
+            assert!(
+                !grid
+                    .map_bbox
+                    .contains_point(MapPoint::new(dimensions.0 - 1., dimensions.1))
+            );
+            tick_walkway_crossing(engine, assets, layer, sector, source, goal);
+        }
     }
 }
 
@@ -290,6 +347,7 @@ fn tick_walkway_crossing(
     for _ in 0..200 {
         engine.t_tick_actor_owner_envelopes(&assets);
         let position = engine.ent(owner).element_data().position_map();
+        assert_actor_receiver(&engine, &assets, owner, handle, layer, position);
         samples.push(position);
         if (position - goal).length() < 0.01 {
             break;
@@ -305,14 +363,83 @@ fn tick_walkway_crossing(
         "actor did not arrive: {samples:?}"
     );
     assert_eq!(entity.position_iface().get_obstacle(), Some(end_receiver));
+    let arrived = entity.element_data().position_map();
     let height = assets.environment.static_sight_obstacles[usize::from(end_receiver)]
-        .compute_top_z_from_projection(goal.x, goal.y);
+        .compute_top_z_from_projection(arrived.x, arrived.y);
     assert!((entity.element_data().position().z - height).abs() < 0.001);
     assert!(
         samples.len() > 2,
         "movement must advance over multiple actor ticks"
     );
     (u32::from(end_receiver), height)
+}
+
+fn point_on_edge(a: MapPoint, b: MapPoint, point: MapPoint) -> bool {
+    let (ax, ay, bx, by, x, y) = (
+        f64::from(a.x),
+        f64::from(a.y),
+        f64::from(b.x),
+        f64::from(b.y),
+        f64::from(point.x),
+        f64::from(point.y),
+    );
+    (x - ax) * (by - ay) == (y - ay) * (bx - ax)
+        && (ax.min(bx)..=ax.max(bx)).contains(&x)
+        && (ay.min(by)..=ay.max(by)).contains(&y)
+}
+
+fn receiver_edge_contains(
+    assets: &LevelAssets,
+    receiver: crate::sight_obstacle::SightObstacleIndex,
+    position: MapPoint,
+) -> bool {
+    let points = &assets.environment.static_sight_obstacles[usize::from(receiver)].obstacle_points;
+    (0..points.len()).any(|index| {
+        let a = &points[index];
+        let b = &points[(index + 1) % points.len()];
+        point_on_edge(
+            MapPoint::new(a.x, a.y - a.z_top),
+            MapPoint::new(b.x, b.y - b.z_top),
+            position,
+        )
+    })
+}
+
+fn assert_actor_receiver(
+    engine: &EngineInner,
+    assets: &LevelAssets,
+    owner: crate::element::EntityId,
+    sector: crate::position_interface::SectorHandle,
+    layer: u16,
+    position: MapPoint,
+) {
+    let queried = engine.get_projection_area_index(assets, sector, layer, position);
+    let current = engine.ent(owner).position_iface().get_obstacle();
+    // Crossing direction can select either side at an exact shared boundary.
+    // Away from that boundary, both identity and plane height must agree.
+    let shared_boundary = current != queried
+        && engine.world.fast_grid.level.lines.iter().any(|line| {
+            line.is_elevation
+                && ((line.left_obstacle_index == current && line.right_obstacle_index == queried)
+                    || (line.right_obstacle_index == current
+                        && line.left_obstacle_index == queried))
+                && point_on_edge(line.a, line.b, position)
+        });
+    assert!(
+        current == queried || shared_boundary,
+        "actor receiver mismatch at {position:?}: current {current:?}, queried {queried:?}"
+    );
+    let expected_height = current
+        .map(|receiver| {
+            assets.environment.static_sight_obstacles[usize::from(receiver)]
+                .compute_top_z_from_projection(position.x, position.y)
+        })
+        .unwrap_or(0.);
+    let actual_height = engine.ent(owner).element_data().position().z;
+    assert!(
+        (actual_height - expected_height).abs() < 0.001,
+        "actor height mismatch at {position:?}: {actual_height} != {expected_height}"
+    );
 }
 
 #[test]

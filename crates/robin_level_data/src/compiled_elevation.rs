@@ -49,7 +49,7 @@ fn split_at(edge: Edge, other: Edge, cuts: &mut Vec<f64>) {
     let offset = subtract(other.0, edge.0);
     let determinant = cross(direction, other_direction);
     let mut add = |t: f64| {
-        if t > EPS && t < 1. - EPS {
+        if t > 0. && t < 1. {
             cuts.push(t);
         }
     };
@@ -230,7 +230,10 @@ pub(crate) fn derive(geometry: &CompiledAssetGeometry) -> Result<Vec<RawElevatio
                 split_at(*edge, (area[i], area[(i + 1) % area.len()]), &mut cuts);
             }
             cuts.sort_by(f64::total_cmp);
-            cuts.dedup_by(|a, b| (*a - *b).abs() < EPS);
+            // A parameter-space epsilon can erase a distinct float32 endpoint
+            // on a long edge, leaving overlapping copies of the shared seam.
+            // Collapsed float32 intervals are discarded after interpolation.
+            cuts.dedup_by(|a, b| *a == *b);
             for interval in cuts.windows(2) {
                 let mut a = interpolate(edge.0, edge.1, interval[0]);
                 let mut b = interpolate(edge.0, edge.1, interval[1]);
@@ -266,9 +269,28 @@ pub(crate) fn derive(geometry: &CompiledAssetGeometry) -> Result<Vec<RawElevatio
                 }
                 if let Some(previous) = output.insert(key, (left, right)) {
                     if previous != (left, right) {
-                        // Coincident boundaries cannot have conflicting receivers.
-                        output.remove(&key);
-                        ambiguous.insert(key);
+                        // Splitting almost-touching edges can collapse a ground
+                        // sliver to one float32 segment. Compose its two swaps
+                        // into the direct receiver transition instead of losing
+                        // the entire boundary. Conflicting real receivers remain
+                        // ambiguous and must not be guessed.
+                        let merge = |a, b| {
+                            if a == b || b == u16::MAX {
+                                Some(a)
+                            } else if a == u16::MAX {
+                                Some(b)
+                            } else {
+                                None
+                            }
+                        };
+                        if let (Some(left), Some(right)) =
+                            (merge(previous.0, left), merge(previous.1, right))
+                        {
+                            output.insert(key, (left, right));
+                        } else {
+                            output.remove(&key);
+                            ambiguous.insert(key);
+                        }
                     }
                 }
             }
@@ -282,6 +304,7 @@ pub(crate) fn derive(geometry: &CompiledAssetGeometry) -> Result<Vec<RawElevatio
     }
     Ok(output
         .into_iter()
+        .filter(|(_, (left, right))| left != right)
         .map(
             |((layer, point_a, point_b), (left_obstacle_index, right_obstacle_index))| {
                 let a = point_a.map(coordinate_from_key);
@@ -431,6 +454,74 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn nearly_coincident_endpoints_split_shared_seams_only_once() {
+        let mut geometry = fixture();
+        geometry.motion_data.layers[0][0].polygon.points =
+            vec![(0, 0), (100, 0), (100, 100), (0, 100)];
+        for (obstacle, (left, right, top)) in geometry
+            .sight_obstacles
+            .iter_mut()
+            .zip([(0., 50., 0.), (50., 100., 0.000001)])
+        {
+            obstacle.points = [(left, top), (right, top), (right, 100.), (left, 100.)]
+                .into_iter()
+                .map(|(x, y)| crate::level_data::RawObstaclePoint {
+                    x,
+                    y,
+                    z_bottom: 0.,
+                    z_top: 0.,
+                })
+                .collect();
+        }
+        let lines = derive(&geometry).unwrap();
+        let shared: Vec<_> = lines
+            .iter()
+            .filter(|line| {
+                line.left_obstacle_index != u16::MAX && line.right_obstacle_index != u16::MAX
+            })
+            .collect();
+        assert_eq!(shared.len(), 1);
+        assert_eq!(shared[0].map_endpoints(), [[50., 0.000001], [50., 100.]]);
+    }
+
+    #[test]
+    fn clipped_ground_sliver_composes_one_representable_receiver_transition() {
+        let mut geometry = fixture();
+        geometry.motion_data.layers[0][0].polygon.points =
+            vec![(1600, 56), (1700, 56), (1700, 110), (1600, 110)];
+        for (obstacle, points) in geometry.sight_obstacles.iter_mut().zip([
+            [(1689., 90.), (1662., 103.), (1662., 56.)],
+            [(1689., 79.), (1689., 90.), (1662., 55.999996)],
+        ]) {
+            obstacle.points = points
+                .into_iter()
+                .map(|(x, y)| crate::level_data::RawObstaclePoint {
+                    x,
+                    y,
+                    z_bottom: 0.,
+                    z_top: 0.,
+                })
+                .collect();
+        }
+        let lines = derive(&geometry).unwrap();
+        let shared: Vec<_> = lines
+            .iter()
+            .filter(|line| {
+                line.left_obstacle_index != u16::MAX && line.right_obstacle_index != u16::MAX
+            })
+            .collect();
+        assert_eq!(shared.len(), 1);
+        assert_eq!(shared[0].map_endpoints(), [[1662., 56.], [1689., 90.]]);
+        assert_eq!(
+            (
+                shared[0].left_obstacle_index,
+                shared[0].right_obstacle_index
+            ),
+            (0, 1)
+        );
     }
 
     #[test]

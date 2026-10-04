@@ -205,6 +205,17 @@ at every tick. These fixtures use a synthetic walking animation. The level-data
 `compiled_elevation` tests additionally cover fractional seams, tiny overlaps,
 gaps and legacy integer endpoint validation.
 
+The ignored `exported_receiving_seams_support_actor_crossings` test reads the same
+`ROBIN_ASSET_MAP_DIAGNOSTICS` batch used below. It selects one collision-clear,
+24-unit perpendicular crossing per eligible receiving-plane pair and walks both
+directions using actor ticks. Endpoints must lie inside different receivers;
+intermediate exact-boundary positions accept either adjacent receiver. Other
+positions must match the queried receiver, and every tick must match its height.
+Its `actor-receiver-crossing-report.json` records eligible pairs and directed
+crossings per map, including zero-coverage maps. This samples initial-state seams
+with at least 16 units of edge length; it does not certify short seams, ground-only
+boundaries, every point along an edge, or changing traversal surfaces.
+
 For editor-generated navigation, the ignored integration test
 `library_exports_route_between_collision_connected_samples` reads a complete
 `diagnostics.json` batch from `ROBIN_ASSET_MAP_DIAGNOSTICS`. It samples numbered

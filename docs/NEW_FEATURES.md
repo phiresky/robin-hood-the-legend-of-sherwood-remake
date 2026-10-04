@@ -1,8 +1,15 @@
 # Post-port Features
 
+- **Partial navigation cells at map edges.** Maps whose pixel dimensions are not
+  multiples of 64 allocate the final partial grid cells and retain their exact
+  image bounds. Actors can cross receiving-surface seams in the right and bottom
+  strips, where elevation callbacks previously stopped outside a truncated grid.
+
 - **Fractional receiving-surface seams.** Generated elevation boundaries retain
   subpixel endpoints and distinguish tiny overlaps from gaps, preventing duplicate
-  receiver switches while walking over sloped terrain. Actor-tick tests traverse
+  receiver switches while walking over sloped terrain. Splitting retains distinct
+  endpoints even very close to a vertex; ground slivers that collapse to one
+  float32 boundary become a direct receiver transition. Actor-tick tests traverse
   curved and rising walkways in both directions through queued pathfinding.
   Integer level files remain readable. Packed datadirs advance to version 22 and
   mission payloads to version 13; regenerate older packed data.
