@@ -4,6 +4,29 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Lincoln spire appearance binding repair (2026-10-05)
+
+A fresh published-map audit stopped at Lincoln: the spire model now exposes
+two appearances, but its gameplay still mapped its only control to the former
+local appearance number. The shared preview name consequently collided with
+the hall's other control. The spire's existing upper reveal now binds to
+`appearance-2`; a separate `appearance-1` control connects to the hall's lower
+reveal through an asset-local spatial join. The compiler's ambiguity check is
+retained.
+
+Both definitions are published and Lincoln's descriptor pins are refreshed.
+The baseline constructs natively and all eleven controls apply/reset. A joint
+one-unit hall/spire move also constructs and applies/resets its ten surviving
+controls, but exposes unresolved neighboring receiving geometry: one control,
+a traversal, doors and light bindings are omitted. The moved result is not a
+placement-parity pass. Staged descriptors, warnings and publication snapshots
+are under `work/map-compile/lincoln-spire-repair-yblqgl`.
+
+The preceding all-map batch at `work/map-compile/published-mask-probes-20261005`
+compiled six scenes before the Lincoln failure; its incomplete output is not
+an all-map acceptance result. The remaining maps and calibrated Wychford still
+need fresh verification.
+
 ## Cropped mask anchors with surviving probes (2026-10-05)
 
 A cropped wall repeat now retains its mask when the authored point anchor is

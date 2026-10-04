@@ -20,6 +20,11 @@ Wychford receiving-seam audit passes 17,468 directed actor crossings over 8,734
 eligible pairs. This samples initial-state routes; it does not verify every
 possible route, control state or feature category.
 
+A fresh all-map batch exposed stale Lincoln spire appearance bindings, now
+repaired and published. Native baseline construction and all eleven control
+apply/reset checks pass. Moving the hall/spire leaves unresolved neighboring
+receivers; the fresh all-map audit remains incomplete.
+
 | Map information | How the editor constructs it | Current evidence / gap |
 |---|---|---|
 | Background and minimap | Render placed models and textures, then downsample. | Browser bake and native ZIP decoding tested. |
