@@ -34,6 +34,12 @@ def selected_workspace(out,asset,catalog_path):
         if (forest_round and asset!='croisement02-shrub-64') or asset=='croisement02-shrub-83':
             fill=refit/'inspection/inferred-fill-evidence.json'
             if review.get('inferred_fill_evidence_sha256')!=sha(fill):raise ValueError('Forest inferred leaf fill evidence changed')
+        if asset=='croisement02-shrub-93':
+            budget=refit/'inspection/render-budget-evidence.json'
+            proof_budget=json.loads(budget.read_text())
+            if (review.get('render_budget_evidence_sha256')!=sha(budget) or proof_budget['model_sha256']!=model_hash
+                    or proof_budget['current_transparent_bounces']<256 or sha(Path(proof_budget['current_report']))!=proof_budget['current_report_sha256']):
+                raise ValueError('Dense shrub transparent traversal proof changed')
         coverage=json.loads((refit/'inspection/source-coverage/report.json').read_text())
         bounds=json.loads((refit/'inspection/actual-materials/opacity-bounds.json').read_text())
         if coverage['model_sha256']!=model_hash or bounds['model_sha256']!=model_hash or coverage['intersection_over_union']<.95 or min(c['depth_width_ratio'] for c in bounds['crowns'])<1:
