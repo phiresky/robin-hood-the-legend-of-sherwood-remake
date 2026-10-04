@@ -7,7 +7,9 @@ from mathutils import Vector
 from tree_geometry import SIN, COS, RAY, material, one_sided, replace_mesh
 
 
-def build(obj, packet, ground_y):
+def build(obj, packet, ground_y, interior_clusters=600):
+    if not 1 <= interior_clusters <= 1600:
+        raise ValueError('Interior cluster count must be between 1 and 1600')
     path = Path(packet['lobes'][0]['image']).parent / 'complete-source.png'
     source = np.asarray(Image.open(path).convert('RGBA'))
     alpha = source[:, :, 3] > 127
@@ -78,7 +80,7 @@ def build(obj, packet, ground_y):
     atlas = np.zeros((80 * 24, 64 * 24, 4), dtype=np.uint8)
     atlas_index = 0
     sample_v, sample_u = np.mgrid[0:24, 0:24] / 24 + .5 / 24
-    for _ in range(600):
+    for _ in range(interior_clusters):
         unit = rng.normal(size=3)
         unit /= np.linalg.norm(unit)
         unit *= rng.uniform(.05, 1.) ** (1 / 3)
@@ -132,7 +134,7 @@ def build(obj, packet, ground_y):
     one_sided(mats[4])
     result = replace_mesh(obj, vertices, faces, uvs, mats, slots, known)
     points = np.asarray(vertices)
-    result.update(geometry_version='native-leaf-clusters-v6', width=float(np.ptp(points[:, 0])),
+    result.update(geometry_version='native-leaf-clusters-v6', interior_cluster_attempts=interior_clusters, width=float(np.ptp(points[:, 0])),
         depth=float(np.ptp(points[:, 1])), source_projection_preserved=True, leaf_clusters=count + atlas_index // 3,
         inferred_off_map_half=False, method='World-space ellipsoid; jittered observed patches and randomly rotated inferred rear leaf clusters',
         tree_references=['leicester-southeast-cottage-tree', 'leicester-moat-bank-tree'])

@@ -8,8 +8,8 @@ from rounded_interior_geometry import build as volume
 from tree_geometry import SIN, COS, RAY, replace_mesh, material, one_sided
 
 
-def build(obj, packet, ground_y):
-    report = volume(obj, packet, ground_y)
+def build(obj, packet, ground_y, interior_clusters=600):
+    report = volume(obj, packet, ground_y, interior_clusters=interior_clusters)
     mesh = obj.data
     fx, fy, fw, fh = packet['bbox']
     cx, cy = int(fx + fw / 2), fy + fh / 2

@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 
 import bpy
+import numpy as np
+from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(Path(__file__).parent))
@@ -21,7 +23,7 @@ from audit_candidates import audit
 from render_tree import render_workspace
 
 
-def main(destination, mask=0):
+def main(destination, mask=0, interior_clusters=600):
     worker = destination / 'assets' / f'croisement02-tree-{mask:02}'
     if worker.exists():
         raise ValueError('Use a fresh prototype destination')
@@ -60,8 +62,19 @@ def main(destination, mask=0):
             lobe['image'] = str(local_source / original.name)
         packet_path = local_source / 'partition.json'
         write_json(packet_path, packet)
-        result = build(crown, packet, source_row['ground_y'])
-        result['northern_completion'] = cap(crown, packet_path, mask, inspection)
+        result = build(crown, packet, source_row['ground_y'], interior_clusters=interior_clusters)
+        native_alpha = np.asarray(Image.open(local_source / 'complete-source.png'))[:, :, 3]
+        north_row = -packet['native_bbox'][1]
+        north_contact = (int(np.count_nonzero(native_alpha[north_row] > 127))
+                         if 0 <= north_row < native_alpha.shape[0] else 0)
+        result['northern_completion'] = (cap(crown, packet_path, mask, inspection) if north_contact >= 8
+            else dict(status='not applicable; native crown does not reach north map edge', contact_pixels=north_contact))
+        result['material_source_roles'] = [dict(slot=i, material=m.name,
+            source_role=('source-projected native RGB and alpha' if i in (0, 5)
+                         else 'inferred placement and palette from own native crown'),
+            faces=sum(p.material_index == i for p in crown.data.polygons))
+            for i, m in enumerate(crown.data.materials) if any(p.material_index == i for p in crown.data.polygons)]
+        result['native_source_sha256'] = sha(local_source / 'complete-source.png')
         saved = {o.name: o.data.copy() for o in objects}
         for mesh in saved.values():
             for i, mat in enumerate(mesh.materials):
@@ -75,7 +88,7 @@ def main(destination, mask=0):
         report = dict(old_report, model_sha256=sha(worker / 'model.blend'), crown=result,
                       source_packet=str(packet_path), status='New cleanup prototype; geometry approval pending')
         report['limitations'] = ['Observed patches are jittered across an inferred ellipsoid; rear foliage uses only this native canopy artwork.',
-            'Missing northern crown is inferred, with no map-edge truncation. Only the two permitted Leicester references inform construction.',
+            'Northern continuation is added only where native alpha reaches the map edge. Only the two permitted Leicester references inform construction.',
             'Earlier approval does not apply to this rebuilt crown. No texture API generation or publication performed.']
         write_json(inspection / 'refinement.json', report)
         audit(worker)
@@ -99,5 +112,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('destination', type=Path)
     parser.add_argument('--mask',type=int,default=0,help='Native wood mask; one isolated candidate per invocation')
+    parser.add_argument('--interior-clusters', type=int, default=600, help='Private inferred volume density experiment')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
-    main(args.destination.resolve(),args.mask)
+    main(args.destination.resolve(),args.mask,args.interior_clusters)
