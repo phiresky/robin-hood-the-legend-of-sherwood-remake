@@ -3,14 +3,29 @@ use super::*;
 #[test]
 #[ignore = "requires current exports via ROBIN_ASSET_MAP_DIAGNOSTICS"]
 fn exported_receiving_seams_support_actor_crossings() {
+    check_exported_receiver_crossings(false);
+}
+
+#[test]
+#[ignore = "requires current exports via ROBIN_ASSET_MAP_DIAGNOSTICS"]
+fn exported_ground_boundaries_support_actor_crossings() {
+    check_exported_receiver_crossings(true);
+}
+
+fn check_exported_receiver_crossings(ground: bool) {
     let directory = std::path::PathBuf::from(std::env::var("ROBIN_ASSET_MAP_DIAGNOSTICS").unwrap());
     let manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(directory.join("diagnostics.json")).unwrap())
             .unwrap();
     assert_eq!(manifest["complete"], true);
-    let report_path = directory.join("actor-receiver-crossing-report.json");
+    let report_path = directory.join(if ground {
+        "actor-ground-crossing-report.json"
+    } else {
+        "actor-receiver-crossing-report.json"
+    });
     let mut report = serde_json::json!({
-        "scope": "sampled-initial-state-actor-receiver-crossings",
+        "scope": if ground { "sampled-initial-state-actor-ground-crossings" }
+            else { "sampled-initial-state-actor-receiver-crossings" },
         "complete": false, "results": []
     });
     std::fs::write(&report_path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
@@ -32,12 +47,13 @@ fn exported_receiving_seams_support_actor_crossings() {
         let mut candidates = vec![];
         let mut pairs = std::collections::BTreeSet::new();
         for line in grid.level.lines.iter().filter(|line| line.is_elevation) {
-            let (Some(left), Some(right)) = (line.left_obstacle_index, line.right_obstacle_index)
-            else {
+            let (left, right) = (line.left_obstacle_index, line.right_obstacle_index);
+            if (left.is_none() || right.is_none()) != ground {
                 continue;
-            };
-            let Some(topology) =
-                assets.environment.static_sight_obstacles[usize::from(left)].projection_area_ref()
+            }
+            let receiver = left.or(right).expect("elevation line must have a receiver");
+            let Some(topology) = assets.environment.static_sight_obstacles[usize::from(receiver)]
+                .projection_area_ref()
             else {
                 continue;
             };
@@ -58,13 +74,14 @@ fn exported_receiving_seams_support_actor_crossings() {
             let b = midpoint - offset;
             let receiver_a = engine.get_projection_area_index(&assets, handle, layer, a);
             let receiver_b = engine.get_projection_area_index(&assets, handle, layer, b);
-            if receiver_a.is_none() || receiver_b.is_none() || receiver_a == receiver_b {
+            if receiver_a == receiver_b || (receiver_a.is_none() || receiver_b.is_none()) != ground
+            {
                 continue;
             }
             // Endpoints must have an unambiguous receiving plane; intermediate
             // actor ticks still exercise exact shared-edge positions.
-            if receiver_edge_contains(&assets, receiver_a.unwrap(), a)
-                || receiver_edge_contains(&assets, receiver_b.unwrap(), b)
+            if receiver_a.is_some_and(|receiver| receiver_edge_contains(&assets, receiver, a))
+                || receiver_b.is_some_and(|receiver| receiver_edge_contains(&assets, receiver, b))
             {
                 continue;
             }
@@ -80,10 +97,7 @@ fn exported_receiving_seams_support_actor_crossings() {
             if !authorized || !grid.is_reachable_thick(a, b, layer, half) {
                 continue;
             }
-            let pair = (
-                usize::from(left).min(usize::from(right)),
-                usize::from(left).max(usize::from(right)),
-            );
+            let pair = (left.min(right), left.max(right));
             if pairs.insert(pair) {
                 candidates.push((layer, sector_index, a, b));
             }

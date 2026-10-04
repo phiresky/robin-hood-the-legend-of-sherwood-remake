@@ -67,6 +67,13 @@ rules. It checks one clear 24-unit perpendicular crossing per pair, on seams at
 least 16 units long, with interior endpoints. Ground-only boundaries, shorter
 seams, every point along an edge, state changes and real animation assets remain
 outside this test's coverage.
+The companion ground-boundary audit passes 52 directed walks across 26 eligible
+plane-to-ground pairs in eight maps, including Sherwood. Wychford and Derby have
+no eligible ground pair under these rules. `actor-ground-crossing-report.json`
+records these counts separately. A regular fixture also checks entering a raised
+plane and returning to uncovered ground with no receiver and zero ground height.
+Together the two audits cover 6,222 directed walks, with nonzero coverage in every
+map, while retaining the sampling and state limitations above.
 
 **Exported depth PNG:** the fixture in `work/map-compile/export-depth-gpu` packages
 a known two-region 16-bit depth image and a pinned sprite through the normal ZIP
@@ -691,7 +698,7 @@ seams, overlapping planes and uncovered gaps. Conflicting real receiver identiti
 still produce warnings. Actor ticks now follow queued, postprocessed paths around
 wall ends and along curved and rising walkways in both directions; each movement
 step must clear collision and match the receiving height within 0.001 map units.
-Full-map actor traversal and animation playback remain unverified.
+Complete full-map actor traversal and real animation playback remain unverified.
 Maps with dimensions that are not multiples of 64 now allocate partial edge cells
 and retain their exact pixel bounds. Walking regressions cover receiving-plane
 crossings inside the right and bottom strips. Wychford previously lost elevation
@@ -860,7 +867,7 @@ sampled Rust queries. Equivalent evidence across all maps remains unfinished.
 | Openings in movement collision | Asset-local clearances remove only the owning asset's derived collision on the matching plane; sight geometry and other assets remain intact. | Working in compiler/runtime tests; recovery geometry failures remain explicit gaps |
 | Navigation graph and fast-find grid | Engine constructs routing and spatial lookup structures from compiled geometry. No copied grids or graph bytes. | Synthetic fixtures, 1,336 initial-state routes across ten maps and 3,706 routes through independent/combined switch states pass; complete connectivity and actor traversal remain unverified |
 | Sight/physical obstacles | Transform asset-local shapes, per-vertex heights and solid/opaque flags. Explicit transition references select initial/applied obstacles. | Static geometry working; sight transitions verified through native initialization, apply and reset; recovered state ownership still incomplete |
-| Projection surfaces / elevation | Generate height planes linked to movement areas; derive fractional receiver-crossing boundaries from all registered planes, independent of sight activation. | Partial: actor walking verified for rotated copies, curved/rising paths and initial/applied/reset sight states; narrow overlap/gap regressions pass; conflicting coincident boundaries and full-map traversal remain unfinished |
+| Projection surfaces / elevation | Generate height planes linked to movement areas; derive fractional receiver-crossing boundaries from all registered planes, independent of sight activation. | Partial: rotated copies, curved/rising paths, sight-state fixtures and 6,222 sampled actor crossings pass; conflicting coincident boundaries and complete full-map traversal remain unfinished |
 | Doors, gates and lock rules | Transform local endpoints and optional click polygons; resolve neighbours geometrically and retain initial/alternate actor lock rules. Asset-local transition links either trigger state changes from doors or swap door permissions. | Compiler/native links implemented; recovered ownership and coverage incomplete |
 | Building interiors | Asset-local rooms connect their own entrances automatically. Map-owned editor links or matching passage sockets join rooms across assets. | Compiler/native tests cover separate, moved, rotated and duplicated assemblies and editable ZIP round-trips; occupants remain mission-owned |
 | Lifts / special traversal | Asset-local traversal surfaces, type, direction and endpoints; explicit local join sockets combine placed segments into one sector with multiple height planes. | Published library exports include lifts; native checks cover 372 directed passage callbacks plus rotated/duplicated compound fixtures. Missing assemblies warn and retain independent collision. Changing lift surfaces and complete traversal coverage remain unfinished |

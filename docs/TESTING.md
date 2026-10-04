@@ -215,6 +215,11 @@ Its `actor-receiver-crossing-report.json` records eligible pairs and directed
 crossings per map, including zero-coverage maps. This samples initial-state seams
 with at least 16 units of edge length; it does not certify short seams, ground-only
 boundaries, every point along an edge, or changing traversal surfaces.
+The companion `exported_ground_boundaries_support_actor_crossings` checks one
+crossing per eligible plane-to-ground pair in both directions and writes
+`actor-ground-crossing-report.json`. A regular synthetic fixture also walks up
+onto a raised receiving plane and back to uncovered ground, checking receiver
+removal and restored ground height.
 
 For editor-generated navigation, the ignored integration test
 `library_exports_route_between_collision_connected_samples` reads a complete

@@ -110,6 +110,35 @@ fn actor_crosses_receivers_in_partial_edge_grid_cells() {
 }
 
 #[test]
+fn actor_steps_between_receiving_plane_and_uncovered_ground() {
+    let mut descriptor: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/asset-navigation-copies.level.json"
+    )))
+    .unwrap();
+    let geometry = &mut descriptor["asset_geometry"];
+    geometry["motion_data"]["layers"][0][0]["polygon"]["points"] =
+        serde_json::json!([[0, 0], [100, 0], [100, 100], [0, 100]]);
+    geometry["sight_obstacles"]
+        .as_array_mut()
+        .unwrap()
+        .truncate(1);
+    geometry["sight_obstacles"][0]["points"] = serde_json::json!(
+        [(40, 20), (80, 20), (80, 80), (40, 80)]
+            .map(|(x, y)| serde_json::json!({"x": x, "y": y + 16, "z_bottom": 16, "z_top": 16}))
+    );
+    let bytes = serde_json::to_vec(&descriptor).unwrap();
+    let a = MapPoint::new(28., 50.);
+    let b = MapPoint::new(52., 50.);
+    for (source, goal) in [(a, b), (b, a)] {
+        let (engine, assets) = compiled_walkway_with_dimensions(&bytes, (100., 100.));
+        let (receiver, height) = tick_walkway_crossing(engine, assets, 0, 0, source, goal);
+        assert_eq!(receiver, if goal == b { Some(0) } else { None });
+        assert_eq!(height, if goal == b { 16. } else { 0. });
+    }
+}
+
+#[test]
 fn actor_ticks_follow_compiled_routes_around_wall_ends() {
     let a = MapPoint::new(250., 150.);
     let b = MapPoint::new(250., 250.);
@@ -321,21 +350,17 @@ fn tick_walkway_crossing(
     sector_index: usize,
     source: MapPoint,
     goal: MapPoint,
-) -> (u32, f32) {
+) -> (Option<u32>, f32) {
     let sector = &engine.world.fast_grid.level.sectors[sector_index];
     let handle = crate::position_interface::SectorHandle::new(u16::from(sector.sector_number))
         .unwrap()
         .with_arena_index(crate::fast_find_grid::SectorIndex::new(sector_index as u32).unwrap());
-    let start_receiver = engine
-        .get_projection_area_index(&assets, handle, layer, source)
-        .unwrap();
-    let end_receiver = engine
-        .get_projection_area_index(&assets, handle, layer, goal)
-        .unwrap();
+    let start_receiver = engine.get_projection_area_index(&assets, handle, layer, source);
+    let end_receiver = engine.get_projection_area_index(&assets, handle, layer, goal);
     assert_ne!(start_receiver, end_receiver);
     let action = OrderType::WalkingUpright;
     let owner = walking_pc(&mut engine, &mut assets, source, layer, handle);
-    engine.set_obstacle_and_material(&assets, owner, Some(start_receiver));
+    engine.set_obstacle_and_material(&assets, owner, start_receiver);
     let mut movement = SequenceElement::new_movement(1, Command::MoveOk, Some(owner), action);
     let order_id = engine.orders.allocate_order_id();
     movement
@@ -362,16 +387,20 @@ fn tick_walkway_crossing(
         (entity.element_data().position_map() - goal).length() < 0.01,
         "actor did not arrive: {samples:?}"
     );
-    assert_eq!(entity.position_iface().get_obstacle(), Some(end_receiver));
+    assert_eq!(entity.position_iface().get_obstacle(), end_receiver);
     let arrived = entity.element_data().position_map();
-    let height = assets.environment.static_sight_obstacles[usize::from(end_receiver)]
-        .compute_top_z_from_projection(arrived.x, arrived.y);
+    let height = end_receiver
+        .map(|receiver| {
+            assets.environment.static_sight_obstacles[usize::from(receiver)]
+                .compute_top_z_from_projection(arrived.x, arrived.y)
+        })
+        .unwrap_or(0.);
     assert!((entity.element_data().position().z - height).abs() < 0.001);
     assert!(
         samples.len() > 2,
         "movement must advance over multiple actor ticks"
     );
-    (u32::from(end_receiver), height)
+    (end_receiver.map(u32::from), height)
 }
 
 fn point_on_edge(a: MapPoint, b: MapPoint, point: MapPoint) -> bool {
@@ -496,7 +525,7 @@ fn actor_crosses_receivers_independently_of_switch_visibility() {
                 MapPoint::new(396., 320.),
                 MapPoint::new(404., 290.),
             );
-            assert_eq!(receiver, expected_receiver as u32);
+            assert_eq!(receiver, Some(expected_receiver as u32));
             heights.push(height);
         }
         assert!(
