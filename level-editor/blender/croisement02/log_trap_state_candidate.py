@@ -20,10 +20,10 @@ def material(imagepath):
     mix=n.new('ShaderNodeMixRGB');mix.blend_type='MIX';mix.inputs[1].default_value=(.17,.17,.17,1);l.new(texture.outputs['Alpha'],mix.inputs[0]);l.new(texture.outputs['Color'],mix.inputs[2]);shader=n.new('ShaderNodeBsdfPrincipled');shader.inputs['Roughness'].default_value=1;l.new(mix.outputs[0],shader.inputs['Base Color']);l.new(mix.outputs[0],shader.inputs['Emission Color']);shader.inputs['Emission Strength'].default_value=.35;out=n.new('ShaderNodeOutputMaterial');l.new(shader.outputs[0],out.inputs[0]);return material
 
 def main():
-    source=OUT/'state-target-evidence/log-trap';manifest=json.loads((source/'manifest.json').read_text());dest=OUT/'log-trap-state-candidate-v9';dest.mkdir(exist_ok=False);box=manifest['bbox'];left,top,right,bottom=box
+    source=OUT/'state-target-evidence/log-trap';manifest=json.loads((source/'manifest.json').read_text());dest=OUT/'log-trap-state-candidate-v10';dest.mkdir(exist_ok=False);box=manifest['bbox'];left,top,right,bottom=box
     # Endpoint centers are surveyed in their own native sprite coordinates.
     initial=json.loads((source/'covered-cylinder-fit.json').read_text())['survey']
-    terminal=json.loads((source/'applied-coherent-bank-slopes-v3.json').read_text())['survey']
+    terminal=json.loads((source/'applied-coherent-bank-slopes-v4.json').read_text())['survey']
     rendering='--no-render' not in sys.argv
     if rendering:acquire()
     try:
@@ -69,7 +69,7 @@ def main():
                 for col,view in enumerate(['source','oblique']):
                     image=Image.open(dest/f'{name}-{view}-actual.png').convert('RGBA');sheet.paste(image,(col*512,row*512),image)
             sheet.save(dest/'comparison.png')
-        report=dict(status='candidate requires self-review and geometry refinement',source_manifest_sha256=sha(source/'manifest.json'),model_sha256=sha(dest/'worker.blend'),support_manifest_sha256=sha(source/'applied-coherent-bank-slopes-v3.json'),surveys=dict(initial=initial,applied=terminal),geometry=audits,limitations=['Applied full-log slopes use audited bank support with fixed source endpoints; contacts and foreground visibility still require actual geometry review.','Covered and applied log counts are independent hypotheses, not matched physical identities or an animation rig.','Endpoint candidates only; per-log correspondence and native transition geometry (last target reaches terminal at tick87) not implemented.','Log end centers and radii inferred from native source; terminal fragments not assigned fabricated identities.','Native atlas RGB on source-facing solid surfaces; unobserved sides intentionally gray, no texture generation requested.','No permanent catalog or scene integration; source shadow patch remains separate ground state.'])
+        report=dict(status='candidate requires self-review and geometry refinement',source_manifest_sha256=sha(source/'manifest.json'),model_sha256=sha(dest/'worker.blend'),support_manifest_sha256=sha(source/'applied-coherent-bank-slopes-v4.json'),surveys=dict(initial=initial,applied=terminal),geometry=audits,limitations=['Applied full-log slopes use audited bank support with fixed source endpoints; contacts and foreground visibility still require actual geometry review.','Covered and applied log counts are independent hypotheses, not matched physical identities or an animation rig.','Endpoint candidates only; per-log correspondence and native transition geometry (last target reaches terminal at tick87) not implemented.','Log end centers and radii inferred from native source; terminal fragments not assigned fabricated identities.','Native atlas RGB on source-facing solid surfaces; unobserved sides intentionally gray, no texture generation requested.','No permanent catalog or scene integration; source shadow patch remains separate ground state.'])
         (dest/'manifest.json').write_text(json.dumps(report,indent=2)+'\n')
     finally:
         if rendering:release()

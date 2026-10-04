@@ -15,7 +15,7 @@ from render_slots import acquire, release
 
 
 def main():
-    base = OUT/'log-trap-state-candidate-v9'
+    base = OUT/'log-trap-state-candidate-v10'
     dest = base/'bank-review'
     dest.mkdir(exist_ok=False)
     report = json.loads((base/'dense-contact-audit.json').read_text())
