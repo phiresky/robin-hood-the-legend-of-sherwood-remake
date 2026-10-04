@@ -139,6 +139,14 @@ def main():
             item['projection_errors']=str(log_residual.parent/'residual-review.png')
             item['projection_errors_label']='Residuals: red timber outlines; magenta fine twig region; yellow ambiguous plant/wood boundary'
             item['notes'].append('Earlier approved geometry and fill remain unchanged. New hidden wood faces are neutral pending fill; residual fine wood and plant boundaries remain documented, not 100% silhouette coverage.')
+        wood_review=workspace/'inspection/independent-wood-review.json'
+        if wood_review.exists():
+            wood=json.loads(wood_review.read_text())
+            if (wood['model_sha256']==model_hash and wood['status'].startswith('PASS')
+                    and all(sha(Path(path))==expected for path,expected in wood['files'].items())):
+                item['source_trace']=str(workspace/'inspection/lower-stem/textured.png')
+                item['source_trace_label']='NEW continuous lower trunk: actual materials from eight close-up views; gray rear wood awaits texture fill'
+                item['notes'].append('Lower wood058 and junction062 revised; approved crown and wood060/061 preserved. This wood revision needs new geometry approval.')
         cleanup_comparison=workspace/'inspection/baseline-comparison'
         if (cleanup_comparison/'evidence.json').exists():
             compared=json.loads((cleanup_comparison/'evidence.json').read_text())
