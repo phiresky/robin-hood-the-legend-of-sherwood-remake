@@ -98,6 +98,35 @@ class PromotionTests(unittest.TestCase):
             promotion.prepare(self.stage, self.library, self.main, 'derby')
         self.assertFalse((self.stage / 'promotion.json').exists())
 
+    def test_retired_derivatives_are_backed_up_removed_and_rolled_back_on_failure(self):
+        for fail in (False, True):
+            with self.subTest(fail=fail):
+                # This fixture's standalone asset is promoted alongside the map.
+                root = self.library / '3d-assets/bridge'
+                old = {'lossy.glb': b'old lossy', 'lossy.glb.receipt.json': b'old receipt'}
+                for name, data in old.items():
+                    (root / name).write_bytes(data)
+                manifest = self.prepare()
+                removals = [item for item in manifest['files'] if item['source'] is None]
+                self.assertEqual(len(removals), 2)
+                copy = promotion.shutil.copy2
+                def fail_document(source, target):
+                    if fail and Path(source) == self.stage / 'derby.rhlos-map.json':
+                        raise OSError('after derivative removal')
+                    return copy(source, target)
+                with patch.object(promotion.shutil, 'copy2', side_effect=fail_document):
+                    if fail:
+                        with self.assertRaisesRegex(OSError, 'after derivative removal'):
+                            promotion.apply(self.stage / 'promotion.json')
+                    else:
+                        promotion.apply(self.stage / 'promotion.json')
+                for item in removals:
+                    self.assertEqual(Path(item['backup']).read_bytes(), old[Path(item['target']).name])
+                    self.assertEqual(Path(item['target']).exists(), fail)
+                # Keep the second attempt independent of the first one's backups.
+                (self.stage / 'promotion.json').unlink()
+                promotion.shutil.rmtree(self.stage / 'promotion-backup')
+
     def test_variants_deduplicate_default_and_copy_both_with_hashes(self):
         self.variants()
         manifest = self.prepare()

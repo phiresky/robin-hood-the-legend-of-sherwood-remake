@@ -141,6 +141,14 @@ def _prepare(stage, library, main_blend, map_name, catalog_source=None, catalog_
                 for relative in (safe_relative(asset[key]), safe_relative(asset[key] + '.receipt.json')):
                     pairs.append((contained_path(staged_root, relative, required=True),
                                   contained_path(library/'3d-assets', relative)))
+            else:
+                kind = key.removesuffix('_model')
+                model = safe_relative(asset['model'])
+                for name in {kind + '.glb', model.stem + '.' + kind + '.glb'}:
+                    for suffix in ('', '.receipt.json'):
+                        target = contained_path(library/'3d-assets', model.with_name(name + suffix))
+                        if target.exists():
+                            pairs.append((None, target))
     # Install manifests only after all referenced assets exist.
     asset_root = (library/'3d-assets').resolve()
     prospective = {str(target.resolve().relative_to(asset_root)): source for source, target in pairs
@@ -150,13 +158,14 @@ def _prepare(stage, library, main_blend, map_name, catalog_source=None, catalog_
     records=[]
     targets={}
     for index,(source,target) in enumerate(pairs):
-        source=source.resolve(strict=True);target=target.resolve()
+        source=source.resolve(strict=True) if source is not None else None;target=target.resolve()
         if target in targets:
-            if targets[target] != source and sha(targets[target]) != sha(source):
+            if targets[target] != source and (source is None or targets[target] is None or sha(targets[target]) != sha(source)):
                 raise ValueError('Conflicting promotion target: ' + str(target))
             continue
         targets[target]=source
-        records.append({'source':str(source),'target':str(target),'source_sha256':sha(source),
+        records.append({'source':str(source) if source is not None else None,'target':str(target),
+                        'source_sha256':sha(source) if source is not None else None,
                         'previous_sha256':sha(target),'backup':str(stage/'promotion-backup'/f'{index:03d}-{target.name}')})
     protected=[]
     for suffix in ('-volumes.scene.json', '-volumes.scene.glb'):
@@ -193,7 +202,8 @@ def _apply(path):
         if sha(target)!=previous:
             raise ValueError('Library index changed during merge')
         asset_root = target.parent.resolve()
-        prospective = {str(Path(record['target']).resolve().relative_to(asset_root)): Path(record['source'])
+        prospective = {str(Path(record['target']).resolve().relative_to(asset_root)):
+                       Path(record['source']) if record['source'] is not None else None
                        for record in manifest['files']
                        if Path(record['target']).resolve().is_relative_to(asset_root)}
         write_asset_index(asset_root, target=Path(item['source']), files=prospective)
@@ -206,7 +216,8 @@ def _apply(path):
         if sha(Path(record['path']))!=record['sha256']:
             raise ValueError('Protected editor document changed')
     for item in manifest['files']:
-        if sha(Path(item['source']))!=item['source_sha256'] or sha(Path(item['target']))!=item['previous_sha256']:
+        source_hash = sha(Path(item['source'])) if item['source'] is not None else None
+        if source_hash!=item['source_sha256'] or sha(Path(item['target']))!=item['previous_sha256']:
             raise ValueError('Promotion input/target changed: '+item['target'])
         if Path(item['backup']).exists():
             raise FileExistsError(item['backup'])
@@ -222,7 +233,9 @@ def _apply(path):
                 raise ValueError('Promotion target changed before write: '+str(target))
             temporary=target.with_name(target.name+'.publication-tmp')
             if temporary.exists():raise FileExistsError(temporary)
-            if target.resolve() == (Path(manifest['library'])/'3d-assets/index.json').resolve():
+            if item['source'] is None:
+                target.unlink()
+            elif target.resolve() == (Path(manifest['library'])/'3d-assets/index.json').resolve():
                 write_asset_index(target.parent)
             else:
                 shutil.copy2(item['source'],temporary)
