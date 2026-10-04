@@ -62,7 +62,10 @@ class ObservedOcclusion:
             return dict(hidden=True, opaque_projected_area=0., uncovered_area=0., occluders=[])
         if not indices:
             return dict(hidden=False, opaque_projected_area=float(target.area), uncovered_area=float(target.area), occluders=[])
-        covering = union_all([self.polygons[i] for i in indices])
+        # Full leaf footprints contain thousands of unrelated texel boundaries.
+        # Intersecting the candidates with this target first preserves coverage
+        # while avoiding a repeated union of distant foliage.
+        covering = union_all([self.polygons[i].intersection(target) for i in indices])
         remainder = target.difference(covering)
         return dict(hidden=bool(remainder.is_empty), opaque_projected_area=float(target.area),
                     uncovered_area=float(remainder.area), occluders=indices)
