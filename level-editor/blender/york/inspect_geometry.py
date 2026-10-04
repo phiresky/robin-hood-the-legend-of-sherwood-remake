@@ -117,9 +117,21 @@ def main():
     scene.view_settings.look = 'None'
     scene.view_settings.exposure = 0
     scene.view_settings.gamma = 1
-    render(destination / 'complete-object/views.json', destination / 'actual', width=384)
-    # Source crop uses one world unit per native pixel and the exact map elevation.
     complete = json.loads((destination / 'complete-object/views.json').read_text())
+    actual_manifest = json.loads(json.dumps(complete))
+    tile_width, tile_height = complete['tile_size']
+    for view in actual_manifest['views']:
+        view['crop'] = {'width': tile_width, 'height': tile_height}
+    manifest_path = destination / 'actual-views.json'
+    manifest_path.write_text(json.dumps(actual_manifest, indent=2) + '\n')
+    render(manifest_path, destination / 'actual', width=384)
+    from PIL import Image
+    tiles = [Image.open(destination / f'actual/view-{i}-textured.png').convert('RGBA') for i in range(8)]
+    sheet = Image.new('RGBA', (tiles[0].width * 4, tiles[0].height * 2))
+    for i, tile in enumerate(tiles):
+        sheet.paste(tile, ((i % 4) * tile.width, (i // 4) * tile.height))
+    sheet.save(destination / 'actual/textured.png')
+    # Source crop uses one world unit per native pixel and the exact map elevation.
     bounds = complete['context_crop']
     crop = args.crop or [bounds[k] for k in ('left', 'top', 'right', 'bottom')]
     w, h = crop[2] - crop[0], crop[3] - crop[1]
