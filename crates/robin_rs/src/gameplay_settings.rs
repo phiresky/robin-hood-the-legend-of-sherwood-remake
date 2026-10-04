@@ -78,4 +78,5 @@ settings! {
     KeyboardDirectControl,
     PreventVictoryInCombat,
     ExcludeStartingDeadSoldiersFromPreservedLives,
+    ExcludeRequiredKillsFromPreservedLives,
 }

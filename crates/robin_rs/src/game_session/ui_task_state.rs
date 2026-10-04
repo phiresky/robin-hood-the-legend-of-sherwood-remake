@@ -409,6 +409,8 @@ fn profile_gameplay_after_options(
         clean_hands_npc_kills_invalidate: original_profile.clean_hands_npc_kills_invalidate,
         exclude_starting_dead_soldiers_from_preserved_lives: original_profile
             .exclude_starting_dead_soldiers_from_preserved_lives,
+        exclude_required_kills_from_preserved_lives: original_profile
+            .exclude_required_kills_from_preserved_lives,
         reusable_cloaks: original_profile.reusable_cloaks,
         item_gameplay: original_profile.item_gameplay,
         noise_distraction_feedback: original_profile.noise_distraction_feedback,

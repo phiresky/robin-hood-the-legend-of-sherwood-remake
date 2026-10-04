@@ -49,6 +49,7 @@ mod patch_effects;
 pub mod peripherals;
 mod posture_transitions;
 mod presentation_view;
+mod preserved_lives;
 mod projectile_runtime;
 pub use presentation_view::PresentationView;
 mod coop;
@@ -1016,7 +1017,7 @@ impl EngineInner {
             campaign.set_mission_done(won, None, profiles);
         }
 
-        let (living, dead) = self.count_soldiers_at_quit();
+        let (living, dead) = self.count_soldiers_at_quit(tcx.assets);
 
         self.reset_all_pc_comas(tcx);
 
@@ -1102,57 +1103,6 @@ impl EngineInner {
             }
         }
         score
-    }
-
-    /// Count living and dead Lacklandist soldiers by iterating entities.
-    ///
-    /// Counts at quit time rather than reading pre-accumulated stats,
-    /// ensuring accuracy. Original increments the living stat for every live
-    /// soldier it sees but leaves the load-time total-soldier stat unchanged.
-    pub(crate) fn count_soldiers_at_quit(&mut self) -> (u32, u32) {
-        use crate::element::{Camp, Human as _};
-
-        let mut living = 0u32;
-        let mut dead = 0u32;
-        let mut living_by_camp = std::collections::BTreeMap::<Camp, u32>::new();
-        for (id, s) in self.world.entities.soldiers() {
-            if self
-                .control
-                .sim_config
-                .exclude_starting_dead_soldiers_from_preserved_lives
-                && self.is_baseline_dead_npc(EntityId::Soldier(id))
-            {
-                continue;
-            }
-            if s.life_points() > 0 {
-                *living_by_camp.entry(s.camp()).or_default() += 1;
-            }
-            if self.is_hostile_to_player_camp(s.camp()) {
-                if s.life_points() > 0 {
-                    living += 1;
-                } else {
-                    dead += 1;
-                }
-            }
-        }
-        self.mission_domain
-            .mission_stat
-            .reset_faction_living_counts();
-        for (camp, count) in living_by_camp {
-            self.mission_domain
-                .mission_stat
-                .set_faction_living_soldiers_at_end(camp, count);
-        }
-        // The living-soldier increment runs inside the per-soldier loop,
-        // accumulating onto whatever was previously in the stat rather than
-        // overwriting. `ulTotalSoldierCount` was established at load time and
-        // QuitMission does not mutate it.
-        self.mission_domain.mission_stat.living_soldier_count = self
-            .mission_domain
-            .mission_stat
-            .living_soldier_count
-            .saturating_add(living);
-        (living, dead)
     }
 
     /// Reset coma state on all PCs at mission end.

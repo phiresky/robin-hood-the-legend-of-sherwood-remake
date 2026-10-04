@@ -101,7 +101,8 @@ pub struct MissionStat {
     pub soldier_money: u32,
     /// Number of enemy soldiers still alive at mission end.
     pub living_soldier_count: u32,
-    /// Total number of enemy soldiers that were in the mission.
+    /// Enemy population used by the debriefing. Starts as the authored total;
+    /// fair accounting replaces it with the eligible population at mission end.
     pub total_soldier_count: u32,
     /// Number of new peasants recruited during the mission.
     pub new_peasant_count: u32,

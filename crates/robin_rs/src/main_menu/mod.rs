@@ -1226,7 +1226,12 @@ fn build_profile_info_lines(
         format!("{difficulty_label} : {difficulty_value}"),
         money,
         format!("{score_label} : {}", profile.score),
-        format!("{spared_label} : {} %", profile.preserved_lives),
+        format!(
+            "{spared_label} : {}",
+            resources
+                .menu_text
+                .preserved_lives_summary(profile.preserved_lives, profile.preserved_life_counts)
+        ),
         format!("{progress_label} : {} %", profile.progression),
         format!("{time_label} : {time}"),
     ]

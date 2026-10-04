@@ -44,6 +44,7 @@ impl GameplaySetting {
                 | Self::ReusableCloaks
                 | Self::CleanHandsNpcKillsInvalidate
                 | Self::ExcludeStartingDeadSoldiersFromPreservedLives
+                | Self::ExcludeRequiredKillsFromPreservedLives
                 | Self::SherwoodTrading
                 | Self::AppleCombatInterrupt
                 | Self::WaspReliableAcquisition
@@ -550,6 +551,10 @@ pub(crate) fn apply_setting(config: &mut GameplayConfig, setting: GameplaySettin
             config.exclude_starting_dead_soldiers_from_preserved_lives =
                 !config.exclude_starting_dead_soldiers_from_preserved_lives
         }
+        Setting::ExcludeRequiredKillsFromPreservedLives => {
+            config.exclude_required_kills_from_preserved_lives =
+                !config.exclude_required_kills_from_preserved_lives
+        }
         Setting::ShowDetailedXp => config.show_detailed_xp = !config.show_detailed_xp,
         Setting::ShowSpeedrunTracker => {
             config.show_speedrun_tracker = !config.show_speedrun_tracker
@@ -679,6 +684,9 @@ impl GameplaySetting {
             Setting::CleanHandsNpcKillsInvalidate => config.clean_hands_npc_kills_invalidate,
             Setting::ExcludeStartingDeadSoldiersFromPreservedLives => {
                 config.exclude_starting_dead_soldiers_from_preserved_lives
+            }
+            Setting::ExcludeRequiredKillsFromPreservedLives => {
+                config.exclude_required_kills_from_preserved_lives
             }
             Setting::ShowDetailedXp => config.show_detailed_xp,
             Setting::ShowSpeedrunTracker => config.show_speedrun_tracker,

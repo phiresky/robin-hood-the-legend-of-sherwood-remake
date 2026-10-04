@@ -998,6 +998,19 @@ impl InteractiveFrameSimulation {
                 },
             );
         }
+        if result
+            .gameplay_config
+            .exclude_required_kills_from_preserved_lives
+            != result
+                .original_gameplay_config
+                .exclude_required_kills_from_preserved_lives
+        {
+            dispatch(PlayerCommand::SetExcludeRequiredKillsFromPreservedLives {
+                enabled: result
+                    .gameplay_config
+                    .exclude_required_kills_from_preserved_lives,
+            });
+        }
         if result.gameplay_config.reusable_cloaks != result.original_gameplay_config.reusable_cloaks
         {
             dispatch(PlayerCommand::SetReusableCloaks {

@@ -212,6 +212,7 @@ impl TraceSimConfig {
             clean_hands_npc_kills_invalidate: false,
             // Retain the original saved-lives behavior in original traces.
             exclude_starting_dead_soldiers_from_preserved_lives: false,
+            exclude_required_kills_from_preserved_lives: false,
             // Reusable cloaks are an opt-in extension and must never alter
             // original-parity traces.
             reusable_cloaks: false,

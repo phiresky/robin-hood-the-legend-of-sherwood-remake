@@ -444,6 +444,7 @@ impl EngineInner {
             | SetUnbindingEnabled { .. }
             | SetCleanHandsNpcKillsInvalidate { .. }
             | SetExcludeStartingDeadSoldiersFromPreservedLives { .. }
+            | SetExcludeRequiredKillsFromPreservedLives { .. }
             | SetReusableCloaks { .. }
             | SetItemGameplayConfig { .. }
             | SetNoiseDistractionFeedback { .. }
@@ -981,6 +982,11 @@ impl EngineInner {
                 self.control
                     .sim_config
                     .exclude_starting_dead_soldiers_from_preserved_lives = *enabled;
+            }
+            SetExcludeRequiredKillsFromPreservedLives { enabled } => {
+                self.control
+                    .sim_config
+                    .exclude_required_kills_from_preserved_lives = *enabled;
             }
             SetReusableCloaks { enabled } => {
                 self.set_reusable_cloaks_enabled(tcx, *enabled);

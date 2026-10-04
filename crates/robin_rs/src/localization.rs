@@ -871,6 +871,8 @@ pub enum RelativeTimeUnit {
 /// stable keyed catalogue alongside the locale service.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PortTextKey {
+    PreservedLivesSummary,
+    PreservedLivesUnknownCount,
     SaveNewSaveLabel,
     SaveNewSaveHint,
     SaveMission,

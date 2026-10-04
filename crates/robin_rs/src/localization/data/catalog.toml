@@ -181,6 +181,12 @@ en_tooltip = "Soldiers already dead when the mission starts do not lower your pr
 de_label = "Leichen zu Missionsbeginn ausschließen"
 de_tooltip = "Zu Missionsbeginn bereits tote Soldaten senken weder den Anteil geretteter Leben noch die Rekrutierung."
 
+[gameplay.ExcludeRequiredKillsFromPreservedLives]
+en_label = "Exclude Required Kills"
+en_tooltip = "Story enemies who must die for mission victory do not lower your preserved-lives percentage or recruitment."
+de_label = "Erforderliche Tötungen ausschließen"
+de_tooltip = "Für den Missionssieg erforderliche Tötungen senken weder den Anteil geretteter Leben noch die Rekrutierung."
+
 [gameplay.ShowDetailedXp]
 en_label = "Detailed Sword/Bow XP"
 en_tooltip = "Show detailed sword and bow experience progress."
@@ -468,3 +474,11 @@ en_label = "Block Victory During Combat (Next Launch)"
 en_tooltip = "Wait until every player character has left combat before accepting mission victory. Applies on the next mission launch."
 de_label = "Kein Sieg im Kampf (nächster Start)"
 de_tooltip = "Missionssiege erst zulassen, wenn keine Spielerfigur mehr kämpft. Gilt ab dem nächsten Missionsstart."
+
+[basic.PreservedLivesSummary]
+en = "{percentage}% (saved {saved} of {total})"
+de = "{percentage}% ({saved} von {total} gerettet)"
+
+[basic.PreservedLivesUnknownCount]
+en = "{percentage}% (count unavailable)"
+de = "{percentage}% (Anzahl nicht verfügbar)"

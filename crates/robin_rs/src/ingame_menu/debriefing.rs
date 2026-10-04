@@ -26,8 +26,8 @@ use super::layout::{
 };
 use super::resources::{
     IngameMenuResources, MT_BTN_LOAD, MT_INFOBULLE_BUTTON_OK, MT_INFOBULLE_BUTTON_RECOMMENCER,
-    MT_STR_DB_S06, MT_STR_DB_S07, MT_STR_DB_S08, MT_STR_DB_S09, MT_STR_DB_S10, MT_STR_DB_S11,
-    MT_STR_DB_S13, MT_STR_DB_S17, MT_STR_DB_S18, MT_TTL_MISSION_LOST, MT_TTL_MISSION_WON, MenuText,
+    MT_STR_DB_S06, MT_STR_DB_S08, MT_STR_DB_S09, MT_STR_DB_S10, MT_STR_DB_S11, MT_STR_DB_S13,
+    MT_STR_DB_S17, MT_STR_DB_S18, MT_TTL_MISSION_LOST, MT_TTL_MISSION_WON, MenuText,
 };
 use super::widget_bridge::{self, ModalInputState, ModalScreenIo, ScreenFrame, ScreenKey};
 
@@ -383,15 +383,20 @@ pub fn format_mission_stat_text(
     }
     out.push('\n');
 
-    // Soldier count (always).
-    append_printf(
-        &mut out,
-        &menu_text.get(MT_STR_DB_S07),
-        &[
-            &stat.living_soldier_count.to_string(),
-            &stat.total_soldier_count.to_string(),
-        ],
-    );
+    // Use the same eligible population as campaign accounting.
+    let saved = stat.living_soldier_count;
+    let total = stat.total_soldier_count;
+    let percentage = if total == 0 {
+        0
+    } else {
+        (u64::from(saved) * 100 / u64::from(total)) as u32
+    };
+    out.push_str(&menu_text.get(super::resources::MT_STR_PRESERVED_LIFES));
+    out.push_str(": ");
+    out.push_str(&menu_text.preserved_lives_summary(
+        percentage,
+        Some(robin_engine::player_profile::PreservedLifeCounts { saved, total }),
+    ));
     out.push('\n');
 
     // New members (peasants + PCs).
@@ -877,7 +882,7 @@ mod tests {
         assert!(text.contains("You collected 100"));
         assert!(text.contains("Found 75 gold pieces (bonuses: 50, soldiers: 25)"));
         // Soldier section.
-        assert!(text.contains("3 of 10 enemy soldiers"));
+        assert!(text.contains("30% (saved 3 of 10)"));
         // Peasants + new members (2 peasants + 1 PC = 3).
         assert!(text.contains("3 new gang members"));
         // PC joined suffix.
@@ -888,6 +893,26 @@ mod tests {
         // Score + length.
         assert!(text.contains("Score: 500"));
         assert!(text.contains("01:02"));
+    }
+
+    #[test]
+    fn preserved_lives_summary_handles_empty_complete_and_legacy_counts() {
+        let menu = MenuText::english_fallbacks_only();
+        for (saved, total, expected) in [
+            (0, 0, "0% (saved 0 of 0)"),
+            (12, 12, "100% (saved 12 of 12)"),
+        ] {
+            let stat = MissionStat {
+                living_soldier_count: saved,
+                total_soldier_count: total,
+                ..Default::default()
+            };
+            assert!(format_mission_stat_text(&stat, 0, &menu).contains(expected));
+        }
+        assert_eq!(
+            menu.preserved_lives_summary(75, None),
+            "75% (count unavailable)"
+        );
     }
 
     #[test]

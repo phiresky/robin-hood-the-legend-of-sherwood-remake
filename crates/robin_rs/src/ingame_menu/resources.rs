@@ -480,6 +480,33 @@ impl MenuText {
         port_fallback(key).unwrap_or_else(|| panic!("unknown port menu-text key {key:?}"))
     }
 
+    /// Render the percentage and its exact eligible population together.
+    pub fn preserved_lives_summary(
+        &self,
+        percentage: u32,
+        counts: Option<robin_engine::player_profile::PreservedLifeCounts>,
+    ) -> String {
+        use crate::localization::{PortTextKey, format_port_text};
+        let percentage = percentage.to_string();
+        match counts {
+            Some(counts) => format_port_text(
+                self.presentation_locale(),
+                PortTextKey::PreservedLivesSummary,
+                &[
+                    ("percentage", &percentage),
+                    ("saved", &counts.saved.to_string()),
+                    ("total", &counts.total.to_string()),
+                ],
+            ),
+            None => format_port_text(
+                self.presentation_locale(),
+                PortTextKey::PreservedLivesUnknownCount,
+                &[("percentage", &percentage)],
+            ),
+        }
+        .expect("preserved-lives summary arguments match the localized template")
+    }
+
     pub fn is_loaded(&self) -> bool {
         !self.strings.is_empty()
     }

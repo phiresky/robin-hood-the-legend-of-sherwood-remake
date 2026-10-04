@@ -478,6 +478,35 @@ async fn play_campaign_outro_once(
     }
 }
 
+/// Queue the relic reward scene once the final cinematic has completed.
+fn queue_relic_bonus_ending(
+    campaign: &mut Campaign,
+    profiles: &mut engine_profiles::ProfileManager,
+) -> bool {
+    if campaign.get_ares() != 10 || campaign.collected_relics.len() < 7 {
+        return false;
+    }
+    campaign
+        .force_next_mission_by_name(profiles, "SherwoodOutro", "Sherwood", true)
+        .expect("forcing the relic bonus ending must create or select its mission");
+    campaign.mission_team_indices = campaign
+        .gang_indices
+        .iter()
+        .copied()
+        .filter(|&index| {
+            let profile = campaign.characters[index]
+                .character_profile_idx
+                .expect("bonus ending gang member requires a character profile");
+            profiles
+                .get_character(profile)
+                .expect("bonus ending gang member references a missing character profile")
+                .vip
+        })
+        .collect();
+    campaign.set_ares(11);
+    true
+}
+
 /// `session_args` is this session's launch. Every outer-mission transition
 /// below derives the next launch from it by value (content replaced as a unit,
 /// restart evidence, host session continuation); what carries over between
@@ -688,11 +717,13 @@ async fn run_session_body(
             }
             GameCode::LevelSucceeded | GameCode::LevelInterrupted if campaign.get_ares() >= 9 => {
                 play_campaign_outro_once(application_context, window, &mut campaign).await;
-                tracing::info!("Returning to main menu (ARES={})", campaign.get_ares());
-                return SessionOutcome {
-                    campaign,
-                    result: Ok(SessionResult::QuitToMenu),
-                };
+                if !queue_relic_bonus_ending(&mut campaign, profiles) {
+                    tracing::info!("Returning to main menu (ARES={})", campaign.get_ares());
+                    return SessionOutcome {
+                        campaign,
+                        result: Ok(SessionResult::QuitToMenu),
+                    };
+                }
             }
             GameCode::LevelSucceeded | GameCode::LevelInterrupted => {
                 // Continue to next mission selection
@@ -956,6 +987,64 @@ async fn run_mission_with_seed(
 
 #[cfg(test)]
 mod required_state_tests {
+    #[test]
+    fn relic_bonus_ending_requires_seven_relics_and_runs_once_with_vips() {
+        use robin_engine::campaign::{CampaignValue, PcDescription};
+        use robin_engine::profiles::{CharacterProfile, CharacterProfileIdx, ProfileManager};
+        let mut profiles = ProfileManager::new();
+        profiles.characters = vec![
+            CharacterProfile {
+                vip: true,
+                ..Default::default()
+            },
+            CharacterProfile::default(),
+        ];
+        let mut campaign = robin_engine::campaign::Campaign::new();
+        campaign.characters = vec![
+            PcDescription {
+                character_profile_idx: Some(CharacterProfileIdx(0)),
+                ..Default::default()
+            },
+            PcDescription {
+                character_profile_idx: Some(CharacterProfileIdx(1)),
+                ..Default::default()
+            },
+        ];
+        campaign.gang_indices = vec![0, 1];
+        campaign.set_value(CampaignValue::LivingSoldiers, 100);
+        campaign.collected_relics = (0..6).collect();
+        campaign.set_ares(10);
+        assert!(!super::queue_relic_bonus_ending(
+            &mut campaign,
+            &mut profiles
+        ));
+        assert!(campaign.next_mission_idx.is_none());
+        campaign.collected_relics.push(6);
+        campaign.set_ares(9);
+        assert!(!super::queue_relic_bonus_ending(
+            &mut campaign,
+            &mut profiles
+        ));
+        campaign.set_ares(10);
+        assert!(super::queue_relic_bonus_ending(
+            &mut campaign,
+            &mut profiles
+        ));
+        let next = campaign.next_mission_idx.unwrap();
+        assert_eq!(
+            campaign.missions[next].profile(&profiles).mission_filename,
+            "SherwoodOutro"
+        );
+        assert_eq!(campaign.mission_team_indices, [0]);
+        assert_eq!(campaign.get_ares(), 11);
+        assert_eq!(campaign.get_value(CampaignValue::LivingSoldiers), 100);
+        assert_eq!(campaign.get_value(CampaignValue::DeadSoldiers), 0);
+        assert!(!super::queue_relic_bonus_ending(
+            &mut campaign,
+            &mut profiles
+        ));
+    }
+
     #[test]
     fn shared_direct_restart_policy_preserves_live_and_replay_checkpoints() {
         let initial = robin_engine::engine::SimConfig::default();

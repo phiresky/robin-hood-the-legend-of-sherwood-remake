@@ -1442,6 +1442,10 @@ pub enum PlayerCommand {
     SetExcludeStartingDeadSoldiersFromPreservedLives {
         enabled: bool,
     },
+    /// Toggle exclusion of audited mandatory story kills from saved-life statistics.
+    SetExcludeRequiredKillsFromPreservedLives {
+        enabled: bool,
+    },
 }
 
 impl PlayerCommand {
@@ -1503,6 +1507,7 @@ impl PlayerCommand {
                 | Self::SetReusableCloaks { .. }
                 | Self::SetCleanHandsNpcKillsInvalidate { .. }
                 | Self::SetExcludeStartingDeadSoldiersFromPreservedLives { .. }
+                | Self::SetExcludeRequiredKillsFromPreservedLives { .. }
                 | Self::SetItemGameplayConfig { .. }
                 | Self::SetNoiseDistractionFeedback { .. }
                 | Self::SetTimedMissionsEnabled { .. }
@@ -1534,6 +1539,9 @@ impl PlayerCommand {
             }
             Self::SetExcludeStartingDeadSoldiersFromPreservedLives { .. } => {
                 Some(Field::ExcludeStartingDeadSoldiersFromPreservedLives)
+            }
+            Self::SetExcludeRequiredKillsFromPreservedLives { .. } => {
+                Some(Field::ExcludeRequiredKillsFromPreservedLives)
             }
             Self::SetItemGameplayConfig { .. } => Some(Field::ItemGameplay),
             Self::SetNoiseDistractionFeedback { .. } => Some(Field::NoiseDistractionFeedback),

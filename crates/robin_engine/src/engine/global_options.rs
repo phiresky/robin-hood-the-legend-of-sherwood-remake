@@ -52,6 +52,9 @@ pub struct SimConfig {
     /// campaign totals and post-mission recruitment calculations.
     #[serde(default = "enabled_by_default")]
     pub exclude_starting_dead_soldiers_from_preserved_lives: bool,
+    /// Exclude audited mandatory story kills from preserved-life totals.
+    #[serde(default = "enabled_by_default")]
+    pub exclude_required_kills_from_preserved_lives: bool,
     /// Enable the deterministic reusable-cloak extension for this session.
     /// Missing state predates the extension and retains Original behavior.
     #[serde(default)]
@@ -134,6 +137,7 @@ pub enum RankedSimulationConfigField {
     EnableUnbinding,
     CleanHandsNpcKillsInvalidate,
     ExcludeStartingDeadSoldiersFromPreservedLives,
+    ExcludeRequiredKillsFromPreservedLives,
     ReusableCloaks,
     ReversibleBackgroundPatches,
     ItemGameplay,
@@ -171,6 +175,9 @@ impl RankedSimulationConfigField {
             Self::CleanHandsNpcKillsInvalidate => "sim_config.clean_hands_npc_kills_invalidate",
             Self::ExcludeStartingDeadSoldiersFromPreservedLives => {
                 "sim_config.exclude_starting_dead_soldiers_from_preserved_lives"
+            }
+            Self::ExcludeRequiredKillsFromPreservedLives => {
+                "sim_config.exclude_required_kills_from_preserved_lives"
             }
             Self::ReversibleBackgroundPatches => "sim_config.reversible_background_patches",
             Self::ReusableCloaks => "sim_config.reusable_cloaks",
@@ -385,6 +392,7 @@ profile_gameplay_projection! {
     enable_unbinding,
     clean_hands_npc_kills_invalidate,
     exclude_starting_dead_soldiers_from_preserved_lives,
+    exclude_required_kills_from_preserved_lives,
     reusable_cloaks,
     reversible_background_patches,
     item_gameplay,
@@ -419,6 +427,7 @@ impl SimConfig {
             enable_unbinding: true,
             clean_hands_npc_kills_invalidate: false,
             exclude_starting_dead_soldiers_from_preserved_lives: true,
+            exclude_required_kills_from_preserved_lives: true,
             reusable_cloaks: true,
             reversible_background_patches: false,
             item_gameplay: ItemGameplayConfig::default(),
@@ -462,6 +471,7 @@ impl SimConfig {
         config.enable_dynamic_ambience = false;
         config.prevent_victory_in_combat = false;
         config.exclude_starting_dead_soldiers_from_preserved_lives = false;
+        config.exclude_required_kills_from_preserved_lives = false;
         config
     }
 
@@ -473,6 +483,7 @@ impl SimConfig {
             enable_unbinding,
             clean_hands_npc_kills_invalidate,
             exclude_starting_dead_soldiers_from_preserved_lives,
+            exclude_required_kills_from_preserved_lives,
             reusable_cloaks,
             reversible_background_patches,
             item_gameplay,
@@ -502,6 +513,8 @@ impl SimConfig {
             clean_hands_npc_kills_invalidate: expected_clean_hands_npc_kills_invalidate,
             exclude_starting_dead_soldiers_from_preserved_lives:
                 expected_exclude_starting_dead_soldiers_from_preserved_lives,
+            exclude_required_kills_from_preserved_lives:
+                expected_exclude_required_kills_from_preserved_lives,
             reusable_cloaks: expected_reusable_cloaks,
             reversible_background_patches: expected_reversible_background_patches,
             item_gameplay: expected_item_gameplay,
@@ -538,6 +551,9 @@ impl SimConfig {
                 .then_some(
                     RankedSimulationConfigField::ExcludeStartingDeadSoldiersFromPreservedLives,
                 ),
+            (exclude_required_kills_from_preserved_lives
+                != expected_exclude_required_kills_from_preserved_lives)
+                .then_some(RankedSimulationConfigField::ExcludeRequiredKillsFromPreservedLives),
             (reversible_background_patches != expected_reversible_background_patches)
                 .then_some(RankedSimulationConfigField::ReversibleBackgroundPatches),
             (reusable_cloaks != expected_reusable_cloaks)
@@ -591,6 +607,7 @@ impl SimConfig {
             enable_unbinding: true,
             clean_hands_npc_kills_invalidate: false,
             exclude_starting_dead_soldiers_from_preserved_lives: true,
+            exclude_required_kills_from_preserved_lives: true,
             reusable_cloaks: true,
             reversible_background_patches: false,
             item_gameplay: ItemGameplayConfig::classic(),

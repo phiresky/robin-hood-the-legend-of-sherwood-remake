@@ -305,6 +305,9 @@ pub struct GameplayConfig {
     /// the campaign preserved-lives and recruitment totals.
     #[serde(default = "crate::serde_defaults::enabled")]
     pub exclude_starting_dead_soldiers_from_preserved_lives: bool,
+    /// Exclude audited mandatory story kills from preserved-life totals.
+    #[serde(default = "crate::serde_defaults::enabled")]
+    pub exclude_required_kills_from_preserved_lives: bool,
 
     /// Independent achievement and detailed-XP presentation switches.
     #[serde(default)]
@@ -411,6 +414,7 @@ impl Default for GameplayConfig {
             campaign_presentation: CampaignPresentationMode::ClassicMap,
             clean_hands_npc_kills_invalidate: false,
             exclude_starting_dead_soldiers_from_preserved_lives: true,
+            exclude_required_kills_from_preserved_lives: true,
             show_detailed_xp: false,
             show_speedrun_tracker: false,
             show_clean_hands_tracker: false,
@@ -459,6 +463,7 @@ impl GameplayConfig {
             campaign_presentation: CampaignPresentationMode::ClassicMap,
             clean_hands_npc_kills_invalidate: false,
             exclude_starting_dead_soldiers_from_preserved_lives: true,
+            exclude_required_kills_from_preserved_lives: true,
             show_detailed_xp: false,
             show_speedrun_tracker: false,
             show_clean_hands_tracker: false,

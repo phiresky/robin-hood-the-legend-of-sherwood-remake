@@ -180,6 +180,8 @@ mod tests {
     use super::*;
     /// Languages each basic key carried when the tables moved to data.
     const BASIC_LANGUAGES: &[(&str, &[&str])] = &[
+        ("PreservedLivesSummary", &["de", "en"]),
+        ("PreservedLivesUnknownCount", &["de", "en"]),
         ("SaveNewSaveLabel", &["en"]),
         ("SaveNewSaveHint", &["en"]),
         ("SaveMission", &["en"]),

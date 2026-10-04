@@ -820,7 +820,20 @@ A list of which additional features we have added, which ones we might still wan
   dead after mission startup setup are excluded from the campaign preserved-lives
   percentage and post-mission recruitment calculation. The Gameplay option
   “Exclude Starting Corpses” can be disabled to restore the original counting
-  behavior. Original-parity sessions retain the original rule.
+  behavior. A separate default-on “Exclude Required Kills” option also omits
+  Guisbourne in `S05_Yrk_EC`, Longchamps in `H10_Yor_VL`, and the Sheriff in
+  `H12_Not_MP`, whose deaths are required for victory. Optional kills (including the Derby generals) still
+  count. Disable both options for the unadjusted totals. Parity sessions disable
+  both. These rules affect future mission results; existing campaign totals are
+  not recalculated. See [the mission audit](slop/PRESERVED_LIVES_MISSION_AUDIT.md).
+  Mission results and main-menu campaign stats show both the percentage and
+  “saved N of M”, using the same eligible population. Older profiles that stored
+  only a percentage show “count unavailable” until campaign synchronization
+  restores their exact counts.
+  Completing the campaign with at least seven royal relics now continues into
+  the Sherwood bonus ending after the final cinematic, with the named companions.
+  The relic objectives can be completed nonlethally; Scathlock's optional blazon
+  is not required to unlock this ending.
 - **Dynamic local cameras.** Nearby players share a view. Distant groups get
   separate cameras with rotating boundaries that disappear as players regroup.
   Up to five controller cursors remain in their own views. Reconnecting a

@@ -1642,6 +1642,9 @@ pub(super) fn handle_pause_menu_events(
                 gameplay_config.exclude_starting_dead_soldiers_from_preserved_lives = engine
                     .sim_config()
                     .exclude_starting_dead_soldiers_from_preserved_lives;
+                gameplay_config.exclude_required_kills_from_preserved_lives = engine
+                    .sim_config()
+                    .exclude_required_kills_from_preserved_lives;
                 gameplay_config.reusable_cloaks = engine.sim_config().reusable_cloaks;
                 gameplay_config.item_gameplay = engine.sim_config().item_gameplay;
                 gameplay_config.noise_distraction_feedback =

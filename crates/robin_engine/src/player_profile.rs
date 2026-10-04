@@ -582,6 +582,25 @@ pub fn profile_save_subdirectory(profile_id: u32) -> String {
     format!("Profile_{profile_id:03}")
 }
 
+/// Exact campaign counts behind the preserved-lives percentage.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct PreservedLifeCounts {
+    pub saved: u32,
+    pub total: u32,
+}
+
 /// A single player profile containing settings and gameplay state.
 #[derive(
     Debug,
@@ -599,6 +618,10 @@ pub struct PlayerProfile {
     pub score: u32,
     pub ransom: u32,
     pub preserved_lives: u32,
+    /// None for older profiles that retained only the percentage. Restored
+    /// from campaign totals at the next synchronization, never inferred.
+    #[serde(default)]
+    pub preserved_life_counts: Option<PreservedLifeCounts>,
     pub play_time: u32,
     pub progression: u32,
     /// Lossless all-time history, independent from replaceable campaign save
@@ -633,6 +656,7 @@ impl PlayerProfile {
             score: 0,
             ransom: INITIAL_RANSOM,
             preserved_lives: 0,
+            preserved_life_counts: Some(PreservedLifeCounts::default()),
             play_time: 0,
             progression: 0,
             campaign_history: crate::campaign_history::ProfileCampaignHistory::default(),
@@ -938,6 +962,12 @@ pub fn synchronize_with_campaign(
 
     let dead = campaign.get_value(CampaignValue::DeadSoldiers) as u32;
     let alive = campaign.get_value(CampaignValue::LivingSoldiers) as u32;
+    profile.preserved_life_counts = Some(PreservedLifeCounts {
+        saved: alive,
+        total: alive
+            .checked_add(dead)
+            .expect("campaign soldier count overflow"),
+    });
     if dead != 0 || alive != 0 {
         profile.preserved_lives = (100.0 * alive as f32 / (dead + alive) as f32) as u32;
     } else {
@@ -950,6 +980,37 @@ pub fn synchronize_with_campaign(
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preserved_life_counts_are_restored_from_campaign_without_guessing() {
+        let profile = PlayerProfile::new(0, "Robin".into(), DifficultyLevel::Medium);
+        let mut legacy = serde_json::to_value(&profile).unwrap();
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("preserved_life_counts");
+        legacy["preserved_lives"] = serde_json::json!(75);
+        let mut restored: PlayerProfile = serde_json::from_value(legacy).unwrap();
+        assert_eq!(restored.preserved_life_counts, None);
+        assert_eq!(restored.preserved_lives, 75);
+        let mut campaign = crate::campaign::Campaign::new();
+        campaign.set_value(CampaignValue::LivingSoldiers, 30);
+        campaign.set_value(CampaignValue::DeadSoldiers, 10);
+        synchronize_with_campaign(
+            &mut restored,
+            &campaign,
+            &crate::profiles::ProfileManager::new(),
+            0,
+        );
+        assert_eq!(
+            restored.preserved_life_counts,
+            Some(PreservedLifeCounts {
+                saved: 30,
+                total: 40
+            })
+        );
+        assert_eq!(restored.preserved_lives, 75);
+    }
 
     #[test]
     fn create_profile_default_values() {
