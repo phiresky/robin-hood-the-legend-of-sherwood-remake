@@ -15,5 +15,6 @@ def main():
  text=text.replace('renderer.setSize(innerWidth,innerHeight);renderer.setPixelRatio',"const viewHeight=()=>Math.max(200,innerHeight-document.querySelector('header').getBoundingClientRect().height);renderer.setSize(innerWidth,viewHeight());renderer.setPixelRatio")
  text=text.replace('new THREE.PerspectiveCamera(40,innerWidth/innerHeight','new THREE.PerspectiveCamera(40,innerWidth/viewHeight()')
  text=text.replace('camera.aspect=innerWidth/innerHeight','camera.aspect=innerWidth/viewHeight()').replace('renderer.setSize(innerWidth,innerHeight)','renderer.setSize(innerWidth,viewHeight())')
+ text=text.replace('30 native ticks/s', '25 native ticks/s; four ticks per phase').replace('*.1+', '*.16+').replace('/.1)', '/.16)').replace('t/.1', 't/.16')
  path=OUT/'tree41-phase-appearance-proof-v2/index.html';path.write_text(text);print(path)
 if __name__=='__main__':main()
