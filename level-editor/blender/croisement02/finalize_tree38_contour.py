@@ -12,7 +12,7 @@ from audit_candidates import audit
 from render_tree import render_workspace
 
 def main():
-    old=tree_workspace(38);prototype=OUT/'tree38-root-research/continuous-contour-v4';worker=OUT/'root-stem-round-1/assets'/old.name
+    old=tree_workspace(38);prototype=OUT/'tree38-root-research/continuous-contour-v9';worker=OUT/'root-stem-round-2/assets'/old.name
     if worker.exists():raise FileExistsError(worker)
     old_hash=sha(old/'model.blend');prototype_hash=sha(prototype/'model.blend');cfg=json.loads((old/'workspace.json').read_text())
     bpy.ops.wm.open_mainfile(filepath=str(old/'model.blend'));bpy.context.preferences.filepaths.save_version=0
@@ -36,7 +36,10 @@ def main():
     previous_args=sys.argv
     try:
         sys.argv=[previous_args[0],'--','--worker',str(worker),'--preservation-base',str(old)];audit_tree38_contour.main(release_slot=False)
-        sys.argv=[previous_args[0],'--','--mask','38','--model',str(worker/'model.blend'),'--output-name','continuous-contour-v4-projected-review'];inspect_tree07_base.main()
+        sys.argv.append('--ground-occlusion');audit_tree38_contour.main(release_slot=False)
+        ground_report=json.loads((worker/'inspection/root-source-coverage-ground/report.json').read_text())
+        if min(ground_report['extension_coverage'],ground_report['root_source_coverage'])<.95:raise ValueError('Observed basal contour lost behind ground')
+        sys.argv=[previous_args[0],'--','--mask','38','--model',str(worker/'model.blend'),'--output-name','continuous-contour-v9-projected-review'];inspect_tree07_base.main()
     finally:sys.argv=previous_args
     if sha(old/'model.blend')!=old_hash or sha(prototype/'model.blend')!=prototype_hash:raise ValueError('Reviewed input changed')
     write_json(worker/'inspection/stem-candidate.json',dict(previous_worker=str(old),previous_model_sha256=old_hash,prototype=str(prototype),prototype_sha256=prototype_hash,model_sha256=sha(worker/'model.blend'),status='New geometry candidate; independent self-review required',approval='pending'))
