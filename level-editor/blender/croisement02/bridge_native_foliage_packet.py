@@ -59,7 +59,7 @@ def main(number, source, output):
                         pixels=np.empty(len(image.pixels),np.float32);image.pixels.foreach_get(pixels)
                         images[image.name]=(tuple(image.size),pixels.reshape(image.size[1],image.size[0],4))
                         protected.append(dict(object=obj.name,material=material.name,image=image.name,image_pixels_sha256=__import__('hashlib').sha256(pixels.tobytes()).hexdigest()))
-                    records.append((np.array([obj.matrix_world@mesh.vertices[i].co for i in triangle.vertices]),np.array([uv.data[i].uv[:] for i in triangle.loops]),images[image.name]))
+                    records.append((tuple(obj.matrix_world@mesh.vertices[i].co for i in triangle.vertices),tuple(uv.data[i].uv[:] for i in triangle.loops),images[image.name],texture.extension))
             finally:evaluated.to_mesh_clear()
         assert len(records)==len(owners)
         shutil.copytree(source,output)
@@ -80,11 +80,21 @@ def main(number, source, output):
                     origin=matrix@Vector((left+(x+.5)*(right-left)/width,bottom+(y+.5)*(top-bottom)/height,0))
                     hit,normal,triangle,_=tree.ray_cast(origin,direction)
                     if hit is None or records[triangle] is None:continue
-                    points,uvs,((iw,ih),pixels)=records[triangle]
-                    basis=np.stack([points[1]-points[0],points[2]-points[0]],axis=1)
-                    weights=np.linalg.lstsq(basis,np.array(hit)-points[0],rcond=None)[0]
-                    uv=uvs[0]*(1-weights.sum())+uvs[1]*weights[0]+uvs[2]*weights[1]
-                    sx,sy=int(np.floor(uv[0]*iw))%iw,int(np.floor(uv[1]*ih))%ih
+                    points,uvs,((iw,ih),pixels),extension=records[triangle]
+                    # Match the physical-opacity ray's arithmetic exactly. A
+                    # different precision at a texel boundary can select the
+                    # transparent neighbor of the texel that accepted the ray.
+                    a,b,c=points;ab,ac,ap=b-a,c-a,hit-a
+                    aa,bb,cc=ab.dot(ab),ab.dot(ac),ac.dot(ac)
+                    determinant=aa*cc-bb*bb
+                    assert abs(determinant)>=1e-20
+                    u=(cc*ap.dot(ab)-bb*ap.dot(ac))/determinant
+                    v=(aa*ap.dot(ac)-bb*ap.dot(ab))/determinant
+                    uv=[uvs[0][i]*(1-u-v)+uvs[1][i]*u+uvs[2][i]*v for i in range(2)]
+                    sx,sy=int(np.floor(uv[0]*iw)),int(np.floor(uv[1]*ih))
+                    if extension=='REPEAT':sx,sy=sx%iw,sy%ih
+                    elif extension=='CLIP':assert 0<=sx<iw and 0<=sy<ih
+                    else:sx,sy=min(iw-1,max(0,sx)),min(ih-1,max(0,sy))
                     sample=pixels[sy,sx];assert sample[3]>=.5
                     colors[y,x]=[*sample[:3],1];known[y,x]=[1,1,1,1];selected[y,x]=True
             assert np.array_equal(colors[~selected],original[~selected]) and np.array_equal(known[~selected],original_known[~selected])
