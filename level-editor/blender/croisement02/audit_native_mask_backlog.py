@@ -74,8 +74,8 @@ NOTES = {
     89: 'Several boundary clumps near stem44; excluded from observed stem wood and require inferred off-map continuation.',
     91: 'Mixed exposed wood and foliage near tree45; split existing wood before assigning new leaf owner.',
     93: 'Mixed stump, leaves and obscured fence95; reconcile existing stump and fence ownership before geometry.',
-    94: 'Missing upright rail fence, isolated authored domain430 being prepared by fence refinement worker.',
-    95: 'Missing upright rail fence, isolated authored domain431 being prepared by fence refinement worker.',
+    94: 'Upright rail fence uses reviewed authored domain430; native87 foreground foliage is excluded from observed wood.',
+    95: 'Upright rail fence uses reviewed authored domain431; foreground85/93 excluded, native75 foliage must subtract accepted wood431.',
     96: 'Stone wall returns share two existing groups; group name east-rail-fence does not mean native94/95.',
     97: 'Stone wall/gate partition shares two existing groups; exact source-domain split remains in worker evidence.',
     108: 'Two physical groups share native source context; preserve existing stump/log partition.',
@@ -105,7 +105,7 @@ def audit(out):
                 phase[global_index].append({'patch': index, 'role': key})
     owner = defaultdict(set)
     for asset, group in groups.items():
-        for field in ('wood_mask', 'native_wood_mask', 'native_foliage_mask'):
+        for field in ('wood_mask', 'native_wood_mask', 'native_foliage_mask', 'native_scenery_mask'):
             if field in group:
                 owner[group[field]].add(asset)
         for mask in group.get('native_foliage_masks', []):

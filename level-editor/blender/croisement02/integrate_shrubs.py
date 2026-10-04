@@ -27,6 +27,9 @@ def main(directory,workers_directory):
     added=[g for key,g in groups.items() if key not in old_groups]
     if not added or any(not g.get('authored_scenery') or 'native_foliage_mask' not in g for g in added):
         raise ValueError('Only new authored shrub groups may be registered')
+    grouping=json.loads((directory/'grouping-review.json').read_text())
+    if grouping['catalog_sha256']!=sha(directory/'catalog.json') or grouping['inventory_sha256']!=sha(directory/'inventory/inventory.json'):
+        raise ValueError('Candidate source inventory binding changed')
     records=[]
     for group in added:
         worker=workers_directory/group['id']
@@ -41,9 +44,27 @@ def main(directory,workers_directory):
                 and bounds['model_sha256']==model_hash and min(r['depth_width_ratio'] for r in bounds['crowns'])>=1.
                 and review['sheet_sha256']==sha(worker/'inspection/actual-materials/sheet.png')):
             raise ValueError('Shrub review/geometry checks incomplete: '+worker.name)
+        preservation=Path(review['preservation_evidence'])
+        if sha(preservation)!=review['preservation_evidence_sha256']:
+            raise ValueError('Observed source preservation evidence changed')
+        joint_path=worker/'inspection/joint-neighbourhood.json'
+        if sha(joint_path)!=review['joint_neighbourhood_sha256']:
+            raise ValueError('Joint review binding changed')
+        joint=json.loads(joint_path.read_text())
+        if (joint['model_sha256']!=model_hash or sha(Path(joint['evidence']))!=joint['evidence_sha256']
+                or sha(Path(joint['sheet']))!=joint['sheet_sha256']):
+            raise ValueError('Joint review packet changed')
+        evidence=json.loads(Path(joint['evidence']).read_text())
+        for dependency in evidence['workers']:
+            if sha(Path(dependency['path'])/'model.blend')!=dependency['model_sha256']:
+                raise ValueError('Joint neighbour changed since review')
         record=dict(model_sha256=model_hash,catalog_sha256=sha(directory/'catalog.json'),
                     status='reviewed geometry candidate; no user approval implied')
-        write_json(worker/'inspection/shrub-candidate.json',record);records.append(dict(asset_id=worker.name,**record))
+        records.append(dict(asset_id=worker.name,**record))
+    if sha(reviewed_catalog())!=sha(directory/'previous-catalog.json'):
+        raise ValueError('Concurrent canonical catalog change')
+    for record in records:
+        write_json(workers_directory/record['asset_id']/'inspection/shrub-candidate.json',{k:v for k,v in record.items() if k!='asset_id'})
     write_json(OUT/'ownership-revision/catalog.json',catalog)
     write_json(OUT/'ownership-revision/grouping-review.json',json.loads((directory/'grouping-review.json').read_text()))
     write_json(directory/'integration.json',dict(status='reviewed shrub candidates integrated; user approval pending',groups=len(catalog['groups']),native_parts=sum(key.startswith('building-') for key in catalog['canonical_owners']),authored_parts=sum(key.startswith(('foliage-','scenery-')) for key in catalog['canonical_owners']),

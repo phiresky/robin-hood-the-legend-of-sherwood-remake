@@ -1,4 +1,5 @@
 """Stage an unapproved western shrub microfragment revision without changing round4."""
+import argparse
 import json
 import shutil
 import sys
@@ -20,19 +21,29 @@ def main():
     source=OUT/'understory-round-4/assets'/ASSET;worker=OUT/'understory-round-5/assets'/ASSET
     if any(r['asset_id']==ASSET and r['decision']=='approved' for r in json.loads((OUT/'user-feedback.json').read_text())['records']):
         raise ValueError('Approved bank geometry requires a separately authorized revision')
-    if worker.exists():raise ValueError('Existing revision must be reviewed, not overwritten')
-    previous=OUT/'understory-candidates/west-bank-v4';directory=OUT/'understory-candidates/west-bank-v5';directory.mkdir(exist_ok=False)
-    shutil.copytree(source,worker)
-    # A copied previous receipt must never select or approve a fresh revision.
-    for name in ['shrub-candidate.json','visual-review.json','joint-neighbourhood.json']:
-        target=worker/'inspection'/name
-        if target.exists():target.rename(target.with_name('previous-'+name))
-    shutil.copy2(previous/'complete-source.png',directory/'complete-source.png')
-    packet=json.loads((previous/'partition.json').read_text());packet['directory']=str(directory);write_json(directory/'partition.json',packet)
+    parser=argparse.ArgumentParser()
+    parser.add_argument('--rebuild',action='store_true')
+    parser.add_argument('--irregular-inferred-alpha',action='store_true')
+    args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
+    source_hash=sha(source/'model.blend')
+    previous=OUT/'understory-candidates/west-bank-v4';directory=OUT/'understory-candidates/west-bank-v5'
+    if worker.exists():
+        if not args.rebuild:raise ValueError('Existing revision requires explicit --rebuild')
+        if (worker/'inspection/shrub-candidate.json').exists():raise ValueError('Integrated candidate is frozen; prepare a new revision')
+    else:
+        directory.mkdir(exist_ok=False)
+        shutil.copytree(source,worker)
+        # Copied receipts cannot select or approve a fresh revision.
+        for name in ['shrub-candidate.json','visual-review.json','joint-neighbourhood.json']:
+            target=worker/'inspection'/name
+            if target.exists():target.rename(target.with_name('previous-'+name))
+        shutil.copy2(previous/'complete-source.png',directory/'complete-source.png')
+        packet=json.loads((previous/'partition.json').read_text());packet['directory']=str(directory);write_json(directory/'partition.json',packet)
+        for label in ['west','east']:shutil.copytree(previous/label,directory/label)
     packets=[]
     for label in ['west','east']:
-        shutil.copytree(previous/label,directory/label)
         packet=json.loads((directory/label/'partition.json').read_text());packet.update(directory=str(directory/label),irregular_source_fragments=True)
+        if args.irregular_inferred_alpha:packet['irregular_inferred_alpha']=True
         write_json(directory/label/'partition.json',packet);packets.append(packet)
     bpy.ops.wm.open_mainfile(filepath=str(worker/'model.blend'));bpy.context.preferences.filepaths.save_version=0
     collection=bpy.data.collections['Croisement02 Working'];reports=[]
@@ -46,6 +57,7 @@ def main():
     write_json(worker/'inspection/refinement.json',report)
     audit(worker);render_workspace(worker,384,release_slot=False)
     write_json(directory/'revision.json',dict(previous_worker=str(source),previous_model_sha256=sha(source/'model.blend'),worker=str(worker),model_sha256=sha(worker/'model.blend'),status='isolated unapproved microfragment revision; source domain413 unchanged'))
+    if sha(source/'model.blend')!=source_hash:raise ValueError('Selected round4 model changed during isolated revision')
     print('WEST BANK MICROFRAGMENT REVISION',worker,flush=True)
 
 if __name__=='__main__':
