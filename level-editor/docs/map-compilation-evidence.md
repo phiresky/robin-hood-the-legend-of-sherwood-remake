@@ -42,6 +42,16 @@ Native traversal remains a separate check. These changes do not add deformation
 for wall-owned masks, lighting, sounds, material regions or stateful geometry,
 and do not repair unresolved passages in placed assets.
 
+The complete editor test batch passes with one test process at a time: 733 passed,
+two skipped, no failures (`node --test --test-concurrency=1` over shared, app and
+app-test files). The native Wychford receiver audit found 8,734 eligible pairs but
+stopped at map coordinate `[436,1498]`: receivers 10674 and 10671 meet at the same
+terrain vertex, while the audit requires a direct shared elevation edge between
+them. Their heights agree at that vertex. A 67-receiver reduction reproduces the
+failure in 0.10 seconds (`work/map-compile/wychford-receiver-junction-GDKJfg`).
+The audit's shared-vertex handling is under correction; the full crossing audit
+has **not passed**. No runtime receiver behavior was changed for this diagnosis.
+
 ## Current library state compilation (2026-10-04)
 
 All ten saved library scenes compiled with the ordinary `compileMap` entry point,
