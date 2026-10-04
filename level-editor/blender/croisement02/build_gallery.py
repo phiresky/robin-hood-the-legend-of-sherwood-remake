@@ -75,16 +75,18 @@ def main():
             technical=technical and coverage.exists() and json.loads(coverage.read_text()).get('model_sha256')==model_hash and json.loads(coverage.read_text())['intersection_over_union']>=.95
         elif 'state' in group['id']:technical=False
         joint_path=workspace/'inspection/joint-neighbourhood.json'
-        if stem and joint_path.exists():
+        if joint_path.exists():
             joint=json.loads(joint_path.read_text())
+            joint_evidence=json.loads(Path(joint['evidence']).read_text())
+            neighbours=joint_evidence.get('inputs') or joint_evidence['workers']
             if (joint['model_sha256']==model_hash
                     and sha(Path(joint['evidence']))==joint['evidence_sha256']
                     and sha(Path(joint['sheet']))==joint['sheet_sha256']
-                    and all((Path(r['worker'])/'model.blend').exists()
-                            and sha(Path(r['worker'])/'model.blend')==r['model_sha256']
-                            for r in json.loads(Path(joint['evidence']).read_text())['inputs'])):
+                    and all((Path(r.get('worker',r.get('path')))/'model.blend').exists()
+                            and sha(Path(r.get('worker',r.get('path')))/'model.blend')==r['model_sha256']
+                            for r in neighbours)):
                 item['source_comparison_secondary']=joint['sheet']
-                item['source_comparison_secondary_label']='Source and oblique views with approved neighbouring trees; lower row hides foliage'
+                item['source_comparison_secondary_label']=joint.get('label','Source and oblique views with approved neighbouring trees; lower row hides foliage' if stem else 'Joint source and oblique review with neighbouring geometry')
         review=workspace/'inspection/visual-review.json'
         full_crown=workspace/'inspection/full-crown'
         if (full_crown/'evidence.json').exists():
@@ -145,7 +147,7 @@ def main():
         items.append(item)
     missing.extend([
         dict(id='croisement02-terrain-integration',name='Terrain integration',status='pending',reason='Full-scene gap audit, foreground-domain removal and terrain texture completion remain required before publication.'),
-        dict(id='croisement02-mask-only-scenery',name='Mask-only scenery',status='pending',reason='Most undergrowth and small grass sprites remain pending. Authored stems09/44 and shrubs55/58/59 have separate review candidates. Mask22 is a northern foliage fragment, not automatically a missing trunk; its ownership remains under review. Mask21 belongs to native obstacle132.'),
+        dict(id='croisement02-mask-only-scenery',name='Mask-only scenery',status='pending',reason='Most undergrowth and small grass sprites remain pending. Authored stems09/44, shrubs55/58/59 and the overlapping western56/61 bank have separate review candidates. Mask22 is a northern foliage fragment, not automatically a missing trunk; its ownership remains under review. Mask21 belongs to native obstacle132.'),
         dict(id='croisement02-animation-and-mission-states',name='Animation and mission states',status='pending',reason='All 15 animation sequences and 129 mission patches are preserved as source evidence. Candidates show synchronized first-frame foliage; full state/animation integration is pending.')])
     data=dict(map='Croisement02',items=items,without_packets=missing,status_counts=dict(Counter(i['status'] for i in items)),
               policy='No geometry or texture approval is implied. Only the two explicitly selected Leicester trees are reference assets.')

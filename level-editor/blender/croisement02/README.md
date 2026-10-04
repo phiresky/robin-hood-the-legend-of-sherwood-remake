@@ -284,3 +284,11 @@ remain explicitly inferred. Larger lobes use denser internal leaves and curved
 front patches to avoid artificial parallel shell steps. This isolated candidate
 lives in `understory-round-4`; it needs joint review with the western rocks
 before catalog integration. The script never changes approved assets.
+
+After the western bank's source, solid, oblique and rock/contact reviews pass,
+`integrate_shrubs.py --directory <west-bank-v4> --workers-directory
+<understory-round-4/assets>` registers its pending geometry candidate. The
+integrator rejects changed existing groups or source owners. Joint-neighbourhood
+receipts bind both participating saved models before the gallery shows their
+supplemental review sheet. This does not approve inferred textures or actual
+terrain placement.
