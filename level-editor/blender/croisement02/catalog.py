@@ -37,6 +37,9 @@ def bank_workspace(asset):
 
 
 def scenery_workspace(asset):
+    from stem_candidates import selected_workspace
+    joined_stem=selected_workspace(OUT,asset,reviewed_catalog())
+    if joined_stem is not None:return joined_stem
     bank=bank_workspace(asset)
     if bank is not None:return bank
     western=OUT/'understory-round-4/assets'/asset
