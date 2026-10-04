@@ -4165,3 +4165,21 @@ multi-tile crops and shadowed appearances under three sun directions; thirteen
 appearance unit tests pass. GPU setup and shadow rendering are still repeated
 per state, so large combination tables remain expensive. The full Lincoln archive
 check is still outstanding; the small fixture is not full-map visual certification.
+
+### Nottingham gateway ownership
+
+The castle gateway's three portcullis lanes and door-rights control now belong
+to the arch asset instead of the courtyard floor. Asset-local coordinates were
+rebased without changing baseline exported door data; the arch appearance is
+bound to that control. Both descriptors and the saved-scene pins are published.
+The baseline and independent one-unit arch/floor moves pass native apply/reset
+for all nine controls (`work/map-compile/nottingham-gate-control-OiiIqc`). The
+control moves with the arch only. Portcullis animation and east-tower appearance
+coverage remain unfinished.
+
+The default Nottingham authoring recipe also names the current dormer-house
+remainder instead of its pre-split asset. Its scan now completes with 165 valid
+drafts; explicit gateway ownership reduces pending appearance bindings from two
+to one (`work/map-compile/nottingham-gate-owner-recovery-20261004`). Other draft
+geometry was not published. Older mask/light coverage totals are not superseded
+by this scan, which did not supply the additional reviewed recovery recipes.

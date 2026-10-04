@@ -151,6 +151,12 @@
   ],
   "door_sources": [
     {
+      "doors": [65, 66, 67],
+      "owner": "nottingham-castle-gate-arch",
+      "node": "building-349",
+      "reason": "The three parallel portcullis lanes and their permission control belong to the gateway arch. The courtyard receiving floor supplies their landings but must not carry the gate when moved independently."
+    },
+    {
       "doors": [
         87,
         88,

@@ -2431,3 +2431,7 @@ It preserves the full-frame camera, tile boundaries, shadow framing and depth
 normalization, while allocating only the affected region's output pixels.
 Browser acceptance runs can report live progress with `TEST_PROGRESS=1`; timeout
 errors include the last reported stage.
+
+Nottingham's castle gateway now owns its three portcullis lanes and permission
+control. Moving the courtyard floor independently no longer carries the gate
+control away; the gate's appearance follows the same local control.

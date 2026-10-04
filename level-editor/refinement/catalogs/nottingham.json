@@ -151,6 +151,12 @@
   ],
   "door_sources": [
     {
+      "doors": [65, 66, 67],
+      "owner": "nottingham-castle-gate-arch",
+      "node": "building-349",
+      "reason": "The three parallel portcullis lanes and their permission control belong to the gateway arch. The courtyard receiving floor supplies their landings but must not carry the gate when moved independently."
+    },
+    {
       "doors": [87, 88, 89],
       "owner": "nottingham-castle-hall-and-watchtower",
       "node": "building-378",
@@ -188,7 +194,7 @@
     },
     {
       "doors": [20],
-      "owner": "nottingham-north-dormer-house",
+      "owner": "nottingham-north-dormer-house-remainder",
       "node": "building-122",
       "reason": "The inside endpoint is within the dormer house footprint; the neighboring stone house is close enough to fail the generic ownership margin."
     },

@@ -542,3 +542,10 @@ restoration after cancellation. The client archive smoke test passes; its ignore
 full-ZIP test additionally validates appearance state dimensions and references
 against the loaded engine's controls. This does not certify a full Lincoln ZIP
 until that bake and ignored test complete.
+
+`work/map-compile/nottingham-gate-control-OiiIqc` verifies transfer of the gate's
+three door lanes from its receiving floor to the arch. Baseline exported door
+data is unchanged; independent one-unit moves of the arch and floor prove the
+control follows only the arch. Native apply/reset passes all nine controls in
+each of the three fixtures. This is placement/permission coverage, not animated
+portcullis rendering or arbitrary-placement traversal certification.
