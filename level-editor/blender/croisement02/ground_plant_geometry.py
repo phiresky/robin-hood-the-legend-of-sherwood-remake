@@ -52,8 +52,9 @@ def build(obj, packet):
         faces.append((k,k+1,k+2));slots.append(slot);known.append(owns)
     def screen_uv(p):return ((p[0]-x0)/w,1-(-p[1]*SIN-p[2]*COS-y0)/h)
     def source_point(x,y):
-        # Subpixel front fragments follow a low, uneven rosette. Unlike a
-        # source-facing sheet, depth changes continuously across its surface.
+        # Place each native pixel near the closest projected rooted blade.
+        # Its hidden depth is inferred; the one-pixel fragment retains the
+        # exact source coordinate and never bridges separate blade depths.
         nearest=int(np.argmin(np.sum((projected-[x,y])**2,axis=1)))
         z=max(ground+.5,samples[nearest,2]+(projected[nearest,1]-y)*.25/COS)
         return np.array([x,(-y-z*COS)/SIN,z])
