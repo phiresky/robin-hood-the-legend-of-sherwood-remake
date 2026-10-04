@@ -312,6 +312,16 @@ covered-state silhouette. Exact preservation of a previously approved donor
 proves preservation, not source completeness; regrouped assets still need this
 comparison.
 
+For dense foliage, rule out the renderer's transparent-surface limit before
+changing geometry to improve coverage. Render the identical saved model and
+camera at increasing transparency budgets, and compare both native-view RGBA
+and a representative oblique material view until they converge. Record the
+budget and comparison with the evidence; do not silently change earlier
+approved renders. A low budget can turn overlapping transparent leaf surfaces
+into false opaque or dark pixels. Likewise, distinguish gameplay occupancy
+masks from displayed alpha: animated foliage may overlay static artwork, so
+one animation frame alone is not necessarily the complete visible silhouette.
+
 Bind the coverage review to the model and modified packet hashes. Missing,
 failed, or stale coverage evidence must block readiness. For terrain, review
 the proposed ground domain against the artwork explicitly; the complement of
