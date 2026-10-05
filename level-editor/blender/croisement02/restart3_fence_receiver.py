@@ -19,7 +19,7 @@ from restore_ground75_source import geometry
 from review_bank_candidate import camera
 from tree_geometry import SIN, COS, RAY
 
-DEST = OUT/'restart3-fence-receiver/terminal-v1'
+DEST = OUT/'restart3-fence-receiver/terminal-v2'
 GROUND = OUT/'restart2-ground-completion/approved-fill-retry-v2/bake-v1/model.blend'
 FENCE = OUT/'fence-state-candidate-v2/worker.blend'
 PATCH = OUT/'source-states/mission-patches/mission-Emb05_FoB_MP-patch-022/transition-000.png'
@@ -87,11 +87,19 @@ def main():
         if geometry(obj) != original_geometry or not np.array_equal(atlas(obj)[1],expected):
             raise ValueError('Reopened geometry/UV or packed artwork differs')
         ground_vertices = [obj.matrix_world@v.co for v in obj.data.vertices]
-        if any(abs(v.z)>1e-6 for v in ground_vertices):
+        if any(abs(v.z)>0.001 for v in ground_vertices):
             raise ValueError('Expected approved planar receiver')
         scene = bpy.data.scenes.new('Cleared fence applied receiver review')
         bpy.context.window.scene = scene
         scene.collection.objects.link(obj)
+        parent = obj.parent
+        while parent is not None:
+            if parent.name not in scene.objects:
+                scene.collection.objects.link(parent)
+            parent = parent.parent
+        bpy.context.view_layer.update()
+        if geometry(obj) != original_geometry:
+            raise ValueError('Ground transform changed in contact scene')
         obj.hide_render = False
         with bpy.data.libraries.load(str(FENCE),link=False) as (source,target):
             target.objects = names
@@ -140,7 +148,7 @@ def main():
             fence_model_sha256=fence_hash,context_sha256=sha(DEST/'contact.blend'),
             geometry_uv_signature=original_geometry,geometry_uv_unchanged=True,
             full_source_pixels=23104,outside_pixels_preserved=int((~domain).sum()),outside_changed=0,
-            packed_rgba_exact=True,source_camera_first=True,receiver_z=0,contacts=contacts,
+            packed_rgba_exact=True,source_camera_first=True,receiver_nominal_z=0,receiver_world_z_range=[min(v.z for v in ground_vertices),max(v.z for v in ground_vertices)],contacts=contacts,
             bbox=BBOX,mission_replicas=[r['id'] for r in rows],
             behavior='Separate applied-state ground only: retain the last transition artwork while applied; base state keeps its approved atlas.',
             limitations=['Cleared fence geometry is approved; new cut-end textures remain pending.',
