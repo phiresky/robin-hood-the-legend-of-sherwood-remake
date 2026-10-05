@@ -14,8 +14,8 @@ from render_multiview_asset import render
 
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('kind',choices=['logging','southwest']);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:])
-    logging=args.kind=='logging';trial=OUT/'restart2-vegetation'/('logging-contour-v6' if logging else 'southwest-contour-v2');prior=OUT/'restart2-vegetation'/('logging-branches-v5' if logging else 'southwest-branches-v1')
+    parser=argparse.ArgumentParser();parser.add_argument('kind',choices=['logging','southwest']);parser.add_argument('--trial',type=Path);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:])
+    logging=args.kind=='logging';trial=args.trial or OUT/'restart2-vegetation'/('logging-contour-v6' if logging else 'southwest-contour-v2');prior=OUT/'restart2-vegetation'/('logging-branches-v5' if logging else 'southwest-branches-v1')
     digest=sha(trial/'model.blend');out=trial/'full-review';out.mkdir(exist_ok=False)
     bpy.ops.wm.open_mainfile(filepath=str(trial/'model.blend'));scene=bpy.data.scenes['Croisement02 Refinement'];bpy.context.window.scene=scene
     packet=json.loads((prior/'cameras.json').read_text());asset=packet['asset_id'];objs=[o for o in scene.objects if o.type=='MESH' and o.get('asset_group')==asset];bpy.context.view_layer.update()
