@@ -26,6 +26,8 @@ def main():
     parser.add_argument('--anchor', nargs=2, type=float, required=True)
     parser.add_argument('--offset', type=float, required=True)
     parser.add_argument('--radius', type=float, required=True)
+    parser.add_argument('--composed-crown-proof', type=Path,
+                        help='Original crown envelope when correcting a separately composed wood worker')
     args = parser.parse_args(sys.argv[sys.argv.index('--')+1:])
     source, output = args.source.resolve(), args.output.resolve()
     require(not output.exists(), 'Fresh support trial required')
@@ -33,6 +35,22 @@ def main():
     acquire()
     try:
         model_hash = sha(source/'model.blend')
+        if args.composed_crown_proof:
+            composition_path = source/'inspection/crown-wood-composition.json'
+            composition = json.loads(composition_path.read_text())
+            require(composition['model_sha256'] == model_hash, 'Stale combined parent')
+            envelope_path = args.composed_crown_proof.resolve()
+            require(envelope_path == Path(composition['crown_worker'])/'inspection/envelope-preservation.json'
+                    and sha(envelope_path) == composition['crown_proof_sha256'], 'Wrong crown envelope')
+            proof = json.loads(envelope_path.read_text())
+            require(proof['model_sha256'] == composition['crown_model_sha256'], 'Original crown changed')
+            proof['parent_combined'] = dict(worker=str(source), model_sha256=model_hash,
+                composition_proof=str(composition_path), composition_sha256=sha(composition_path),
+                retained_wood_worker=composition['wood_worker'],
+                retained_wood_model_sha256=composition['wood_model_sha256'])
+        else:
+            envelope_path = source/'inspection/envelope-preservation.json'
+            proof = json.loads(envelope_path.read_text())
         cfg = json.loads((source/'workspace.json').read_text())
         bpy.ops.wm.open_mainfile(filepath=str(source/'model.blend'))
         crown, = [o for o in bpy.data.objects if o.type == 'MESH'
@@ -82,6 +100,9 @@ def main():
         require(foreign == {o.name: (geometry(o), appearance(o)) for o in bpy.data.objects
                            if o.type == 'MESH' and o != crown}, 'Wood or foreign object changed')
         output.mkdir(parents=True)
+        (output/'inspection').mkdir()
+        shutil.copy2(envelope_path, output/'inspection/prior-crown-envelope.json')
+        proof['prior_envelope_sha256'] = sha(envelope_path)
         for name in ['workspace.json', 'source-masks.json', 'modified/views.json',
                      'inspection/refinement.json', 'inspection/source-coverage/report.json']:
             target = output/name
@@ -89,8 +110,8 @@ def main():
             shutil.copy2(source/name, target)
         bpy.context.preferences.filepaths.save_version = 0
         bpy.ops.wm.save_as_mainfile(filepath=str(output/'model.blend'), compress=True)
-        proof = json.loads((source/'inspection/envelope-preservation.json').read_text())
         proof['model_sha256'] = sha(output/'model.blend')
+        proof['non_crown_preservation_reference'] = dict(worker=str(source), model_sha256=model_hash)
         proof['support_reanchor'] = dict(source=str(source), source_model_sha256=model_hash,
             projected_anchor=args.anchor, radius=args.radius, source_ray_offset=args.offset,
             component_shift_range=[min(shifts), max(shifts)], components=len(components),
