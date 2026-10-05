@@ -15,10 +15,10 @@ from evidence_io import sha, write_json
 from render_slots import acquire, release
 
 
-def main():
-    fitpath = OUT / 'restart2-state/south-cart-body-fit-v2/fit.json'
+def main(variant='v1', triangulate=False, fit_variant='v2', supported=False):
+    fitpath = OUT / f'restart2-state/south-cart-body-fit-{fit_variant}/fit.json'
     fit = json.loads(fitpath.read_text())
-    dest = OUT / 'restart2-state/south-cart-wreck-solid-v1'; dest.mkdir(exist_ok=False)
+    dest = OUT / f'restart2-state/south-cart-wreck-solid-{variant}'; dest.mkdir(exist_ok=False)
     manifest = json.loads((OUT / 'state-target-evidence/south-cart/manifest.json').read_text())
     box = [945, 820, 1165, 1000]; source = Image.new('RGBA', (220, 180))
     for index in [0, 1]:
@@ -50,12 +50,16 @@ def main():
             pieces.append(dict(name=f'Wheel {axle} {side}', vertices=m.vertices, faces=m.faces))
             m = Mesh(); m.tube(center - across * 3, center + across * 3, 4, n=12)
             pieces.append(dict(name=f'Hub {axle} {side}', vertices=m.vertices, faces=m.faces))
+    shift = Vector(fit['source_preserving_ground_shift']) if supported else Vector((0, 0, 0))
+    for piece in pieces:
+        piece['vertices'] = [tuple(Vector(v) + shift) for v in piece['vertices']]
     objects = []; audits = []
     for piece in pieces:
         data = bpy.data.meshes.new(piece['name']); data.from_pydata(piece['vertices'], [], piece['faces']); data.update()
         bm = bmesh.new(); bm.from_mesh(data); bmesh.ops.recalc_face_normals(bm, faces=list(bm.faces))
         assert all(e.is_manifold for e in bm.edges), piece['name']
         volume = bm.calc_volume(signed=True); assert volume > 0, piece['name']
+        if triangulate: bmesh.ops.triangulate(bm, faces=list(bm.faces))
         cuts = min(20, max(0, math.ceil(max(e.calc_length() for e in bm.edges) / 5) - 1))
         if cuts: bmesh.ops.subdivide_edges(bm, edges=list(bm.edges), cuts=cuts, use_grid_fill=True)
         bmesh.ops.recalc_face_normals(bm, faces=list(bm.faces)); assert all(e.is_manifold for e in bm.edges)
@@ -90,7 +94,7 @@ def main():
                 scene.view_layers[0].material_override = gray if mode == 'solid' else None
                 scene.render.filepath = str(dest / f'{name}-{mode}.png'); bpy.ops.render.render(write_still=True)
     finally: release()
-    write_json(dest / 'manifest.json', dict(status='Private whole wreck diagnostic; no geometry approval', model_sha256=sha(dest / 'worker.blend'), fit_sha256=sha(fitpath), components=audits, source_first_hit_material_assignment=True, source_domain='Bounded body polygon and terminal wheel region; ground scraps, barrel, horses and fence excluded', limitations=['Rigid tipped template is a hypothesis; native broken roof, end boards and wheel identity still need visual assessment.', 'Native body survey missing1659 and excess893 pixels before wheel addition; not a final first-hit score.', 'Lower wheels and hidden boards inferred. Exact terrain contact remains unverified; finite wheel thickness can cross provisional Z0.', 'No physical motion, state completion, appearance generation or user approval.']))
+    write_json(dest / 'manifest.json', dict(status='Private whole wreck diagnostic; no geometry approval', model_sha256=sha(dest / 'worker.blend'), fit_sha256=sha(fitpath), components=audits, source_preserving_ground_shift=list(shift), analytical_support_constrained=supported, source_first_hit_material_assignment=True, triangulated_before_source_visibility=triangulate, source_domain='Bounded body polygon and terminal wheel region; ground scraps, barrel, horses and fence excluded', limitations=['Rigid tipped template is a hypothesis; native broken roof, end boards and wheel identity still need visual assessment.', f"Native body survey missing{fit['missing_pixels']} and excess{fit['excess_pixels']} pixels before wheel addition; not a final first-hit score.", 'Lower wheels and hidden boards inferred. Exact receiver and finite mesh contacts still require a reopened audit.', 'No physical motion, state completion, appearance generation or user approval.']))
 
 
 if __name__ == '__main__': main()
