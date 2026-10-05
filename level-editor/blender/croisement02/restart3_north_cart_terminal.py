@@ -3,13 +3,14 @@ import sys
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 from restart3_cart_cargo_debris import *
+from restart3_terminal_render import finish_terminal as finish
 from PIL import ImageDraw
 from scenery_geometry import Mesh
 from mathutils.geometry import tessellate_polygon
 
 
 def main():
-    dest=OUT/'restart3-north-cart/terminal-physical-v9';dest.mkdir(exist_ok=False)
+    dest=OUT/'restart3-north-cart/terminal-physical-v12';dest.mkdir(exist_ok=False)
     source=json.loads((OUT/'state-target-evidence/north-cart/manifest.json').read_text());frame=source['parts'][0]['frames'][-1]
     assert sha(frame['image'])==frame['image_sha256']
     rgba=np.array(Image.open(frame['image']).convert('RGBA'));box=[1202,220,1454,362]
@@ -39,11 +40,11 @@ def main():
       ('front-drape',[(80,45),(91,45),(99,43),(112,42),(111,67),(106,78),(98,84),(97,93),(88,92),(79,87)]),
       ('rear-drape',[(133,41),(145,41),(163,37),(160,62),(157,70),(151,75),(139,71),(133,64)])]:
         paint=claim(name+'-owned',poly)
-        prism(name,poly,lambda x,y:max(26,rh(x,43-.10*(x-82))-(y-(43-.10*(x-82)))/COS+3*max(0,min(1,(y-45)/6))),.65,paint,RAY)
+        prism(name,poly,lambda x,y:max(34 if name=='front-drape' else 26,rh(x,43-.10*(x-82))-(y-(43-.10*(x-82)))/COS+3*max(0,min(1,(y-45)/6))),.65,paint,RAY)
     panel=[(55,93),(56,52),(62,37),(64,32),(68,25),(72,30),(77,35),(81,36),(85,29),(90,18),(93,21),(91,43),(86,54),(83,75),(86,98),(69,98)]
     pp=claim('broken-front-panel-owned',panel)
     bh=lambda x,y:3+21*max(0,min(1,(x-27)/62))-17*max(0,min(1,(x-153)/9))*max(0,min(1,(y-73)/16))
-    ph=lambda x,y:max(bh(x,y)+.5,90-(y-27-.25*(x-68))/COS)
+    ph=lambda x,y:max(bh(x,y)+.5,90-(y-27-.25*(x-68))/COS-12*max(0,min(1,(y-31)/7))*max(0,min(1,(x-83)/7)))
     prism('Jagged standing front panel',panel,ph,2.5,pp,RAY)
     side=[(109,43),(131,41),(134,58),(138,69),(126,82),(126,102),(117,106),(98,110),(93,94),(102,85),(110,75)]
     sp=claim('cabin-side-owned',side)
@@ -54,10 +55,11 @@ def main():
     bh=lambda x,y:3+21*max(0,min(1,(x-27)/62))-17*max(0,min(1,(x-153)/9))*max(0,min(1,(y-73)/16))
     prism('Broken notched bed',bed,bh,3/SIN,bp,RAY)
     timber=[
-      ('diagonal-front-plank',[(23,71),(30,70),(56,89),(57,99),(46,94),(28,79)],lambda x,y:bh(x,y)+2.5),
+      ('diagonal-front-plank',[(21,69),(24,69),(25,67),(29,70),(32,70),(36,72),(56,89),(57,99),(46,94),(28,79)],lambda x,y:bh(x,y)+2.5),
       ('left-jagged-shaft',[(0,89),(7,89),(10,88),(13,90),(16,90),(18,92),(23,94),(27,94),(33,93),(38,94),(43,97),(39,102),(29,103),(23,100),(18,98),(15,97),(11,95),(8,95),(8,93),(3,92),(0,92)],lambda x,y:1.5+.13*x),
       ('upper-broken-shaft',[(20,82),(25,78),(39,78),(44,74),(49,78),(37,83),(30,87),(22,86)],lambda x,y:bh(x,y)+2.5),
       ('raised-foretimber',[(31,93),(34,87),(35,81),(34,76),(38,68),(44,64),(48,64),(49,59),(53,59),(58,58),(58,65),(50,70),(48,75),(46,79),(49,86),(43,90),(39,95)],ph),
+      ('inner-broken-brace',[(47,75),(52,71),(57,70),(59,74),(57,80),(54,82),(53,86),(49,86),(48,81)],ph),
       ('rear-facing-splinter',[(41,54),(47,52),(56,57),(59,62),(52,64),(49,58)],ph)]
     for name,poly,h in timber:
         p=claim(name+'-owned',poly);prism(name,poly,h,1.3,p,RAY)
@@ -103,13 +105,13 @@ def main():
     write_json(dest/'post-roof-role.json',dict(source_sha256=frame['image_sha256'],pixels=int(post_overlap.sum()),rule='Brown pixels within the independently traced front-post and roof overlap belong to the structural post; no new source domain is granted.'))
     Image.fromarray((post_overlap*255).astype(np.uint8)).save(dest/'post-roof-role.png')
     labels[:]=0
-    priority=['roof-owned','front-drape-owned','rear-drape-owned','upright-wheel-owned','fallen-wheel-owned','diagonal-front-plank-owned','left-jagged-shaft-owned','upper-broken-shaft-owned','raised-foretimber-owned','rear-facing-splinter-owned','broken-front-panel-owned','cabin-side-owned','broken-bed-owned','box-owned']
+    priority=['roof-owned','front-drape-owned','rear-drape-owned','upright-wheel-owned','fallen-wheel-owned','diagonal-front-plank-owned','left-jagged-shaft-owned','upper-broken-shaft-owned','raised-foretimber-owned','inner-broken-brace-owned','rear-facing-splinter-owned','broken-front-panel-owned','cabin-side-owned','broken-bed-owned','box-owned']
     for name in priority:
         index=next(i for i,row in enumerate(records,1) if row['name']==name);row=records[index-1];requested=requested_masks[name];owned=requested&(labels==0);labels[owned]=index
         image=rgba.copy();image[~owned,3]=0;Image.fromarray(image).save(row['image']);row.update(accepted_pixels=int(owned.sum()),overlap_with_prior=int((requested&~owned).sum()),sha256=sha(Path(row['image'])))
         for node in paints[name].node_tree.nodes:
             if node.type=='TEX_IMAGE':node.image.reload();node.image.pack()
-    wood_names={'broken-front-panel-owned','cabin-side-owned','broken-bed-owned','diagonal-front-plank-owned','left-jagged-shaft-owned','upper-broken-shaft-owned','raised-foretimber-owned','rear-facing-splinter-owned'}
+    wood_names={'broken-front-panel-owned','cabin-side-owned','broken-bed-owned','diagonal-front-plank-owned','left-jagged-shaft-owned','upper-broken-shaft-owned','raised-foretimber-owned','inner-broken-brace-owned','rear-facing-splinter-owned'}
     wood_pool=np.isin(labels,[i for i,row in enumerate(records,1) if row['name'] in wood_names])
     for index,row in enumerate(records,1):
         domain=rgba.copy();domain[labels!=index,3]=0;dp=dest/(row['name']+'-exclusive.png');Image.fromarray(domain).save(dp);row['exclusive_ownership_image']=str(dp);row['exclusive_ownership_sha256']=sha(dp)
