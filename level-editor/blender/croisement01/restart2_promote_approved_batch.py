@@ -16,6 +16,8 @@ def write(p,d):p.write_text(json.dumps(d,indent=2)+'\n')
 proof=read(stage/'scene-splice-proof.json');runtime=read(stage/'browser-export-proof.json')
 assert runtime['status']=='PASS' and runtime['palette_insert_save_reload']
 assert read(stage/'integration-self-review.json')['status']=='PASS'
+full_editor=read(stage/'full-editor-private-v2/result.json')
+assert full_editor['status']=='PASS' and full_editor['mapGroups']==58 and full_editor['mapParts']==92
 assets=proof['assets'];assert set(assets)=={x['asset'] for x in runtime['result']}
 for asset,e in assets.items():
  source=stage/'assets'/asset
