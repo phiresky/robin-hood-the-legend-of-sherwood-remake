@@ -26,6 +26,53 @@ mod tests {
     use super::*;
 
     #[test]
+    fn seam_roundoff_cleanup_preserves_real_and_standalone_thin_obstacles() {
+        let stair = polygon(&[
+            [2100., 1800.],
+            [2140., 1800.],
+            [2140., 1840.],
+            [2100., 1840.],
+        ])
+        .unwrap();
+        let solid = polygon(&[
+            [2090., 1800.],
+            [2150., 1800.],
+            [2150., 1830.],
+            [2090., 1830.],
+        ])
+        .unwrap();
+        let strip = |width: f32| {
+            polygon(&[
+                [2090., 1800.],
+                [2150., 1800.],
+                [2150., 1800. - width],
+                [2090., 1800. - width],
+            ])
+            .unwrap()
+        };
+        let noise = strip(0.000244140625);
+        assert!(rounded_seam_sliver(&noise, &solid, &stair, 0.0005));
+        assert!(!rounded_seam_sliver(&strip(0.01), &solid, &stair, 0.0005));
+        assert!(!rounded_seam_sliver(&noise, &noise, &stair, 0.0005));
+        let landing_wall = polygon(&[
+            [2090., 1800.],
+            [2150., 1800.],
+            [2150., 1790.],
+            [2090., 1790.],
+        ])
+        .unwrap();
+        assert!(!rounded_seam_sliver(&noise, &landing_wall, &stair, 0.0005));
+        let unrelated = polygon(&[
+            [2100., 1700.],
+            [2140., 1700.],
+            [2140., 1740.],
+            [2100., 1740.],
+        ])
+        .unwrap();
+        assert!(!rounded_seam_sliver(&noise, &solid, &unrelated, 0.0005));
+    }
+
+    #[test]
     fn receiver_can_cover_part_of_a_joined_motion_region() {
         let motion = serde_json::from_value(serde_json::json!({
             "is_lift":false, "state_id":0, "flags":0, "skeleton_segments":[], "obstacles":[],
@@ -540,6 +587,11 @@ impl BoundPhysicalStair {
                 )?
             };
             for clipped in collision.intersection(support) {
+                if !obstacle.precise_polygon.is_empty()
+                    && rounded_seam_sliver(&clipped, &collision, &stair, tolerance)
+                {
+                    continue;
+                }
                 if !clipped.interiors().is_empty() {
                     return Err(
                         "landing collision clipping produced an unsupported holed solid".into(),
@@ -564,6 +616,45 @@ impl BoundPhysicalStair {
         });
         Ok(())
     }
+}
+
+/// Clipping independently encoded f32 contours can leave a strip on their shared
+/// edge. Only discard that strip when the original solid extends away from it;
+/// a genuinely thin standalone obstacle must retain its collision.
+fn rounded_seam_sliver(
+    clipped: &Polygon<f32>,
+    collision: &Polygon<f32>,
+    stair: &Polygon<f32>,
+    tolerance: f64,
+) -> bool {
+    if !clipped.interiors().is_empty() {
+        return false;
+    }
+    // A real wall extending into the landing is not a stair-hole rounding
+    // artifact. The solid must overlap more stair area than this clipped strip.
+    if collision.intersection(stair).unsigned_area() <= clipped.unsigned_area() {
+        return false;
+    }
+    collision.exterior().lines().any(|edge| {
+        let precise_edge = edge.map_coords(|p| geo::Coord {
+            x: f64::from(p.x),
+            y: f64::from(p.y),
+        });
+        let distance = |p: geo::Point<f32>| {
+            point_edge_distance([f64::from(p.x()), f64::from(p.y())], precise_edge)
+        };
+        stair.exterior().lines().any(|other| {
+            rounded_shared_edge(edge, other, tolerance)
+                .is_some_and(|shared| shared.start != shared.end)
+        }) && clipped
+            .exterior()
+            .points()
+            .all(|p| distance(p) <= tolerance)
+            && collision
+                .exterior()
+                .points()
+                .any(|p| distance(p) > tolerance)
+    })
 }
 
 fn point_edge_distance(point: [f64; 2], edge: geo::Line<f64>) -> f64 {

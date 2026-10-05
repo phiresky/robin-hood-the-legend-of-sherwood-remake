@@ -112,8 +112,8 @@ complete-sprite and rendered verification remain open.
 All ten scenes reopen after publication, and full Derby passes all five control
 apply/reset checks. All ten Derby stair definitions now pass local floor-anchor
 support checks after the upper-west publication below.
-A library-wide local-anchor audit finds unsupported anchors in 42 of 53 authored stair
-definitions: Derby 0/10, Leicester 8/8, Lincoln 6/6, Nottingham 11/12,
+A library-wide local-anchor audit finds unsupported anchors in 40 of 53 authored stair
+definitions: Derby 0/10, Leicester 6/8, Lincoln 6/6, Nottingham 11/12,
 Sherwood 1/1 and York 16/16. All audited floors are planar. This checks local
 definitions, not placed connectivity or actual route failures; corrections and
 moved/rotated native traversal checks remain necessary across these assets.
@@ -125,11 +125,14 @@ physical landing collision preserves their obstacle identities and live states.
 All 32/32 routes and eight control apply/reset checks now pass, and eight raised
 external approaches still reject. The landing review still finds incomplete mesh
 coverage; 38 missing-floor foot samples are visible near the lower entrance in
-the default view. Full Leicester also exposes a separate external-landing gap:
-the published scene passes 16/16 routes, but the corrected candidate passes 14/16.
-The lower flight needs a connection to the terrace-owned receiver and underlying
-terrain navigation. Both versions pass twelve control apply/reset checks.
-The asset corrections remain unpublished. The earlier diagnostic
+the default view. The church and adjacent terrace corrections are now published
+as drafts with an explicit visual warning. The terrace owns its walkable top and
+clearance; its reviewed seam extends at most 0.233 units beyond the visible mesh.
+Together, the independently placed assets pass 32/32 directed routes at four
+rotations and two elevations, with all sixteen missing/raised-terrace cases
+rejecting. Full Leicester retains 16/16 routes and twelve control apply/reset
+checks. Runtime landing clipping removes bounded floating-point strips on exact
+shared stair edges while preserving real thin obstacles. The earlier diagnostic
 that removed the blocker is not a publishable floor definition.
 Landing mesh checks now include other components in the same asset, since the
 visible floor and receiving surface can belong to different parts.

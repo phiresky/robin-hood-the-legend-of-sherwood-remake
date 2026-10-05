@@ -4,6 +4,44 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Published church stairs and terrace-owned landing (2026-10-06)
+
+The church-side tower and lower-bailey terrace now publish their reviewed
+connection together. The terrace owns its flat top, exact receiving boundary and
+owner-scoped clearance, so it carries the landing when moved independently of
+the terrain. Its body still obstructs movement below the top. The church retains
+an explicit draft warning for incomplete upper stair mesh and unverified
+lower-entry character compositing.
+
+`refinement/stage-church-terrace-floor.mjs` stages both definitions from pinned
+assets and an editor-compiled candidate; publication uses the normal transactional
+asset configuration tool. Candidate `church-terrace-floor-6UJaCJ` is published
+with backup `church-terrace-publication-20261006`, refreshing Leicester and Wychford
+scene pins. The mesh reviewer samples 205 positions along the adjusted terrace
+edge: 41 have exact mesh support and the remaining 164 extend at most
+0.232576 game units beyond it. This is an explicit subpixel authoring discrepancy,
+not a relaxed runtime connection tolerance.
+
+`refinement/check-church-terrace-placements.mjs` places the two independent assets
+on fresh authored terrain at 0/37/90/180 degrees and elevations 0/40. Candidate
+batch `church-terrace-placements-FT51Ek` passes **32/32 directed native actor
+routes**. All sixteen missing/raised-terrace cases reject the lower connection.
+Published batch `church-terrace-placements-cwvmwf` exactly matches the tested
+descriptors except for the added visual warning; its eight controls apply/reset
+and its sixteen negative cases still reject. Complete Leicester candidate
+`church-terrace-level-MJAhPD` passes **16/16 routes** and twelve control checks.
+
+Physical landing collision also removes clipping roundoff confined to an exact
+shared stair edge. This applies only to precise obstacles, uses the existing
+coordinate-scaled floating-point bound and requires the original solid to extend
+into the stair. Tests preserve standalone thin obstacles, real landing-side
+walls, unrelated edges and larger strips. Native stair tests pass 16/16;
+movement tests pass 191 with twelve ignored. The game build, Rust formatting,
+and focused JavaScript lint/format checks pass. The refreshed local-anchor audit
+`stair-anchor-support-JWUBgS` reports **40/53 unsupported definitions**, with
+Leicester down to 6/8 and Derby still 0/10. These checks do not establish complete
+rendered or alternate-state traversal parity.
+
 ## Church assembly visibility and complete-level gate (2026-10-06)
 
 The seam reviewer now casts projected floor/head rays through initially visible

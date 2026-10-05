@@ -56,7 +56,7 @@
       "model": "3d-assets/leicester/leicester-church-side-tower/model.glb",
       "model_sha256": "1c2a831d839e0bf5132722e7d743a6b419d1ade2b2a87543ecbd65dc861a40c4",
       "descriptor": "3d-assets/leicester/leicester-church-side-tower/asset.json",
-      "descriptor_sha256": "5f2e4fa05cfaac80f4fbe098df63c45681e01bf4034cec09c465d1378ca28732",
+      "descriptor_sha256": "2a0f5de68ee67e21771929ffbe83b10299593af7df9524a05a2339876488a5c7",
       "id": "leicester-church-side-tower"
     },
     {
@@ -167,7 +167,7 @@
       "model": "3d-assets/leicester/leicester-lower-bailey-terrace/model.glb",
       "model_sha256": "54bf7dfc7fe331735e3f98c6cfebe51970d036494298efed3d631a5de7eae080",
       "descriptor": "3d-assets/leicester/leicester-lower-bailey-terrace/asset.json",
-      "descriptor_sha256": "4c583596e3260a4b476218d116d88b6e1f36d9d6c729c13075e6636b3bbff475",
+      "descriptor_sha256": "ff196f176f53d1432d90cc566ee8882ce8d9596ad2d5ec255d4fcd862441bf0b",
       "id": "leicester-lower-bailey-terrace"
     },
     {
