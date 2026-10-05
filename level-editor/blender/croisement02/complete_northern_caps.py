@@ -37,7 +37,7 @@ def mesh_prefix(mesh, vertices=None, faces=None, loops=None):
     return hashlib.sha256(json.dumps(payload,sort_keys=True).encode()).hexdigest()
 
 
-def cap(crown, packet_path, mask, destination, edge='north'):
+def cap(crown, packet_path, mask, destination, edge='north', west_native_frame=False):
     counts = (len(crown.data.vertices),len(crown.data.polygons),len(crown.data.loops))
     observed_before = mesh_prefix(crown.data)
     packet = json.loads(packet_path.read_text())
@@ -70,6 +70,14 @@ def cap(crown, packet_path, mask, destination, edge='north'):
     patch_xs=range(0,width-24,8) if edge=='north' else range(max(0,width-130),width-24,8)
     if edge=='west':patch_xs=range(0,min(width-24,130),8)
     patches = [(px, py) for py in patch_ys for px in patch_xs if alpha[py:py+24, px:px+24].mean() > .55]
+    if west_native_frame:
+        if edge != 'west':raise ValueError('Native west frame only supports west continuation')
+        patches = [(px, py) for py in patch_ys for px in patch_xs
+                   if .2 < alpha[py:py+24, px:px+24].mean() < .7]
+        observed_indices = {v for p in crown.data.polygons if p.material_index == 0 for v in p.vertices}
+        edge_points = world[[v for v in observed_indices if world[v,0] <= 8]]
+        if not len(edge_points):raise ValueError('Native west boundary fragments missing')
+        native_depth = float(np.median(-edge_points[:,1]*COS+edge_points[:,2]*SIN))
     if not patches:
         raise ValueError('No local native leaf palette')
     rng = np.random.default_rng(74000 + mask)
@@ -91,10 +99,16 @@ def cap(crown, packet_path, mask, destination, edge='north'):
             position=center+direction*np.array([rise,radius_y,radius_x])*irregular
             if edge=='east' and position[0]<=1792:continue
             if edge=='west' and position[0]>=0:continue
+            if west_native_frame:
+                source_y = center_x + direction[2]*radius_x*irregular
+                depth = native_depth+radius_y*.15+direction[1]*radius_y*irregular
+                position[1] = -source_y*SIN-depth*COS
+                position[2] = -source_y*COS+depth*SIN
         axis = Vector(rng.normal(size=3)).normalized()
         other = axis.cross(Vector((0, 0, 1)) if abs(axis.z) < .9 else Vector((1, 0, 0))).normalized()
         third = axis.cross(other).normalized()
         size = rng.uniform(7, 12)
+        if west_native_frame:size=rng.uniform(4,7)
         px, py = patches[int(rng.integers(len(patches)))]
         for u, v in [(axis, other), (axis, third), (other, third)]:
             points = [position + size*(np.asarray(u)*su + np.asarray(v)*sv)
@@ -171,6 +185,7 @@ def cap(crown, packet_path, mask, destination, edge='north'):
     return dict(source_packet_sha256=sha(packet_path), source_image_sha256=sha(source_path),
         native_edge_span=[left,right], inferred_rise=rise, added_faces=len(new_faces),
         map_edge=edge,
+        west_native_frame=west_native_frame,
         completion_version='world-aligned-volume-v2',
         added_vertices=len(new_vertices), observed_geometry_preserved=True,
         preserved_crown_prefix_sha256=observed_before,

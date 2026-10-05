@@ -35,10 +35,14 @@ def main():
                         help='Private smooth branch falloff trial without ellipsoid tangent lips')
     parser.add_argument('--west-edge-completion', action='store_true',
                         help='Add inferred own-source leaf continuation strictly outside the west map edge')
+    parser.add_argument('--west-native-frame', action='store_true',
+                        help='Align west continuation with native boundary depth and projected vertical span')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
     source, output = args.source.resolve(), args.output.resolve()
     require(not output.exists(), 'Use a fresh candidate destination')
     require(0 <= args.fragment_jitter <= 12, 'Fragment jitter must be in0..12 native pixels')
+    require(not args.west_native_frame or args.west_edge_completion,
+            'West native frame requires west edge completion')
     source_hash = sha(source / 'model.blend')
     cfg = json.loads((source / 'workspace.json').read_text())
     refinement = json.loads((source / 'inspection/refinement.json').read_text())
@@ -154,7 +158,8 @@ def main():
             from complete_northern_caps import cap
             (output / 'inspection').mkdir()
             west_completion = cap(crown, source / 'inspection/source-packet/partition.json',
-                                  int(cfg['asset_id'].rsplit('-', 1)[1]), output / 'inspection', edge='west')
+                                  int(cfg['asset_id'].rsplit('-', 1)[1]), output / 'inspection', edge='west',
+                                  west_native_frame=args.west_native_frame)
         for relative in ['workspace.json', 'source-masks.json', 'modified/views.json',
                          'inspection/refinement.json', 'inspection/source-coverage/report.json']:
             target = output / relative
