@@ -16,7 +16,7 @@ def shape(obj):return ([tuple(v.co) for v in obj.data.vertices],[tuple(f.vertice
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('index',type=int,choices=[43,45,46]);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:]);index=args.index;old=tree_workspace(index)
-    prototype=OUT/f'restart2-wood/tree{index}-branch-fitted-v2';worker=OUT/'restart2-wood/branch-projected-v3/assets'/old.name;domain=old;proto=json.loads((prototype/'evidence.json').read_text());base=Path(proto['previous_worker']);prototype_hash=sha(prototype/'model.blend');baked_hash=sha(worker/'model.blend')
+    prototype=OUT/f'restart2-wood/tree{index}-branch-fitted-v{3 if index==46 else 2}';worker=OUT/f'restart2-wood/branch-projected-v{4 if index==46 else 3}/assets'/old.name;domain=old;proto=json.loads((prototype/'evidence.json').read_text());base=Path(proto['previous_worker']);prototype_hash=sha(prototype/'model.blend');baked_hash=sha(worker/'model.blend')
     snapshot=prototype/'projected-before-restore.blend'
     if snapshot.exists():
         if sha(snapshot)!=baked_hash:raise ValueError('Earlier bake snapshot differs; preserve it')
