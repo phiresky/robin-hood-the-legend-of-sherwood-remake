@@ -213,9 +213,10 @@ test("wall lighting follows repeated and turned paths and preserves ambience fil
   const ground = bentCompiled.sight_obstacles.find(
     (obstacle) => obstacle.projection_area && obstacle.points.every((point) => point.z_top === 0),
   );
-  assert.ok(ground?.projection_area);
+  assert.ok(Array.isArray(ground?.projection_area));
+  const groundLayer = ground.projection_area[1];
   assert.ok(
-    bentCompiled.light_sectors!.every((light) => light.layer !== ground.projection_area![1]),
+    bentCompiled.light_sectors!.every((light) => light.layer !== groundLayer),
   );
   delete asset.gameplay!.lights[0]!.receiverSegments;
   assert.deepEqual(

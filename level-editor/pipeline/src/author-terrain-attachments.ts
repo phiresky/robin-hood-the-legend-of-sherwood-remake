@@ -14,7 +14,13 @@ import type { Vec3 } from "../../shared/src/scene.ts";
 import { configureAssetGameplay, type GameplayEdit } from "./configure-surface-jumps.ts";
 
 export interface TerrainAttachmentRule {
-  kind: "mask" | "interior-door" | "passage-outside" | "passage-inside" | "projection-receiver";
+  kind:
+    | "mask"
+    | "interior-door"
+    | "passage-outside"
+    | "passage-inside"
+    | "projection-receiver"
+    | "control";
   id: string;
   node: string;
   /** Reviewed asset-local anchor; reject changed ownership or geometry on reapplication. */
@@ -57,16 +63,23 @@ export function authorTerrainAttachments(
       rule.kind === "projection-receiver"
         ? (gameplay.projectionReceivers?.filter((r) => r.id === rule.id) ?? [])
         : [];
-    if (mask.length + doors.length + receivers.length !== 1)
+    const controls =
+      rule.kind === "control"
+        ? (gameplay.movementTransitions?.filter((t) => t.id === rule.id) ?? [])
+        : [];
+    if (mask.length + doors.length + receivers.length + controls.length !== 1)
       throw new Error(`Terrain attachment needs one local feature ${key}`);
-    if ((mask[0] ?? doors[0] ?? receivers[0])!.node !== rule.node)
+    if ((mask[0] ?? doors[0] ?? receivers[0] ?? controls[0])!.node !== rule.node)
       throw new Error(`Terrain attachment owner changed ${key}`);
     const inside = rule.kind === "passage-inside";
     const anchor =
-      mask[0]?.anchor ?? receivers[0]?.anchor ?? (inside ? doors[0]!.inside : doors[0]!.outside);
+      mask[0]?.anchor ??
+      receivers[0]?.anchor ??
+      controls[0]?.waypoint ??
+      (inside ? doors[0]!.inside : doors[0]!.outside);
     if (anchor.some((v, i) => Math.abs(v - rule.anchor[i]!) > 1e-4))
       throw new Error(`Terrain attachment anchor changed ${key}`);
-    if (inside ? doors[0]?.insideAnchor : doors[0]?.outsideAnchor)
+    if (controls[0]?.waypointAnchor || (inside ? doors[0]?.insideAnchor : doors[0]?.outsideAnchor))
       throw new Error(`Terrain attachment conflicts with door anchor ${key}`);
     const [x, y, z] = anchor;
     const segment: [Vec3, Vec3] = [
@@ -76,11 +89,13 @@ export function authorTerrainAttachments(
     const previous =
       mask[0]?.receiverSegment ??
       receivers[0]?.receiverSegment ??
+      controls[0]?.waypointReceiverSegment ??
       (inside ? doors[0]?.insideReceiverSegment : doors[0]?.outsideReceiverSegment);
     if (previous && JSON.stringify(previous) !== JSON.stringify(segment))
       throw new Error(`Terrain attachment already has different bounds ${key}`);
     if (mask[0]) mask[0].receiverSegment = segment;
     else if (receivers[0]) receivers[0].receiverSegment = segment;
+    else if (controls[0]) controls[0].waypointReceiverSegment = segment;
     else if (inside) doors[0]!.insideReceiverSegment = segment;
     else doors[0]!.outsideReceiverSegment = segment;
   }

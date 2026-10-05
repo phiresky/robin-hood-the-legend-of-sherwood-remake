@@ -5,11 +5,45 @@ import {
   maskAssetCompilerFixture,
   anchoredReceiverCompilerFixture,
   assetCompilerFixture,
+  terrainTransitionCompilerFixture,
 } from "../../shared/test-fixtures/asset-gameplay.ts";
 import {
   authorTerrainAttachments,
   type TerrainAttachmentRule,
 } from "./author-terrain-attachments.ts";
+import { compileAssetGameplay } from "../../shared/src/compile-asset-gameplay.ts";
+
+test("control attachment recipes follow receiving terrain and reject stacked floors", () => {
+  const { document, assets, hut } = terrainTransitionCompilerFixture();
+  const control = hut.gameplay!.movementTransitions![0]!;
+  delete control.waypointReceiverSegment;
+  const rule: TerrainAttachmentRule = {
+    kind: "control",
+    id: control.id,
+    node: control.node,
+    anchor: control.waypoint,
+    below: 10,
+    above: 10,
+  };
+  const before = structuredClone(hut);
+  const gameplay = authorTerrainAttachments(hut, [rule]);
+  assert.deepEqual(hut, before);
+  hut.gameplay = gameplay;
+  assert.ok(
+    compileAssetGameplay(document, assets, [0, 0, 2000, 2000]).movement_transitions!.length,
+  );
+  assert.deepEqual(authorTerrainAttachments(hut, [rule]), gameplay);
+  assets.get("marker")!.gameplay!.surfaces[1]!.height = 7;
+  assert.throws(
+    () => compileAssetGameplay(document, assets, [0, 0, 2000, 2000]),
+    /exactly one surface/,
+  );
+  hut.gameplay!.movementTransitions![0]!.waypointAnchor = control.waypoint;
+  assert.throws(
+    () => authorTerrainAttachments(hut, [rule]),
+    /conflicts|invalid movement transition/,
+  );
+});
 
 test("passage recipes author each endpoint independently and retain all door rules", () => {
   const { hut } = assetCompilerFixture();

@@ -4,6 +4,21 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Reviewed terrain attachment for controls (2026-10-05)
+
+The terrain-attachment authoring utility now supports `control` recipes targeting
+an asset-local transition waypoint. Rules retain explicit owner, anchor and
+finite vertical reach checks; existing waypoint anchors or conflicting receiver
+segments are rejected. Runtime compilation still requires exactly one receiving
+surface. Tests cover sloped ground, competing stacked floors, repeatable
+authoring and unchanged input definitions. Fourteen focused tests, pipeline
+typechecking and targeted authoring lint pass.
+
+This adds the missing authoring path for controls such as Wychford's displaced
+tower reveal. No tower probe bounds have been published yet: choosing and
+validating those bounds against the tower's intended approach remains separate
+from providing the authoring mechanism.
+
 ## Calibrated Wychford browser ZIP round trip (2026-10-05)
 
 The corrected full-library browser fixture produces
