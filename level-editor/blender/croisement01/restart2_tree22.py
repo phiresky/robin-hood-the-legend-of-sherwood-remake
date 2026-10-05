@@ -121,7 +121,8 @@ def main():
             # Keep the cut boundary exact; extend only its lower closure.
             bm=bmesh.new();bm.from_mesh(obj.data)
             for vertex in bm.verts:vertex.co=obj.matrix_world@vertex.co
-            cut_z=foot.z+8
+            cut_z=foot.z+(30 if args.revision>=7 else 8)
+            basal_radius=8.5 if args.revision>=7 else 6.5
             bmesh.ops.bisect_plane(bm,geom=list(bm.verts)+list(bm.edges)+list(bm.faces),dist=.0001,plane_co=Vector((0,0,cut_z)),plane_no=Vector((0,0,1)),clear_inner=True,clear_outer=False)
             boundary=[edge for edge in bm.edges if edge.is_boundary]
             if not boundary or any(abs(v.co.z-cut_z)>.01 for e in boundary for v in e.verts):raise ValueError('Unexpected basal cut boundary')
@@ -141,7 +142,7 @@ def main():
             lower=[]
             for vertex in ring:
                 direction=Vector((vertex.co.x-center.x,vertex.co.y-center.y,0)).normalized()
-                x=center.x+direction.x*6.5;y=center.y+direction.y*6.5
+                x=center.x+direction.x*basal_radius;y=center.y+direction.y*basal_radius
                 support=terrain.ray_cast(Vector((x,y,cut_z+40)),Vector((0,0,-1)),100)[0]
                 if support is None:raise ValueError('Missing continuous root-ring support')
                 lower.append(bm.verts.new((x,y,support.z-.4)))
@@ -153,7 +154,7 @@ def main():
             inverse=obj.matrix_world.inverted()
             for vertex in bm.verts:vertex.co=inverse@vertex.co
             bm.to_mesh(obj.data);bm.free();obj.data.update()
-            (dest/'basal-flare.json').write_text(json.dumps(dict(method='Replace basal point closure with a continuous bank-conforming ring; retain the existing cut boundary exactly.',cut_height=cut_z,ring_vertices=len(ring),radius=6.5,penetration=.4,status='Private candidate; native coverage and contact review required'),indent=2)+'\n')
+            (dest/'basal-flare.json').write_text(json.dumps(dict(method='Replace basal point closure with a continuous bank-conforming ring; retain the existing cut boundary exactly.',cut_height=cut_z,ring_vertices=len(ring),radius=basal_radius,penetration=.4,status='Private candidate; native coverage and contact review required'),indent=2)+'\n')
         elif args.revision>=4:
             foot=foot+shift
             verts=[];faces=[];count=24
