@@ -105,7 +105,11 @@ round-2/assets/<asset-id>/
 ```
 
 The eight views are four columns by two rows with identical cameras in input
-and modified output. Use the same framing and resolution. The context image is
+and modified output. View 0, at the top left, must always use the original
+game-art camera direction and projection, including state and contact sheets.
+Check this against the native source overlay; an arbitrary first orbit angle
+is not sufficient. Keep this ordering in solid and textured comparisons.
+Use the same framing and resolution. The context image is
 the original map crop, not a synthesized texture. Back or unseen surfaces are
 shown as neutral gray so the worker can distinguish source evidence from
 inferred geometry.
@@ -113,6 +117,11 @@ inferred geometry.
 Workers may create extra close-ups, reverse views, or alternative camera
 angles when needed. These supplements must not replace the frozen eight-view
 packet.
+
+When importing neighboring objects for contact or occlusion reviews, link them
+and update the dependency graph before reading their world transforms. Compare
+the evaluated transforms with the separately reopened source scene; an unlinked
+library object can report an identity matrix and invalidate the context review.
 
 ## 4. Use masks and patches as ownership authority
 
