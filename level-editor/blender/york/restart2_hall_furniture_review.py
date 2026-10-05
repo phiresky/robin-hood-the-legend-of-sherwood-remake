@@ -1,11 +1,15 @@
 """Render private furniture solids without claiming revealed texture ownership."""
 import json
+import argparse
 from pathlib import Path
 import sys
 
 ROOT=Path(__file__).resolve().parents[3]
 OUT=ROOT/'level-editor/work/york-refinement'
-DEST=OUT/'restart2/hall-furniture-v1/solid-inspection'
+parser=argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--version',required=True)
+args=parser.parse_args(sys.argv[sys.argv.index('--')+1:])
+DEST=OUT/'restart2'/args.version/'solid-inspection'
 if DEST.exists():raise FileExistsError(DEST)
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
@@ -22,6 +26,6 @@ for obj in bpy.data.collections['york Working'].all_objects:
         obj['asset_group']='private-york-hall-furniture'
 render_review(DEST,scene_name='york Refinement',collection_name='york Working',
               asset_id='private-york-hall-furniture',source_path=OUT/'baseline/revealed.png',
-              width=384,height=512,framing_padding=1.15,lighting=config['lighting'])
+              width=384,height=512,framing_padding=1.5,lighting=config['lighting'])
 (DEST/'diagnostic-scope.json').write_text(json.dumps({'scope':'Solid geometry inspection only. Any helper source-textured output is not state ownership evidence.',
     'saved_model_unchanged':True,'approval':False},indent=2)+'\n')

@@ -15,6 +15,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('model', type=Path)
     parser.add_argument('output', type=Path)
+    parser.add_argument('--furniture-only', action='store_true',
+                        help='Independent native furniture-mask fit; omits room context explicitly')
     args = parser.parse_args(sys.argv[sys.argv.index('--')+1:])
     if args.output.exists():
         raise FileExistsError(args.output)
@@ -29,23 +31,31 @@ def main():
     bpy.ops.wm.open_mainfile(filepath=str(args.model.resolve()))
     scene = bpy.data.scenes['york Refinement']
     vertices, triangles, owners = [], [], []
+    furniture={824:631,825:634,826:633,827:640,828:632,829:636}
+    nodes={f'building-{n}' for n in furniture}
     for obj in scene.objects:
         if obj.type != 'MESH' or obj.hide_render:
+            continue
+        if args.furniture_only and obj.get('source_node') not in nodes:
             continue
         start = len(vertices)
         vertices += [obj.matrix_world @ v.co for v in obj.data.vertices]
         obj.data.calc_loop_triangles()
         triangles += [tuple(start+i for i in triangle.vertices) for triangle in obj.data.loop_triangles]
-        owners += [(obj.get('asset_group'),obj.get('source_node',obj.name))] * len(obj.data.loop_triangles)
+        owners += [(obj.get('source_node') if args.furniture_only else obj.get('asset_group'),obj.get('source_node',obj.name))] * len(obj.data.loop_triangles)
     tree = BVHTree.FromPolygons(vertices, triangles, all_triangles=True)
     sine, cosine = math.sin(math.radians(35)), math.cos(math.radians(35))
     ray = Vector((0,-cosine,sine))
-    source = Image.open(OUT/'baseline/covered.png').convert('RGB')
+    source = Image.open(OUT/'baseline'/('revealed.png' if args.furniture_only else 'covered.png')).convert('RGB')
     args.output.mkdir(parents=True)
     results = []
-    for asset, image, origin in (
+    domains=[
             ('york-market-southeast-tall-narrow-house', OUT/'geometry-pass-01/narrow-house-domain-mask.png', (550,1205)),
-            ('york-southwest-square-west-house', OUT/'restart2/main-house-domain.png', (550,1100))):
+            ('york-southwest-square-west-house', OUT/'restart2/main-house-domain.png', (550,1100))]
+    if args.furniture_only:
+        masks={m['index']:m for m in json.loads((OUT/'baseline/masks/manifest.json').read_text())['masks']}
+        domains=[(f'building-{n}',OUT/'baseline/masks'/masks[index]['png'],masks[index]['box_top_left']) for n,index in furniture.items()]
+    for asset, image, origin in domains:
         domain = np.array(Image.open(image).convert('L')) > 0
         size = domain.shape[::-1]
         crop = (*origin,origin[0]+size[0],origin[1]+size[1])
@@ -72,7 +82,8 @@ def main():
         results.append(dict(asset=asset,domain_pixels=int(domain.sum()),domain_sha256=hashlib.sha256(image.read_bytes()).hexdigest(),
                             counts=dict(counts),owned_fraction=counts['OWNED_FIRST_HIT']/int(domain.sum())))
     (args.output/'report.json').write_text(json.dumps(dict(model_sha256=hashlib.sha256(args.model.read_bytes()).hexdigest(),
-        scope='Opaque saved geometry first-hit preflight; native domains reviewed independently. Missing pixels are not waived or subtracted.',assets=results),indent=2)+'\n')
+        scope=('Opaque saved geometry first-hit preflight; native domains reviewed independently. Missing pixels are not waived or subtracted.'+
+               (' Furniture-only diagnostic excludes all room context; not a complete revealed state.' if args.furniture_only else '')),assets=results),indent=2)+'\n')
     print(json.dumps(results))
 
 

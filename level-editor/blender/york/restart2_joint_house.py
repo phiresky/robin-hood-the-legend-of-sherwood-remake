@@ -20,6 +20,8 @@ def main():
     parser.add_argument('--bay-outline', action='store_true')
     parser.add_argument('--notch-intercept', type=float, default=1153)
     parser.add_argument('--retain-upper-gable', action='store_true')
+    parser.add_argument('--gable-eave', action='store_true')
+    parser.add_argument('--extend-left-roof', action='store_true')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
     destination = OUT / 'restart2' / args.version
     if destination.exists():
@@ -144,6 +146,11 @@ def main():
         vertices = [tuple(obj.matrix_world @ v.co) for v in top.verts]
         top_indices = [tuple(v.index for v in face.verts) for face in top.faces]
         top.free()
+        if node=='building-311' and args.extend_left_roof:
+            # Continue the entire low roof edge to the observed projecting
+            # eave, rather than attaching an unsupported narrow timber.
+            vertices=[(x-15.5,y+7.34/sine,z-13.353/cosine) if z*cosine<250 else (x,y,z)
+                      for x,y,z in vertices]
         n = len(vertices)
         vertices += [(x, y, z-2.5/cosine) for x, y, z in vertices]
         faces = top_indices
@@ -176,6 +183,26 @@ def main():
             start = len(vertices)
             vertices += body_vertices
             faces += [tuple(start+i for i in face) for face in body_faces]
+            if args.gable_eave:
+                # The painted projecting timber lies beyond the coarse roof
+                # proxy. Its two source anchors are (565,1231) and (594,1222).
+                # Depth follows the existing front gable plane; section and
+                # hidden end join remain inferred.
+                from mathutils import Vector
+                def timber(a,b,width,depth):
+                    a=Vector((a[0],-a[1]/sine,a[2]/cosine))
+                    b=Vector((b[0],-b[1]/sine,b[2]/cosine))
+                    axis=(b-a).normalized()
+                    transverse=axis.cross(Vector((0,1,0))).normalized()*width/2
+                    normal=axis.cross(transverse).normalized()*depth/2
+                    start=len(vertices)
+                    for point in (a,b):
+                        vertices.extend(tuple(point+s*transverse+t*normal)
+                                        for s,t in ((-1,-1),(1,-1),(1,1),(-1,1)))
+                    faces.extend(tuple(start+i for i in f) for f in
+                                 ((3,2,1,0),(4,5,6,7),(0,1,5,4),(1,2,6,5),(2,3,7,6),(3,0,4,7)))
+                timber((565,1468.5,237.5),(594,1482.5,260.5),3,3)
+                timber((578.5,1474.9,226),(578.5,1474.9,244.9),3,3)
         replace(obj, vertices, faces)
 
     bay_source = OUT / 'geometry-pass-01/assets' / BAY / 'model.blend'
@@ -245,6 +272,8 @@ def main():
               'bay_outline_revision': args.bay_outline,
               'notch_intercept': args.notch_intercept,
               'retain_upper_gable': args.retain_upper_gable,
+              'gable_eave': args.gable_eave,
+              'extend_left_roof': args.extend_left_roof,
               'changes': changes, 'outside_meshes_preserved': len(outside),
               'inferred': ['Main gable body recessed below unchanged roof tops.',
                            'Roof underside thickness 2.5 native height units; body and roof are separate closed volumes.'],
