@@ -55,12 +55,22 @@ with foreground mask 48 is explicitly unresolved and excluded from appearance
 approval. Gray rear stone needs texture fill after geometry approval and fringe
 ownership resolution. No actual surrounding vegetation is complete.
 
-Eastern rock version 8 passed the worker's source, solid, saved-material and
-ground-contact review and awaits independent review. A closed tapered base
+Eastern rock version 8 passed source, solid, saved-material and diagnostic
+ground-contact review, including independent review. Its immutable geometry
+card is `restart2/geometry-round3-east-rocks-v8/review-candidates.json`, reserved
+for the subsequent pool rather than the closing batch-v7. A closed tapered base
 replaces the earlier unsupported slab and pointed-foot drafts. Source-ray
 clipping keeps the observed upper outline. Its 89 rendered foreground-shrub
 pixels remain reserved from appearance approval; real shrub/tree/terrain
-context is incomplete. The draft is not yet a gallery candidate.
+context is incomplete. Its inferred upper height is 67 versus the coarse
+obstacle's 51.29; gameplay geometry has not changed.
+
+Shrub 61 is in source preflight, with no new geometry or ownership approval.
+The tentative plant domain reserves 148 traced stone pixels. Across the saved
+animated crown frames, 1,073 of its 4,339 pixels are covered at least once,
+including 362 intermittently covered pixels. This is a saved-reference alpha
+diagnostic, not runtime draw-order proof or permission to discard the static
+plant. Evidence is in `restart2/east-shrub61-preflight/all-frame-overlap.json`.
 
 Wind animation, other trees,
 undergrowth, rocks, terrain, water and mission appearances remain unfinished.
