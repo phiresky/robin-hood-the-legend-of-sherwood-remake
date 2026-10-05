@@ -17,6 +17,22 @@ def read(path):
     return json.loads(path.read_text())
 
 
+def verify_protected_rgba(source, result, mask):
+    if mask.mode == 'RGBA':
+        editable = np.asarray(mask)[:, :, 3] == 0
+    elif mask.mode == 'L':
+        editable = np.asarray(mask) > 127
+    else:
+        raise ValueError('Unsupported authoritative edit-mask mode: ' + mask.mode)
+    if source.shape != result.shape or source.shape[:2] != editable.shape:
+        raise ValueError('Protected RGBA dimensions differ')
+    if not np.any(editable) or not np.any(~editable):
+        raise ValueError('Expected both editable and protected pixels')
+    if np.any(source[~editable] != result[~editable]):
+        raise ValueError('Protected RGBA bytes differ')
+    return int(np.count_nonzero(editable))
+
+
 def audit(experiment):
     experiment = experiment.resolve()
     bake = experiment / 'baked-preserved-v1'
@@ -34,9 +50,7 @@ def audit(experiment):
         raise ValueError('Generation changed protected source pixels')
     source = np.array(Image.open(experiment / 'input.png').convert('RGBA'))
     result = np.array(Image.open(preserved).convert('RGBA'))
-    editable = np.array(Image.open(experiment / 'mask.png').convert('L')) > 127
-    if source.shape != result.shape or np.any(source[~editable] != result[~editable]):
-        raise ValueError('Protected RGBA bytes differ')
+    verify_protected_rgba(source, result, Image.open(experiment / 'mask.png'))
     launch = read(experiment / 'bake-launch.json')
     if sha(launch['recipe']) != launch['recipe_sha256']:
         raise ValueError('Archived launch recipe changed')
