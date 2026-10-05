@@ -11,7 +11,7 @@ from catalog import OUT
 from evidence_io import sha,write_json
 from tree_geometry import SIN,RAY
 from render_slots import acquire,release
-DEST=OUT/'restart2-state/receiver-rebind-v1'
+DEST=OUT/'restart2-state/receiver-rebind-v2'
 MODELS=[('ground',OUT/'restart2-ground-completion/approved-fill-retry-v2/bake-v1/model.blend','16c638be71eeb76e86439a0fdb14bac1e7bb9562afe20d175b58d0df96fb4ec2'),('bank',OUT/'restart2-bank321/packaged-v1/assets/croisement02-north-woodland-bank/model.blend','69ecb7b704e30d6d64565a44aa810a21b924195609dbe7ac35818a0209137641')]
 def main():
  if DEST.exists():raise FileExistsError(DEST)
@@ -20,9 +20,13 @@ def main():
   DEST.mkdir();old=OUT/'state-ground-receivers-v2/receiver-transitions.json';ledger=json.loads(old.read_text());vertices=[];faces=[];labels=[];objects=[]
   for label,path,digest in MODELS:
    if sha(path)!=digest:raise ValueError('Receiver changed '+str(path))
-   bpy.ops.wm.open_mainfile(filepath=str(path));bpy.context.view_layer.update();deps=bpy.context.evaluated_depsgraph_get()
-   for obj in bpy.context.scene.objects:
-    if obj.type!='MESH' or obj.hide_render:continue
+   bpy.ops.wm.open_mainfile(filepath=str(path))
+   if label=='bank':
+    workspace=json.loads((path.parent/'workspace.json').read_text());bpy.context.window.scene=bpy.data.scenes[workspace['scene_name']];selected=[o for o in bpy.data.collections[workspace['collection_name']].all_objects if o.type=='MESH' and o.get('asset_group')==workspace['asset_id']]
+    if len(selected)!=5:raise ValueError('Expected exactly five owned bank meshes')
+   else:selected=[bpy.data.objects['Croisement02 Terrain']]
+   bpy.context.view_layer.update();deps=bpy.context.evaluated_depsgraph_get()
+   for obj in selected:
     evaluated=obj.evaluated_get(deps);mesh=evaluated.to_mesh();mesh.calc_loop_triangles();offset=len(vertices);matrix=evaluated.matrix_world.copy()
     vertices.extend([matrix@v.co for v in mesh.vertices]);faces.extend([tuple(offset+i for i in t.vertices) for t in mesh.loop_triangles]);labels.extend([len(objects)]*len(mesh.loop_triangles));objects.append({'receiver':label,'name':obj.name,'matrix_world':[list(r) for r in matrix],'vertices':len(mesh.vertices),'triangles':len(mesh.loop_triangles)});evaluated.to_mesh_clear()
   tree=BVHTree.FromPolygons(vertices,faces,all_triangles=True);cache={};records=[]
