@@ -15,7 +15,7 @@ from restart2_tree71 import tube
 
 def main():
  if shutil.disk_usage(OUT).free<25*1024**3:raise ValueError('Disk floor25GiB')
- dest=OUT/'restart2/tree19-v5';dest.mkdir(exist_ok=False)
+ dest=OUT/'restart2/tree19-v6';dest.mkdir(exist_ok=False)
  acquire();bpy.ops.wm.open_mainfile(filepath=str(OUT/'croisement01-grouped.blend'));bpy.context.preferences.filepaths.save_version=0
  working=bpy.data.collections['Croisement01 Working'];asset='croisement01-tree-19';name='Northern Forked Oak'
  objects={int(o['source_node'].split('-')[-1]):o for o in working.all_objects if o.type=='MESH' and o.get('source_node') in ['building-050','building-051']};assert len(objects)==2
@@ -61,8 +61,8 @@ def main():
   point_on_branch=vertex.co;screen_y=-point_on_branch.y*SIN-point_on_branch.z*COS
   if point_on_branch.x<1200 or not branch_rows[0]<=screen_y<=branch_rows[-1]:continue
   center=float(np.interp(screen_y,branch_rows,branch_centers));width=float(np.interp(screen_y,branch_rows,branch_widths))
-  factor=min(1,max(0,(point_on_branch.x-1200)/5));point_on_branch.x+=1.5*max(-1,min(1,(point_on_branch.x-center)/max(width/2,1)))*factor;expanded_vertices+=1
- body.data.update();(dest/'post-voxel-branch-margin.json').write_text(json.dumps(dict(margin_per_side=1.5,vertices=expanded_vertices,scope='Whole rounded crossing branch only; restore source pixel-center coverage after voxel smoothing.'),indent=2)+'\n')
+  factor=min(1,max(0,(point_on_branch.x-1200)/5));point_on_branch.x+=1.8*max(-1,min(1,(point_on_branch.x-center)/max(width/2,1)))*factor;expanded_vertices+=1
+ body.data.update();(dest/'post-voxel-branch-margin.json').write_text(json.dumps(dict(margin_per_side=1.8,vertices=expanded_vertices,scope='Whole rounded crossing branch only; restore source pixel-center coverage after voxel smoothing.'),indent=2)+'\n')
  bm=bmesh.new();bm.from_mesh(body.data);remaining=set(bm.verts);components=[]
  while remaining:
   pending=[remaining.pop()];component=[]
