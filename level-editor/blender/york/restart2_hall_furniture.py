@@ -98,9 +98,9 @@ for n in range(824,830):
             volume([(.23*math.cos(i*math.tau/8),.23*math.sin(i*math.tau/8)) for i in range(8)],floor+1.5,top-2)
             box(-.6,-.6,.6,.6,floor,floor+1.5)
         else:
-            for y in (-.55,.55):
-                beam((-.65,y,floor+1),(.65,y,top-2),.8)
-                beam((.65,y,floor+1),(-.65,y,top-2),.8)
+            for x in (-.55,.55):
+                beam((x,-.85,floor+1),(x,.65,top-2),.8)
+                beam((x,.85,floor+1),(x,-.65,top-2),.8)
     elif n==824:
         # Source shows a closed writing cabinet, not an open-legged table.
         box(-1,-1,1,1,top-2,top)
@@ -109,9 +109,9 @@ for n in range(824,830):
             for y in (-.7,.7):box(x-.15,y-.15,x+.15,y+.15,floor,floor+1.5)
     elif n==828:
         box(-1,-1,1,1,top-1.5,top)
-        for y in (-.75,.75):
-            beam((-.85,y,floor+1),(.85,y,top-1.5),1.0)
-            beam((.85,y,floor+1),(-.85,y,top-1.5),1.0)
+        for x in (-.75,.75):
+            beam((x,-1.05,floor+1),(x,.85,top-1.5),1.0)
+            beam((x,1.05,floor+1),(x,-.85,top-1.5),1.0)
     else:
         box(-1,-1,1,1,top-2,top)
         for x in (-.82,.82):
