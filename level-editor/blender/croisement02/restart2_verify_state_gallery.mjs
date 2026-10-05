@@ -6,6 +6,7 @@ import {tmpdir} from 'node:os';
 import {createHash} from 'node:crypto';
 import {chromeEndpoint,socketOpen,evaluate} from '../../app/tests/cdp.mjs';
 
+const expectedCards=Number(process.argv[3]||4);
 const root=resolve('.'),base=join(root,'level-editor/work/croisement02-refinement/restart2-state');
 const server=createServer(async(req,res)=>{try{
   const pathname=decodeURIComponent(new URL(req.url,'http://localhost').pathname);
@@ -25,11 +26,11 @@ try{
   const folder=join(base,process.argv[2]||'scoped-geometry-review-v2','gallery');
   await command('Emulation.setDeviceMetricsOverride',{width:1440,height:1100,deviceScaleFactor:1,mobile:false});
   await command('Page.navigate',{url:origin+'/@fs/'+join(folder,'index.html')});
-  for(let i=0;i<150;i++){if(await evaluate(ws,++id,'document.querySelectorAll("article").length===4'))break;await new Promise(r=>setTimeout(r,100));}
+  for(let i=0;i<150;i++){if(await evaluate(ws,++id,`document.querySelectorAll("article").length===${expectedCards}`))break;await new Promise(r=>setTimeout(r,100));}
   await evaluate(ws,++id,'document.querySelectorAll("img").forEach(i=>i.loading="eager");true');
   let result;
   for(let i=0;i<150;i++){result=await evaluate(ws,++id,'({cards:[...document.querySelectorAll("article")].map(a=>({id:a.id,revision:a.dataset.reviewRevision,approveEnabled:!a.querySelector("option[value=approved]").disabled})),images:[...document.images].map(i=>({src:i.getAttribute("src"),loaded:i.complete&&i.naturalWidth>0}))})');if(result.images.every(i=>i.loaded))break;await new Promise(r=>setTimeout(r,100));}
-  if(result.cards.length!==4||result.cards.some(c=>!c.approveEnabled)||result.images.some(i=>!i.loaded))throw Error(JSON.stringify(result));
+  if(result.cards.length!==expectedCards||result.cards.some(c=>!c.approveEnabled)||result.images.some(i=>!i.loaded))throw Error(JSON.stringify(result));
   for(const card of result.cards){await evaluate(ws,++id,`document.getElementById(${JSON.stringify(card.id)}).scrollIntoView();true`);const shot=await command('Page.captureScreenshot',{format:'png'});await writeFile(join(folder,card.id+'-browser.png'),Buffer.from(shot.data,'base64'));}
   result.status='PASS gallery load and evidence image availability';result.evidence_sha256=createHash('sha256').update(await readFile(join(folder,'evidence.json'))).digest('hex');await writeFile(join(folder,'browser-verification.json'),JSON.stringify(result,null,2)+'\n');console.log(result.status,result.cards.length,result.images.length);
 
