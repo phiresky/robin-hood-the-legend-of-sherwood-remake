@@ -111,13 +111,18 @@ def main():
             if used!=set(members): raise ValueError('Uncarded texture member')
     for entry in config.get('supplementary_evidence',[]):
         sources.append(dict(kind='supplementary provenance',evidence=resource(entry['file'],entry['sha256'])))
+    resource_bytes = sum(Path(entry['source']).stat().st_size for entry in resources.values())
+    if resource_bytes > config.get('max_resource_bytes', float('inf')):
+        raise ValueError(f'Review resources exceed write budget: {resource_bytes}')
+    if shutil.disk_usage(out.parent).free - resource_bytes < config.get('minimum_free_bytes', 0):
+        raise ValueError('Review resources would cross the reserved disk floor')
     out.mkdir(parents=True)
     (out/'resources').mkdir()
     for rel,entry in resources.items():
         shutil.copyfile(entry['source'],out/rel)
         if sha(out/rel)!=entry['sha256']: raise ValueError(f'Copy mismatch: {rel}')
     evidence=dict(status='Frozen pending user review',title=config['title'],cards=cards,sources=sources,
-        resources=resources,card_count=len(cards),decision_count=sum(len(c['members']) for c in cards),
+        resources=resources,resource_bytes=resource_bytes,card_count=len(cards),decision_count=sum(len(c['members']) for c in cards),
         approval_policy='Only explicit decisions for these exact member revisions apply; Each geometry, texture and source-state application scope remains separate.')
     (out/'evidence.json').write_text(json.dumps(evidence,indent=2)+'\n')
     escaped=lambda s:html.escape(str(s),quote=True)
