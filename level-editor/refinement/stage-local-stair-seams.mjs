@@ -11,7 +11,13 @@ const [asset, ...arguments_] = process.argv.slice(2);
 const external = new Set(
   arguments_.filter((value) => value.startsWith("--external=")).map((value) => value.slice(11)),
 );
-const ids = arguments_.filter((value) => !value.startsWith("--external="));
+const floorLimits = arguments_.filter((value) => value.startsWith("--floor-shift-limit="));
+assert.ok(floorLimits.length <= 1, "Provide at most one floor shift limit");
+const floorShiftLimit = floorLimits.length ? Number(floorLimits[0].split("=")[1]) : 2;
+assert.ok(Number.isFinite(floorShiftLimit) && floorShiftLimit > 0, "Invalid floor shift limit");
+const ids = arguments_.filter(
+  (value) => !value.startsWith("--external=") && !value.startsWith("--floor-shift-limit="),
+);
 const usedExternal = new Set();
 assert.ok(asset && ids.length, "Provide an asset and selected stair lift IDs");
 const index = JSON.parse(await fs.readFile("library/3d-assets/index.json", "utf8")).assets;
@@ -47,7 +53,7 @@ for (const id of ids) {
     const z = endpoints.reduce((a, b) =>
       Math.abs(heights[i] - a) < Math.abs(heights[i] - b) ? a : b,
     );
-    if (Math.abs(heights[i] - z) / length > 2) return point;
+    if (Math.abs(heights[i] - z) / length > floorShiftLimit) return point;
     floor.height[i] = z;
     return seat(point, z);
   });
@@ -148,7 +154,13 @@ await fs.writeFile(`${output}/edits.json`, JSON.stringify([{ asset, descriptorSh
 await fs.writeFile(
   `${output}/review.json`,
   JSON.stringify(
-    { scope: "unpublished local stair seam candidate", asset, descriptorSha256, changes },
+    {
+      scope: "unpublished local stair seam candidate",
+      asset,
+      descriptorSha256,
+      floorShiftLimit,
+      changes,
+    },
     null,
     2,
   ),

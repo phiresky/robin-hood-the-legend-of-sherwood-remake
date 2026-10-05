@@ -110,10 +110,10 @@ Derby/Wychford pins refreshed. All eight fresh component exports exactly match
 the native-tested staged descriptors. The composite keep remains unpublished;
 complete-sprite and rendered verification remain open.
 All ten scenes reopen after publication, and full Derby passes all five control
-apply/reset checks. Three other Derby stairs still retain projected navigation
+apply/reset checks. Two other Derby stairs still retain projected navigation
 because their authored endpoints lack physical floor support.
-A library-wide local-anchor audit finds this issue in 45 of 53 authored stair
-definitions: Derby 3/10, Leicester 8/8, Lincoln 6/6, Nottingham 11/12,
+A library-wide local-anchor audit finds this issue in 44 of 53 authored stair
+definitions: Derby 2/10, Leicester 8/8, Lincoln 6/6, Nottingham 11/12,
 Sherwood 1/1 and York 16/16. All audited floors are planar. This checks local
 definitions, not placed connectivity or actual route failures; corrections and
 moved/rotated native traversal checks remain necessary across these assets.
@@ -138,6 +138,14 @@ scenes reopen. Stair handoffs query the actual seam, with a bounded floating-poi
 boundary probe, instead of the outside waypoint. The upper-west candidate passes
 routes but its visible stair mesh and authored floor disagree, so it remains
 unpublished.
+The upper gatehouse stair is now published after a mesh-reviewed 2.567-unit
+corner correction. Its eight placements pass 16/16 actor routes and eight
+control apply/reset checks; full Derby passes 28/28 routes and all five controls.
+Runtime landing binding now preserves an exact receiver whose rounded footprint
+fits inside a joined movement region, even when another receiver occupies the
+rest at a different height. Overhanging or unsupported receivers still reject.
+Fresh published exports exactly match the tested candidates and all ten scenes
+reopen. These remain initial-state traversal checks, not full rendered parity.
 Physical transitions
 now wait at a reached world target until animation completion, or preserve
 unfinished distance in the next movement order. An edge-on actor-loop test

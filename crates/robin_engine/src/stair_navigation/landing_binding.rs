@@ -26,6 +26,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn receiver_can_cover_part_of_a_joined_motion_region() {
+        let motion = serde_json::from_value(serde_json::json!({
+            "is_lift":false, "state_id":0, "flags":0, "skeleton_segments":[], "obstacles":[],
+            "polygon":{"points":[[0,0],[100,0],[100,100],[50,100],[50,120],[0,120]]}
+        }))
+        .unwrap();
+        let receiver = polygon(&[[0., 0.], [100., 0.], [100., 100.25], [0., 100.25]]).unwrap();
+        assert!(receiver_matches_motion(&receiver, &motion, [0.; 3]));
+        // Being assigned to the same region does not authorize an overhang
+        // whose rounded footprint extends beyond that region.
+        let overhang = polygon(&[[0., 0.], [100., 0.], [100., 101.], [0., 101.]]).unwrap();
+        assert!(!receiver_matches_motion(&overhang, &motion, [0.; 3]));
+    }
+
+    #[test]
     fn receiver_identity_ignores_rounded_vertices_inserted_on_straight_edges() {
         let motion = serde_json::from_value(serde_json::json!({
             "is_lift":false, "state_id":0, "flags":0, "skeleton_segments":[], "obstacles":[],
@@ -364,9 +379,10 @@ impl BoundPhysicalStair {
         };
         let floor = unproject(&motion.polygon.points)?;
         let mut support = if let Some(receiver) = receiver {
-            // Exact receiving geometry may encode the same motion boundary
-            // before integer-grid rounding. Use it only when that identity is
-            // proven, so unrelated overhanging receivers cannot widen support.
+            // Exact receiving geometry may encode all or part of a motion
+            // region before integer-grid rounding. Joined regions can include
+            // other receivers at different heights. Preserve this receiver only
+            // when its rounded footprint stays inside the assigned region.
             if receiver_matches_motion(receiver, motion, plane) {
                 geo::MultiPolygon::from(vec![receiver.clone()])
             } else {
@@ -595,7 +611,7 @@ fn receiver_matches_motion(
         ),
         Vec::new(),
     );
-    raw.xor(&rounded).unsigned_area() < 1e-6
+    rounded.difference(&raw).unsigned_area() < 1e-6
 }
 
 fn simplify_receiver_ring(points: &mut Vec<(f64, f64)>, tolerance: f64) {

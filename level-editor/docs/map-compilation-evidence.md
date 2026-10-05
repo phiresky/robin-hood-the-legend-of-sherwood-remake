@@ -4,6 +4,36 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Gatehouse seams and partial landing receiver binding (2026-10-05)
+
+The gatehouse floor omitted part of its upper tread. Baseline mesh review is
+`gatehouse-floor-review-GvRNU4`; candidate `local-stair-seams-z0PFF8` uses an
+explicit `--floor-shift-limit=3` authoring override (default remains two units).
+The maximum correction is 2.566319 units. Mesh review finds regular 7.08-unit
+treads and 1,293/1,297 sample hits; the four uncovered samples are at most 0.180
+units from the mesh edge. Both endpoint landing boundaries are corrected with
+the floor, and the selected authoring limit is recorded in the review.
+
+Initial placement exports `local-stair-placements-ZJiVPP` failed four of sixteen
+routes at 180 degrees, and full Derby `gatehouse-seam-full-VuUQfO` failed two of
+28. Runtime tracing showed the upper landing could not bind: its motion region
+also contains a receiver at another height. Requiring the selected receiver to
+equal the entire region clipped away the exact seam. Binding now accepts the
+receiver when its rounded footprint is contained in that region. A regression
+covers partial coverage and rejects a receiver extending outside the region;
+existing wrong-height, short-receiver and real-gap rejection tests still pass.
+
+With this fix, all 16 placement routes and eight control apply/reset checks pass,
+as do full Derby's 28 routes, native construction and five controls. Fourteen
+stair-navigation tests and 190 movement tests pass (12 movement tests ignored).
+The gatehouse definition is published with backups in
+`gatehouse-seam-publication-20261005`; Derby's pin is refreshed. All ten scenes
+reopen, published Derby exactly matches the tested candidate, and all eight fresh
+placement exports in `local-stair-placements-mU2vt1` exactly match the tested
+descriptors. The local audit `stair-anchor-support-pTbPPE` now reports 44/53
+unsupported definitions, including two remaining Derby stairs. Complete rendered
+traversal and broader state/placement verification remain open.
+
 ## East-bailey stair and terrain contact publication (2026-10-05)
 
 The terrain contact staging tool now also handles the explicitly reviewed
