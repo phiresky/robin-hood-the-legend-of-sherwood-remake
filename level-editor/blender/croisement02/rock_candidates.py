@@ -39,6 +39,9 @@ def validate_worker(worker):
 
 
 def selected_workspace(out,asset,catalog):
+    from approved_ledge_selection import selected_workspace as approved_ledge_workspace
+    approved=approved_ledge_workspace(out,asset,catalog)
+    if approved is not None:return approved
     if asset!=ASSET:return None
     path=out/'northwest-rock-source-revision/selection.json'
     if not path.exists():return None
