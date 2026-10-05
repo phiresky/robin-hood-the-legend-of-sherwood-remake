@@ -4337,6 +4337,50 @@ impl EngineInner {
         }
     }
 
+    /// Emit movement splashes using animation distance and the committed world position.
+    fn emit_movement_water(
+        entity: &mut crate::element::Entity,
+        speed: f32,
+        titbits: &mut crate::titbit::TitbitManager,
+    ) {
+        // Water splash titbit emission.  Every walk tick
+        // where `speed > 2` and the actor's cached material
+        // is water, the sprite's splatter counter ticks up;
+        // on `>= 2` a water particle is added at the actor's
+        // 3D position and the counter resets.  Cosmetic but
+        // observable — actors crossing a stream kick up
+        // splash titbits.
+        {
+            let elem = entity.element_data_mut();
+            if speed > 2.0 && elem.material() == crate::element::GameMaterial::Water {
+                if elem.sprite.splitch_count >= 2 {
+                    elem.sprite.splitch_count = 0;
+                    let pos = elem.position();
+                    let layer = elem.layer();
+                    titbits.add_titbit(
+                        crate::coordinates::WorldPoint3D {
+                            x: pos.x,
+                            y: pos.y,
+                            z: pos.z,
+                        },
+                        layer,
+                        crate::titbit::TitbitKind::Water,
+                        crate::titbit::ElementHandle::INVALID,
+                        0,
+                        crate::titbit::ElementHandle::INVALID,
+                        false,
+                        crate::titbit::INVALID_ID,
+                        true,
+                        None,
+                        None,
+                    );
+                } else {
+                    elem.sprite.splitch_count = elem.sprite.splitch_count.saturating_add(1);
+                }
+            }
+        }
+    }
+
     /// Commit collision-adjusted geometry and its forecast.
     /// Returns whether movement aborted; arrival and START remain caller-owned.
     // Disjoint world/AI borrows remain explicit rather than introducing another
@@ -4446,42 +4490,7 @@ impl EngineInner {
         // reached.  A blocked step aborts before reaching it.
         refresh_motion_forecast(entity.sprite_mut(), speed);
 
-        // Water splash titbit emission.  Every walk tick
-        // where `speed > 2` and the actor's cached material
-        // is water, the sprite's splatter counter ticks up;
-        // on `>= 2` a water particle is added at the actor's
-        // 3D position and the counter resets.  Cosmetic but
-        // observable — actors crossing a stream kick up
-        // splash titbits.
-        {
-            let elem = entity.element_data_mut();
-            if speed > 2.0 && elem.material() == crate::element::GameMaterial::Water {
-                if elem.sprite.splitch_count >= 2 {
-                    elem.sprite.splitch_count = 0;
-                    let pos = elem.position();
-                    let layer = elem.layer();
-                    titbits.add_titbit(
-                        crate::coordinates::WorldPoint3D {
-                            x: pos.x,
-                            y: pos.y,
-                            z: pos.z,
-                        },
-                        layer,
-                        crate::titbit::TitbitKind::Water,
-                        crate::titbit::ElementHandle::INVALID,
-                        0,
-                        crate::titbit::ElementHandle::INVALID,
-                        false,
-                        crate::titbit::INVALID_ID,
-                        true,
-                        None,
-                        None,
-                    );
-                } else {
-                    elem.sprite.splitch_count = elem.sprite.splitch_count.saturating_add(1);
-                }
-            }
-        }
+        Self::emit_movement_water(entity, speed, titbits);
 
         // When the blocked counter trips, the motion aborts
         // and the backing sequence element is marked

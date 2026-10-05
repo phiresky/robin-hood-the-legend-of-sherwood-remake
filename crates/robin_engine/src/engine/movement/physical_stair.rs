@@ -172,7 +172,8 @@ impl EngineInner {
             .hypot(next.y - position.y)
             .hypot(next.z - position.z);
         refresh_motion_forecast(entity.sprite_mut(), travelled);
-        // TODO: share water-particle emission and soft repulsion with ordinary
+        Self::emit_movement_water(entity, speed, &mut self.feedback.titbit_manager);
+        // TODO: share soft repulsion with ordinary
         // movement before enabling physical stairs in normal editor exports.
         if next == goal {
             self.settle_movement_waypoint(

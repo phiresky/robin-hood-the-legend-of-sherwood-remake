@@ -4,6 +4,27 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Water effects during physical stair movement (2026-10-05)
+
+Physical stair steps now call the same water-particle emission routine as
+ordinary movement after committing their world position. The animation-distance
+threshold remains strictly greater than two, and the existing splash counter
+emits on every third eligible step. Particles retain the actor's current layer
+and full world position, including when stair movement has no screen-space
+displacement.
+
+A native actor-loop test crosses an edge-on stair with distances at and above
+the threshold, on wet and dry material. It checks the counter, emission cadence,
+particle kind, layer and exact world position. The fixture faces along the route
+so turn slowdown does not change the threshold being tested. The focused check
+passes, as does the complete movement suite (197 passed, 12 ignored).
+The updated game build, formatting and whitespace checks also pass.
+
+This closes the missing emission call, not complete rendered material/effect
+parity. Physical soft repulsion, neighbouring landing-sector collision/crushing,
+general point/seek orders, transition choreography and normal export integration
+remain unfinished.
+
 ## World-space asset surface placement (2026-10-05)
 
 Main compilation now uses a shared placement step for authored surface vertices,

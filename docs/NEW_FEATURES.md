@@ -29,6 +29,8 @@
   owner-scoped clearances; it shares volume-height slicing with ordinary export.
   Asset surface placement now retains world-space floor and hole geometry before
   projection, including separate physical/navigation heights for clearances.
+  Physical stair steps now share ordinary movement's water-splash emission,
+  using committed world positions even when the screen position is stationary.
 
 - **Asset-authored movement headroom.** A permanent gameplay volume can set
   `movementHeadroom` in game-height units. Export excludes walking space that

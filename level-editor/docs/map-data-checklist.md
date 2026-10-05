@@ -105,8 +105,10 @@ collision with references to the normal movement obstacles. Physical route queri
 read their current state rather than maintaining separate switch state. Compiler
 emission, broader multi-door traversal and movement effects are still unfinished.
 Physical orders currently use hard neighbour collision; neighbours and crushing
-across landing-sector boundaries, soft repulsion and water-particle emission
-remain to be integrated.
+across landing-sector boundaries and soft repulsion remain to be integrated.
+Water-particle emission now shares ordinary movement's animation-distance
+threshold and cadence, with an edge-on actor-loop check of particle world
+positions and layers. Complete rendered movement-effect coverage remains open.
 Best-effort export now warns instead of aborting on collapsed mask boundaries or
 collision-split stair regions, retaining independent usable features. These
 fallbacks do not repair the missing traversal.

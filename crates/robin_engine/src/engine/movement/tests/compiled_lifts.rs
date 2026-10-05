@@ -612,6 +612,58 @@ fn physical_stair_actor_executes_edge_on_motion_in_both_directions() {
 }
 
 #[test]
+fn physical_stair_water_splashes_follow_animation_distance_and_world_position() {
+    for (distance, wet) in [(2, true), (3, true), (3, false)] {
+        let (mut engine, mut assets) =
+            compiled_walkway(&serde_json::to_vec(&edge_on_physical_stair_fixture()).unwrap());
+        let owner = physical_walker(&mut engine, &mut assets, 2, [400., 320.], [400., 380.]);
+        let entity = engine.ent_mut(owner);
+        // Face along world +Y so turn slowdown does not change the threshold under test.
+        entity.element_data_mut().set_direction_instantly(8);
+        if wet {
+            entity
+                .element_data_mut()
+                .set_material(crate::element::GameMaterial::Water);
+        }
+        for script in Arc::make_mut(&mut entity.sprite_mut().scripts) {
+            script.distances.fill(distance);
+            script.sum_distance = distance * 3;
+            script.average_speed = f32::from(distance);
+        }
+        let mut moves = 0;
+        for _ in 0..30 {
+            let before = engine.ent(owner).position_iface().get_position();
+            engine.t_tick_actor_owner_envelopes(&assets);
+            let position = engine.ent(owner).position_iface().get_position();
+            if position == before {
+                continue;
+            }
+            moves += 1;
+            assert!((engine.ent(owner).element_data().position_map().y - 200.).abs() < 0.001);
+            let particles = engine.feedback.titbit_manager.titbits();
+            let expected = if wet && distance > 2 { moves / 3 } else { 0 };
+            assert_eq!(particles.len(), expected);
+            assert_eq!(
+                engine.ent(owner).sprite().splitch_count as usize,
+                if wet && distance > 2 { moves % 3 } else { 0 },
+                "distance={distance}, wet={wet}, moves={moves}, position={position:?}, material={:?}",
+                engine.ent(owner).element_data().material()
+            );
+            if expected > 0 && moves % 3 == 0 {
+                let particle = particles.last().unwrap();
+                assert_eq!(particle.kind, crate::titbit::TitbitKind::Water);
+                assert_eq!(particle.position, position);
+                assert_eq!(particle.layer, 2);
+            }
+            if moves == 6 {
+                break;
+            }
+        }
+        assert_eq!(moves, 6);
+    }
+}
+
+#[test]
 fn physical_stair_actor_stops_for_live_control_and_resumes_when_reopened() {
     let (mut engine, mut assets) =
         compiled_walkway(&serde_json::to_vec(&physical_stair_fixture()).unwrap());
