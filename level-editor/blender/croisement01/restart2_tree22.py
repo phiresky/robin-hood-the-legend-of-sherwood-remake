@@ -9,6 +9,7 @@ import bpy
 import bmesh
 import numpy as np
 from mathutils import Vector
+from mathutils.bvhtree import BVHTree
 from PIL import Image,ImageChops
 
 sys.path.insert(0,str(Path(__file__).parent))
@@ -88,6 +89,23 @@ def main():
     mat=bpy.data.materials.new('Unknown off-map tree22 foliage');mat.diffuse_color=(.34,.34,.34,1);mesh.materials.append(mat)
     crown=bpy.data.objects.new('Tree22 inferred off-map crown',mesh);working.objects.link(crown)
     for k,v in dict(source_node=crown_node,asset_group=asset,asset_name=name,part_name='Inferred off-map crown',projection_component='crown').items():crown[k]=v
+    if args.revision>=2:
+        vertices=[];faces=[]
+        terrain_nodes={'ground'}|{f'building-{i:03}' for i in [*range(10),*range(76,81)]}
+        for support in working.all_objects:
+            if support.type!='MESH' or support.get('source_node') not in terrain_nodes:continue
+            offset=len(vertices);vertices.extend(support.matrix_world@v.co for v in support.data.vertices)
+            faces.extend(tuple(offset+i for i in f.vertices) for f in support.data.polygons)
+        terrain=BVHTree.FromPolygons(vertices,faces);ray=Vector((0,-COS,SIN))
+        foot=min((obj.matrix_world@v.co for v in obj.data.vertices),key=lambda p:p.z)
+        hit=terrain.ray_cast(foot+ray*5000,-ray,10000)[0]
+        if hit is None:raise ValueError('Missing bank support beneath tree22 native root')
+        shift=ray*((hit-foot).dot(ray)+.2)
+        for target in (obj,crown):
+            inverse=target.matrix_world.inverted()
+            for vertex in target.data.vertices:vertex.co=inverse@(target.matrix_world@vertex.co+shift)
+            target.data.update()
+        (dest/'root-support-placement.json').write_text(json.dumps(dict(method='Move complete asset along original camera ray to measured archival bank; native image coordinates unchanged.',original_foot=list(foot),support=list(hit),shift=list(shift),status='Provisional contact; saved geometry and joint review required'),indent=2)+'\n')
     uv=mesh.uv_layers.new(name='Source UV');known=mesh.color_attributes.new(name='Source ownership',type='FLOAT_COLOR',domain='CORNER');mesh.color_attributes.active_color=known
     for loop in mesh.loops:
         p=mesh.vertices[loop.vertex_index].co;uv.data[loop.index].uv=(p.x/1408,1-(-p.y*SIN-p.z*COS)/960);known.data[loop.index].color=(0,1,1,1)
