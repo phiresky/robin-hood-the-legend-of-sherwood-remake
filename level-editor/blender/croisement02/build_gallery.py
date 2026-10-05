@@ -263,7 +263,7 @@ def main():
         feedback_path=OUT/'user-feedback.json'
         decisions=[r for r in json.loads(feedback_path.read_text())['records'] if r['asset_id']==group['id']] if feedback_path.exists() else []
         if decisions:
-            decision=decisions[-1]
+            decision=next((r for r in reversed(decisions) if r['model_sha256']==model_hash),decisions[-1])
             current=decision['model_sha256']==model_hash
             correction=workspace/'inspection/feedback-revision-1.json'
             if not current and correction.exists():
