@@ -98,6 +98,7 @@ def main():
     config = json.loads((workspace / 'workspace.json').read_text())
     scene = bpy.data.scenes[config['scene_name']]
     bpy.context.window.scene = scene
+    bpy.context.view_layer.update()
     destination.mkdir()
     if args.audit_only:
         geometric_first_hits(scene, config['asset_id'], args.crop, destination)
@@ -166,6 +167,10 @@ def main():
               'scope': 'Actual reopened saved materials, eight complete-object views and exact native isolated/joint views.',
               'status': 'Awaiting independent visual and source-coverage review.'}
     (destination / 'evidence.json').write_text(json.dumps(record, indent=2) + '\n')
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from restart2_camera_audit import label_packet, labeled_copy
+    label_packet(destination / 'complete-object')
+    labeled_copy(destination / 'actual/textured.png', destination / 'actual/textured-native-labeled.png')
 
 
 if __name__ == '__main__':

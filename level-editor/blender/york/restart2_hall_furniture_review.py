@@ -28,5 +28,8 @@ for obj in bpy.data.collections['york Working'].all_objects:
 render_review(DEST,scene_name='york Refinement',collection_name='york Working',
               asset_id=args.asset_id,source_path=OUT/'baseline/revealed.png',
               width=384,height=512,framing_padding=1.5,lighting=config['lighting'])
+sys.path.insert(0,str(Path(__file__).resolve().parent))
+from restart2_camera_audit import label_packet
+label_packet(DEST)
 (DEST/'diagnostic-scope.json').write_text(json.dumps({'scope':'Solid geometry inspection only. Any helper source-textured output is not state ownership evidence.',
     'saved_model_unchanged':True,'approval':False},indent=2)+'\n')
