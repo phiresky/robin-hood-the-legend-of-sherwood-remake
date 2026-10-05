@@ -13,7 +13,8 @@ from render_slots import acquire, release
 
 
 def main():
-    dest = OUT / 'restart3-south-cart/broken-panel-v2'; manifest = json.loads((dest / 'manifest.json').read_text())
+    dest = Path(sys.argv[sys.argv.index('--')+1]).resolve() if '--' in sys.argv else OUT / 'restart3-south-cart/broken-panel-v2'
+    manifest = json.loads((dest / 'manifest.json').read_text())
     model = dest / 'worker.blend'; assert sha(model) == manifest['model_sha256']
     bpy.ops.wm.open_mainfile(filepath=str(model)); bpy.context.view_layer.update()
     rows = []; contacts = []; samples = []; total_mass = 0.; moment = np.zeros(3)
