@@ -1320,8 +1320,12 @@ export function copiedChangingLiftCompilerFixture() {
   return fixture;
 }
 
-export function changingClimbCompilerFixture(type: 2 | 3, highDoor: 4 | 6 = 4) {
-  const fixture = changingLiftCompilerFixture();
+export function changingClimbCompilerFixture(type: 2 | 3, highDoor: 4 | 6 = 4, copied = false) {
+  const fixture = copied ? copiedChangingLiftCompilerFixture() : changingLiftCompilerFixture();
+  if (copied) {
+    fixture.document.groups[0]!.transform = { dx: 900, dy: 900, dz: 20, rot_deg: 0 };
+    fixture.document.groups[1]!.transform = { dx: 900, dy: 900, dz: 80, rot_deg: 180 };
+  }
   const gameplay = fixture.hut.gameplay!;
   // Leave room for actor-sized approaches and the wall's fixed animation offset.
   for (const surface of gameplay.surfaces) {

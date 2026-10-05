@@ -46,6 +46,24 @@ fn compiled_stair_barriers_remain_independent_after_copying() {
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/asset-changing-lifts-copied.level.json"
     ));
+    audit_copied_lift_controls(bytes, None);
+}
+
+#[test]
+#[ignore = "requires ROBIN_CLIMB_RHS"]
+fn compiled_climb_barriers_remain_independent_after_copying() {
+    let sprite = complete_climb_sprite();
+    let fixtures: Vec<serde_json::Value> = serde_json::from_slice(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/asset-changing-climbs-copied.levels.json"
+    )))
+    .unwrap();
+    for fixture in fixtures {
+        audit_copied_lift_controls(&serde_json::to_vec(&fixture).unwrap(), Some(&sprite));
+    }
+}
+
+fn audit_copied_lift_controls(bytes: &[u8], sprite: Option<&crate::sprite::Sprite>) {
     let document: serde_json::Value = serde_json::from_slice(bytes).unwrap();
     let geometry: crate::level_data::CompiledAssetGeometry =
         serde_json::from_value(document["asset_geometry"].clone()).unwrap();
@@ -70,7 +88,8 @@ fn compiled_stair_barriers_remain_independent_after_copying() {
         closed[changed] = applied;
         for (index, &blocked) in closed.iter().enumerate() {
             for (entrance, exit) in [(index * 2, index * 2 + 1), (index * 2 + 1, index * 2)] {
-                let result = walk_exported_stairs(engine.clone(), assets.clone(), entrance, exit);
+                let result =
+                    walk_exported_lift(engine.clone(), assets.clone(), entrance, exit, sprite);
                 if blocked {
                     assert!(
                         result
@@ -198,11 +217,22 @@ fn arbitrarily_rotated_stairs_support_complete_actor_routes() {
 }
 
 fn walk_exported_lift(
+    engine: EngineInner,
+    assets: LevelAssets,
+    entrance: usize,
+    exit: usize,
+    sprite: Option<&crate::sprite::Sprite>,
+) -> Result<bool, String> {
+    walk_exported_lift_with_tick(engine, assets, entrance, exit, sprite, |_, _, _| {})
+}
+
+fn walk_exported_lift_with_tick(
     mut engine: EngineInner,
     mut assets: LevelAssets,
     entrance: usize,
     exit: usize,
     sprite: Option<&crate::sprite::Sprite>,
+    mut tick: impl FnMut(&mut EngineInner, &LevelAssets, crate::element::EntityId),
 ) -> Result<bool, String> {
     let doors = &engine.script_domains.interactables.doors;
     let enter = doors[entrance].clone();
@@ -292,6 +322,7 @@ fn walk_exported_lift(
         engine.t_hourglass_phase_sequences(&assets);
         engine.hourglass_phase_paths(TickCtx::new(&sim, &assets));
         engine.t_tick_actor_owner_envelopes(&assets);
+        tick(&mut engine, &assets, owner);
         let element = engine.ent(owner).element_data();
         let position = element.position_map();
         let sector = element.sector().ok_or("stair actor lost its sector")?;
@@ -480,6 +511,66 @@ fn changing_climbs_update_collision_and_routes_after_reset() {
 fn changing_climbs_stop_actor_traversal_and_reset() {
     let sprite = complete_climb_sprite();
     audit_changing_climbs(Some(&sprite));
+}
+
+#[test]
+#[ignore = "requires ROBIN_CLIMB_RHS"]
+fn changing_climb_barriers_stop_an_actor_already_climbing() {
+    let sprite = complete_climb_sprite();
+    let fixtures: Vec<serde_json::Value> = serde_json::from_slice(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/asset-changing-climbs.levels.json"
+    )))
+    .unwrap();
+    for (index, fixture) in fixtures.iter().enumerate() {
+        let (engine, assets) = compiled_walkway(&serde_json::to_vec(fixture).unwrap());
+        for (entrance, exit) in [(0, 1), (1, 0)] {
+            let mut applied = false;
+            let sim = crate::sim_rng::test_context();
+            let goal = engine.script_domains.interactables.doors[exit].point_in;
+            let lift_sector = engine.script_domains.interactables.doors[entrance].sector_in_index;
+            let result = walk_exported_lift_with_tick(
+                engine.clone(),
+                assets.clone(),
+                entrance,
+                exit,
+                Some(&sprite),
+                |engine, assets, owner| {
+                    let element = engine.ent(owner).element_data();
+                    if applied
+                        || !matches!(element.posture(), Posture::OnLadder | Posture::OnWall)
+                        || element.sector().and_then(|sector| sector.arena_index()) != lift_sector
+                    {
+                        return;
+                    }
+                    let position = element.position_map();
+                    let layer = element.layer();
+                    engine.apply_patch(
+                        TickCtx::new(&sim, assets),
+                        crate::patch::PatchIndex::new(0).unwrap(),
+                    );
+                    assert!(
+                        !engine
+                            .world
+                            .fast_grid
+                            .is_reachable_thin(position, goal, layer),
+                        "barrier must appear ahead of the climbing actor, fixture={index}, entrance={entrance}"
+                    );
+                    applied = true;
+                },
+            );
+            assert!(
+                applied,
+                "actor never began climbing, fixture={index}, entrance={entrance}: {result:?}"
+            );
+            assert!(
+                result
+                    .as_ref()
+                    .is_err_and(|error| error.starts_with("lift route stalled")),
+                "mid-climb barrier fixture={index}, entrance={entrance}: {result:?}"
+            );
+        }
+    }
 }
 
 #[test]

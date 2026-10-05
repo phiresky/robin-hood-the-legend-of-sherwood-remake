@@ -6,6 +6,17 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Changing climb barriers and corrected fixture diagnosis (2026-10-05)
 
+Follow-up verification covers copied controls and closing a barrier during a
+climb. Three exported assemblies each contain two copies of a ladder, ordinary
+wall or crenellated wall. Closing each copy and then resetting them independently
+passes 48 directed actor/state checks. A separate per-tick test applies the
+barrier only after the actor has climbing posture and occupies the lift sector,
+asserts that the active barrier blocks the segment ahead, and requires traversal
+to stall. All twelve placed fixtures pass in both directions (24 further checks).
+The copied stair regression still passes; 62 editor export tests, app typechecking
+and targeted lint pass. These tests use complete animation and current compiled
+asset definitions; no gameplay-engine change was needed.
+
 Export now retains changing ladder/wall barriers. Twelve compiler-generated
 fixtures cover ladders and both wall-top door types at four rotations. Native
 collision queries and pathfinding reject the applied barrier in both directions;
@@ -29,9 +40,9 @@ reset (12 further checks, 84 total). An inner-endpoint reachability query alone
 would incorrectly diagnose this case as a bypass. All three native tests pass;
 171 focused editor tests, app typechecking and targeted lint also pass.
 
-Closing a barrier during an ongoing climb, independent copied climb controls,
-broader placement coverage and rendered state transitions remain unverified.
-These results are not full climbing parity.
+Broader placement coverage, reopening during an existing movement sequence and
+rendered state transitions remain unverified. These results are not full
+climbing parity.
 
 ## Published church insertion ground elevation (2026-10-05)
 

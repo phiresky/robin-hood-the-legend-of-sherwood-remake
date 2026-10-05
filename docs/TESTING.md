@@ -348,6 +348,13 @@ and crenellated wall types. Export tests require exact descriptor equality.
 pathfinding without external resources. With `ROBIN_CLIMB_RHS` set, run
 `cargo test -p robin_engine --lib changing_climb -j1 -- --include-ignored`
 to additionally check complete actor routes and a barrier near the entrance.
+The included `changing_climb_barriers_stop_an_actor_already_climbing` test
+applies the barrier after the actor has climbing posture and occupies the lift
+sector, verifies that the barrier is ahead, and requires traversal to stall.
+`compiled_climb_barriers_remain_independent_after_copying` uses the same sprite
+and verifies independent apply/reset on two copies for each climb type. Its
+`asset-changing-climbs-copied.levels.json` fixtures are checked against fresh editor
+exports too. Run it separately with `--ignored` and `ROBIN_CLIMB_RHS` set.
 `cargo test -p robin_level_data compiled_approaches` checks that mutually
 exclusive barriers do not prevent deriving actor-sized shared approach points.
 Permanent collision still constrains those points; live stair traversal tests

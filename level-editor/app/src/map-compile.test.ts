@@ -1195,6 +1195,31 @@ test("copied changing stairs export matches the native isolation fixture", async
   assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
 });
 
+test("copied changing climbs export independent native state bindings", async () => {
+  const fixtures = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/asset-changing-climbs-copied.levels.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  for (const [index, [type, high]] of (
+    [
+      [2, 4],
+      [3, 4],
+      [3, 6],
+    ] as const
+  ).entries()) {
+    const { document, assets } = changingClimbCompilerFixture(type, high, true);
+    const compiled = compileMap(document, [0, 0, 2000, 2000], assets).descriptor;
+    assert.deepEqual(compiled, fixtures[index]);
+    assert.equal(compiled.asset_geometry!.movement_transitions!.length, 2);
+    assert.equal(compiled.asset_geometry!.lifts!.length, 2);
+  }
+});
+
 test("interior asset export matches the native building fixture", async () => {
   const { document, assets } = interiorAssetCompilerFixture();
   const fixture = JSON.parse(
