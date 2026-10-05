@@ -15,7 +15,7 @@ def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def signature(objects):
     return hashlib.sha256(json.dumps([dict(name=o.name,vertices=[list(v.co)for v in o.data.vertices],faces=[list(f.vertices)for f in o.data.polygons],material_indices=[f.material_index for f in o.data.polygons],materials=[m.name for m in o.data.materials],uvs=[[list(d.uv)for d in layer.data]for layer in o.data.uv_layers])for o in sorted(objects,key=lambda o:o.name)],sort_keys=True).encode()).hexdigest()
 def main():
-    dest=OUT/'restart2-state/log-triangular-pile-v1';fit=json.loads((dest/'fit.json').read_text());base=OUT/'log-trap-state-candidate-v14/worker.blend';assert sha(base)==fit['source_model_sha256'];bpy.ops.wm.open_mainfile(filepath=str(base));scene=bpy.context.scene;bpy.context.view_layer.update();fallen=[o for o in scene.objects if o.get('state_endpoint')=='applied'];before=signature(fallen);covered=[o for o in scene.objects if o.get('state_endpoint')=='covered'];materials=list(covered[0].data.materials)
+    dest=OUT/'restart2-state'/(sys.argv[sys.argv.index('--candidate')+1]if '--candidate'in sys.argv else'log-triangular-pile-v5');fit=json.loads((dest/'fit.json').read_text());base=OUT/'log-trap-state-candidate-v14/worker.blend';assert sha(base)==fit['source_model_sha256'];bpy.ops.wm.open_mainfile(filepath=str(base));scene=bpy.context.scene;bpy.context.view_layer.update();fallen=[o for o in scene.objects if o.get('state_endpoint')=='applied'];before=signature(fallen);covered=[o for o in scene.objects if o.get('state_endpoint')=='covered'];materials=list(covered[0].data.materials)
     for o in covered:bpy.data.objects.remove(o,do_unlink=True)
     source=json.loads((OUT/'state-target-evidence/log-trap/manifest.json').read_text());left,top,right,bottom=source['bbox'];objects=[];guards=[]
     for index,row in enumerate(fit['records']):
@@ -23,7 +23,7 @@ def main():
         for material in materials:data.materials.append(material)
         uv=data.uv_layers.new(name='Native target projection')
         for face in data.polygons:
-            face.material_index=0 if row['column']==0 and face.normal.dot(RAY)>.05 else 1
+            face.material_index=0 if (row.get('observed_index') is not None if 'observed_index'in row else row['column']==0) and face.normal.dot(RAY)>.05 else 1
             for loop in face.loop_indices:
                 p=data.vertices[data.loops[loop].vertex_index].co;uv.data[loop].uv=((p.x-left)/(right-left),1-(-p.y*SIN-p.z*COS-top)/(bottom-top))
         obj['state_endpoint']='covered';obj['native_source_tick']=-1;obj['geometry_status']='Unapproved triangular pile prototype';obj['source_role']=row['role'];objects.append(obj);guards.append(dict(name=obj.name,closed_volume=volume,layer=row['layer'],column=row['column'],role=row['role']))
@@ -42,5 +42,5 @@ def main():
                 im=Image.open(dest/f'{view:02}-{mode}.png').convert('RGBA');x,y=(view%4)*512,(view//4)*544;sheet.paste(im,(x,y+32),im);draw.text((x+8,y+8),'Original game camera / art view'if view==0 else f'Orbit {view}',fill='white')
             sheet.save(dest/f'{mode}-sheet.png')
     finally:release()
-    assert signature(fallen)==before and sha(base)==fit['source_model_sha256'];report=dict(status='PRIVATE prototype; source cap error and inferred supports require refinement/review',model_sha256=sha(dest/'worker.blend'),source_model_sha256=fit['source_model_sha256'],fit_sha256=sha(dest/'fit.json'),fallen_endpoint_geometry_uv_material_signature=before,fallen_endpoint_unchanged=True,objects=guards,renders=records,native_first=True,maximum_source_cap_error=fit['maximum_endpoint_error_pixels'],limitations=['Not approved. Uniform radius prototype intentionally measures its native alignment error.','Supporting courses are inferred; source-visible new support surfaces remain gray.','Exact current bank contact and longitudinal support audit still required.']);(dest/'manifest.json').write_text(json.dumps(report,indent=2)+'\n')
+    assert signature(fallen)==before and sha(base)==fit['source_model_sha256'];report=dict(status='PRIVATE prototype; source cap error and inferred supports require refinement/review',model_sha256=sha(dest/'worker.blend'),source_model_sha256=fit['source_model_sha256'],fit_sha256=sha(dest/'fit.json'),fallen_endpoint_geometry_uv_material_signature=before,fallen_endpoint_unchanged=True,objects=guards,renders=records,native_first=True,maximum_source_cap_error=fit['maximum_endpoint_error_pixels'],limitations=['Not approved. Complete equal-radius support courses retain measured native alignment error.','Supporting courses are inferred; source-visible new support surfaces remain gray.','Exact current bank contact and longitudinal support audit still required.']);(dest/'manifest.json').write_text(json.dumps(report,indent=2)+'\n')
 if __name__=='__main__':main()
