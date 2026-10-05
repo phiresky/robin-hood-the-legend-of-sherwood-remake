@@ -34,26 +34,32 @@ unresolved/ivy/ground domains remain disclosed. Rear and off-map masonry has
 been filled through Sunburst/OpenRouter and baked without changing geometry
 or protected source pixels. The saved eight-view result under
 `restart2/texture-wall10/` passed independent review. Its immutable texture card
-is `restart2/texture-review-wall10/texture-candidates.json`, awaiting the next
-consolidated user decision.
+is `restart2/texture-review-wall10/texture-candidates.json`. The user approved
+that exact texture in batch-v7; `restart2/texture-approval-wall10/` retains the
+decision. Wall integration remains private and pending.
 
 Tree 25 version 17 has a frozen, independently reviewed static geometry card in
-`restart2/geometry-round2-tree25-v17/review-candidates.json`; user review is
-pending in the next consolidated batch. Its crown retains native foliage and
+`restart2/geometry-round2-tree25-v17/review-candidates.json`; the user approved
+its static geometry in batch-v7. Its crown retains native foliage and
 complete inferred depth. Eight one-pixel bark-edge misses and 52 small
 background-edge overshoot pixels remain disclosed, along with gray inferred
 surfaces and the buried trunk closure. Joint version 11 verifies contact with
 wall10. The wall card retains tree16 only as unapproved contact context; future
 tree changes require fresh joint evidence.
+The dependent texture fill under `restart2/texture-batch-v7/` uses only the two
+permitted Leicester trees as supplementary examples. Generated appearance still
+needs saved-model, independent, and user review; wind remains incomplete.
 
 The central shrub boulder version 2 has an independently reviewed geometry card
-in `restart2/geometry-round2-boulder-v2/`, awaiting the next user batch.
+in `restart2/geometry-round2-boulder-v2/`, approved by the user in batch-v7.
 Its saved eight-view materials, native comparison and diagnostic ground contact
 have been inspected. Mask 97 mixes stone with foreground vegetation, so the
 authored rock trace excludes part of that mask; a remaining 83-pixel overlap
 with foreground mask 48 is explicitly unresolved and excluded from appearance
-approval. Gray rear stone needs texture fill after geometry approval and fringe
-ownership resolution. No actual surrounding vegetation is complete.
+approval. The source-protected rear texture has been generated and baked; its
+saved eight-view model passed the worker review and awaits independent review.
+The 83-pixel fringe remains excluded from appearance approval and unchanged.
+No actual surrounding vegetation is complete.
 
 Eastern rock version 8 passed source, solid, saved-material and diagnostic
 ground-contact review, including independent review. Its immutable geometry
