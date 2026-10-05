@@ -1,5 +1,5 @@
 """Native-camera sign proof against every overlapping receiver in a frozen physical scene."""
-import json,sys,math
+import json,sys,math,hashlib
 from pathlib import Path
 import bpy,numpy as np
 from mathutils import Vector
@@ -25,7 +25,16 @@ def bounds(obj):
     return(min(p.x for p in corners),min(-p.y*SIN-p.z*COS for p in corners),max(p.x for p in corners),max(-p.y*SIN-p.z*COS for p in corners))
 
 def intersects(a,b):return a[0]<b[2]and a[2]>b[0]and a[1]<b[3]and a[3]>b[1]
-def refs(objects):return {o.name:dict(matrix_world=[list(r)for r in o.matrix_world],geometry=geometry(o))for o in objects}
+def mesh_identity(o):
+    data=dict(vertices=[list(v.co)for v in o.data.vertices],faces=[list(p.vertices)for p in o.data.polygons],edges=[list(e.vertices)for e in o.data.edges],uvs={u.name:[list(x.uv)for x in u.data]for u in o.data.uv_layers},source_node=o.get('source_node'),asset_group=o.get('asset_group'),projection_component=o.get('projection_component'))
+    return hashlib.sha256(json.dumps(data,sort_keys=True).encode()).hexdigest()
+def refs(objects):return {o.name:dict(matrix_world=[list(r)for r in o.matrix_world],geometry=geometry(o),mesh_identity=mesh_identity(o))for o in objects}
+def verify_import(objects,receipt,reference):
+    for obj,row in zip(objects,receipt):
+        expected=reference[row['source_object']];assert mesh_identity(obj)==expected['mesh_identity'],obj.name
+        delta=np.array(obj.matrix_world)-np.array(expected['matrix_world']);world_error=max(float(np.linalg.norm(delta@np.array([*v.co,1.])))for v in obj.data.vertices);assert world_error<.01,(obj.name,world_error)
+        row.update(local_mesh_uv_provenance_exact=True,maximum_world_vertex_error=world_error,source_geometry_signature=expected['geometry'],imported_geometry_signature=geometry(obj))
+
 
 def prepare():
     DEST.mkdir(parents=True,exist_ok=False)
@@ -54,13 +63,9 @@ def main():
             model=checked(row['model'],row['model_sha256']);bpy.ops.wm.open_mainfile(filepath=str(model));bpy.context.view_layer.update();replacements[aid]=refs([bpy.data.objects[n]for n in row['objects']])
         bpy.ops.wm.open_mainfile(filepath=str(base));scene=bpy.data.scenes['Croisement02 Refinement'];bpy.context.window.scene=scene;bpy.context.view_layer.update();collection=bpy.data.collections['Croisement02 Working'];selected=[o for o in collection.all_objects if o.type=='MESH'and not o.hide_render and o.get('asset_group')not in inputs['changes']and any(intersects(bounds(o),b)for b in boxes.values())];frozen_refs=refs(selected)
         bpy.ops.wm.open_mainfile(filepath=str(sign));scene=bpy.context.scene;bpy.context.view_layer.update();neighbors=[];imports=[]
-        objects,receipt=append_verified(scene,base,list(frozen_refs),frozen_refs);neighbors.extend(objects);imports.extend(receipt)
+        objects,receipt=append_verified(scene,base,list(frozen_refs),frozen_refs);verify_import(objects,receipt,frozen_refs);neighbors.extend(objects);imports.extend(receipt)
         for aid,row in inputs['changes'].items():
-            objects,receipt=append_verified(scene,checked(row['model'],row['model_sha256']),row['objects'],replacements[aid]);neighbors.extend(objects);imports.extend(receipt)
-        for obj in neighbors:
-            expected=next((r[obj.name]['geometry']for r in [frozen_refs,*replacements.values()]if obj.name in r),None)
-            # Names may receive a suffix on import; transform verification above remains authoritative.
-            if expected is not None:assert geometry(obj)==expected
+            objects,receipt=append_verified(scene,checked(row['model'],row['model_sha256']),row['objects'],replacements[aid]);verify_import(objects,receipt,replacements[aid]);neighbors.extend(objects);imports.extend(receipt)
         write_json(DEST/'evaluated-imports.json',dict(inputs_sha256=sha(DEST/'inputs.json'),frozen_receivers=frozen_refs,replacements=replacements,imports=imports))
         scene.render.engine='CYCLES';scene.cycles.samples=4;scene.cycles.use_denoising=False;scene.cycles.pixel_filter_type='BOX';scene.cycles.filter_width=.01;scene.cycles.seed=0;scene.cycles.use_adaptive_sampling=False;scene.cycles.transparent_max_bounces=1024;scene.render.dither_intensity=0;scene.render.film_transparent=True;scene.render.image_settings.color_mode='RGBA';scene.render.resolution_x=scene.render.resolution_y=288;scene.render.resolution_percentage=100;scene.view_settings.view_transform='Standard';scene.view_settings.look='None'
         data=bpy.data.cameras.new('Native full-scene sign crop');data.type='ORTHO';data.ortho_scale=96;data.clip_end=20000;camera=bpy.data.objects.new(data.name,data);scene.collection.objects.link(camera);scene.camera=camera
