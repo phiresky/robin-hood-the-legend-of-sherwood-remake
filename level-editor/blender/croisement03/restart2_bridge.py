@@ -22,7 +22,7 @@ from refinement_workspace import prepare,modified
 
 SIN=math.sin(math.radians(35)); COS=math.cos(math.radians(35))
 ASSET='croisement03-timber-bridge'; NODE='scenery-croisement03-timber-bridge'
-DECK_Z=32.0
+DECK_Z=0.0
 
 def world(pixel,z):
     x,y=pixel
@@ -45,7 +45,7 @@ def rail_world(pixel,side):
     return world(pixel,DECK_Z+(base_y-pixel[1])/COS)
 
 def main():
-    root=OUT/'restart2/bridge-v4';root.mkdir(parents=True,exist_ok=False)
+    root=OUT/'restart2/bridge-v6';root.mkdir(parents=True,exist_ok=False)
     masks=json.loads((OUT/'baseline/masks/manifest.json').read_text())
     for row in masks['masks']:row['png']=str(OUT/'baseline/masks'/row['png'])
     source=Image.open(OUT/'baseline/covered.png');domain=Image.new('L',source.size)
@@ -90,6 +90,8 @@ def main():
             for ring in component['rings']:
                 for a,b in zip(ring,ring[1:]+ring[:1]):
                     faces.append((vertex(a),vertex(b),vertex(b,True),vertex(a,True)))
+    # Extend the concealed right brace into the deck fascia.
+    beam(vertices,faces,rail_world((918,730),'near'),rail_world((928,722),'near'),2.5)
     mesh=bpy.data.meshes.new('Native-traced timber bridge');mesh.from_pydata(vertices,[],faces);mesh.update()
     bm=bmesh.new();bm.from_mesh(mesh);bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces));bm.to_mesh(mesh)
     topology=dict(vertices=len(bm.verts),faces=len(bm.faces),open_edges=sum(not e.is_manifold for e in bm.edges),degenerate_faces=sum(f.calc_area()<1e-8 for f in bm.faces));bm.free()
@@ -104,8 +106,12 @@ def main():
     write_json(root/'grouping-review.json',dict(status='reviewed',reviewer='Codex',catalog_sha256=sha(root/'catalog.json'),inventory_sha256=sha(root/'inventory/inventory.json'),evidence='New authored scenery node; no fabricated native obstacle. Preliminary bridge structure only.'))
     worker=root/'assets'/ASSET
     prepare(worker,asset_id=ASSET,scene_name='Croisement03 Refinement',collection_name=collection.name,source_path=OUT/'baseline/covered.png',grouping_manifest=root/'catalog.json',inventory_path=root/'inventory/inventory.json',review_path=root/'grouping-review.json',source_mask_manifest=root/'source-masks.json',width=256,height=256,framing_padding=1.2,lighting=dict(toward_sun=[-.45,-.55,.70],ambient=.22,diffuse=.78,shadow_epsilon=.05))
+    config=json.loads((worker/'workspace.json').read_text())
+    evidence=OUT/'restart2/bridge-elevation/evidence.json'
+    config['source_projection_ground_exclusion']=dict(version=1,asset_id=ASSET,object_name=next(o.name for o in collection.all_objects if o.type=='MESH' and o.get('source_node')=='ground'),rationale='Native bridge has no elevated support plane. Its deck meets landZ0 while the visible pier extends into the river below the unrefined flat ground sheet; private land/water contact proof is required.',source_sha256=sha(OUT/'baseline/covered.png'),evidence=str(evidence),evidence_sha256=sha(evidence))
+    write_json(worker/'workspace.json',config)
     modified(worker)
-    write_json(worker/'construction.json',dict(model_sha256=sha(worker/'model.blend'),topology=topology,status='PRIVATE HOLD: source coverage, joints and plank refinement pending',limitations=['Deck height32 is inferred pending bank/water contact reconstruction.','Source-traced timber profiles preserve native brackets and the northwest far-rail gap. Physical thickness is inferred.','All closed members are assembled components; overlap at joints is intentional.','Pier foot and obscured southeast landing need terrain-neighbor review.']))
+    write_json(worker/'construction.json',dict(model_sha256=sha(worker/'model.blend'),topology=topology,status='PRIVATE HOLD: source coverage, joints and plank refinement pending',limitations=['Deck topZ0 follows native no-support-plane elevation. River/water depth remains inferred and requires a separate contact proof.','Source-traced timber profiles preserve native brackets and the northwest far-rail gap. Physical thickness is inferred.','All closed members are assembled components; overlap at joints is intentional.','Pier foot and obscured southeast landing need terrain-neighbor review.']))
     release()
 
 if __name__=='__main__':main()
