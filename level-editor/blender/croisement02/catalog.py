@@ -37,6 +37,9 @@ def bank_workspace(asset):
 
 
 def scenery_workspace(asset):
+    from hay_selections import selected_workspace as hay_workspace
+    hay=hay_workspace(OUT,asset,reviewed_catalog())
+    if hay is not None:return hay
     from kindling_selections import selected_workspace as kindling_workspace
     kindling=kindling_workspace(OUT,asset,reviewed_catalog())
     if kindling is not None:return kindling
