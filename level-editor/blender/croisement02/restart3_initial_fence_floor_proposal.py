@@ -4,30 +4,27 @@ from pathlib import Path
 import numpy as np
 from PIL import Image,ImageDraw
 ROOT=Path(__file__).resolve().parents[3];OUT=ROOT/'level-editor/work/croisement02-refinement'
-D=OUT/'restart3-initial-fence/floor-proposal-v1'
+D=OUT/'restart3-initial-fence/floor-proposal-v2'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  D.mkdir(exist_ok=False)
  fence=np.array(Image.open(OUT/'restart3-initial-fence/source-domain-v1/fence-source.png').convert('L'))>0
- # Native coordinates bound plainly visible background between source posts.
- polygons=[[(1063,831),(1071,831),(1071,847),(1063,846)],[(1081,841),(1088,841),(1088,851),(1081,851)],[(1097,842),(1109,845),(1109,859),(1097,856)],[(1119,854),(1124,855),(1124,865),(1119,864)],[(1134,858),(1149,858),(1149,873),(1134,868)],[(1160,858),(1169,861),(1169,876),(1160,875)]]
- mask=Image.new('L',(1792,1152));draw=ImageDraw.Draw(mask)
- for poly in polygons:draw.polygon(poly,fill=255)
- returned=(np.array(mask)>0)&fence;inferred=fence&~returned
+ # The prior eight-pixel return proposal was rejected after enlarged source review.
+ polygons=[];returned=np.zeros_like(fence);inferred=fence.copy()
  srcpath=OUT/'animation-references/composite-frame-0.png';basepath=OUT/'restart3-fence-receiver/terminal-v3/base-atlas.png';source=np.array(Image.open(srcpath).convert('RGBA'));base=np.array(Image.open(basepath).convert('RGBA'));known=np.array(Image.open(OUT/'restart2-ground-completion/preparation-v1/known.png').convert('L'))>0
  assert not (fence&known).any()
  proposal=base.copy();proposal[returned]=source[returned];assert np.array_equal(proposal[~returned],base[~returned])
  for name,array in [('native-background-return',returned),('inferred-hidden-floor',inferred)]:Image.fromarray(array.astype('uint8')*255).save(D/(name+'.png'))
- Image.fromarray(proposal).save(D/'source-return-preview.png')
+ Image.fromarray(proposal).save(D/'base-atlas-input-preview.png')
  overlay=source[:,:,:3].copy();overlay[returned]=[30,220,220];overlay[inferred]=(overlay[inferred].astype(float)*.35+np.array([215,110,25])*.65).astype('uint8')
  sheet=Image.new('RGB',(912,486),'#303030');draw=ImageDraw.Draw(sheet)
- for i,(title,arr)in enumerate([('Original source',source),('Cyan: proposed native ground; orange: unseen floor',overlay)]):sheet.paste(Image.fromarray(arr).convert('RGB').crop((1018,811,1170,963)).resize((456,456),Image.Resampling.NEAREST),(456*i,30));draw.text((456*i+5,8),title,fill='white')
+ for i,(title,arr)in enumerate([('Original source',source),('Orange: inferred floor; native fence artwork stays separate',overlay)]):sheet.paste(Image.fromarray(arr).convert('RGB').crop((1018,811,1170,963)).resize((456,456),Image.Resampling.NEAREST),(456*i,30));draw.text((456*i+5,8),title,fill='white')
  sheet.save(D/'source-role-proposal.png')
- report=dict(status='PROPOSAL ONLY: API off; source-domain and appearance review required',ground_model_sha256='16c638be71eeb76e86439a0fdb14bac1e7bb9562afe20d175b58d0df96fb4ec2',source_sha256=sha(srcpath),base_atlas_sha256=sha(basepath),source_polygons=polygons,native_background_return_pixels=int(returned.sum()),inferred_hidden_floor_pixels=int(inferred.sum()),scope='Only initial ground appearance beneath original fence domain. Fence source pixels remain on fence geometry; synthesized floor is explicitly unobserved and does not receive original wood RGB.',known_pixels_exact=int(known.sum()),neighbor_foliage_reserved=True,applied_terminal_unchanged=True,files={p.name:sha(p)for p in D.glob('*.png')},holds=['Complete bounded initial fence geometry review first.','Review explicit native-background polygon classifications; do not infer background from luminance alone.','Remaining ambiguous source edge pixels stay protected as source evidence; any underlying floor appearance is inferred.','No existing approval authorizes these newly editable floor texels.'])
+ report=dict(status='PROPOSAL ONLY: API off; source-domain and appearance review required',ground_model_sha256='16c638be71eeb76e86439a0fdb14bac1e7bb9562afe20d175b58d0df96fb4ec2',source_sha256=sha(srcpath),base_atlas_sha256=sha(basepath),source_polygons=polygons,native_background_return_pixels=int(returned.sum()),inferred_hidden_floor_pixels=int(inferred.sum()),scope='Only initial ground appearance beneath original fence domain. Fence source pixels remain on fence geometry; synthesized floor is explicitly unobserved and does not receive original wood RGB.',known_pixels_exact=int(known.sum()),neighbor_foliage_reserved=True,applied_terminal_unchanged=True,files={p.name:sha(p)for p in D.glob('*.png')},holds=['Complete bounded initial fence geometry review first.','No native ground reassignment: all5419 pixels are inferred underlying floor; original source wood remains on the fence.','Native source imagery and all previously known ground pixels remain unchanged; uncertain fence-edge source is never copied to ground.','No existing approval authorizes these newly editable floor texels.'])
  (D/'proposal.json').write_text(json.dumps(report,indent=2)+'\n');print(report['native_background_return_pixels'],report['inferred_hidden_floor_pixels'])
 def prepare_inputs():
  d=D/'inputs-v1';d.mkdir(exist_ok=False)
- source=np.array(Image.open(OUT/'animation-references/composite-frame-0.png').convert('RGBA'));input_image=Image.open(D/'source-return-preview.png').convert('RGBA');input_image.save(d/'input.png')
+ source=np.array(Image.open(OUT/'animation-references/composite-frame-0.png').convert('RGBA'));input_image=Image.open(D/'base-atlas-input-preview.png').convert('RGBA');input_image.save(d/'input.png')
  editable=np.array(Image.open(D/'inferred-hidden-floor.png').convert('L'))>0
  guide=np.array(input_image);guide[editable,:3]=[235,140,35];Image.fromarray(guide).save(d/'region-guide.png')
  mask=np.full((1152,1792,4),255,dtype='uint8');mask[editable,3]=0;Image.fromarray(mask).save(d/'mask.png')
