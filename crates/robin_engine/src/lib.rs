@@ -112,6 +112,7 @@ pub mod spellforge;
 pub mod sprite;
 pub mod sprite_script;
 pub mod sprite_variant;
+pub mod stair_navigation;
 pub use robin_engine_types::static_arc;
 pub mod stealth;
 pub mod tactical_control;

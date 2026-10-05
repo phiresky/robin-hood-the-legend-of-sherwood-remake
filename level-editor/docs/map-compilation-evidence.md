@@ -4,6 +4,32 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Physical stair collision routing foundation (2026-10-05)
+
+`robin_engine::stair_navigation::StairRouteGeometry` builds an independent
+ground-coordinate grid and visibility graph from a physical boundary and the
+current active obstacle polygons. It reuses the engine's footprint/corridor
+queries and pathfinder. Negative world positions are translated into a bounded
+local grid; returned endpoints retain their caller coordinates. Malformed
+geometry is an error, while valid unreachable requests return no route.
+
+The route boundary must include actual connected landing support. The router
+does not enlarge short stairs or invent terrain. It verifies endpoint support,
+footprint clearance and every returned segment. Obstacle state changes require
+a fresh geometry snapshot; this API does not yet bind to runtime control events.
+
+All five physical-routing tests and 22 pathfinder tests pass, as do formatting
+and the game build. The new cases
+cover an edge-on stair detouring around solid geometry, sampled polygon-based
+footprint checks independent of the grid, ten directed routes at five rotated/
+translated placements, a wall that blocks until removed, unsupported endpoints,
+invalid geometry, a tiny obstacle wholly inside the swept corridor and a short
+stair that needs actual landing support.
+
+This remains groundwork for physical stair traversal. The compiler format,
+door handoffs, current height/receiver ownership and actor movement loop still
+need integration. It does not resolve or supersede the 24 failing keep routes.
+
 ## Physical stair coordinate and stepping foundation (2026-10-05)
 
 `robin_level_data::stair_navigation` now provides a validated physical height
