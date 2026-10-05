@@ -29,6 +29,22 @@ thirteen York entries. None is placed in the ten saved scenes. These require
 individual authoring/ownership review; buildings and bridges cannot receive
 empty scenery declarations merely to remove export warnings.
 
+The follow-up `work/map-compile/library-missing-gameplay-owners-20261005.json`
+uses every indexed descriptor path, including assets directly under the asset
+root. It pins both missing and candidate-owner descriptors. Thirty-two missing
+assets have all their part names represented in gameplay-bearing replacements:
+the Derby keep in four components, the fourteen Croisement fragments in five
+state assemblies, four Nottingham assets in combined/remainder assets, and
+thirteen York assets in market-state/remainder assets. The imported bridge,
+Leicester ground background and Nottingham terrain ground have no such match.
+
+All fourteen Croisement fragments participate in old/new sight-obstacle sets
+of map controls. They cannot simply be restored as always-active collision.
+The component matches are authoring candidates, not proof of equal geometry or
+frames. Restoring standalone definitions must preserve their own features while
+separating unrelated assembly parts and control dependencies. No definitions
+were published or missing-definition warnings suppressed by this audit.
+
 ## Published Lincoln static-prop definitions (2026-10-05)
 
 Five recently added scenery assets had no gameplay declaration: the barn tool,

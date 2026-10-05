@@ -17,6 +17,11 @@ York market props and the imported wood bridge. None is placed in the ten saved
 scenes, but placing one in a new map still omits its gameplay with a warning.
 These need individual ownership/geometry review; empty scenery definitions would
 be incorrect for buildings and bridges.
+An index-based component audit finds that 32 of these assets have every part
+represented in newer gameplay-bearing assets, often larger state assemblies.
+Their standalone definitions still need restoring with local control dependencies
+and coordinate frames; matching parts alone does not make them interchangeable.
+The imported bridge and two old ground assets have no component-owner match.
 
 The watermill now publishes asset-owned body collision and a platform clearance
 projected after placement onto its foundation navigation plane. Twenty-four new
