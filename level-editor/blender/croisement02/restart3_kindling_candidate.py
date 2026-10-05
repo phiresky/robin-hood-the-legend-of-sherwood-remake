@@ -1,5 +1,5 @@
 """New kindling worker with exact native ownership and untouched outside scene."""
-import json,sys,shutil
+import argparse,json,sys,shutil
 from pathlib import Path
 import bpy
 from PIL import Image
@@ -13,7 +13,8 @@ from render_tree import render_workspace
 from render_slots import acquire,release
 
 def main():
- asset='croisement02-southwest-kindling-bundle';old=OUT/'scenery-round-1/assets'/asset;worker=OUT/'restart3-kindling/candidate-v1/assets'/asset;geometry=OUT/'restart3-kindling/outline-v1/geometry.json';baseline_hash='1ad1b4e508e8511d42d5caf135935aaa81f6b5ca34f2a6a9f57329f9df29e26b'
+ parser=argparse.ArgumentParser();parser.add_argument('--version',type=int,choices=[1,2],default=1);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
+ asset='croisement02-southwest-kindling-bundle';old=OUT/'scenery-round-1/assets'/asset;worker=OUT/f'restart3-kindling/candidate-v{args.version}/assets'/asset;geometry=OUT/f'restart3-kindling/outline-v{args.version}/geometry.json';baseline_hash='1ad1b4e508e8511d42d5caf135935aaa81f6b5ca34f2a6a9f57329f9df29e26b'
  if worker.exists():raise FileExistsError(worker)
  if sha(old/'model.blend')!=baseline_hash:raise ValueError('Approved geometry changed')
  cfg=json.loads((old/'workspace.json').read_text());bpy.ops.wm.open_mainfile(filepath=str(old/'model.blend'));bpy.context.view_layer.update();bpy.context.preferences.filepaths.save_version=0
