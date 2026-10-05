@@ -27,6 +27,8 @@ def main():
     parser.add_argument('output', type=Path)
     parser.add_argument('--flat-leaf-fragments', action='store_true',
                         help='Use small source-facing fragments instead of stretching the native chart over slopes')
+    parser.add_argument('--minimum-depth-width', type=float, default=0.,
+                        help='Optional new inferred depth target, using positive native-ray scaling')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
     source, output = args.source.resolve(), args.output.resolve()
     require(not output.exists(), 'Use a fresh candidate destination')
@@ -112,6 +114,21 @@ def main():
                                  else [(start+2, start+1, start), (start+3, start+2, start)])
                     slots.extend([2 if backside else 0]*2)
                     known.extend([not backside]*2)
+        depth_scale = 1.
+        if args.minimum_depth_width:
+            require(1 <= args.minimum_depth_width <= 1.5, 'Depth target must be in1..1.5')
+            points = np.asarray(vertices)
+            depths = points @ ray
+            center_depth = float((depths.min()+depths.max())/2)
+            offsets = depths-center_depth
+            width_target = float(np.ptp(points[:, 0]))*args.minimum_depth_width
+            while np.ptp((points+(depth_scale-1)*offsets[:, None]*ray)[:, 1]) < width_target:
+                depth_scale += .01
+                require(depth_scale < 4, 'Unable to fit bounded inferred crown depth')
+            points += (depth_scale-1)*offsets[:, None]*ray
+            if points[:, 2].min() < 20:
+                points += ray*((20-points[:, 2].min())/SIN)
+            vertices = points.tolist()
         result = replace_mesh(crown, vertices, faces, uvs, materials, slots, known)
         require(foreign == {o.name: (geometry(o), appearance(o)) for o in bpy.data.objects
                            if o.type == 'MESH' and o != crown}, 'Foreign or wood receiver changed')
@@ -129,6 +146,7 @@ def main():
             native_source_image=str(source_image), native_source_sha256=sha(source_image),
             original_native_rgba_image_reused_exactly=True, native_uv_mapping='exact source x/y orthographic projection',
             flat_leaf_fragments=args.flat_leaf_fragments,
+            inferred_native_ray_depth_scale=depth_scale,
             retained_inferred_faces=retained_faces, mesh=result,
             non_crown_geometry_and_appearance_unchanged=True,
             method='Smooth native-source leaf envelope over branch-scale ellipsoids; original hidden leaf clusters and off-map continuation retained',
