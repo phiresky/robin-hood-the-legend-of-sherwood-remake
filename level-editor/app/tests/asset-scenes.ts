@@ -65,7 +65,47 @@ function display(object: THREE.Object3D) {
   camera.lookAt(center);
   renderer.render(scene, camera);
 }
+function renderResourceProbe(material: THREE.Material) {
+  check(owned === null, "Resource probe requires an empty asset scene");
+  const geometry = new THREE.BoxGeometry(1, 1, 1);
+  const mesh = new THREE.Mesh(geometry, material);
+  const probeCamera = new THREE.PerspectiveCamera(35, 900 / 700, 0.01, 10);
+  probeCamera.position.z = 3;
+  scene.add(mesh);
+  try {
+    renderer.render(scene, probeCamera);
+  } finally {
+    scene.remove(mesh);
+    geometry.dispose();
+    material.dispose();
+    renderer.renderLists.dispose();
+    renderer.render(scene, camera);
+  }
+}
+// PBR rendering lazily allocates renderer-owned lighting textures. Measure
+// those before loading assets so retirement still rejects every asset leak.
+const coldMemory = { ...renderer.info.memory };
+renderResourceProbe(new THREE.MeshStandardMaterial());
+const rendererBaseline = { ...renderer.info.memory };
+check(rendererBaseline.geometries === 0, "Warmup geometry was not disposed");
 const api = {
+  resourceBaseline() {
+    return { cold: coldMemory, warmed: rendererBaseline };
+  },
+  resourceLeakProbe() {
+    const texture = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+    texture.needsUpdate = true;
+    let leaked: typeof rendererBaseline;
+    try {
+      renderResourceProbe(new THREE.MeshStandardMaterial({ map: texture }));
+      // Deliberately retain only the asset texture until the counter is read.
+      leaked = { ...renderer.info.memory };
+    } finally {
+      texture.dispose();
+      renderer.render(scene, camera);
+    }
+    return { leaked, cleaned: { ...renderer.info.memory } };
+  },
   async configure(path: string) {
     retire();
     const flat = await fetch("/@fs" + path + "/index.json");

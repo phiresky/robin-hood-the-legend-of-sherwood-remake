@@ -16,10 +16,17 @@ async function capture(id,suffix){const response=await command('Page.captureScre
 try{
  const endpoint=new URL(await chromeEndpoint(chrome,{timeoutMs:30000}));const pages=await(await fetch('http://'+endpoint.host+'/json/list')).json();ws=new WebSocket(pages.find(page=>page.type==='page').webSocketDebuggerUrl);await socketOpen(ws);await command('Page.enable');
  for(let attempt=0;attempt<120;attempt++){if(await evaluate('!!window.assetSceneVerification'))break;if(attempt===119)throw Error('Fixture failed to load');await new Promise(resolve=>setTimeout(resolve,250));}
+ const baseline=await evaluate('window.assetSceneVerification.resourceBaseline()');
+ if(baseline.warmed.geometries!==0)throw Error('Renderer warmup leaked geometry');
+ const matchesBaseline=memory=>memory.geometries===baseline.warmed.geometries&&memory.textures===baseline.warmed.textures;
+ const leakProbe=await evaluate('window.assetSceneVerification.resourceLeakProbe()');
+ if(matchesBaseline(leakProbe.leaked))throw Error('Retirement check failed to reject deliberately retained asset texture');
+ if(!matchesBaseline(leakProbe.cleaned))throw Error('Negative leak probe did not clean up');
+ result.resourceBaseline=baseline;result.negativeLeakCheck={rejected:true,...leakProbe};
  const listed=await evaluate(`window.assetSceneVerification.configure(${JSON.stringify(library)})`);
  const expanded=listed.filter(entry=>ids.some(id=>entry.id===id||entry.id.startsWith(id+'--state-')));
  if(!ids.every(id=>expanded.some(entry=>entry.id===id||entry.id.startsWith(id+'--state-'))))throw Error('Missing requested asset');
- for(const entry of expanded){const record=await evaluate(`window.assetSceneVerification.verify(${JSON.stringify(entry.id)})`);await capture(entry.id,'model');record.preview=await evaluate(`window.assetSceneVerification.preview(${JSON.stringify(entry.id)})`);await capture(entry.id,'preview');record.retired=await evaluate('window.assetSceneVerification.retire()');if(record.retired.geometries!==0||record.retired.textures!==0)throw Error('GPU resources leaked '+entry.id+JSON.stringify(record.retired));result.results.push(record);await writeFile(join(output,'progress.json'),JSON.stringify(result,null,2));}
+ for(const entry of expanded){const record=await evaluate(`window.assetSceneVerification.verify(${JSON.stringify(entry.id)})`);await capture(entry.id,'model');record.preview=await evaluate(`window.assetSceneVerification.preview(${JSON.stringify(entry.id)})`);await capture(entry.id,'preview');record.retired=await evaluate('window.assetSceneVerification.retire()');if(!matchesBaseline(record.retired))throw Error('GPU resources leaked '+entry.id+JSON.stringify(record.retired));result.results.push(record);await writeFile(join(output,'progress.json'),JSON.stringify(result,null,2));}
  result.status='PASS';
 }catch(error){result.error=String(error);result.browserLog=log;process.exitCode=1;}
 finally{await writeFile(join(output,'report.json'),JSON.stringify(result,null,2));console.log(JSON.stringify({status:result.status,count:result.results.length,error:result.error}));ws?.close();chrome.kill('SIGTERM');await closed;await rm(profile,{recursive:true,force:true});}
