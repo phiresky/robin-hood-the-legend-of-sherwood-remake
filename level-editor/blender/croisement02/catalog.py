@@ -37,6 +37,12 @@ def bank_workspace(asset):
 
 
 def scenery_workspace(asset):
+    from approved_initial_fence_selection import selected_workspace as initial_fence_workspace
+    fence=initial_fence_workspace(OUT,asset,reviewed_catalog())
+    if fence is not None:return fence
+    from shed_east_selection import selected_workspace as shed_east_workspace
+    shed=shed_east_workspace(OUT,asset,reviewed_catalog())
+    if shed is not None:return shed
     from logging_stump_selection import selected_workspace as stump_workspace
     stump=stump_workspace(OUT,asset,reviewed_catalog())
     if stump is not None:return stump
