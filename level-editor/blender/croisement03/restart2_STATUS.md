@@ -33,7 +33,9 @@ objects before mutation. Seventeen traced stone-edge pixels and separate
 unresolved/ivy/ground domains remain disclosed. Rear and off-map masonry has
 been filled through Sunburst/OpenRouter and baked without changing geometry
 or protected source pixels. The saved eight-view result under
-`restart2/texture-wall10/` awaits independent review and user texture approval.
+`restart2/texture-wall10/` passed independent review. Its immutable texture card
+is `restart2/texture-review-wall10/texture-candidates.json`, awaiting the next
+consolidated user decision.
 
 Tree 25 version 17 has a frozen, independently reviewed static geometry card in
 `restart2/geometry-round2-tree25-v17/review-candidates.json`; user review is
@@ -53,9 +55,12 @@ with foreground mask 48 is explicitly unresolved and excluded from appearance
 approval. Gray rear stone needs texture fill after geometry approval and fringe
 ownership resolution. No actual surrounding vegetation is complete.
 
-Eastern rock drafts remain on hold. The physically seated version 4 needs
-foreground context for its hidden base; version 5 keeps the original outline
-but creates an unnatural pointed rear foot. Neither is a gallery candidate.
+Eastern rock version 8 passed the worker's source, solid, saved-material and
+ground-contact review and awaits independent review. A closed tapered base
+replaces the earlier unsupported slab and pointed-foot drafts. Source-ray
+clipping keeps the observed upper outline. Its 89 rendered foreground-shrub
+pixels remain reserved from appearance approval; real shrub/tree/terrain
+context is incomplete. The draft is not yet a gallery candidate.
 
 Wind animation, other trees,
 undergrowth, rocks, terrain, water and mission appearances remain unfinished.
