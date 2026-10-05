@@ -122,6 +122,11 @@ passes 48 directed routes across four rotations and two elevations. Full Derby
 passes 28/28 stair routes and all five control checks with this correction.
 The hall's unchanged lower stair still fails both directions at 180 degrees;
 the complete hall placement audit passes 60/64 routes, not full asset parity.
+An unpublished lower-stair correction passes 64/64 routes for both stairs on
+authored terrain and rejects eight raised, disconnected ground entrances. Full
+Derby still fails two routes with that candidate: its terrain boundary stops
+1.52 units short of the new entrance. Terrain geometry review precedes publication;
+the published asset remains unchanged by this candidate.
 Physical transitions
 now wait at a reached world target until animation completion, or preserve
 unfinished distance in the next movement order. An edge-on actor-loop test

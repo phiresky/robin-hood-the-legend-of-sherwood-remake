@@ -9,6 +9,10 @@ const [staged, mode] = process.argv.slice(2);
 assert.ok(staged, "Provide a staged edits directory");
 assert.ok(mode === undefined || mode === "--published", "Unknown verification mode");
 const edits = JSON.parse(await fs.readFile(`${staged}/edits.json`, "utf8"));
+const review = JSON.parse(await fs.readFile(`${staged}/review.json`, "utf8"));
+const externalDoors = review.changes
+  .filter((change) => change.landing === "external placement receiver")
+  .map((change) => change.door);
 assert.equal(edits.length, 1, "This fixture places one complete asset independently");
 const edit = edits[0];
 const index = JSON.parse(await fs.readFile("library/3d-assets/index.json", "utf8")).assets;
@@ -33,6 +37,7 @@ const reference = {
 };
 const output = await fs.mkdtemp("work/map-compile/local-stair-placements-");
 const results = [];
+const gaps = [];
 for (const height of [0, 40])
   for (const rotation of [0, 37, 90, 180]) {
     const empty = {
@@ -63,12 +68,38 @@ for (const height of [0, 40])
       controls: geometry.movement_transitions?.length ?? 0,
       warnings: compiled.warnings,
     });
+    if (externalDoors.length) {
+      const raised = structuredClone(document);
+      raised.groups[0].transform.dz += 20;
+      const disconnected = compileMap(
+        raised,
+        [0, 0, 4000, 4000],
+        new Map([[entry.id, descriptor]]),
+        { bestEffort: true },
+      );
+      for (const door of externalDoors)
+        assert.ok(
+          disconnected.warnings.some(
+            (warning) => warning.includes(door) && warning.includes("traversal omitted"),
+          ),
+          `${file}: raised external entrance must reject`,
+        );
+      assert.ok(disconnected.descriptor.asset_geometry.lifts.length < geometry.lifts.length);
+      gaps.push({
+        height,
+        rotation,
+        raisedBy: 20,
+        lifts: disconnected.descriptor.asset_geometry.lifts.length,
+        warnings: disconnected.warnings,
+      });
+    }
   }
 await fs.writeFile(
   `${output}/diagnostics.json`,
   JSON.stringify({ scope: "static-geometry-only-not-gameplay-parity", complete: true, results }),
 );
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));
+await fs.writeFile(`${output}/external-gap-checks.json`, JSON.stringify(gaps));
 console.log(
   JSON.stringify({ output, placements: results.map(({ warnings, ...result }) => result) }, null, 2),
 );

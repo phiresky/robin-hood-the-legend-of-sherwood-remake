@@ -4,6 +4,34 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Lower east-hall stair and external ground contact (2026-10-05)
+
+The seam staging recipe now accepts explicitly named `--external=` door IDs.
+These require no local landing owner, retain their authored outside position and
+create no substitute receiving floor. Unused or conflicting selections reject.
+The compiler still resolves the actual placed receiver. The placement checker
+raises these assets by 20 units and asserts that disconnected traversal is omitted.
+
+Unpublished candidate `work/map-compile/local-stair-seams-8uUfqO` corrects the
+east hall's lower stair and upper landing, retaining the published upper stair.
+Floor movement is at most 1.349 units. Mesh sampling intersects 639/641 points;
+the two remaining samples lie within 0.205 units of the mesh edge. The irregular
+treads remain above and below the unchanged smooth navigation plane.
+`local-stair-placements-DHIW64` passes **64/64 directed actor routes**, covering
+both stairs at four rotations and two elevations. The repeated compiler fixture
+`local-stair-placements-yKi1yH` additionally rejects all eight raised ground
+entrances while preserving the independent upper stair.
+
+Full Derby in `east-hall-lower-full-v1UV2F` passes control apply/reset but fails
+two of 28 stair routes. Runtime tracing isolates the lower ground receiver:
+the terrain asset's `ground-section-0-0` boundary edge from [1375,1381] to
+[1411,1365] remains about 1.518 units away from the corrected midpoint
+[1391.848643,1371.850417]. This is a real authored boundary gap, not f32 noise.
+Projecting those edge endpoints onto the zero-height stair seam would move them
+0.664 and 2.423 units respectively; that terrain change requires geometry review.
+No asset definitions or scene pins were published from this candidate. The
+published full Derby remains the previous passing version.
+
 ## Published east-hall upper stair seams (2026-10-05)
 
 `refinement/stage-local-stair-seams.mjs` authors explicitly selected local stair

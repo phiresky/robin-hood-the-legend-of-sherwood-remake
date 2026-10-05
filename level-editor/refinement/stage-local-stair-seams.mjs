@@ -7,7 +7,12 @@ import { validateAssetGameplay } from "../shared/src/asset-gameplay.ts";
 
 // Explicitly selected authoring candidates only. Publication requires mesh and
 // placed actor checks; this never repairs a scene silently during compilation.
-const [asset, ...ids] = process.argv.slice(2);
+const [asset, ...arguments_] = process.argv.slice(2);
+const external = new Set(
+  arguments_.filter((value) => value.startsWith("--external=")).map((value) => value.slice(11)),
+);
+const ids = arguments_.filter((value) => !value.startsWith("--external="));
+const usedExternal = new Set();
 assert.ok(asset && ids.length, "Provide an asset and selected stair lift IDs");
 const index = JSON.parse(await fs.readFile("library/3d-assets/index.json", "utf8")).assets;
 const entry = index.find((entry) => entry.id === asset);
@@ -59,7 +64,11 @@ for (const id of ids) {
         pointInGameplayPolygon(door.outside, surface.polygon, true) &&
         !(surface.holes ?? []).some((hole) => pointInGameplayPolygon(door.outside, hole, true)),
     );
-    assert.equal(landings.length, 1, `${door.id}: requires external or ambiguous landing review`);
+    if (external.has(door.id)) {
+      assert.equal(landings.length, 0, `${door.id}: external endpoint has a local landing`);
+      usedExternal.add(door.id);
+    } else
+      assert.equal(landings.length, 1, `${door.id}: requires external or ambiguous landing review`);
     const landing = landings[0];
     const a = planeHeight(plane, door.outside),
       b = planeHeight(plane, door.inside);
@@ -79,7 +88,15 @@ for (const id of ids) {
       pointInGameplayPolygon(door.middle, floor.polygon, true),
       `${door.id}: midpoint still unsupported`,
     );
-    changes.push({ door: door.id, before: oldMiddle, after: door.middle, landing: landing.id });
+    changes.push({
+      door: door.id,
+      before: oldMiddle,
+      after: door.middle,
+      landing: landing?.id ?? "external placement receiver",
+    });
+    // Preserve the authored approach. The compiler must find real receiving
+    // terrain or another placed asset; authoring creates no replacement floor.
+    if (!landing) continue;
     if (adjusted.has(landing.id)) continue;
     const sideways = (point) => (-plane[1] * point[0] + plane[0] * point[1]) / length;
     const seam = floor.polygon.filter((_, i) => Math.abs(floor.height[i] - door.outside[2]) < 1e-4);
@@ -124,6 +141,7 @@ for (const id of ids) {
   gameplay.movementClearances.push(clearance);
   changes.push({ clearance: clearance.id, after: clearance });
 }
+assert.deepEqual(usedExternal, external, "Unused external endpoint selection");
 validateAssetGameplay(gameplay, descriptor);
 const output = await fs.mkdtemp("work/map-compile/local-stair-seams-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify([{ asset, descriptorSha256, gameplay }]));
