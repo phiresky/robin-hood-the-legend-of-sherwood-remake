@@ -4,6 +4,28 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Bridge sight/projectile gaps and body-clearance review (2026-10-05)
+
+`work/map-compile/imported-bridge-deck-y6Ojxi` adds explicit world-space ray
+probes without changing any of the ten previously tested geometry descriptors.
+The new ignored native test
+`exported_geometry_preserves_authored_sight_and_projectile_gaps` loads the
+compiled map and queries its active obstacles. It passes 140 checks: seven
+probes, five rotations, both directions and separate sight/projectile flags.
+Deck thickness, upper rails, posts and cross-braces block; the selected railing
+gap, open underpass and space below a brace remain clear. The complete result is
+`ray-probe-report.json`. Focused lint, Rust formatting and the game build pass.
+
+These point rays and movement-footprint tests do not establish body clearance.
+The library's upright character previews extend substantially above their foot
+hotspots: sampled profile bounds reach 53 pixels for Robin Town and 76 for
+Little John. The blocking brace probe is only about 42 game-height units above
+the foundation. Navigation currently derives solid intersections at the walking
+plane, so a clear foot route can still pass beneath wood that intersects an
+upright body. The bridge remains unpublished until its walking restrictions or
+asset-authored headroom policy account for that difference. No mission cast or
+character profile should become a runtime map-compilation dependency.
+
 ## Collision subtraction recovery and bridge structure candidate (2026-10-05)
 
 The fitted bridge structure exposed a floating-point sweep failure while

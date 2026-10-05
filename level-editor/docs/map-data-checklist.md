@@ -27,8 +27,10 @@ crossings and 754 sampled receiving-seam crossings at five rotations. Adding
 twelve inclined support hulls preserves those ten complete crossings, passes
 twenty underpass routes and blocks sixty sampled support-foot positions. A newer
 candidate adds fitted rail/brace collision and mesh-derived deck thickness and
-passes those same route/foot checks plus ten landing-height rejections. Direct
-sight/projectile and visual/body-clearance review remain before publication.
+passes those same route/foot checks plus ten landing-height rejections. Another
+140 native sight/projectile checks preserve the tested wood and gaps. Body
+clearance remains unresolved: foot-level navigation alone allows routes beneath
+braces that can intersect an upright character. The candidate is not published.
 
 The staged composite keep preserves Derby's door permissions, room memberships
 and lift endpoints; both assemblies pass 28 native stair routes and five control

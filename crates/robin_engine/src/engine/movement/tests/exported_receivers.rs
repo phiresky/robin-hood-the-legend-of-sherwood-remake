@@ -1,6 +1,72 @@
 use super::*;
 
 #[test]
+#[ignore = "requires exported geometry and ray probes via ROBIN_ASSET_MAP_DIAGNOSTICS"]
+fn exported_geometry_preserves_authored_sight_and_projectile_gaps() {
+    use crate::sight_obstacle::{SIGHTOBSTACLE_OPAQUE, SIGHTOBSTACLE_SOLID, is_reachable_3d};
+    let directory = std::path::PathBuf::from(std::env::var("ROBIN_ASSET_MAP_DIAGNOSTICS").unwrap());
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(directory.join("diagnostics.json")).unwrap())
+            .unwrap();
+    assert_eq!(manifest["complete"], true);
+    let report_path = directory.join("ray-probe-report.json");
+    let mut report = serde_json::json!({"complete": false, "scope": "authored-initial-state-ray-probes", "results": []});
+    std::fs::write(&report_path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
+    let mut checked = 0;
+    let mut failures = 0;
+    for result in manifest["results"].as_array().unwrap() {
+        let Some(probes) = result["ray_probes"].as_array() else {
+            continue;
+        };
+        let file = result["file"].as_str().unwrap();
+        let bytes = std::fs::read(directory.join(file)).unwrap();
+        let descriptor: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let dimensions = &descriptor["walkable_polygon"][2];
+        let (engine, assets) = compiled_walkway_with_dimensions(
+            &bytes,
+            (
+                dimensions[0].as_f64().unwrap() as f32 + 1.,
+                dimensions[1].as_f64().unwrap() as f32 + 1.,
+            ),
+        );
+        for probe in probes {
+            let endpoints: [[f32; 3]; 2] =
+                serde_json::from_value(probe["endpoints"].clone()).unwrap();
+            for (kind, mask) in [
+                ("sight", SIGHTOBSTACLE_OPAQUE),
+                ("projectile", SIGHTOBSTACLE_SOLID),
+            ] {
+                let expected = probe["clear"].as_bool().unwrap();
+                for reverse in [false, true] {
+                    let (a, b) = if reverse {
+                        (endpoints[1], endpoints[0])
+                    } else {
+                        (endpoints[0], endpoints[1])
+                    };
+                    let actual = is_reachable_3d(engine.sight_obstacles(&assets), a, b, mask);
+                    checked += 1;
+                    failures += usize::from(actual != expected);
+                    report["results"]
+                        .as_array_mut()
+                        .unwrap()
+                        .push(serde_json::json!({
+                            "file": file, "probe": probe["name"], "kind": kind, "reverse": reverse,
+                            "expected_clear": expected, "actual_clear": actual
+                        }));
+                }
+            }
+        }
+    }
+    report["complete"] = true.into();
+    report["checked"] = checked.into();
+    report["failures"] = failures.into();
+    std::fs::write(&report_path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
+    assert!(checked > 0, "no sight/projectile probes tested");
+    assert_eq!(failures, 0, "see {}", report_path.display());
+    eprintln!("{checked} sight/projectile ray probes passed");
+}
+
+#[test]
 fn loaded_movement_obstacles_reject_mouse_positions_inside_and_on_boundary() {
     let mut descriptor: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),

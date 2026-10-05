@@ -354,6 +354,73 @@ for (const rotation of [0, 37, 90, 180, 270]) {
       sector: largest.sector,
       warnings: lower.warnings,
       blocked_points: blocked,
+      ...(process.argv.includes("--structure")
+        ? {
+            ray_probes: [
+              {
+                name: "deck thickness",
+                clear: false,
+                endpoints: [
+                  [0, 0, 110],
+                  [0, 0, 80],
+                ],
+              },
+              {
+                name: "open underpass",
+                clear: true,
+                endpoints: [
+                  [-60, 0, 40],
+                  [60, 0, 40],
+                ],
+              },
+              {
+                name: "railing gap",
+                clear: true,
+                endpoints: [
+                  [-40, 5, 98.5],
+                  [40, 5, 98.5],
+                ],
+              },
+              {
+                name: "upper railing",
+                clear: false,
+                endpoints: [
+                  [-40, 5, 103],
+                  [40, 5, 103],
+                ],
+              },
+              {
+                name: "railing post",
+                clear: false,
+                endpoints: [
+                  [-40, 0.2, 98.5],
+                  [40, 0.2, 98.5],
+                ],
+              },
+              {
+                name: "cross brace",
+                clear: false,
+                endpoints: [
+                  [0, 15, 51.5],
+                  [0, 35, 51.5],
+                ],
+              },
+              {
+                name: "below cross brace",
+                clear: true,
+                endpoints: [
+                  [0, 15, 10],
+                  [0, 35, 10],
+                ],
+              },
+            ].map((probe) => ({
+              ...probe,
+              endpoints: probe.endpoints.map((point) =>
+                sceneToGame(camera, applyAffineMatrix(matrix, point)),
+              ),
+            })),
+          }
+        : {}),
       routes: [
         [
           [3.125, -130.375, 0],

@@ -24,7 +24,7 @@
     "publication": "staged only"
   },
   "remaining": [
-    "Verify complete projectile and sight obstruction independently of walking surfaces.",
-    "Review fitted collision and rendered actor body clearance before publication."
+    "Resolve navigation body clearance beneath the low cross-braces before publication.",
+    "Review fitted collision and rendered actor clearance; passing point rays do not certify a full body route."
   ]
 }
