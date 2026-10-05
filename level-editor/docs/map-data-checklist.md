@@ -27,8 +27,10 @@ receivers. The completed fresh ten-map descriptor batch passes native constructi
 and apply/reset for all 70 compiled controls, but retains omissions. Five Lincoln
 props lack gameplay definitions. The separate calibrated Wychford export also
 passes native construction and both control apply/reset checks, retaining its
-tower-control and church-traversal height mismatches. This is not a rendered ZIP
-round-trip or full feature-coverage pass.
+tower-control and church-traversal height mismatches. A fresh calibrated Wychford
+browser ZIP also passes native mod discovery, image decoding and construction
+without a base datadir, including its editable scene and appearance resources.
+This remains short of full feature coverage or rendered actor/state parity.
 
 | Map information | How the editor constructs it | Current evidence / gap |
 |---|---|---|

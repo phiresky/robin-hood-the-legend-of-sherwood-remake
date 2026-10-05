@@ -4,6 +4,24 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Calibrated Wychford browser ZIP round trip (2026-10-05)
+
+The corrected full-library browser fixture produces
+`work/map-compile/wychford-wall-calibration-QcegIB/editor-wychford-current.zip`
+(51,927,200 bytes, SHA-256
+`0c76ca3c7735ce08709a4077480b7581236d27cb4d1f1d75eee8d1fa8fc2b2e7`).
+The 3600×2400 baked map was visually inspected. The native
+`full_editor_archive_constructs_native_map_without_base_datadir` test passes
+in 6.67 seconds: color/depth/minimap and the embedded editor scene load, with
+21,323 sight/receiving obstacles, 15 masks, 30 door projections, 57,456 grid
+blocks and one appearance region for two controls. The descriptor contains
+two traversals and no animated scenery.
+
+This verifies the real packaged resources and native archive path after wall
+calibration. It does not certify rendered actor occlusion, every traversal,
+state interaction or the still-omitted map connections. The existing user mod
+archive was not overwritten.
+
 ## Fresh calibrated Wychford construction (2026-10-05)
 
 The current scene with model-calibrated walls exports to
