@@ -4,6 +4,35 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Refreshed published-map batch (2026-10-05)
+
+`work/map-compile/published-probes-20261005-r2` contains fresh best-effort exports
+of all ten saved scenes using their pinned asset definitions. Native construction
+passes for every descriptor (8.66 seconds), and all 71 compiled controls pass
+apply/reset (7.60 seconds). Controls per map are Wychford 3, Croisement01 6,
+Croisement02 9, Croisement03 9, Derby 5, Leicester 12, Lincoln 11, Nottingham 10,
+Sherwood 0 and York 6. Wychford now includes the published west-tower reveal.
+
+This batch does not prepare mesh calibration for Wychford's spline wall; its
+22 areas and 17,478 sight obstacles are an incomplete wall export, not a replacement
+for the separately calibrated run. Wychford retains the church approach-height
+mismatch and missing/ambiguous physical receivers on the footbridge, edge banks,
+woodland banks and watermill. Five Lincoln props still have no gameplay definitions:
+the barn tool, loose log, path poles, loose plank and south stake. Their published
+parts are marked scenery and contain no authored collision shapes; this audit
+does not assume that they should be non-colliding. Integer-grid collapses and
+recovery-review warnings also remain. Successful loading and state changes do not
+certify omitted geometry, rendered output or complete actor traversal.
+
+The fresh calibrated Wychford run is
+`work/map-compile/wychford-wall-calibration-UNeRFM`. Model calibration reports no
+warnings. Its descriptor has 146 movement areas, 21,323 sight obstacles, 30 doors,
+17 masks, two lifts and three controls. Native construction passes (5.97 seconds),
+including 57,456 grid blocks and 36,983 elevation boundaries; all three controls
+pass apply/reset (5.72 seconds). The church mismatch and five physical-receiver
+binding omissions listed above remain after calibration. This is a descriptor
+audit, not a newly baked/rendered ZIP or an actor-route certification.
+
 ## Disconnected spline-light receiving probes (2026-10-05)
 
 Spline lighting now retains each disconnected fragment of a clipped receiving

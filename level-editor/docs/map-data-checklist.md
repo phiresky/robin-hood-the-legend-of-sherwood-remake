@@ -23,12 +23,13 @@ possible route, control state or feature category.
 A fresh all-map batch exposed stale Lincoln spire appearance bindings, now
 repaired and published. Native baseline construction and all eleven control
 apply/reset checks pass. Moving the hall/spire leaves unresolved neighboring
-receivers. The completed fresh ten-map descriptor batch passes native construction
-and apply/reset for all 70 compiled controls, but retains omissions. Five Lincoln
+receivers. The refreshed ten-map descriptor batch passes native construction
+and apply/reset for all 71 compiled controls, but retains omissions. Five Lincoln
 props lack gameplay definitions. The separate calibrated Wychford export also
-passes native construction and both control apply/reset checks, retaining its
-tower-control and church-traversal height mismatches. A fresh calibrated Wychford
-browser ZIP also passes native mod discovery, image decoding and construction
+passes native construction and all three control apply/reset checks, retaining
+the church-traversal height mismatch and five physical-receiver binding omissions.
+The calibrated descriptor has 146 movement areas, 21,323 sight obstacles and
+17 masks. An earlier calibrated Wychford browser ZIP passes native mod discovery, image decoding and construction
 without a base datadir, including its editable scene and appearance resources.
 This remains short of full feature coverage or rendered actor/state parity.
 
