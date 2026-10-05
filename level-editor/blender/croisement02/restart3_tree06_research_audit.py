@@ -19,7 +19,8 @@ def bvh(obj):
 
 
 def main():
- base=OUT/'restart3-tree06-root/research-roots-v4';model=base/'root.blend'
+ variant=sys.argv[sys.argv.index('--')+1]if '--'in sys.argv else 'research-roots-v4'
+ base=OUT/'restart3-tree06-root'/variant;model=base/'root.blend'
  bpy.ops.wm.open_mainfile(filepath=str(model));bpy.context.view_layer.update();obj=next(o for o in bpy.context.scene.objects if o.type=='MESH')
  new=bvh(obj);bm=bmesh.new();bm.from_mesh(obj.data);nonmanifold=sum(not e.is_manifold for e in bm.edges);volume=bm.calc_volume(signed=True);remaining=set(bm.verts);components=[]
  while remaining:
