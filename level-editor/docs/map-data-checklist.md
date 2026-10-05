@@ -32,6 +32,12 @@ browser ZIP also passes native mod discovery, image decoding and construction
 without a base datadir, including its editable scene and appearance resources.
 This remains short of full feature coverage or rendered actor/state parity.
 
+The west-tower reveal now has a published terrain receiver probe. Derby's
+compiled geometry is unchanged; Wychford gains its third control and two masks,
+with native construction and apply/reset verified. Its elevated entrance and
+the church traversal remain unresolved. The latest baked Wychford ZIP predates
+this attachment change.
+
 | Map information | How the editor constructs it | Current evidence / gap |
 |---|---|---|
 | Background and minimap | Render placed models and textures, then downsample. | Browser bake and native ZIP decoding tested. |

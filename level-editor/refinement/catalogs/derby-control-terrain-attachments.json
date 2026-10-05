@@ -1,0 +1,16 @@
+[
+  {
+    "asset": "derby-keep-west-tower",
+    "review": "The appearance/mask-only reveal control can receive on the approach floor from the modeled base to its existing raised approach. This finite probe preserves Derby exactly and restores the independently placed Wychford reveal without changing navigation or entrance geometry. Ambiguous floors remain invalid. This does not relocate the tower's elevated entrance.",
+    "rules": [
+      {
+        "kind": "control",
+        "id": "mask-change-1",
+        "node": "building-239",
+        "anchor": [-134.90194702148438, 100.78039391542511, 110.00120673726359],
+        "below": 111.00120673726359,
+        "above": 1
+      }
+    ]
+  }
+]

@@ -4,6 +4,24 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Published west-tower reveal terrain attachment (2026-10-05)
+
+The west tower's appearance/mask-only reveal now owns a finite receiver probe
+from one unit below the modeled base to one unit above its existing raised
+approach. Derby's entire compiled geometry remains exactly identical. In
+Wychford, this restores the reveal and its two applied masks: three controls
+and seventeen masks instead of two and fifteen. Navigation, sight obstacles,
+doors and traversals remain unchanged. The elevated entrance is still omitted
+when no supporting floor exists; the probe does not relocate that entrance.
+
+Both descriptor fixtures pass native construction and apply/reset of all five
+Derby and three Wychford controls (5.35/5.74 seconds). Evidence and publication
+snapshots are in `work/map-compile/tower-control-attachment-2NjWaI`; the reviewed
+recipe is `refinement/catalogs/derby-control-terrain-attachments.json`. The asset
+definition and referencing scene pins are published. This focused Wychford
+batch omits wall calibration; the previously baked ZIP predates this fix and
+must not be described as validating the newly restored control.
+
 ## Reviewed terrain attachment for controls (2026-10-05)
 
 The terrain-attachment authoring utility now supports `control` recipes targeting
