@@ -31,6 +31,8 @@ def main():
                         help='Optional new inferred depth target, using positive native-ray scaling')
     parser.add_argument('--fragment-jitter', type=float, default=0.,
                         help='Bounded deterministic source-ray depth variation per leaf fragment')
+    parser.add_argument('--soft-branch-envelope', action='store_true',
+                        help='Private smooth branch falloff trial without ellipsoid tangent lips')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
     source, output = args.source.resolve(), args.output.resolve()
     require(not output.exists(), 'Use a fresh candidate destination')
@@ -57,7 +59,14 @@ def main():
         disc = b*b-4*a*c
         valid = disc >= 0
         high = (-b+np.sqrt(np.maximum(0, disc)))/(2*a)
-        if np.any(valid):
+        if args.soft_branch_envelope:
+            closest_depth = -b/(2*a)
+            radial_distance = np.maximum(0., c+1-b*b/(4*a))
+            branch_depth = closest_depth + np.exp(-.5*radial_distance)/np.sqrt(a)
+            weights = np.exp(-2*radial_distance)
+            weights /= max(float(weights.sum()), 1e-300)
+            depth = float(np.sum(weights*branch_depth))
+        elif np.any(valid):
             depth = float(high[valid].max())
         else:
             # Outside a fitted lobe the image remains authoritative. Extend the
@@ -153,6 +162,7 @@ def main():
             flat_leaf_fragments=args.flat_leaf_fragments,
             inferred_native_ray_depth_scale=depth_scale,
             fragment_jitter=args.fragment_jitter,
+            soft_branch_envelope=args.soft_branch_envelope,
             retained_inferred_faces=retained_faces, mesh=result,
             non_crown_geometry_and_appearance_unchanged=True,
             method='Smooth native-source leaf envelope over branch-scale ellipsoids; original hidden leaf clusters and off-map continuation retained',
