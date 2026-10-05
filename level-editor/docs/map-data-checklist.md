@@ -26,8 +26,13 @@ The imported bridge and two old ground assets have no component-owner match.
 The staged composite keep preserves Derby's door permissions, room memberships
 and lift endpoints; both assemblies pass 28 native stair routes and five control
 apply/reset checks. New placements expose remaining rotation problems: the
-eight-placement audit has 12 failed stair routes out of 68 tested, and the
-180-degree cases omit one disconnected stair. The candidate remains unpublished.
+initial eight-placement audit had 12 failed stair routes out of 68 tested, and
+the 180-degree cases omitted one disconnected stair. Published precision settings
+on the gallery/west-tower stair surfaces fix that assembly disconnection without
+changing Derby's compiled geometry. The expanded candidate audit tests 80 routes:
+56 pass and 24 fail, including twelve newly available routes. Failed projected
+stair polygons cannot contain the test actor's 12-by-6 movement box anywhere;
+full-surface clearances do not fix them. The composite remains unpublished.
 Best-effort export now warns instead of aborting on collapsed mask boundaries or
 collision-split stair regions, retaining independent usable features. These
 fallbacks do not repair the missing traversal.

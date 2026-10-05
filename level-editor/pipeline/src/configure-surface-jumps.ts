@@ -25,13 +25,19 @@ export interface GameplayEdit {
   descriptorSha256: string;
   gameplay: AssetGameplay;
 }
+export interface SurfacePrecisionEdit {
+  asset: string;
+  surface: string;
+  descriptorSha256: string;
+  preserveMovementPrecision: boolean;
+}
 const hash = (bytes: string) => createHash("sha256").update(bytes).digest("hex");
 const encode = (value: unknown) => JSON.stringify(value) + "\n";
 
 /** Install reviewed gameplay without changing models or scene placements. */
 export async function configureAssetGameplay(
   library: string,
-  edits: (SurfaceJumpEdit | GameplayEdit)[],
+  edits: (SurfaceJumpEdit | SurfacePrecisionEdit | GameplayEdit)[],
   output: string,
   apply = false,
 ) {
@@ -78,7 +84,11 @@ export async function configureAssetGameplay(
       if (!("surface" in edit)) continue;
       const surface = gameplay.surfaces.find((surface) => surface.id === edit.surface);
       if (!surface) throw new Error(`Missing surface: ${asset}/${edit.surface}`);
-      surface.jump = structuredClone(edit.rules);
+      if ("preserveMovementPrecision" in edit) {
+        if (typeof edit.preserveMovementPrecision !== "boolean")
+          throw new Error(`Invalid surface precision edit: ${asset}/${edit.surface}`);
+        surface.preserveMovementPrecision = edit.preserveMovementPrecision;
+      } else surface.jump = structuredClone(edit.rules);
     }
     validateAssetGameplay(gameplay, descriptor);
     const next = { ...raw, gameplay };
@@ -172,7 +182,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     throw new Error(
       "Usage: configure-surface-jumps.ts library edits.json new-backup-directory [--apply]",
     );
-  const edits = JSON.parse(await fs.readFile(configuration, "utf8")) as SurfaceJumpEdit[];
+  const edits = JSON.parse(await fs.readFile(configuration, "utf8")) as (
+    | SurfaceJumpEdit
+    | SurfacePrecisionEdit
+    | GameplayEdit
+  )[];
   console.log(
     JSON.stringify(await configureSurfaceJumps(library, edits, output, mode === "--apply")),
   );

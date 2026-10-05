@@ -81,6 +81,31 @@ test("surface authoring stages reviewable data then updates every scene pin with
   }
 });
 
+test("compact precision edits retain all other gameplay and update pinned scenes", async () => {
+  const f = await fixture();
+  try {
+    const { rules: _rules, ...edit } = f.edits[0]!;
+    await configureAssetGameplay(
+      f.library,
+      [{ ...edit, preserveMovementPrecision: true }],
+      path.join(f.root, "precision"),
+      true,
+    );
+    const after = await fs.readFile(f.descriptor, "utf8");
+    const expected = JSON.parse(f.before);
+    expected.gameplay.surfaces.find(
+      (s: { id: string }) => s.id === edit.surface,
+    ).preserveMovementPrecision = true;
+    assert.deepEqual(JSON.parse(after), expected);
+    const scene = JSON.parse(await fs.readFile(f.scene, "utf8"));
+    assert.deepEqual(scene.placements, f.document.placements);
+    for (const ref of [...scene.assetSources, ...scene.sceneAssets])
+      assert.equal(ref.descriptor_sha256, f.hash(after));
+  } finally {
+    await fs.rm(f.root, { recursive: true, force: true });
+  }
+});
+
 test("failed installation restores descriptors and removes only its temporary files", async (t) => {
   const f = await fixture();
   const rename = fs.rename;

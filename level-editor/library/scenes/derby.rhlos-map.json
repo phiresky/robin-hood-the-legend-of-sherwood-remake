@@ -265,7 +265,7 @@
       "model": "3d-assets/derby/derby-keep-west-tower/model.glb",
       "model_sha256": "275066ae3238a4aafd527350f586138a3f8c550fc5ff23b0511289c11f543534",
       "descriptor": "3d-assets/derby/derby-keep-west-tower/asset.json",
-      "descriptor_sha256": "e8c15f78ebda089650912ea734ad4c8c45a8b494c974071c256c2dba787aa897",
+      "descriptor_sha256": "7ec1e4d8952e851b0b7112f405cd9e575359381069a429233c35948b7f683f73",
       "id": "derby-keep-west-tower"
     },
     {
@@ -279,7 +279,7 @@
       "model": "3d-assets/derby/derby-keep-central-gallery/model.glb",
       "model_sha256": "8e35b1be1767ae67c8ca925135a59c8f47c34eb7ee1de9d1439ec80618e4b08d",
       "descriptor": "3d-assets/derby/derby-keep-central-gallery/asset.json",
-      "descriptor_sha256": "ea7367bbed2a49b481261d0a6f01252cc04c0f61d9fd550dfe96aac9880e7cc5",
+      "descriptor_sha256": "c70ae89d4fe4af49978e11b354d8f6b3099886ad851b01fdfd6de30dd6799916",
       "id": "derby-keep-central-gallery"
     },
     {

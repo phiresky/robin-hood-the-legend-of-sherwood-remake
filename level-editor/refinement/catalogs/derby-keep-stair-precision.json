@@ -1,0 +1,20 @@
+[
+  {
+    "asset": "derby-keep-central-gallery",
+    "descriptorSha256": "ea7367bbed2a49b481261d0a6f01252cc04c0f61d9fd550dfe96aac9880e7cc5",
+    "surface": "building-156-walk-0",
+    "preserveMovementPrecision": true
+  },
+  {
+    "asset": "derby-keep-central-gallery",
+    "descriptorSha256": "ea7367bbed2a49b481261d0a6f01252cc04c0f61d9fd550dfe96aac9880e7cc5",
+    "surface": "building-154-walk-0",
+    "preserveMovementPrecision": true
+  },
+  {
+    "asset": "derby-keep-west-tower",
+    "descriptorSha256": "e8c15f78ebda089650912ea734ad4c8c45a8b494c974071c256c2dba787aa897",
+    "surface": "building-134-walk-0",
+    "preserveMovementPrecision": true
+  }
+]

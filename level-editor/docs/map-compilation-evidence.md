@@ -4,6 +4,40 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Keep stair precision and projected actor clearance (2026-10-05)
+
+The clearance experiment `work/map-compile/keep-placements-FgNcOp` adds complete
+stair-surface clearances without widening the walking surfaces. It still fails
+the same 12 of 68 native routes. Its `stair-clearance-audit.json` intersects the
+candidate center regions for all four corners of the test actor's 12-by-6
+movement box. Every failed stair region has an empty intersection: no position
+can contain that box in the projected walking polygon. This necessary-condition
+check does not prove routes through polygons with a nonempty intersection.
+The failures therefore cannot be fixed solely by changing the actor's route.
+
+Preserving fractional stair coordinates through clipping separately fixes the
+180-degree assembly disconnection. `work/map-compile/keep-placements-RegQxL`
+uses only that precision setting, without the experimental full clearances.
+All eight placements retain three stairs and pass native construction and the
+available control's apply/reset. The native traversal audit still fails 24 of
+80 routes: the extra twelve tested routes are on the formerly omitted stair,
+and all twelve fail. The previously passing 56 routes continue to pass. This
+is an assembly correction, not a solution to projected actor clearance.
+
+The three precision settings are published on `derby-keep-central-gallery`
+and `derby-keep-west-tower`, using the compact pinned recipe
+`refinement/catalogs/derby-keep-stair-precision.json`. The publication helper
+supports reviewed per-surface precision settings without copying megabytes of
+unchanged mask geometry into a recipe. Its four tests and pipeline typecheck
+pass. `work/map-compile/keep-stair-precision-3DHB3d` contains the reviewed before/
+after Derby exports and transactional publication backups. Derby's complete
+compiled geometry is exactly unchanged; both snapshots pass all 28 native stair
+routes and five control apply/reset checks. Scene pins are refreshed without
+moving placements. All ten saved scenes reopen with current descriptor pins
+(`scene-pin-check.json`). The fresh Wychford/Derby export comparison is still
+running; Wychford geometry equality is not yet claimed. The composite keep
+remains unpublished, and no ZIP is rebaked.
+
 ## Composite keep placement and best-effort failures (2026-10-05)
 
 The revised candidate `work/map-compile/keep-reassembly-yEL2X5` explicitly

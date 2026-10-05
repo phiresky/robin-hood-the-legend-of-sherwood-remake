@@ -68,6 +68,7 @@ test("best-effort collapsed mask boundaries retain independent rules and control
       assert.equal(mask.character_polyline, null);
       assert.deepEqual(mask.projectile_polyline, obstacles ? [] : null);
     }
+    assert.ok(compiled.warnings);
     assert.equal(compiled.warnings.filter((w) => w.includes("boundary omitted")).length, 4);
     assert.equal(compiled.movement_transitions!.length, 1);
     for (const mask of hut.gameplay!.masks!) {
@@ -101,6 +102,7 @@ test("best-effort collision-split stairs retain solid obstacles and independent 
   assert.equal(compiled.lifts?.length ?? 0, 0);
   assert.ok(compiled.sight_obstacles.some((o) => o.solid));
   assert.ok(compiled.motion_data.layers.flat().length >= 2);
+  assert.ok(compiled.warnings);
   assert.ok(
     compiled.warnings.some(
       (w) => w.includes("traversal omitted") && w.includes("connected traversal area"),
