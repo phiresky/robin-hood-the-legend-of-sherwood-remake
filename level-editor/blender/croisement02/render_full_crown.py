@@ -16,16 +16,21 @@ from render_multiview_asset import render
 
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('masks',nargs='+',type=int)
+    parser=argparse.ArgumentParser();parser.add_argument('masks',nargs='*',type=int)
+    parser.add_argument('--workspace', type=Path, help='Inspect a private candidate without changing its selector')
+    parser.add_argument('--transparent-bounces', type=int, default=64)
     args=parser.parse_args(sys.argv[sys.argv.index('--')+1:])
+    if bool(args.masks) == bool(args.workspace):raise ValueError('Choose masks or one private workspace')
+    if not 1<=args.transparent_bounces<=1024:raise ValueError('Invalid transparent bounce budget')
+    workers=[args.workspace.resolve()] if args.workspace else [tree_workspace(mask) for mask in args.masks]
     try:
-        for mask in args.masks:
-            w=tree_workspace(mask);dest=w/'inspection/full-crown'
+        for w in workers:
+            dest=w/'inspection/full-crown'
             if dest.exists():
                 evidence=dest/'evidence.json'
                 if evidence.exists():
                     old=json.loads(evidence.read_text())
-                    if (old.get('framing_revision')==2 and old['model_sha256']==sha(w/'model.blend')
+                    if (old.get('framing_revision')==2 and old.get('transparent_max_bounces',64)==args.transparent_bounces and old['model_sha256']==sha(w/'model.blend')
                             and old['original_cameras_sha256']==sha(w/'modified/views.json')
                             and old['supplemental_cameras_sha256']==sha(dest/'cameras.json')
                             and old['solid_sha256']==sha(dest/'solid.png')
@@ -34,7 +39,7 @@ def main():
                 dest.rename(dest.with_name('full-crown-archive-'+uuid.uuid4().hex[:8]))
             dest.mkdir()
             acquire();before=sha(w/'model.blend');bpy.ops.wm.open_mainfile(filepath=str(w/'model.blend'))
-            scene=bpy.data.scenes['Croisement02 Refinement'];scene.render.engine='CYCLES';scene.cycles.samples=4;scene.cycles.transparent_max_bounces=64
+            scene=bpy.data.scenes['Croisement02 Refinement'];scene.render.engine='CYCLES';scene.cycles.samples=4;scene.cycles.transparent_max_bounces=args.transparent_bounces
             packet=json.loads((w/'modified/views.json').read_text())
             objects=[o for o in scene.objects if o.type=='MESH' and not o.hide_render and o.get('asset_group')==w.name]
             points=[o.matrix_world@v.co for o in objects for v in o.data.vertices]
@@ -57,7 +62,7 @@ def main():
                 for i,image in enumerate(images):sheet.paste(image,((i%4)*width,(i//4)*height))
                 sheet.save(dest/f'{mode}.png')
             assert before==sha(w/'model.blend')
-            write_json(dest/'evidence.json',dict(model_sha256=before,original_cameras_sha256=sha(w/'modified/views.json'),supplemental_cameras_sha256=sha(dest/'cameras.json'),framing_revision=2,minimum_scale_factor=1.5,framing='Recentered on complete visible geometry with at least 20 percent padding',solid_sha256=sha(dest/'solid.png'),textured_sha256=sha(dest/'textured.png')))
+            write_json(dest/'evidence.json',dict(model_sha256=before,original_cameras_sha256=sha(w/'modified/views.json'),supplemental_cameras_sha256=sha(dest/'cameras.json'),framing_revision=2,transparent_max_bounces=args.transparent_bounces,minimum_scale_factor=1.5,framing='Recentered on complete visible geometry with at least 20 percent padding',solid_sha256=sha(dest/'solid.png'),textured_sha256=sha(dest/'textured.png')))
             release()
     finally:release()
 

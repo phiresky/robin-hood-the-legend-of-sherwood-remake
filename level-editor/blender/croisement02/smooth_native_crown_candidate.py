@@ -29,9 +29,12 @@ def main():
                         help='Use small source-facing fragments instead of stretching the native chart over slopes')
     parser.add_argument('--minimum-depth-width', type=float, default=0.,
                         help='Optional new inferred depth target, using positive native-ray scaling')
+    parser.add_argument('--fragment-jitter', type=float, default=0.,
+                        help='Bounded deterministic source-ray depth variation per leaf fragment')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
     source, output = args.source.resolve(), args.output.resolve()
     require(not output.exists(), 'Use a fresh candidate destination')
+    require(0 <= args.fragment_jitter <= 12, 'Fragment jitter must be in0..12 native pixels')
     source_hash = sha(source / 'model.blend')
     cfg = json.loads((source / 'workspace.json').read_text())
     refinement = json.loads((source / 'inspection/refinement.json').read_text())
@@ -104,6 +107,8 @@ def main():
                 if args.flat_leaf_fragments:
                     middle = point(x0+(left+right)/2, y0+(top+bottom)/2)
                     depth = float(middle @ ray)
+                    phase = math.sin((x0+left)*12.9898+(y0+top)*78.233)*43758.5453
+                    depth += args.fragment_jitter*(2*(phase-math.floor(phase))-1)
                     points = [np.array([x0+x, -(y0+y)*SIN, -(y0+y)*COS])+ray*depth
                               for x, y in coordinates]
                 for backside in (False, True):
@@ -147,6 +152,7 @@ def main():
             original_native_rgba_image_reused_exactly=True, native_uv_mapping='exact source x/y orthographic projection',
             flat_leaf_fragments=args.flat_leaf_fragments,
             inferred_native_ray_depth_scale=depth_scale,
+            fragment_jitter=args.fragment_jitter,
             retained_inferred_faces=retained_faces, mesh=result,
             non_crown_geometry_and_appearance_unchanged=True,
             method='Smooth native-source leaf envelope over branch-scale ellipsoids; original hidden leaf clusters and off-map continuation retained',
