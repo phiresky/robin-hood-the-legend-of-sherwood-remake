@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import html
 import json
+import os
 from pathlib import Path
 import shutil
 
@@ -119,7 +120,12 @@ def main():
     out.mkdir(parents=True)
     (out/'resources').mkdir()
     for rel,entry in resources.items():
-        shutil.copyfile(entry['source'],out/rel)
+        reuse = (Path(config['reuse_frozen_resources']) / Path(rel).name
+                 if config.get('reuse_frozen_resources') else None)
+        if reuse is not None and reuse.is_file() and sha(reuse)==entry['sha256']:
+            os.link(reuse, out/rel)
+        else:
+            shutil.copyfile(entry['source'],out/rel)
         if sha(out/rel)!=entry['sha256']: raise ValueError(f'Copy mismatch: {rel}')
     evidence=dict(status='Frozen pending user review',title=config['title'],cards=cards,sources=sources,
         resources=resources,resource_bytes=resource_bytes,card_count=len(cards),decision_count=sum(len(c['members']) for c in cards),
