@@ -173,7 +173,7 @@ def main():
         contact = Image.new('RGB', (2048, 384), '#454545')
         for i in range(4):
             angle = 2 * math.pi * i / 4
-            direction = Vector((math.sin(angle) * math.cos(.25), -math.cos(angle) * math.cos(.25), math.sin(.25)))
+            direction = RAY if i==0 else Vector((math.sin(angle) * math.cos(.25), -math.cos(angle) * math.cos(.25), math.sin(.25)))
             render(f'contact-{i}.png', center, direction, scale, 512, 384)
             image = Image.open(destination / f'contact-{i}.png').convert('RGBA')
             contact.paste(image, (i * 512, 0), image)
