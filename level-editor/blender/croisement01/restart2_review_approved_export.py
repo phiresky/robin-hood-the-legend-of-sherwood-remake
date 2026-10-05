@@ -13,7 +13,7 @@ from review_evidence import sha
 import render_candidate
 R=ROOT/'level-editor/work/croisement01-refinement/restart2'
 kind=sys.argv[sys.argv.index('--')+1]
-folder,identifier,bake,experiment={'tree20':('approved-tree-fills-v1','croisement01-tree-20','baked-v4-dark-bark','experiment-v2-dark-bark'),'stump68':('approved-stump68-wood-fill-v1','croisement01-southeast-small-stump','baked-v1-luminance','experiment')}[kind]
+folder,identifier,bake,experiment={'tree21':('approved-tree21-fill-v1','croisement01-tree-21','baked-v1-luminance','experiment'),'stump65':('approved-stump65-wood-fill-v1','croisement01-southwest-cut-stump','baked-v1-luminance','experiment'),'tree20':('approved-tree-fills-v1','croisement01-tree-20','baked-v4-dark-bark','experiment-v2-dark-bark'),'stump68':('approved-stump68-wood-fill-v1','croisement01-southeast-small-stump','baked-v1-luminance','experiment')}[kind]
 case=R/folder/identifier
 stage=R/(kind+'-integration-v2');asset=stage/'assets'/identifier
 acquire()
@@ -45,6 +45,10 @@ packet=json.loads((case/experiment/'views.json').read_text());packet['object_nam
 out=stage/'glb-review-v1';out.mkdir(exist_ok=False);(out/'inspection').mkdir();(out/'modified').mkdir()
 (out/'workspace.json').write_text(json.dumps(config,indent=2)+'\n')
 (out/'modified/views.json').write_text(json.dumps(packet,indent=2)+'\n')
+# The GLB appearance review needs only this asset, not another whole-map save.
+for other in list(bpy.data.objects):
+    if other.type=='MESH' and other not in meshes:bpy.data.objects.remove(other,do_unlink=True)
+bpy.data.orphans_purge(do_recursive=True)
 bpy.ops.wm.save_as_mainfile(filepath=str(out/'model.blend'))
 (out/'glb-proof.json').write_text(json.dumps(dict(source_glb_sha256=sha(asset/'model.glb'),expected_bounds=expected,actual_bounds=actual,max_bound_error=error,mesh_count=len(meshes)),indent=2)+'\n')
 sys.argv=['render','--',str(out)];render_candidate.main()

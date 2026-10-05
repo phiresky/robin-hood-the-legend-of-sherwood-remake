@@ -11,13 +11,13 @@ from export_editor import export_asset_library
 from review_evidence import sha
 R=ROOT/'level-editor/work/croisement01-refinement/restart2'
 kind=sys.argv[sys.argv.index('--')+1]
-folder,asset={'tree20':('approved-tree-fills-v1','croisement01-tree-20'),'stump68':('approved-stump68-wood-fill-v1','croisement01-southeast-small-stump')}[kind]
+folder,asset={'tree21':('approved-tree21-fill-v1','croisement01-tree-21'),'stump65':('approved-stump65-wood-fill-v1','croisement01-southwest-cut-stump'),'tree20':('approved-tree-fills-v1','croisement01-tree-20'),'stump68':('approved-stump68-wood-fill-v1','croisement01-southeast-small-stump')}[kind]
 case=R/folder/asset
 acquire()
 try:
  h=validate_texture_handoff(case/'review-manifest.json',asset,case/'texture-handoff-v1/decisions.json',case/'decisions.json')
  proof=verify_baked_geometry(h)
- grouping=R/({'tree20':'tree20-v3','stump68':'stump68-wood-fit-v2'}[kind])/'assets'/asset/'reference/grouping.json'
+ grouping=R/({'tree21':'tree21-v7','stump65':'stump65-wood-fit-v2','tree20':'tree20-v3','stump68':'stump68-wood-fit-v2'}[kind])/'assets'/asset/'reference/grouping.json'
  config=json.loads((case/'approved-workspace/workspace.json').read_text())
  assert sha(grouping)==config['grouping_manifest_sha256']
  catalog=json.loads(grouping.read_text())
