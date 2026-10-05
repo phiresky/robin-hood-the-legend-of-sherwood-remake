@@ -47,8 +47,16 @@ def attach_aligned_comparisons(manifest):
 
 
 def main():
-    roots = sorted({review.parent.parent for round_root in OUT.glob('texture-fill-round-*')
-                    for review in round_root.rglob('texture-review.json')})
+    roots = {review.parent.parent for round_root in OUT.glob('texture-fill-round-*')
+             for review in round_root.rglob('texture-review.json')}
+    additional = OUT / 'texture-review/additional-experiment-roots.json'
+    if additional.exists():
+        for name in json.loads(additional.read_text())['roots']:
+            root = Path(name).resolve(strict=True)
+            if not root.is_relative_to(OUT.resolve()):
+                raise ValueError('Additional texture experiments must stay inside this map workspace')
+            roots.add(root)
+    roots = sorted(roots)
     if not roots:
         raise ValueError('No manually reviewed texture experiments exist')
     supersessions_path = OUT / 'texture-review/supersessions.json'
