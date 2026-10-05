@@ -13,7 +13,7 @@ OUT=ROOT/'level-editor/work/croisement01-refinement/restart2'
 READY=OUT/'ready-trees18-20-v2'
 def read(p):return json.loads(p.read_text())
 def write(p,d):p.write_text(json.dumps(d,indent=2)+'\n')
-def main(ready=READY, destination='approved-tree-fills-v1', exact_user_text='Both trees approved'):
+def main(ready=READY, destination='approved-tree-fills-v1', exact_user_text='Both trees approved', approval_provenance=None):
     archive=read(ready/'archive.json')
     for name,digest in archive['files'].items():
         if sha(ready/name)!=digest:raise ValueError('Changed immutable review file: '+name)
@@ -24,6 +24,7 @@ def main(ready=READY, destination='approved-tree-fills-v1', exact_user_text='Bot
         model_hash=approved['model_sha256'];assert sha(w/'model.blend')==model_hash
         for name,digest in approved['evidence'].items():assert sha(w/name)==digest
         decision=dict(asset_id=asset,scope='geometry',decision='approved',exact_user_text=exact_user_text,received_via='Root coordinator relayed exact user message for this immutable gallery',gallery=str(ready/'gallery/index.html'),gallery_review_revision=g['review_revision'],model_sha256=model_hash,archive_sha256=sha(ready/'archive.json'),recorded_at=datetime.now(timezone.utc).isoformat(),texture_approval='pending')
+        if approval_provenance is not None:decision['batch_approval_provenance']=approval_provenance
         records.append(decision);case=dest/asset;case.mkdir();write(case/'user-decision.json',decision)
         frozen=case/'approved-workspace';frozen.mkdir();shutil.copy2(w/'model.blend',frozen/'model.blend');shutil.copytree(w/'modified',frozen/'modified')
         for name in ['workspace.json','source-masks.json','projection-layers.json','handoff.json','validation.json']:

@@ -11,7 +11,7 @@ from build_review_gallery import build
 
 CASES = {
     '18': ('tree18-v4', 'experiment-v3', 'baked-v1', 'Northeast Forked Forest Tree'),
-    '20': ('tree20-v3', 'experiment', 'baked-v2-luminance', 'Northern Shaded Forest Tree'),
+    '20': ('tree20-v3', 'experiment-v2-dark-bark', 'baked-v4-dark-bark', 'Northern Shaded Forest Tree'),
     'rock29': ('rock29-v4', 'experiment', 'baked-v1-luminance', 'Small Bank Stones'),
 }
 
@@ -56,6 +56,8 @@ def main():
             'Only the permitted Leicester southeast cottage and moat bank tree examples supplemented the inferred crown and bark.',
             'Brightness varies around the inferred reverse bark. Foreground foliage ownership and final scene joints remain separate unfinished work.',
         ]
+        if number == '20':
+            notes[2:] = ['Own native trunk and only the permitted two Leicester leaf references supplemented the inferred materials.', 'The broad pale upper and diagonal bands have been replaced by dark bark; a small inferred light bark fleck remains. Neighboring tree19 branch ownership and final scene joint remain separate unfinished work.']
         if number == 'rock29':
             notes[2:] = ['Only this rock’s own native artwork supplemented its inferred weathered backs.', 'Dark mottling on inferred reverse surfaces is texture only; no new physical cavity was introduced. Provisional terrain contact remains disclosed.']
         review = dest / 'receipts' / f'{asset}-review.json'
