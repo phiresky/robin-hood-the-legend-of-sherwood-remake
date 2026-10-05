@@ -1,5 +1,5 @@
 """Read-only native lower31 joint with its exact saved foliage at converged budgets."""
-import json,sys
+import argparse,json,sys
 from pathlib import Path
 import bpy,numpy as np
 from PIL import Image
@@ -12,7 +12,7 @@ from tree_geometry import SIN,RAY
 from render_slots import acquire,release
 
 def main():
- worker=tree_workspace(31);digest=sha(worker/'model.blend');out=OUT/'restart2-wood/tree31-native-joint-v1';out.mkdir(exist_ok=False)
+ parser=argparse.ArgumentParser();parser.add_argument('--workspace',type=Path);parser.add_argument('--output',type=Path);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else []);worker=args.workspace or tree_workspace(31);digest=sha(worker/'model.blend');out=args.output or OUT/'restart2-wood/tree31-native-joint-v1';out.mkdir(exist_ok=False)
  bpy.ops.wm.open_mainfile(filepath=str(worker/'model.blend'));bpy.context.view_layer.update();objects=[o for o in bpy.data.collections['Croisement02 Working'].all_objects if o.type=='MESH' and o.get('asset_group')==worker.name];transforms={o:o.matrix_world.copy() for o in objects};scene=bpy.data.scenes.new('Native31 wood and exact saved foliage');bpy.context.window.scene=scene
  for original in objects:
   obj=original.copy();obj.parent=None;obj.matrix_world=transforms[original];obj.hide_render=False;scene.collection.objects.link(obj)
@@ -21,6 +21,7 @@ def main():
  for budget in [256,512]:
   scene.cycles.transparent_max_bounces=budget;scene.render.filepath=str(out/f'native-{budget}.png');bpy.ops.render.render(write_still=True,scene=scene.name);arrays.append(np.array(Image.open(out/f'native-{budget}.png').convert('RGBA')))
  source=Image.open(worker/'reference/source.png').convert('RGB').crop(box);display=Image.new('RGBA',(w,h),(100,100,100,255));display.alpha_composite(Image.fromarray(arrays[-1]));sheet=Image.new('RGB',(w*2,h));sheet.paste(source,(0,0));sheet.paste(display.convert('RGB'),(w,0));sheet.resize((w*8,h*4),Image.Resampling.NEAREST).save(out/'source-comparison.png');diff=np.abs(arrays[1].astype(int)-arrays[0].astype(int));write_json(out/'evidence.json',dict(model_sha256=digest,worker=str(worker),objects=[o.name for o in objects],source_crop=box,budgets=[256,512],convergence_max_channel_difference=int(diff.max()),convergence_changed_pixels=int(np.any(diff,axis=2).sum()),scope='Exact saved31 wood and crown local native view. Ground and adjacent independent plants excluded; unknown regions not assigned semantic ownership.',source_comparison_sha256=sha(out/'source-comparison.png')))
+ domain=OUT/'restart2-wood/tree31-sdf-v5/native-lower-mask.png';mask=np.asarray(Image.open(domain).convert('L'))[top:bottom,left:right]>0;covered=arrays[-1][:,:,3]>127;record=json.loads((out/'evidence.json').read_text());record['independent_native31_lower_domain']=dict(path=str(domain),sha256=sha(domain),expected_pixels=int(mask.sum()),actual_alpha_covered=int((mask&covered).sum()),missing_pixels=int((mask&~covered).sum()),source_coverage=float((mask&covered).sum()/mask.sum()));write_json(out/'domain-audit.json',record)
  if sha(worker/'model.blend')!=digest:raise ValueError('Read-only input changed')
 if __name__=='__main__':
  acquire()
