@@ -1,8 +1,9 @@
 # Croisement01 refinement
 
 Private candidates and evidence live in `work/croisement01-refinement/`.
-The current library is untouched. All background Blender work acquires the
-shared four-slot render pool before opening a scene.
+Publication receipts identify the exact approved scopes already installed in the
+library; a private candidate is not evidence of publication. All background
+Blender work acquires the shared four-slot render pool before opening a scene.
 
 The frozen source is 1408 × 960 pixels, with 85 sight-obstacle parts,
 103 masks on layers 0 and 1, 13 animation records, six native patches and
@@ -79,3 +80,24 @@ pixels, a flat continuous front and rapidly varying radial depth all failed
 oblique review. `trace_grass_leaves.py` preserves native alpha and derives rooted
 leaf-path assignments; its latest experiment improves continuity but remains
 HOLD. Do not copy these experiments as an approved foliage recipe.
+
+## Scoped publication and compact workers
+
+New prop candidates retain only their target and required terrain or joint
+context before saving. The approved source packets and earlier evidence remain
+immutable. Saved material, native-camera and contact reviews are separate from
+texture-sheet review; geometry and texture decisions remain separate.
+
+The tree21/tree22 baseline parts share a group with unrelated parts61/77.
+`restart2_partition_group061.py` prepares a private residual with those mesh
+nodes, pivots, materials, buffer payloads and gameplay records unchanged.
+Tree metadata is then rebased into standalone pivots with world-coordinate
+checks. This is a private staging operation until the combined editor proof
+and coordinated publication succeed.
+
+The south stump has two native gameplay references even though its reviewed
+wood is one continuous surface. The guarded exporter can separate its existing
+cap face from its shaft without changing any surface, UV, material or corner
+ownership value. Both references, walking/projection surfaces, jump zones,
+paired edges and cross-asset segments must survive publication. Metadata
+adapters reject unfamiliar fields rather than silently discarding them.
