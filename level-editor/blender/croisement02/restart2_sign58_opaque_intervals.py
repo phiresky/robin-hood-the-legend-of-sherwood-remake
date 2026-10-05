@@ -16,7 +16,7 @@ from sign_context_import import append_verified
 from restart2_sign_scene_projection import verify_import,bounds,intersects
 from restart2_sign_fragment_bounds import Surface
 from sign_rigid_depth import groups_for
-DEST=OUT/'restart2-fence/sign58-opaque-intervals-v1'
+DEST=OUT/'restart2-fence/sign58-opaque-intervals-v2'
 PROOF=OUT/'restart2-state/sign-scene-projection-v1'
 
 def clip(poly,axis,bound,greater):
@@ -106,7 +106,7 @@ def main():
                             limits[g]=min(limits[g],limit)
             for g,demand in required.items():
                 assert samples[g]>0,(o.name,g)
-                intervals.append(dict(object=o.name,paired_component=g,vertices=len(groups[g]),required_retreat=demand,opaque_clearance_limit=limits[g],opaque_minimum_z=mins[g],opaque_footprint_samples=samples[g],existing_interior_samples=inside[g],feasible_at_sampled_constraints=limits[g]>=demand))
+                intervals.append(dict(object=o.name,paired_component=g,vertices=len(groups[g]),required_retreat=demand,opaque_clearance_limit=limits[g],opaque_minimum_z=mins[g],opaque_footprint_samples=samples[g],existing_interior_samples=inside[g],feasible_at_sampled_constraints=bool(limits[g]>=demand)))
         result=dict(target=target,counts=counts,overlay_phases=period,pixels=pixels,paired_intervals=intervals,first_hit_objects=dict(Counter(p['blockers'][0]['object']for p in pixels if p['blockers'])),constraints=sum(bool(p['blockers'])for p in pixels),infeasible_components=sum(not r['feasible_at_sampled_constraints']for r in intervals));write_json(DEST/f'target-{target}.json',result);results.append({k:v for k,v in result.items()if k not in ['pixels','paired_intervals']});print('TARGET_DONE',target,flush=True)
     for path,digest,_ in sources:assert sha(path)==digest
     write_json(DEST/'report.json',dict(status='Read-only finite diagnostic; no model mutation or renders',inputs_sha256=sha(PROOF/'inputs.json'),evaluated_imports_sha256=sha(PROOF/'evaluated-imports.json'),imports=receipts,results=results,limitations=['Four physical sign poses; native overlay masks cover all stored relative phases. Counts use fitted body silhouette, not sprite pixel parity.','Footprint intervals preserve rigid paired fragments and existing solid interior contacts. A failed interval excludes that translation, not every alternative reconstruction.','Opaque UV cell corners and centroids are sampled; bank breaklines within cells and coherent branch connection remain separate requirements.','Source-camera ordering may require explicit native presentation instead of physical geometry distortion.']))
