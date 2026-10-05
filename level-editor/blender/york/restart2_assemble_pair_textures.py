@@ -1,4 +1,5 @@
 """Join independent approved-geometry texture candidates for a native context review."""
+import argparse
 import hashlib
 import json
 import math
@@ -6,7 +7,12 @@ from pathlib import Path
 import sys
 ROOT=Path(__file__).resolve().parents[3]
 BASE=ROOT/'level-editor/work/york-refinement'
-OUT=BASE/'restart2/pair-textures-v1/assembled-v1'
+parser=argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--version',default='assembled-v1')
+parser.add_argument('--bay-bake',default='bake-v2-shadow')
+parser.add_argument('--house-bake',default='bake-v1')
+args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
+OUT=BASE/'restart2/pair-textures-v1'/args.version
 BAY='york-market-southeast-tall-narrow-house'
 HOUSE='york-southwest-square-west-house'
 if OUT.exists():raise FileExistsError(OUT)
@@ -22,8 +28,8 @@ from refinement_workspace import _geometry
 from render_multiview_asset import render
 from render_views import render_views
 sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()
-bay=OUT.parent/BAY/'bake-v2-shadow/model.blend'
-house=OUT.parent/HOUSE/'bake-v1/model.blend'
+bay=OUT.parent/BAY/args.bay_bake/'model.blend'
+house=OUT.parent/HOUSE/args.house_bake/'model.blend'
 for p in (bay,house):
     if sha(p)!=json.loads(p.with_name('validation.json').read_text())['baked_model_sha256']:
         raise ValueError('Bake model changed')
