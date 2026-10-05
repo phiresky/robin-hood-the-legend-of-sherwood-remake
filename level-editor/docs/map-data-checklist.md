@@ -92,10 +92,18 @@ and some receiver contours do not meet the exact door seams. This unpublished
 candidate is not a replacement for the current definitions. Exact authored
 landing support now survives export when its rounded contour matches one motion
 region. Runtime binding accepts matching pre-grid receivers, including combined
-coplanar fragments, while retaining live motion collision. A fractional-edge
-regression passes and rejects short/unrelated receivers. The staged keep still
-fails all 80 routes: preserving precision alone has not resolved runtime seam
-binding. Further seam diagnostics and rotated traversal checks remain necessary.
+coplanar fragments, while retaining live motion collision. Straight-edge cleanup
+before rounding resolves material-partition contour mismatches; shared-edge
+binding and foot support handle only bounded floating-point discrepancies.
+Rotated wider-landing entry passes while real gaps and unrelated receivers reject.
+The intermediate keep audit binds its landings and passes 4/80 routes. Corrected
+floors also need matching asset-owned clearances: stale clearances leave thin
+collision strips across the stairs. A separate unpublished clearance candidate
+now passes **80/80 directed native actor routes** at 0/37/90/180 degrees and
+elevations 0/40. All eight exports construct native geometry and apply/reset their
+control. These are initial-state actor-loop checks, not complete-sprite or rendered
+verification. Asset geometry/ownership review and migration into reusable component
+definitions still precede publication; the published assets are unchanged.
 Physical transitions
 now wait at a reached world target until animation completion, or preserve
 unfinished distance in the next movement order. An edge-on actor-loop test

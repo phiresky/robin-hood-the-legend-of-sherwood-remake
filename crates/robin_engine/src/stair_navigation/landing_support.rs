@@ -1,8 +1,10 @@
 //! Configuration-space routing with separate foot support and center ownership.
 
 use super::*;
+use geo::algorithm::buffer::{BufferStyle, LineJoin};
 use geo::{
     BooleanOps, Buffer, Closest, ClosestPoint, ConvexHull, MultiPoint, MultiPolygon, Relate,
+    Simplify,
 };
 
 impl StairRouteGeometry {
@@ -43,6 +45,23 @@ impl StairRouteGeometry {
         for landing in landings {
             support = support.union(&convert(landing)?);
         }
+        // Independently encoded f32 edges can leave sub-ULP cracks between
+        // already bound floors. Close only that representation error, then
+        // remove the expansion before footprint erosion. Actor centers remain
+        // constrained to the stair and live solids are subtracted below.
+        if !landings.is_empty() {
+            let rounding = self
+                .boundary
+                .iter()
+                .flatten()
+                .fold(1.0_f64, |scale, value| scale.max(f64::from(value.abs())))
+                * f64::from(f32::EPSILON);
+            // Bevels keep the correction bounded without creating circular
+            // micro-segments that would multiply visibility-graph vertices.
+            support = support
+                .buffer_with_style(BufferStyle::new(rounding).line_join(LineJoin::Bevel))
+                .buffer_with_style(BufferStyle::new(-rounding).line_join(LineJoin::Bevel));
+        }
         let half = [f64::from(half.x - 1.0), f64::from(half.y - 1.0)];
         let sweep = |a: geo::Coord<f64>, b: geo::Coord<f64>| {
             MultiPoint::from_iter([a, b].into_iter().flat_map(|p| {
@@ -54,6 +73,25 @@ impl StairRouteGeometry {
             }))
             .convex_hull()
         };
+        let solids = self
+            .obstacles
+            .iter()
+            .map(|ring| convert(ring))
+            .collect::<Result<Vec<_>, _>>()?;
+        let direct = geo::Line::new(
+            (f64::from(source[0]), f64::from(source[1])),
+            (f64::from(goal[0]), f64::from(goal[1])),
+        );
+        let footprint = sweep(direct.start, direct.end);
+        // A completely supported swept footprint proves a straight route
+        // without constructing all possible actor centers. Boundary/rounding
+        // cases still use the full configuration-space query below.
+        if floor.relate(&direct).is_covers()
+            && support.relate(&footprint).is_contains_properly()
+            && solids.iter().all(|solid| !solid.intersects(&footprint))
+        {
+            return Ok(Some(vec![source, goal]));
+        }
         // Erode real support by the effective rectangular footprint. Sweeping
         // every exterior and hole edge removes exactly the centers whose box
         // crosses a support boundary; no arbitrary padding is introduced.
@@ -67,9 +105,8 @@ impl StairRouteGeometry {
         }
         // Expand each live solid by the same footprint, including concave
         // solids: the solid plus its swept boundary is its rectangular dilation.
-        for obstacle in &self.obstacles {
-            let obstacle = convert(obstacle)?;
-            centers = centers.difference(&obstacle);
+        for obstacle in &solids {
+            centers = centers.difference(obstacle);
             for edge in obstacle.exterior().lines() {
                 centers = centers.difference(&sweep(edge.start, edge.end));
             }
@@ -119,11 +156,28 @@ impl StairRouteGeometry {
             * f64::from(f32::EPSILON)
             * 2.0;
         let visibility_region = region.buffer(rounding);
+        // A supported direct segment is already the shortest route. In
+        // particular, continuing along a stair should not rebuild visibility
+        // links to every receiving-boundary vertex on each movement tick.
+        if visibility_region
+            .relate(&geo::Line::new(source.0, goal.0))
+            .is_covers()
+        {
+            return Ok(Some(vec![original_source, original_goal]));
+        }
         // A polygonal free space has a shortest path through visible boundary
         // vertices. Retain hole vertices too; they represent blocked footprints.
         let mut points = vec![source, goal];
         for ring in std::iter::once(region.exterior()).chain(region.interiors()) {
-            points.extend(ring.points().take(ring.0.len().saturating_sub(1)));
+            // Drop redundant candidate vertices within the coordinate-error
+            // budget. Visibility still uses the complete region, so this does
+            // not simplify collision or authorize a segment through a solid.
+            let candidates = ring.simplify(rounding * 0.25);
+            points.extend(
+                candidates
+                    .points()
+                    .take(candidates.0.len().saturating_sub(1)),
+            );
         }
         let mut distance = vec![f64::INFINITY; points.len()];
         let mut previous = vec![None; points.len()];

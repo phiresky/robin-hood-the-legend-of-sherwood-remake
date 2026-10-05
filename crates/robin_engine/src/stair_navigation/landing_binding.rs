@@ -1,7 +1,7 @@
 //! Landing geometry comes from the current motion area and its actual receiver.
 
 use super::*;
-use geo::{BooleanOps, BoundingRect};
+use geo::{BooleanOps, BoundingRect, MapCoords};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct BoundLanding {
@@ -24,6 +24,33 @@ pub(super) struct BoundLandingObstacle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn receiver_identity_ignores_rounded_vertices_inserted_on_straight_edges() {
+        let motion = serde_json::from_value(serde_json::json!({
+            "is_lift":false, "state_id":0, "flags":0, "skeleton_segments":[], "obstacles":[],
+            "polygon":{"points":[[0,0],[100,0],[100,100],[0,10]]}
+        }))
+        .unwrap();
+        let receiver = polygon(&[
+            [0., 0.],
+            [100., 0.],
+            [100., 100.25],
+            [50.2, 55.43],
+            [0., 10.25],
+        ])
+        .unwrap();
+        assert!(receiver_matches_motion(&receiver, &motion, [0.; 3]));
+        let unrelated = polygon(&[
+            [0., 0.],
+            [100., 0.],
+            [100., 100.25],
+            [50.2, 56.43],
+            [0., 10.25],
+        ])
+        .unwrap();
+        assert!(!receiver_matches_motion(&unrelated, &motion, [0.; 3]));
+    }
 
     #[test]
     fn landing_binding_preserves_matching_pre_grid_receiver() {
@@ -71,6 +98,84 @@ mod tests {
             .unwrap();
         assert!(stair.supports_landing_neighbour(0, 0, [400., 300.125, 100.]));
         assert!(!stair.supports_landing_neighbour(0, 0, [400., 300.5, 100.]));
+        for degrees in [37.0_f64, 90., 180., 270.] {
+            let (sin, cos) = degrees.to_radians().sin_cos();
+            let transform = |[x, y]: [f32; 2]| {
+                [
+                    (2000. + cos * f64::from(x) - sin * f64::from(y)) as f32,
+                    (1700. + sin * f64::from(x) + cos * f64::from(y)) as f32,
+                ]
+            };
+            for gap in [0.0, 0.01] {
+                let mut placed = stair.clone();
+                placed.landings.clear();
+                placed.definition.plane = [-sin, cos, -200.25 + sin * 2000. - cos * 1700.];
+                placed.definition.boundary = stair
+                    .definition
+                    .boundary
+                    .iter()
+                    .copied()
+                    .map(transform)
+                    .collect();
+                for door in &mut placed.definition.doors {
+                    for point in [&mut door.inside, &mut door.middle, &mut door.outside] {
+                        let [x, y] = transform([point[0], point[1]]);
+                        point[0] = x;
+                        point[1] = y;
+                    }
+                }
+                let ring = [
+                    [370., 270.],
+                    [430., 270.],
+                    [430., 300.25 - gap],
+                    [370., 300.25 - gap],
+                ]
+                .map(transform);
+                let mut placed_motion = motion.clone();
+                placed_motion.polygon.points = ring
+                    .iter()
+                    .map(|p| {
+                        (
+                            (p[0] + 0.5).floor() as i16,
+                            (p[1] - 100. + 0.5).floor() as i16,
+                        )
+                    })
+                    .collect();
+                let result = placed.bind_landing(
+                    0,
+                    &placed_motion,
+                    0,
+                    0,
+                    0,
+                    [0., 0., 100.],
+                    Some(&polygon(&ring).unwrap()),
+                );
+                assert_eq!(
+                    result.is_ok(),
+                    gap == 0.,
+                    "rotation {degrees}, gap {gap}: {result:?}"
+                );
+                if gap == 0. {
+                    let door = &placed.definition.doors[0];
+                    let geometry = StairRouteGeometry {
+                        boundary: placed.definition.boundary.clone(),
+                        obstacles: vec![],
+                    };
+                    assert!(
+                        geometry
+                            .route_with_landing_support(
+                                [door.middle[0], door.middle[1]],
+                                [door.inside[0], door.inside[1]],
+                                MoveBoxHalfDiagonal::new(6., 3.),
+                                &[placed.landings[0].boundary.clone()]
+                            )
+                            .unwrap()
+                            .is_some(),
+                        "rotation {degrees}: bound landing must support entry"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
@@ -309,33 +414,47 @@ impl BoundPhysicalStair {
         // Quantized landing contours can extend slightly into a physical stair.
         // Remove that overlap before binding; never extend a floor across a gap.
         let support = support.difference(&stair);
+        let tolerance = physical.middle[..2]
+            .iter()
+            .fold(1.0_f64, |scale, value| scale.max(f64::from(value.abs())))
+            * f64::from(f32::EPSILON)
+            * 2.0;
         let Some(support) = support.iter().find(|patch| {
-            [physical.middle, physical.outside]
-                .iter()
-                .all(|point| patch.intersects(&Point::new(point[0], point[1])))
+            [physical.middle, physical.outside].iter().all(|point| {
+                patch.intersects(&Point::new(point[0], point[1]))
+                    || patch.exterior().lines().any(|edge| {
+                        point_edge_distance(
+                            [f64::from(point[0]), f64::from(point[1])],
+                            edge.map_coords(|c| geo::Coord {
+                                x: f64::from(c.x),
+                                y: f64::from(c.y),
+                            }),
+                        ) <= tolerance
+                    })
+            })
         }) else {
             return Err("landing receiver does not reach its physical door".into());
         };
         let mut door_seam = false;
         for stair_edge in stair.exterior().lines() {
             for landing_edge in support.exterior().lines() {
-                if let Some(geo::line_intersection::LineIntersection::Collinear { intersection }) =
-                    geo::line_intersection::line_intersection(stair_edge, landing_edge)
+                if let Some(intersection) = rounded_shared_edge(stair_edge, landing_edge, tolerance)
                 {
                     if intersection.start == intersection.end {
                         continue;
                     }
                     for p in [intersection.start, intersection.end] {
-                        let difference =
-                            (sa - a) * f64::from(p.x) + (sb - b) * f64::from(p.y) + sc - c;
+                        let difference = (sa - a) * p.x + (sb - b) * p.y + sc - c;
                         if difference.abs() > 0.001 {
                             return Err(
                                 "landing and stair heights disagree along their shared edge".into(),
                             );
                         }
                     }
-                    door_seam |= intersection
-                        .intersects(&Point::new(physical.middle[0], physical.middle[1]));
+                    door_seam |= point_edge_distance(
+                        [f64::from(physical.middle[0]), f64::from(physical.middle[1])],
+                        intersection,
+                    ) <= tolerance;
                 }
             }
         }
@@ -373,6 +492,59 @@ impl BoundPhysicalStair {
     }
 }
 
+fn point_edge_distance(point: [f64; 2], edge: geo::Line<f64>) -> f64 {
+    let dx = edge.end.x - edge.start.x;
+    let dy = edge.end.y - edge.start.y;
+    let length = dx * dx + dy * dy;
+    let t = if length > 0. {
+        ((point[0] - edge.start.x) * dx + (point[1] - edge.start.y) * dy) / length
+    } else {
+        0.
+    };
+    let t = t.clamp(0., 1.);
+    (point[0] - edge.start.x - t * dx).hypot(point[1] - edge.start.y - t * dy)
+}
+
+/// Encoded boundary vertices may disagree by a few ULPs along the same seam.
+/// Require a nonzero overlapping segment within that precision, not a nearby
+/// corner or an extension across a real gap.
+fn rounded_shared_edge(
+    first: geo::Line<f32>,
+    second: geo::Line<f32>,
+    tolerance: f64,
+) -> Option<geo::Line<f64>> {
+    let convert = |c: geo::Coord<f32>| geo::Coord {
+        x: f64::from(c.x),
+        y: f64::from(c.y),
+    };
+    let first = first.map_coords(convert);
+    let second = second.map_coords(convert);
+    let dx = first.end.x - first.start.x;
+    let dy = first.end.y - first.start.y;
+    let length = dx * dx + dy * dy;
+    if length == 0. {
+        return None;
+    }
+    let project =
+        |p: geo::Coord<f64>| ((p.x - first.start.x) * dx + (p.y - first.start.y) * dy) / length;
+    let a = project(second.start);
+    let b = project(second.end);
+    let low = a.min(b).max(0.);
+    let high = a.max(b).min(1.);
+    if (high - low) * length.sqrt() <= tolerance {
+        return None;
+    }
+    let at = |t| geo::Coord {
+        x: first.start.x + t * dx,
+        y: first.start.y + t * dy,
+    };
+    let overlap = geo::Line::new(at(low), at(high));
+    [overlap.start, overlap.end]
+        .iter()
+        .all(|p| point_edge_distance([p.x, p.y], second) <= tolerance)
+        .then_some(overlap)
+}
+
 fn receiver_matches_motion(
     receiver: &Polygon<f32>,
     motion: &crate::level_data::RawMotionArea,
@@ -385,11 +557,24 @@ fn receiver_matches_motion(
             .map(|p| {
                 let x = f64::from(p.x());
                 let y = f64::from(p.y());
-                // Match the exporter's nearest-integer ties toward positive infinity.
-                ((x + 0.5).floor(), (y - (a * x + b * y + c) + 0.5).floor())
+                (x, y - (a * x + b * y + c))
             })
             .collect::<Vec<_>>();
-        points.dedup();
+        // Material clipping may insert points along an existing edge. Rounding
+        // those independently introduces kinks absent from the motion contour.
+        // Remove only collinearity noise within the encoded f32 precision.
+        let tolerance = points
+            .iter()
+            .fold(1.0_f64, |scale, &(x, y)| scale.max(x.abs()).max(y.abs()))
+            * f64::from(f32::EPSILON)
+            * 2.0;
+        simplify_receiver_ring(&mut points, tolerance);
+        for (x, y) in &mut points {
+            // Match the exporter's nearest-integer ties toward positive infinity.
+            *x = (*x + 0.5).floor();
+            *y = (*y + 0.5).floor();
+        }
+        simplify_receiver_ring(&mut points, 0.0);
         LineString::from(points)
     };
     let rounded = Polygon::new(
@@ -411,4 +596,30 @@ fn receiver_matches_motion(
         Vec::new(),
     );
     raw.xor(&rounded).unsigned_area() < 1e-6
+}
+
+fn simplify_receiver_ring(points: &mut Vec<(f64, f64)>, tolerance: f64) {
+    if points.first() == points.last() {
+        points.pop();
+    }
+    loop {
+        if points.len() < 3 {
+            return;
+        }
+        let redundant = (0..points.len()).find(|&i| {
+            let a = points[(i + points.len() - 1) % points.len()];
+            let b = points[i];
+            let c = points[(i + 1) % points.len()];
+            let cross = ((b.0 - a.0) * (c.1 - b.1) - (b.1 - a.1) * (c.0 - b.0)).abs();
+            let length = (c.0 - a.0)
+                .hypot(c.1 - a.1)
+                .max((b.0 - a.0).hypot(b.1 - a.1))
+                .max((c.0 - b.0).hypot(c.1 - b.1));
+            cross <= tolerance * length
+        });
+        let Some(index) = redundant else {
+            break;
+        };
+        points.remove(index);
+    }
 }

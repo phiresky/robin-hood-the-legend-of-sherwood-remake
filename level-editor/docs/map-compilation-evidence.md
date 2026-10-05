@@ -4,6 +4,55 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Rounded landing seams and keep clearance diagnostics (2026-10-05)
+
+Material clipping inserts vertices along straight receiving edges. Rounding those
+vertices individually introduces kinks absent from the emitted motion boundary.
+Runtime receiver-identity checks now remove collinear noise within the encoded
+coordinate precision before rounding, then remove integer-grid duplicates/spikes.
+All seven landing receivers in the unrotated staged keep match after this cleanup.
+A regression retains a real bend while removing a redundant fractional vertex.
+
+Landing binding now checks shared-edge overlap and door seating within the same
+f32 coordinate-error budget used by physical route endpoints. It still requires
+nonzero shared length and matching floor heights. A wider landing rotated through
+37/90/180/270 degrees binds and supports stair entry; a 0.01-unit gap rejects.
+Foot support closes representational cracks with a bounded outward/inward bevel
+operation before actor-footprint erosion. Live obstacles remain authoritative.
+Straight supported swept footprints bypass construction of the full actor-center
+region; other routes retain full geometry for visibility while dropping redundant
+candidate vertices within the coordinate-error budget.
+
+The intermediate binding-only audit in
+`work/map-compile/keep-tolerant-bindings-1b2bi0d1` finishes with **4/80 routes
+passing** and no landing-binding warnings. This supersedes the previous failure
+to bind every keep landing, not complete keep traversal. Rounded-buffer experiments
+were stopped after exposing excessive pathfinding work; the retained correction
+uses bevels and avoids redundant route candidates.
+
+The staged seam correction had also left some stair clearances on their old
+floor boundaries, producing thin collision strips across the corrected floor.
+`work/map-compile/keep-placements-xzcrsx` is a separate diagnostic candidate with
+asset-owned clearances covering the corrected stair floors. The final audit is
+retained separately in `work/map-compile/keep-final-clearances-g2q5u6qs`: **80/80
+directed actor routes pass**, covering three stairs at rotations 0/37/90/180 and
+elevations 0/40. The report marks `audit_finished` and `complete` true. Its scope
+is initial-state walks between every entrance pair, with `complete_sprite` false;
+this is not complete-animation or rendered actor validation. The audit took
+108.56 seconds while the game was building.
+
+All eight candidates also pass native geometry construction and control apply/reset
+(one control each). The candidate must receive geometry/ownership review, and its
+corrections must migrate into reusable component assets before publication. No
+asset publication or full-map parity claim follows from these diagnostics.
+
+Validation of the final runtime changes: twelve stair-navigation tests and 190
+movement tests pass (twelve movement tests ignored); the movement suite takes
+14.95 seconds. The 32 ordinary level-loading tests pass (two ignored). Formatting,
+whitespace checks and the game build pass. The fast swept-footprint path requires
+positive clearance: an existing regression rejects a zero-width actor-center
+corridor and falls back to the full solver for boundary cases.
+
 ## Precise landing receivers and unresolved keep binding (2026-10-05)
 
 The compiler retains pre-grid receiving contours when a clipped source region
