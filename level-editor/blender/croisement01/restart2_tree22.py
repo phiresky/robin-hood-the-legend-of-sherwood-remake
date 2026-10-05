@@ -55,7 +55,16 @@ def main():
         union(body,tube(f'Inferred bough{i}',[start,start.lerp(tip,.5)+Vector((0,0,10)),tip],[5,3,.6]))
     bpy.context.view_layer.objects.active=body;modifier=body.modifiers.new('Connected hidden branches','REMESH');modifier.mode='VOXEL';modifier.voxel_size=.7;modifier.use_remove_disconnected=False;bpy.ops.object.modifier_apply(modifier=modifier.name)
     mesh=body.data.copy();bpy.data.objects.remove(body,do_unlink=True);assign_mesh(obj,mesh)
-    fit=fit_native_width(obj,np.asarray(alpha)>127,'single',x0=row['box_top_left'][0]);(dest/'source-contour-fit.json').write_text(json.dumps(fit,indent=2)+'\n')
+    fit_domain=np.asarray(alpha)>127
+    if args.revision>=3:
+        # Infer the hidden wood contour from the continuous visible bark strip;
+        # surrounding leaf tips do not establish the trunk's outside boundary.
+        fit_domain=np.zeros_like(fit_domain)
+        for y,line in enumerate(np.asarray(core)>127):
+            columns=np.flatnonzero(line)
+            if len(columns):fit_domain[y,max(0,columns[0]-1):min(len(line),columns[-1]+7)]=True
+        Image.fromarray((fit_domain*255).astype('uint8')).save(dest/'inferred-wood-contour.png')
+    fit=fit_native_width(obj,fit_domain,'single',x0=row['box_top_left'][0]);(dest/'source-contour-fit.json').write_text(json.dumps(fit,indent=2)+'\n')
     removed_islands=[]
     if args.revision>=1:
         bm=bmesh.new();bm.from_mesh(obj.data);remaining=set(bm.verts);components=[]

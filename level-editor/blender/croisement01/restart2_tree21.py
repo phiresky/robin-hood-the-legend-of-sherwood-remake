@@ -125,16 +125,17 @@ def main():
         # Short roots spread load over the bank face inside the observed flare.
         # Their endpoints come from vertical support probes, not image darkness.
         supports=[Vector((1270,-479.6887,44.5129)),Vector((1270,-470.6887,42.1733)),Vector((1276,-458.6887,42.3630))]
-        attachment=Vector((1274,-491,70));normal=Vector((-.4709,.2220,.8538)).normalized()
+        attachment=Vector((1274,-491,78 if args.revision>=7 else 70));normal=Vector((-.4709,.2220,.8538)).normalized()
+        radii=[10.,7.,3.5] if args.revision>=7 else [4.6,3.2,1.4]
         records=[]
         for i,support in enumerate(supports):
             hit=terrain.ray_cast(support+Vector((0,0,50)),Vector((0,0,-1)),100)[0]
             if hit is None or (hit-support).length>.1:raise ValueError('Root support probe no longer matches terrain')
             tip=hit+normal*.2
             middle=attachment.lerp(tip,.55)+Vector((0,0,1.5))
-            root=tube(f'Bank buttress {i}',[attachment,middle,tip],[4.6,3.2,1.4])
+            root=tube(f'Bank buttress {i}',[attachment,middle,tip],radii)
             union(obj,root)
-            records.append(dict(attachment=list(attachment),support=list(hit),tip=list(tip),radii=[4.6,3.2,1.4]))
+            records.append(dict(attachment=list(attachment),support=list(hit),tip=list(tip),radii=radii))
         (dest/'root-buttress-construction.json').write_text(json.dumps(dict(status='private candidate; native silhouette and solid joint review required',method='Three continuous short wood buttresses joined to the lower stem and seated slightly into measured bank surfaces.',roots=records,terrain_provisional=True),indent=2)+'\n')
     uv=mesh.uv_layers.new(name='Source UV');known=mesh.color_attributes.new(name='Source ownership',type='FLOAT_COLOR',domain='CORNER');mesh.color_attributes.active_color=known
     for loop in mesh.loops:
