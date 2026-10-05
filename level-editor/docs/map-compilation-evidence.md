@@ -4,6 +4,31 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Physical stair area emission and native contract fixture (2026-10-05)
+
+The world-space compiler now emits a complete motion-area fragment together with
+its physical navigation. Permanent holes and changing collision pieces receive
+one ordered set of obstacle identities; each physical piece references the same
+index and retains the corresponding runtime state word. Projection happens only
+after this allocation. Collapsed projected contours retain their ordered vertices
+instead of being simplified into invalid two-point polygons. Out-of-range game
+coordinates and invalid state words are rejected.
+
+`shared/test-fixtures/physical-stair-area.json` is checked against compiler output
+in the editor tests and embedded directly by the Rust edge-on traversal fixture.
+The native actor tests therefore consume emitted area/navigation data, rather
+than maintaining a handwritten duplicate of the stair contract. All twelve
+focused native checks pass, including complete gate routes in both directions,
+barrier closure/reopening, landing support and nearby-actor detours.
+
+The main asset compiler still assembles its intermediate surfaces and collision
+in screen space. Switching those stages to the physical frame remains necessary
+before normal editor exports can use this emitter. The 24 keep failures remain
+unresolved; this fixture does not establish full-map export parity.
+
+Verification: 124 affected editor tests, both typechecks, focused lint, formatting,
+whitespace checks and the updated game build pass.
+
 ## World-space stair compilation primitive (2026-10-05)
 
 The shared compiler contract now describes `physical_navigation`. A separate

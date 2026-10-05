@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { compilePhysicalStair, type PhysicalStairInput } from "./compile-physical-stair.ts";
+import { readFileSync } from "node:fs";
+import {
+  compilePhysicalStair,
+  compilePhysicalStairArea,
+  type PhysicalStairInput,
+} from "./compile-physical-stair.ts";
 import { planeHeight } from "./gameplay-plane.ts";
 import type { Vec3 } from "./scene.ts";
 
@@ -20,6 +25,49 @@ const fixture = (): PhysicalStairInput => ({
     { inside: [400, 310, 110], middle: [400, 300, 100], outside: [400, 290, 100] },
     { inside: [400, 390, 190], middle: [400, 400, 200], outside: [400, 410, 200] },
   ],
+});
+
+test("physical area emission allocates holes and live obstacle identities together", () => {
+  const input = fixture();
+  const result = compilePhysicalStairArea({
+    ...input,
+    obstacles: [
+      { stateId: 1, polygon: input.obstacles[0]!.polygon },
+      { stateId: 2, polygon: rectangle(395, 359, 405, 361) },
+    ],
+  });
+  assert.equal(result.area.obstacles.length, 3);
+  assert.deepEqual(
+    result.area.obstacles.map((obstacle) => obstacle.state_id),
+    [0, 1, 2],
+  );
+  assert.deepEqual(
+    result.navigation.obstacles.map((obstacle) => obstacle.motion_obstacle),
+    [0, 1, 2],
+  );
+  for (const [index, obstacle] of result.navigation.obstacles.entries())
+    assert.deepEqual(
+      result.area.obstacles[index]!.polygon.points,
+      obstacle.polygon.map((point) => [
+        Math.round(point[0]),
+        Math.round(point[1] - planeHeight(result.navigation.plane, point)),
+      ]),
+    );
+  assert.ok(result.area.polygon.points.every(([, y]) => y === 200));
+  assert.ok(result.area.polygon.points.length >= 3);
+});
+
+test("native edge-on traversal fixture is emitted by the shared compiler", () => {
+  const input = fixture();
+  const result = compilePhysicalStairArea({
+    surfaces: input.surfaces.map((surface) => ({ ...surface, holes: [] })),
+    obstacles: [],
+    doors: input.doors,
+  });
+  const expected: unknown = JSON.parse(
+    readFileSync(new URL("../test-fixtures/physical-stair-area.json", import.meta.url), "utf8"),
+  );
+  assert.deepEqual(result, expected);
 });
 
 test("physical stair compilation retains an edge-on floor and distinct door identities", () => {

@@ -1,5 +1,5 @@
 import polygonClipping from "polygon-clipping";
-import type { PhysicalStairNavigation } from "./asset-gameplay.ts";
+import type { CompiledAssetGeometry, PhysicalStairNavigation } from "./asset-gameplay.ts";
 import { heightPlane, planeHeight } from "./gameplay-plane.ts";
 import type { Point } from "./level.ts";
 import type { Vec3 } from "./scene.ts";
@@ -9,6 +9,69 @@ export interface PhysicalStairInput {
   /** Collision pieces already bound to the emitted motion area's obstacle IDs. */
   obstacles: { motionObstacle: number; polygon: Vec3[] }[];
   doors: PhysicalStairNavigation["doors"];
+}
+
+export interface PhysicalStairAreaInput extends Omit<PhysicalStairInput, "obstacles"> {
+  obstacles: { stateId: number; polygon: Vec3[] }[];
+}
+
+/** Allocate one authoritative motion identity for every physical collision piece. */
+export function compilePhysicalStairArea(input: PhysicalStairAreaInput): {
+  area: CompiledAssetGeometry["motion_data"]["layers"][number][number];
+  navigation: PhysicalStairNavigation;
+} {
+  for (const obstacle of input.obstacles)
+    if (
+      !Number.isInteger(obstacle.stateId) ||
+      obstacle.stateId < 0 ||
+      obstacle.stateId > 0xffffffff
+    )
+      throw new Error("Physical stair collision needs a valid motion state word");
+  const { navigation, holes } = compilePhysicalStair({
+    ...input,
+    obstacles: input.obstacles.map((obstacle, motionObstacle) => ({
+      motionObstacle,
+      polygon: obstacle.polygon,
+    })),
+  });
+  const collision = [
+    ...holes.map((polygon) => ({ stateId: 0, polygon })),
+    ...navigation.obstacles.map((obstacle, index) => ({
+      stateId: input.obstacles[index]!.stateId,
+      polygon: obstacle.polygon,
+    })),
+  ];
+  if (collision.length > 65536)
+    throw new Error("Physical stair exceeds motion obstacle identity capacity");
+  navigation.obstacles = collision.map((obstacle, motion_obstacle) => ({
+    motion_obstacle,
+    polygon: obstacle.polygon,
+  }));
+  const project = (point: Point): Point => {
+    const result: Point = [
+      Math.round(point[0]),
+      Math.round(point[1] - planeHeight(navigation.plane, point)),
+    ];
+    if (result.some((value) => !Number.isFinite(value) || value < -32768 || value > 32767))
+      throw new Error("Physical stair projection exceeds the game coordinate range");
+    return result;
+  };
+  return {
+    navigation,
+    area: {
+      is_lift: true,
+      state_id: 0,
+      flags: 0,
+      skeleton_segments: [],
+      // A valid physical floor can project to a line. Preserve its ordered
+      // vertices; simplifying that line would lose the physical surface identity.
+      polygon: { points: navigation.boundary.map(project) },
+      obstacles: collision.map((obstacle) => ({
+        state_id: obstacle.stateId,
+        polygon: { points: obstacle.polygon.map(project) },
+      })),
+    },
+  };
 }
 
 /** Assemble a placed floor before projection/quantization can destroy its area. */

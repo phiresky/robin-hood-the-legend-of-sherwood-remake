@@ -19,6 +19,8 @@
   A shared world-space stair compilation primitive preserves joined floors,
   holes and endpoint identities, but the main compiler still needs to integrate
   it through surface/collision assembly before exporting the new metadata.
+  Its motion-area emitter allocates holes and live collision identities together;
+  native edge-on traversal tests consume compiler-generated area/navigation data.
 
 - **Asset-authored movement headroom.** A permanent gameplay volume can set
   `movementHeadroom` in game-height units. Export excludes walking space that

@@ -77,6 +77,9 @@ A world-space compiler primitive now preserves joined floors, holes, collision
 identities and door anchors through edge-on and rotated placements. It remains
 unwired: the existing surface/collision assembly must stop depending on screen
 space before normal exports can emit that data.
+The new area emitter now allocates permanent holes and live obstacle IDs together
+and produces the data consumed by the native edge-on traversal fixture. This
+checks the compiler/runtime contract but does not yet change normal exports.
 An optional physical-stair descriptor and runtime binding now retain ground-space
 collision with references to the normal movement obstacles. Physical route queries
 read their current state rather than maintaining separate switch state. Compiler
