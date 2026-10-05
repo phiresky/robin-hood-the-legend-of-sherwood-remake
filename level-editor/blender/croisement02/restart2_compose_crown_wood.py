@@ -37,7 +37,10 @@ def main():
  bpy.context.view_layer.update();actual={name:crown_state(bpy.data.objects[name]) for name in names}
  if actual!=expected:raise ValueError('Incoming crown changed during composition')
  if before!={o.name:_geometry(o,True) for o in allobjects if o.name not in expected}:raise ValueError('Selected wood or outside scene changed')
- shutil.copytree(wood,worker);(worker/'modified').rename(worker/'previous-modified');bpy.ops.wm.save_as_mainfile(filepath=str(worker/'model.blend'));validate(worker);cfg=json.loads((worker/'workspace.json').read_text());_render(cfg,worker/'modified',worker/'input/views.json');validate(worker)
+ shutil.copytree(wood,worker)
+ if (worker/'recipe').exists():(worker/'recipe').rename(worker/'previous-recipe')
+ (worker/'inspection').rename(worker/'previous-inspection');(worker/'inspection').mkdir()
+ (worker/'modified').rename(worker/'previous-modified');bpy.ops.wm.save_as_mainfile(filepath=str(worker/'model.blend'));validate(worker);cfg=json.loads((worker/'workspace.json').read_text());_render(cfg,worker/'modified',worker/'input/views.json');validate(worker)
  write_json(worker/'inspection/crown-wood-composition.json',dict(model_sha256=sha(worker/'model.blend'),wood_worker=str(wood),wood_model_sha256=wood_hash,crown_worker=str(crown),crown_model_sha256=a.crown_sha,crown_proof_sha256=sha(proof),crown_before=expected,crown_after=actual,wood_before=wood_before,wood_after={o.name:_geometry(o,True) for o in allobjects if o.type=='MESH' and o.get('asset_group')==wood.name and o.get('projection_component')!='crown'},non_crown_geometry_appearance_exact=True,source_mask_sha256=sha(worker/'source-masks.json'),status='Private combined candidate; native joint and root review pending',approval='pending'))
  audit(worker);render_workspace(worker,384,release_slot=False,transparent_bounces=256)
  if sha(wood/'model.blend')!=wood_hash or sha(crown/'model.blend')!=a.crown_sha:raise ValueError('Frozen input changed')
