@@ -18,9 +18,9 @@ from refinement_review import _tree
 
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--budget',type=int,default=256);parser.add_argument('--revision',default='v2');parser.add_argument('--rays-only',action='store_true');parser.add_argument('--candidate',type=Path)
+    parser=argparse.ArgumentParser();parser.add_argument('--budget',type=int,default=256);parser.add_argument('--revision',default='v2');parser.add_argument('--rays-only',action='store_true');parser.add_argument('--candidate',type=Path);parser.add_argument('--joint',default='restart2-shrub93-boundary-v1')
     args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
-    joint=OUT/'leaf-clump-joint-review/restart2-shrub93-boundary-v1'
+    joint=OUT/'leaf-clump-joint-review'/args.joint
     evidence=json.loads((joint/'evidence.json').read_text())
     if args.candidate:
         candidate=args.candidate.resolve();proof=json.loads((candidate/'preservation.json').read_text())

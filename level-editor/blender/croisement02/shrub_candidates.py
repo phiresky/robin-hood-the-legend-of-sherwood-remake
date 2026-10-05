@@ -8,6 +8,9 @@ from evidence_io import sha,write_json
 
 
 def selected_workspace(out,asset,catalog_path):
+    from restart2_shrub93_candidate import selected_workspace as boundary_workspace
+    boundary=boundary_workspace(out,asset,catalog_path)
+    if boundary is not None:return boundary
     from wattle_flower_candidates import selected_workspace as pair_workspace
     pair=pair_workspace(out,asset,catalog_path)
     if pair is not None:return pair
