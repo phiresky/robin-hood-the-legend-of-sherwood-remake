@@ -15,11 +15,17 @@ import { createTerrainGrid } from "../shared/src/authored-terrain.ts";
 const base = "library/3d-assets/sketchfab/sketchfab-long-wood-bridge";
 const descriptorBytes = await fs.readFile(`${base}/asset.json`);
 const descriptor = JSON.parse(descriptorBytes);
+const published = process.argv.includes("--published");
+const publishedGameplay = structuredClone(descriptor.gameplay);
 const bytes = await fs.readFile(`${base}/model.glb`);
 const review = JSON.parse(
   await fs.readFile("refinement/catalogs/sketchfab-long-wood-bridge-deck-review.json", "utf8"),
 );
-assert.equal(createHash("sha256").update(descriptorBytes).digest("hex"), review.descriptorSha256);
+assert.equal(
+  createHash("sha256").update(descriptorBytes).digest("hex"),
+  published ? review.publishedDescriptorSha256 : review.descriptorSha256,
+);
+if (published) assert.ok(process.argv.includes("--structure"));
 assert.equal(createHash("sha256").update(bytes).digest("hex"), review.modelSha256);
 const jsonLength = bytes.readUInt32LE(12);
 const gltf = JSON.parse(bytes.subarray(20, 20 + jsonLength).toString());
@@ -210,6 +216,16 @@ if (process.argv.includes("--supports") || process.argv.includes("--structure"))
   ];
 }
 validateAssetGameplay(descriptor.gameplay, descriptor);
+if (published) {
+  const withoutDraft = (gameplay) => {
+    // Compare serialized definitions, where JSON normalizes negative zero.
+    const normalized = JSON.parse(JSON.stringify(gameplay));
+    delete normalized.draft;
+    return normalized;
+  };
+  assert.deepEqual(withoutDraft(descriptor.gameplay), withoutDraft(publishedGameplay));
+  descriptor.gameplay = publishedGameplay;
+}
 const output = await fs.mkdtemp("work/map-compile/imported-bridge-deck-");
 await fs.writeFile(
   `${output}/candidate.gameplay.json`,
@@ -450,6 +466,16 @@ await fs.writeFile(
   JSON.stringify({ scope: "static-geometry-only-not-gameplay-parity", complete: true, results }),
 );
 await fs.writeFile(`${output}/mismatched-landings.json`, JSON.stringify(landingChecks, null, 2));
+if (process.argv.includes("--structure") && !published) {
+  const gameplay = structuredClone(descriptor.gameplay);
+  gameplay.draft.issues = [
+    "Fitted timber collision and 80-unit upright headroom pass native route and ray checks; textured actor compositing remains unverified.",
+  ];
+  await fs.writeFile(
+    `${output}/gameplay-edits.json`,
+    JSON.stringify([{ asset: review.asset, descriptorSha256: review.descriptorSha256, gameplay }]),
+  );
+}
 console.log(
   JSON.stringify({
     output,

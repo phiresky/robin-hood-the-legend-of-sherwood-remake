@@ -4,6 +4,36 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Published draft wood bridge and geometric review (2026-10-05)
+
+The bridge is published with an explicit warning that textured actor compositing
+remains unverified. Its gameplay matches the native-tested headroom candidate;
+only the draft warning changes. The pinned review catalog records both descriptor
+hashes. Publication backups and the scene-pin audit are in
+`work/map-compile/published-imported-bridge-headroom`; all ten saved scenes reopen.
+
+`refinement/review-imported-bridge-collision.py` renders the pinned mesh alongside
+the actual authored volume faces and deck surfaces in three orthographic views.
+The inspected `imported-bridge-deck-X16cpf/collision-review.png` shows conservative
+timber proxies, retained railing/cross-brace gaps and foundation extensions below
+the short support feet. It is a geometric review, not textured in-game validation.
+No mesh or textures changed. The library now has 34 missing gameplay definitions.
+
+Reproduce the published placement checks from `level-editor` with:
+
+```sh
+node refinement/stage-imported-bridge-gameplay.mjs --structure --published
+```
+
+This reconstructs the authored geometry from the pinned mesh, compares its JSON
+representation to the installed gameplay, then compiles the installed definition.
+JSON comparison normalizes negative zero exactly as publication does. The command
+requires the hull files produced by `author-imported-bridge-supports.py --structure`.
+The published run `work/map-compile/imported-bridge-deck-BFZSPh` passes all 30
+directed native actor routes, 75 blocked points and 140 sight/projectile probes.
+All ten descriptors differ from `X16cpf` only in their single draft warning;
+the placement script also passes all ten landing-height rejection checks.
+
 ## Authored movement headroom and bridge detours (2026-10-05)
 
 Permanent gameplay volumes can now author `movementHeadroom` in world game-height

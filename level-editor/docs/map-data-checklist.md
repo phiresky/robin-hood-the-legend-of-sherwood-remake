@@ -11,9 +11,9 @@ not certification of every library asset or gameplay case. Best-effort exports
 warn about omissions and preserve initial states where possible; warnings are
 not evidence that an omitted feature works.
 
-The library-wide audit still finds 35 of 1,288 indexed assets without gameplay
+The library-wide audit still finds 34 of 1,289 indexed assets without gameplay
 definitions, including the composite Derby keep, several Nottingham buildings,
-York market props and the imported wood bridge. None is placed in the ten saved
+and York market props. None is placed in the ten saved
 scenes, but placing one in a new map still omits its gameplay with a warning.
 These need individual ownership/geometry review; empty scenery definitions would
 be incorrect for buildings and bridges.
@@ -21,7 +21,7 @@ An index-based component audit finds that 32 of these assets have every part
 represented in newer gameplay-bearing assets, often larger state assemblies.
 Their standalone definitions still need restoring with local control dependencies
 and coordinate frames; matching parts alone does not make them interchangeable.
-The imported bridge and two old ground assets have no component-owner match.
+The two remaining old ground assets have no component-owner match.
 An unpublished mesh-derived bridge deck candidate passes ten complete native
 crossings and 754 sampled receiving-seam crossings at five rotations. Adding
 twelve inclined support hulls preserves those ten complete crossings, passes
@@ -34,8 +34,10 @@ It passes 30 native actor routes, 75 blocked support/low-clearance points and te
 landing-height rejections at five rotations. Foundation routes now detour around
 low wood; deck crossings remain usable and all 140 sight/projectile checks pass.
 The compiler changes pass 134 affected tests, both typechecks, focused lint and
-the production build. Rendered actor/collision review remains; the candidate is
-not published.
+the production build. The bridge is now published as a draft with an explicit
+textured actor-compositing warning. Orthographic mesh/collision review shows
+conservative timber proxies preserving the major gaps; rendered actor integration
+remains unverified.
 
 The staged composite keep preserves Derby's door permissions, room memberships
 and lift endpoints; both assemblies pass 28 native stair routes and five control

@@ -1,7 +1,8 @@
 {
-  "description": "Reviewed mesh triangles for an unpublished bridge deck candidate; not a complete gameplay definition or publication recipe.",
+  "description": "Pinned mesh and authoring recipe for the published draft bridge; textured actor compositing remains unverified.",
   "asset": "sketchfab-long-wood-bridge",
   "descriptorSha256": "091b24580805ccad1ded2741dc0ac0096bcefbaa65af89efc7766cdc0095c936",
+  "publishedDescriptorSha256": "37b3d2e8026c3a383ef8c4ea90d23d0823b0333edcd849516f57fdf7a7a80f3c",
   "modelSha256": "06e8d1939dafc704709cf589244b055240ff77c334ce763b328db98d34a7e8a2",
   "node": "scenery-long-wood-bridge",
   "primitive": 0,
@@ -22,7 +23,7 @@
     "woodPieceProxies": 150,
     "shape": "fitted oriented boxes, with long arched rails split at mesh profile stations",
     "deckThickness": "paired bottom vertex at each of the eighteen reviewed top triangles",
-    "publication": "staged only"
+    "publication": "published draft with explicit rendered-review warning"
   },
   "remaining": [
     "Review fitted collision and rendered actor clearance; passing point rays do not certify a full body route."
