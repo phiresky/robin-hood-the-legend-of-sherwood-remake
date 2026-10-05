@@ -9,7 +9,7 @@ from mathutils.geometry import tessellate_polygon
 
 
 def main():
-    dest=OUT/'restart3-north-cart/terminal-physical-v4';dest.mkdir(exist_ok=False)
+    dest=OUT/'restart3-north-cart/terminal-physical-v5';dest.mkdir(exist_ok=False)
     source=json.loads((OUT/'state-target-evidence/north-cart/manifest.json').read_text());frame=source['parts'][0]['frames'][-1]
     assert sha(frame['image'])==frame['image_sha256']
     rgba=np.array(Image.open(frame['image']).convert('RGBA'));box=[1202,220,1454,362]
@@ -72,7 +72,7 @@ def main():
             j=(i+1)%n
             for aa,bb in [(0,n),(2*n,3*n),(0,2*n),(n,3*n)]:m.faces.append((aa+i,aa+j,bb+j,bb+i))
         solid(name+' rim',m.vertices,m.faces,paint)
-        m=Mesh();hub_half=min(3,depth/2);m.tube(c-normal*hub_half,c+normal*hub_half,3.3,n=12)
+        m=Mesh();hub_half=3 if name=='Near upright wheel' else min(3,depth/2);m.tube(c-normal*hub_half,c+normal*hub_half,3.3,n=12)
         for i in range(10):m.tube(c,c+(a*math.cos(i*math.tau/10)+b*math.sin(i*math.tau/10))*(inner+.5),.9,n=6)
         solid(name+' spokes and hub',m.vertices,m.faces,paint)
     wheel('Near upright wheel',center,u,Z,v,22,18.2,3,wp)

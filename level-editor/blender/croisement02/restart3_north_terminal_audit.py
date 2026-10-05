@@ -30,10 +30,11 @@ def main():
     material_pass=all(all(row[k] for k in ['native_rgb_exact','exclusive_ownership_exact','packed_image_exact']) for row in guard_rows)
 
     for obj in objects:
-        vertices=np.array([obj.matrix_world@v.co for v in obj.data.vertices]);obj.data.calc_loop_triangles();faces=[tuple(t.vertices) for t in obj.data.loop_triangles]
+        vertices=np.array([list(obj.matrix_world@v.co) for v in obj.data.vertices],dtype=np.float64);obj.data.calc_loop_triangles();faces=[tuple(t.vertices) for t in obj.data.loop_triangles]
         trees[obj.name]=BVHTree.FromPolygons(vertices.tolist(),faces,all_triangles=True)
-        a,b,c=[vertices[np.array(faces)[:,i]] for i in range(3)];vol=np.einsum('ij,ij->i',a,np.cross(b,c))/6
-        volume=float(vol.sum());centroid=np.sum((a+b+c)/4*vol[:,None],axis=0)/volume
+        origin=vertices.mean(axis=0);relative=vertices-origin
+        a,b,c=[relative[np.array(faces)[:,i]] for i in range(3)];vol=np.einsum('ij,ij->i',a,np.cross(b,c))/6
+        volume=float(vol.sum());centroid=origin+np.sum((a+b+c)/4*vol[:,None],axis=0)/volume
         mass[obj.name]=(abs(volume),centroid)
     edges={n:[] for n in trees}
     for i,a in enumerate(trees):
