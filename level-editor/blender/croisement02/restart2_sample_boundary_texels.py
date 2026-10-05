@@ -15,7 +15,7 @@ from tree_geometry import SIN,RAY
 
 def main():
  parser=argparse.ArgumentParser();parser.add_argument('--workspace',type=Path);parser.add_argument('--review-directory',type=Path);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
- for index in ([35] if args.workspace else [35,43,45,46]):
+ for index in ([int(args.workspace.name.rsplit('-',1)[-1])] if args.workspace else [35,43,45,46]):
   worker=args.workspace or OUT/f'restart2-wood/projected/assets/croisement02-tree-{index}';review=args.review_directory or OUT/f'restart2-wood/tree{index}-boundary-review-v3';meta=json.loads((review/'evidence.json').read_text());bpy.ops.wm.open_mainfile(filepath=str(worker/'model.blend'));bpy.context.view_layer.update();mask=np.array(Image.open(meta['boundary_mask']).convert('L'))>0;source=np.array(Image.open(worker/'reference/source.png').convert('RGB'));trees=[];images={};rows=[]
   for obj in bpy.data.collections['Croisement02 Working'].all_objects:
    if obj.type!='MESH' or obj.get('asset_group')!=worker.name or obj.get('projection_component')=='crown':continue

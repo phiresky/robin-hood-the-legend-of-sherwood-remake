@@ -12,6 +12,15 @@ from refinement_workspace import _geometry
 from render_slots import acquire,release
 from rebuild_tree32_roots import check
 
+def tiny_faces(bm):
+ for _ in range(100):
+  faces=[f for f in bm.faces if f.calc_area()<1e-9]
+  if not faces:return
+  edge=min(faces[0].edges,key=lambda e:e.calc_length())
+  if edge.calc_length()>.01:raise ValueError('Degenerate cleanup exceeds .01 world units')
+  bmesh.ops.collapse(bm,edges=[edge],uvs=False)
+ raise ValueError('Degenerate cleanup did not converge')
+
 def main():
  parser=argparse.ArgumentParser();parser.add_argument('index',type=int,choices=[43,45,46]);index=parser.parse_args(sys.argv[sys.argv.index('--')+1:]).index;worker=tree_workspace(index);digest=sha(worker/'model.blend');out=OUT/f'restart2-wood/tree{index}-branch-sdf-v1'
  if (out/'model.blend').exists():raise FileExistsError(out/'model.blend')
@@ -19,14 +28,14 @@ def main():
  for obj in wood:
   mesh=obj.data.copy();mesh.transform(obj.matrix_world);original.from_mesh(mesh);bpy.data.meshes.remove(mesh)
  ref=bpy.data.meshes.new('Reference source wood');original.to_mesh(ref);oldsurface=BVHTree.FromPolygons([v.co for v in ref.vertices],[list(f.vertices) for f in ref.polygons]);bmesh.ops.bisect_plane(original,geom=list(original.verts)+list(original.edges)+list(original.faces),dist=.0001,plane_co=(0,0,60),plane_no=(0,0,1),clear_outer=True);bmesh.ops.holes_fill(original,edges=[e for e in original.edges if e.is_boundary],sides=0);mesh=bpy.data.meshes.new('Retained lower wood');original.to_mesh(mesh);original.free();lower=bpy.data.objects.new(mesh.name,mesh);bpy.context.scene.collection.objects.link(lower)
- data=np.load(out/'upper-volume.npz');mesh=bpy.data.meshes.new('Continuous upper native wood');mesh.from_pydata(data['vertices'].tolist(),[],data['faces'].tolist());mesh.update();upper=bpy.data.objects.new(mesh.name,mesh);bpy.context.scene.collection.objects.link(upper);bm=bmesh.new();bm.from_mesh(mesh);bmesh.ops.remove_doubles(bm,verts=list(bm.verts),dist=1e-4);bmesh.ops.dissolve_degenerate(bm,edges=list(bm.edges),dist=1e-4);bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces));bm.to_mesh(mesh);bm.free();check(mesh)
- bpy.ops.object.select_all(action='DESELECT');upper.select_set(True);bpy.context.view_layer.objects.active=upper;modifier=upper.modifiers.new('Graft continuous upper onto retained base','BOOLEAN');modifier.operation='UNION';modifier.solver='EXACT';modifier.use_self=True;modifier.object=lower;bpy.ops.object.modifier_apply(modifier=modifier.name);mesh=upper.data.copy();bpy.data.objects.remove(upper,do_unlink=True);bpy.data.objects.remove(lower,do_unlink=True);bm=bmesh.new();bm.from_mesh(mesh);bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces));bm.to_mesh(mesh);bm.free();mesh.update();full=check(mesh);distances=[oldsurface.find_nearest(v.co)[3] for v in mesh.vertices if v.co.z<20]
+ data=np.load(out/'upper-volume.npz');mesh=bpy.data.meshes.new('Continuous upper native wood');mesh.from_pydata(data['vertices'].tolist(),[],data['faces'].tolist());mesh.update();upper=bpy.data.objects.new(mesh.name,mesh);bpy.context.scene.collection.objects.link(upper);bm=bmesh.new();bm.from_mesh(mesh);bmesh.ops.remove_doubles(bm,verts=list(bm.verts),dist=1e-4);bmesh.ops.dissolve_degenerate(bm,edges=list(bm.edges),dist=1e-4);tiny_faces(bm);bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces));bm.to_mesh(mesh);bm.free();check(mesh)
+ bpy.ops.object.select_all(action='DESELECT');upper.select_set(True);bpy.context.view_layer.objects.active=upper;modifier=upper.modifiers.new('Graft continuous upper onto retained base','BOOLEAN');modifier.operation='UNION';modifier.solver='EXACT';modifier.use_self=True;modifier.object=lower;bpy.ops.object.modifier_apply(modifier=modifier.name);mesh=upper.data.copy();bpy.data.objects.remove(upper,do_unlink=True);bpy.data.objects.remove(lower,do_unlink=True);bm=bmesh.new();bm.from_mesh(mesh);tiny_faces(bm);bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces));bm.to_mesh(mesh);bm.free();mesh.update();full=check(mesh);distances=[oldsurface.find_nearest(v.co)[3] for v in mesh.vertices if v.co.z<20]
  if max(distances)>1.:raise ValueError('Retained root surface changed beyond tolerance')
  normals=KDTree(len(mesh.vertices));values=[]
  for v in mesh.vertices:normals.insert(v.co,v.index);values.append(tuple(v.normal))
  normals.balance();neutral=bpy.data.materials.new('Private unprojected continuous branches');neutral.diffuse_color=(.4,.4,.4,1);cut={43:86.,45:20.,46:25.}[index];lowerpart={43:108,45:111,46:113}[index];parts={}
  for obj in wood:
-  part=int(obj['source_node'].split('-')[-1]);bm=bmesh.new();bm.from_mesh(mesh);bmesh.ops.bisect_plane(bm,geom=list(bm.verts)+list(bm.edges)+list(bm.faces),dist=.0001,plane_co=(0,0,cut),plane_no=(0,0,1),clear_inner=part!=lowerpart,clear_outer=part==lowerpart);bmesh.ops.holes_fill(bm,edges=[e for e in bm.edges if e.is_boundary],sides=0);bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces));result=bpy.data.meshes.new('Continuous native branch owner');bm.to_mesh(result);bm.free()
+  part=int(obj['source_node'].split('-')[-1]);bm=bmesh.new();bm.from_mesh(mesh);bmesh.ops.bisect_plane(bm,geom=list(bm.verts)+list(bm.edges)+list(bm.faces),dist=.0001,plane_co=(0,0,cut),plane_no=(0,0,1),clear_inner=part!=lowerpart,clear_outer=part==lowerpart);bmesh.ops.holes_fill(bm,edges=[e for e in bm.edges if e.is_boundary],sides=0);tiny_faces(bm);bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces));result=bpy.data.meshes.new('Continuous native branch owner');bm.to_mesh(result);bm.free()
   for attr in list(result.attributes):
    if attr.name.startswith('reprojection_'):result.attributes.remove(attr)
   obj.data=result;obj.parent=None;obj.matrix_world=Matrix.Identity(4);result.materials.append(neutral)
