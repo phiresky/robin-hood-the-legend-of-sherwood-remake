@@ -1400,3 +1400,29 @@ test("refined mission target visibility is scoped and mission replacement retire
   assert.equal(entities.root.children.length, 0);
   viewport.dispose();
 });
+
+test("native artwork mode requires a loaded mounted preview and retires on mission changes", () => {
+  const { viewport } = fixture();
+  assert.equal(viewport.statePresentationMode, "physical");
+  assert.throws(() => viewport.setStatePresentationMode("native-art"), /not ready/);
+  let retired = 0;
+  const internal = viewport as unknown as {
+    nativeSurface: { dispose(): void } | undefined;
+    nativeControlState: { orbit: boolean; gizmo: boolean } | undefined;
+    orbit: { enabled: boolean };
+  };
+  internal.nativeSurface = { dispose: () => retired++ };
+  internal.nativeControlState = { orbit: true, gizmo: false };
+  internal.orbit = { enabled: false };
+  assert.equal(viewport.statePresentationMode, "native-art");
+  viewport.replaceEntities(null);
+  assert.equal(retired, 1);
+  assert.equal(internal.orbit.enabled, true);
+  assert.equal(viewport.statePresentationMode, "physical");
+  viewport.clearNativeArtPresentation();
+  assert.equal(retired, 1);
+  // This minimal control stub is not a mounted OrbitControls instance.
+  internal.orbit = undefined as unknown as { enabled: boolean };
+  viewport.dispose();
+  assert.throws(() => viewport.setStatePresentationMode("native-art"), /not ready/);
+});

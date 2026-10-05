@@ -5,6 +5,12 @@ import { MissionLayer } from "./mission-layer.ts";
 import { MissionEntities } from "./mission.ts";
 import { MissionStateLayer, type MissionStateSource } from "./mission-state-layer.ts";
 import type { MissionStateContract } from "../../shared/src/mission-state.ts";
+import type { NativeStatePresentationContract } from "../../shared/src/native-state-presentation.ts";
+import {
+  NativeStatePresentation,
+  NativeArtworkSurface,
+  nativeLibraryReader,
+} from "./native-state-presentation.ts";
 import { SceneryLayer } from "./scenery-layer.ts";
 import { CHARACTER_DRAG_TYPE } from "./mission-character-catalog.ts";
 import { terrainContours } from "./terrain-contours.ts";
@@ -297,6 +303,8 @@ export class EditorViewport {
   private entities: SceneEntities | null = null;
 
   setPerspective(value: number) {
+    if (this.nativeSurface)
+      throw new Error("Switch to the physical view before changing its camera");
     this.perspective = THREE.MathUtils.clamp(value, 0, 65);
     if (this.camera) this.activeCamera();
   }
@@ -321,6 +329,8 @@ export class EditorViewport {
     return Math.atan2(-right.z, right.x);
   }
   private orientCamera(azimuth: number, top = false) {
+    if (this.nativeSurface)
+      throw new Error("Switch to the physical view before changing its camera");
     if (!this.camera || !this.orbit || !Number.isFinite(azimuth)) return;
     const offset = this.camera.position.clone().sub(this.orbit.target);
     const radius = Math.max(1, offset.length());
@@ -346,6 +356,7 @@ export class EditorViewport {
     this.spriteOrientationLock = enabled;
   }
   replaceEntities(entities: SceneEntities | null) {
+    this.clearNativeArtPresentation();
     this.missionStates.clear();
     this.entities?.dispose();
     this.entities = entities;
@@ -557,6 +568,69 @@ export class EditorViewport {
   private readonly splines = new SplineLayer();
   private readonly missionMarkers = new MissionLayer();
   private stateMission = "";
+  private readonly nativeArt = new NativeStatePresentation();
+  private nativeSurface: NativeArtworkSurface | undefined;
+  private nativeControlState: { orbit: boolean; gizmo: boolean } | undefined;
+  get statePresentationMode(): "physical" | "native-art" {
+    return this.nativeSurface ? "native-art" : "physical";
+  }
+  async setNativeArtPresentation(
+    contract: NativeStatePresentationContract,
+    library: FileSystemDirectoryHandle,
+    source: MissionStateSource,
+  ) {
+    if (this.disposed) throw new Error("Disposed viewport");
+    this.clearNativeArtPresentation();
+    if (this.entities instanceof MissionEntities && this.entities.missionName !== source.name)
+      throw new Error("Native artwork does not match the displayed mission");
+    try {
+      return await this.nativeArt.set(
+        contract,
+        { ...source, level: this.bindings.level() ?? source.level },
+        nativeLibraryReader(library),
+      );
+    } catch (error) {
+      this.bindings.onError?.(String(error));
+      throw error;
+    }
+  }
+  setStatePresentationMode(mode: "physical" | "native-art") {
+    if (mode === "physical") {
+      this.nativeSurface?.dispose();
+      this.nativeSurface = undefined;
+      if (this.nativeControlState) {
+        if (this.orbit) this.orbit.enabled = this.nativeControlState.orbit;
+        if (this.gizmo) this.gizmo.enabled = this.nativeControlState.gizmo;
+        this.nativeControlState = undefined;
+      }
+      return;
+    }
+    if (mode !== "native-art") throw new Error("Unknown state presentation mode");
+    if (this.disposed || !this.container || !this.nativeArt.ready)
+      throw new Error("Native artwork preview is not ready");
+    if (this.nativeSurface) return;
+    this.cancelPointerGesture?.();
+    this.cancelMissionDrag?.();
+    this.nativeControlState = {
+      orbit: this.orbit?.enabled ?? false,
+      gizmo: this.gizmo?.enabled ?? false,
+    };
+    if (this.orbit) this.orbit.enabled = false;
+    if (this.gizmo) this.gizmo.enabled = false;
+    this.nativeSurface = new NativeArtworkSurface(this.container);
+    this.nativeSurface.update(this.nativeArt.pixels());
+  }
+  clearNativeArtPresentation() {
+    this.setStatePresentationMode("physical");
+    this.nativeArt.clear();
+  }
+  setNativeArtPlaying(playing: boolean) {
+    this.nativeArt.setPlaying(playing);
+  }
+  seekNativeArt(tick: number, id?: string) {
+    this.nativeArt.seek(tick, id);
+    this.nativeSurface?.update(this.nativeArt.pixels());
+  }
   private readonly missionStates = new MissionStateLayer(
     (indices) => {
       if (this.entities instanceof MissionEntities)
@@ -984,6 +1058,7 @@ export class EditorViewport {
     this.observer?.disconnect();
     this.retireMap();
     this.missionStates.dispose();
+    this.nativeArt.dispose();
     for (const control of this.controls.reverse()) control.dispose();
     this.controls = [];
     disposeObjectResources([
@@ -1141,6 +1216,10 @@ export class EditorViewport {
     );
     this.animate((elapsed) => {
       if (!this.renderer || !this.camera) return;
+      if (this.nativeSurface) {
+        if (this.nativeArt.advance(elapsed)) this.nativeSurface.update(this.nativeArt.pixels());
+        return;
+      }
       if (this.missionStates.advance(elapsed)) this.clippingBoundsDirty = true;
       this.flushTerrainPreview();
       this.flushSplinePreview();
