@@ -1,5 +1,11 @@
 import { terrainGameplay } from "./authored-terrain.ts";
 import { placeGameplaySurface } from "./place-gameplay-surface.ts";
+import {
+  containsNavigationAnchor,
+  navigationAnchorHeight,
+  pointInGameplayPolygon as inside,
+  type NavigationAnchorArea,
+} from "./navigation-anchor.ts";
 import { wallSplineGameplay } from "./wall-spline-gameplay.ts";
 import polygonClipping, { type Polygon } from "polygon-clipping";
 import { assembleSightVolumes } from "./assemble-sight-volumes.ts";
@@ -104,19 +110,6 @@ function ring(points: Point[], label = "Gameplay polygon", minimumArea = 0.5): P
   return result;
 }
 const polygon = (points: Point[]): Polygon => [[...points, points[0]!]];
-function inside(p: Point, points: Point[]) {
-  let hit = false;
-  for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
-    const a = points[i]!,
-      b = points[j]!;
-    if (
-      a[1] > p[1] !== b[1] > p[1] &&
-      p[0] < ((b[0] - a[0]) * (p[1] - a[1])) / (b[1] - a[1]) + a[0]
-    )
-      hit = !hit;
-  }
-  return hit;
-}
 function instances(
   document: Level3D,
   descriptors: ReadonlyMap<string, ProjectionAssetDescriptor>,
@@ -1317,15 +1310,12 @@ function compileAssetGameplayAttempt(
       navigationRegion: undefined,
       surfaces: [surface],
     });
-  const areas: {
-    plane: HeightPlane;
+  const areas: (NavigationAnchorArea & {
     lift?: string;
     navigationRegion?: string;
     sector: number;
     layer: number;
-    polygon: Point[];
-    blockers: Point[][];
-  }[] = [];
+  })[] = [];
   const jumpWalkAreas: JumpWalkArea[] = [];
   let sector = 0;
   const navigationPieces: NavigationPiece[] = [];
@@ -1701,18 +1691,18 @@ function compileAssetGameplayAttempt(
     const matches = areas.filter(
       (a) =>
         (lift === null || a.lift === lift) &&
-        Math.abs(planeHeight(a.plane, [point[0], point[1] - point[2]]) - point[2]) < 1e-4 &&
-        inside(projected, a.polygon) &&
-        (allowBlocked || !a.blockers.some((b) => inside(projected, b))),
+        containsNavigationAnchor(a, point, { projected, allowBlocked }),
     );
     if (new Set(matches.map((a) => a.sector)).size !== 1) {
-      const containing = areas.filter((a) => inside(projected, a.polygon));
+      const containing = areas.filter((a) =>
+        containsNavigationAnchor(a, point, { projected, allowBlocked: true, requireHeight: false }),
+      );
       const details = containing.slice(0, 8).map((a) => ({
         sector: a.sector,
         layer: a.layer,
         lift: a.lift,
-        height: planeHeight(a.plane, [point[0], point[1] - point[2]]),
-        blocked: a.blockers.some((b) => inside(projected, b)),
+        height: navigationAnchorHeight(a, point),
+        blocked: !containsNavigationAnchor(a, point, { projected, requireHeight: false }),
       }));
       throw new UnresolvedSurface(
         `${label} must resolve to exactly one ${allowBlocked ? "" : "unblocked "}walkable surface (found ${matches.length}); world point ${JSON.stringify(point)}, projected ${JSON.stringify(projected)}; containing areas (${containing.length}, showing up to 8) ${JSON.stringify(details)}`,

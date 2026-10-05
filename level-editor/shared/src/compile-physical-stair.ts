@@ -3,6 +3,7 @@ import type { CompiledAssetGeometry, PhysicalStairNavigation } from "./asset-gam
 import { heightPlane, planeHeight } from "./gameplay-plane.ts";
 import type { Point } from "./level.ts";
 import type { Vec3 } from "./scene.ts";
+import { pointInGameplayPolygon } from "./navigation-anchor.ts";
 
 export interface PhysicalStairInput {
   surfaces: { polygon: Vec3[]; holes: Vec3[][] }[];
@@ -129,28 +130,8 @@ export function compilePhysicalStair(input: PhysicalStairInput): {
       polygon: groundRing(obstacle.polygon, "Physical stair obstacle"),
     };
   });
-  const contains = (point: Vec3, ring: Point[]) => {
-    let inside = false;
-    for (let i = 0; i < ring.length; i++) {
-      const a = ring[i]!,
-        b = ring[(i + 1) % ring.length]!;
-      const cross = (point[0] - a[0]) * (b[1] - a[1]) - (point[1] - a[1]) * (b[0] - a[0]);
-      if (
-        Math.abs(cross) <= 1e-6 &&
-        point[0] >= Math.min(a[0], b[0]) - 1e-6 &&
-        point[0] <= Math.max(a[0], b[0]) + 1e-6 &&
-        point[1] >= Math.min(a[1], b[1]) - 1e-6 &&
-        point[1] <= Math.max(a[1], b[1]) + 1e-6
-      )
-        return true;
-      if (
-        a[1] > point[1] !== b[1] > point[1] &&
-        point[0] < ((b[0] - a[0]) * (point[1] - a[1])) / (b[1] - a[1]) + a[0]
-      )
-        inside = !inside;
-    }
-    return inside;
-  };
+  const contains = (point: Vec3, ring: Point[]) =>
+    pointInGameplayPolygon([point[0], point[1]], ring, true);
   const doors = input.doors.map((door): PhysicalStairNavigation["doors"][number] => {
     for (const point of [door.inside, door.middle, door.outside])
       if (point.some((value) => !Number.isFinite(value)))

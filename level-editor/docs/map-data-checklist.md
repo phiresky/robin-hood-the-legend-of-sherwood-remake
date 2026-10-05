@@ -73,9 +73,11 @@ identities. Tests cover rotated/elevated placements, headroom and fractional
 barriers; the native edge-on fixture consumes emitted area/navigation data.
 Export-frame clipping also operates in world space, preserving edge-on floors
 and reallocating collision identities when cropping changes holes or barriers.
-The main compiler shares world-space surface placement and volume-height slicing,
-but its subsequent area assembly, receiving-feature binding and lift emission
-still depend on projected geometry. **Normal exports do not yet emit physical
+The main compiler shares world-space surface placement and volume-height slicing.
+Its point-anchor queries now support world-space areas, preserving distinct
+heights and holes at coincident screen positions. Area assembly, receiver/material
+construction and lift emission still depend on projected geometry.
+**Normal exports do not yet emit physical
 stairs, and the 24 failed keep routes remain unresolved.** General point/seek
 order creation, transition choreography and broader multi-door coverage also
 remain unfinished.

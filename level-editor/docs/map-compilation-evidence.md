@@ -4,6 +4,27 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Coordinate-aware navigation anchor resolution (2026-10-05)
+
+The main compiler's point-anchor resolver and its diagnostics now use a shared
+query that supports projected areas and world-space physical areas. Physical
+queries check the actual XY footprint and height, including hole boundaries,
+without substituting a snapped screen probe. Projected areas retain the previous
+separate exact-height and rounded-contour probes and their existing edge rules.
+Physical door validation shares the same boundary-inclusive polygon predicate.
+
+A test feeds emitted edge-on floor geometry into the query and distinguishes
+low/high anchors, an interior hole, an unsupported point beyond the floor, a
+height mismatch and a nonfinite height even when screen positions coincide.
+Another test covers projected rounding, blocked-anchor opt-in and diagnostic
+queries without height filtering. All seven affected compiler suites pass
+(149 tests), both typechecks pass, and focused lint, formatting and whitespace
+checks pass.
+
+The main pipeline does not yet assemble or emit physical stair areas. This
+resolves a query assumption needed for integration, not the keep route failures
+or complete receiving-feature/material support.
+
 ## Physical stair export-frame clipping (2026-10-05)
 
 Physical region assembly now accepts the visible export rectangle. It converts

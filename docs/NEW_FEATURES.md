@@ -31,6 +31,8 @@
   screen projection collapses, rebuilding collision identities after cropping.
   Asset surface placement now retains world-space floor and hole geometry before
   projection, including separate physical/navigation heights for clearances.
+  Main compiler anchor queries can distinguish world-space floors, heights and
+  holes independently of coincident or rounded screen positions.
   Physical stair steps now share ordinary movement's water-splash emission,
   using committed world positions even when the screen position is stationary.
   Their collision queries also include actors on bound adjoining landings,
