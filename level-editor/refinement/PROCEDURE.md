@@ -388,6 +388,15 @@ Each card contains the stable asset ID and name, solid and source-textured
 views, original context, covered/revealed views when applicable, validation,
 ownership evidence, and limitations.
 
+Collect review-ready candidates into larger, frozen batches with one gallery
+and one approval request per batch. When several maps or workers are active,
+combine their ready cards instead of sending separate per-asset requests.
+Geometry and texture cards may share a gallery, but each card must clearly name
+its decision scope and bind its exact revision and model hashes. Preserve the
+original evidence and verify copied gallery resources and links. A batch
+approval applies only to the cards in that frozen batch. Continue independent
+refinement and texture work while collecting candidates and awaiting review.
+
 1. Finish geometry and the complete `modified/` packet.
 2. Validate masks, hashes, transforms, outside objects, and all fixed cameras.
 3. Rebuild the gallery with `--pending-only`, archiving the previous index.
