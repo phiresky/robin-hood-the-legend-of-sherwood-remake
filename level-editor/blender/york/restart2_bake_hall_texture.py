@@ -47,13 +47,19 @@ scene=bpy.data.scenes['york Refinement'];bpy.context.window.scene=scene
 bpy.context.view_layer.update();scene.render.threads_mode='FIXED';scene.render.threads=2
 before={o.name:_geometry(o) for o in scene.objects}
 outside={o.name:_geometry(o,protect_appearance=True) for o in scene.objects if o.get('asset_group')!=approval['asset_id']}
+receiver_scope=json.loads(manifest.read_text()).get('texture_receiver_object_names')
+unselected={o.name:_geometry(o,protect_appearance=True) for o in scene.objects
+            if receiver_scope is not None and o.get('asset_group')==approval['asset_id'] and o.name not in receiver_scope}
 report=apply(manifest,args.generation/'generated-preserved.png',args.output,
              texels_per_unit=2,map_name='york',reconciliation_reference=args.generation/'generated-raw.png')
 if before!={o.name:_geometry(o) for o in scene.objects}:raise ValueError('Bake changed geometry')
 if outside!={o.name:_geometry(o,protect_appearance=True) for o in scene.objects if o.name in outside}:
     raise ValueError('Bake changed outside objects or materials')
+if unselected!={o.name:_geometry(o,protect_appearance=True) for o in scene.objects if o.name in unselected}:
+    raise ValueError('Scoped bake changed common materials')
 bpy.ops.wm.save_as_mainfile(filepath=str(args.output/'model.blend'),compress=True)
 report.update(geometry_verified=True,outside_objects_preserved=len(outside),
+              unselected_common_objects_preserved=len(unselected),
               approved_model_sha256=sha(model),baked_model_sha256=sha(args.output/'model.blend'),
               scope='Private texture candidate; actual rendered review and user texture approval pending')
 (args.output/'validation.json').write_text(json.dumps(report,indent=2)+'\n')
