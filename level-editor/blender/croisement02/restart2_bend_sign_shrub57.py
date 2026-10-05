@@ -41,7 +41,16 @@ def main(mode="smooth", version=1):
     old=render(scene,dest/'native-before.png')
     projected=np.column_stack((before[:,0],-SIN*before[:,1]-COS*before[:,2]))
     deformation=None
-    if mode=='piecewise':
+    if mode=='rigid':
+        from sign_rigid_depth import bend
+        deformation=bend(obj,detail)
+        after=np.array([tuple(obj.matrix_world@v.co) for v in obj.data.vertices])
+        shifts=np.array([deformation['maximum_shift']])
+        reprojection=np.column_stack((after[:,0],-SIN*after[:,1]-COS*after[:,2]))
+        projection_error=float(np.max(np.abs(reprojection-projected)))
+        assert projection_error<.0002
+        assert uv_before==[tuple(x.uv) for x in obj.data.uv_layers.active.data]
+    elif mode=='piecewise':
         from sign_piecewise_depth import bend
         deformation=bend(obj)
         after=np.array([tuple(obj.matrix_world@v.co) for v in obj.data.vertices])
@@ -78,7 +87,7 @@ def main(mode="smooth", version=1):
         pic=render(scene,dest/f'actual-{i}.png');sheet.paste(pic,(i%4*384,i//4*408),pic.getchannel('A'))
         ImageDraw.Draw(sheet).text((i%4*384+4,i//4*408+386),f'Actual saved materials {i}',fill='white')
     sheet.save(dest/'actual-eight.png')
-    write_json(dest/'report.json',dict(status='Private local depth bend; fresh physical sign and ground checks pending',model_sha256=sha(dest/'model.blend'),source_model_sha256=sha(source),constraints_sha256=sha(prior),deformation=deformation,vertex_count=len(after),maximum_shift=float(shifts.max()),source_projection_max_error=projection_error,uv_unchanged=(mode=="smooth"),source_projection_contract="Ray-preserving deformation; piecewise mode interpolates UV at new face cuts",native_raster=dict(alpha_changed_pixels=int(np.count_nonzero(a[:,:,3]!=b[:,:,3])),opaque_rgb_changed_pixels=int(np.count_nonzero(np.any(a[:,:,:3]!=b[:,:,:3],axis=2)&opaque)),maximum_channel_error=int(np.max(np.abs(a.astype(int)-b.astype(int))))),ground_fringe_fixed="Depth map is identity at and below Z0.5",bounds_before=[before.min(0).tolist(),before.max(0).tolist()],bounds_after=[after.min(0).tolist(),after.max(0).tolist()],minimum_source_ray_jacobian=(deformation['minimum_source_ray_jacobian'] if deformation else 1-SIN*float(demands.max())/80),method=(deformation['method'] if deformation else 'Maximum of smooth radial source-screen depth envelopes; same continuous field applies to every front/back/interior vertex, tapering linearly to zero at grounded Z0.5. Positive source-ray Jacobian prevents inversion of depth order on one ray.'),limitations=['Four-pose constraints only; all32 sign poses need validation.','Grounded fringe and source projection preserved; nearby bank/rock intersections require separate check.','Raw card bounds include transparent margins.','New geometry has no inherited user approval; selector remains unchanged.']))
+    write_json(dest/'report.json',dict(status='Private local depth bend; fresh physical sign and ground checks pending',model_sha256=sha(dest/'model.blend'),source_model_sha256=sha(source),constraints_sha256=sha(prior),deformation=deformation,vertex_count=len(after),maximum_shift=float(shifts.max()),source_projection_max_error=projection_error,uv_unchanged=(mode in ["smooth","rigid"]),source_projection_contract="Ray-preserving deformation; piecewise mode interpolates UV at new face cuts",native_raster=dict(alpha_changed_pixels=int(np.count_nonzero(a[:,:,3]!=b[:,:,3])),opaque_rgb_changed_pixels=int(np.count_nonzero(np.any(a[:,:,:3]!=b[:,:,:3],axis=2)&opaque)),maximum_channel_error=int(np.max(np.abs(a.astype(int)-b.astype(int))))),ground_fringe_fixed="Depth map is identity at and below Z0.5",bounds_before=[before.min(0).tolist(),before.max(0).tolist()],bounds_after=[after.min(0).tolist(),after.max(0).tolist()],minimum_source_ray_jacobian=(deformation.get('minimum_source_ray_jacobian') if deformation else 1-SIN*float(demands.max())/80),method=(deformation['method'] if deformation else 'Maximum of smooth radial source-screen depth envelopes; same continuous field applies to every front/back/interior vertex, tapering linearly to zero at grounded Z0.5. Positive source-ray Jacobian prevents inversion of depth order on one ray.'),limitations=['Four-pose constraints only; all32 sign poses need validation.','Grounded fringe and source projection preserved; nearby bank/rock intersections require separate check.','Raw card bounds include transparent margins.','New geometry has no inherited user approval; selector remains unchanged.']))
     assert sha(source)==detail['inputs']['shrub-57']['model_sha256']
     print(dest)
 if __name__=='__main__':

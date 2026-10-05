@@ -15,8 +15,8 @@ from opacity_bounds import measure
 from restart2_sign_neighbors import camera_to,render,NEIGHBORS
 from sign_object_mask import setup
 
-def main():
-    base=OUT/'restart2-fence/shrub57-sign-bend-v1';dest=base/'joint-proof';dest.mkdir(exist_ok=False)
+def main(version=1):
+    base=OUT/f'restart2-fence/shrub57-sign-bend-v{version}';dest=base/'joint-proof';dest.mkdir(exist_ok=False)
     proof=json.loads((OUT/'restart2-fence/sign-neighbors-v4/manifest.json').read_text())
     candidate=base/'model.blend';digest=sha(candidate)
     bpy.ops.wm.open_mainfile(filepath=str(candidate));obj=bpy.data.objects['West Rock Foliage 57'];opacity=measure(obj)

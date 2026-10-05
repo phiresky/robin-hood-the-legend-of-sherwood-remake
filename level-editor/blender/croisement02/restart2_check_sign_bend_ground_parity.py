@@ -26,8 +26,8 @@ def samples(obj):
         bary=np.column_stack((1-bc[inside].sum(1),bc[inside]));result.extend(bary@world[list(tri.vertices)])
     return np.array(result)
 
-def main():
-    dest=OUT/'restart2-fence/shrub57-sign-bend-v1/ground-parity-proof';dest.mkdir(exist_ok=False)
+def main(version=1):
+    dest=OUT/f'restart2-fence/shrub57-sign-bend-v{version}/ground-parity-proof';dest.mkdir(exist_ok=False)
     source=OUT/'understory-round-9/assets/croisement02-shrub-57/model.blend';candidate=dest.parent/'model.blend'
     positions=[]
     for path in [source,candidate]:

@@ -30,12 +30,12 @@ def sample(path,box):
             out[y-box[1],x-box[0]]=im[iy%h,ix%w];roles[y-box[1],x-box[0]]=1 if rec['role']=='observed' else 2
     return out,roles,measure(obj)
 
-def main():
-    dest=OUT/'restart2-fence/shrub57-bend-source-audit-v1';dest.mkdir(exist_ok=False)
+def main(versions=(1,3), output_name="shrub57-bend-source-audit-v1"):
+    dest=OUT/'restart2-fence'/output_name;dest.mkdir(exist_ok=False)
     source=OUT/'understory-round-9/assets/croisement02-shrub-57/model.blend';box=[-42,200,116,390]
     before,roles,oldbounds=sample(source,box)
     results=[]
-    for version in [1,3]:
+    for version in versions:
         candidate=OUT/f'restart2-fence/shrub57-sign-bend-v{version}/model.blend'
         after,newroles,bounds=sample(candidate,box)
         visible=(before[:,:,3]>.5)|(after[:,:,3]>.5);different=np.any(abs(before-after)>1e-5,axis=2)&visible
