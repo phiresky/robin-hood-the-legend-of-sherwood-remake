@@ -14,6 +14,9 @@ one multi-plane navigation region and two end sockets. It compiles strictly at
 0, 37, 90, 180 and 270 degrees. The review script is
 `work/map-compile/stage-imported-bridge-deck.mjs`; the resulting descriptors,
 source pins and routes are in `work/map-compile/imported-bridge-deck-O5SOR0`.
+The subsequent `imported-bridge-deck-MiYngY` batch also checks landings one game
+unit above and below each of the five placements. All ten mismatches retain
+separate deck and terrain navigation regions; matching landings form one region.
 
 Native endpoint tests pass ten directed complete crossings. Native receiving
 seam tests pass another 754 sampled crossings. The fixture terrain is at the

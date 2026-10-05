@@ -11,6 +11,6 @@
   "remaining": [
     "Author support and railing collision without filling the underpass.",
     "Review projectile and sight obstruction independently of walking surfaces.",
-    "Verify under-bridge routes and mismatched landing rejection before publication."
+    "Verify under-bridge routes before publication."
   ]
 }
