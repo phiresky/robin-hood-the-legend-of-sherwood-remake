@@ -7,9 +7,9 @@ ROOT=Path(__file__).resolve().parents[3]
 OUT=ROOT/'level-editor/work/croisement03-refinement/restart2'
 
 def main():
-    result=OUT/'firewood-fit-v3';result.mkdir(parents=True,exist_ok=False)
+    result=OUT/'firewood-fit-v4';result.mkdir(parents=True,exist_ok=False)
     record=json.loads((OUT/'firewood-fit-v1/fit.json').read_text());vertices=np.array(record['vertices'])
-    for i,(shorten_x,lower_y) in enumerate([(12.5,1.8),(7.5,.8),(4.,0.)]):
+    for i,(shorten_x,lower_y) in enumerate([(12.5,3.4),(7.5,2.4),(4.,0.)]):
         log=record['logs'][i];a=np.array(log['a']);b=np.array(log['b']);axis=(b-a)/np.linalg.norm(b-a);delta=-axis*(shorten_x/axis[0]);delta[1]-=lower_y/math.sin(math.radians(35));vertices[i*32+16:(i+1)*32]+=delta;log['b']=(b+delta).tolist()
     record['vertices']=vertices.tolist();record['source_fit']=dict(status='Silhouette fit superseded by source-visible end constraints; final native renderer audit required')
     record['source_observations']=['Dominant upper diagonal billet remains longest.','Near lower billet ends around435,784; the pale end is below the dark cap center.','Second lower billet ends around445,782.','Three billets remain an inferred count; dark and green mask114 end regions are not automatically timber.']
