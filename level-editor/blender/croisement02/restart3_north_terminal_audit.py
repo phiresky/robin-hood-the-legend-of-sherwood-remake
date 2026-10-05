@@ -26,7 +26,8 @@ def main():
     for index,row in enumerate(ownership['roles'],1):
         image=np.array(Image.open(row['image']).convert('RGBA'));active=image[:,:,3]>0
         exact=bool(np.array_equal(image[active,:3],original[active,:3]))
-        owned=bool(np.array_equal(active,labels==index));guard_rows.append(dict(role=row['name'],native_rgb_exact=exact,exclusive_ownership_exact=owned,packed_image_exact=row['sha256'] in packed))
+        exclusive=np.array(Image.open(row.get('exclusive_ownership_image',row['image'])).convert('RGBA'))[:,:,3]>0
+        owned=bool(np.array_equal(exclusive,labels==index));guard_rows.append(dict(role=row['name'],native_rgb_exact=exact,exclusive_ownership_exact=owned,packed_image_exact=row['sha256'] in packed))
     material_pass=all(all(row[k] for k in ['native_rgb_exact','exclusive_ownership_exact','packed_image_exact']) for row in guard_rows)
 
     for obj in objects:
