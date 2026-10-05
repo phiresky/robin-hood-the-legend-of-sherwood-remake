@@ -28,9 +28,23 @@ def main():
     source = Path(trial_proof['source_worker'])
     require(sha(trial / 'model.blend') == trial_proof['model_sha256'], 'Trial changed')
     require(sha(source / 'model.blend') == trial_proof['source_model_sha256'], 'Construction source changed')
-    old_proof = json.loads((source / 'inspection/prototype-preservation.json').read_text())
-    previous = Path(old_proof['previous_worker'])
-    require(sha(previous / 'model.blend') == old_proof['previous_model_sha256'], 'Approved baseline changed')
+    old_proof_path = source / 'inspection/prototype-preservation.json'
+    if old_proof_path.exists():
+        old_proof = json.loads(old_proof_path.read_text())
+        previous = Path(old_proof['previous_worker'])
+        previous_hash = old_proof['previous_model_sha256']
+    else:
+        # An interrupted private trial may lack its final report. Its frozen
+        # workspace still binds the exact source; actual wood is checked below.
+        original_config = json.loads((source / 'workspace.json').read_text())
+        previous = Path(original_config['source_blend']).parent
+        previous_hash = original_config['source_blend_sha256']
+        from catalog import OUT
+        feedback = json.loads((OUT / 'user-feedback.json').read_text())['records']
+        require(any(r['asset_id'] == original_config['asset_id'] and r.get('decision') == 'approved'
+                    and r.get('model_sha256') == previous_hash for r in feedback),
+                'Interrupted trial has no exact approved baseline')
+    require(sha(previous / 'model.blend') == previous_hash, 'Approved baseline changed')
     output.mkdir(parents=True)
     for name in ['input', 'reference', 'mask-reference']:
         shutil.copytree(source / name, output / name)
