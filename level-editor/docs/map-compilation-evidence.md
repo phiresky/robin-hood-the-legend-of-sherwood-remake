@@ -4,6 +4,42 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Published east-hall upper stair seams (2026-10-05)
+
+`refinement/stage-local-stair-seams.mjs` authors explicitly selected local stair
+corrections with descriptor pins, bounded floor/landing movements and unique
+local landing ownership. It retains intermediate side-boundary heights and door
+permissions. External/ambiguous landings require separate review; a gatehouse
+attempt also rejects its still-unsupported upper midpoint rather than publishing.
+
+The first east-hall upper stair candidate compiled physical navigation but failed
+all six upper-stair routes per placement. A wider landing had only one endpoint
+adjusted because its other endpoint lay beyond the stair span; runtime tracing
+confirmed that neither lower entrance could bind landing support. The revised
+recipe adjusts both endpoints of the complete matching near-coplanar landing edge.
+
+Candidate `work/map-compile/local-stair-seams-GWqLz7` changes the upper floor by at
+most 0.323 units and its landings by at most 0.532/0.770 units. All 807 sampled
+floor points intersect the pinned stair mesh; the smooth ramp lies within the
+approximately 6.5-unit tread steps. Permissions, control definitions and the
+lower stair are unchanged. The candidate includes an asset-owned floor clearance.
+
+`refinement/check-local-stair-seams.mjs` inserts the complete asset independently
+over authored terrain. `local-stair-placements-u5SepC` tests rotations 0/37/90/180
+and elevations 0/40: all **48 upper-stair directed routes pass**. The complete
+audit is **60/64**, with four failures on the unchanged lower stair at 180 degrees.
+These are initial-state actor-loop checks without complete sprites. Full Derby
+in `east-hall-seam-full-ljO2YV` passes **28/28 stair routes** and all five control
+apply/reset checks; its upper stair no longer falls back to projected navigation.
+
+The asset and Derby scene pin are published, with backups under
+`work/map-compile/east-hall-seam-publication-20261005`. All ten scenes reopen.
+The eight `--published` exports in `local-stair-placements-K2NXTu` and the full
+published Derby descriptor exactly equal their native-tested candidates.
+The refreshed `stair-anchor-support-pAMh3U` audit has 48/53 definitions with local
+anchor-support issues (Derby 6/10). Rendered traversal, other stairs and full-map
+parity remain unfinished.
+
 ## Library stair-anchor support audit (2026-10-05)
 
 `refinement/audit-stair-anchor-support.mjs` reads hash-verified library descriptors
