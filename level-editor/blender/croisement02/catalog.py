@@ -37,6 +37,9 @@ def bank_workspace(asset):
 
 
 def scenery_workspace(asset):
+    from logging_stump_selection import selected_workspace as stump_workspace
+    stump=stump_workspace(OUT,asset,reviewed_catalog())
+    if stump is not None:return stump
     from hay_selections import selected_workspace as hay_workspace
     hay=hay_workspace(OUT,asset,reviewed_catalog())
     if hay is not None:return hay
