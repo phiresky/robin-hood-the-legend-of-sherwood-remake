@@ -110,10 +110,10 @@ Derby/Wychford pins refreshed. All eight fresh component exports exactly match
 the native-tested staged descriptors. The composite keep remains unpublished;
 complete-sprite and rendered verification remain open.
 All ten scenes reopen after publication, and full Derby passes all five control
-apply/reset checks. Five other Derby stairs still retain projected navigation
+apply/reset checks. Four other Derby stairs still retain projected navigation
 because their authored endpoints lack physical floor support.
-A library-wide local-anchor audit finds this issue in 47 of 53 authored stair
-definitions: Derby 5/10, Leicester 8/8, Lincoln 6/6, Nottingham 11/12,
+A library-wide local-anchor audit finds this issue in 46 of 53 authored stair
+definitions: Derby 4/10, Leicester 8/8, Lincoln 6/6, Nottingham 11/12,
 Sherwood 1/1 and York 16/16. All audited floors are planar. This checks local
 definitions, not placed connectivity or actual route failures; corrections and
 moved/rotated native traversal checks remain necessary across these assets.
@@ -127,6 +127,12 @@ their exact receiving contours, restoring full Derby's 28/28 stair routes and
 five control checks. Landing-support routing considers only geometry within a
 footprint of the stair bounds; the final Derby route audit takes about eight
 seconds. These are initial-state actor checks, not complete rendered parity.
+The lower-east curtain stair is also published after 16/16 placement routes,
+eight disconnected-ground rejections, complete mesh sample coverage and another
+28/28 full Derby route check. The east-bailey candidate remains unpublished:
+two rotated exits select the wrong terrain receiver, and full Derby retains its
+ground-contact gap. The upper-west candidate passes routes but its visible stair
+mesh and authored floor disagree, so it also remains unpublished.
 Physical transitions
 now wait at a reached world target until animation completion, or preserve
 unfinished distance in the next movement order. An edge-on actor-loop test

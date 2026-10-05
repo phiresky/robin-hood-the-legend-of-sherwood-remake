@@ -84,12 +84,13 @@ for (const height of [0, 40])
           ),
           `${file}: raised external entrance must reject`,
         );
-      assert.ok(disconnected.descriptor.asset_geometry.lifts.length < geometry.lifts.length);
+      const remainingLifts = disconnected.descriptor.asset_geometry.lifts?.length ?? 0;
+      assert.ok(remainingLifts < geometry.lifts.length);
       gaps.push({
         height,
         rotation,
         raisedBy: 20,
-        lifts: disconnected.descriptor.asset_geometry.lifts.length,
+        lifts: remainingLifts,
         warnings: disconnected.warnings,
       });
     }

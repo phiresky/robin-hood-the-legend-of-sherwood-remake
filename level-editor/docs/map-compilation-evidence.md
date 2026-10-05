@@ -4,6 +4,42 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Derby curtain stair batch and lower-east publication (2026-10-05)
+
+Three explicitly staged local corrections use the stair's external ground
+endpoint and its asset-owned upper landing. All 24 placements emit physical
+navigation and reject their raised, disconnected ground entrances. The placement
+checker now accepts an absent lift array when every traversal was omitted.
+`work/map-compile/derby-wall-stair-batch-08ar745d` passes 46/48 directed actor
+routes: lower-east and upper-west pass 16/16 each; east-bailey passes 14/16.
+
+Lower-east candidate `local-stair-seams-4ZxBUm` moves its floor by at most 0.877
+units. All 1,190 mesh samples intersect the stair; tread residuals span about
+-7.11 to 7.10 units around its unchanged smooth ramp. The separately compiled
+full Derby `derby-lower-east-full-srfDW5` passes 28/28 stair routes and all five
+control apply/reset checks. The asset and Derby scene pin are published with
+backups in `lower-east-stair-publication-20261005`. All ten scenes reopen and
+published full Derby exactly equals the native-tested candidate. Published
+placement exports are in `local-stair-placements-nyGMS3`. The refreshed local
+anchor audit (`stair-anchor-support-lHwZxH`) has 46/53 unsupported definitions,
+including four remaining Derby stairs.
+
+East-bailey candidate `local-stair-seams-sXM21T` is unpublished. At 180 degrees
+and both heights its downward exit leaves the actor on terrain receiver 18 while
+the actual position queries receiver 17; these are adjacent flat terrain triangles
+with identical material. This is away from their shared boundary, so the test
+correctly rejects the mismatch. Door handoff currently selects a receiver at the
+outside waypoint before restoring the physical seam position; this is a concrete
+lead for a focused regression, not a verified fix. The combined east-side full
+Derby candidate (`derby-wall-stair-full-kUdq1z`) also fails both east-bailey routes
+at its ground contact. Both issues remain open.
+
+Upper-west candidate `local-stair-seams-RZsuxX` is also unpublished despite its
+passing routes. Only 805/822 samples intersect its selected mesh, uncovered samples
+are up to 1.842 units from mesh edges, and mesh/floor height residuals reach -80.12.
+The visible stair extends beyond the authored upper boundary. A small seam snap
+does not establish geometry parity for that asset; model/frame review is required.
+
 ## Published ground contact and bounded landing queries (2026-10-05)
 
 `refinement/stage-derby-stair-ground-contact.mjs` reviews the two terrain edge
