@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / 'level-editor/refinement'))
 from promote_staged_publication import sha, library_lock, _apply, asset_file_pairs
 import promote_staged_publication as promotion
-from asset_index import write_asset_index
+from restart2_scoped_index import writer
 
 WORK = ROOT / 'level-editor/work/croisement03-refinement/restart2'
 STAGE = WORK / 'publication-five-v1'
@@ -45,7 +45,10 @@ def prepare():
                 pairs.append((source / relative, LIVE / '3d-assets' / relative))
     old_folder = LIVE / '3d-assets' / Path(old['descriptor']).parent
     rollback = STAGE / 'retired-group049-complete-backup'
-    shutil.copytree(old_folder, rollback)
+    if rollback.exists():
+        assert all(sha(p) == sha(rollback/p.relative_to(old_folder)) for p in old_folder.rglob("*") if p.is_file())
+    else:
+        shutil.copytree(old_folder, rollback)
     old_descriptor = json.loads((LIVE / '3d-assets' / old['descriptor']).read_text())
     for resource in old_descriptor.get('resources', []):
         path = LIVE / resource['path']
@@ -60,7 +63,7 @@ def prepare():
     prospective = {str(target.relative_to(LIVE / '3d-assets')):source_path for source_path,target in pairs
                    if target.is_relative_to(LIVE / '3d-assets')}
     merged = STAGE / 'promotion-library-index.json'
-    write_asset_index(LIVE / '3d-assets', target=merged, files=prospective)
+    writer(prior, sha(live_index), selected, old['id'])(LIVE / '3d-assets', target=merged, files=prospective)
     new = json.loads(merged.read_text())
     other = lambda rows: {a['id']:a for a in rows if a['id'] not in selected | {old['id']}}
     assert other(prior['assets']) == other(new['assets']), 'Unrelated palette entry changed'
@@ -90,6 +93,12 @@ def main():
             old_path = LIVE / '3d-assets/croisement03/croisement03-group-049/asset.json'
             replacement = STAGE / 'map-assets/3d-assets/croisement03/croisement03-southwest-firewood-stack/asset.json'
             original_check = promotion.check_gameplay_preserved
+            original_writer = promotion.write_asset_index
+            prior = json.loads((STAGE / 'palette-before.json').read_text())
+            selected = set(json.loads((STAGE / 'scope.json').read_text())['asset_ids'])
+            manifest = json.loads((STAGE / 'promotion.json').read_text())
+            index_record = next(r for r in manifest['files'] if r['target'] == str(LIVE/'3d-assets/index.json'))
+            promotion.write_asset_index = writer(prior, index_record['previous_sha256'], selected, 'croisement03-group-049')
 
             def retirement_check(source, target):
                 if source is not None or target.resolve() != old_path:
@@ -120,6 +129,7 @@ def main():
                 _apply(STAGE / 'promotion.json')
             finally:
                 promotion.check_gameplay_preserved = original_check
+                promotion.write_asset_index = original_writer
             prior = json.loads((STAGE / 'palette-before.json').read_text())
             after = json.loads((LIVE / '3d-assets/index.json').read_text())
             selected = set(json.loads((STAGE / 'scope.json').read_text())['asset_ids'])
