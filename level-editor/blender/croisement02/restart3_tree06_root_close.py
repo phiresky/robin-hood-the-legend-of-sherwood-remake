@@ -16,13 +16,14 @@ from sign_context_import import append_verified
 from evidence_io import sha,write_json
 
 
-def main(variant='collar-v3'):
- base=OUT/'restart3-tree06-root'/variant;dest=base/'root-close';dest.mkdir(exist_ok=False)
+def main(variant='collar-v3',before=False):
+ base=OUT/'restart3-tree06-root'/variant;dest=base/('root-close-before'if before else 'root-close');dest.mkdir(exist_ok=False)
+ model=Path(json.loads((base/'report.json').read_text())['input_model'])if before else base/'model.blend'
  bank=OUT/'restart2-bank321/packaged-v1/assets/croisement02-north-woodland-bank/model.blend'
  bpy.ops.wm.open_mainfile(filepath=str(bank));bpy.context.view_layer.update()
  names=[o.name for o in bpy.context.scene.objects if o.type=='MESH' and o.get('asset_group')=='croisement02-north-woodland-bank']
  expected={n:dict(matrix_world=[list(r)for r in bpy.data.objects[n].matrix_world])for n in names}
- bpy.ops.wm.open_mainfile(filepath=str(base/'model.blend'));bpy.context.view_layer.update();scene=bpy.context.scene
+ bpy.ops.wm.open_mainfile(filepath=str(model));bpy.context.view_layer.update();scene=bpy.context.scene
  hidden=[]
  for o in scene.objects:
   if o.type=='MESH':
@@ -36,6 +37,9 @@ def main(variant='collar-v3'):
   pic=render(scene,dest/f'contact-{i}.png');sheet.paste(pic,(i%4*384,i//4*408),pic.getchannel('A'))
   ImageDraw.Draw(sheet).text((i%4*384+5,i//4*408+388),f'Root contact {i}; crown hidden for inspection',fill='white')
  sheet.save(dest/'contact-eight.png')
+ if before:
+  write_json(dest/'report.json',dict(model_sha256=sha(model),bank_sha256=sha(bank),verified_context=receipt,hidden_in_review_only=hidden,native_camera_first=True,no_model_saved=True,status='Unchanged approved baseline comparison'))
+  return
  root=scene.objects['Northwest Tree 06 / Root collar continuation']
  bm=bmesh.new();bm.from_mesh(root.data);nonmanifold=sum(not e.is_manifold for e in bm.edges);volume=bm.calc_volume(signed=True)
  remaining=set(bm.verts);components=[]
@@ -64,5 +68,5 @@ def main(variant='collar-v3'):
 
 if __name__=='__main__':
  acquire()
- try:main(sys.argv[sys.argv.index('--')+1] if '--' in sys.argv else 'collar-v3')
+ try:main(sys.argv[sys.argv.index('--')+1] if '--' in sys.argv else 'collar-v3',before='--before' in sys.argv)
  finally:release()
