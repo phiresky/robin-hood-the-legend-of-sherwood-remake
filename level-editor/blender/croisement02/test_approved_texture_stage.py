@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import shutil
 import unittest
-from approved_texture_stage import FLAGS, select, select_native_front
+from approved_texture_stage import FLAGS, select, select_native_front, select_native_atlas
 from evidence_io import sha
 
 
@@ -283,6 +283,52 @@ class NativeFrontSelectionTests(unittest.TestCase):
         self.write(path, data)
         self.hashes[str(path)] = sha(path)
         with self.assertRaisesRegex(ValueError, 'Independent native front actual review'):
+            self.selected()
+
+
+class NativeAtlasSelectionTests(unittest.TestCase):
+    write = NativeFrontSelectionTests.write
+
+    def setUp(self):
+        NativeFrontSelectionTests.setUp(self)
+        authority = self.root / 'ownership.json'
+        authority.write_bytes(b'exact reconstructed ownership')
+        self.mask = self.root / 'protected-mask.npz'
+        self.mask.write_bytes(b'known and restored source texels')
+        parent = self.root / 'bake-v1'
+        self.proof = self.candidate / 'native-atlas-preservation.json'
+        self.write(self.proof, dict(status='PASS', reopened_preservation='PASS',
+            geometry_unchanged=True, all_original_uv_layers_exact=True,
+            original_native_atlas_rgba_and_packed_bytes_exact=True,
+            explicit_source_ownership_mask=True,
+            candidate_model_sha256=sha(self.candidate / 'worker.blend'),
+            approved_geometry_sha256=sha(self.base), parent_model_sha256=sha(parent / 'worker.blend'),
+            parent_reopened_preservation_sha256=sha(parent / 'reopened-preservation.json'),
+            source_authority=str(authority), source_authority_sha256=sha(authority),
+            records=[dict(object='Added roots', protected_mask=str(self.mask),
+                          protected_mask_sha256=sha(self.mask))]))
+        self.hashes[str(self.proof)] = sha(self.proof)
+        for name in ('root-review.json', 'agent-material-review.json'):
+            path = self.candidate / name
+            review = json.loads(path.read_text())
+            review['preservation_sha256'] = sha(self.proof)
+            self.write(path, review)
+            self.hashes[str(path)] = sha(path)
+
+    def selected(self):
+        return select_native_atlas({'asset_id': 'prop'}, self.base, self.candidate, self.hashes)
+
+    def test_exact_original_atlas_chain(self):
+        self.assertEqual(self.selected()['receiver_names'], ['Added roots'])
+
+    def test_changed_known_mask_rejected(self):
+        self.mask.write_bytes(b'inferred domain expanded into observed texels')
+        with self.assertRaisesRegex(ValueError, 'protected mask changed'):
+            self.selected()
+
+    def test_changed_approved_geometry_rejected(self):
+        self.base.write_bytes(b'new geometry')
+        with self.assertRaisesRegex(ValueError, 'atlas model changed'):
             self.selected()
 
 

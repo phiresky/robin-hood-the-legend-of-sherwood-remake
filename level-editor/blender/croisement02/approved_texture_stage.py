@@ -80,6 +80,8 @@ def select_canopy(document, decision, base):
             and geometry_decision['model_sha256'] == sha(base), 'Canopy current geometry changed')
     if (candidate / 'native-front-preservation.json').exists():
         return select_native_front(decision, base, candidate, hashes)
+    if (candidate / 'native-atlas-preservation.json').exists():
+        return select_native_atlas(decision, base, candidate, hashes)
     retained = (candidate / 'preservation.json').exists()
     restored = (candidate / 'native-boundary-preservation.json').exists()
     require(not (retained and restored), 'Ambiguous texture derivative')
@@ -234,6 +236,57 @@ def select_native_front(decision, base, candidate, hashes):
                 reviewer + ' native front actual review changed')
     return dict(decision=decision, model=str(model), proof=str(proof_path),
                 proof_sha256=sha(proof_path), receiver_names=receivers)
+
+
+def select_native_atlas(decision, base, candidate, hashes):
+    """Validate original-atlas retention over a guarded unknown-surface bake."""
+    proof_path = candidate / 'native-atlas-preservation.json'
+    require(str(proof_path) in hashes and sha(proof_path) == hashes[str(proof_path)],
+            'Native atlas proof absent from frozen approval')
+    proof = json.loads(proof_path.read_text())
+    model = candidate / 'worker.blend'
+    require(proof['status'] == 'PASS' and proof['reopened_preservation'] == 'PASS'
+            and all(proof.get(flag) is True for flag in
+                    ('geometry_unchanged', 'all_original_uv_layers_exact',
+                     'original_native_atlas_rgba_and_packed_bytes_exact',
+                     'explicit_source_ownership_mask')), 'Incomplete native atlas preservation')
+    require(proof['candidate_model_sha256'] == sha(model)
+            and proof['approved_geometry_sha256'] == sha(base), 'Native atlas model changed')
+    require(sha(Path(proof['source_authority'])) == proof['source_authority_sha256'],
+            'Native atlas source authority changed')
+    for row in proof['records']:
+        require(sha(Path(row['protected_mask'])) == row['protected_mask_sha256'],
+                'Native atlas protected mask changed')
+    baked = candidate.parent / 'bake-v1'
+    parent_path = baked / 'reopened-preservation.json'
+    parent = json.loads(parent_path.read_text())
+    require(sha(parent_path) == proof['parent_reopened_preservation_sha256']
+            and parent['status'] == 'PASS' and parent['reopened_preservation'] == 'PASS'
+            and all(parent.get(flag) is True for flag in FLAGS), 'Native atlas parent proof changed')
+    require(parent['model_sha256'] == sha(base)
+            and parent['candidate_model_sha256'] == sha(baked / 'worker.blend')
+            and proof['parent_model_sha256'] == parent['candidate_model_sha256'],
+            'Native atlas parent model changed')
+    for path, expected in parent['evidence_sha256'].items():
+        require(sha(Path(path)) == expected, 'Native atlas bake evidence changed: ' + path)
+    validation = baked / 'validation.json'
+    require(sha(validation) == parent['bake_validation_sha256'], 'Native atlas validation changed')
+    for path, expected in json.loads(validation.read_text())['source_mask_evidence'].items():
+        require(sha(Path(path)) == expected, 'Native atlas source evidence changed: ' + path)
+    require(set(row['object'] for row in proof['records']) == set(parent['receiver_names']),
+            'Native atlas receiver scope changed')
+    for filename in ('root-review.json', 'agent-material-review.json'):
+        path = candidate / filename
+        require(str(path) in hashes, 'Native atlas actual review not frozen')
+        review = json.loads(path.read_text())
+        require(review.get('status', '').startswith('PASS')
+                and review.get('all_eight_actual_views_inspected') is True
+                and review.get('candidate_model_sha256') == sha(model)
+                and review.get('actual_sheet_sha256') == sha(candidate / 'actual/textured.png')
+                and review.get('preservation_sha256') == sha(proof_path),
+                'Native atlas actual review changed')
+    return dict(decision=decision, model=str(model), proof=str(proof_path),
+                proof_sha256=sha(proof_path), receiver_names=parent['receiver_names'])
 
 
 def geometry(obj):
