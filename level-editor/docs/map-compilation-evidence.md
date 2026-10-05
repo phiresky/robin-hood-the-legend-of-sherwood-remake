@@ -4,6 +4,29 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Upper-west stair profile review (2026-10-05)
+
+The mesh review now samples each horizontal triangle's center, records its
+navigation height and containment, and checks coverage by the flight itself and
+other asset parts. This distinguishes underside faces and covered steps from
+exposed treads without treating a stair-only mesh sample as the assembled asset.
+
+Rechecking `local-stair-seams-RZsuxX` finds 26 exposed tread triangles, 22 with
+centers inside navigation. Navigation-minus-tread height ranges from -5.216 to
++14.840 units; the upper two treads are outside the navigation floor. No adjacent
+part covers these centers. The model's top tread extends beyond the authored
+upper seam, confirming a mesh/floor disagreement rather than only a snapped
+door or a hidden extension beneath the platform. This candidate remains
+unpublished pending coordinated flight/landing geometry correction.
+
+For comparison, the published lower-west stair review
+`published-lower-west-profile-PZ1LEj` finds all 38 exposed horizontal triangle
+centers inside navigation, with navigation-minus-tread heights from -5.534 to
++0.000708 units. That is consistent with a smooth ramp beneath stepped treads.
+Both reviews execute successfully; focused lint and formatting checks pass.
+These profile samples supplement, rather than replace, full mesh coverage,
+rendered actor checks and native traversal tests.
+
 ## Publish lower-west stair and external contacts (2026-10-05)
 
 Published `derby-lower-west-access-stair` together with its terrain-owned lower

@@ -137,7 +137,9 @@ is 1.165 units. Fresh published exports match the tested candidates and all ten
 scenes reopen. Stair handoffs query the actual seam, with a bounded floating-point
 boundary probe, instead of the outside waypoint. The upper-west candidate passes
 routes but its visible stair mesh and authored floor disagree, so it remains
-unpublished.
+unpublished. Per-tread review confirms exposed tread centers up to 14.84 units
+below navigation, with the top two treads outside the floor. Adjacent asset
+meshes do not cover these samples; endpoint snapping alone cannot repair this.
 The upper gatehouse stair is now published after a mesh-reviewed 2.567-unit
 corner correction. Its eight placements pass 16/16 actor routes and eight
 control apply/reset checks; full Derby passes 28/28 routes and all five controls.

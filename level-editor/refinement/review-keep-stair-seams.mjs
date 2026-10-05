@@ -84,6 +84,44 @@ for (const edit of edits) {
     const floorTriangles = triangles.filter((triangle) =>
       triangle.every(([x, y, z]) => Math.abs(z - planeHeight(plane, [x, y])) < 2),
     );
+    // Inspect the assembled asset too: an adjacent landing can cover the end
+    // of the visible flight, so a stair-only height sample is insufficient.
+    const neighbours = descriptor.parts
+      .filter((part) => part.node !== lift.node)
+      .map((part) => ({
+        node: part.node,
+        triangles: maskRecoveryMesh(
+          model,
+          part.node,
+          (p) => sceneToGame(camera, gltfToScene(p)),
+          textures,
+        ),
+      }));
+    const treadProfiles = triangles
+      .filter(
+        (triangle) =>
+          Math.max(...triangle.map((p) => p[2])) - Math.min(...triangle.map((p) => p[2])) < 0.01,
+      )
+      .map((triangle) => {
+        const center = [0, 1, 2].map((axis) => triangle.reduce((sum, p) => sum + p[axis], 0) / 3);
+        const covering = neighbours.flatMap(({ node, triangles }) => {
+          const hits = triangles
+            .map((triangle) => meshHeight(center, triangle))
+            .filter((z) => z !== undefined && z > center[2] + 0.1);
+          return hits.length ? [{ node, height: Math.max(...hits) }] : [];
+        });
+        const coveredByFlight = triangles.some((triangle) => {
+          const z = meshHeight(center, triangle);
+          return z !== undefined && z > center[2] + 0.1;
+        });
+        return {
+          center,
+          navigationHeight: planeHeight(plane, center),
+          insideNavigation: contains(center, after.polygon),
+          coveredByFlight,
+          covering,
+        };
+      });
     const samples = [];
     const bounds = [0, 1].map((axis) => [
       Math.min(...after.polygon.map((p) => p[axis])),
@@ -168,6 +206,7 @@ for (const edit of edits) {
       ),
       sampleFile: `${file}-samples.json`,
       nearFloorTriangles: floorTriangles.length,
+      treadProfiles,
       maximumFloorXYShift: Math.max(
         ...before.polygon.map((p, i) =>
           Math.hypot(p[0] - after.polygon[i][0], p[1] - after.polygon[i][1]),
