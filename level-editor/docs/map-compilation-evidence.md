@@ -4,6 +4,46 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Published ground contact and bounded landing queries (2026-10-05)
+
+`refinement/stage-derby-stair-ground-contact.mjs` reviews the two terrain edge
+endpoints against a pinned terrain model and compiled candidate frame. The terrain
+model uses a bare Z-up root; standalone building models have a map wrapper and
+require a different frame conversion. In the correct frame, all 205 samples across
+the added contact strip intersect mesh at exactly zero height. The two terrain
+endpoints move 0.6632 and 2.4224 units; no collision holes or other edges change.
+Combined staged edits and mesh evidence are in
+`work/map-compile/derby-stair-ground-contact-wcawND`.
+
+The first combined export (`east-hall-ground-full-HzQaZL`) binds the ground but
+still fails two routes and takes 309.81 seconds. A stair query processed the whole
+ground support and its distant obstacles. Routing now clips query geometry to
+the stair bounds expanded by the actor's full half-size. Actor centers remain
+on the stair, and the effective footprint is one unit smaller, so distant geometry
+cannot affect support and the new clipping boundary cannot restrict valid centers.
+A regression compares local and huge landings with 100 distant obstacles, retaining
+the same detour while a nearby barrier still blocks traversal. Thirteen stair
+tests and 190 movement tests pass (twelve movement tests ignored). The same
+two-failure diagnostic takes 11.87 seconds after this change, with tracing enabled.
+
+The remaining failure was in preserved-boundary export: ordinary generated areas
+retained their pre-grid receiving contour, but preserved terrain areas did not.
+They now retain that contour too. A zero-height fractional landing regression
+fails without the change and passes with it. Integer movement geometry and live
+collision remain authoritative; exact receiving geometry is used only under the
+existing runtime identity checks.
+
+`east-hall-ground-precise-aGkMlb` passes **28/28 full Derby stair routes** in
+8.01 seconds and all five control apply/reset checks. The lower stair and terrain
+definitions are published with backups in `east-hall-ground-publication-20261005`.
+All ten saved scenes reopen, and the published full Derby descriptor exactly
+matches this native-tested candidate. The published hall placement fixture is
+`local-stair-placements-Pj4yie`; its fresh native audit passes **64/64 routes**
+in 29.84 seconds, and all eight raised-ground rejection checks pass.
+The compiler/export/spline suites pass 198 tests, both TypeScript typechecks and
+focused lint pass, and the Rust game build and formatting checks pass. These
+results do not certify complete sprites, rendered traversal or remaining assets.
+
 ## Lower east-hall stair and external ground contact (2026-10-05)
 
 The seam staging recipe now accepts explicitly named `--external=` door IDs.

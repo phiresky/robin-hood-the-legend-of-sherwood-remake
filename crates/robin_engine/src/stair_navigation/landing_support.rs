@@ -3,8 +3,8 @@
 use super::*;
 use geo::algorithm::buffer::{BufferStyle, LineJoin};
 use geo::{
-    BooleanOps, Buffer, Closest, ClosestPoint, ConvexHull, MultiPoint, MultiPolygon, Relate,
-    Simplify,
+    BooleanOps, BoundingRect, Buffer, Closest, ClosestPoint, ConvexHull, MultiPoint, MultiPolygon,
+    Relate, Simplify,
 };
 
 impl StairRouteGeometry {
@@ -41,9 +41,26 @@ impl StairRouteGeometry {
             ))
         };
         let floor = convert(&self.boundary)?;
+        // Centers stay on this stair. Only support within one footprint of its
+        // bounds can affect them; distant terrain must not multiply erosion
+        // and visibility work. The full half size leaves one unit beyond the
+        // effective footprint used below, so clipping cannot create a boundary
+        // that excludes otherwise supported stair centers.
+        let bounds = floor.bounding_rect().ok_or("empty physical stair")?;
+        let neighborhood = geo::Rect::new(
+            (
+                bounds.min().x - f64::from(half.x),
+                bounds.min().y - f64::from(half.y),
+            ),
+            (
+                bounds.max().x + f64::from(half.x),
+                bounds.max().y + f64::from(half.y),
+            ),
+        )
+        .to_polygon();
         let mut support = MultiPolygon::from(vec![floor.clone()]);
         for landing in landings {
-            support = support.union(&convert(landing)?);
+            support = support.union(&convert(landing)?.intersection(&neighborhood));
         }
         // Independently encoded f32 edges can leave sub-ULP cracks between
         // already bound floors. Close only that representation error, then
@@ -77,7 +94,10 @@ impl StairRouteGeometry {
             .obstacles
             .iter()
             .map(|ring| convert(ring))
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .flat_map(|solid| solid.intersection(&neighborhood).0)
+            .collect::<Vec<_>>();
         let direct = geo::Line::new(
             (f64::from(source[0]), f64::from(source[1])),
             (f64::from(goal[0]), f64::from(goal[1])),
@@ -232,6 +252,38 @@ mod tests {
 
     fn rectangle(x0: f32, y0: f32, x1: f32, y1: f32) -> Vec<[f32; 2]> {
         vec![[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+    }
+
+    #[test]
+    fn distant_landing_geometry_does_not_change_local_stair_routes() {
+        let half = MoveBoxHalfDiagonal::new(6., 3.);
+        let mut geometry = StairRouteGeometry {
+            boundary: rectangle(0., 0., 100., 30.),
+            obstacles: vec![rectangle(45., 0., 55., 14.)],
+        };
+        let small = vec![rectangle(-10., -10., 110., 0.)];
+        let large = vec![rectangle(-10000., -10000., 10000., 0.)];
+        let expected = geometry
+            .route_with_landing_support([10., 0.], [90., 0.], half, &small)
+            .unwrap()
+            .expect("local obstacle has a supported detour");
+        for i in 0..100 {
+            let x = 200. + i as f32 * 20.;
+            geometry.obstacles.push(rectangle(x, -100., x + 10., -50.));
+        }
+        let actual = geometry
+            .route_with_landing_support([10., 0.], [90., 0.], half, &large)
+            .unwrap()
+            .expect("distant collision cannot remove the detour");
+        assert_eq!(actual, expected);
+        geometry.obstacles.push(rectangle(45., 14., 55., 30.));
+        assert!(
+            geometry
+                .route_with_landing_support([10., 0.], [90., 0.], half, &large)
+                .unwrap()
+                .is_none(),
+            "nearby collision still blocks the stair"
+        );
     }
 
     #[test]

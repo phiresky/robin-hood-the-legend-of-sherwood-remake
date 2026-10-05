@@ -110,23 +110,23 @@ Derby/Wychford pins refreshed. All eight fresh component exports exactly match
 the native-tested staged descriptors. The composite keep remains unpublished;
 complete-sprite and rendered verification remain open.
 All ten scenes reopen after publication, and full Derby passes all five control
-apply/reset checks. Six other Derby stairs still retain projected navigation
+apply/reset checks. Five other Derby stairs still retain projected navigation
 because their authored endpoints lack physical floor support.
-A library-wide local-anchor audit finds this issue in 48 of 53 authored stair
-definitions: Derby 6/10, Leicester 8/8, Lincoln 6/6, Nottingham 11/12,
+A library-wide local-anchor audit finds this issue in 47 of 53 authored stair
+definitions: Derby 5/10, Leicester 8/8, Lincoln 6/6, Nottingham 11/12,
 Sherwood 1/1 and York 16/16. All audited floors are planar. This checks local
 definitions, not placed connectivity or actual route failures; corrections and
 moved/rotated native traversal checks remain necessary across these assets.
 The east hall's upper stair now has published floor/landing seam corrections and
 passes 48 directed routes across four rotations and two elevations. Full Derby
 passes 28/28 stair routes and all five control checks with this correction.
-The hall's unchanged lower stair still fails both directions at 180 degrees;
-the complete hall placement audit passes 60/64 routes, not full asset parity.
-An unpublished lower-stair correction passes 64/64 routes for both stairs on
-authored terrain and rejects eight raised, disconnected ground entrances. Full
-Derby still fails two routes with that candidate: its terrain boundary stops
-1.52 units short of the new entrance. Terrain geometry review precedes publication;
-the published asset remains unchanged by this candidate.
+The lower-stair correction and mesh-supported Derby terrain contact are now also
+published. Both stairs pass 64/64 routes on authored terrain, and eight raised,
+disconnected ground entrances reject. Preserved terrain boundaries now retain
+their exact receiving contours, restoring full Derby's 28/28 stair routes and
+five control checks. Landing-support routing considers only geometry within a
+footprint of the stair bounds; the final Derby route audit takes about eight
+seconds. These are initial-state actor checks, not complete rendered parity.
 Physical transitions
 now wait at a reached world target until animation completion, or preserve
 unfinished distance in the next movement order. An edge-on actor-loop test

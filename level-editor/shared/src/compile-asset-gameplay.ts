@@ -1504,6 +1504,7 @@ function compileAssetGameplayAttempt(
         navigationRegion,
         preserveMovementBoundary: true,
         worldPlane,
+        receivingPolygon: ring(group[0]!.polygon, "Preserved receiving boundary"),
         ...preserveMovementBoundary(group[0]!.polygon, cutouts, warnings, contourGroups),
       });
       continue;

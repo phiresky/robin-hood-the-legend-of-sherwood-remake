@@ -19,7 +19,7 @@
       "model": "3d-assets/derby/derby-terrain/model.glb",
       "model_sha256": "d0f986fc567b41019463fb5db9908b8b6cd148eca9135575276d0f39d9e2b5fd",
       "descriptor": "3d-assets/derby/derby-terrain/asset.json",
-      "descriptor_sha256": "8816eb6d6271d1c762c17c765682038dc9d6fac3fc75988a606d3a1edb2d66cf"
+      "descriptor_sha256": "11856907518a51f24299e68eebb1ead74d81258a0aa5f54a69d450040e32f021"
     }
   ],
   "assetSources": [
@@ -195,7 +195,7 @@
       "model": "3d-assets/derby/derby-east-hall/model.glb",
       "model_sha256": "44f101f4933c8a3f0b445dda7b70ce647fc561fb3b87b0cb55eb583808245354",
       "descriptor": "3d-assets/derby/derby-east-hall/asset.json",
-      "descriptor_sha256": "20e727ece4fa4ae703171a86c5095b5820aae749a7be1bfada3482c14fb8322e",
+      "descriptor_sha256": "48de6effe1d26af47daf76a2e3af9807dafdbd316f6eaf8b4f5ddc022f9c6a24",
       "id": "derby-east-hall"
     },
     {

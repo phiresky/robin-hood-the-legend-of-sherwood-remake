@@ -1199,6 +1199,28 @@ test("physical stair landings retain fractional receiving boundaries at zero hei
   assert.notDeepEqual(receiver.points[0], receiver.points.at(-1));
 });
 
+test("preserved ground boundaries retain physical stair receiving precision", () => {
+  const { document, assets, hut } = liftAssetCompilerFixture();
+  for (const surface of hut.gameplay!.surfaces) surface.preserveMovementPrecision = true;
+  hut.gameplay!.surfaces[0]!.preserveMovementBoundary = true;
+  hut.gameplay!.surfaces[0]!.navigationRegion = "preserved-ground";
+  document.groups[0]!.transform.dx += 0.25;
+  const geometry = compileMap(document, [0, 0, 2000, 2000], assets).descriptor.asset_geometry!;
+  const lift = geometry.lifts![0]!;
+  assert.ok(lift.physical_navigation);
+  const door = lift.doors[0]!;
+  const receivers = geometry.sight_obstacles!.filter(
+    (obstacle) =>
+      obstacle.projection_area?.[0] === door.sector_out &&
+      obstacle.projection_area[1] === door.layer_out,
+  );
+  assert.equal(receivers.length, 1);
+  assert.ok(
+    receivers[0]!.points.some((point) => point.x === lift.physical_navigation!.doors[0]!.middle[0]),
+  );
+  assert.ok(receivers[0]!.points.every((point) => point.z_top === 0));
+});
+
 test("changing climb exports match native placed traversal fixtures", async () => {
   const fixtures = JSON.parse(
     await readFile(
