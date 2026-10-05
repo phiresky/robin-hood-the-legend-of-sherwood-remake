@@ -4,6 +4,41 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## East-moat tower: rounded notch becomes a blocking hole (2026-10-06)
+
+Unpublished candidate `local-stair-seams-4HHZoS` corrects `building-185-lift`
+using `stage-local-stair-seams.mjs leicester-east-moat-tower building-185-lift
+--local-landing-edges`. Eight placements emit the physical stair, but native
+batch `local-stair-placements-3ixHBq` fails **all sixteen directed stair routes**.
+Both landings bind; their collision stops actors at entry. The zero-degree
+`trace-0.log` and filtered actor report retain the detailed failure. Complete
+Leicester candidate `east-moat-tower-level-gKVvDP` passes only 14/16 routes.
+The published asset is unchanged.
+
+The lower landing's static obstacle has no `precise_polygon`. Diagnostic
+`normalization-diagnostic.log` under the candidate captures a single input
+polygon with **one outer ring and no holes**; movement normalization produces
+the same region with **an enclosed hole**. Rounding closes an open notch, so the
+current exact-hole matcher has no input hole to recover. The rounded blocker
+includes the seam edge near [1676,1624] → [1699,1613] in projected placement
+coordinates. `region-diagnostic.log` confirms one contributing navigation piece,
+with no exact receiving polygon or precise blocker for this hole. This needs a
+targeted treatment of collision introduced by rounded topology, while preserving
+real obstacles and the integer movement footprint.
+
+Two clearance experiments (`local-stair-seams-Myqjvk` and `local-stair-seams-UcaOIc`)
+still failed 16/16 routes, as did an attempted reconstruction of holes formed by
+joining multiple navigation pieces (`local-stair-placements-4X2KPl`). Those code
+experiments and temporary tracing are removed; none was published. Clearances
+are scoped to an asset placement, so changing their node does not isolate one
+component's collision.
+
+The stair's mesh review also remains incomplete: 309/713 flight samples hit its
+mesh, with the missing samples occluded in the initial view. The lower landing
+seam has full sampled assembly support; upper landing edges have discrepancies
+up to 0.3862 units. This evidence is insufficient for rendered parity. Local
+anchor corrections alone do not justify publishing this candidate.
+
 ## Published east-wall turret and terrace contact (2026-10-06)
 
 The east-wall turret now has precise stair endpoints, an aligned local landing

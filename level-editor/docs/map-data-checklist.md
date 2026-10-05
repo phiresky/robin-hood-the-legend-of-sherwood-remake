@@ -146,6 +146,12 @@ short connecting edges extend at most 0.156 units beyond mesh. The terrace edge
 has a maximum 0.268-unit discrepancy. Both drafts retain rendered-integration
 warnings. Published descriptors equal the tested candidates and all ten scenes
 reopen; the isolated turret/terrace pair contains no switches.
+The next east-moat tower candidate remains unpublished: all sixteen moved stair
+routes stall against landing collision, and full Leicester falls to 14/16 routes.
+Movement-grid normalization closes an open notch into a new obstacle hole whose
+exact contour is unavailable to the current hole-preservation path. Clearance
+experiments did not repair it and were removed. This is a remaining compiler
+precision/topology case, in addition to the asset's incomplete stair mesh.
 The east hall's upper stair now has published floor/landing seam corrections and
 passes 48 directed routes across four rotations and two elevations. Full Derby
 passes 28/28 stair routes and all five control checks with this correction.
