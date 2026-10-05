@@ -4,6 +4,28 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## World-space stair compilation primitive (2026-10-05)
+
+The shared compiler contract now describes `physical_navigation`. A separate
+world-space compilation step joins coplanar placed stair surfaces before screen
+projection, preserving physical floor area, holes, motion-obstacle identities and
+ordered world door anchors. It rejects disconnected floors, inconsistent heights,
+invalid obstacle identities and door anchors without floor support. Permanent
+holes are returned separately for allocation of their motion-obstacle IDs.
+
+The tests cover an exactly edge-on floor and ten rotated/elevated placements,
+including joined surface parts and a retained hole. Opposite door anchors retain
+different world heights even when their screen coordinates coincide.
+
+This primitive is not yet called by `compileAssetGameplay`. That pipeline still
+assembles stair surfaces, solid slices and changing barriers in screen space and
+can reject an edge-on floor before serialization. It must use the physical frame
+through those stages and allocate the returned holes/state links before emitting
+the new field. Ordinary exports and the 24 failed keep routes are unchanged.
+
+Verification: 122 affected compiler tests pass, including the three new tests;
+both editor/pipeline typechecks, focused lint, formatting and the game build pass.
+
 ## Physical stair gate-route dispatch (2026-10-05)
 
 Gate-route assembly now retains the destination door identity for an approach

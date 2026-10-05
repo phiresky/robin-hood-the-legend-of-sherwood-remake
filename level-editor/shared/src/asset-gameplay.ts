@@ -1,6 +1,7 @@
 import type { LightSector, MaterialSector, Point, SightObstacle, SoundSource } from "./level.ts";
 import type { ProjectionAssetDescriptor } from "./projection-assets.ts";
 import { safeLibraryPath } from "./projection-assets.ts";
+import type { Vec3 } from "./scene.ts";
 
 /** All coordinates belong to the named mesh part's local game frame. No level indices. */
 export interface AssetWalkableSurface {
@@ -441,8 +442,17 @@ export interface CompiledAssetGeometry {
     lift_type: number;
     direction: number;
     endpoint_doors?: [number, number];
+    physical_navigation?: PhysicalStairNavigation;
     doors: CompiledAssetGeometry["doors"];
   }[];
+}
+
+/** Placed physical floors retain navigation independently of screen projection. */
+export interface PhysicalStairNavigation {
+  plane: [number, number, number];
+  boundary: Point[];
+  obstacles: { motion_obstacle: number; polygon: Point[] }[];
+  doors: { inside: Vec3; middle: Vec3; outside: Vec3 }[];
 }
 
 export function validateAssetGameplay(

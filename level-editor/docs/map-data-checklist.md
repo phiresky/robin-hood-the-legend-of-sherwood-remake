@@ -73,6 +73,10 @@ Compiler emission remains unfinished, so the failed keep routes remain unresolve
 The sprite motion API and ground-coordinate receiver entry now also support
 edge-on planes, with animation-distance and position-state round-trip coverage.
 Compiler emission and general point/seek order creation still need integration.
+A world-space compiler primitive now preserves joined floors, holes, collision
+identities and door anchors through edge-on and rotated placements. It remains
+unwired: the existing surface/collision assembly must stop depending on screen
+space before normal exports can emit that data.
 An optional physical-stair descriptor and runtime binding now retain ground-space
 collision with references to the normal movement obstacles. Physical route queries
 read their current state rather than maintaining separate switch state. Compiler

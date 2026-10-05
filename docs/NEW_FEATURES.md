@@ -16,6 +16,9 @@
   geometry and its own live collision state. Physical movement accounts for
   the actor footprint across adjoining floors while constraining its center to
   the stair; complete passes at edge-on door endpoints have native coverage.
+  A shared world-space stair compilation primitive preserves joined floors,
+  holes and endpoint identities, but the main compiler still needs to integrate
+  it through surface/collision assembly before exporting the new metadata.
 
 - **Asset-authored movement headroom.** A permanent gameplay volume can set
   `movementHeadroom` in game-height units. Export excludes walking space that
