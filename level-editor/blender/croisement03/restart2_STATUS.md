@@ -24,9 +24,18 @@ Its scope-specific index adapter retains unrelated legacy cached metadata while
 validating current descriptors and derivatives. It rejects stale catalog inputs.
 Do not rerun the already applied transaction or remove its backups.
 
-Tree 25 and the southeast wall are private iterations without geometry approval.
-The full crown needs an acceptable reverse silhouette; the root/wall junction
-needs native bark/stone ownership corrections. Wind animation, other trees,
+The southeast wall has a frozen, independently reviewed geometry card in
+`restart2/geometry-round2-wall10/review-candidates.json`; user review is pending.
+All seven native wall segments were rebuilt and asserted. The earlier mutable
+collection loop skipped the last segment; the corrected recipe snapshots its
+objects before mutation. Seventeen traced stone-edge pixels and separate
+unresolved/ivy/ground domains remain disclosed. Gray rear and off-map masonry
+await texture fill after geometry approval.
+
+Tree 25 remains private and unapproved. Its crown retains native foliage and
+complete inferred depth; bark fitting is being constrained against both source
+bark and the visible gaps between branches. The wall card uses tree16 only as
+unapproved contact context. Future tree changes require fresh joint evidence. Wind animation, other trees,
 undergrowth, rocks, terrain, water and mission appearances remain unfinished.
 The exhaustive source-mask/group ledger is `restart2/finite-backlog.json`.
 
