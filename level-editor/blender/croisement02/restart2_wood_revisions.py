@@ -13,6 +13,9 @@ def require(value,message):
 
 
 def selected_workspace(out,mask,catalog_path):
+    if mask==31:
+        from restart2_lower31_selection import selected_workspace as lower31_workspace
+        return lower31_workspace(out,mask,catalog_path)
     if mask in (35,43,45,46):
         from restart2_boundary_selections import selected_workspace as boundary_workspace
         return boundary_workspace(out,mask,catalog_path)
