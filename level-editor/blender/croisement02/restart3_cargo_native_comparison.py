@@ -18,7 +18,9 @@ from render_slots import acquire,release
 def main():
     acquire()
     try:
-        for name,box in [('barrel-v1',[1148,765,1224,841]),('loose-wood-v1',[1000,950,1080,1030])]:
+        names=sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else ['barrel-v1','loose-wood-v1']
+        for name in names:
+            box=[1148,765,1224,841] if name.startswith('barrel') else [1000,950,1080,1030]
             worker=OUT/'restart3-south-cart'/name;metadata=json.loads((worker/'manifest.json').read_text())
             dest=worker/'native-comparison-v1';dest.mkdir(exist_ok=False)
             assert sha(worker/'worker.blend')==metadata['model_sha256']
