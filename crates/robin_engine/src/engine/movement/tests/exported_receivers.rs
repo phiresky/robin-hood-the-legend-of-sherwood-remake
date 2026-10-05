@@ -1,6 +1,39 @@
 use super::*;
 
 #[test]
+fn loaded_movement_obstacles_reject_mouse_positions_inside_and_on_boundary() {
+    let mut descriptor: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/asset-navigation-copies.level.json"
+    )))
+    .unwrap();
+    descriptor["asset_geometry"]["motion_data"]["layers"][1][0]["obstacles"] = serde_json::json!([{
+        "state_id": 0,
+        "polygon": { "points": [[480, 280], [520, 280], [520, 320], [480, 320]] }
+    }]);
+    let (engine, _) = compiled_walkway(&serde_json::to_vec(&descriptor).unwrap());
+    let grid = &engine.world.fast_grid;
+    for point in [
+        MapPoint::new(500., 300.),
+        MapPoint::new(480., 300.),
+        MapPoint::new(480., 280.),
+    ] {
+        assert!(
+            matches!(
+                grid.get_sector(point, point, 1),
+                crate::fast_find_grid::SectorHit::Blocked
+            ),
+            "movement obstacle must reject mouse position {point:?}"
+        );
+    }
+    let outside = MapPoint::new(550., 300.);
+    assert!(matches!(
+        grid.get_sector(outside, outside, 1),
+        crate::fast_find_grid::SectorHit::Found { .. }
+    ));
+}
+
+#[test]
 #[ignore = "requires assembly exports and endpoint routes via ROBIN_ASSET_MAP_DIAGNOSTICS"]
 fn exported_endpoint_routes_support_actor_crossings() {
     let directory = std::path::PathBuf::from(std::env::var("ROBIN_ASSET_MAP_DIAGNOSTICS").unwrap());
@@ -47,6 +80,19 @@ fn exported_endpoint_routes_support_actor_crossings() {
             .as_array()
             .expect("endpoint routes are required");
         assert!(!routes.is_empty(), "no endpoint routes in {file}");
+        if let Some(points) = result["blocked_points"].as_array() {
+            let grid = &engine.world.fast_grid;
+            for point in points {
+                let x = point[0].as_f64().unwrap() as f32;
+                let y = point[1].as_f64().unwrap() as f32;
+                let position = MapPoint::new(x, y);
+                let hit = grid.get_sector(position, position, layer);
+                assert!(
+                    matches!(hit, crate::fast_find_grid::SectorHit::Blocked),
+                    "{file}: expected blocked position [{x}, {y}], got {hit:?}"
+                );
+            }
+        }
         for route in routes {
             let point = |i: usize| {
                 MapPoint::new(

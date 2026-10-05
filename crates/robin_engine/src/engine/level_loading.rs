@@ -2918,7 +2918,7 @@ impl EngineInner {
                             crate::fast_find_grid::GridSector {
                                 points: obs_pts,
                                 bounding_box: obs_bbox,
-                                sector_type: SectorType::MOTION,
+                                sector_type: SectorType::MOTION | SectorType::MOUSE,
                                 layer: layer_idx as u16,
                                 sector_number,
                                 door_index: None,

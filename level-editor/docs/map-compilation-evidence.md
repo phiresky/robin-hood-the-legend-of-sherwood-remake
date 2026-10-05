@@ -4,6 +4,46 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Native movement-obstacle mouse rejection (2026-10-05)
+
+Native level loading registered ordinary movement obstacles with only the motion
+flag, so mouse-sector queries could select the surrounding walkable area even
+inside a building's movement obstacle. Obstacles now participate in mouse queries
+as well. A native load regression verifies the obstacle interior, edge and vertex
+are blocked while adjacent floor remains selectable. The movement suite passes
+170 tests (ten ignored), level-loading checks pass 40 (three ignored), and all
+50 fast-find-grid checks pass. The updated `robin` game binary builds successfully.
+
+The explicit endpoint audit accepts optional `blocked_points`. Unlike boundary
+intersection alone, these reject positions deep inside an obstacle. With the
+runtime fix, the staged watermill cardinal-placement batch below passes all twelve
+body-interior checks and 24 directed actor crossings. The published-definition
+negative control in `work/map-compile/watermill-negative-vLBjYY` correctly fails
+at the same body point. This separates missing asset collision from the runtime
+selection bug; fixing one does not fix the other.
+
+## Watermill collision audit: unpublished candidate (2026-10-05)
+
+The published watermill has no movement blockers or selected movement solids.
+Its original scene supplies exclusions, but placing the asset on new terrain
+does not construct body collision. Its drop height is already correct: explicit
+placement-ground metadata produces the identical inserted editor document.
+
+The staged candidate derives collision from solid parts except the platform,
+adds a platform clearance and selects the receiving region through the platform
+entrance. `work/map-compile/watermill-placement-EIgfKI` compiles twelve placements
+at three elevations and four cardinal rotations, retaining three entrances,
+one jump pair and two masks. `work/map-compile/watermill-collision-tgsIKN` has
+exactly the same complete Leicester geometry as the published edge-bank baseline.
+Wychford still reports the elevated mill's missing receiver and approaches.
+
+The expanded check in `work/map-compile/watermill-placement-bZjhGM` rejects the
+45-degree placement: body collision blocks the raised platform entrance. The
+clearance was projected to the lower plane before rotation; that construction
+does not preserve the physical platform's projected footprint at other angles.
+This candidate is not published. The native cardinal-placement checks above do
+not establish arbitrary-rotation traversal or complete collision coverage.
+
 ## Published edge-bank receiver and mask attachments (2026-10-05)
 
 `leicester-southwest-edge-bank` now binds its physical receiver and ground

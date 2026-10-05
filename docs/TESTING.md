@@ -248,6 +248,14 @@ crossing per eligible plane-to-ground pair in both directions and writes
 onto a raised receiving plane and back to uncovered ground, checking receiver
 removal and restored ground height.
 
+The ignored `exported_endpoint_routes_support_actor_crossings` engine unit test can
+also use explicit routes in a complete `ROBIN_ASSET_MAP_DIAGNOSTICS` batch.
+Each result provides `file`, `routes` (pairs of projected map coordinates), and
+optional `layer`/`sector` indices; without indices it requires a single navigation
+region. Optional `blocked_points` must resolve to native blocked mouse positions,
+including points deep inside movement obstacles where no boundary crosses the
+actor's box. Every explicit route is walked in both directions.
+
 For editor-generated navigation, the ignored integration test
 `library_exports_route_between_collision_connected_samples` reads a complete
 `diagnostics.json` batch from `ROBIN_ASSET_MAP_DIAGNOSTICS`. It samples numbered
