@@ -13,6 +13,13 @@ assert.ok(staged && compiledFile, "Provide stair edits and their compiled Derby 
 const edits = JSON.parse(await fs.readFile(`${staged}/edits.json`, "utf8"));
 assert.equal(edits.length, 1);
 const contacts = {
+  "derby-lower-west-access-stair": {
+    outside: [429, 1775, 0],
+    edge: [
+      [407, 1768],
+      [442, 1760],
+    ],
+  },
   "derby-east-hall": {
     outside: [1403, 1383, 0],
     edge: [
@@ -34,7 +41,8 @@ const bytes = await fs.readFile(compiledFile);
 const compiled = JSON.parse(bytes).asset_geometry;
 const matches = compiled.lifts.filter((lift) =>
   lift.physical_navigation?.doors.some(
-    (door) => Math.hypot(...door.outside.map((value, axis) => value - contact.outside[axis])) < 1e-5,
+    (door) =>
+      Math.hypot(...door.outside.map((value, axis) => value - contact.outside[axis])) < 1e-5,
   ),
 );
 assert.equal(matches.length, 1, "Expected reviewed lower stair placement");

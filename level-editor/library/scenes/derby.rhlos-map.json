@@ -19,7 +19,7 @@
       "model": "3d-assets/derby/derby-terrain/model.glb",
       "model_sha256": "d0f986fc567b41019463fb5db9908b8b6cd148eca9135575276d0f39d9e2b5fd",
       "descriptor": "3d-assets/derby/derby-terrain/asset.json",
-      "descriptor_sha256": "8fab1eb1b78377ff001c8905f9c6ea938fb7519fc154b26f35ebc8354151936b"
+      "descriptor_sha256": "75441fa7eaba1927f632e33041ce4edbf449ac00f97b39e032568c7cedb7692f"
     }
   ],
   "assetSources": [
@@ -55,7 +55,7 @@
       "model": "3d-assets/derby/derby-lower-west-curtain/model.glb",
       "model_sha256": "709c2706aaff8a760eccd51dc508fc072b16657e9d4603c25ecb62f4de45e61c",
       "descriptor": "3d-assets/derby/derby-lower-west-curtain/asset.json",
-      "descriptor_sha256": "c82fa187c3e115f2e2569002c9ab691b7f7db289156713526a8b02a09d72f38a",
+      "descriptor_sha256": "4608748b444c7a05b36ea72c5e10d92577d23f491a82c9fcfe5f25e0d4f699ca",
       "id": "derby-lower-west-curtain"
     },
     {
@@ -69,7 +69,7 @@
       "model": "3d-assets/derby/derby-lower-west-access-stair/model.glb",
       "model_sha256": "79e126afbdcb282941b0dd4644278c1dcc560cdbe30a2b591565bbce122dcf0e",
       "descriptor": "3d-assets/derby/derby-lower-west-access-stair/asset.json",
-      "descriptor_sha256": "5bf1190cb392bc9221e378e9795dfb57d2de3d75c62fbd33ee70469736df5f22",
+      "descriptor_sha256": "bb36dac4cf35b415d916bf6611d710ed4cbcaa59ea08935502cc7def95198115",
       "id": "derby-lower-west-access-stair"
     },
     {

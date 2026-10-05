@@ -110,10 +110,10 @@ Derby/Wychford pins refreshed. All eight fresh component exports exactly match
 the native-tested staged descriptors. The composite keep remains unpublished;
 complete-sprite and rendered verification remain open.
 All ten scenes reopen after publication, and full Derby passes all five control
-apply/reset checks. Two other Derby stairs still retain projected navigation
-because their authored endpoints lack physical floor support.
-A library-wide local-anchor audit finds this issue in 44 of 53 authored stair
-definitions: Derby 2/10, Leicester 8/8, Lincoln 6/6, Nottingham 11/12,
+apply/reset checks. One other Derby stair still retains projected navigation
+because its authored endpoints lack physical floor support.
+A library-wide local-anchor audit finds this issue in 43 of 53 authored stair
+definitions: Derby 1/10, Leicester 8/8, Lincoln 6/6, Nottingham 11/12,
 Sherwood 1/1 and York 16/16. All audited floors are planar. This checks local
 definitions, not placed connectivity or actual route failures; corrections and
 moved/rotated native traversal checks remain necessary across these assets.
@@ -146,15 +146,20 @@ fits inside a joined movement region, even when another receiver occupies the
 rest at a different height. Overhanging or unsupported receivers still reject.
 Fresh published exports exactly match the tested candidates and all ten scenes
 reopen. These remain initial-state traversal checks, not full rendered parity.
-The lower-west access stair has an unpublished mesh-reviewed seam correction.
+The lower-west access stair now has a published mesh-reviewed seam correction.
 Two independent copies connected to synthetic landing assets pass 32/32 routes
 when landing boundaries are preserved; 64 missing/raised-landing cases reject.
 Ordinary collision-split landings now also pass 32/32 routes: the compiler traces
 their emitted edges back to unambiguous source edges, clips the recovered contour
 to the original coverage and verifies identical grid rounding. All 64 negative
 cases still reject. Ambiguous contour recovery retains the existing fallback;
-these tests do not certify every split topology. Full Derby still needs this
-stair's two external contacts corrected, so its definition remains unpublished.
+these tests do not certify every split topology. Both external Derby contacts
+are now corrected in their owning assets. All 205 terrain-strip samples have mesh
+support. The wall strip has 167/205 exact mesh hits; the remaining points extend
+at most 0.229 units beyond its mesh. An explicit 0.25-unit authoring review bound
+accepts this discrepancy without changing compiler/runtime connection tolerances.
+Full Derby passes 28/28 routes, native construction and all five controls;
+fresh published geometry matches the tested candidate and all ten scenes reopen.
 Physical transitions
 now wait at a reached world target until animation completion, or preserve
 unfinished distance in the next movement order. An edge-on actor-loop test

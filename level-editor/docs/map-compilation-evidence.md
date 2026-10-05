@@ -4,6 +4,35 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Publish lower-west stair and external contacts (2026-10-05)
+
+Published `derby-lower-west-access-stair` together with its terrain-owned lower
+contact and `derby-lower-west-curtain` upper receiving edge. The compiler uses
+only these asset-local definitions; the authoring scripts use the saved Derby
+placement to convert the reviewed contact into each owner's local frame.
+
+The terrain review `derby-stair-ground-contact-lVSHEz` has 205/205 mesh-supported
+samples and edge shifts of 0.687 and 0.085 game units. Upper-wall review
+`lower-west-stair-landing-zoNKot` shifts the authored edge by 1.710–1.826 units.
+167/205 samples hit the wall's top mesh; the other 38 are 0.106–0.229 units
+outside it. A joint stair/wall mesh overlay (`lower-west-stair-landing-lDakko/contact.png`)
+shows the narrow mesh seam discrepancy. Publication explicitly uses
+`--reviewed-mesh-edge=0.25`; the default authoring check still rejects unsupported
+samples. No export/runtime attachment tolerance is widened. The report retains
+`supported: false`, the separate review acceptance, mesh hashes and sample hits.
+
+Combined descriptor `lower-west-contacts-full-wgsNlT` passes 28/28 directed native
+stair routes, all five control apply/reset checks and native geometry construction.
+Publication backup `lower-west-contact-publication-20261005` includes the edits
+and scene pins. All ten saved scenes reopen and the published Derby descriptor
+exactly matches the tested candidate. Published external-landing fixture
+`external-stair-landings-aOM0wA` passes 32/32 native routes for two copies at four
+rotations and two heights, plus 64 missing/raised-landing rejections. Focused lint
+and formatting checks pass. The refreshed anchor audit
+`stair-anchor-support-uNVYcg` reports 43/53 unsupported definitions, Derby 1/10.
+The remaining Derby upper-west stair still needs mesh/floor review. These checks
+do not establish rendered parity or every possible placement/state combination.
+
 ## Recover precise receivers after movement-grid splitting (2026-10-05)
 
 `restoreReceivingBoundary` recovers a normalized movement piece from its
