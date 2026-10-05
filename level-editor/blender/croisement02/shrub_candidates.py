@@ -8,6 +8,9 @@ from evidence_io import sha,write_json
 
 
 def selected_workspace(out,asset,catalog_path):
+    from wattle_flower_candidates import selected_workspace as pair_workspace
+    pair=pair_workspace(out,asset,catalog_path)
+    if pair is not None:return pair
     northwest=asset=='croisement02-northwest-boundary-shrub-54'
     western=asset in ('croisement02-shrub-57','croisement02-shrub-60')
     forest_round={'croisement02-shrub-62':11,'croisement02-shrub-63':13,'croisement02-shrub-64':8}.get(asset)

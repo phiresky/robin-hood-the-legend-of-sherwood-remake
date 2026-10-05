@@ -12,6 +12,9 @@ from evidence_io import sha,write_json
 
 
 def selected_workspace(out,asset,catalog_path):
+    from wattle_flower_candidates import selected_workspace as pair_workspace
+    pair=pair_workspace(out,asset,catalog_path)
+    if pair is not None:return pair
     from fence_cap_candidate import selected_workspace as cap_workspace
     cap=cap_workspace(out,asset,catalog_path)
     if cap is not None:return cap

@@ -75,7 +75,7 @@ def main():
              if o.type == 'MESH'}
     assert before == after, 'Packaging changed reviewed candidate appearance'
     assert all(sha(Path(p)) == digest for p, digest in protected.items())
-    validate(worker)
+    write_json(worker / 'validation.json', validate(worker))
     (worker / 'inspection').mkdir(exist_ok=True)
     audit(worker)
     write_json(worker / 'inspection/package-preservation.json', dict(
