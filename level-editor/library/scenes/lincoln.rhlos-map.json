@@ -1470,7 +1470,7 @@
       "model": "3d-assets/lincoln/lincoln-village-barn-tool/model.glb",
       "model_sha256": "b61689b30d870009575ddf07b59ab5cd0f9a164692f6a3a28ac0f35bb336c60f",
       "descriptor": "3d-assets/lincoln/lincoln-village-barn-tool/asset.json",
-      "descriptor_sha256": "5b60bebd5ef67c0f01c85b664d5956b5e746e8447211bc8f37ca647055be1ee9",
+      "descriptor_sha256": "efe5c58c197fb8cac1cc5b760af4c12d267c1ecc60381bd6723124381766493e",
       "id": "lincoln-village-barn-tool",
       "resources": []
     },
@@ -1478,7 +1478,7 @@
       "model": "3d-assets/lincoln/lincoln-village-longhouse-loose-log/model.glb",
       "model_sha256": "bb3bc3c9c565a72edc1ad89642a064cbcc630ee8ba4c703626ff0466734aefb4",
       "descriptor": "3d-assets/lincoln/lincoln-village-longhouse-loose-log/asset.json",
-      "descriptor_sha256": "4957e6d10e39497f75ce2c8111f227450565f4f60bac6f908498041813076dd0",
+      "descriptor_sha256": "da7abf5757dd05e819baf50c41532557cb9d2e32e87a5bf0f390a184890a151d",
       "id": "lincoln-village-longhouse-loose-log",
       "resources": []
     },
@@ -1486,7 +1486,7 @@
       "model": "3d-assets/lincoln/lincoln-village-longhouse-path-poles/model.glb",
       "model_sha256": "f8b1737b2f30c5b4dedaa041afceb3ca5b4e4f92a250a8a664f1ff595b7ac991",
       "descriptor": "3d-assets/lincoln/lincoln-village-longhouse-path-poles/asset.json",
-      "descriptor_sha256": "3d2bc19aefe6d270f5c9b1c61a3f7302d0009b8adef6568ef3cbebd355dba4f9",
+      "descriptor_sha256": "4c0d9b2699dd2a7b2bea2b5781f81c01307c6aa489f33c211bb3b9fc0990f779",
       "id": "lincoln-village-longhouse-path-poles",
       "resources": []
     },
@@ -1494,7 +1494,7 @@
       "model": "3d-assets/lincoln/lincoln-village-pond-loose-plank/model.glb",
       "model_sha256": "35598ff757d47a52ef343b9cb39f3df0660d479ac18f83703f9c32b942ea8768",
       "descriptor": "3d-assets/lincoln/lincoln-village-pond-loose-plank/asset.json",
-      "descriptor_sha256": "33ef91d897ac056d3aaa292bc2c1232d7ad43903b8909420dad6bd3984178756",
+      "descriptor_sha256": "de1edb3235c985642c4f7027ca0eae1ab881402e95988697544be216e4297305",
       "id": "lincoln-village-pond-loose-plank",
       "resources": []
     },
@@ -1502,7 +1502,7 @@
       "model": "3d-assets/lincoln/lincoln-village-pond-south-stake/model.glb",
       "model_sha256": "f4c02e8946290d16256d9e91f5ded1a9757570408dfea0739d8fe54bedc539f0",
       "descriptor": "3d-assets/lincoln/lincoln-village-pond-south-stake/asset.json",
-      "descriptor_sha256": "a64bf80f938d942c59bcf5de4aa0ba509e3fd9a0d4d3f96e962f483f9e128446",
+      "descriptor_sha256": "af308f46797c3d4333e679044860c1dd4ac0432e3dffdbd27124782458ce93a2",
       "id": "lincoln-village-pond-south-stake",
       "resources": []
     }

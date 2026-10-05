@@ -34,8 +34,14 @@ A fresh all-map batch exposed stale Lincoln spire appearance bindings, now
 repaired and published. Native baseline construction and all eleven control
 apply/reset checks pass. Moving the hall/spire leaves unresolved neighboring
 receivers. The refreshed ten-map descriptor batch passes native construction
-and apply/reset for all 71 compiled controls, but retains omissions. Five Lincoln
-props lack gameplay definitions. The separate calibrated Wychford export also
+and apply/reset for all 71 compiled controls, but retains omissions. The five
+Lincoln static props now have reviewed scenery-only definitions: their nearby
+collision belongs to other assets. Lincoln's geometry is unchanged, all eleven
+controls pass apply/reset, and twenty rotated/copied prop assemblies retain the
+underlying terrain without adding collision or floors. All ten saved scenes
+reopen with no placed asset missing a gameplay definition; this does not certify
+the completeness of those definitions. Wychford retains an unused great-keep
+library reference without gameplay. The separate calibrated Wychford export also
 passes native construction and all three control apply/reset checks, retaining
 the church-traversal height mismatch and, before the woodland-bank fix below,
 five physical-receiver binding omissions.
