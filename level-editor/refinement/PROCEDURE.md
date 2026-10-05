@@ -20,6 +20,14 @@ The source artwork is authoritative for visible pixels. The 3D model is an
 editable hypothesis for hidden depth and surfaces. Do not infer a surface from
 texture alone when the source mask or a revealed state contradicts it.
 
+When resuming parallel work, assign one writer to each asset family and one
+writer to the canonical catalog. Check surviving host processes and queued jobs
+as well as the visible agent list before restarting work. An absent agent does
+not prove its render job has stopped. Reconcile existing artifacts and their
+model/review hashes first; keep mismatched reviews private. Use new recipe names
+and output directories for replacement work until ownership is settled, and
+never overwrite an earlier worker merely because its owning agent is absent.
+
 ## 2. Create logical asset groups before refining geometry
 
 An asset group is the smallest logical object a level designer should select:
@@ -499,6 +507,12 @@ Pass `--auxiliary-references <manifest.json>` with the target `input_sha256`,
 target and lighting images, included in cache identity, and archived with the
 request. Existing `input`/`lighting` explanatory crops retain their exact-pixel
 validation; material examples are explicitly distinguished from target evidence.
+
+After splitting a shared canopy into individual trees, bind native texture
+donors to the current individual crown partition and reviewed model hash. A
+shared animation or occlusion mask alone cannot establish donor ownership:
+it may admit pixels belonging to a neighboring tree. Record accepted donor
+pixels against the individual partition and retain that evidence with the fill.
 
 If a supplementary example causes the generator to copy its object layout,
 reject the raw result even when local source protection passes. A protected
