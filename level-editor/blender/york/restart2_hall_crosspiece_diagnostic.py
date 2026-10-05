@@ -1,4 +1,5 @@
 """Identify native-camera crosspiece receivers without changing approved models."""
+import argparse
 import hashlib
 import json
 import math
@@ -6,7 +7,8 @@ from pathlib import Path
 import sys
 ROOT=Path(__file__).resolve().parents[3]
 BASE=ROOT/'level-editor/work/york-refinement/restart2'
-OUT=BASE/'hall-crosspiece-study-v1'
+parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--model',type=Path);parser.add_argument('--output',type=Path);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
+OUT=args.output or BASE/'hall-crosspiece-study-v1'
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
 acquire()
@@ -18,8 +20,8 @@ direction=Vector((0,-c,s))
 points=[(2795,515),(2800,515),(2805,512),(2810,508),(2820,500),(2830,491),
         (2795,535),(2805,535),(2820,530),(2765,530)]
 records=[]
-for model in [BASE/'hall-four-state-review-v1/approval-batch-v3/applied-applied.blend',
-              BASE/'hall-textures-v1/applied-applied/bake-v1/model.blend']:
+for model in ([args.model] if args.model else [BASE/'hall-four-state-review-v1/approval-batch-v3/applied-applied.blend',
+              BASE/'hall-textures-v1/applied-applied/bake-v1/model.blend']):
     bpy.ops.wm.open_mainfile(filepath=str(model))
     bpy.context.window.scene=bpy.data.scenes['york Refinement'];bpy.context.view_layer.update()
     objects=[o for o in bpy.data.collections['york Working'].all_objects if o.type=='MESH' and not o.hide_render]
@@ -40,7 +42,7 @@ for model in [BASE/'hall-four-state-review-v1/approval-batch-v3/applied-applied.
                      'asset_group':obj.get('asset_group'),'face':face,'world':list(hit)})
     detail=[]
     for o in bpy.data.collections['york Working'].all_objects:
-        if o.type!='MESH' or o.get('source_node') not in {'building-790','building-791','building-810','building-831'}:continue
+        if o.type!='MESH' or o.get('source_node') not in ({row['source_node'] for row in hits}|{'building-790','building-791','building-810','building-831'}):continue
         world=[o.matrix_world@v.co for v in o.data.vertices]
         detail.append({'name':o.name,'node':o.get('source_node'),'group':o.get('asset_group'),
                        'hide_render':o.hide_render,'matrix':[list(row) for row in o.matrix_world],

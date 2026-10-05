@@ -12,6 +12,8 @@ from build_review_gallery import build
 CASES = {
     '18': ('tree18-v4', 'experiment-v3', 'baked-v1', 'Northeast Forked Forest Tree'),
     '20': ('tree20-v3', 'experiment-v2-dark-bark', 'baked-v4-dark-bark', 'Northern Shaded Forest Tree'),
+    '21': ('tree21-v7', 'experiment', 'baked-v1-luminance', 'Eastern Bank Forest Tree'),
+    'stump65': ('stump65-wood-fit-v2', 'experiment', 'baked-v1-luminance', 'Southwest Cut Stump — WOOD ONLY'),
     'rock29': ('rock29-v4', 'experiment', 'baked-v1-luminance', 'Small Bank Stones'),
     'stump68': ('stump68-wood-fit-v2', 'experiment', 'baked-v1-luminance', 'Southeast Small Stump — WOOD ONLY'),
 }
@@ -29,8 +31,8 @@ def main():
     items, archive = [], []
     for number in args.trees:
         original, experiment, bake, name = CASES[number]
-        asset = {'rock29':'croisement01-small-bank-stones', 'stump68':'croisement01-southeast-small-stump'}.get(number, 'croisement01-tree-' + number)
-        root = OUT / {'rock29':'approved-rock29-fill-v2', 'stump68':'approved-stump68-wood-fill-v1'}.get(number, 'approved-tree-fills-v1') / asset
+        asset = {'rock29':'croisement01-small-bank-stones', 'stump68':'croisement01-southeast-small-stump', 'stump65':'croisement01-southwest-cut-stump'}.get(number, 'croisement01-tree-' + number)
+        root = OUT / {'rock29':'approved-rock29-fill-v2', 'stump68':'approved-stump68-wood-fill-v1', 'stump65':'approved-stump65-wood-fill-v1', '21':'approved-tree21-fill-v1'}.get(number, 'approved-tree-fills-v1') / asset
         e, b = root / experiment, root / bake
         w = b / 'actual-review-v1'
         geometry = OUT / original / 'assets' / asset
@@ -61,6 +63,10 @@ def main():
             notes[2:] = ['Own native trunk and only the permitted two Leicester leaf references supplemented the inferred materials.', 'The broad pale upper and diagonal bands have been replaced by dark bark; a small inferred light bark fleck remains. Neighboring tree19 branch ownership and final scene joint remain separate unfinished work.']
         if number == 'rock29':
             notes[2:] = ['Only this rock’s own native artwork supplemented its inferred weathered backs.', 'Dark mottling on inferred reverse surfaces is texture only; no new physical cavity was introduced. Provisional terrain contact remains disclosed.']
+        if number == 'stump65':
+            notes[2:] = ['WOOD ONLY: this stump’s own native cut wood and bark supplemented the inferred materials.', 'The 651 native surrounding foliage pixels remain a separate unfinished obligation. Hidden reverse bark and cut grain are inferred; this card does not approve the surrounding foliage.']
+        if number == '21':
+            notes[2:] = ['Own native bark and only the two permitted Leicester leaf references supplemented the inferred materials.', 'The complete off-map crown and hidden bark are inferred. Neighboring foliage ownership and final scene joints remain separate unfinished work.']
         if number == 'stump68':
             notes[2:] = ['WOOD ONLY: only this stump’s own native cut wood and bark supplemented the inferred materials.', 'The 786 native surrounding foliage pixels remain a separate unfinished obligation. Hidden reverse bark and cut grain are inferred; this card does not approve the surrounding foliage.']
         review = dest / 'receipts' / f'{asset}-review.json'
