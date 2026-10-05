@@ -4,6 +4,30 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Climb floor-anchor audit (2026-10-06)
+
+`node refinement/audit-stair-anchor-support.mjs library --all-lifts` extends
+the read-only, descriptor-hash-checked audit to ladder and wall definitions.
+Report `lift-anchor-support-oWEtgS` covers 70 lifts: 38/53 stairs, 6/8 ladders
+and 9/9 climbable walls have unsupported floor anchors. Default invocation
+still reports only stairs; its complete result array equals the stair subset
+of the expanded report. Focused lint and formatting checks pass.
+
+The east-moat ladder's inside points lie on its planar floor, but its two
+middle points miss the boundary by 0.208886 and 0.181409 local units. Their
+height differences from the adjoining landings are +0.403543 and -0.411097.
+This rules out merely enabling the existing physical stair emitter for this
+asset: endpoint seams need review before that emitter can accept it.
+
+The existing 180-degree fixture's `climb-trace-180.log` in
+`local-stair-placements-3gX5jX` also reports no actor-sized inside approach at
+both ladder doors, followed by failed source extraction on lift layer 5. The
+projected corridor cannot fit the actor's movement box. This is distinct from
+the local anchor mismatches and remains a runtime/compiler gap. The audit does
+not certify climbing routes or change published gameplay; climb animation,
+landing transitions and live barriers still need validation with independent
+navigation coordinates.
+
 ## Published east-moat stair; remaining rotated ladder limitation (2026-10-06)
 
 The remaining upper stair failure came from authoring edge selection. The

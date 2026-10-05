@@ -157,6 +157,14 @@ occluded at all four reviewed rotations; landing discrepancies reach 0.387 units
 The isolated ladder passes 12/16 routes: four failures at 180 degrees also occur
 in the old published definition. Both visual and rotated-ladder limitations
 remain explicit draft warnings and are not certified as parity.
+The expanded local-anchor audit also checks ladders and climbable walls:
+6/8 ladder definitions and 9/9 wall definitions have unsupported floor anchors.
+These are geometric compatibility checks for physical navigation, not proof that
+their current projected routes fail. The east-moat ladder's door midpoints lie
+0.209 and 0.181 units outside its floor, with landing-height discrepancies of
+0.404 and 0.411 units. Its rotated projected corridor failure therefore needs
+both independent navigation coordinates and reviewed endpoint seams; enabling
+physical stair navigation for climb types alone would not repair it.
 The east hall's upper stair now has published floor/landing seam corrections and
 passes 48 directed routes across four rotations and two elevations. Full Derby
 passes 28/28 stair routes and all five control checks with this correction.

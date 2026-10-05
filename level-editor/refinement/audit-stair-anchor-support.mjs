@@ -5,7 +5,8 @@ import { heightPlane, planeHeight } from "../shared/src/gameplay-plane.ts";
 import { pointInGameplayPolygon } from "../shared/src/navigation-anchor.ts";
 
 // Read-only local-geometry audit. No source map or inferred ground is consulted.
-const [library = "library"] = process.argv.slice(2);
+const [library = "library", mode] = process.argv.slice(2);
+assert.ok(mode === undefined || mode === "--all-lifts", "Unknown audit mode");
 const index = JSON.parse(await fs.readFile(`${library}/3d-assets/index.json`, "utf8")).assets;
 const results = [];
 function distance(point, polygon) {
@@ -27,7 +28,7 @@ for (const entry of index) {
   assert.equal(createHash("sha256").update(bytes).digest("hex"), entry.descriptor_sha256, entry.id);
   const { gameplay } = JSON.parse(bytes);
   for (const lift of gameplay?.lifts ?? []) {
-    if (lift.type !== 1) continue;
+    if (lift.type !== 1 && mode !== "--all-lifts") continue;
     const surface = gameplay.surfaces.find((surface) => surface.id === lift.surface);
     assert.ok(surface, `${entry.id}/${lift.surface}`);
     const vertices = surface.polygon.map(([x, y], i) => [
@@ -39,7 +40,7 @@ for (const entry of index) {
     try {
       plane = heightPlane(vertices);
     } catch (error) {
-      results.push({ asset: entry.id, lift: lift.id, error: String(error) });
+      results.push({ asset: entry.id, lift: lift.id, type: lift.type, error: String(error) });
       continue;
     }
     const doors = lift.doors.map((door) => ({
@@ -75,6 +76,7 @@ for (const entry of index) {
       asset: entry.id,
       descriptorSha256: entry.descriptor_sha256,
       lift: lift.id,
+      type: lift.type,
       surface: surface.id,
       maximumPlaneResidual: Math.max(
         ...vertices.map((p) => Math.abs(p[2] - planeHeight(plane, p))),
@@ -83,7 +85,9 @@ for (const entry of index) {
     });
   }
 }
-const output = await fs.mkdtemp("work/map-compile/stair-anchor-support-");
+const output = await fs.mkdtemp(
+  `work/map-compile/${mode === "--all-lifts" ? "lift" : "stair"}-anchor-support-`,
+);
 const unsupported = results.filter(
   (result) =>
     result.error ||
@@ -99,7 +103,12 @@ console.log(
   JSON.stringify(
     {
       output,
-      stairs: results.length,
+      ...(mode === "--all-lifts" ? { lifts: results.length } : { stairs: results.length }),
+      byType: [...new Set(results.map((result) => result.type))].map((type) => ({
+        type,
+        total: results.filter((result) => result.type === type).length,
+        unsupported: unsupported.filter((result) => result.type === type).length,
+      })),
       unsupported: unsupported.length,
       assets: unsupported.map((result) => ({
         asset: result.asset,
