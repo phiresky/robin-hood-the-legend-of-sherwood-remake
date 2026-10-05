@@ -487,6 +487,10 @@ discovers and archives current image-endpoint capabilities, then sends JSON to
 The input and pure-gray sheet become ordered `input_references`; quality remains
 high, `size` remains the exact approved canvas, and output is requested as PNG.
 It requires `--no-mask`, while local protection still uses the approved mask.
+OpenRouter drops the edit-mask field; never rely on it to preserve known pixels.
+If the model needs a region guide, send it as an ordinary reference image and
+describe its role in the prompt. Enforce the authoritative mask locally when
+compositing, and verify that known pixels and reserved state regions are unchanged.
 Provider and endpoint are part of cache identity and provenance; OpenRouter
 outputs use the suffix `-openrouter` so previous raw results stay intact.
 Returned dimensions and PNG format are checked before composing or baking;
