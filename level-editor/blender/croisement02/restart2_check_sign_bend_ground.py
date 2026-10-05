@@ -10,8 +10,8 @@ from catalog import OUT
 from evidence_io import sha,write_json
 from render_slots import acquire,release
 
-def samples(obj):
-    mesh=obj.data;mesh.calc_loop_triangles();uv=mesh.uv_layers['Foliage UV'];result=[];images={}
+def samples(obj,with_records=False):
+    mesh=obj.data;mesh.calc_loop_triangles();uv=mesh.uv_layers['Foliage UV'];result=[];images={};records=[]
     world=np.array([tuple(obj.matrix_world@v.co) for v in mesh.vertices])
     for tri in mesh.loop_triangles:
         m=mesh.materials[tri.material_index];im=next(n.image for n in m.node_tree.nodes if n.type=='TEX_IMAGE' and n.image)
@@ -23,8 +23,8 @@ def samples(obj):
         yy,xx=np.mgrid[y0:y1:2,x0:x1:2];q=np.column_stack((xx.ravel()+.5,yy.ravel()+.5));a,b,c=coords;basis=np.column_stack((b-a,c-a))
         if abs(np.linalg.det(basis))<1e-9:continue
         bc=(q-a)@np.linalg.inv(basis).T;inside=(bc[:,0]>=0)&(bc[:,1]>=0)&(bc.sum(1)<=1)&(alpha[yy.ravel(),xx.ravel()]>.5)
-        bary=np.column_stack((1-bc[inside].sum(1),bc[inside]));result.extend(bary@world[list(tri.vertices)])
-    return np.array(result)
+        bary=np.column_stack((1-bc[inside].sum(1),bc[inside]));result.extend(bary@world[list(tri.vertices)]);records.extend([(tri.polygon_index,float(u/w),float(v/h)) for u,v in q[inside]])
+    return (np.array(result),records) if with_records else np.array(result)
 
 def main():
     dest=OUT/'restart2-fence/shrub57-sign-bend-v1/ground-proof';dest.mkdir(exist_ok=False)

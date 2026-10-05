@@ -10,21 +10,37 @@ from scipy.spatial import cKDTree
 from tree_geometry import SIN,COS,RAY
 from catalog import OUT
 from evidence_io import sha
+from sign_context_import import append_verified
 
 
-def bend(obj,detail):
-    mesh=obj.data;mesh.calc_loop_triangles();world=np.array([tuple(obj.matrix_world@v.co) for v in mesh.vertices]);ray=np.array(RAY)
-    projection=np.column_stack((world[:,0],-SIN*world[:,1]-COS*world[:,2]));parent=list(range(len(world)))
+def groups_for(mesh,world,projection):
+    parent=list(range(len(world)))
     def root(i):
         while parent[i]!=i:parent[i]=parent[parent[i]];i=parent[i]
         return i
     def union(a,b):parent[root(b)]=root(a)
     for p in mesh.polygons:
         for i in p.vertices[1:]:union(p.vertices[0],i)
-    for a,b in cKDTree(world).query_pairs(.031):
-        if np.max(abs(projection[a]-projection[b]))<.001:union(a,b)
+    explicit=mesh.attributes.get('Sign leaf pair')
+    if explicit:
+        anchors={}
+        for p in mesh.polygons:
+            identity=explicit.data[p.index].value
+            if identity in anchors:union(anchors[identity],p.vertices[0])
+            else:anchors[identity]=p.vertices[0]
+    else:
+        for a,b in cKDTree(world).query_pairs(.031):
+            if np.max(abs(projection[a]-projection[b]))<.001:union(a,b)
     groups=defaultdict(list)
     for i in range(len(world)):groups[root(i)].append(i)
+    return groups,[root(i) for i in range(len(world))]
+
+
+def bend(obj,detail):
+    mesh=obj.data;mesh.calc_loop_triangles();world=np.array([tuple(obj.matrix_world@v.co) for v in mesh.vertices]);ray=np.array(RAY)
+    projection=np.column_stack((world[:,0],-SIN*world[:,1]-COS*world[:,2]))
+    groups,roots=groups_for(mesh,world,projection)
+    def root(i):return roots[i]
     needs=defaultdict(float);source_constraints={}
     for row in detail['pixels']:
         for hit in row.get('blockers',[]):
@@ -32,14 +48,16 @@ def bend(obj,detail):
             key=tuple(row['source_pixel']);source_constraints[key]=max(source_constraints.get(key,0),hit['required_retreat']+.25)
     sourcepoints=np.array(list(source_constraints))+.5;demands=np.array(list(source_constraints.values()))
     manifest=json.loads((OUT/'restart2-fence/sign-neighbors-v4/manifest.json').read_text());trees=[];hashes={}
+    transform_path=OUT/'restart2-fence/sign-context-evaluated-transforms-v1.json';transform_reference=json.loads(transform_path.read_text())['inputs'];transform_receipts={}
     for key in ['north-woodland-bank','west-rock-outcrop']:
         info=manifest['inputs'][key];path=Path(info['worker'])/'model.blend';assert sha(path)==info['model_sha256'];hashes[key]=sha(path)
-        with bpy.data.libraries.load(str(path),link=False) as (src,data):data.objects=info['objects']
+        assert transform_reference[key]['model_sha256']==info['model_sha256']
+        imported,transform_receipts[key]=append_verified(bpy.context.scene,path,info['objects'],transform_reference[key]['objects'])
         verts=[];tris=[]
-        for o in data.objects:
+        for o in imported:
             o.data.calc_loop_triangles();offset=len(verts);verts.extend([tuple(o.matrix_world@v.co) for v in o.data.vertices]);tris.extend([tuple(offset+i for i in t.vertices) for t in o.data.loop_triangles])
         trees.append(BVHTree.FromPolygons(verts,tris,all_triangles=True))
-        for o in data.objects:bpy.data.objects.remove(o,do_unlink=True)
+        for o in imported:bpy.data.objects.remove(o,do_unlink=True)
     desired={};limits={};samples=defaultdict(int)
     for g,indices in groups.items():
         center=projection[indices].mean(0);distance=np.linalg.norm(sourcepoints-center,axis=1)
@@ -89,6 +107,6 @@ def bend(obj,detail):
         for i in indices:mesh.vertices[i].co=inverse@(Vector(world[i])+delta)
         if shift>1e-5 or needs[g]>0:changes.append(dict(component=g,vertices=len(indices),requested=desired[g],required_for_sampled_sign=needs[g],clearance_limit=limits[g],applied=shift,opaque_footprint_samples=samples[g],unresolved=shift+1e-5<needs[g]))
     mesh.update()
-    report=dict(method='Rigid paired fragments follow one smooth source-screen envelope, capped by ground and bank/rock ray clearance over opaque UV texel footprint vertices and centroids. Original front/back spacing and UV are unchanged.',paired_components=len(groups),changed_components=sum(c['applied']>1e-5 for c in changes),required_components=len([c for c in changes if c['required_for_sampled_sign']>0]),unresolved_required_components=sum(c['unresolved'] for c in changes),maximum_shift=max(c['applied'] for c in changes),components=changes,bank_inputs=hashes,limitations=['Opaque footprint sampling includes every clipped texel cell corner and centroid; bank projection breaklines inside a cell still require reopened crossing verification.','Preexisting bank-interior fragments stay fixed.','Rigid neighboring fragments approximate a smooth envelope; actual oblique review must check gaps.'])
+    report=dict(method='Rigid paired fragments follow one smooth source-screen envelope, capped by ground and bank/rock ray clearance over opaque UV texel footprint vertices and centroids. Original front/back spacing and UV are unchanged.',paired_components=len(groups),changed_components=sum(c['applied']>1e-5 for c in changes),required_components=len([c for c in changes if c['required_for_sampled_sign']>0]),unresolved_required_components=sum(c['unresolved'] for c in changes),maximum_shift=max(c['applied'] for c in changes),components=changes,bank_inputs=hashes,context_transform_receipt_sha256=sha(transform_path),verified_context_transforms=transform_receipts,limitations=['Opaque footprint sampling includes every clipped texel cell corner and centroid; bank projection breaklines inside a cell still require reopened crossing verification.','Preexisting bank-interior fragments stay fixed.','Rigid neighboring fragments approximate a smooth envelope; actual oblique review must check gaps.'])
 
     return json.loads(json.dumps(report,default=lambda v:v.item()))

@@ -14,9 +14,10 @@ from render_slots import acquire,release
 from opacity_bounds import measure
 from restart2_sign_neighbors import camera_to,render,NEIGHBORS
 from sign_object_mask import setup
+from sign_context_import import append_verified
 
-def main(version=1):
-    base=OUT/f'restart2-fence/shrub57-sign-bend-v{version}';dest=base/'joint-proof';dest.mkdir(exist_ok=False)
+def main(version=1, proof_name="joint-proof", include_keys=None, obliques=True):
+    base=OUT/f'restart2-fence/shrub57-sign-bend-v{version}';dest=base/proof_name;dest.mkdir(exist_ok=False)
     proof=json.loads((OUT/'restart2-fence/sign-neighbors-v4/manifest.json').read_text())
     candidate=base/'model.blend';digest=sha(candidate)
     bpy.ops.wm.open_mainfile(filepath=str(candidate));obj=bpy.data.objects['West Rock Foliage 57'];opacity=measure(obj)
@@ -27,13 +28,15 @@ def main(version=1):
     selected=set(row['parts'])
     for o in list(scene.objects):
         if o.type=='MESH' and o.name not in selected:bpy.data.objects.remove(o,do_unlink=True)
-    neighbors=[];bank=[]
-    for key in NEIGHBORS[7]:
+    neighbors=[];bank=[];transform_receipts={}
+    transform_path=OUT/'restart2-fence/sign-context-evaluated-transforms-v1.json';transform_reference=json.loads(transform_path.read_text())['inputs']
+    for key in (NEIGHBORS[7] if include_keys is None else include_keys):
         info=proof['inputs'][str(key)];path=candidate if key=='shrub-57' else Path(info['worker'])/'model.blend'
         if key!='shrub-57':assert sha(path)==info['model_sha256']
-        with bpy.data.libraries.load(str(path),link=False) as (src,data):data.objects=list(info['objects'])
-        for o in data.objects:
-            scene.collection.objects.link(o);matrix=o.matrix_world.copy();o.parent=None;o.matrix_world=matrix;o.hide_render=False;neighbors.append(o)
+        assert transform_reference[str(key)]['model_sha256']==info['model_sha256']
+        imported,transform_receipts[str(key)]=append_verified(scene,path,info['objects'],transform_reference[str(key)]['objects'])
+        for o in imported:
+            neighbors.append(o)
             if key in ['north-woodland-bank','west-rock-outcrop','southwest-rock-outcrop']:bank.append(o)
     scene.render.engine='CYCLES';scene.cycles.samples=8;scene.cycles.use_denoising=False;scene.cycles.transparent_max_bounces=128
     scene.cycles.pixel_filter_type='BOX';scene.cycles.filter_width=.01;scene.cycles.seed=0;scene.cycles.use_adaptive_sampling=False
@@ -65,12 +68,12 @@ def main(version=1):
     for o in shadows:o.hide_render=False
     center=Vector(row['world_anchor'])+Vector((0,0,22));data.ortho_scale=140
     sheet=Image.new('RGB',(4*288,2*312),(60,60,60))
-    for i in range(8):
+    for i in (range(8) if obliques else []):
         angle=i*math.pi/4;camera_to(camera,center,Vector((math.sin(angle)*COS,-math.cos(angle)*COS,SIN)))
         actual=render(scene,dest/f'oblique-{i}.png');sheet.paste(actual,(i%4*288,i//4*312),actual.getchannel('A'))
     sheet.save(dest/'joint-eight.png')
     assert sha(candidate)==digest
-    write_json(dest/'report.json',dict(status='Private candidate physical proof; independent visual review pending',model_sha256=digest,sign_model_sha256=sha(model),neighbor_manifest_sha256=sha(OUT/'restart2-fence/sign-neighbors-v4/manifest.json'),opacity_bounds=opacity,poses=masks,total_blocked=sum(r['blocked_pixels'] for r in masks),limitations=['Known lower fringe retains its anchor; exact opaque shrub/rock intersection comparison remains pending.','Source raster changed in initial comparison; native RGBA images and UV are unchanged but that does not prove identical first-hit output.','New geometry does not inherit approval.']))
+    write_json(dest/'report.json',dict(status='Private candidate physical proof; independent visual review pending',model_sha256=digest,sign_model_sha256=sha(model),neighbor_manifest_sha256=sha(OUT/'restart2-fence/sign-neighbors-v4/manifest.json'),context_transform_receipt_sha256=sha(transform_path),verified_context_transforms=transform_receipts,context_scope=NEIGHBORS[7] if include_keys is None else include_keys,opacity_bounds=opacity,poses=masks,total_blocked=sum(r['blocked_pixels'] for r in masks),limitations=['Known lower fringe retains its anchor; exact opaque shrub/rock intersection comparison remains pending.','Source raster changed in initial comparison; native RGBA images and UV are unchanged but that does not prove identical first-hit output.','New geometry does not inherit approval.']))
     print(dest)
 if __name__=='__main__':
     acquire()

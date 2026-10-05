@@ -10,28 +10,34 @@ from catalog import OUT
 from evidence_io import sha,write_json
 from render_slots import acquire,release
 
-def samples(obj):
-    mesh=obj.data;mesh.calc_loop_triangles();uv=mesh.uv_layers['Foliage UV'];result=[];images={}
-    world=np.array([tuple(obj.matrix_world@v.co) for v in mesh.vertices])
+from restart2_check_sign_bend_ground import samples
+
+
+def corresponding_samples(obj,records):
+    from collections import defaultdict
+    mesh=obj.data;mesh.calc_loop_triangles();attribute=mesh.attributes['Sign source polygon'];uv=mesh.uv_layers['Foliage UV'];world=np.array([tuple(obj.matrix_world@v.co) for v in mesh.vertices]);index=defaultdict(list)
     for tri in mesh.loop_triangles:
-        m=mesh.materials[tri.material_index];im=next(n.image for n in m.node_tree.nodes if n.type=='TEX_IMAGE' and n.image)
-        w,h=im.size
-        if im.name not in images:images[im.name]=np.array(im.pixels[:],dtype=np.float32).reshape(h,w,4)[:,:,3]
-        alpha=images[im.name];coords=np.array([uv.data[i].uv for i in tri.loops])*[w,h]
-        x0,y0=np.maximum(0,np.floor(coords.min(0)).astype(int));x1,y1=np.minimum([w,h],np.ceil(coords.max(0)).astype(int))
-        if x1<=x0 or y1<=y0:continue
-        yy,xx=np.mgrid[y0:y1:2,x0:x1:2];q=np.column_stack((xx.ravel()+.5,yy.ravel()+.5));a,b,c=coords;basis=np.column_stack((b-a,c-a))
-        if abs(np.linalg.det(basis))<1e-9:continue
-        bc=(q-a)@np.linalg.inv(basis).T;inside=(bc[:,0]>=0)&(bc[:,1]>=0)&(bc.sum(1)<=1)&(alpha[yy.ravel(),xx.ravel()]>.5)
-        bary=np.column_stack((1-bc[inside].sum(1),bc[inside]));result.extend(bary@world[list(tri.vertices)])
+        coords=np.array([tuple(uv.data[i].uv) for i in tri.loops]);a,b,c=coords;basis=np.column_stack((b-a,c-a))
+        if abs(np.linalg.det(basis))<1e-12:continue
+        index[attribute.data[tri.polygon_index].value].append((a,np.linalg.inv(basis),world[list(tri.vertices)]))
+    result=[]
+    for polygon,u,v in records:
+        point=np.array([u,v]);found=False
+        for a,inverse,worldpoints in index[polygon]:
+            bc=inverse@(point-a)
+            if min(bc)>=-1e-5 and bc.sum()<=1+1e-5:
+                result.append(np.array([1-bc.sum(),*bc])@worldpoints);found=True;break
+        if not found:raise ValueError('Opaque source sample lost in subdivision')
     return np.array(result)
+
 
 def main(version=1):
     dest=OUT/f'restart2-fence/shrub57-sign-bend-v{version}/ground-parity-proof';dest.mkdir(exist_ok=False)
     source=OUT/'understory-round-9/assets/croisement02-shrub-57/model.blend';candidate=dest.parent/'model.blend'
-    positions=[]
-    for path in [source,candidate]:
-        bpy.ops.wm.open_mainfile(filepath=str(path));positions.append(samples(bpy.data.objects['West Rock Foliage 57']))
+    bpy.ops.wm.open_mainfile(filepath=str(source));original,records=samples(bpy.data.objects['West Rock Foliage 57'],with_records=True)
+    bpy.ops.wm.open_mainfile(filepath=str(candidate));obj=bpy.data.objects['West Rock Foliage 57']
+    modified=corresponding_samples(obj,records) if obj.data.attributes.get('Sign source polygon') else samples(obj)
+    positions=[original,modified]
     assert positions[0].shape==positions[1].shape
     manifest=OUT/'restart2-fence/sign-neighbors-v4/manifest.json';inputs=json.loads(manifest.read_text())['inputs'];results=[]
     for key in ['north-woodland-bank','west-rock-outcrop','southwest-rock-outcrop']:
