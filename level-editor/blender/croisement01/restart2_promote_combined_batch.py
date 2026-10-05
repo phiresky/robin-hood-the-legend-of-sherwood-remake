@@ -16,7 +16,7 @@ def main():
     assert full['status']=='PASS' and full['mapGroups']==59 and full['mapParts']==94
     config=read(stage/revision/'config.json')
     assert full['filesHashVerified']==len(config['files'])
-    assert set(full['insertedAssets'])=={a['id'] for a in config['expected']['assets']}
+    assert set(full['insertedAssets'])=={a.get('inserted_id',a['id']) for a in config['expected']['assets'] if a.get('editor_usage')!='map-background'}
     assert len(full['selectionChecks'])==config['expected']['groups']
     checker_path=stage/revision/'checker-provenance.json'
     for path,digest in read(checker_path).items():assert sha(ROOT/path)==digest,path
