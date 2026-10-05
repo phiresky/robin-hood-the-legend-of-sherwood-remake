@@ -192,6 +192,16 @@ def main():
                 item['source_comparison_secondary']=str(full_crown/'solid.png')
                 item['source_comparison_secondary_label']='Supplemental full-crown solid mesh (opaque cards; wider framing)'
                 item['stored_material_states']=[dict(id='full-crown',name='Supplemental full-crown views (wider framing)',sheet=str(full_crown/'textured.png'),audit=str(full_crown/'evidence.json'))]
+        composed_gallery=workspace/'inspection/composed-gallery.json'
+        if composed_gallery.exists():
+            composed=json.loads(composed_gallery.read_text())
+            native_joint=Path(composed['native_joint'])
+            if (composed['model_sha256']!=model_hash
+                    or not native_joint.is_file()
+                    or sha(native_joint)!=composed['native_joint_sha256']):
+                raise ValueError('Stale composed native joint evidence')
+            item['source_trace']=str(native_joint)
+            item['source_trace_label']=composed['label']
         if review.exists():
             reviewed=json.loads(review.read_text())
             current_review=reviewed.get('model_sha256')==model_hash
