@@ -1,5 +1,11 @@
 # Post-port Features
 
+- **Mission state previews.** Crossroads 2's 05 · Ambush mission offers log and
+  rock trap artwork playback, seeking, and independently reviewed 3D endpoint
+  views. These controlled previews do not run mission scripts or synthesize
+  physical motion between endpoints. See
+  [the editor controls and scope](../level-editor/docs/state-previews.md).
+
 - **Physical stair navigation infrastructure (integration in progress).** Lift
   descriptors can retain placed ground-coordinate floors, collision pieces and
   world-coordinate door anchors. Collision pieces reference the owning motion
