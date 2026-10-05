@@ -19,7 +19,7 @@ ASSET='croisement03-southwest-firewood-stack'
 SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35))
 
 def main():
-    root=OUT/'restart2/firewood-v5';root.mkdir(parents=True,exist_ok=False)
+    root=OUT/'restart2/firewood-v6';root.mkdir(parents=True,exist_ok=False)
     worker=root/'assets'/ASSET
     if worker.exists():raise FileExistsError(worker)
     masks=json.loads((OUT/'baseline/masks/manifest.json').read_text())
@@ -37,7 +37,7 @@ def main():
     bpy.context.preferences.filepaths.save_version=0
     prepare(worker,asset_id=ASSET,scene_name='Croisement03 Refinement',collection_name='Croisement03 Working',source_path=OUT/'baseline/covered.png',grouping_manifest=OUT/'catalog.json',inventory_path=OUT/'inventory/inventory.json',review_path=OUT/'grouping-review.json',source_mask_manifest=root/'source-masks.json',width=256,height=256,framing_padding=1.20,lighting=dict(toward_sun=[-.45,-.55,.70],ambient=.22,diffuse=.78,shadow_epsilon=.05))
     obj=next(o for o in bpy.data.collections['Croisement03 Working'].all_objects if o.type=='MESH' and o.get('source_node')=='building-049')
-    fit=json.loads((OUT/'restart2/firewood-fit-v4/fit.json').read_text())
+    fit=json.loads((OUT/'restart2/firewood-fit-v5/fit.json').read_text())
     verts=fit['vertices'];faces=fit['faces'];logs=fit['logs']
     old=obj.data;mesh=bpy.data.meshes.new('Southwest firewood closed billets');mesh.from_pydata(verts,[],faces);mesh.update()
     material=bpy.data.materials.new('Unknown firewood surface')

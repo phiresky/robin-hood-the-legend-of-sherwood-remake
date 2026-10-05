@@ -16,7 +16,7 @@ SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35))
 DOMAIN=[(592,907),(612,905),(639,891),(661,881),(690,875),(729,871),(750,868),(762,860),(769,857),(766,870),(752,879),(726,883),(691,887),(669,899),(640,909),(615,916),(595,921)]
 RINGS=[(574,919,13),(595,914,13),(615,909,12),(640,900,12),(663,889,10),(687,881,8),(713,878,7),(738,875,6),(752,871,5),(764,864,4),(769,860,2.5)]
 def main():
-    root=OUT/'restart2/fallen-log-v2';root.mkdir(exist_ok=False)
+    root=OUT/'restart2/fallen-log-v3';root.mkdir(exist_ok=False)
     source=OUT/'baseline/covered.png';image=Image.open(source);domain=Image.new('L',image.size);ImageDraw.Draw(domain).polygon(DOMAIN,fill=255);domain.save(root/'observed-domain.png')
     native=json.loads((OUT/'baseline/masks/manifest.json').read_text())
     for row in native['masks']:row['png']=str(OUT/'baseline/masks'/row['png'])
@@ -25,7 +25,7 @@ def main():
     write_json(root/'source-masks.json',dict(version=1,mask_inventory=str(root/'mask-inventory.json'),projections={'exterior':dict(state='Initial lower stream fallen timber; hand-traced native surface domain',source_sha256=sha(source),assignments=[dict(reviewed=True,source_node=NODE,mask_indices=[131],exclude_mask_indices=[64],exclusions_reviewed=True,exclusion_reason='Three native shrub64 pixels cross the source-traced trunk boundary; preserve foliage ownership.')])}))
     acquire();bpy.ops.wm.open_mainfile(filepath=str(OUT/'croisement03-grouped.blend'));bpy.context.preferences.filepaths.save_version=0
     collection=bpy.data.collections['Croisement03 Working']
-    fitted=json.loads((OUT/'restart2/fallen-log-fit-v2/fit.json').read_text());vertices=fitted['vertices'];faces=fitted['faces']
+    fitted=json.loads((OUT/'restart2/fallen-log-fit-v3/fit.json').read_text());vertices=fitted['vertices'];faces=fitted['faces']
     mesh=bpy.data.meshes.new('Bent tapered round fallen trunk');mesh.from_pydata(vertices,[],faces);mesh.update();bm=bmesh.new();bm.from_mesh(mesh);bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces));bm.to_mesh(mesh)
     topology=dict(nonmanifold_edges=sum(not e.is_manifold for e in bm.edges),degenerate_faces=sum(f.calc_area()<1e-8 for f in bm.faces));bm.free();assert topology==dict(nonmanifold_edges=0,degenerate_faces=0)
     obj=bpy.data.objects.new('Lower stream fallen log',mesh);collection.objects.link(obj)

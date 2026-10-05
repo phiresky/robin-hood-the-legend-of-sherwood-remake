@@ -16,7 +16,7 @@ from texture_camera import depth_clip_range
 from evidence_io import sha,write_json
 
 def main():
-    worker=OUT/'restart2/fallen-log-v2/assets'/ASSET;out=OUT/'restart2/fallen-log-contact-v2';out.mkdir(parents=True,exist_ok=False)
+    worker=OUT/'restart2/fallen-log-v3/assets'/ASSET;out=OUT/'restart2/fallen-log-contact-v3';out.mkdir(parents=True,exist_ok=False)
     acquire();digest=sha(worker/'model.blend');bpy.ops.wm.open_mainfile(filepath=str(worker/'model.blend'));bpy.context.preferences.filepaths.save_version=0
     old=bpy.data.collections['Croisement03 Working'];scene=bpy.data.scenes.new('Fallen log land and water contact');bpy.context.window.scene=scene;objects=[]
     for o in old.all_objects:
