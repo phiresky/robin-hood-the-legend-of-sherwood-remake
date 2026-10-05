@@ -115,7 +115,46 @@ def main():
             for vertex in target.data.vertices:vertex.co=inverse@(target.matrix_world@vertex.co+shift)
             target.data.update()
         (dest/'root-support-placement.json').write_text(json.dumps(dict(method='Move complete asset along original camera ray to measured archival bank; native image coordinates unchanged.',original_foot=list(foot),support=list(hit),shift=list(shift),status='Provisional contact; saved geometry and joint review required'),indent=2)+'\n')
-        if args.revision>=4:
+        if args.revision>=5:
+            foot=foot+shift
+            # Replace the tiny basal termination with a connected support ring.
+            # Keep the cut boundary exact; extend only its lower closure.
+            bm=bmesh.new();bm.from_mesh(obj.data)
+            for vertex in bm.verts:vertex.co=obj.matrix_world@vertex.co
+            cut_z=foot.z+8
+            bmesh.ops.bisect_plane(bm,geom=list(bm.verts)+list(bm.edges)+list(bm.faces),dist=.0001,plane_co=Vector((0,0,cut_z)),plane_no=Vector((0,0,1)),clear_inner=True,clear_outer=False)
+            boundary=[edge for edge in bm.edges if edge.is_boundary]
+            if not boundary or any(abs(v.co.z-cut_z)>.01 for e in boundary for v in e.verts):raise ValueError('Unexpected basal cut boundary')
+            vertices={v for e in boundary for v in e.verts}
+            neighbors={v:[] for v in vertices}
+            for edge in boundary:
+                a,b=edge.verts;neighbors[a].append(b);neighbors[b].append(a)
+            if any(len(adjacent)!=2 for adjacent in neighbors.values()):raise ValueError('Basal cut is not a closed ring')
+            ring=[next(iter(vertices))];previous=None
+            while True:
+                following=next(v for v in neighbors[ring[-1]] if v!=previous)
+                if following==ring[0]:break
+                if following in ring:raise ValueError('Basal ring repeats before closure')
+                previous=ring[-1];ring.append(following)
+            if len(ring)!=len(vertices):raise ValueError('Basal cut has multiple loops')
+            center=sum((v.co for v in ring),Vector())/len(ring)
+            lower=[]
+            for vertex in ring:
+                direction=Vector((vertex.co.x-center.x,vertex.co.y-center.y,0)).normalized()
+                x=center.x+direction.x*6.5;y=center.y+direction.y*6.5
+                support=terrain.ray_cast(Vector((x,y,cut_z+40)),Vector((0,0,-1)),100)[0]
+                if support is None:raise ValueError('Missing continuous root-ring support')
+                lower.append(bm.verts.new((x,y,support.z-.4)))
+            for j in range(len(ring)):
+                k=(j+1)%len(ring);bm.faces.new((ring[j],lower[j],lower[k],ring[k]))
+            bm.faces.new(tuple(reversed(lower)))
+            bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces))
+            if any(not e.is_manifold for e in bm.edges):raise ValueError('Continuous root ring is not closed')
+            inverse=obj.matrix_world.inverted()
+            for vertex in bm.verts:vertex.co=inverse@vertex.co
+            bm.to_mesh(obj.data);bm.free();obj.data.update()
+            (dest/'basal-flare.json').write_text(json.dumps(dict(method='Replace basal point closure with a continuous bank-conforming ring; retain the existing cut boundary exactly.',cut_height=cut_z,ring_vertices=len(ring),radius=6.5,penetration=.4,status='Private candidate; native coverage and contact review required'),indent=2)+'\n')
+        elif args.revision>=4:
             foot=foot+shift
             verts=[];faces=[];count=24
             for height,radius in [(0,6.5),(5,7.),(16,5.)]:

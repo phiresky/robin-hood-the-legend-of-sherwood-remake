@@ -17,8 +17,11 @@ acquire()
 try:
  h=validate_texture_handoff(case/'review-manifest.json',asset,case/'texture-handoff-v1/decisions.json',case/'decisions.json')
  proof=verify_baked_geometry(h)
- out=R/(kind+'-integration-v1');out.mkdir(exist_ok=False)
- catalog=json.loads((case/'approved-workspace/reference/grouping.json').read_text())
+ grouping=R/({'tree20':'tree20-v3','stump68':'stump68-wood-fit-v2'}[kind])/'assets'/asset/'reference/grouping.json'
+ config=json.loads((case/'approved-workspace/workspace.json').read_text())
+ assert sha(grouping)==config['grouping_manifest_sha256']
+ catalog=json.loads(grouping.read_text())
+ out=R/(kind+'-integration-v2');out.mkdir(exist_ok=False)
  report=export_asset_library('Croisement01',out/'assets',ROOT/'level-editor/work/croisement01-refinement/baseline/Croisement01.rhp.json',asset_ids=[asset],catalog=catalog)
  (out/'export-proof.json').write_text(json.dumps(dict(scope='Private exact approved asset export; live map unchanged',geometry=proof,export=report,approved_user_decision_sha256=sha(case/'user-texture-decision.json')),indent=2)+'\n')
  print(out,flush=True)

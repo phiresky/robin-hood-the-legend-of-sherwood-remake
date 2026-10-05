@@ -10,7 +10,7 @@ from asset_index import write_asset_index
 from review_evidence import sha
 kind=sys.argv[1]
 asset,node={'tree20':('croisement01-tree-20','082'),'stump68':('croisement01-southeast-small-stump','059')}[kind]
-R=ROOT/'level-editor/work/croisement01-refinement/restart2'/(kind+'-integration-v1')
+R=ROOT/'level-editor/work/croisement01-refinement/restart2'/(kind+'-integration-v2')
 scene=json.loads((ROOT/'level-editor/library/scenes/croisement01.rhlos-map.json').read_text())
 p=R/'assets'/asset/'asset.json';d=json.loads(p.read_text())
 assert 'gameplay' not in d
@@ -22,10 +22,27 @@ for n in [node]:
     live=ROOT/'level-editor/library/3d-assets/croisement01'/asset/'asset.json'
     old=json.loads(live.read_text());g=old['gameplay'];placement=next(p for p in scene['placements'] if p['assets']==[asset]);t=placement['transform'];before=[t['dx'],t['dy'],t['dz']]
     assert set(g)=={'version','collision','surfaces','sightOrder','movementBlockers','doors','lifts','interiors','draft'}
-    assert all(g[k]==[] for k in ['surfaces','doors','lifts','interiors']) and g['collision']=='parts'
+    assert all(g[k]==[] for k in ['doors','lifts','interiors']) and g['collision']=='parts'
     if gameplay is None:gameplay=copy.deepcopy(g);gameplay['movementBlockers']=[];gameplay['sightOrder']={}
     assert gameplay['draft']==g['draft']
     gameplay['sightOrder'].update(g['sightOrder'])
+    for surface in gameplay['surfaces']:
+        old_surface=next(s for s in g['surfaces'] if s['id']==surface['id'])
+        assert not surface['holes']
+        surface['polygon']=[[x+before[0]-new[0],y+before[1]-new[1]] for x,y in surface['polygon']]
+        surface['height']=[h+before[2]-new[2] for h in surface['height']]
+        projection=surface.get('projectionMaterials')
+        if projection:
+            assert projection['regions']==[]
+            for key in ['planePoints','footprint']:
+                projection[key]=[[v[i]+before[i]-new[i] for i in range(3)] for v in projection[key]]
+                assert max(abs(a[i]+before[i]-b[i]-new[i]) for a,b in zip(old_surface['projectionMaterials'][key],projection[key]) for i in range(3))<1e-9
+            projection['priorityHeight']+=before[2]-new[2]
+            assert abs(old_surface['projectionMaterials']['priorityHeight']+before[2]-projection['priorityHeight']-new[2])<1e-9
+        error=max(abs(a[i]+before[i]-b[i]-new[i]) for a,b in zip(old_surface['polygon'],surface['polygon']) for i in range(2))
+        error=max(error,max(abs(a+before[2]-b-new[2]) for a,b in zip(old_surface['height'],surface['height'])))
+        assert error<1e-9
+        records.append(dict(source_descriptor=str(live),source_descriptor_sha256=sha(live),surface=surface['id'],world_coordinate_max_error=error,projection_material_semantics_unchanged=True))
     for blocker in g['movementBlockers']:
         assert not blocker['holes']
         translated=copy.deepcopy(blocker)
