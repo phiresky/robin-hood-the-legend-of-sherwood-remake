@@ -13,12 +13,16 @@ def require(condition, message):
 
 
 def select(decisions_path, models):
-    latest = {row['asset_id']: row for row in json.loads(decisions_path.read_text())['decisions']}
+    document = json.loads(decisions_path.read_text())
+    latest = {row['asset_id']: row for row in document['decisions']}
     result = {}
     for asset, decision in latest.items():
         if decision.get('scope') != 'texture' or decision.get('decision') != 'approved':
             continue
         require(asset in models, 'Approved texture has no current geometry: ' + asset)
+        if 'archived_evidence' in decision:
+            result[asset] = select_canopy(document, decision, models[asset])
+            continue
         paths, hashes = decision['evidence_paths'], decision['evidence_sha256']
         require(set(paths) == set(hashes), 'Incomplete decision evidence: ' + asset)
         for key, path in paths.items():
@@ -52,6 +56,72 @@ def select(decisions_path, models):
                              proof_sha256=sha(proof_path), receiver_names=proof['receiver_names'])
     require(bool(result), 'No approved textures selected')
     return result
+
+
+def select_canopy(document, decision, base):
+    """Validate a gallery archive and both ordinary and retained-wood bake chains."""
+    asset = decision['asset_id']
+    snapshot = Path(document['snapshot'])
+    require(json.loads((snapshot / 'decisions.json').read_text()) == document,
+            'Archived canopy decisions changed')
+    require(sha(snapshot / 'evidence.json') == decision['gallery_evidence_sha256'],
+            'Archived canopy gallery evidence changed')
+    hashes = decision['evidence_sha256']
+    require(set(hashes) == set(decision['archived_evidence']), 'Incomplete canopy archive')
+    for path, expected in hashes.items():
+        require(sha(Path(path)) == expected, 'Stale approved canopy evidence: ' + path)
+        require(sha(Path(decision['archived_evidence'][path])) == expected,
+                'Archived canopy evidence changed: ' + path)
+    candidate = Path(decision['candidate'])
+    model = candidate / 'worker.blend'
+    require(hashes[str(model)] == decision['model_sha256'], 'Canopy model approval mismatch')
+    geometry_decision = decision['geometry_approval']
+    require(geometry_decision['decision'] == 'approved' and geometry_decision['scope'] == 'geometry'
+            and geometry_decision['model_sha256'] == sha(base), 'Canopy current geometry changed')
+    retained = (candidate / 'preservation.json').exists()
+    proof_path = candidate / ('preservation.json' if retained else 'reopened-preservation.json')
+    proof = json.loads(proof_path.read_text())
+    require(proof['asset_id'] == asset and proof['status'] == 'PASS'
+            and proof['reopened_preservation'] == 'PASS', 'Failed canopy preservation')
+    require(proof['candidate_model_sha256'] == sha(model), 'Canopy proof model changed')
+    flags = ('geometry_unchanged', 'foreign_appearance_unchanged',
+             'original_wood_appearance_and_uv_unchanged', 'generated_foliage_unchanged',
+             'physical_alpha_native_rgba_and_ownership_unchanged') if retained else FLAGS
+    require(all(proof.get(flag) is True for flag in flags), 'Incomplete canopy preservation')
+    require(proof['original_model_sha256' if retained else 'model_sha256'] == sha(base),
+            'Canopy proof base changed')
+    for path, expected in proof['evidence_sha256'].items():
+        require(sha(Path(path)) == expected, 'Canopy bake evidence changed: ' + path)
+    baked = candidate.parent / 'bake-v1' if retained else candidate
+    bake_proof = json.loads((baked / 'reopened-preservation.json').read_text())
+    require(bake_proof['status'] == 'PASS' and bake_proof['reopened_preservation'] == 'PASS'
+            and all(bake_proof.get(flag) is True for flag in FLAGS), 'Failed underlying canopy bake')
+    require(bake_proof['model_sha256'] == sha(base)
+            and bake_proof['candidate_model_sha256'] == sha(baked / 'worker.blend'),
+            'Underlying canopy bake model changed')
+    if retained:
+        require(proof['baked_foliage_model_sha256'] == bake_proof['candidate_model_sha256'],
+                'Retained wood foliage chain changed')
+    for path, expected in bake_proof['evidence_sha256'].items():
+        require(sha(Path(path)) == expected, 'Underlying canopy bake evidence changed: ' + path)
+    validation_path = baked / 'validation.json'
+    require(sha(validation_path) == bake_proof['bake_validation_sha256'], 'Canopy validation changed')
+    for path, expected in json.loads(validation_path.read_text())['source_mask_evidence'].items():
+        require(sha(Path(path)) == expected, 'Canopy source mask changed: ' + path)
+    review = json.loads((candidate / 'agent-material-review.json').read_text())
+    require(review['preservation_report_sha256' if retained else 'reopened_preservation_sha256']
+            == sha(proof_path), 'Canopy reviewed preservation proof changed')
+    require(review['ready_for_coordinator_review'] is True
+            and review['all_eight_saved_model_views_inspected'] is True
+            and review['model_sha256'] == sha(model)
+            and review['actual_sheet_sha256'] == sha(candidate / 'actual/textured.png'),
+            'Canopy saved-model review changed')
+    receivers = bake_proof['receiver_names']
+    if retained:
+        require(set(receivers) == set(proof['wood_objects'] + proof['foliage_objects']),
+                'Retained wood receiver scope changed')
+    return dict(decision=decision, model=str(model), proof=str(proof_path),
+                proof_sha256=sha(proof_path), receiver_names=receivers)
 
 
 def geometry(obj):

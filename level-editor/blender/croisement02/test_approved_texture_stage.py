@@ -74,5 +74,67 @@ class SelectionTests(unittest.TestCase):
             select(self.decisions, {'tree': self.base})
 
 
+class CanopySelectionTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.base = self.root / 'base.blend'
+        self.base.write_bytes(b'geometry')
+        self.candidate = self.root / 'bake-v1'
+        self.candidate.mkdir()
+        self.model = self.candidate / 'worker.blend'
+        self.model.write_bytes(b'approved texture')
+        (self.candidate / 'actual').mkdir()
+        self.sheet = self.candidate / 'actual/textured.png'
+        self.sheet.write_bytes(b'eight views')
+        validation = self.candidate / 'validation.json'
+        validation.write_text(json.dumps({'source_mask_evidence': {}}))
+        self.proof = self.candidate / 'reopened-preservation.json'
+        self.proof.write_text(json.dumps(dict(asset_id='tree', status='PASS',
+            reopened_preservation='PASS', model_sha256=sha(self.base),
+            candidate_model_sha256=sha(self.model), receiver_names=['Tree'],
+            evidence_sha256={}, bake_validation_sha256=sha(validation), **{k: True for k in FLAGS})))
+        self.review = self.candidate / 'agent-material-review.json'
+        self.review.write_text(json.dumps(dict(ready_for_coordinator_review=True,
+            all_eight_saved_model_views_inspected=True, model_sha256=sha(self.model),
+            actual_sheet_sha256=sha(self.sheet), reopened_preservation_sha256=sha(self.proof))))
+        self.archive = self.root / 'archive'
+        self.archive.mkdir()
+        (self.archive / 'evidence.json').write_bytes(b'frozen gallery')
+        files = [self.model, self.sheet, self.review]
+        for p in files:
+            shutil.copy2(p, self.archive / p.name)
+        row = dict(asset_id='tree', scope='texture', decision='approved', candidate=str(self.candidate),
+            model_sha256=sha(self.model), evidence_sha256={str(p): sha(p) for p in files},
+            archived_evidence={str(p): str(self.archive / p.name) for p in files},
+            gallery_evidence_sha256=sha(self.archive / 'evidence.json'),
+            geometry_approval=dict(scope='geometry', decision='approved', model_sha256=sha(self.base)))
+        document = dict(snapshot=str(self.archive), decisions=[row])
+        self.decisions = self.root / 'decisions.json'
+        self.decisions.write_text(json.dumps(document))
+        shutil.copy2(self.decisions, self.archive / 'decisions.json')
+
+    def test_exact_canopy_chain(self):
+        self.assertEqual(set(select(self.decisions, {'tree': self.base})), {'tree'})
+
+    def test_changed_archive(self):
+        (self.archive / 'worker.blend').write_bytes(b'other candidate')
+        with self.assertRaisesRegex(ValueError, 'Archived canopy evidence'):
+            select(self.decisions, {'tree': self.base})
+
+    def test_changed_base(self):
+        self.base.write_bytes(b'new geometry')
+        with self.assertRaisesRegex(ValueError, 'current geometry'):
+            select(self.decisions, {'tree': self.base})
+
+    def test_proof_must_be_review_bound(self):
+        proof = json.loads(self.proof.read_text())
+        proof['receiver_names'] = ['Changed scope']
+        self.proof.write_text(json.dumps(proof))
+        with self.assertRaisesRegex(ValueError, 'reviewed preservation proof'):
+            select(self.decisions, {'tree': self.base})
+
+
 if __name__ == '__main__':
     unittest.main()
