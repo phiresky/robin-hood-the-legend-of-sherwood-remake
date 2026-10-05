@@ -54,6 +54,8 @@ def validate_inputs(selection_path, selection, authority):
         for ref in refs:
             if ref:
                 checked(ref['path'], ref['sha256'])
+    for ref in authority.get('global_evidence', []):
+        checked(ref['path'], ref['sha256'])
 
 
 def append_receivers(model, names, collection, references):
@@ -85,6 +87,9 @@ def main(plan_path, output):
     selection = read(selection_path)
     authority_path = selection_path.parent / 'worker-source-authorities.json'
     authority = read(authority_path)
+    authority_hash = sha(authority_path)
+    if plan.get('source_authorities_sha256'):
+        checked(authority_path, plan['source_authorities_sha256'])
     if authority['status'] != 'PASS' or authority['selection_sha256'] != sha(selection_path):
         raise ValueError('Worker source authority is stale')
     if output.exists():
@@ -171,6 +176,8 @@ def main(plan_path, output):
             raise ValueError('Visible whole scene group reconciliation differs')
         expected = {o.name: fingerprints(o) for o in collection.all_objects if o.type == 'MESH'}
         validate_inputs(selection_path, selection, authority)
+        checked(selection_path, plan['selection_sha256'])
+        checked(authority_path, authority_hash)
         model = output / 'scene.blend'
         bpy.ops.wm.save_as_mainfile(filepath=str(model), compress=True)
         bpy.ops.wm.open_mainfile(filepath=str(model))
@@ -179,6 +186,8 @@ def main(plan_path, output):
             if fingerprints(bpy.data.objects[name]) != reference:
                 raise ValueError('Saved scene altered receiver geometry or appearance: ' + name)
         validate_inputs(selection_path, selection, authority)
+        checked(selection_path, plan['selection_sha256'])
+        checked(authority_path, authority_hash)
         checked(plan['base_scene'], plan['base_scene_sha256'])
         selector_delta = []
         for asset, record in rows.items():
@@ -198,7 +207,7 @@ def main(plan_path, output):
                    plan=str(plan_path), plan_sha256=sha(plan_path), source_authorities_sha256=sha(authority_path),
                    counts=plan['counts'], approved_texture_count=selection['approved_texture_count'],
                    ground=ground, reopened_preservation='PASS', new_model_bytes=model.stat().st_size,
-                   original93_unchanged=True, later_selector_delta=selector_delta,
+                   base_scene_unchanged=True, later_selector_delta=selector_delta,
                    pending_replacements=plan['pending_replacements'], state_scope=plan['state_scope'],
                    source_roles_complete=False, visual_review='pending', publication='not performed'))
         print('SAVED', model, model.stat().st_size, flush=True)

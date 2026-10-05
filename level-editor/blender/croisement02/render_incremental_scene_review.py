@@ -118,7 +118,10 @@ def main(stage, output):
                               pending_replacements=assembly['pending_replacements'], state_scope=assembly['state_scope']), indent=2))
         (output / 'index.html').write_text('<!doctype html><meta charset="utf-8"><title>Croisement02 private126 review</title>'
             '<style>body{background:#252525;color:#eee;font:16px system-ui;margin:24px}img{max-width:100%;height:auto}pre{white-space:pre-wrap}</style>'
-            '<h1>Croisement02 private126 spatial review</h1><p>122 visible groups,4 state-only groups;24 exact approved texture models. '
+            '<h1>Croisement02 private126 spatial review</h1>'
+            f'<p>{assembly["counts"]["initial_visible_groups"]} visible groups, '
+            f'{assembly["counts"]["state_only_groups"]} state-only groups; '
+            f'{assembly["counts"]["approved_texture_models"]} exact approved texture models. '
             'Pending geometry and unknown surfaces are shown for cross-asset review. This is not a completed state integration or publication.</p>'
             f'<p>{html.escape(report["status"])}</p><h2>All eight saved-model views</h2><img src="{orbit.name}/sheet.png">'
             '<h2>Native camera</h2><img src="native.png"><h2>Native source artwork</h2><img src="native-source.png">'
