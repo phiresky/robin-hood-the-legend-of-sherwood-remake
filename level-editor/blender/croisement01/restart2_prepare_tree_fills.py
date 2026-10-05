@@ -38,8 +38,18 @@ def main(ready=READY, destination='approved-tree-fills-v1', exact_user_text='Bot
         assert read(w/'validation.json')['status']=='PASS'
         actual=read(w/'inspection/actual-materials/evidence.json');assert actual['model_sha256']==model_hash and actual['actual_sheet_sha256']==sha(w/'inspection/actual-materials/sheet.png')
         geometry=read(w/'inspection/saved-tree-geometry.json');assert geometry['model_sha256']==model_hash
+        union_path=w/'inspection/saved-wood-surface-union.json'
+        union=None
+        if union_path.exists():
+            union=read(union_path)
+            assert union['model_sha256']==model_hash and union['status']=='PASS'
+            assert union['nonmanifold_edges']==union['degenerate_faces']==0 and len(union['components'])==1
+            assert approved['evidence']['inspection/saved-wood-surface-union.json']==sha(union_path)
+            bind('technical/inspection/saved-wood-surface-union.json',union_path)
         for mesh in geometry['meshes']:
-            if mesh['source_node'].startswith('building-'):assert mesh['nonmanifold_edges']==mesh['degenerate_faces']==0
+            if mesh['source_node'].startswith('building-'):
+                assert mesh['degenerate_faces']==0
+                assert mesh['nonmanifold_edges']==0 or (union is not None and mesh['source_node'] in union['parts'])
             else:assert mesh['depth_width_ratio']>=1
         frames=read(frozen/'modified/views.json')
         for n,(path,digest) in enumerate(frames['source_mask_evidence'].items()):
