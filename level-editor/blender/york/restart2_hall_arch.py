@@ -34,9 +34,10 @@ def surface(obj):
     return [[list(d.uv) for d in l.data] for l in obj.data.uv_layers],[m.name if m else None for m in obj.data.materials],obj.hide_render
 before={o.name:shape(o) for o in original}
 outside={o.name:surface(o) for o in original if o.get('asset_group') not in groups}
-proposal_path=OUT/'restart2/hall-arch-ring-proposal.json'
-proposal=json.loads(proposal_path.read_text())
-outer,inner=proposal['outer_source_contour'],proposal['inner_source_contour']
+outer=[(2761,598),(2761,555),(2764,545),(2770,537),(2777,531),
+       (2784,529),(2791,529),(2797,534),(2797,586)]
+inner=[(2767,592),(2767,555),(2770,549),(2775,544),(2780,541),
+       (2785,539),(2789,540),(2791,546),(2791,585)]
 if len(outer)!=len(inner):
     raise ValueError('Arch contours must have matching stations')
 # The disappearing rectangular cover establishes the entrance wall datum.
@@ -90,7 +91,8 @@ config['part_ids']=list(config.get('part_ids',[]))+[obj['source_node']]
 (destination/'geometry.json').write_text(json.dumps({
     'status':'HOLD: authored arch hypothesis awaiting actual eight-view and native joint inspection',
     'source_model_sha256':hashlib.sha256(source.read_bytes()).hexdigest(),
-    'proposal_sha256':hashlib.sha256(proposal_path.read_bytes()).hexdigest(),
+    'source_image_sha256':hashlib.sha256(source_image.read_bytes()).hexdigest(),
+    'outer_source_contour':outer,'inner_source_contour':inner,
     'source_node':obj['source_node'],'native_mask_reference':646,
     'closed_volume_world':volume,'game_profiles':game_profiles,
     'existing_geometry_preserved':len(original),'outside_materials_uv_visibility_preserved':len(outside),
