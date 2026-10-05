@@ -49,8 +49,11 @@ def cap(crown, packet_path, mask, destination, edge='north', west_native_frame=F
         if not 0 <= -y < height:raise ValueError('Source domain does not reach the north edge')
         edge_x = np.where(alpha[-y])[0] + x
     elif edge=='east':
-        if not 0 <= 1791-x < width:raise ValueError('Source domain does not reach the east edge')
-        edge_x = np.where(alpha[:,1791-x])[0] + y
+        # Some native cutouts omit the final transparent map column.
+        edge_column = min(1791, x+width-1)
+        if not 1790 <= edge_column <= 1791 or not 0 <= edge_column-x < width:
+            raise ValueError('Source domain does not reach the east edge')
+        edge_x = np.where(alpha[:,edge_column-x])[0] + y
     elif edge=='west':
         if not 0 <= 1-x < width:raise ValueError('Source domain does not reach the west edge')
         edge_x = np.where(alpha[:,1-x])[0] + y
