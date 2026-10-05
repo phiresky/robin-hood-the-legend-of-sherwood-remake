@@ -4,6 +4,37 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Physical stairs in ordinary exports (2026-10-05)
+
+The main compiler now emits physical navigation for compatible planar stairs.
+It assembles placed world floors and holes, solids, owner-scoped clearances and
+live barriers through the physical region compiler. Motion collision and control
+references use that same allocation; retained door ordinals follow exported doors.
+Physical anchor resolution uses the world floor while lighting, masks and material
+queries retain their projected receiving geometry. Unsupported physical assemblies
+warn and retain projected navigation, including the multi-plane fixture.
+
+Six native descriptor fixtures are regenerated from ordinary editor compilation.
+Four rotated/elevated stair exports and copied stairs retain matching physical
+obstacle IDs and independent controls. Native complete actor routes exercise open,
+closed and reset barriers in both directions. Landing binding subtracts overlap
+and clips support to the landing side of the equal-height seam; it never extends
+support across gaps. This handles rounded landing corners next to exact physical
+stairs. The native receiver audit checks physical floor height and footprint
+support for physical actors. Synthetic screen-rotation fixtures deliberately keep
+their legacy navigation coverage; actual world placement is tested by the editor
+exports.
+
+The seven affected compiler suites pass 149 tests, all 63 map-export tests pass,
+and the movement suite passes 205 tests (12 ignored). Physical navigation passes
+10 tests; level loading passes 40 (three ignored), and patch effects pass 26
+(four ignored), including physical routes and projected collision through repeated
+apply/reset. Both editor typechecks, focused lint/format checks and the game build
+pass. Edge-on surface fitting,
+disconnected region assembly, full multi-plane physical navigation, broader
+placement audits and rendered traversal remain unfinished. The keep placement
+audit has not yet been rerun, and this is not all-map parity certification.
+
 ## Local physical stair point dispatch (2026-10-05)
 
 Local point Move requests on an invertible physical stair now resolve their

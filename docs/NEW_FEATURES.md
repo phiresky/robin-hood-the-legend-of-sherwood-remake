@@ -8,7 +8,9 @@
   projection. Explicit physical distance orders now execute through the actor
   loop, including live barriers and hard neighbour collision. Door orders retain
   physical endpoints, and entry/exit callbacks transfer floor ownership without
-  inverting the stair projection. The editor does not emit this metadata yet;
+  inverting the stair projection. Normal editor exports now emit this metadata
+  for compatible planar stairs; unsupported assemblies warn and retain projected
+  navigation. Edge-on surface assembly remains unfinished;
   local point Move requests resolve supported goals on invertible floors to
   physical orders. Ambiguous edge-on point requests reject; seek/line requests
   and full movement effects remain unfinished.

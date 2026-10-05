@@ -491,6 +491,30 @@ fn actor_receiver_result(
     layer: u16,
     position: MapPoint,
 ) -> Result<(), String> {
+    if let Some(stair) = assets.navigation.physical_stairs.get(&sector.get()) {
+        let pi = engine.ent(owner).position_iface();
+        let world = pi.get_position();
+        let ground = [world.x, world.y];
+        let plane =
+            robin_level_data::stair_navigation::StairNavigationPlane::new(stair.definition.plane)?;
+        let expected = plane.world_position(ground.map(f64::from))?;
+        if (expected[2] - f64::from(world.z)).abs() >= 0.001
+            || world.to_map() != position
+            || stair
+                .route(
+                    &engine.world.pathfinder,
+                    ground,
+                    ground,
+                    pi.get_half_diagonal(),
+                )?
+                .is_none()
+        {
+            return Err(format!(
+                "actor physical stair support mismatch at {world:?}, sector {sector:?}"
+            ));
+        }
+        return Ok(());
+    }
     let queried = engine.get_projection_area_index(assets, sector, layer, position);
     let current = engine.ent(owner).position_iface().get_obstacle();
     // Crossing direction can select either side at an exact shared boundary.

@@ -131,6 +131,8 @@ fn overlapping_stairs_on_separate_layers_do_not_block_each_other() {
     geometry.sight_obstacles.push(receiver);
     let mut lift = geometry.lifts[0].clone();
     lift.motion_area_index = 4;
+    // This fixture offsets only projected geometry; retain its legacy layer test.
+    lift.physical_navigation = None;
     for door in &mut lift.doors {
         door.sector_in = 4;
         door.layer_in = 3;
@@ -317,6 +319,12 @@ fn walk_exported_lift_with_tick(
     let mut stationary = 0;
     let mut previous_receiver = receiver;
     let trace = std::env::var_os("ROBIN_LIFT_TRACE").is_some();
+    if trace {
+        eprintln!(
+            "physical stair bindings: {:?}",
+            assets.navigation.physical_stairs
+        );
+    }
     for _ in 0..(distance.ceil() as usize * 4 + 1000) {
         engine.control.frame_counter += 1;
         engine.t_hourglass_phase_sequences(&assets);

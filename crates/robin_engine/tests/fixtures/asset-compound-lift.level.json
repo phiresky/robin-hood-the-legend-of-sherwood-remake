@@ -22,6 +22,9 @@
   ],
   "volumes": [],
   "asset_geometry": {
+    "warnings": [
+      "Lift hut-a/hut/stairs: physical navigation unavailable; retaining projected navigation: Walkable surface must be planar; split it into planar asset surfaces"
+    ],
     "motion_data": {
       "layers": [
         [
@@ -303,6 +306,10 @@
         "motion_area_index": 3,
         "lift_type": 1,
         "direction": 4,
+        "endpoint_doors": [
+          0,
+          1
+        ],
         "doors": [
           {
             "door_type": 5,
@@ -366,10 +373,6 @@
             "sector_in": 3,
             "layer_in": 2
           }
-        ],
-        "endpoint_doors": [
-          0,
-          1
         ]
       }
     ]

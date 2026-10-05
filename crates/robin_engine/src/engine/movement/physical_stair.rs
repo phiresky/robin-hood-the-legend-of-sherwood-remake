@@ -196,8 +196,7 @@ impl EngineInner {
             .hypot(next.z - position.z);
         refresh_motion_forecast(entity.sprite_mut(), travelled);
         Self::emit_movement_water(entity, speed, &mut self.feedback.titbit_manager);
-        // TODO: share soft repulsion with ordinary
-        // movement before enabling physical stairs in normal editor exports.
+        // TODO: share soft repulsion with ordinary movement.
         if next == goal {
             if wait_for_animation {
                 entity.position_iface_mut().zero_all_increments();

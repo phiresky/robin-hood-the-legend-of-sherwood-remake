@@ -952,22 +952,23 @@ mod tests {
                     }
                 }
                 let grid = &engine.world.fast_grid;
-                for (source, goal) in [(a, b), (b, a)] {
+                for (direction, (source, goal)) in [(a, b), (b, a)].into_iter().enumerate() {
                     assert_eq!(
                         grid.is_reachable_thin(source, goal, layer),
                         !applied,
                         "stair collision, rotation {rotation}, applied {applied}"
                     );
-                    let route = engine.world.pathfinder.find_path(
-                        &assets.navigation.pathfinder_graph,
-                        grid,
-                        layer,
-                        sector,
-                        0,
-                        source,
-                        goal,
-                        false,
-                    );
+                    let stair = &assets.navigation.physical_stairs[&sector];
+                    let from = stair.definition.doors[direction].inside;
+                    let to = stair.definition.doors[1 - direction].inside;
+                    let route = stair
+                        .route(
+                            &engine.world.pathfinder,
+                            [from[0], from[1]],
+                            [to[0], to[1]],
+                            crate::coordinates::MoveBoxHalfDiagonal::new(6., 3.),
+                        )
+                        .unwrap();
                     assert_eq!(
                         route.is_some(),
                         !applied,

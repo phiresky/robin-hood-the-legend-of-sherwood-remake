@@ -1,7 +1,7 @@
 //! Landing geometry comes from the current motion area and its actual receiver.
 
 use super::*;
-use geo::BooleanOps;
+use geo::{BooleanOps, BoundingRect};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct BoundLanding {
@@ -79,6 +79,35 @@ mod tests {
         assert!(!stair.supports_landing_neighbour(0, 1, [400., 299., 100.]));
         assert!(!stair.supports_landing_neighbour(0, 0, [400., 299., 200.]));
         assert!(!stair.supports_landing_neighbour(0, 0, [400., 301., 100.]));
+        let mut overlapping_motion = motion.clone();
+        for point in &mut overlapping_motion.polygon.points {
+            if point.1 == 200 {
+                point.1 = 201;
+            }
+        }
+        let overlapping_receiver =
+            polygon(&[[380., 270.], [420., 270.], [420., 301.], [380., 301.]]).unwrap();
+        stair
+            .bind_landing(
+                0,
+                &overlapping_motion,
+                0,
+                0,
+                0,
+                [0., 0., 100.],
+                Some(&overlapping_receiver),
+            )
+            .unwrap();
+        assert!(
+            stair
+                .landings
+                .last()
+                .unwrap()
+                .boundary
+                .iter()
+                .all(|point| point[1] <= 300.)
+        );
+        assert!(!stair.supports_landing_neighbour(0, 0, [400., 300.5, 100.]));
     }
 }
 
@@ -181,11 +210,50 @@ impl BoundPhysicalStair {
             polygon(&ring)
         };
         let floor = unproject(&motion.polygon.points)?;
-        let support = if let Some(receiver) = receiver {
+        let mut support = if let Some(receiver) = receiver {
             floor.intersection(receiver)
         } else {
             geo::MultiPolygon::from(vec![floor])
         };
+        let [sa, sb, sc] = self.definition.plane;
+        let difference = |x: f64, y: f64| (sa - a) * x + (sb - b) * y + sc - c;
+        let outside_side = difference(
+            f64::from(physical.outside[0]),
+            f64::from(physical.outside[1]),
+        );
+        if outside_side.abs() > 0.001 {
+            // Only the side of the equal-height seam containing this landing
+            // can support a stair footprint. Rounded corners on the opposite
+            // side must not create support beside a different stair height.
+            let bounds = support.bounding_rect().ok_or("empty landing support")?;
+            let corners = [
+                [bounds.min().x, bounds.min().y],
+                [bounds.max().x, bounds.min().y],
+                [bounds.max().x, bounds.max().y],
+                [bounds.min().x, bounds.max().y],
+            ];
+            let mut mask = Vec::new();
+            for (index, from) in corners.iter().enumerate() {
+                let to = corners[(index + 1) % corners.len()];
+                let d0 = difference(f64::from(from[0]), f64::from(from[1])) * outside_side.signum();
+                let d1 = difference(f64::from(to[0]), f64::from(to[1])) * outside_side.signum();
+                if d0 >= 0. {
+                    mask.push(*from);
+                }
+                if (d0 >= 0.) != (d1 >= 0.) {
+                    let t = d0 / (d0 - d1);
+                    mask.push([
+                        (f64::from(from[0]) + t * (f64::from(to[0]) - f64::from(from[0]))) as f32,
+                        (f64::from(from[1]) + t * (f64::from(to[1]) - f64::from(from[1]))) as f32,
+                    ]);
+                }
+            }
+            support = support.intersection(&polygon(&mask)?);
+        }
+        let stair = polygon(&self.definition.boundary)?;
+        // Quantized landing contours can extend slightly into a physical stair.
+        // Remove that overlap before binding; never extend a floor across a gap.
+        let support = support.difference(&stair);
         let Some(support) = support.iter().find(|patch| {
             [physical.middle, physical.outside]
                 .iter()
@@ -193,11 +261,6 @@ impl BoundPhysicalStair {
         }) else {
             return Err("landing receiver does not reach its physical door".into());
         };
-        let stair = polygon(&self.definition.boundary)?;
-        if stair.intersection(support).unsigned_area() > 0.001 {
-            return Err("landing receiver overlaps the stair in ground space".into());
-        }
-        let [sa, sb, sc] = self.definition.plane;
         let mut door_seam = false;
         for stair_edge in stair.exterior().lines() {
             for landing_edge in support.exterior().lines() {

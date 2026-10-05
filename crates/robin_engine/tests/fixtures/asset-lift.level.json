@@ -110,6 +110,8 @@
           {
             "is_lift": true,
             "state_id": 0,
+            "flags": 0,
+            "skeleton_segments": [],
             "polygon": {
               "points": [
                 [
@@ -130,8 +132,6 @@
                 ]
               ]
             },
-            "skeleton_segments": [],
-            "flags": 0,
             "obstacles": []
           }
         ]
@@ -257,6 +257,10 @@
         "motion_area_index": 3,
         "lift_type": 1,
         "direction": 4,
+        "endpoint_doors": [
+          0,
+          1
+        ],
         "doors": [
           {
             "door_type": 5,
@@ -321,10 +325,68 @@
             "layer_in": 2
           }
         ],
-        "endpoint_doors": [
-          0,
-          1
-        ]
+        "physical_navigation": {
+          "plane": [
+            5,
+            0,
+            -1950
+          ],
+          "boundary": [
+            [
+              390,
+              300
+            ],
+            [
+              410,
+              300
+            ],
+            [
+              410,
+              400.00000000000006
+            ],
+            [
+              390,
+              400.00000000000006
+            ]
+          ],
+          "obstacles": [],
+          "doors": [
+            {
+              "inside": [
+                392,
+                350.00000000000006,
+                10
+              ],
+              "middle": [
+                390,
+                350.00000000000006,
+                0
+              ],
+              "outside": [
+                380,
+                350.00000000000006,
+                0
+              ]
+            },
+            {
+              "inside": [
+                408,
+                350.00000000000006,
+                90
+              ],
+              "middle": [
+                410,
+                350.00000000000006,
+                100
+              ],
+              "outside": [
+                420,
+                350.00000000000006,
+                100
+              ]
+            }
+          ]
+        }
       }
     ]
   }

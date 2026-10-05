@@ -1,5 +1,6 @@
 import { terrainGameplay } from "./authored-terrain.ts";
 import { placeGameplaySurface } from "./place-gameplay-surface.ts";
+import { compilePhysicalStairRegion } from "./compile-physical-stair-region.ts";
 import {
   containsNavigationAnchor,
   navigationAnchorHeight,
@@ -363,7 +364,11 @@ function compileAssetGameplayAttempt(
   const navigationJoins: PlacedNavigationJoin[] = [];
   const movementSolids: { owner: string; shape: SightObstacle; headroom?: number }[] = [];
   const movementClearances: typeof surfaces = [];
-  const transitionBlockers: PlacedTransitionBlocker[] = [];
+  const transitionBlockers: (PlacedTransitionBlocker & {
+    worldPlane: HeightPlane;
+    worldPolygon: Point[];
+    worldHoles: Point[][];
+  })[] = [];
   const projectionSupports: (ProjectionMaterialSupport & {
     plane: HeightPlane;
     holes: Point[][];
@@ -426,6 +431,7 @@ function compileAssetGameplayAttempt(
     outsideReceiverSegment?: [Vec3, Vec3];
     insideReceiverSegment?: [Vec3, Vec3];
     middle: Point;
+    worldMiddle: Vec3;
     polygon: Point[];
   }[] = [];
   const sight: SightObstacle[] = [];
@@ -1058,6 +1064,7 @@ function compileAssetGameplayAttempt(
             }
           : {}),
         middle: project(transform(door.node, door.middle)),
+        worldMiddle: transform(door.node, door.middle),
         polygon: door.polygon.length
           ? ring(
               door.polygon.map((p) => project(transform(door.node, [...p, door.outside[2]]))),
@@ -1311,6 +1318,7 @@ function compileAssetGameplayAttempt(
       surfaces: [surface],
     });
   const areas: (NavigationAnchorArea & {
+    physical?: NavigationAnchorArea;
     lift?: string;
     navigationRegion?: string;
     sector: number;
@@ -1567,22 +1575,87 @@ function compileAssetGameplayAttempt(
     }
   allocateLightReceivingLayers(navigationRegions, lights, layers.length - 1, inside);
   const liftLayer = compactNavigationLayers(navigationRegions);
+  const physicalStairs = new Map<string, ReturnType<typeof compilePhysicalStairRegion>>();
+  for (const lift of lifts.filter((lift) => lift.type === 1)) {
+    const floor = surfaces.filter((surface) => surface.lift === lift.id);
+    const worldRing = (points: Point[], plane: HeightPlane): Vec3[] =>
+      points.map(([x, y]) => [x, y, planeHeight(plane, [x, y])]);
+    try {
+      physicalStairs.set(
+        lift.id,
+        compilePhysicalStairRegion({
+          frame: [0, 0, bounds[2], bounds[3]],
+          surfaces: floor.map((surface) => ({
+            polygon: worldRing(surface.worldPolygon, surface.worldPlane),
+            holes: surface.worldHoles.map((hole) => worldRing(hole, surface.worldPlane)),
+          })),
+          doors: doors
+            .filter((door) => door.lift === lift.id)
+            .map((door) => ({
+              inside: door.inside,
+              middle: door.worldMiddle,
+              outside: door.outside,
+            })),
+          solids: solidGeometry.map((solid) => ({
+            owner: solid.owner,
+            polygon: solid.footprint,
+            holes: [],
+            top: solid.top,
+            bottom: solid.bottom,
+          })),
+          clearances: movementClearances.map((surface) => ({
+            owner: surface.owner,
+            polygon: surface.worldPolygon,
+            holes: surface.worldHoles,
+            plane: surface.worldPlane,
+          })),
+          blockers: [
+            ...transitionBlockers.map((blocker) => ({
+              ...blocker,
+              plane: blocker.worldPlane,
+              polygon: blocker.worldPolygon,
+              holes: blocker.worldHoles,
+            })),
+            ...movementBlockers.map((blocker) => ({
+              transition: blocker.owner,
+              fixed: true,
+              applied: false,
+              plane: blocker.worldPlane,
+              polygon: blocker.worldPolygon,
+              holes: blocker.worldHoles,
+            })),
+          ],
+        }),
+      );
+    } catch (error) {
+      warnings.push(
+        `Lift ${lift.id}: physical navigation unavailable; retaining projected navigation: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
   // Receiving planes can share a navigation region; their provisional layers are not runtime layers.
   layers.length = 0;
   while (layers.length <= liftLayer) layers.push([]);
   for (const region of navigationRegions) {
     const { layer, lift, polygon: boundary, blockers, pieces } = region;
     const plane = pieces[0]!.plane;
-    const changing = compileTransitionObstacles(
-      boundary,
-      blockers,
-      plane,
-      transitionBlockers,
-      warnings,
-      pieces.length > 1 ? pieces : undefined,
-      pieces[0]!.preserveMovementBoundary === true,
-      pieces[0]!.worldPlane,
-    );
+    const physical = lift ? physicalStairs.get(lift) : undefined;
+    const changing = physical
+      ? {
+          pairs: physical.pairs,
+          obstacles: physical.area.obstacles,
+          initial: physical.initialBlockers,
+        }
+      : compileTransitionObstacles(
+          boundary,
+          blockers,
+          plane,
+          transitionBlockers,
+          warnings,
+          pieces.length > 1 ? pieces : undefined,
+          pieces[0]!.preserveMovementBoundary === true,
+          pieces[0]!.worldPlane,
+        );
     for (const [id, pair] of changing.pairs)
       transitions
         .find((t) => t.id === id)!
@@ -1591,24 +1664,49 @@ function compileAssetGameplayAttempt(
           sector,
           changing_obstacle: pair,
         });
-    layers[layer]!.push({
-      is_lift: !!lift,
-      state_id: 0,
-      polygon: { points: boundary },
-      skeleton_segments: [],
-      flags: 0,
-      obstacles: [
-        ...blockers.map((points) => ({ state_id: 0, polygon: { points } })),
-        ...changing.obstacles,
-      ],
-    });
+    layers[layer]!.push(
+      physical?.area ?? {
+        is_lift: !!lift,
+        state_id: 0,
+        polygon: { points: boundary },
+        skeleton_segments: [],
+        flags: 0,
+        obstacles: [
+          ...blockers.map((points) => ({ state_id: 0, polygon: { points } })),
+          ...changing.obstacles,
+        ],
+      },
+    );
     // Projection surfaces provide layer-aware elevation and picking.
     for (const piece of pieces) {
-      areas.push({ ...piece, sector, layer, blockers: [...piece.blockers, ...changing.initial] });
+      areas.push({
+        ...piece,
+        sector,
+        layer,
+        blockers: physical
+          ? physical.area.obstacles
+              .filter(
+                (obstacle) => obstacle.state_id === 0 || (obstacle.state_id & 0x55555555) !== 0,
+              )
+              .map((obstacle) => obstacle.polygon.points)
+          : [...piece.blockers, ...changing.initial],
+        ...(physical
+          ? {
+              physical: {
+                coordinateSpace: "world" as const,
+                plane: physical.navigation.plane,
+                polygon: physical.navigation.boundary,
+                blockers: physical.initialBlockers,
+              },
+            }
+          : {}),
+      });
       jumpWalkAreas.push({
         plane: piece.plane,
         polygon: boundary,
-        blockers: [...blockers, ...changing.obstacles.map((o) => o.polygon.points)],
+        blockers: physical
+          ? physical.area.obstacles.map((o) => o.polygon.points)
+          : [...blockers, ...changing.obstacles.map((o) => o.polygon.points)],
       });
       const walkableCoverage =
         piece.preserveMovementBoundary && piece.blockers.length
@@ -1665,7 +1763,8 @@ function compileAssetGameplayAttempt(
         });
       }
     }
-    sector += 1 + blockers.length + changing.obstacles.length;
+    sector +=
+      1 + (physical ? physical.area.obstacles.length : blockers.length + changing.obstacles.length);
   }
   for (const support of projectionSupports)
     if (
@@ -1691,18 +1790,25 @@ function compileAssetGameplayAttempt(
     const matches = areas.filter(
       (a) =>
         (lift === null || a.lift === lift) &&
-        containsNavigationAnchor(a, point, { projected, allowBlocked }),
+        containsNavigationAnchor(a.physical ?? a, point, { projected, allowBlocked }),
     );
     if (new Set(matches.map((a) => a.sector)).size !== 1) {
       const containing = areas.filter((a) =>
-        containsNavigationAnchor(a, point, { projected, allowBlocked: true, requireHeight: false }),
+        containsNavigationAnchor(a.physical ?? a, point, {
+          projected,
+          allowBlocked: true,
+          requireHeight: false,
+        }),
       );
       const details = containing.slice(0, 8).map((a) => ({
         sector: a.sector,
         layer: a.layer,
         lift: a.lift,
-        height: navigationAnchorHeight(a, point),
-        blocked: !containsNavigationAnchor(a, point, { projected, requireHeight: false }),
+        height: navigationAnchorHeight(a.physical ?? a, point),
+        blocked: !containsNavigationAnchor(a.physical ?? a, point, {
+          projected,
+          requireHeight: false,
+        }),
       }));
       throw new UnresolvedSurface(
         `${label} must resolve to exactly one ${allowBlocked ? "" : "unblocked "}walkable surface (found ${matches.length}); world point ${JSON.stringify(point)}, projected ${JSON.stringify(projected)}; containing areas (${containing.length}, showing up to 8) ${JSON.stringify(details)}`,
@@ -2351,6 +2457,10 @@ function compileAssetGameplayAttempt(
             const placedEndpoints = doors.filter(
               (door, index) => door.lift === lift.id && compiledDoors[index] !== null,
             );
+            const physical = physicalStairs.get(lift.id)?.navigation;
+            const physicalDoorIndices = doors.flatMap((door, index) =>
+              door.lift === lift.id ? [index] : [],
+            );
             // Heights and stable local door order survive arbitrary placement;
             // projected screen Y does not identify the top of a rotated lift.
             const ranked = placedEndpoints
@@ -2375,6 +2485,16 @@ function compileAssetGameplayAttempt(
               direction: lift.direction,
               endpoint_doors: [ranked[0]!.index, ranked.at(-1)!.index] as [number, number],
               doors: endpoints,
+              ...(physical
+                ? {
+                    physical_navigation: {
+                      ...physical,
+                      doors: physical.doors.filter(
+                        (_, index) => compiledDoors[physicalDoorIndices[index]!] !== null,
+                      ),
+                    },
+                  }
+                : {}),
             };
           }),
         }

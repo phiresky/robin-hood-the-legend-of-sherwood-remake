@@ -75,10 +75,14 @@ Export-frame clipping also operates in world space, preserving edge-on floors
 and reallocating collision identities when cropping changes holes or barriers.
 The main compiler shares world-space surface placement and volume-height slicing.
 Its point-anchor queries now support world-space areas, preserving distinct
-heights and holes at coincident screen positions. Area assembly, receiver/material
-construction and lift emission still depend on projected geometry.
-**Normal exports do not yet emit physical
-stairs, and the 24 failed keep routes remain unresolved.** Physical transitions
+heights and holes at coincident screen positions. Normal exports now emit physical
+navigation for compatible planar stairs, with world-space collision and shared
+control identities. Receiving and material queries retain their projected
+geometry; world-space anchors use the physical floor. Unsupported physical
+assemblies warn and retain projected navigation. Earlier surface fitting and
+region assembly still reject edge-on or disconnected cases before this emission
+stage. **The 24 failed keep routes remain unresolved pending a fresh placement
+audit and the remaining compiler integration.** Physical transitions
 now wait at a reached world target until animation completion, or preserve
 unfinished distance in the next movement order. An edge-on actor-loop test
 covers both cases. Local point Move requests now resolve an invertible stair

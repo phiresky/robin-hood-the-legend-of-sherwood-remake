@@ -164,6 +164,8 @@
           {
             "is_lift": true,
             "state_id": 0,
+            "flags": 0,
+            "skeleton_segments": [],
             "polygon": {
               "points": [
                 [
@@ -184,8 +186,6 @@
                 ]
               ]
             },
-            "skeleton_segments": [],
-            "flags": 0,
             "obstacles": []
           }
         ]
@@ -349,6 +349,10 @@
         "motion_area_index": 5,
         "lift_type": 1,
         "direction": 4,
+        "endpoint_doors": [
+          0,
+          1
+        ],
         "doors": [
           {
             "door_type": 5,
@@ -413,10 +417,68 @@
             "layer_in": 2
           }
         ],
-        "endpoint_doors": [
-          0,
-          1
-        ]
+        "physical_navigation": {
+          "plane": [
+            5,
+            0,
+            -3450
+          ],
+          "boundary": [
+            [
+              690,
+              300
+            ],
+            [
+              710,
+              300
+            ],
+            [
+              710,
+              400.00000000000006
+            ],
+            [
+              690,
+              400.00000000000006
+            ]
+          ],
+          "obstacles": [],
+          "doors": [
+            {
+              "inside": [
+                692,
+                350.00000000000006,
+                10
+              ],
+              "middle": [
+                690,
+                350.00000000000006,
+                0
+              ],
+              "outside": [
+                680,
+                350.00000000000006,
+                0
+              ]
+            },
+            {
+              "inside": [
+                708,
+                350.00000000000006,
+                90
+              ],
+              "middle": [
+                710,
+                350.00000000000006,
+                100
+              ],
+              "outside": [
+                720,
+                350.00000000000006,
+                100
+              ]
+            }
+          ]
+        }
       }
     ],
     "warnings": [

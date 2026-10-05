@@ -1279,6 +1279,9 @@ fn transformed_lift_fixture(
         }
     }
     for lift in &mut geometry.lifts {
+        // This helper rotates projected geometry, not an asset in world space.
+        // Keep legacy traversal coverage; physical placement uses editor exports.
+        lift.physical_navigation = None;
         lift.lift_type = lift_type;
         lift.endpoint_doors = Some([0, 1]);
         lift.direction = (lift.direction + direction_delta).rem_euclid(16);

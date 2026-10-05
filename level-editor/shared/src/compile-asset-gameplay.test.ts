@@ -123,6 +123,11 @@ test("changing stair barriers follow translated and rotated traversal areas", ()
       (a) => a.is_lift,
     )!;
     assert.equal(area.obstacles.filter((o) => o.state_id === 2).length, 1);
+    assert.ok(lift.physical_navigation, compiled.warnings?.join("\n") ?? "Missing physical stair");
+    assert.equal(lift.physical_navigation.doors.length, lift.doors.length);
+    assert.equal(lift.physical_navigation.obstacles.length, area.obstacles.length);
+    for (const [index, obstacle] of lift.physical_navigation.obstacles.entries())
+      assert.equal(obstacle.motion_obstacle, index);
   }
 });
 
