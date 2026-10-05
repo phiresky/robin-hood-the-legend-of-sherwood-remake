@@ -10,6 +10,54 @@ import {
 import { subdir } from "./fs.ts";
 import { readLossyModel, lossyApplies } from "./lossy-models.ts";
 
+import { captureStateAppearance, type StateAppearanceTemplate } from "./state-appearance-player.ts";
+
+/** Retain selected-scene clips before display names replace loader binding names. */
+export function retainSceneAnimations(
+  scene: THREE.Object3D,
+  clips: readonly THREE.AnimationClip[] = [],
+  loadedScenes: readonly THREE.Object3D[] = [scene],
+) {
+  const selected = new Set<THREE.Object3D>();
+  scene.traverse((node) => selected.add(node));
+  const all = new Set<THREE.Object3D>(selected);
+  for (const root of loadedScenes) root.traverse((node) => all.add(node));
+  scene.animations = clips.flatMap((clip) => {
+    const tracks = clip.tracks.flatMap((original) => {
+      const parsed = THREE.PropertyBinding.parseTrackName(original.name);
+      const name = parsed.nodeName;
+      const matches =
+        !name || name === "."
+          ? [scene]
+          : [...all].filter((node) => node.name === name || node.uuid === name);
+      if (matches.length !== 1)
+        throw new Error(`Missing or ambiguous loaded animation target: ${original.name}`);
+      const target = matches[0]!;
+      // A shared GLB may contain clips for another selected scene.
+      if (!selected.has(target)) return [];
+      const prefix = !name || name === "." ? "" : name;
+      if (!original.name.startsWith(prefix + "."))
+        throw new Error(`Unsupported loaded animation binding: ${original.name}`);
+      const track = original.clone();
+      track.name = target.uuid + original.name.slice(prefix.length);
+      return [track];
+    });
+    return tracks.length
+      ? [new THREE.AnimationClip(clip.name, clip.duration, tracks, clip.blendMode)]
+      : [];
+  });
+}
+
+/** Capture an extracted group using retained UUID bindings; static assets have no player. */
+export function captureLoadedStateAppearance(
+  scene: THREE.Object3D,
+  selectedRoot: THREE.Object3D = scene,
+): StateAppearanceTemplate | undefined {
+  return scene.animations.length
+    ? captureStateAppearance(selectedRoot, scene.animations)
+    : undefined;
+}
+
 async function read(root: FileSystemDirectoryHandle, path: string) {
   if (!safeLibraryPath(path)) throw new Error(`Unsafe scene asset path: ${path}`);
   const parts = path.split("/");
@@ -168,6 +216,7 @@ export class SceneAssetLoader {
       };
     });
     const result = await loader.parseAsync(bytes, "");
+    retainSceneAnimations(result.scene, result.animations, result.scenes);
     result.scene.traverse((node) => {
       const index = result.parser?.associations.get(node)?.nodes;
       const name = index === undefined ? undefined : result.parser.json.nodes[index]?.name;

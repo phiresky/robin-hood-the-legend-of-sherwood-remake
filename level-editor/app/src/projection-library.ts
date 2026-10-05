@@ -16,7 +16,7 @@ import {
   type ProjectionAssetEntry,
 } from "@rle/shared";
 import { isNotFound, readJson, subdir } from "./fs.ts";
-import { SceneAssetLoader } from "./scene-assets.ts";
+import { SceneAssetLoader, retainSceneAnimations } from "./scene-assets.ts";
 import { readLossyModel, lossyApplies } from "./lossy-models.ts";
 import { disposeObjectResources } from "./resources.ts";
 import { hasGameplayEndpoints, type PlacementAsset } from "./asset-commands.ts";
@@ -296,12 +296,15 @@ export async function prepareProjectionAsset(
         "",
       );
       asset = gltf.scene;
+      retainSceneAnimations(asset, gltf.animations, gltf.scenes);
       restoreNodeNames(gltf);
     }
     const mapRoot = asset.children.find((child) => child.name === "map");
     if (!mapRoot || mapRoot.children.length !== 1)
       throw new Error(`Standalone asset requires exactly one group: ${entry.id}`);
     const group = mapRoot.children[0]!;
+    // Keep UUID-bound clips with the logical group when insertion extracts it.
+    group.animations = asset.animations;
     // Pinned descriptors already carry the appearance ID, but model groups
     // retain the base asset ID for every state.
     const groupId = entry.state_variant
@@ -453,10 +456,12 @@ export async function loadProjectionAssetPreview(
       return prepared.asset;
     }
     const gltf = await previewLoader().parseAsync(selected, "");
+    retainSceneAnimations(gltf.scene, gltf.animations, gltf.scenes);
     restoreNodeNames(gltf);
     const preview = gltf.scene;
     const mapRoot = preview.children.find((child) => child.name === "map");
     const group = mapRoot?.children[0];
+    if (group) group.animations = preview.animations;
     if (group)
       for (const part of variant?.parts ?? original.parts) {
         const node = group.children.find((child) => child.name === part.node);

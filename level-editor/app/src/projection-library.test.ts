@@ -10,6 +10,8 @@ import {
   prepareProjectionPlacement,
   readPinnedAssetDescriptors,
 } from "./projection-library.ts";
+import { captureLoadedStateAppearance } from "./scene-assets.ts";
+import { StateAppearancePlayer } from "./state-appearance-player.ts";
 import { disposeObjectResources } from "./resources.ts";
 import { insertProjectionAsset } from "./asset-commands.ts";
 import { prepareMapCandidate } from "./map-candidate.ts";
@@ -1146,4 +1148,42 @@ test("published catalog supports insertion without original models or receipts",
     }),
     /model changed/,
   );
+});
+
+test("projection direct and shared loaders retain clips on the extracted logical group", async (t) => {
+  for (const shared of [false, true]) {
+    const f = fixture();
+    if (shared) f.json(f.entry.descriptor, { ...f.descriptor, resources: [] });
+    const node = new THREE.Object3D();
+    node.name = "phase_unique";
+    f.mesh.add(node);
+    const clip = new THREE.AnimationClip("native", 0.08, [
+      new THREE.VectorKeyframeTrack(
+        "phase_unique.scale",
+        [0, 0.08],
+        [1, 1, 1, 2, 2, 2],
+        THREE.InterpolateDiscrete,
+      ),
+    ]);
+    const mock = t.mock.method(GLTFLoader.prototype, "parseAsync", async () => ({
+      scene: f.asset,
+      animations: [clip],
+      parser: {
+        associations: new Map([[node, { nodes: 0 }]]),
+        json: { nodes: [{ name: "restored/phase" }] },
+      },
+    }));
+    const prepared = await prepareProjectionAsset(f.directory, f.entry, "Leicester");
+    assert.equal(node.name, "restored/phase");
+    assert.equal(prepared.asset.animations.length, 1);
+    f.group.removeFromParent();
+    const player = new StateAppearancePlayer(captureLoadedStateAppearance(f.group)!);
+    player.select("native", { mode: "clamp", terminalTick: 2 });
+    player.seek(2);
+    assert.equal(player.content.getObjectByName("restored/phase")!.scale.x, 2);
+    assert.equal(node.scale.x, 1);
+    player.dispose();
+    disposeObjectResources([prepared.asset, f.group]);
+    mock.mock.restore();
+  }
 });
