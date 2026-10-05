@@ -11,7 +11,7 @@ from render_slots import acquire,release
 from sign_context_import import append_verified
 from log_trap_state_candidate import point
 from tree_geometry import RAY
-BASE=OUT/'restart2-state/net-empty01-v7';DEST=BASE/'joint'
+BASE=OUT/'restart2-state/net-empty01-v9';DEST=BASE/'joint'
 def main():
  if DEST.exists():raise FileExistsError(DEST)
  acquire()
@@ -25,7 +25,7 @@ def main():
    for obj in objects:
     (wood if 'wood 'in obj.name else foliage).append(obj)
   intersections=[]
-  for name in ['Empty bag','Wooden piece']:
+  for name in ['Empty bag','Wooden piece','Upper attachment knot']:
    body=bpy.data.objects[name]
    for receiver in wood:
     test=body.copy();test.data=body.data.copy();scene.collection.objects.link(test);bpy.context.view_layer.objects.active=test;mod=test.modifiers.new('Independent support intersection','BOOLEAN');mod.operation='INTERSECT';mod.solver='EXACT';mod.object=receiver;bpy.ops.object.modifier_apply(modifier=mod.name);bm=bmesh.new();bm.from_mesh(test.data);volume=abs(bm.calc_volume(signed=True));bm.free();intersections.append({'body':name,'receiver':receiver.name,'volume':volume});bpy.data.objects.remove(test,do_unlink=True)

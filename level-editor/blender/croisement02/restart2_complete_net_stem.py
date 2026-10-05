@@ -11,12 +11,12 @@ from evidence_io import sha,write_json
 from render_slots import acquire,release
 from tree_geometry import SIN,COS,RAY
 from log_trap_state_candidate import material
-BASE=OUT/'restart2-state/net-empty01-v7';DEST=OUT/'restart2-state/net-empty01-v8'
+BASE=OUT/'restart2-state/net-empty01-v7';DEST=OUT/'restart2-state/net-empty01-v9'
 def main():
  if DEST.exists():raise FileExistsError(DEST)
  acquire()
  try:
-  DEST.mkdir();prior=json.loads((BASE/'report.json').read_text());assert sha(BASE/'model.blend')==prior['model_sha256'];bpy.ops.wm.open_mainfile(filepath=str(BASE/'model.blend'));scene=bpy.context.scene;row=next(r for r in json.loads((OUT/'net-endpoint-volume-fit-v2/manifest.json').read_text())['records']if r['family']=='piege01'and r['variant']=='e');x,y,w,h=row['bbox'];world_y=-1107/SIN+RAY.y*54;vertices=[];faces=[];rings=[(.5,35.3,.35),(2,35.2,1.65),(4.5,35.3,2.0),(7.5,35.7,2.15),(10.5,35.9,1.4)]
+  DEST.mkdir();prior=json.loads((BASE/'report.json').read_text());assert sha(BASE/'model.blend')==prior['model_sha256'];bpy.ops.wm.open_mainfile(filepath=str(BASE/'model.blend'));scene=bpy.context.scene;row=next(r for r in json.loads((OUT/'net-endpoint-volume-fit-v2/manifest.json').read_text())['records']if r['family']=='piege01'and r['variant']=='e');x,y,w,h=row['bbox'];world_y=-1107/SIN+RAY.y*54;vertices=[];faces=[];rings=[(.5,35.3,.35),(2,35.2,2.2),(4.5,35.3,2.5),(7.5,35.5,2.7),(10.5,35.9,1.4)]
   for sy,sx,r in rings:
    for j in range(16):
     a=j*math.pi/8;vertices.append((x+sx+r*math.cos(a),world_y+r*.65*math.sin(a),(-(y+sy)-world_y*SIN)/COS))
