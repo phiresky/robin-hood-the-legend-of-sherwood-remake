@@ -68,7 +68,7 @@ def assign_mesh(obj,mesh):
     obj.data=mesh
 
 
-def fit_native_width(obj,alpha,role):
+def fit_native_width(obj,alpha,role,x0=1059):
     """Adjust the full rounded wood volume to the measured camera silhouette."""
     mesh=obj.data;points=np.asarray([tuple(obj.matrix_world@v.co) for v in mesh.vertices]);projected=np.column_stack([points[:,0],-points[:,1]*SIN-points[:,2]*COS])
     edges=np.asarray([tuple(e.vertices) for e in mesh.edges]);a=projected[edges[:,0]];b=projected[edges[:,1]];dy=b[:,1]-a[:,1]
@@ -81,12 +81,14 @@ def fit_native_width(obj,alpha,role):
         intersections=a[active,0]+(sy-a[active,1])/dy[active]*(b[active,0]-a[active,0])
         breaks=np.flatnonzero(np.diff(xs)>1)+1;runs=np.split(xs,breaks)
         if role=='main':
-            lo,hi=1059+runs[-1][0],1060+runs[-1][-1]
+            lo,hi=x0+runs[-1][0],x0+1+runs[-1][-1]
             if len(runs)==1 and y<80:lo=max(lo,hi-(18+(y-50)*.15))
-        else:
-            lo,hi=1059+runs[0][0],1060+runs[0][-1]
+        elif role=='fork':
+            lo,hi=x0+runs[0][0],x0+1+runs[0][-1]
             if len(runs)==1:hi=min(hi,lo+16)
             if y>82:continue
+        else:
+            lo,hi=x0+xs[0],x0+1+xs[-1]
         samples.append(sy);old_min.append(float(intersections.min()));old_max.append(float(intersections.max()));target_min.append(float(lo)-.25);target_max.append(float(hi)+.25)
     if len(samples)<20:raise ValueError('Insufficient independent silhouette slices')
     for field in (target_min,target_max):

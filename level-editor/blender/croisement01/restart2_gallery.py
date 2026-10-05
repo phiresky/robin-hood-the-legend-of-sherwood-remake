@@ -3,6 +3,7 @@ import hashlib
 import html
 import json
 from pathlib import Path
+from restart2_review_labels import labeled_sheet
 
 ROOT=Path(__file__).resolve().parents[3]
 OUT=ROOT/'level-editor/work/croisement01-refinement/restart2'
@@ -26,6 +27,7 @@ def main():
         for label,path in [('Solid','modified/solid.png'),('Actual saved materials','inspection/actual-materials/sheet.png'),('Original source camera','inspection/native-source/comparison.png'),('Archival terrain contacts','inspection/terrain-contact/sheet.png')]:
             source=worker/path
             if not source.exists():continue
+            if label!='Original source camera':source=labeled_sheet(worker,path)
             digest=hashlib.sha256(source.read_bytes()).hexdigest()
             url='../'+str(source.relative_to(OUT))+'?sha256='+digest
             items.append(f'<figure><figcaption>{label}</figcaption><a href="{url}"><img src="{url}"></a></figure>')
