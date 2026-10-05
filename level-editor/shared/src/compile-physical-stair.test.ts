@@ -89,6 +89,47 @@ test("physical changing barriers retain fractional geometry and state identities
   }
 });
 
+test("physical clipping dust does not allocate a collision control", () => {
+  const result = compilePhysicalTransitionObstacles(
+    [
+      [3000, 3000],
+      [3100, 3000],
+      [3100, 3100],
+      [3000, 3100],
+    ],
+    [],
+    [0, 0, 0],
+    [
+      {
+        transition: "dust",
+        applied: false,
+        plane: [0, 0, 0],
+        holes: [],
+        polygon: [
+          [3010, 3010],
+          [3011, 3010],
+          [3011, 3010 + 1e-10],
+        ],
+      },
+      {
+        transition: "barrier",
+        applied: false,
+        plane: [0, 0, 0],
+        holes: [],
+        polygon: [
+          [3020, 3020],
+          [3030, 3020],
+          [3030, 3030],
+          [3020, 3030],
+        ],
+      },
+    ],
+  );
+  assert.deepEqual([...result.pairs], [["barrier", 0]]);
+  assert.equal(result.obstacles.length, 1);
+  assert.equal(result.obstacles[0]!.state_id, 1);
+});
+
 test("physical volume barriers slice the real stair height before projection", () => {
   const floor = rectangle(380, 300, 420, 400);
   const plane = heightPlane(floor);

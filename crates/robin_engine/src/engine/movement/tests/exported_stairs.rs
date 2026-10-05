@@ -872,6 +872,12 @@ fn audit_exported_lifts(
     sprite: Option<&crate::sprite::Sprite>,
     report_name: &str,
 ) {
+    if std::env::var_os("ROBIN_LIFT_TRACE").is_some() {
+        let _ = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::WARN)
+            .with_test_writer()
+            .try_init();
+    }
     let directory = std::path::PathBuf::from(std::env::var("ROBIN_ASSET_MAP_DIAGNOSTICS").unwrap());
     let manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(directory.join("diagnostics.json")).unwrap())

@@ -1,6 +1,6 @@
 //! Placed stair geometry in ground coordinates, retaining live collision ownership.
 
-use geo::{Intersects, Validation};
+use geo::{Closest, ClosestPoint, Intersects, Validation};
 use serde::{Deserialize, Serialize};
 
 use crate::level_data::{RawLift, RawMotionArea};
@@ -129,7 +129,7 @@ impl PhysicalStairNavigation {
             geo::LineString::from(
                 self.boundary
                     .iter()
-                    .map(|point| (point[0], point[1]))
+                    .map(|point| (f64::from(point[0]), f64::from(point[1])))
                     .collect::<Vec<_>>(),
             ),
             Vec::new(),
@@ -152,11 +152,49 @@ impl PhysicalStairNavigation {
                 if on_floor && (plane.world_position([x, y])?[2] - z).abs() > 0.001 {
                     return Err("physical stair door is not on its floor".into());
                 }
-                if on_floor && !boundary.intersects(&geo::Point::new(world[0], world[1])) {
+                if on_floor && !contains_rounded_anchor(&boundary, [world[0], world[1]]) {
                     return Err("physical stair door is outside its boundary".into());
                 }
             }
         }
         Ok(())
+    }
+}
+
+fn contains_rounded_anchor(boundary: &geo::Polygon<f64>, point: [f32; 2]) -> bool {
+    let point = geo::Point::new(f64::from(point[0]), f64::from(point[1]));
+    if boundary.intersects(&point) {
+        return true;
+    }
+    let Closest::SinglePoint(closest) = boundary.closest_point(&point) else {
+        return false;
+    };
+    // Independently encoded f32 vertices and anchors can round to opposite
+    // sides of the same edge. Match the runtime route query's error budget.
+    let tolerance = point.x().abs().max(point.y().abs()).max(1.0) * f64::from(f32::EPSILON) * 2.0;
+    (closest.x() - point.x()).hypot(closest.y() - point.y()) <= tolerance
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn boundary_validation_accepts_coordinate_rounding_but_not_missing_floor() {
+        let boundary = geo::Polygon::new(
+            geo::LineString::from(vec![
+                (1000., 2000.),
+                (1100., 2033.),
+                (1100., 2100.),
+                (1000., 2100.),
+            ]),
+            vec![],
+        );
+        let x = 1037.1234_f32;
+        let y = (2000. + (f64::from(x) - 1000.) * 0.33) as f32;
+        assert!(contains_rounded_anchor(&boundary, [x, y]));
+        assert!(contains_rounded_anchor(&boundary, [x, y - 0.000244140625]));
+        assert!(!contains_rounded_anchor(&boundary, [x, y - 0.01]));
+        assert!(!contains_rounded_anchor(&boundary, [x, y - 0.125]));
     }
 }

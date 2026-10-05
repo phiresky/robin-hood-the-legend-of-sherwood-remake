@@ -218,13 +218,6 @@ function compileTransitionObstaclesInFrame(
         ? region
         : quantizeGeneratedMotionPolygon(region, Math.round, blocker.transition, warnings);
       if (!rounded) continue;
-      let pair = pairs.get(blocker.transition);
-      if (!blocker.fixed && pair === undefined) {
-        pair = pairs.size;
-        if (pair >= 16) throw new MovementTransitionLimit(blocker.transition);
-        pairs.set(blocker.transition, pair);
-      }
-      const state_id = blocker.fixed ? 0 : (1 << (2 * pair! + (blocker.applied ? 1 : 0))) >>> 0;
       const rings = rounded.map((ring) => {
         if (!physical) return simplifyMotionRing(ring);
         const points = ring.map(([x, y]): Point => [x, y]);
@@ -249,12 +242,27 @@ function compileTransitionObstaclesInFrame(
           );
       }
       for (const points of pieces) {
+        const origin = physical ? points[0]! : [0, 0];
         const area = points.reduce((sum, p, i) => {
           const q = points[(i + 1) % points.length]!;
-          return sum + p[0] * q[1] - q[0] * p[1];
+          return (
+            sum +
+            (p[0] - origin[0]!) * (q[1] - origin[1]!) -
+            (q[0] - origin[0]!) * (p[1] - origin[1]!)
+          );
         }, 0);
+        // Clipping tangent world-space solids can leave numerical slivers.
+        // Drop them before allocating control identities; no collision survives.
+        if (physical && (points.length < 3 || Math.abs(area) < 1e-8)) continue;
         if (points.length < 3 || Math.abs(area) < (physical ? 1e-8 : 1))
           throw new Error(`${blocker.transition}: degenerate state-dependent movement blocker`);
+        let pair = pairs.get(blocker.transition);
+        if (!blocker.fixed && pair === undefined) {
+          pair = pairs.size;
+          if (pair >= 16) throw new MovementTransitionLimit(blocker.transition);
+          pairs.set(blocker.transition, pair);
+        }
+        const state_id = blocker.fixed ? 0 : (1 << (2 * pair! + (blocker.applied ? 1 : 0))) >>> 0;
         if (area < 0) points.reverse();
         obstacles.push({ state_id, polygon: { points } });
         if (!blocker.applied) initial.push(points);

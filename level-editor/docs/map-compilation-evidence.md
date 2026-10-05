@@ -4,6 +4,43 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Staged keep seams expose landing precision loss (2026-10-05)
+
+`work/map-compile/keep-door-seams-WR2Oyl` stages asset-local seam corrections from
+the unchanged keep candidate. Each stair keeps its existing plane. Its end
+vertices move along the slope to the adjacent asset-owned landing heights; door
+midpoints are recomputed on their outside-to-inside segments. Nearby landing
+vertices align with that seam. The matching landings are selected by local
+geometry and height, without scene or level-data lookups. Maximum stair-floor XY
+changes are 0.334602, 0.313056 and 1.104837 units for 156, 154 and 134 respectively.
+The largest midpoint XYZ change is 2.096771 units. These changes are staged for
+review, not published.
+
+The candidate exposed two numerical issues now fixed: tangent solid clipping
+could produce negligible fragments that aborted physical compilation, and f32
+encoding could place an exact boundary anchor just outside its independently
+rounded edge. Physical collision area calculation now uses a local origin and
+discards generated fragments below the existing physical area threshold before
+allocating control pairs. Native boundary validation accepts only the same
+coordinate-rounding budget used by physical route queries; tests still reject
+meaningful unsupported positions.
+
+`work/map-compile/keep-placements-kPG2tq` emits all three physical stairs at each
+of eight placements and loads natively. **All 80 directed actor routes fail** at
+entry. This is not a publishable candidate. The isolated trace in
+`work/map-compile/keep-bindings-zw__462v` finds no bound landings: five doors fail
+receiver reach and two fail shared-edge matching in the zero-rotation case.
+Their exact midpoints are 0.121979–0.471218 units from the integer-rounded landing
+navigation edges. Some receiver contours also differ. Preserve actual authored
+landing support through compilation and binding before retrying publication;
+relaxing actor-sized support checks would hide the missing geometry.
+
+The audit's `ROBIN_LIFT_TRACE` mode now enables loader warnings. Focused compiler
+suites pass 141 tests; all 63 map-export tests pass. Native movement passes 205
+tests (12 ignored), and the new level-data boundary validation test passes.
+Both editor typechecks, focused lint, formatting and the game build pass. The unchanged keep baseline
+remains at 56/80 successful routes; this staged candidate does not supersede it.
+
 ## Refreshed keep placement audit and unsupported door seams (2026-10-05)
 
 `work/map-compile/keep-placements-9UUrtV` recompiles the precision-preserving

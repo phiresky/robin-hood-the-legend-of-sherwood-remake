@@ -86,6 +86,11 @@ stairs retain projected navigation because authored door midpoints lie outside
 their floor boundaries. Unsupported midpoints are 0.13–0.52 asset-local units
 beyond the floor; midpoint/landing height differences reach 0.84 units. These
 asset seams need correction before physical traversal can be evaluated there.
+A staged seam correction now emits all three physical stairs at all eight
+placements, but fails all 80 actor routes at entry: rounded landing navigation
+and some receiver contours do not meet the exact door seams. This unpublished
+candidate is not a replacement for the current definitions. Exact authored
+landing support still needs preserving through export and runtime binding.
 Physical transitions
 now wait at a reached world target until animation completion, or preserve
 unfinished distance in the next movement order. An edge-on actor-loop test
