@@ -11,7 +11,7 @@ from render_slots import acquire,release
 from sign_context_import import append_verified
 from log_trap_state_candidate import point
 from tree_geometry import RAY
-BASE=OUT/'restart2-state/net-empty01-v9';DEST=BASE/'joint'
+BASE=OUT/'restart2-state/net-empty01-v11';DEST=BASE/'joint'
 def main():
  if DEST.exists():raise FileExistsError(DEST)
  acquire()

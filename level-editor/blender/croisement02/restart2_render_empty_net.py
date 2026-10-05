@@ -10,7 +10,7 @@ from catalog import OUT
 from evidence_io import sha,write_json
 from render_slots import acquire,release
 from tree_geometry import SIN,COS
-BASE=OUT/'restart2-state/net-empty01-v9'
+BASE=OUT/'restart2-state/net-empty01-v11'
 def main():
  dest=BASE/'review';dest.mkdir(exist_ok=False);expected=json.loads((BASE/'report.json').read_text())['model_sha256']
  if sha(BASE/'model.blend')!=expected:raise ValueError('Endpoint changed')
