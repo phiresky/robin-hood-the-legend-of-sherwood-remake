@@ -9,6 +9,8 @@ pub(super) struct BoundLanding {
     pub holes: Vec<Vec<[f32; 2]>>,
     pub layer: usize,
     pub area: usize,
+    pub sector: u16,
+    pub plane: [f64; 3],
     pub obstacles: Vec<(u32, Vec<[f32; 2]>)>,
 }
 
@@ -41,19 +43,19 @@ mod tests {
         .unwrap();
         assert!(
             stair
-                .bind_landing(0, &motion, 0, 0, [0., 0., 101.], None)
+                .bind_landing(0, &motion, 0, 0, 0, [0., 0., 101.], None)
                 .is_err()
         );
         assert!(
             stair
-                .bind_landing(0, &motion, 0, 0, [0.2, 0., 20.], None)
+                .bind_landing(0, &motion, 0, 0, 0, [0.2, 0., 20.], None)
                 .is_err()
         );
         let short_receiver =
             polygon(&[[380., 270.], [420., 270.], [420., 299.], [380., 299.]]).unwrap();
         assert!(
             stair
-                .bind_landing(0, &motion, 0, 0, [0., 0., 100.], Some(&short_receiver))
+                .bind_landing(0, &motion, 0, 0, 0, [0., 0., 100.], Some(&short_receiver))
                 .is_err()
         );
         assert!(
@@ -62,13 +64,49 @@ mod tests {
         );
         let receiver = polygon(&[[380., 270.], [420., 270.], [420., 300.], [380., 300.]]).unwrap();
         stair
-            .bind_landing(0, &motion, 0, 0, [0., 0., 100.], Some(&receiver))
+            .bind_landing(0, &motion, 0, 0, 0, [0., 0., 100.], Some(&receiver))
             .unwrap();
         assert_eq!(stair.landings.len(), 1);
+        assert!(stair.supports_landing_neighbour(0, 0, [400., 299., 100.]));
+        assert!(!stair.supports_landing_neighbour(1, 0, [400., 299., 100.]));
+        assert!(!stair.supports_landing_neighbour(0, 1, [400., 299., 100.]));
+        assert!(!stair.supports_landing_neighbour(0, 0, [400., 299., 200.]));
+        assert!(!stair.supports_landing_neighbour(0, 0, [400., 301., 100.]));
     }
 }
 
 impl BoundPhysicalStair {
+    /// Only actors on an explicitly bound adjoining floor can disturb this stair.
+    pub(crate) fn supports_landing_neighbour(
+        &self,
+        layer: u16,
+        sector: u16,
+        position: [f32; 3],
+    ) -> bool {
+        self.landings.iter().any(|landing| {
+            if landing.layer != usize::from(layer) || landing.sector != sector {
+                return false;
+            }
+            let [a, b, c] = landing.plane;
+            if (a * f64::from(position[0]) + b * f64::from(position[1]) + c
+                - f64::from(position[2]))
+            .abs()
+                > 0.001
+            {
+                return false;
+            }
+            let point = Point::new(position[0], position[1]);
+            polygon(&landing.boundary)
+                .expect("bound landing boundary is invalid")
+                .intersects(&point)
+                && !landing.holes.iter().any(|hole| {
+                    polygon(hole)
+                        .expect("bound landing hole is invalid")
+                        .intersects(&point)
+                })
+        })
+    }
+
     /// Bind only the connected receiving patch at a door. Never extrapolate a
     /// receiver plane over the rest of a multi-height motion area.
     pub(crate) fn bind_landing(
@@ -77,6 +115,7 @@ impl BoundPhysicalStair {
         motion: &crate::level_data::RawMotionArea,
         layer: usize,
         area: usize,
+        sector: u16,
         plane: [f64; 3],
         receiver: Option<&Polygon<f32>>,
     ) -> Result<(), String> {
@@ -168,6 +207,8 @@ impl BoundPhysicalStair {
             holes: support.interiors().iter().map(ring).collect(),
             layer,
             area,
+            sector,
+            plane,
             obstacles,
         });
         Ok(())

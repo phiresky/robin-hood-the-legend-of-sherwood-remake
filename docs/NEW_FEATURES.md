@@ -31,6 +31,8 @@
   projection, including separate physical/navigation heights for clearances.
   Physical stair steps now share ordinary movement's water-splash emission,
   using committed world positions even when the screen position is stationary.
+  Their collision queries also include actors on bound adjoining landings,
+  checking receiver height and ownership and retaining overlapping collision radii.
 
 - **Asset-authored movement headroom.** A permanent gameplay volume can set
   `movementHeadroom` in game-height units. Export excludes walking space that

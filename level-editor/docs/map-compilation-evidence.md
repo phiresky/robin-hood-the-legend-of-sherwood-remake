@@ -4,6 +4,32 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Physical stair collision with landing neighbours (2026-10-05)
+
+Bound landings now retain their runtime sector identity and receiving height
+plane. Physical stair collision queries admit a neighbouring actor from another
+sector only when its layer, sector, world position and height match one of those
+bound patches. A failed landing binding does not provide collision authority.
+Ordinary movement retains its existing exact layer/sector filtering.
+
+Physical broad-phase checks now consider each repulsive radius against the stair
+footprint expanded by the mover's half-diagonal. A landing actor whose center is
+just outside the stair can therefore block an endpoint when its radius overlaps
+the supported route. Existing actor target/posture/activity filters remain in
+effect.
+
+The new native actor-loop test waits at an endpoint blocked by a lower-landing
+actor, resumes after that actor becomes inactive, and reaches the endpoint. A
+second case at the same XY but a different height does not obstruct the stair.
+Landing-binding checks separately reject wrong sector/layer and positions beyond
+the receiver footprint. Verification passes: 198 movement tests (12 ignored),
+10 collision tests, 10 stair-routing/binding tests and 40 loading tests (3 ignored).
+The game build, formatting and whitespace checks also pass.
+
+This covers a physical stair mover observing a landing neighbour. Reciprocal
+handling for an ordinary landing mover, cross-sector crushing, soft repulsion,
+broader placement/performance coverage and main export integration remain open.
+
 ## Water effects during physical stair movement (2026-10-05)
 
 Physical stair steps now call the same water-particle emission routine as

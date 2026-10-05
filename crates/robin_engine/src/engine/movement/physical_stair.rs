@@ -71,7 +71,8 @@ impl EngineInner {
         let half = entity.position_iface().get_half_diagonal();
         let mut bounds = MapBBox::new();
         for point in &stair.definition.boundary {
-            bounds.expand_point(MapPoint::new(point[0], point[1]));
+            bounds.expand_point(MapPoint::new(point[0] - half.x, point[1] - half.y));
+            bounds.expand_point(MapPoint::new(point[0] + half.x, point[1] + half.y));
         }
         let mut mover = super::super::anti_collision::CollisionMover::new(owner, entity);
         mover.position_map = MapPoint::new(position.x, position.y);
@@ -88,6 +89,18 @@ impl EngineInner {
                     profiles: &tcx.assets.profile_manager,
                 },
                 &bounds,
+                &|other| {
+                    let elem = other.element_data();
+                    let (Some(layer), Some(sector)) = (elem.optional_layer(), elem.sector()) else {
+                        return false;
+                    };
+                    let position = elem.position();
+                    stair.supports_landing_neighbour(
+                        layer.get(),
+                        sector.get(),
+                        [position.x, position.y, position.z],
+                    )
+                },
             )
             .into_iter()
             .map(|point| {

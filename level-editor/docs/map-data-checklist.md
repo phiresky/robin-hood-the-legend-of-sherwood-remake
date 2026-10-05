@@ -61,51 +61,29 @@ geometry and the landing's own live collision state. Complete actor-loop entry
 and exit pass at both doors of an edge-on fixture. Incompatible or unsupported
 landing geometry warns without inventing walking space; broader placement and
 performance coverage remains open.
-Physical-plane conversion and distance-bounded stepping now have native unit
-coverage, including stationary screen positions. Physical collision routing also
-passes native unit checks for obstacles, rotations and landing support using the
-existing pathfinder. Explicit physical distance orders now use these APIs in the
-actor loop, including an edge-on floor, nearby actors and live barriers. Door
-orders now retain world endpoints, and entry/exit callbacks transfer the physical
-floor and landing receiver. Normal two-door gate routes now cross an edge-on
-stair in both directions, including mid-route barrier closure and reopening.
-Compiler emission remains unfinished, so the failed keep routes remain unresolved.
-The sprite motion API and ground-coordinate receiver entry now also support
-edge-on planes, with animation-distance and position-state round-trip coverage.
-Compiler emission and general point/seek order creation still need integration.
-A world-space compiler primitive now preserves joined floors, holes, collision
-identities and door anchors through edge-on and rotated placements. It remains
-unwired: the existing surface/collision assembly must stop depending on screen
-space before normal exports can emit that data.
-The new area emitter now allocates permanent holes and live obstacle IDs together
-and produces the data consumed by the native edge-on traversal fixture. This
-checks the compiler/runtime contract but does not yet change normal exports.
-The main compiler now retains planes fitted from placed 3D vertices for static
-and changing collision cuts, rather than reconstructing them from rounded
-projected outlines. Surface assembly and final stair emission still need the
-physical coordinate path.
-Changing collision compilation also has a physical-coordinate path: it slices
-volumes against the world plane, retains fractional contours and holes, and
-allocates the same control state pairs used by normal movement areas. Five
-rotated placements pass compiler-to-area-emitter checks. Normal exports do not
-yet call this path.
-A physical region assembler now combines solid height slices, asset-owned
-clearances, permanent floor holes and changing barriers before emitting shared
-collision identities. Rotation/headroom tests cover this combined path. The
-normal compiler shares its volume-height slicing routine, but still needs to
-retain physical surfaces through placement, receiving-feature binding and final
-lift serialization before ordinary exports can use the assembled region.
-Surface placement now has a shared world-space step that transforms asset-local
-floors and holes without requiring a valid screen projection. The main compiler
-uses this step and retains the world holes; tests feed its results into physical
-region assembly at five rotations and two elevations. The subsequent projected
-assembly still rejects edge-on floors in ordinary exports.
-An optional physical-stair descriptor and runtime binding now retain ground-space
-collision with references to the normal movement obstacles. Physical route queries
-read their current state rather than maintaining separate switch state. Compiler
-emission, broader multi-door traversal and movement effects are still unfinished.
-Physical orders currently use hard neighbour collision; neighbours and crushing
-across landing-sector boundaries and soft repulsion remain to be integrated.
+Physical stair orders and normal two-door gate routes now cross an edge-on
+fixture in both directions, including mid-route barrier closure/reopening.
+World endpoints survive door handoffs, and collision reads the normal movement
+obstacles' live state. Animation-distance stepping and position-state round trips
+have native coverage even when screen positions remain stationary.
+
+The physical region compiler combines asset-local floors and holes, solid height
+slices, owner-scoped clearances and changing barriers with shared collision/state
+identities. Tests cover rotated/elevated placements, headroom and fractional
+barriers; the native edge-on fixture consumes emitted area/navigation data.
+The main compiler shares world-space surface placement and volume-height slicing,
+but its subsequent area assembly, receiving-feature binding and lift emission
+still depend on projected geometry. **Normal exports do not yet emit physical
+stairs, and the 24 failed keep routes remain unresolved.** General point/seek
+order creation, transition choreography and broader multi-door coverage also
+remain unfinished.
+
+Physical stair movers now include hard collision from actors on explicitly bound
+landings. Checks require matching sector, layer, receiver footprint and height;
+overlapping radii count even when the neighbour's center lies outside the stair.
+Native coverage verifies waiting and resuming at a blocked endpoint and rejecting
+an actor at a different height. Ordinary landing movers' reciprocal handling,
+crushing across landing-sector boundaries and soft repulsion remain unfinished.
 Water-particle emission now shares ordinary movement's animation-distance
 threshold and cadence, with an edge-on actor-loop check of particle world
 positions and layers. Complete rendered movement-effect coverage remains open.

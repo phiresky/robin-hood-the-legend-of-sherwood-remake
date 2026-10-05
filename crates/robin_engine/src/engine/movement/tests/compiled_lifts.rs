@@ -716,6 +716,64 @@ fn physical_stair_control_crushes_an_actor_inside_its_physical_obstacle() {
 }
 
 #[test]
+fn physical_stair_waits_for_a_neighbour_on_its_bound_landing() {
+    for neighbour_height in [100., 200.] {
+        let (mut engine, mut assets) =
+            compiled_walkway(&serde_json::to_vec(&edge_on_physical_stair_fixture()).unwrap());
+        let owner = physical_walker(&mut engine, &mut assets, 2, [400., 320.], [400., 300.]);
+        let index =
+            engine.world.fast_grid.level.sector_number_map[&crate::sector::SectorNumber::new(0)];
+        let sector = crate::position_interface::SectorHandle::new(0)
+            .unwrap()
+            .with_arena_index(crate::fast_find_grid::SectorIndex::new(index as u32).unwrap());
+        let neighbour = walking_pc(
+            &mut engine,
+            &mut assets,
+            MapPoint::new(400., 299. - neighbour_height),
+            0,
+            sector,
+        );
+        engine
+            .ent_mut(neighbour)
+            .position_iface_mut()
+            .set_obstacle_at_ground_position(
+                None,
+                Some(crate::position_interface::PlaneZCoeffs {
+                    az: 0.,
+                    bz: 0.,
+                    dz: neighbour_height,
+                }),
+                crate::coordinates::GroundPoint::new(400., 299.),
+            )
+            .unwrap();
+        let start = engine.ent(owner).position_iface().get_position();
+        for _ in 0..8 {
+            engine.t_tick_actor_owner_envelopes(&assets);
+        }
+        let position = engine.ent(owner).position_iface().get_position();
+        if neighbour_height == 100. {
+            assert_eq!(
+                position, start,
+                "landing footprint must block the stair endpoint"
+            );
+        } else {
+            assert_ne!(
+                position, start,
+                "an actor on a different height must not obstruct this landing"
+            );
+        }
+        engine.ent_mut(neighbour).element_data_mut().active = false;
+        for _ in 0..100 {
+            engine.t_tick_actor_owner_envelopes(&assets);
+            if engine.ent(owner).position_iface().get_position().y == 300. {
+                break;
+            }
+        }
+        assert_eq!(engine.ent(owner).position_iface().get_position().y, 300.);
+    }
+}
+
+#[test]
 fn physical_stair_actor_avoids_neighbour_at_the_same_screen_position() {
     let (mut engine, mut assets) =
         compiled_walkway(&serde_json::to_vec(&edge_on_physical_stair_fixture()).unwrap());

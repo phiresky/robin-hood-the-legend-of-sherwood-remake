@@ -346,7 +346,7 @@ pub(super) fn gather_disturbing(
     box_future: &MapBBox,
     increment: MapVec,
 ) -> (Vec<RepulsivePoint>, Vec<crate::repulsive::RepulsiveLine>) {
-    gather_disturbing_in_space(mover, world, box_future, increment, false)
+    gather_disturbing_in_space(mover, world, box_future, increment, false, &|_| false)
 }
 
 /// Physical stair routing uses the same owner/target/posture filters, but
@@ -355,8 +355,17 @@ pub(super) fn gather_physical_stair_neighbours(
     mover: &CollisionMover,
     world: CollisionWorld<'_>,
     boundary: &MapBBox,
+    landing_neighbour: &dyn Fn(&Entity) -> bool,
 ) -> Vec<RepulsivePoint> {
-    gather_disturbing_in_space(mover, world, boundary, MapVec::ZERO, true).0
+    gather_disturbing_in_space(
+        mover,
+        world,
+        boundary,
+        MapVec::ZERO,
+        true,
+        landing_neighbour,
+    )
+    .0
 }
 
 fn gather_disturbing_in_space(
@@ -365,6 +374,7 @@ fn gather_disturbing_in_space(
     box_future: &MapBBox,
     increment: MapVec,
     physical: bool,
+    landing_neighbour: &dyn Fn(&Entity) -> bool,
 ) -> (Vec<RepulsivePoint>, Vec<crate::repulsive::RepulsiveLine>) {
     let mut points = Vec::new();
     let lines = Vec::new();
@@ -376,13 +386,11 @@ fn gather_disturbing_in_space(
         if !elem.active {
             continue;
         }
-        if elem.optional_layer().map(|layer| layer.get()) != Some(mover.layer) {
-            continue;
-        }
-        // Strict sector equality — sector handles compare directly,
-        // so a sectorless mover rejects sectored neighbours and vice
-        // versa.
-        if elem.sector() != mover.sector {
+        // Ordinary movement requires exact layer/sector ownership. Physical
+        // stairs additionally admit neighbours on explicitly bound landings.
+        let same_area = elem.optional_layer().map(|layer| layer.get()) == Some(mover.layer)
+            && elem.sector() == mover.sector;
+        if !same_area && !(physical && landing_neighbour(other)) {
             continue;
         }
         // Target-element filter: mover never treats its own target
@@ -435,7 +443,7 @@ fn gather_disturbing_in_space(
                 continue;
             }
         }
-        if !box_future.contains_point(position) {
+        if !physical && !box_future.contains_point(position) {
             continue;
         }
         if !is_object && !physical {
@@ -456,6 +464,26 @@ fn gather_disturbing_in_space(
         if physical {
             for point in &mut points[start..] {
                 point.position.y += elem.position().z;
+            }
+            // A landing actor's center may be outside the stair while its
+            // collision radius overlaps the supported movement footprint.
+            let mut index = start;
+            while index < points.len() {
+                let point = &points[index];
+                let mut bounds = MapBBox::new();
+                bounds.expand_point(MapPoint::new(
+                    point.position.x - point.radius,
+                    point.position.y - point.radius,
+                ));
+                bounds.expand_point(MapPoint::new(
+                    point.position.x + point.radius,
+                    point.position.y + point.radius,
+                ));
+                if bounds.intersects_bbox(box_future) {
+                    index += 1;
+                } else {
+                    points.remove(index);
+                }
             }
         }
     }

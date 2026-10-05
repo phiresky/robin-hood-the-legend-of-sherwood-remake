@@ -2448,6 +2448,7 @@ impl EngineInner {
                     landing_motion,
                     landing_layer,
                     landing_area,
+                    door.sector_out,
                     plane,
                     receiver.map(|receiver| receiver.polygon.as_geo()),
                 ) {
