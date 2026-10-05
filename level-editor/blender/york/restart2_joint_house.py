@@ -22,7 +22,10 @@ def main():
     parser.add_argument('--retain-upper-gable', action='store_true')
     parser.add_argument('--gable-eave', action='store_true')
     parser.add_argument('--extend-left-roof', action='store_true')
+    parser.add_argument('--extend-front-eave', action='store_true')
     parser.add_argument('--fitted-bay-recess', action='store_true')
+    parser.add_argument('--retain-lower-doorway', action='store_true')
+    parser.add_argument('--projected-doorway-return', action='store_true')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
     destination = OUT / 'restart2' / args.version
     if destination.exists():
@@ -73,6 +76,17 @@ def main():
             return obj
         body = object_for('Private body boolean', vertices, faces)
         footprint = [(500,250+args.notch_intercept), (646,323+args.notch_intercept), (646,1600), (500,1600)]
+        rear_count = 2
+        if args.retain_lower_doorway and not args.projected_doorway_return:
+            # Retain the source-visible door base below the adjoining bay.
+            # Its inferred sloped closure follows the bay's receding foot;
+            # source and reverse-view checks must establish its suitability.
+            cutoff_slope = .475 + 15.5/23
+            cutoff_intercept = 1200.1625 - (1492.5 + 15.5/23*623) + 90.00101
+            breakpoint = (80-cutoff_intercept)/cutoff_slope
+            footprint = [(x,.5*x+args.notch_intercept) for x in (500,breakpoint,646)]
+            footprint += [(x,1600) for x in (646,breakpoint,500)]
+            rear_count = 3
         # The native dark gable above the attached roof survives the lower
         # recess. Its lower edge projects to source row 1228 on the original
         # front datum. This upper cantilever remains an explicit hypothesis.
@@ -81,18 +95,29 @@ def main():
         for t in fractions:
             for index,(x,y) in enumerate(footprint):
                 upper=.475*x-28 if args.retain_upper_gable else 400
-                z=80+t*(upper-80)
-                if args.fitted_bay_recess and index<2:
+                lower=max(80,cutoff_slope*x+cutoff_intercept) if args.retain_lower_doorway and not args.projected_doorway_return else 80
+                if args.projected_doorway_return:
+                    # Bound the retained return by the bay foot in native
+                    # projection at every depth, not only at the front wall.
+                    lower_y=.475*x+1170.15 if args.fitted_bay_recess and index<rear_count else y
+                    foot_row=1492.5-(15.5/23)*(x-623)-90.00101
+                    lower=lower_y-foot_row
+                z=lower+t*(upper-lower)
+                if args.fitted_bay_recess and index<rear_count:
                     blend=max(0,min(1,(z-220)/20))
                     # Lower niche meets the bay's observed rear footprint;
                     # upper recession preserves the reviewed roof clearance.
                     y=(1-blend)*(.475*x+1170.15)+blend*y
                 cutter_vertices.append((x,-y/sine,z/cosine))
-        last=4*(len(fractions)-1)
-        cutter_faces=[(3,2,1,0),tuple(last+i for i in range(4))]
+        count=len(footprint)
+        last=count*(len(fractions)-1)
+        # The lower return changes slope at the added pair of vertices. Two
+        # planar quads avoid ambiguous triangulation of a nonplanar hexagon.
+        bottom=[(0,5,4,1),(1,4,3,2)] if args.retain_lower_doorway and not args.projected_doorway_return else [tuple(reversed(range(count)))]
+        cutter_faces=bottom+[tuple(last+i for i in range(count))]
         for ring in range(len(fractions)-1):
-            a=ring*4;b=a+4
-            cutter_faces += [(a+i,a+(i+1)%4,b+(i+1)%4,b+i) for i in range(4)]
+            a=ring*count;b=a+count
+            cutter_faces += [(a+i,a+(i+1)%count,b+(i+1)%count,b+i) for i in range(count)]
         cutter = object_for('Private attached bay recess', cutter_vertices, cutter_faces)
         modifier = body.modifiers.new('Attached bay recess', 'BOOLEAN')
         modifier.operation = 'DIFFERENCE'
@@ -160,10 +185,12 @@ def main():
         vertices = [tuple(obj.matrix_world @ v.co) for v in top.verts]
         top_indices = [tuple(v.index for v in face.verts) for face in top.faces]
         top.free()
-        if node=='building-311' and args.extend_left_roof:
-            # Continue the entire low roof edge to the observed projecting
-            # eave, rather than attaching an unsupported narrow timber.
-            vertices=[(x-15.5,y+7.34/sine,z-13.353/cosine) if z*cosine<250 else (x,y,z)
+        if node=='building-311' and (args.extend_left_roof or args.extend_front_eave):
+            # The bounded front control continues the observed projecting
+            # eave while retaining the rear edge beside the market canopy.
+            # The older whole-edge control remains reproducible separately.
+            vertices=[(x-15.5,y+7.34/sine,z-13.353/cosine)
+                      if z*cosine<250 and (args.extend_left_roof or -y*sine>1450) else (x,y,z)
                       for x,y,z in vertices]
         n = len(vertices)
         vertices += [(x, y, z-2.5/cosine) for x, y, z in vertices]
@@ -288,7 +315,12 @@ def main():
               'retain_upper_gable': args.retain_upper_gable,
               'gable_eave': args.gable_eave,
               'extend_left_roof': args.extend_left_roof,
+              'extend_front_eave': args.extend_front_eave,
               'fitted_bay_recess': args.fitted_bay_recess,
+              'retain_lower_doorway': args.retain_lower_doorway,
+              'projected_doorway_return': args.projected_doorway_return,
+              'lower_doorway_cap': ('native projected foot plane' if args.projected_doorway_return else
+                                    'piecewise planar quads' if args.retain_lower_doorway else None),
               'changes': changes, 'outside_meshes_preserved': len(outside),
               'inferred': ['Main gable body recessed below unchanged roof tops.',
                            'Roof underside thickness 2.5 native height units; body and roof are separate closed volumes.'],
