@@ -64,6 +64,7 @@ import {
 import { heightPlane, planeHeight, type HeightPlane } from "./gameplay-plane.ts";
 import { movementVolumeHeightSlice } from "./movement-volume-height-slice.ts";
 import { quantizeGeneratedMotionPolygon, simplifyMotionRing } from "./motion-quantization.ts";
+import { restoreReceivingBoundary } from "./restore-receiving-boundary.ts";
 import { normalizeGeneratedMotion } from "./normalize-generated-motion.ts";
 import { normalizeGameplayStateViews } from "./gameplay-state-views.ts";
 import { compileAppearanceBindings } from "./compile-appearance-bindings.ts";
@@ -1558,6 +1559,21 @@ function compileAssetGameplayAttempt(
       const blockers = quantized
         .slice(1)
         .map((r) => ring(r, `Merged movement hole on layer ${layer}`));
+      const receivingBoundary =
+        receivingCandidates.length === 1
+          ? ring(receivingCandidates[0]![0]!, "Receiving boundary")
+          : !lift &&
+              doors.some(
+                (door) =>
+                  door.lift &&
+                  containsNavigationAnchor(
+                    { plane, polygon: boundary, blockers },
+                    door.outsideAnchor,
+                    { allowBlocked: true },
+                  ),
+              )
+            ? restoreReceivingBoundary(boundary, merged)
+            : undefined;
       navigationPieces.push({
         layer,
         plane,
@@ -1565,9 +1581,7 @@ function compileAssetGameplayAttempt(
         lift,
         navigationRegion,
         polygon: boundary,
-        ...(receivingCandidates.length === 1
-          ? { receivingPolygon: ring(receivingCandidates[0]![0]!, "Receiving boundary") }
-          : {}),
+        ...(receivingBoundary ? { receivingPolygon: receivingBoundary } : {}),
         blockers,
       });
     }

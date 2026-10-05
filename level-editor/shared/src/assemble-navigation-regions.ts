@@ -16,7 +16,7 @@ export interface NavigationPiece {
   preserveMovementBoundary?: boolean;
   closeDeformationSeams?: boolean;
   polygon: Point[];
-  /** Pre-grid boundary, when one clipped floor maps to this navigation piece. */
+  /** Source-clipped outer receiving boundary that rounds to this navigation piece. */
   receivingPolygon?: Point[];
   blockers: Point[][];
 }

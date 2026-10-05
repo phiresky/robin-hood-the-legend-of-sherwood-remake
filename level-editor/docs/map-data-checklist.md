@@ -149,10 +149,12 @@ reopen. These remain initial-state traversal checks, not full rendered parity.
 The lower-west access stair has an unpublished mesh-reviewed seam correction.
 Two independent copies connected to synthetic landing assets pass 32/32 routes
 when landing boundaries are preserved; 64 missing/raised-landing cases reject.
-Ordinary collision-split landings lose exact receiving contours and fail 16/32
-routes at 90/180 degrees. This compiler precision gap remains open. Full Derby
-also fails both routes at this stair's two external contacts, so its definition
-is not published on the strength of the synthetic checks.
+Ordinary collision-split landings now also pass 32/32 routes: the compiler traces
+their emitted edges back to unambiguous source edges, clips the recovered contour
+to the original coverage and verifies identical grid rounding. All 64 negative
+cases still reject. Ambiguous contour recovery retains the existing fallback;
+these tests do not certify every split topology. Full Derby still needs this
+stair's two external contacts corrected, so its definition remains unpublished.
 Physical transitions
 now wait at a reached world target until animation completion, or preserve
 unfinished distance in the next movement order. An edge-on actor-loop test

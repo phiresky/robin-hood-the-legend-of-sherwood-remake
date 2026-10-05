@@ -87,6 +87,7 @@ const reference = {
 };
 const assets = new Map([descriptor, ...landings].map((asset) => [asset.id, asset]));
 const output = await fs.mkdtemp("work/map-compile/external-stair-landings-");
+await fs.writeFile(`${output}/fixture-assets.json`, JSON.stringify([...assets]));
 const results = [],
   rejected = [];
 for (const height of [0, 40])
@@ -141,6 +142,7 @@ for (const height of [0, 40])
     );
     assert.ok(compiled.descriptor.asset_geometry.lifts.every((lift) => lift.physical_navigation));
     const file = `${edit.asset}-${height}-${rotation}.level.json`;
+    await fs.writeFile(`${output}/${file}.scene.json`, JSON.stringify(document));
     await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
     results.push({ file, map: file, warnings: compiled.warnings });
     for (const id of landingGroups)

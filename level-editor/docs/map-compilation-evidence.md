@@ -4,6 +4,51 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Recover precise receivers after movement-grid splitting (2026-10-05)
+
+`restoreReceivingBoundary` recovers a normalized movement piece from its
+pre-grid source contour. Each emitted edge must match a unique source edge
+through both endpoint rounding cells. Shared corners retain their source
+vertices; new split corners connect source-edge points within their common
+rounding cell. The candidate is clipped to the source outer contour and must
+round to exactly the emitted region. Holes retain their separately compiled
+movement blockers. Ambiguous, disconnected or nonmatching recovery falls back
+to the existing rounded receiver; no original map data is consulted.
+
+Two regressions cover the 90-degree split and a 180-degree half-grid endpoint.
+They assert no coverage outside the source, exact rounded-region identity,
+retained source vertices, and rejection of unrelated or competing contours.
+The first implementation fixed only the 90-degree case (`external-stair-landings-U7XDvk`,
+24/32 routes); handling the half-open rounding cell fixes the remaining eight.
+Final ordinary-landings export `external-stair-landings-vGvzYT` passes 32/32
+directed native actor routes and all 64 missing/raised-landing rejections.
+The fixture tool now stores its synthetic descriptors and input scenes so these
+compiles can be reproduced without reconstructing the authoring inputs.
+
+The 195 affected editor compiler/export/quantization tests pass, both TypeScript
+checks pass, focused lint/format checks pass, and the production editor build
+passes. Static ten-map snapshots `precise-split-all-maps-sNwsCq` pass native
+construction and all 71 compiled control apply/reset checks; Derby passes all
+28 stair routes. Those snapshots omit splines and editor state assignments,
+so they are not full saved-scene or rendered-ZIP parity evidence. The lower-west
+stair candidate remains unpublished pending its two real Derby landing contacts.
+The separate batch `precise-split-saved-scenes-PwH9lV` compiles the actual saved
+scenes with splines and editor state assignments intact. All ten descriptors
+construct native geometry and all 71 controls apply/reset. Wychford includes
+17,478 sight obstacles and 28,825 elevation boundaries in this batch. These
+remain best-effort descriptors with warnings, not new baked ZIPs or complete
+rendered/gameplay certification. Recovery is only attempted for possible stair
+landings and stops at the first ambiguous edge. Optimized copied placements
+`external-stair-landings-EvVoQF` exactly match all eight native-tested descriptors.
+All ten optimized saved-scene descriptors also match their native-tested JSON
+(`optimized-equality.json`). Wychford compilation took about 98 seconds; the
+other maps took 0.1–3.5 seconds. This check does not establish fast export for
+large spline-heavy maps. Comparison uses serialized JSON: signed zero in some
+in-memory coordinates serializes as zero and is not an exported difference.
+The refreshed lower-west candidate `lower-west-split-fixed-full-4KdsaN` still
+fails its two full-Derby routes (26/28 overall). The compiler fix therefore does
+not substitute for reviewing and correcting its actual neighbouring asset seams.
+
 ## Lower-west stair: independent landing fixtures and open precision gap (2026-10-05)
 
 Candidate `local-stair-seams-onfJOY` corrects the two external endpoints of
