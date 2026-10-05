@@ -51,6 +51,8 @@ def render_review(scene, destination, model_hash, *, transparent_bounces=64):
         angle = index * math.tau / 8
         direction = Vector((math.sin(angle) * math.cos(math.radians(30)),
                             -math.cos(angle) * math.cos(math.radians(30)), math.sin(math.radians(30))))
+        if index == 0:
+            direction = RAY.copy()
         camera.location = center + direction * 5000
         camera.rotation_euler = (center - camera.location).to_track_quat('-Z', 'Y').to_euler()
         # Include inferred off-map geometry at every rotation, not just map bounds.
@@ -79,6 +81,7 @@ def render_review(scene, destination, model_hash, *, transparent_bounces=64):
     sheet.save(destination / 'sheet.png')
     write_json(destination / 'render-evidence.json', dict(model_sha256=model_hash,
         views=views, sheet_sha256=sha(destination / 'sheet.png'), visual_review='pending',
+        first_view='Original game orthographic direction; complete-scene framing',
         transparent_max_bounces=transparent_bounces))
 
 
