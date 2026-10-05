@@ -10,6 +10,8 @@ use crate::coordinates::{MapBBox, MapPoint, MoveBoxHalfDiagonal};
 use crate::fast_find_grid::{FastFindGrid, GridLine};
 use crate::pathfinder::{MotionArea, MotionObstacle, PathFinder, PathGraph};
 
+mod landing_support;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StairRouteGeometry {

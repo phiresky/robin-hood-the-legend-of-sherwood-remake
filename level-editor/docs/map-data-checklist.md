@@ -54,6 +54,10 @@ the three stairs: nonzero physical floors project to zero-area polygons. A
 screen-space footprint adjustment cannot solve arbitrary rotation; traversal
 needs navigation coordinates independent of rendering projection. The short
 gallery stair also needs landing-overlap support, not merely a skewed footprint.
+A separate landing-support route query now computes supported actor centers while
+keeping the route on the stair itself; rotated seams, missing support and blocked
+detours have focused coverage. Binding actual landing geometry and live collision
+into actor movement remains unfinished.
 Physical-plane conversion and distance-bounded stepping now have native unit
 coverage, including stationary screen positions. Physical collision routing also
 passes native unit checks for obstacles, rotations and landing support using the

@@ -9,8 +9,10 @@
   loop, including live barriers and hard neighbour collision. Door orders retain
   physical endpoints, and entry/exit callbacks transfer floor ownership without
   inverting the stair projection. The editor does not emit this metadata yet;
-  automatic route creation, complete door crossings, landing support and full
-  movement effects remain unfinished.
+  automatic route creation, complete door crossings, landing binding and full
+  movement effects remain unfinished. A landing-support route API accounts for
+  the actor footprint across adjoining floors while constraining its center to
+  the stair; normal movement does not yet supply those landing polygons.
 
 - **Asset-authored movement headroom.** A permanent gameplay volume can set
   `movementHeadroom` in game-height units. Export excludes walking space that

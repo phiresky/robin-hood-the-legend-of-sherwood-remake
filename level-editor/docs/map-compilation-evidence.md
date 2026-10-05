@@ -4,6 +4,31 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Physical stair landing-support routing (2026-10-05)
+
+A new route query separates support for the actor's footprint from ownership of
+its center position. It unions supplied landing polygons with the physical stair,
+erodes support by the actor's effective rectangular footprint, expands live solids
+by that footprint, and intersects the resulting center space with the stair floor.
+A visibility graph through this polygonal free space preserves holes and connects
+the requested endpoints. Thus a landing can support feet overhanging a short stair
+without allowing a detour onto that landing using the stair's extrapolated height.
+
+Endpoint normalization is limited to f32 coordinate rounding error. The rotated
+seam cases retain the caller's exact endpoints; a real gap in support is rejected.
+Tests also reject a route around a full-width stair barrier even when broad
+landings would otherwise permit that shortcut, and sample actor clearance along
+a route around a partial obstacle.
+
+This API is not yet called by normal actor movement. The compiler/runtime still
+need to supply connected, height-matched landing polygons and their live collision
+ownership. It does not yet fix the 24 failed keep routes or complete door crossings.
+All eight physical-routing tests pass, including ten directed seam queries at
+five rotations, missing/gapped support, forbidden off-stair detours and sampled
+clearance around a partial solid. Formatting and whitespace checks pass.
+The updated game build passes:
+`RUSTC_WRAPPER= cargo build -p robin_rs --bin robin -j1`.
+
 ## Physical stair door identities and receiver handoffs (2026-10-05)
 
 Stair door translation now retains the world destination for the inside walk.
