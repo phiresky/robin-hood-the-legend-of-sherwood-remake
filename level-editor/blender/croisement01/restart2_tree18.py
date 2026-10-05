@@ -89,6 +89,9 @@ def fit_native_width(obj,alpha,role,x0=1059,y0=0):
             if y>82:continue
         else:
             lo,hi=x0+xs[0],x0+1+xs[-1]
+            if role=='west-cut' and xs[0]==0:
+                # A clipped image edge does not bound the hidden wood volume.
+                lo=float(intersections.min())+.25
         samples.append(sy);old_min.append(float(intersections.min()));old_max.append(float(intersections.max()));target_min.append(float(lo)-.25);target_max.append(float(hi)+.25)
     if len(samples)<20:raise ValueError('Insufficient independent silhouette slices')
     for field in (target_min,target_max):
