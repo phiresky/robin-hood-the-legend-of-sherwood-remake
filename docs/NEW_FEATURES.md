@@ -27,6 +27,8 @@
   geometry, holes and shared control states before physical area emission.
   Physical region assembly combines these with solid height slices and
   owner-scoped clearances; it shares volume-height slicing with ordinary export.
+  Asset surface placement now retains world-space floor and hole geometry before
+  projection, including separate physical/navigation heights for clearances.
 
 - **Asset-authored movement headroom.** A permanent gameplay volume can set
   `movementHeadroom` in game-height units. Export excludes walking space that

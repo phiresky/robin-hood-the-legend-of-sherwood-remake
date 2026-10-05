@@ -95,6 +95,11 @@ collision identities. Rotation/headroom tests cover this combined path. The
 normal compiler shares its volume-height slicing routine, but still needs to
 retain physical surfaces through placement, receiving-feature binding and final
 lift serialization before ordinary exports can use the assembled region.
+Surface placement now has a shared world-space step that transforms asset-local
+floors and holes without requiring a valid screen projection. The main compiler
+uses this step and retains the world holes; tests feed its results into physical
+region assembly at five rotations and two elevations. The subsequent projected
+assembly still rejects edge-on floors in ordinary exports.
 An optional physical-stair descriptor and runtime binding now retain ground-space
 collision with references to the normal movement obstacles. Physical route queries
 read their current state rather than maintaining separate switch state. Compiler

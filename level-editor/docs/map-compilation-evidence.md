@@ -4,6 +4,27 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## World-space asset surface placement (2026-10-05)
+
+Main compilation now uses a shared placement step for authored surface vertices,
+holes and navigation height planes. Placement requires a valid physical plane,
+but does not require the projected floor to have area. The main compiler retains
+world-space holes alongside its existing world boundary and updates those holes
+when authored terrain replaces covered ground. Changing terrain-volume holes use
+the same placed geometry, avoiding a separate transform path.
+
+Raised clearances retain distinct physical and navigation-height contours,
+including holes; their existing projected footprint semantics are unchanged.
+A test places an asset-local sloping floor with a hole at five rotations and two
+elevations and passes the result directly to physical region assembly. Exactly
+edge-on placements preserve the floor and permanent obstacle identity. Another
+test checks raised clearance holes after rotation and elevation.
+
+All six affected compiler suites (144 tests), both typechecks, focused lint and
+formatting pass. The main compiler still asks for a projected plane after this
+placement step. Receiving-feature binding, area assembly and final lift emission
+must be integrated before normal exports can use edge-on physical floors.
+
 ## Combined physical stair collision assembly (2026-10-05)
 
 The physical region compiler now joins floor surfaces, slices solid volumes

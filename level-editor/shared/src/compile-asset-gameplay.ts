@@ -1,4 +1,5 @@
 import { terrainGameplay } from "./authored-terrain.ts";
+import { placeGameplaySurface } from "./place-gameplay-surface.ts";
 import { wallSplineGameplay } from "./wall-spline-gameplay.ts";
 import polygonClipping, { type Polygon } from "polygon-clipping";
 import { assembleSightVolumes } from "./assemble-sight-volumes.ts";
@@ -352,6 +353,7 @@ function compileAssetGameplayAttempt(
     plane: HeightPlane;
     worldPlane: HeightPlane;
     worldPolygon: Point[];
+    worldHoles: Point[][];
     lift?: string;
     navigationRegion?: string;
     preserveMovementBoundary?: boolean;
@@ -886,19 +888,14 @@ function compileAssetGameplayAttempt(
       ...(gameplay.movementClearances ?? []),
       ...dynamic.map((d) => d.surface),
     ]) {
-      const local = surface.polygon.map((p, i): Vec3 => [
-        p[0],
-        p[1],
-        typeof surface.height === "number" ? surface.height : surface.height[i]!,
-      ]);
-      const localPlane = heightPlane(local);
+      const geometry = placeGameplaySurface(surface, transform);
+      const { localPlane, points, navigationPoints, worldPlane } = geometry;
       const anchors = surface.projectionMaterials?.planePoints;
       if (anchors) {
         heightPlane(anchors);
         if (anchors.some(([x, y, z]) => Math.abs(planeHeight(localPlane, [x, y]) - z) > 1e-4))
           throw new Error(`${surface.id}: receiving plane anchors must lie on the surface`);
       }
-      const points = local.map((p) => transform(surface.node, p));
       for (const edge of surface.navigationJoins ?? [])
         navigationJoins.push({
           region: `${placement.id}/${surface.navigationRegion}`,
@@ -911,13 +908,7 @@ function compileAssetGameplayAttempt(
           ]),
         });
       // Fit before integer quantization so height remains exact after placement.
-      const navigationHeight = surface.navigationHeight;
-      const navigationPoints =
-        navigationHeight === undefined
-          ? points
-          : local.map(([x, y]) => transform(surface.node, [x, y, navigationHeight]));
       const plane = heightPlane(navigationPoints.map(([x, y, z]) => [x, y - z, z]));
-      const worldPlane = heightPlane(navigationPoints);
       const target = gameplay.movementClearances?.includes(surface)
         ? movementClearances
         : gameplay.movementBlockers?.includes(surface)
@@ -942,17 +933,12 @@ function compileAssetGameplayAttempt(
         plane,
         worldPlane,
         worldPolygon: navigationPoints.map(([x, y]): Point => [x, y]),
+        worldHoles: geometry.navigationHoles.map((hole) => hole.map(([x, y]): Point => [x, y])),
         ...(gameplay.lifts?.find((l) => l.surface === surface.id)
           ? { lift: `${placement.id}/${gameplay.lifts.find((l) => l.surface === surface.id)!.id}` }
           : {}),
-        holes: (surface.holes ?? []).map((hole) =>
-          ring(
-            hole.map((p) =>
-              projectMovement(transform(surface.node, [p[0], p[1], planeHeight(localPlane, p)])),
-            ),
-            `${placement.id}/${surface.id} hole`,
-            minimumArea,
-          ),
+        holes: geometry.holes.map((hole) =>
+          ring(hole.map(projectMovement), `${placement.id}/${surface.id} hole`, minimumArea),
         ),
       };
       const change = dynamic.find((d) => d.surface === surface);
@@ -1045,12 +1031,7 @@ function compileAssetGameplayAttempt(
                   ...surface.terrainReach,
                   plane: heightPlane(points),
                   polygon: points.map(([x, y]): Point => [x, y]),
-                  holes: (surface.holes ?? []).map((hole) =>
-                    hole.map((p): Point => {
-                      const [x, y] = transform(surface.node, [...p, planeHeight(localPlane, p)]);
-                      return [x, y];
-                    }),
-                  ),
+                  holes: geometry.holes.map((hole) => hole.map(([x, y]): Point => [x, y])),
                 },
               }
             : {}),
@@ -1141,6 +1122,11 @@ function compileAssetGameplayAttempt(
             x,
             y + planeHeight(surface.plane, [x, y]),
           ]),
+          worldHoles: polygon
+            .slice(1)
+            .map((hole) =>
+              hole.map(([x, y]): Point => [x, y + planeHeight(surface.plane, [x, y])]),
+            ),
           holes: polygon.slice(1).map((h) => ring(h)),
         });
     }
