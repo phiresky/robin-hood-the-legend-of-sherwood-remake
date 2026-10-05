@@ -51,6 +51,12 @@ surface. A staged deck definition passes native construction but creates an
 independent navigation layer with no sampled receiver crossings. It remains
 unpublished pending endpoint connections and navigation-ownership corrections.
 
+Sloped asset sockets now connect to authored terrain using the shared edge's
+heights, avoiding false rejection from an offset height probe. Matching and
+mismatching slopes are checked at five rotations; ten directed native actor
+routes across the matching deck/terrain connections pass. Rotated coplanar
+terrain clipping also rejects floating-point dust before it can abort export.
+
 Assets can author a placement ground height for new drops. The church-side
 tower now uses its lower stair approach, verified at three elevations and four
 rotations. Existing placements and Leicester's compiled geometry are unchanged;

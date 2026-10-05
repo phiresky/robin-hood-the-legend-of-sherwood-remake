@@ -56,6 +56,29 @@ fn compiled_walkway_with_dimensions(
 }
 
 #[test]
+fn actors_cross_sloped_terrain_sockets_after_rotation() {
+    let cases: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/asset-sloped-terrain-sockets.json"
+    )))
+    .unwrap();
+    for case in cases.as_array().unwrap() {
+        let bytes = serde_json::to_vec(&case["descriptor"]).unwrap();
+        let (engine, assets) = compiled_walkway(&bytes);
+        let point = |index: usize| {
+            MapPoint::new(
+                case["route"][index][0].as_f64().unwrap() as f32,
+                case["route"][index][1].as_f64().unwrap() as f32,
+            )
+        };
+        eprintln!("sloped socket rotation {}", case["rotation"]);
+        for (source, goal) in [(point(0), point(1)), (point(1), point(0))] {
+            tick_walkway_crossing(engine.clone(), assets.clone(), 0, 0, source, goal);
+        }
+    }
+}
+
+#[test]
 fn actor_ticks_cross_compiled_walkway_seams_and_update_height() {
     for (layer, sector_index, source, goal) in [
         (0, 0, MapPoint::new(396., 320.), MapPoint::new(404., 290.)),

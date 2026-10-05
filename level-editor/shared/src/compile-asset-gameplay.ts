@@ -1084,7 +1084,7 @@ function compileAssetGameplayAttempt(
         .filter((other) => other.plane.every((n, i) => Math.abs(n - surface.plane[i]!) < 1e-7))
         .map((other) => [other.polygon, ...other.holes] as Polygon);
       const shape: Polygon = [surface.polygon, ...surface.holes];
-      const remaining = cuts.length ? polygonClipping.difference(shape, ...cuts) : [shape];
+      const remaining = cuts.length ? fixedPolygonBoolean("difference", shape, cuts) : [shape];
       for (const polygon of remaining)
         replacement.push({
           ...surface,
@@ -1104,16 +1104,17 @@ function compileAssetGameplayAttempt(
         (a[0] + b[0]) / 2 + (dy / length) * 0.5,
         (a[1] - a[2] + b[1] - b[2]) / 2 - (dx / length) * 0.5,
       ];
-      const height = (a[2] + b[2]) / 2;
       const groundSurface = replacement.find(
         (s) =>
-          Math.abs(planeHeight(s.plane, probe) - height) < 1e-4 &&
+          // A slope changes height beside the socket. Compare both ends on
+          // the shared edge; the outward probe only selects adjacent ground.
+          join.edge.every(([x, y, z]) => Math.abs(planeHeight(s.plane, [x, y - z]) - z) < 1e-4) &&
           inside(probe, s.polygon) &&
           !s.holes.some((h) => inside(probe, h)) &&
           !movementBlockers.some(
             (blocker) =>
               blocker.owner === "authored-terrain" &&
-              Math.abs(planeHeight(blocker.plane, probe) - height) < 1e-4 &&
+              Math.abs(planeHeight(blocker.plane, probe) - planeHeight(s.plane, probe)) < 1e-4 &&
               inside(probe, blocker.polygon),
           ),
       );

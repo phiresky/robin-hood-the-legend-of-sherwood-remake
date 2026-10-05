@@ -1,5 +1,13 @@
 import type { GameplayAssetDescriptor } from "../src/asset-gameplay.ts";
-import { IDENTITY_TRANSFORM, type Level3D, type Level3DObject } from "../src/level3d.ts";
+import {
+  IDENTITY_TRANSFORM,
+  partMatrix,
+  type Level3D,
+  type Level3DObject,
+} from "../src/level3d.ts";
+import { createTerrainGrid } from "../src/authored-terrain.ts";
+import { gameToScene } from "../src/scene.ts";
+import { applyAffineMatrix, sceneToGame } from "../src/geometry.ts";
 import type { MaskTriangle } from "../src/compile-mask-geometry.ts";
 
 export function rotatedSceneryCompilerFixture() {
@@ -1395,6 +1403,53 @@ export function liftLightCompilerFixture() {
     },
   ];
   return fixture;
+}
+
+export function slopedTerrainSocketCompilerFixture(crossingSlope = false, rotation = 0) {
+  const fixture = assetCompilerFixture();
+  const { document, hut } = fixture;
+  document.groups[0]!.transform = { dx: 500, dy: 500, dz: 40, rot_deg: rotation };
+  hut.gameplay!.collision = "none";
+  hut.gameplay!.doors = [];
+  hut.gameplay!.surfaces = [
+    {
+      id: "deck",
+      node: "building-999",
+      polygon: [
+        [0, 0],
+        [100, 0],
+        [100, 100],
+        [0, 100],
+      ],
+      height: [0, 20, 20, 0],
+      navigationRegion: "deck",
+      preserveMovementPrecision: true,
+      navigationJoins: [
+        [
+          [100, 0, 20],
+          [100, 100, 20],
+        ],
+      ],
+    },
+  ];
+  document.terrain = createTerrainGrid([100, 0, 100, 100], 100, 20);
+  const matrix = partMatrix(document.camera, document, document.objects[0]!);
+  for (const vertex of document.terrain.vertices) {
+    const [x, y] = vertex.position;
+    const z = 20 + (crossingSlope ? (y - 50) * 0.1 : (x - 100) * 0.2);
+    vertex.position = sceneToGame(
+      document.camera,
+      applyAffineMatrix(matrix, gameToScene(document.camera, x, y, z)),
+    );
+  }
+  const route = [80, 120].map((x) => {
+    const [worldX, worldY, worldZ] = sceneToGame(
+      document.camera,
+      applyAffineMatrix(matrix, gameToScene(document.camera, x, 50, x * 0.2)),
+    );
+    return [worldX, worldY - worldZ];
+  });
+  return { ...fixture, route };
 }
 
 export function joinedNavigationCompilerFixture() {

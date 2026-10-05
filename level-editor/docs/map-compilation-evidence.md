@@ -4,6 +4,29 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Sloped asset sockets meeting authored terrain (2026-10-05)
+
+Exterior navigation sockets now compare the receiving terrain plane at both
+socket endpoints. Previously the compiler compared the socket's midpoint height
+with a probe offset into neighboring terrain, rejecting a continuous slope.
+Matching just the midpoint could also accept a differently tilted surface. The
+offset probe still selects adjacent unblocked terrain; it no longer supplies the
+height comparison. Coplanar terrain subtraction now uses fixed-point clipping to
+avoid degenerate floating-point fragments at rotated shared edges.
+
+The compiler regression covers matching and mismatching slopes at 0, 45, 90,
+180 and 270 degrees, translated and elevated. All 112 gameplay compiler tests
+and 63 map-export tests pass. The export test compares complete descriptors and
+routes against `asset-sloped-terrain-sockets.json`. Native test
+`actors_cross_sloped_terrain_sockets_after_rotation` walks an actor across the
+actual deck/terrain connection in both directions at all five rotations, checking
+receiver and height updates throughout. All ten directed routes pass. This
+explicit test supplements the sampled seam audit, which found no eligible deck
+crossing at 45 degrees and therefore could not prove that case on its own.
+
+This fixes connections in new assemblies; it does not publish the footbridge
+candidate or resolve its existing-map navigation ownership.
+
 ## Footbridge deck ownership investigation (2026-10-05)
 
 The published `leicester-east-village-footbridge` has no walkable surfaces. Its

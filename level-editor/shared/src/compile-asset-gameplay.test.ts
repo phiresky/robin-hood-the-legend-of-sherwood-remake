@@ -29,6 +29,7 @@ import {
   compoundLiftCompilerFixture,
   multiPlaneRegionCompilerFixture,
   joinedNavigationCompilerFixture,
+  slopedTerrainSocketCompilerFixture,
   crossAssetJumpCompilerFixture,
   obstructedJumpCompilerFixture,
   surfaceJumpCompilerFixture,
@@ -1475,6 +1476,20 @@ test("explicit height steps join projected navigation boundaries and reject inva
   for (const invalid of [-1, Infinity, NaN]) {
     surface.navigationJoinHeightTolerance = invalid;
     assert.throws(() => compileAssetGameplay(document, assets, bounds), /height tolerance/);
+  }
+});
+
+test("exterior sockets meet sloped terrain along their boundary, not at an offset probe", () => {
+  for (const rotation of [0, 45, 90, 180, 270]) {
+    for (const crossingSlope of [false, true]) {
+      const { document, assets } = slopedTerrainSocketCompilerFixture(crossingSlope, rotation);
+      const compiled = compileAssetGameplay(document, assets, bounds);
+      assert.equal(compiled.motion_data.layers.flat().length, crossingSlope ? 2 : 1);
+      assert.equal(
+        (compiled.warnings ?? []).filter((w) => w.includes("no matching boundary")).length,
+        crossingSlope ? 1 : 0,
+      );
+    }
   }
 });
 

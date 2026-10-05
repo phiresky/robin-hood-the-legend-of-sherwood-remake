@@ -51,6 +51,7 @@ import {
   navigationRegionCompilerFixture,
   compoundLiftCompilerFixture,
   multiPlaneRegionCompilerFixture,
+  slopedTerrainSocketCompilerFixture,
   joinedNavigationCompilerFixture,
   nonrenderingVolumeCompilerFixture,
   crossAssetJumpCompilerFixture,
@@ -529,6 +530,27 @@ test("preserved contour export matches the native overlap fixture", async () => 
     ),
   );
   assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+});
+
+test("sloped terrain socket exports match the native actor traversal cases", async () => {
+  const expected = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/asset-sloped-terrain-sockets.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  const actual = [0, 45, 90, 180, 270].map((rotation) => {
+    const { document, assets, route } = slopedTerrainSocketCompilerFixture(false, rotation);
+    return {
+      rotation,
+      route,
+      descriptor: compileMap(document, [0, 0, 2000, 2000], assets).descriptor,
+    };
+  });
+  assert.deepEqual(actual, expected);
 });
 
 test("ordinary multi-plane export matches the native traversal fixture", async () => {
