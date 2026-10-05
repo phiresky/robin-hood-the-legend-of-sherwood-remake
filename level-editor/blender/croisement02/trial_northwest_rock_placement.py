@@ -19,7 +19,7 @@ from review_bank_candidate import camera
 
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--part',choices=['all','building-035'],default='all');parser.add_argument('--output',required=True);parser.add_argument('--shift',type=float,default=51.5);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:])
+    parser=argparse.ArgumentParser();parser.add_argument('--part',choices=['all','building-035'],default='all');parser.add_argument('--output',required=True);parser.add_argument('--shift',type=float,default=51.5);parser.add_argument('--ramp-x',type=float,nargs=2);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:])
     output=OUT/args.output
     if output.exists():raise FileExistsError(output)
     output.mkdir()
@@ -37,11 +37,18 @@ def main():
         shift=args.shift
         for obj in rock:
             if args.part != 'all' and obj.get('source_node') != args.part:continue
-            matrix=obj.matrix_world.copy();matrix.translation+=Vector(RAY)*shift;obj.matrix_world=matrix
+            if args.ramp_x:
+                low,high=args.ramp_x
+                if high<=low:raise ValueError('Ramp interval must increase')
+                inverse=obj.matrix_world.inverted()
+                for vertex in obj.data.vertices:
+                    world=obj.matrix_world@vertex.co;weight=max(0.,min(1.,(world.x-low)/(high-low)));vertex.co=inverse@(world+Vector(RAY)*(shift*weight))
+            else:
+                matrix=obj.matrix_world.copy();matrix.translation+=Vector(RAY)*shift;obj.matrix_world=matrix
         bpy.context.view_layer.update();after_tree=surface(rock)
         projection_errors=[]
         for obj in rock:
-            if local[obj.name]!=[list(v.co) for v in obj.data.vertices] or appearance[obj.name]!=digest(appearance_state(obj,{})):raise ValueError('Local geometry/UV/texture changed')
+            if (not args.ramp_x and local[obj.name]!=[list(v.co) for v in obj.data.vertices]) or appearance[obj.name]!=digest(appearance_state(obj,{})):raise ValueError('Protected geometry/UV/texture changed')
             a=world_before[obj.name];b=np.array([obj.matrix_world@v.co for v in obj.data.vertices]);projection=lambda p:np.column_stack((p[:,0],-p[:,1]*SIN-p[:,2]*COS));projection_errors.append(float(abs(projection(a)-projection(b)).max()))
         if max(projection_errors)>.001:raise ValueError('Source silhouette shifted')
         if foreign!={o.name:digest(_geometry(o)) for o in scene.objects if o not in rock}:raise ValueError('Unrelated geometry changed')
@@ -57,7 +64,7 @@ def main():
         stats=dict(new_visible_pixels=int(gained.sum()),new_visible_native_rock=int((gained&domain).sum()),new_visible_native_bank=int((gained&bank_domain).sum()),new_visible_other=int((gained&~domain&~bank_domain).sum()),native_rock_visible_before=int((before_visible&domain).sum()),native_rock_visible_after=int((after_visible&domain).sum()),native_rock_domain_pixels=int(domain.sum()),native_rock_still_missing=int((domain&~after_visible).sum()))
         for name,data in [('gained',gained),('before-visible',before_visible),('after-visible',after_visible)]:Image.fromarray(data.astype('uint8')*255).save(output/(name+'.png'))
         bpy.ops.wm.save_as_mainfile(filepath=str(output/'worker.blend'))
-        write_json(output/'validation.json',dict(status='Private placement diagnostic; root/user review pending',model_sha256=sha(output/'worker.blend'),source_model_sha256=sha(source),bank_model_sha256=sha(bank),shifted_part=args.part,source_ray_shift=shift,world_shift=list(Vector(RAY)*shift),max_source_projection_error=max(projection_errors),local_geometry_uv_images_exact=True,unrelated_geometry_unchanged=True,coverage=stats,user_approval=None,prior_texture_approval_inherited=False))
+        write_json(output/'validation.json',dict(status='Private placement diagnostic; root/user review pending',model_sha256=sha(output/'worker.blend'),source_model_sha256=sha(source),bank_model_sha256=sha(bank),shifted_part=args.part,source_ray_shift=shift,world_shift=list(Vector(RAY)*shift),max_source_projection_error=max(projection_errors),local_geometry_exact=not bool(args.ramp_x),uv_images_exact=True,ramp_x=args.ramp_x,unrelated_geometry_unchanged=True,coverage=stats,user_approval=None,prior_texture_approval_inherited=False))
         # Import reviewed bank matrices from the opened source, never from an
         # unlinked library object whose matrix may still be identity.
         bank_names=list(bank_matrices)
