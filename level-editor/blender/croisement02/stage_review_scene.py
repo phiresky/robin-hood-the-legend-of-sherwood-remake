@@ -27,10 +27,10 @@ def signature(obj):
                        uv={layer.name: [list(v.uv) for v in layer.data] for layer in obj.data.uv_layers}))
 
 
-def render_review(scene, destination, model_hash):
+def render_review(scene, destination, model_hash, *, transparent_bounces=64):
     scene.render.engine = 'CYCLES'
     scene.cycles.samples = 4
-    scene.cycles.transparent_max_bounces = 64
+    scene.cycles.transparent_max_bounces = transparent_bounces
     scene.render.resolution_x = 1024
     scene.render.resolution_y = 768
     scene.render.resolution_percentage = 100
@@ -78,7 +78,8 @@ def render_review(scene, destination, model_hash):
         sheet.paste(im, (index % 4 * 512, index // 4 * 384))
     sheet.save(destination / 'sheet.png')
     write_json(destination / 'render-evidence.json', dict(model_sha256=model_hash,
-        views=views, sheet_sha256=sha(destination / 'sheet.png'), visual_review='pending'))
+        views=views, sheet_sha256=sha(destination / 'sheet.png'), visual_review='pending',
+        transparent_max_bounces=transparent_bounces))
 
 
 def main(destination=None, texture_decisions=None):
