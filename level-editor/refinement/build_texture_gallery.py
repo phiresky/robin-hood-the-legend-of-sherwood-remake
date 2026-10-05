@@ -183,15 +183,38 @@ def attach_states(item, review, approval, experiment, map_name):
         fields(item)  # Reject unsafe or duplicate identifiers before building files.
 
 
-def collect(experiments, output, map_name, additional_experiments=()):
+def superseded_reviews(records, map_name):
+    """Hide explicitly replaced revisions without editing archived decisions."""
+    excluded = {}
+    for record in records:
+        old = Path(record['review']).resolve()
+        new = Path(record['replacement']).resolve()
+        if old == new or old in excluded:
+            raise ValueError('Duplicate or self-replacing texture revision')
+        if sha(old) != record['review_sha256'] or sha(new) != record['replacement_sha256']:
+            raise ValueError('Texture supersession evidence changed')
+        old_item, _, _ = candidate(old.parent, map_name)
+        new_item, _, _ = candidate(new.parent, map_name)
+        if old_item['id'] != new_item['id'] or old_item['id'] != record['asset_id']:
+            raise ValueError('Texture supersession must preserve asset identity')
+        excluded[old] = new
+    if set(excluded) & set(excluded.values()):
+        raise ValueError('Texture supersession chains require an explicit final replacement')
+    return excluded
+
+
+def collect(experiments, output, map_name, additional_experiments=(), *, supersessions=()):
     experiments, output = Path(experiments).resolve(), Path(output).resolve()
     items = []
     decisions_path = output / 'decisions.json'
     decisions = json.loads(decisions_path.read_text())['decisions'] if decisions_path.exists() else []
     roots = {experiments, *(Path(path).resolve() for path in additional_experiments)}
+    excluded = superseded_reviews(supersessions, map_name)
     for experiment in sorted({path.resolve() for root in roots for path in root.iterdir() if path.is_dir()}):
         review_path = experiment / 'texture-review.json'
         if not review_path.is_file():
+            continue
+        if review_path in excluded:
             continue
         review = json.loads(review_path.read_text())
         if review.get('status') in {'held', 'fix-needed', 'rejected', 'supplemental',
@@ -202,6 +225,9 @@ def collect(experiments, output, map_name, additional_experiments=()):
         if any(existing['id'] == item['id'] for existing in items):
             raise ValueError('Multiple ready texture candidates for asset: ' + item['id'])
         items.append(item)
+    included_reviews = {Path(item['review']).resolve() for item in items}
+    if not set(excluded.values()).issubset(included_reviews):
+        raise ValueError('Replacement texture review is absent from collected candidates')
     output.mkdir(parents=True, exist_ok=True)
     for item in items:
         bind_texture_decision(item, decisions)

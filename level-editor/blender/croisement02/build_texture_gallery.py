@@ -51,7 +51,9 @@ def main():
                     for review in round_root.rglob('texture-review.json')})
     if not roots:
         raise ValueError('No manually reviewed texture experiments exist')
-    result = collect(roots[0], OUT / 'texture-review', 'Croisement02', roots[1:])
+    supersessions_path = OUT / 'texture-review/supersessions.json'
+    supersessions = json.loads(supersessions_path.read_text())['records'] if supersessions_path.exists() else []
+    result = collect(roots[0], OUT / 'texture-review', 'Croisement02', roots[1:], supersessions=supersessions)
     manifest = OUT / 'texture-review/texture-candidates.json'
     if attach_aligned_comparisons(manifest):
         build(manifest, OUT / 'texture-review/gallery', map_name='Croisement02 texture', pending_only=True)

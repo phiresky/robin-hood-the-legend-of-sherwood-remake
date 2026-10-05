@@ -102,6 +102,43 @@ class TextureStateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Multiple ready texture candidates'):
             self.build()
 
+    def replacement_record(self, replacement):
+        old = self.primary / 'texture-review.json'
+        new = replacement / 'texture-review.json'
+        return dict(asset_id='leicester-bridge', review=str(old), review_sha256=sha(old),
+                    replacement=str(new), replacement_sha256=sha(new))
+
+    def test_explicit_supersession_keeps_approval_archive_and_new_revision_pending(self):
+        _, items = self.build()
+        decisions = self.output / 'decisions.json'
+        record(self.output / 'gallery', decisions,
+               'leicester-bridge: approved [review ' + items[0]['review_revision'][:16] + ']')
+        original_decisions = decisions.read_bytes()
+        original_review = (self.primary / 'texture-review.json').read_bytes()
+        replacement = self.make_experiment('replacement', 'ready-for-user')
+        result = collect(self.experiments, self.output, 'Leicester',
+                         supersessions=[self.replacement_record(replacement)])
+        self.assertEqual(result['candidates'], 1)
+        self.assertEqual(result['approved'], 0)
+        self.assertEqual(decisions.read_bytes(), original_decisions)
+        self.assertEqual((self.primary / 'texture-review.json').read_bytes(), original_review)
+        decision = json.loads(decisions.read_text())['decisions'][0]
+        self.assertEqual((Path(decision['archive']) / 'model.blend').read_bytes(), b'initial')
+
+    def test_supersession_rejects_changed_review(self):
+        replacement = self.make_experiment('replacement', 'ready-for-user')
+        replacement_record = self.replacement_record(replacement)
+        self.update(replacement / 'texture-review.json', notes=['changed'])
+        with self.assertRaisesRegex(ValueError, 'supersession evidence changed'):
+            collect(self.experiments, self.output, 'Leicester', supersessions=[replacement_record])
+
+    def test_supersession_rejects_different_asset(self):
+        replacement = self.make_experiment('replacement', 'ready-for-user')
+        self.update(replacement / 'approval.json', asset_id='different-object')
+        with self.assertRaisesRegex(ValueError, 'preserve asset identity'):
+            collect(self.experiments, self.output, 'Leicester',
+                    supersessions=[self.replacement_record(replacement)])
+
     def test_pending_bake_does_not_block_completed_candidates(self):
         pending = self.experiments / 'pending'
         pending.mkdir()
