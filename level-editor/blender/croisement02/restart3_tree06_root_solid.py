@@ -21,15 +21,21 @@ def neutral(name,color):
  return mat
 
 
-def main():
- base=OUT/'restart3-tree06-root/collar-v8';dest=base/'neutral-solid';dest.mkdir(exist_ok=False)
- model=base/'model.blend';digest=sha(model)
+def main(variant='collar-v8'):
+ base=OUT/'restart3-tree06-root'/variant;dest=base/'neutral-solid';dest.mkdir(exist_ok=False)
+ research=variant.startswith('research-');model=base/('root.blend'if research else 'model.blend');digest=sha(model)
  bank=OUT/'restart2-bank321/packaged-v1/assets/croisement02-north-woodland-bank/model.blend'
  bpy.ops.wm.open_mainfile(filepath=str(bank));bpy.context.view_layer.update()
  names=[o.name for o in bpy.context.scene.objects if o.type=='MESH' and o.get('asset_group')=='croisement02-north-woodland-bank']
  expected={n:dict(matrix_world=[list(r)for r in bpy.data.objects[n].matrix_world])for n in names}
  bpy.ops.wm.open_mainfile(filepath=str(model));bpy.context.view_layer.update();scene=bpy.context.scene
- root=scene.objects['Northwest Tree 06 / Root collar continuation']
+ root=next(o for o in scene.objects if o.type=='MESH'and (o.get('research_only')if research else o.name=='Northwest Tree 06 / Root collar continuation'))
+ original_model=None
+ if research:
+  root_name=root.name;root_matrix={root_name:dict(matrix_world=[list(r)for r in root.matrix_world])}
+  original_model=Path(json.loads((OUT/'restart3-tree06-root/probe.json').read_text())['model'])
+  bpy.ops.wm.open_mainfile(filepath=str(original_model));bpy.context.view_layer.update();scene=bpy.context.scene
+  roots,root_receipt=append_verified(scene,model,[root_name],root_matrix);root=roots[0]
  original=[o for o in scene.objects if o.type=='MESH' and o.get('asset_group')=='croisement02-tree-06' and 'wood 'in o.name]
  for o in scene.objects:
   if o.type=='MESH':o.hide_render=o!=root and o not in original
@@ -55,10 +61,10 @@ def main():
    ImageDraw.Draw(sheet).text((i%4*384+5,i//4*408+388),f'{mode} {i}: blue new / gray old / green bank',fill='white')
   sheet.save(dest/f'{mode}-eight.png')
  assert sha(model)==digest
- write_json(dest/'report.json',dict(model_sha256=digest,bank_sha256=sha(bank),verified_context=receipt,appearance_override_only=True,no_model_saved=True,native_camera_first=True,legend={'blue':'new root volume','gray':'unchanged approved wood','green':'exact bank context'},scope='Geometry inspection only; original saved-material views remain the appearance authority'))
+ write_json(dest/'report.json',dict(model_sha256=digest,original_model=str(original_model)if original_model else None,original_model_sha256=sha(original_model)if original_model else None,bank_sha256=sha(bank),verified_context=receipt,appearance_override_only=True,no_model_saved=True,native_camera_first=True,legend={'blue':'new root volume','gray':'unchanged approved wood','green':'exact bank context'},scope='Geometry inspection only; original saved-material views remain the appearance authority'))
 
 
 if __name__=='__main__':
  acquire()
- try:main()
+ try:main(sys.argv[sys.argv.index('--')+1]if '--'in sys.argv else 'collar-v8')
  finally:release()
