@@ -6,6 +6,7 @@ import { orderSightVolumes } from "./order-sight-volumes.ts";
 import { compileSoundSource } from "./compile-sound-source.ts";
 import { compileSceneryAnimation } from "./compile-scenery-animation.ts";
 import { fixedPolygonBoolean } from "./fixed-polygon-boolean.ts";
+import { subtractMovementCollision } from "./subtract-movement-collision.ts";
 import { unionMovementSurfaces } from "./union-movement-surfaces.ts";
 import {
   assembleNavigationRegions,
@@ -1470,7 +1471,7 @@ function compileAssetGameplayAttempt(
           contourGroups.push(...regions.map(() => undefined));
         } else if (regions.length) {
           if (owner.startsWith("wall-spline-")) wallCuts.push(...regions);
-          else merged = polygonClipping.difference(merged, regions);
+          else merged = subtractMovementCollision(merged, regions);
         }
       }
     }
