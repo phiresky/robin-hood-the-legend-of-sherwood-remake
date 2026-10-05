@@ -19,7 +19,7 @@ from restore_ground75_source import geometry
 from review_bank_candidate import camera
 from tree_geometry import SIN, COS, RAY
 
-DEST = OUT/'restart3-fence-receiver/terminal-v2'
+DEST = OUT/'restart3-fence-receiver/terminal-v3'
 GROUND = OUT/'restart2-ground-completion/approved-fill-retry-v2/bake-v1/model.blend'
 FENCE = OUT/'fence-state-candidate-v2/worker.blend'
 PATCH = OUT/'source-states/mission-patches/mission-Emb05_FoB_MP-patch-022/transition-000.png'
@@ -105,10 +105,12 @@ def main():
             target.objects = names
         for imported in target.objects:
             scene.collection.objects.link(imported)
-        bpy.context.view_layer.update()
         for imported in target.objects:
-            imported.parent = None
-            imported.matrix_world = Matrix(transforms[imported.name])
+            parent = imported.parent
+            while parent is not None:
+                if parent.name not in scene.objects:
+                    scene.collection.objects.link(parent)
+                parent = parent.parent
             imported.hide_render = False
         bpy.context.view_layer.update()
         for imported in target.objects:

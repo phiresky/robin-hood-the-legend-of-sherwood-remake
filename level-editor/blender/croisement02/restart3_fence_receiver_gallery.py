@@ -9,7 +9,7 @@ from build_review_gallery import build
 
 
 def main():
-    folder = OUT/'restart3-fence-receiver/terminal-v2'
+    folder = OUT/'restart3-fence-receiver/terminal-v3'
     model = sha(folder/'model.blend')
     validation = json.loads((folder/'validation.json').read_text())
     review = json.loads((folder/'root-review.json').read_text())
