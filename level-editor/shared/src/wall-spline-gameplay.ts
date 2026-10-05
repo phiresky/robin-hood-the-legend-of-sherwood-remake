@@ -554,15 +554,7 @@ export function wallSplineGameplay(
                     stations,
                   )
                 : [points];
-              // A probe split by trimming must not acquire an artificial bond.
-              if (fragments.length > 1) {
-                if (!cropped.has(repeat))
-                  warnings.push(
-                    `Wall spline ${path.id}, light ${light.id}, repeat ${repeat}: cropping splits a receiving probe into disconnected fragments; probe omitted.`,
-                  );
-                cropped.add(repeat);
-                return [];
-              }
+              // Keep each fragment separate so trimming cannot invent a receiver.
               return fragments
                 .filter((line) => line.length > 1)
                 .map((line) => line.map((p) => warp(p, repeat)));

@@ -5,6 +5,7 @@ import {
   wallSplineFixture,
   wallMaterialFixture,
   wallDisconnectedMaskFixture,
+  wallDisconnectedLightFixture,
   wallAutomaticLightFixture,
 } from "../../shared/test-fixtures/wall-spline.ts";
 import { wallSplineGameplay } from "../../shared/src/wall-spline-gameplay.ts";
@@ -51,6 +52,11 @@ test("wall materials match the fixture exercised by native material queries", as
   assert.deepEqual(compileMap(f.document, f.bounds, f.assets).descriptor, expected);
   const split = wallDisconnectedMaskFixture();
   assert.deepEqual(compileMap(split.document, split.bounds, split.assets).descriptor, expected);
+  const lighting = wallDisconnectedLightFixture();
+  assert.deepEqual(
+    compileMap(lighting.document, lighting.bounds, lighting.assets).descriptor,
+    expected,
+  );
 });
 
 test("automatic curved wall lighting matches the native elevated shadow fixture", async () => {

@@ -4,6 +4,7 @@ import {
   wallSplineFixture,
   wallMaterialFixture,
   wallDisconnectedMaskFixture,
+  wallDisconnectedLightFixture,
 } from "../test-fixtures/wall-spline.ts";
 import { wallSplineGameplay } from "./wall-spline-gameplay.ts";
 import { compileAssetGameplay } from "./compile-asset-gameplay.ts";
@@ -302,6 +303,48 @@ test("wall spatial sounds repeat and crop with their acoustic rules intact", () 
       warning.includes("global emitters"),
     ),
   );
+});
+
+test("split lighting probes keep their receiving regions after spline trimming", () => {
+  const { document, asset, assets, bounds } = wallDisconnectedLightFixture();
+  const base = wallMaterialFixture();
+  asset.gameplay!.masks = [];
+  base.asset.gameplay!.masks = [];
+  const before = structuredClone(asset);
+  for (const points of [
+    [
+      [100, 200, 0],
+      [400, 200, 0],
+    ],
+    [
+      [100, 200, 0],
+      [345, 200, 0],
+    ],
+    [
+      [100, 200, 0],
+      [220, 300, 0],
+      [345, 200, 0],
+    ],
+  ]) {
+    document.splines![0]!.points = points.map(([x, y, z]) => [x!, y!, z!]);
+    document.splines![0]!.curved = points.length > 2;
+    document.splines![0]!.repeatLength =
+      points.length > 2 ? splineCurve(document.splines![0]!, document.camera).getLength() / 3 : 100;
+    base.document.splines = structuredClone(document.splines);
+    const generated = wallSplineGameplay(document, assets, false);
+    assert.deepEqual(
+      generated.warnings,
+      wallSplineGameplay(base.document, base.assets, false).warnings,
+    );
+    const lights = generated.descriptors[0]!.gameplay!.lights!;
+    assert.ok(lights.length > 0);
+    assert.ok(lights.every((light) => light.receiverPolylines!.length === 2));
+    assert.deepEqual(
+      compileAssetGameplay(document, assets, bounds).light_sectors,
+      compileAssetGameplay(base.document, base.assets, base.bounds).light_sectors,
+    );
+  }
+  assert.deepEqual(asset, before);
 });
 
 test("wall masks deform coverage, front boundaries and obstacle ownership together", () => {

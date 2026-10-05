@@ -217,3 +217,23 @@ export function wallDisconnectedMaskFixture() {
   ];
   return fixture;
 }
+
+export function wallDisconnectedLightFixture() {
+  const fixture = wallMaterialFixture();
+  const { document, asset } = fixture;
+  const local = (x: number, y: number, z: number) => sceneToGame(document.camera, [x, y, z]);
+  const light = asset.gameplay!.lights![0]!;
+  delete light.receivers;
+  delete light.receiverSegments;
+  light.receiverPolylines = [
+    [
+      local(-35, -30, -10),
+      local(-35, -30, 10),
+      local(80, -30, 10),
+      local(80, -30, -10),
+      local(-25, -30, -10),
+      local(-25, -30, 10),
+    ],
+  ];
+  return fixture;
+}

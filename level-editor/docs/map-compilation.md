@@ -302,6 +302,10 @@ probe fragments and subdivides them at bends. Disconnected application boundarie
 point-only anchors removed by trimming, global sounds and disconnected sound crops
 remain explicit omissions. See the checklist for detailed verification limits.
 
+Light receiving probes likewise retain disconnected fragments after trimming.
+Each fragment must independently identify a valid receiving surface; valid
+fragments retain the light contour and ambience filter on their receiving layers.
+
 Re-author existing prepared strips and calibrate selectable corners without
 changing models:
 

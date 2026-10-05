@@ -4,6 +4,19 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Disconnected spline-light receiving probes (2026-10-05)
+
+Spline lighting now retains each disconnected fragment of a clipped receiving
+probe. The existing light receiver compiler resolves each fragment independently;
+no segment is invented across a trimmed gap. Straight, partially trimmed and
+curved fixture paths preserve the same light regions as their point-anchored
+counterparts, without mutating the asset. The complete split-probe descriptor
+matches `asset-spline-material.level.json`; the native lighting regression passes
+region/layer and ambience-filter queries for all three repeated sections.
+All 19 focused spline/editor tests, app typechecking and targeted lint pass.
+This does not remove omissions for probes with no surviving receiver or ambiguous
+intersections, nor verify complete-scene lighting and shadows.
+
 ## Disconnected spline-mask receiving probes (2026-10-05)
 
 Mask authoring now supports disconnected `receiverPolylines`, mutually exclusive
