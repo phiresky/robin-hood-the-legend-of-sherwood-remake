@@ -18,6 +18,8 @@ def main():
     parser.add_argument('--setback', type=float, default=.1)
     parser.add_argument('--bay-notch', action='store_true')
     parser.add_argument('--bay-outline', action='store_true')
+    parser.add_argument('--notch-intercept', type=float, default=1153)
+    parser.add_argument('--retain-upper-gable', action='store_true')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
     destination = OUT / 'restart2' / args.version
     if destination.exists():
@@ -67,8 +69,13 @@ def main():
             temporary.append(obj)
             return obj
         body = object_for('Private body boolean', vertices, faces)
-        footprint = [(500,1403), (646,1476), (646,1600), (500,1600)]
-        cutter_vertices = [(x,-y/sine,z/cosine) for z in (80,400) for x,y in footprint]
+        footprint = [(500,250+args.notch_intercept), (646,323+args.notch_intercept), (646,1600), (500,1600)]
+        # The native dark gable above the attached roof survives the lower
+        # recess. Its lower edge projects to source row 1228 on the original
+        # front datum. This upper cantilever remains an explicit hypothesis.
+        cutter_vertices = [(x,-y/sine,80/cosine) for x,y in footprint]
+        cutter_vertices += [(x,-y/sine,(.475*x-28 if args.retain_upper_gable else 400)/cosine)
+                            for x,y in footprint]
         cutter_faces = [(3,2,1,0),(4,5,6,7),(0,1,5,4),(1,2,6,5),(2,3,7,6),(3,0,4,7)]
         cutter = object_for('Private attached bay recess', cutter_vertices, cutter_faces)
         modifier = body.modifiers.new('Attached bay recess', 'BOOLEAN')
@@ -236,6 +243,8 @@ def main():
     report = {'status': 'private geometric hypothesis; not approved', 'setback_fraction': args.setback,
               'bay_notch': args.bay_notch,
               'bay_outline_revision': args.bay_outline,
+              'notch_intercept': args.notch_intercept,
+              'retain_upper_gable': args.retain_upper_gable,
               'changes': changes, 'outside_meshes_preserved': len(outside),
               'inferred': ['Main gable body recessed below unchanged roof tops.',
                            'Roof underside thickness 2.5 native height units; body and roof are separate closed volumes.'],
