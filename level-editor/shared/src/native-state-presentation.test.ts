@@ -131,3 +131,33 @@ test("contracts reject escaping images, duplicate source and reversed polylines"
   ];
   assert.throws(() => validateNativeStatePresentation(c), /increase/);
 });
+
+test("explicit shadow contracts reject ambiguous color, format and strength", () => {
+  const contract = {
+    version: 1,
+    mission: "S03",
+    mission_data_sha256: "a".repeat(64),
+    level_data_sha256: "b".repeat(64),
+    camera_elevation_deg: 35,
+    scope: "map-art-and-listed-effects",
+    background: { path: "background.png", sha256: "c".repeat(64), width: 2, height: 2 },
+    origin: [0, 0],
+    elements: [element("marker")],
+  };
+  const frame = contract.elements[0]!.frames[0]!;
+  frame.shadow_key = { rgb: [0, 0, 255], strength_percent: 40, pixel_format: "rgb565" };
+  validateNativeStatePresentation(contract);
+  for (const invalid of [
+    { ...frame.shadow_key, rgb: [0, 0, 256] },
+    { ...frame.shadow_key, rgb: [0, 255] },
+    { ...frame.shadow_key, strength_percent: -1 },
+    { ...frame.shadow_key, strength_percent: 101 },
+    { ...frame.shadow_key, strength_percent: 40.5 },
+    { ...frame.shadow_key, pixel_format: "automatic" },
+    null,
+  ]) {
+    const changed = structuredClone(contract);
+    Object.assign(changed.elements[0]!.frames[0]!, { shadow_key: invalid });
+    assert.throws(() => validateNativeStatePresentation(changed), /shadow key/);
+  }
+});

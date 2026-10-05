@@ -6,12 +6,22 @@ export interface NativeImageResource {
   width: number;
   height: number;
 }
+export interface NativeShadowKey {
+  rgb: [number, number, number];
+  strength_percent: number;
+  pixel_format: "rgb565" | "rgb555";
+}
 export interface NativePresentationElement {
   id: string;
   source: { kind: "map-animation" | "mission-target"; index: number; sha256: string };
   active: boolean;
   /** Empty frames retain an ordering boundary without claiming its appearance. */
-  frames: (NativeImageResource & { offset: [number, number]; delay: number })[];
+  frames: (NativeImageResource & {
+    offset: [number, number];
+    delay: number;
+    /** Reserved source pixels darken the destination instead of painting this color. */
+    shadow_key?: NativeShadowKey;
+  })[];
   loop: boolean;
   display_position: [number, number];
   sort_position: [number, number];
@@ -112,6 +122,18 @@ export function validateNativeStatePresentation(
         !uint(frame.delay)
       )
         fail("invalid frame");
+      const shadow = frame.shadow_key;
+      if (
+        shadow !== undefined &&
+        (!shadow ||
+          !Array.isArray(shadow.rgb) ||
+          shadow.rgb.length !== 3 ||
+          !shadow.rgb.every((c) => uint(c) && c <= 255) ||
+          !uint(shadow.strength_percent) ||
+          shadow.strength_percent > 100 ||
+          !["rgb565", "rgb555"].includes(shadow.pixel_format))
+      )
+        fail("invalid shadow key");
       duration += frame.delay + 1;
       if (!Number.isSafeInteger(duration)) fail("invalid frame duration");
     }

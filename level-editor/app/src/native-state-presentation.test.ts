@@ -69,6 +69,7 @@ async function fixture() {
     ],
   };
   return {
+    image,
     contract,
     source,
     files,
@@ -153,4 +154,67 @@ test("mission switch retires an in-flight load and its late failure", async () =
   assert.equal(await old, false);
   assert.equal(player.ready, true);
   assert.equal(player.pixels().data[0], 200);
+});
+
+test("declared shadow keys darken destination with native channel quantization", () => {
+  const source = { width: 1, height: 1, data: new Uint8Array([0, 0, 255, 255]) };
+  const cases = [
+    { format: "rgb565", percent: 40, background: [255, 255, 255], expected: [148, 150, 148] },
+    { format: "rgb555", percent: 40, background: [255, 255, 255], expected: [148, 148, 148] },
+    { format: "rgb565", percent: 10, background: [255, 255, 255], expected: [222, 227, 222] },
+    { format: "rgb565", percent: 40, background: [231, 73, 33], expected: [132, 40, 16] },
+    { format: "rgb565", percent: 100, background: [231, 73, 33], expected: [0, 0, 0] },
+    { format: "rgb565", percent: 0, background: [231, 73, 33], expected: [231, 73, 33] },
+  ] as const;
+  for (const row of cases) {
+    const target = { width: 1, height: 1, data: new Uint8Array([...row.background, 217]) };
+    compositeNativePixels(target, source, 0, 0, {
+      rgb: [0, 0, 255],
+      strength_percent: row.percent,
+      pixel_format: row.format,
+    });
+    assert.deepEqual([...target.data], [...row.expected, 217]);
+  }
+  const ordinary = { width: 1, height: 1, data: new Uint8Array([231, 73, 33, 255]) };
+  compositeNativePixels(ordinary, source, 0, 0);
+  assert.deepEqual([...ordinary.data], [0, 0, 255, 255]);
+  assert.deepEqual([...source.data], [0, 0, 255, 255]);
+});
+
+test("shadow composition follows clipping and layer order without painting transparent keys", () => {
+  const target = { width: 1, height: 1, data: new Uint8Array([255, 255, 255, 255]) };
+  const shadow = {
+    rgb: [0, 0, 255] as [number, number, number],
+    strength_percent: 40,
+    pixel_format: "rgb565" as const,
+  };
+  const sprite = { width: 2, height: 1, data: new Uint8Array([0, 0, 255, 0, 0, 0, 255, 255]) };
+  compositeNativePixels(target, sprite, 0, 0, shadow);
+  assert.deepEqual([...target.data], [255, 255, 255, 255]);
+  compositeNativePixels(target, sprite, -1, 0, shadow);
+  compositeNativePixels(target, sprite, -1, 0, shadow);
+  assert.deepEqual([...target.data], [82, 89, 82, 255]);
+});
+
+test("per-frame shadow semantics survive loading and phase wrap; invalid shadow alpha fails atomically", async () => {
+  const f = await fixture();
+  const resource = await f.image("shadow.png", [0, 0, 255, 255]);
+  const shadow = {
+    rgb: [0, 0, 255] as [number, number, number],
+    strength_percent: 40,
+    pixel_format: "rgb565" as const,
+  };
+  f.contract.elements[0]!.frames[0] = { ...resource, offset: [0, 0], delay: 1, shadow_key: shadow };
+  const player = new NativeStatePresentation();
+  await player.set(f.contract, f.source, f.read);
+  assert.deepEqual(Array.from(player.pixels().data.subarray(0, 4)), [8, 16, 16, 255]);
+  player.seek(2);
+  assert.deepEqual(Array.from(player.pixels().data.subarray(0, 4)), [0, 200, 0, 255]);
+  player.seek(4);
+  assert.deepEqual(Array.from(player.pixels().data.subarray(0, 4)), [8, 16, 16, 255]);
+  const invalid = await f.image("invalid-shadow.png", [0, 0, 255, 128]);
+  f.contract.elements[0]!.frames[0] = { ...invalid, offset: [0, 0], delay: 1, shadow_key: shadow };
+  await assert.rejects(player.set(f.contract, f.source, f.read), /binary alpha/);
+  assert.equal(player.ready, false);
+  player.dispose();
 });

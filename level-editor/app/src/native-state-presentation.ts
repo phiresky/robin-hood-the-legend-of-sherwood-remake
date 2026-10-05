@@ -4,6 +4,7 @@ import {
   nativePresentationOrder,
   validateNativeStatePresentation,
   type NativeImageResource,
+  type NativeShadowKey,
   type NativeStatePresentationContract,
 } from "../../shared/src/native-state-presentation.ts";
 import { missionStateDataHash, type MissionStateSource } from "./mission-state-layer.ts";
@@ -57,12 +58,13 @@ export async function decodeNativeResource(
   return { width: image.width, height: image.height, data };
 }
 
-/** Straight-alpha source-over, clipped to the declared native background. */
+/** Source-over with explicitly declared destination darkening, clipped to the background. */
 export function compositeNativePixels(
   target: NativePixels,
   source: NativePixels,
   x: number,
   y: number,
+  shadow?: NativeShadowKey,
 ) {
   x = Math.floor(x);
   y = Math.floor(y);
@@ -72,6 +74,17 @@ export function compositeNativePixels(
         to = ((sy + y) * target.width + sx + x) * 4;
       const alpha = source.data[from + 3]!;
       if (alpha === 0) continue;
+      if (shadow && shadow.rgb.every((value, c) => source.data[from + c] === value)) {
+        if (alpha !== 255) throw new Error("Native shadow key must have binary alpha");
+        const factor = Math.floor(((100 - shadow.strength_percent) * 256) / 100);
+        for (let c = 0; c < 3; c++) {
+          const bits = c === 1 && shadow.pixel_format === "rgb565" ? 6 : 5;
+          const component = target.data[to + c]! >> (8 - bits);
+          const darkened = (component * factor) >> 8;
+          target.data[to + c] = (darkened << (8 - bits)) | (darkened >> (2 * bits - 8));
+        }
+        continue;
+      }
       if (alpha === 255) {
         target.data.set(source.data.subarray(from, from + 4), to);
         continue;
@@ -220,6 +233,17 @@ export class NativeStatePresentation {
       }
     }
     if (this.disposed || epoch !== this.epoch) return false;
+    for (const frame of frozen.elements.flatMap((element) => element.frames)) {
+      if (!frame.shadow_key) continue;
+      const data = images.get(frame.path)!.data;
+      for (let pixel = 0; pixel < data.length; pixel += 4)
+        if (
+          data[pixel + 3] !== 0 &&
+          data[pixel + 3] !== 255 &&
+          frame.shadow_key.rgb.every((value, c) => data[pixel + c] === value)
+        )
+          throw new Error(`Native shadow key must have binary alpha: ${frame.path}`);
+    }
     this.contract = frozen;
     this.images = images;
     this.revision++;
@@ -278,6 +302,7 @@ export class NativeStatePresentation {
         this.images.get(frame.path)!,
         element.display_position[0] + frame.offset[0] - this.contract.origin[0],
         element.display_position[1] + frame.offset[1] - this.contract.origin[1],
+        frame.shadow_key,
       );
     }
     this.cached = { revision: this.revision, pixels };
