@@ -47,10 +47,23 @@ def run(destination):
             if review.get('preservation_evidence_sha256') != bindings[str(preservation)]:
                 errors.append('Observed RGB preservation evidence changed')
             preserved = json.loads(preservation.read_text())
-            if preserved.get('status') != 'PASS':
+            package_preserved=(preserved.get('exact_geometry_uv_material_preservation') is True
+                               and preserved.get('model_sha256')==model_hash
+                               and bool(preserved.get('protected'))
+                               and all(sha(Path(p))==digest for p,digest in preserved['protected'].items()))
+            if preserved.get('status') != 'PASS' and not package_preserved:
                 errors.append('Observed RGB preservation is not PASS')
         else:
-            errors.append('No explicit observed RGB preservation receipt in selected visual review')
+            preservation=inspection/'package-preservation.json'
+            if preservation.exists():
+                preserved=json.loads(preservation.read_text());bindings[str(preservation)]=sha(preservation)
+                if not (preserved.get('exact_geometry_uv_material_preservation') is True
+                        and preserved.get('model_sha256')==model_hash
+                        and bool(preserved.get('protected'))
+                        and all(sha(Path(p))==digest for p,digest in preserved['protected'].items())):
+                    errors.append('Exact package appearance preservation failed')
+            else:
+                errors.append('No explicit observed RGB or exact package appearance preservation receipt')
         images = []
         for obj in proofs.get('saved-model-audit.json', {}).get('objects', []):
             for material in obj['used_materials']:
@@ -91,6 +104,7 @@ def run(destination):
                   packed_image_recipe_files=image_files,
                   unique_packed_images=len(wanted), matched_recipe_images=len(image_files),
                   limitations=['Evidence reconciliation only; no new visual or user approval.',
+                               'Additive packages bind exact geometry/UV/material preservation to their reviewed source candidates; this is not a new native-pixel comparison.',
                                'Packed image binding does not itself prove attractive inferred appearance.',
                                'Ground union, registered group count and source ownership do not prove full scene completion.',
                                'Grass and fern scenery without native_foliage_mask are outside this shrub audit.'])
