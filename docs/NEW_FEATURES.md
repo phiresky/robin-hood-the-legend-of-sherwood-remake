@@ -39,6 +39,8 @@
   checking receiver height and ownership and retaining overlapping collision radii.
   Closing controls also test full actor footprints across bound stair/landing
   boundaries in both directions, using the existing crushing damage path.
+  Physical transition animations retain world-space goals through arrival waits
+  and unfinished-distance continuation orders using the normal handoff lifecycle.
 
 - **Asset-authored movement headroom.** A permanent gameplay volume can set
   `movementHeadroom` in game-height units. Export excludes walking space that

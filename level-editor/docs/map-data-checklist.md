@@ -78,9 +78,11 @@ Its point-anchor queries now support world-space areas, preserving distinct
 heights and holes at coincident screen positions. Area assembly, receiver/material
 construction and lift emission still depend on projected geometry.
 **Normal exports do not yet emit physical
-stairs, and the 24 failed keep routes remain unresolved.** General point/seek
-order creation, transition choreography and broader multi-door coverage also
-remain unfinished.
+stairs, and the 24 failed keep routes remain unresolved.** Physical transitions
+now wait at a reached world target until animation completion, or preserve
+unfinished distance in the next movement order. An edge-on actor-loop test
+covers both cases. General point/seek order creation, broader transition/seek
+choreography and multi-door coverage remain unfinished.
 
 Physical stair movers now include hard collision from actors on explicitly bound
 landings. Checks require matching sector, layer, receiver footprint and height;

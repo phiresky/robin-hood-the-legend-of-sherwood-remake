@@ -4,6 +4,28 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Physical movement transition handoffs (2026-10-05)
+
+Physical stair orders no longer reject transition animations. Their position
+commit uses world-space collision and distance, while the existing transition
+lifecycle retains ownership of animation completion and continuation orders.
+Reaching a world target clears movement increments but waits for the animation
+to finish unless the next order uses the same action. If the animation finishes
+first, the copied continuation retains the physical stair and world destination.
+Stationary arrival waits retain the ordinary forecast and water-effect updates.
+
+A native edge-on actor-loop test covers a target reached before the transition
+ends and a farther target requiring unfinished-distance continuation. Both reach
+the exact transition target and then the final destination; the copied order
+retains its physical identity and full world coordinates. The complete movement
+suite passes (201 tests, 12 ignored), as do all 33 door-pass tests. The game
+build, formatting and whitespace checks pass.
+
+This covers explicit physical distance orders with transition animations.
+General point/seek order creation, broader animation/seek combinations, soft
+repulsion, reciprocal ordinary-neighbour handling and normal export integration
+remain unfinished. The keep placement failures remain unresolved.
+
 ## Coordinate-aware navigation anchor resolution (2026-10-05)
 
 The main compiler's point-anchor resolver and its diagnostics now use a shared

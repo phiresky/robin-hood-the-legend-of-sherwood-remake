@@ -662,6 +662,79 @@ fn physical_stair_door_handoffs_preserve_distinct_world_endpoints() {
 }
 
 #[test]
+fn physical_stair_transitions_wait_at_the_goal_and_preserve_unfinished_world_distance() {
+    for transition_y in [320.1, 350.] {
+        let (mut engine, mut assets) =
+            compiled_walkway(&serde_json::to_vec(&edge_on_physical_stair_fixture()).unwrap());
+        let owner = physical_walker(&mut engine, &mut assets, 2, [400., 320.], [400., 380.]);
+        let action = OrderType::TransitionWaitingUprightWalkingUpright;
+        let entity = engine.ent_mut(owner);
+        entity.element_data_mut().set_direction_instantly(8);
+        let sprite = entity.sprite_mut();
+        let mut script = sprite.scripts[0].clone();
+        script.action_id = action as u16;
+        Arc::make_mut(&mut sprite.conversion)[action as usize] = sprite.scripts.len() as u16;
+        Arc::make_mut(&mut sprite.scripts).extend(vec![script; 16]);
+        let destination = [400., transition_y, transition_y - 200.];
+        let mut transition =
+            crate::order::Order::new(action, 400., 200., engine.orders.allocate_order_id());
+        transition.physical_stair = Some(2);
+        transition.destination_3d = destination;
+        let transition_id = transition.order_id;
+        let (sequence, element) = engine.current_sequence_element_for_actor(owner).unwrap();
+        engine
+            .orders
+            .sequence_manager
+            .get_element_mut(sequence, element)
+            .unwrap()
+            .insert_order(0, transition);
+        engine.install_actor_order(owner, None);
+        let mut held_at_transition_goal = false;
+        let mut saw_continuation = false;
+        let mut visited_transition_goal = false;
+        for _ in 0..300 {
+            engine.t_tick_actor_owner_envelopes(&assets);
+            let position = engine.ent(owner).position_iface().get_position();
+            let at_transition_goal = [position.x, position.y, position.z] == destination;
+            visited_transition_goal |= at_transition_goal;
+            if let Some(element) = engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, element)
+            {
+                held_at_transition_goal |= at_transition_goal
+                    && element
+                        .current_order()
+                        .is_some_and(|order| order.order_id == transition_id);
+                for order in &element.orders {
+                    if order.transition_distance_continuation {
+                        saw_continuation = true;
+                        assert_eq!(order.physical_stair, Some(2));
+                        assert_eq!(order.destination_3d, destination);
+                    }
+                }
+            }
+            if position.y == 380. {
+                break;
+            }
+        }
+        assert_eq!(engine.ent(owner).position_iface().get_position().y, 380.);
+        assert!(
+            visited_transition_goal,
+            "the physical transition target must not be skipped"
+        );
+        if transition_y < 321. {
+            assert!(held_at_transition_goal);
+        } else {
+            assert!(
+                saw_continuation,
+                "exhausted animation must retain remaining world distance"
+            );
+        }
+    }
+}
+
+#[test]
 fn physical_stair_actor_executes_edge_on_motion_in_both_directions() {
     for (source, goal) in [([400., 320.], [400., 380.]), ([400., 380.], [400., 320.])] {
         let (mut engine, mut assets) =

@@ -12,6 +12,7 @@ impl EngineInner {
         tolerance: FinalTol,
         speed: f32,
         fallback: MotionState,
+        wait_for_animation: bool,
     ) -> MotionState {
         let sector = selected
             .physical_stair
@@ -47,6 +48,15 @@ impl EngineInner {
             );
         }
         if position == goal {
+            if wait_for_animation {
+                let entity = self.world.entities.get_mut(owner).unwrap();
+                entity.position_iface_mut().zero_all_increments();
+                if speed > 0.0 {
+                    refresh_motion_forecast(entity.sprite_mut(), speed);
+                    Self::emit_movement_water(entity, speed, &mut self.feedback.titbit_manager);
+                }
+                return fallback;
+            }
             return self.settle_movement_waypoint(
                 tcx,
                 tolerance,
@@ -189,6 +199,11 @@ impl EngineInner {
         // TODO: share soft repulsion with ordinary
         // movement before enabling physical stairs in normal editor exports.
         if next == goal {
+            if wait_for_animation {
+                entity.position_iface_mut().zero_all_increments();
+                entity.sprite_mut().compute_display_depth();
+                return fallback;
+            }
             self.settle_movement_waypoint(
                 tcx,
                 tolerance,

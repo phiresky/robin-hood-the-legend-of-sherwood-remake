@@ -1213,22 +1213,45 @@ impl EngineInner {
                     );
                 }
             }
-            let call_motion = if selected_order.physical_stair.is_some() {
-                assert!(
-                    !is_transition_anim,
-                    "physical stair transitions require explicit world-space choreography"
-                );
-                self.commit_physical_stair_step(
-                    tcx,
-                    entity_id,
-                    selected_order,
-                    ft,
-                    speed,
-                    fallback_motion,
-                )
-            } else if is_transition_anim && !tolerance_arrival {
+            let call_motion = if is_transition_anim && !tolerance_arrival {
                 'transition: {
-                    let goal_reached = {
+                    let goal_reached = if selected_order.physical_stair.is_some() {
+                        let was_at_goal = self
+                            .world
+                            .entities
+                            .get(entity_id)
+                            .unwrap()
+                            .position_iface()
+                            .get_position()
+                            == selected_order.physical_goal;
+                        let motion = self.commit_physical_stair_step(
+                            tcx,
+                            entity_id,
+                            selected_order,
+                            ft,
+                            speed,
+                            fallback_motion,
+                            true,
+                        );
+                        if matches!(motion, MotionState::Aborted) {
+                            break 'transition motion;
+                        }
+                        let reached = self
+                            .world
+                            .entities
+                            .get(entity_id)
+                            .unwrap()
+                            .position_iface()
+                            .get_position()
+                            == selected_order.physical_goal;
+                        if reached
+                            && !was_at_goal
+                            && selected_order.next_destination_same_action.is_some()
+                        {
+                            raw_motion_state = MotionState::Terminated;
+                        }
+                        reached
+                    } else {
                         let SelectedMovementOrder {
                             goal,
                             order_action,
@@ -1482,6 +1505,16 @@ impl EngineInner {
                     }
                     movement_execute_visible_motion(raw_motion_state, false, entity_target_seek)
                 }
+            } else if selected_order.physical_stair.is_some() {
+                self.commit_physical_stair_step(
+                    tcx,
+                    entity_id,
+                    selected_order,
+                    ft,
+                    speed,
+                    fallback_motion,
+                    false,
+                )
             } else if !stationary_motion_waits(speed, tolerance_arrival, dist) {
                 ('ordinary: {
         let Some(mut point_seek_post_arrival) = ('arrival_preparation: {
