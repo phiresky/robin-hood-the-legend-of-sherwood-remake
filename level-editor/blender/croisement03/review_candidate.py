@@ -17,11 +17,12 @@ from render_multiview_asset import render
 SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));RAY=Vector((0,-COS,SIN))
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('workspace',type=Path);parser.add_argument('--mask',type=int,required=True);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:])
+    parser=argparse.ArgumentParser();parser.add_argument('workspace',type=Path);parser.add_argument('--mask',type=int,required=True);parser.add_argument('--domain',type=Path,help='Optional full-map authored ownership bitmap; native mask still provides crop context');args=parser.parse_args(sys.argv[sys.argv.index('--')+1:])
     w=args.workspace.resolve();acquire();digest=sha(w/'model.blend');bpy.ops.wm.open_mainfile(filepath=str(w/'model.blend'))
     scene=bpy.data.scenes['Croisement03 Refinement'];scene.render.engine='CYCLES';scene.cycles.samples=4;scene.cycles.transparent_max_bounces=256
     scene.world=bpy.data.worlds.new('Croisement03 neutral actual-material inspection');scene.world.color=(.1,.1,.1)
     actual=w/'inspection/actual-materials'
+    actual.parent.mkdir(parents=True,exist_ok=True)
     if actual.exists():raise FileExistsError(actual)
     packet=json.loads((w/'modified/views.json').read_text())
     for v in packet['views']:v['crop']=dict(width=packet['tile_size'][0],height=packet['tile_size'][1])
@@ -41,11 +42,15 @@ def main():
     native.render.engine='CYCLES';native.cycles.samples=8;native.cycles.transparent_max_bounces=256;native.cycles.use_denoising=False;native.render.resolution_x=width;native.render.resolution_y=height;native.render.resolution_percentage=100;native.render.film_transparent=True;native.render.image_settings.file_format='PNG';native.render.image_settings.color_mode='RGBA';native.view_settings.view_transform='Standard';native.view_settings.look='None'
     out=w/'inspection/source-comparison';out.mkdir(exist_ok=False);native.render.filepath=str(out/'render.png');bpy.ops.render.render(write_still=True,scene=native.name)
     crop=source.crop((left,top,right,bottom));rendered=Image.open(out/'render.png').convert('RGBA');composite=Image.alpha_composite(crop,rendered)
-    expected=Image.new('L',(sw,sh));expected.paste(Image.open(OUT/f'baseline/masks/{args.mask:06}.png'),(x,y));expected=np.asarray(expected)[top:bottom,left:right]>127;hit=np.asarray(rendered)[:,:,3]>127;missing=expected&~hit;extra=hit&~expected;diff=np.asarray(crop).copy();diff[missing]=[255,40,40,255];diff[extra]=[0,220,255,255]
+    expected=Image.new('L',(sw,sh));expected.paste(Image.open(OUT/f'baseline/masks/{args.mask:06}.png'),(x,y))
+    if args.domain:
+        expected=Image.open(args.domain).convert('L')
+        if expected.size!=(sw,sh):raise ValueError('Authored review domain must have exact full-map dimensions')
+    expected=np.asarray(expected)[top:bottom,left:right]>127;hit=np.asarray(rendered)[:,:,3]>127;missing=expected&~hit;extra=hit&~expected;diff=np.asarray(crop).copy();diff[missing]=[255,40,40,255];diff[extra]=[0,220,255,255]
     scale=max(1,min(5,1100//width));comparison=Image.new('RGB',(width*scale,height*scale*4+96),'#ddd');draw=ImageDraw.Draw(comparison)
     for n,(label,im) in enumerate([('Native source',crop),('Saved actual geometry',rendered),('Geometry over source',composite),('Red missing native mask; cyan outside mask',Image.fromarray(diff))]):
         draw.text((4,n*(height*scale+24)+4),label,fill='black');expanded=im.resize((width*scale,height*scale),Image.Resampling.NEAREST);comparison.paste(expanded,(0,n*(height*scale+24)+24),expanded.getchannel('A'))
-    comparison.save(out/'comparison.png');write_json(out/'report.json',dict(model_sha256=digest,comparison_sha256=sha(out/'comparison.png'),native_mask=args.mask,crop=[int(v) for v in (left,top,right,bottom)],expected_pixels=int(expected.sum()),missing_pixels=int(missing.sum()),extra_pixels=int(extra.sum()),iou=float(np.count_nonzero(expected&hit)/np.count_nonzero(expected|hit)),status='measurement; visual interpretation required'))
+    comparison.save(out/'comparison.png');write_json(out/'report.json',dict(model_sha256=digest,comparison_sha256=sha(out/'comparison.png'),native_mask=args.mask,authored_domain=str(args.domain.resolve()) if args.domain else None,authored_domain_sha256=sha(args.domain) if args.domain else None,crop=[int(v) for v in (left,top,right,bottom)],expected_pixels=int(expected.sum()),missing_pixels=int(missing.sum()),extra_pixels=int(extra.sum()),iou=float(np.count_nonzero(expected&hit)/np.count_nonzero(expected|hit)),status='measurement; visual interpretation required'))
     if sha(w/'model.blend')!=digest:raise ValueError('Saved model changed during inspection')
     release();print(out/'comparison.png')
 if __name__=='__main__':main()

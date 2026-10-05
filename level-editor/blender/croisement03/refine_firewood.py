@@ -18,7 +18,7 @@ ASSET='croisement03-southwest-firewood-stack'
 SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35))
 
 def main():
-    root=OUT/'firewood-candidate-v1';root.mkdir(exist_ok=True)
+    root=OUT/'firewood-candidate-v2';root.mkdir(exist_ok=True)
     worker=root/'assets'/ASSET
     if worker.exists():raise FileExistsError(worker)
     masks=json.loads((OUT/'baseline/masks/manifest.json').read_text())
@@ -51,7 +51,10 @@ def main():
             faces.append(tuple(start+n+j for j in range(n)))
             logs.append(dict(a=list(a),b=list(b),radius=radius))
     old=obj.data;mesh=bpy.data.meshes.new('Southwest firewood closed billets');mesh.from_pydata(verts,[],faces);mesh.update()
-    for material in old.materials:mesh.materials.append(material)
+    material=bpy.data.materials.new('Unknown firewood surface')
+    material.diffuse_color=(.42,.42,.42,1)
+    mesh.materials.append(material)
+    mesh.uv_layers.new(name='UVMap')
     obj.data=mesh;obj.matrix_world.identity()
     import bmesh
     bm=bmesh.new();bm.from_mesh(mesh);bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces));bm.to_mesh(mesh)

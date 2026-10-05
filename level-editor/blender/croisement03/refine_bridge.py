@@ -44,7 +44,7 @@ def rail_world(pixel,side):
     return world(pixel,DECK_Z+(base_y-pixel[1])/COS)
 
 def main():
-    root=OUT/'bridge-candidate-v1';root.mkdir(exist_ok=False)
+    root=OUT/'bridge-candidate-v3';root.mkdir(exist_ok=False)
     masks=json.loads((OUT/'baseline/masks/manifest.json').read_text())
     for row in masks['masks']:row['png']=str(OUT/'baseline/masks'/row['png'])
     source=Image.open(OUT/'baseline/covered.png');domain=Image.new('L',source.size)
@@ -64,11 +64,17 @@ def main():
     # documented refinement obligation rather than an invented regular count.
     vertices.extend(tuple(p) for p in corners);vertices.extend(tuple(p-Vector((0,0,3))) for p in corners)
     faces.extend([(0,1,2,3),(7,6,5,4),(0,4,5,1),(1,5,6,2),(2,6,7,3),(3,7,4,0)])
+    for a,b in [(corners[0],corners[3]),(corners[1],corners[2])]:
+        beam(vertices,faces,a-Vector((0,0,6)),b-Vector((0,0,6)),3.5,10)
     for side in ['near','far']:
         endpoints=[rail_world(p,side) for p in RUNS[side+'_handrail']];beam(vertices,faces,*endpoints,2.8,2.2)
         for name,pixels in RUNS.items():
             if name.startswith(side+'_post_'):
-                a=rail_world(pixels[0],side);b=rail_world(pixels[1],side);beam(vertices,faces,a,b,3.1)
+                a=rail_world(pixels[0],side);b=rail_world(pixels[1],side)
+                # Visible post endpoints can stop at an occluding fascia. The
+                # physical member continues into the supporting deck beam.
+                b.z=min(b.z,DECK_Z-7)
+                beam(vertices,faces,a,b,3.1)
     # Pier and braces use a common projected support plane at the near edge.
     for name in ['pier','pier_brace_left','pier_brace_right']:
         pts=[rail_world(p,'near') for p in RUNS[name]];beam(vertices,faces,*pts,2.5)
@@ -78,12 +84,12 @@ def main():
     assert topology['open_edges']==0 and topology['degenerate_faces']==0
     obj=bpy.data.objects.new('Timber bridge',mesh);collection.objects.link(obj)
     for key,value in dict(source_node=NODE,asset_group=ASSET,asset_name='Timber Bridge',part_name='Deck, rails and pier').items():obj[key]=value
-    mat=bpy.data.materials.new('Unknown bridge timber');mat.diffuse_color=(.42,.42,.42,1);mesh.materials.append(mat)
+    mat=bpy.data.materials.new('Unknown bridge timber');mat.diffuse_color=(.42,.42,.42,1);mesh.materials.append(mat);mesh.uv_layers.new(name='UVMap')
     catalog=json.loads((OUT/'catalog.json').read_text());catalog['groups'].append(dict(id=ASSET,name='Timber Bridge',parts=[dict(node=NODE,name='Deck, rails and pier')]))
     write_json(root/'catalog.json',catalog)
     bpy.ops.wm.save_as_mainfile(filepath=str(root/'bridge-grouped.blend'))
     inventory(root/'inventory',collection_name=collection.name,map_name='Croisement03',source_path=OUT/'baseline/covered.png')
-    write_json(root/'grouping-review.json',dict(status='reviewed',catalog_sha256=sha(root/'catalog.json'),inventory_sha256=sha(root/'inventory/inventory.json'),evidence='New authored scenery node; no fabricated native obstacle. Preliminary bridge structure only.'))
+    write_json(root/'grouping-review.json',dict(status='reviewed',reviewer='Codex',catalog_sha256=sha(root/'catalog.json'),inventory_sha256=sha(root/'inventory/inventory.json'),evidence='New authored scenery node; no fabricated native obstacle. Preliminary bridge structure only.'))
     worker=root/'assets'/ASSET
     prepare(worker,asset_id=ASSET,scene_name='Croisement03 Refinement',collection_name=collection.name,source_path=OUT/'baseline/covered.png',grouping_manifest=root/'catalog.json',inventory_path=root/'inventory/inventory.json',review_path=root/'grouping-review.json',source_mask_manifest=root/'source-masks.json',width=256,height=256,framing_padding=1.2,lighting=dict(toward_sun=[-.45,-.55,.70],ambient=.22,diffuse=.78,shadow_epsilon=.05))
     modified(worker)
