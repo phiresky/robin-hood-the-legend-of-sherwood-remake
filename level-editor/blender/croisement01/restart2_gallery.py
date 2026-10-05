@@ -18,6 +18,9 @@ SELECTION=[('branch-source-fit-v3/branch-round-10/assets/croisement01-east-falle
 
 def main():
     destination=OUT/'gallery';destination.mkdir(exist_ok=True)
+    approvals_path=OUT/'approved-tree-fills-v1/user-decisions.json'
+    approvals=json.loads(approvals_path.read_text())['decisions'] if approvals_path.exists() else []
+    approved={r['asset_id']:r for r in approvals}
     cards=[];records=[]
     for relative,name in SELECTION:
         worker=OUT/relative
@@ -25,6 +28,9 @@ def main():
         report=worker/'inspection/self-review.json'
         review=json.loads(report.read_text()) if report.exists() else dict(status='private candidate; review pending')
         status=review['status'];items=[]
+        decision=approved.get(worker.name)
+        if decision and hashlib.sha256((worker/'model.blend').read_bytes()).hexdigest()==decision['model_sha256']:
+            status+='; USER GEOMETRY APPROVED, texture review pending'
         for label,path in [('Solid','modified/solid.png'),('Actual saved materials','inspection/actual-materials/sheet.png'),('Original source camera','inspection/native-source/comparison.png'),('Archival terrain contacts','inspection/terrain-contact/sheet.png')]:
             source=worker/path
             if not source.exists():continue
@@ -37,11 +43,11 @@ def main():
         records.append(dict(asset_id=worker.name,name=name,worker=str(worker),model_sha256=hashlib.sha256((worker/'model.blend').read_bytes()).hexdigest(),review=review))
     document='''<!doctype html><meta charset="utf-8"><title>Crossings01 continuation review</title>
 <style>body{background:#202020;color:#eee;font:16px system-ui;max-width:1400px;margin:32px auto;padding:0 24px}a{color:#9bd6ff}img{max-width:100%}article{border-top:1px solid #666;margin-top:32px;padding-top:16px}figure{margin:16px 0}</style>
-<h1>Crossings01 continuation review</h1><p>Private continuation candidates. No user geometry or texture approval has been recorded. Original gallery, catalog and library remain preserved.</p>
+<h1>Crossings01 continuation review</h1><p>Private continuation candidates. Exact trees18v4 and20v3 have user geometry approval; their texture candidates remain under review. Other candidates remain unapproved. Original catalog and library remain preserved.</p>
 <p>Earlier 21 private experiments remain archived. Most map assets, all scene integration and mission-state geometry are unfinished. Source-fit measurements do not establish whole-map completion.</p>
 '''+''.join(cards)
     (destination/'index.html').write_text(document)
-    (destination/'evidence.json').write_text(json.dumps(dict(status='private coordinator review',user_approvals=0,items=records),indent=2)+'\n')
+    (destination/'evidence.json').write_text(json.dumps(dict(status='private coordinator review',user_approvals=len(approved),items=records),indent=2)+'\n')
     print(destination/'index.html')
 
 
