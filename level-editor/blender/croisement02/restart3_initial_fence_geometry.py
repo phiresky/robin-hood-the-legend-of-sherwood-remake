@@ -14,8 +14,9 @@ from feedback_geometry import wattle_top
 from review_bank_candidate import camera
 from restore_ground75_source import geometry
 from refinement_review import _tree
+from restart3_initial_fence_cut_guard import section
 BASE=OUT/'texture-fill-round-1/croisement02-south-field-wattle-fence/experiment/bake-v1/worker.blend'
-DEST=OUT/'restart3-initial-fence/geometry-v5'
+DEST=OUT/'restart3-initial-fence/geometry-v6'
 
 def main():
  DEST.mkdir(exist_ok=False);assert sha(BASE)=='faaaa33ac0ad34c09af5ae65bcf244f8add09bd6a4630888c9a946f96b912d15'
@@ -29,6 +30,7 @@ def main():
  bottom={x:float(np.percentile([bottom[k] for k in range(max(1018,x-8),min(1170,x+8)+1)],25)) for x in bottom}
  bpy.ops.wm.open_mainfile(filepath=str(BASE));bpy.context.preferences.filepaths.save_version=0;bpy.context.view_layer.update()
  scene=bpy.context.scene;objects=[bpy.data.objects[r['object']]for r in survey['objects']];before={o.name:geometry(o)for o in objects}
+ cut_before={o.name:{str(c):section(o,c)for c in [1018,1170]}for o in objects}
  sourcepath=OUT/'animation-references/composite-frame-0.png';source=bpy.data.images.load(str(sourcepath),check_existing=False);source.pack()
  Image.fromarray(roles.astype('uint8')*255).save(DEST/'source-domain.png');mask=bpy.data.images.load(str(DEST/'source-domain.png'),check_existing=False);mask.colorspace_settings.name='Non-Color';mask.pack()
  edits=[]
@@ -37,6 +39,7 @@ def main():
   for component in rec['components']:
    ids=component['vertices'];lo,hi=np.array(component['bounds']);cx=component['center'][0]
    if hi[0]<1018 or lo[0]>1170:continue
+   if any(lo[0]<cut<hi[0] for cut in [1018,1170]):continue
    post=hi[2]-lo[2]>15
    if post and not 1025<cx<1165:continue
    for index in ids:
@@ -76,8 +79,12 @@ def main():
   assert all((obj.matrix_world@obj.data.vertices[i].co-oldworld[i]).length<1e-6 for i in range(len(oldworld)) if not 1018<oldworld[i].x<1170), 'Outside applied cut footprint changed'
   assert all((obj.matrix_world@obj.data.vertices[i].co-oldworld[i]).length<1e-6 for i in range(len(oldworld)) if i not in changed)
   edits.append(dict(object=obj.name,changed_vertices=len(changed),unchanged_vertices=len(oldworld)-len(changed),old_geometry=before[obj.name],new_geometry=geometry(obj)))
- bpy.context.view_layer.update();bpy.ops.wm.save_as_mainfile(filepath=str(DEST/'model.blend'),compress=True)
- modelhash=sha(DEST/'model.blend');bpy.ops.wm.open_mainfile(filepath=str(DEST/'model.blend'));bpy.context.view_layer.update();objects=[bpy.data.objects[r['object']]for r in survey['objects']]
+ bpy.context.view_layer.update();cut_rows=[]
+ for obj in objects:
+  for cut in [1018,1170]:
+   old=cut_before[obj.name][str(cut)];new=section(obj,cut);assert old==new,'Cut intersection changed';cut_rows.append(dict(object=obj.name,cut=cut,baseline_crossings=len(old),candidate_crossings=len(new),exact_equal=True,changed_pairs=0))
+ bpy.ops.wm.save_as_mainfile(filepath=str(DEST/'model.blend'),compress=True)
+ modelhash=sha(DEST/'model.blend');write_json(DEST/'cut-plane-guard.json',dict(status='PASS',model_sha256=modelhash,base_sha256=sha(BASE),sections=cut_rows,applied_model_sha256=sha(OUT/'fence-state-candidate-v2/worker.blend'),rule='All22 crossing members frozen entirely, preserving exact cut-cap sections and complete surviving portions.'));bpy.ops.wm.open_mainfile(filepath=str(DEST/'model.blend'));bpy.context.view_layer.update();objects=[bpy.data.objects[r['object']]for r in survey['objects']]
  review=bpy.data.scenes.new('Initial fence bounded review');bpy.context.window.scene=review
  for obj in objects:
   review.collection.objects.link(obj);obj.hide_render=False;parent=obj.parent

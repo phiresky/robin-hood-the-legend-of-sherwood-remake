@@ -1,5 +1,5 @@
 """Reopen candidate fence and verify unchanged ground in source and oblique contact."""
-import sys,json,math
+import sys,json,math,hashlib
 from pathlib import Path
 import bpy,bmesh,numpy as np
 from PIL import Image,ImageDraw
@@ -13,7 +13,7 @@ from restore_ground75_source import geometry
 from restart3_fence_receiver import atlas
 from review_bank_candidate import camera
 from tree_geometry import SIN,COS,RAY
-D=OUT/'restart3-initial-fence/geometry-v5';GROUND=OUT/'restart2-ground-completion/approved-fill-retry-v2/bake-v1/model.blend';BASE=OUT/'texture-fill-round-1/croisement02-south-field-wattle-fence/experiment/bake-v1/worker.blend'
+D=OUT/'restart3-initial-fence/geometry-v6';GROUND=OUT/'restart2-ground-completion/approved-fill-retry-v2/bake-v1/model.blend';BASE=OUT/'texture-fill-round-1/croisement02-south-field-wattle-fence/experiment/bake-v1/worker.blend'
 
 def link(scene,obj):
  if obj.name not in scene.objects:scene.collection.objects.link(obj)
@@ -26,9 +26,13 @@ def main():
  out=D/'contact-v1';out.mkdir(exist_ok=False)
  assert sha(GROUND)=='16c638be71eeb76e86439a0fdb14bac1e7bb9562afe20d175b58d0df96fb4ec2'
  bpy.ops.wm.open_mainfile(filepath=str(GROUND));bpy.context.view_layer.update();ground=bpy.data.objects['Croisement02 Terrain'];sig=geometry(ground);original=atlas(ground)[1]
- result=[];frozen={};outside=[]
+ result=[];frozen={};outside=[];original_images={}
  for label,model in [('baseline',BASE),('candidate',D/'model.blend')]:
   bpy.ops.wm.open_mainfile(filepath=str(model));bpy.context.view_layer.update();objects=[o for o in bpy.context.scene.objects if o.type=='MESH' and o.get('asset_group')=='croisement02-south-field-wattle-fence'];signatures={o.name:geometry(o)for o in objects}
+  images={n.image for o in objects for m in o.data.materials if m and m.use_nodes for n in m.node_tree.nodes if n.type=='TEX_IMAGE' and n.image};packed={im.name:hashlib.sha256(im.packed_file.data).hexdigest()for im in images if im.packed_file}
+  if label=='baseline':original_images=packed
+  else:
+   assert all(packed.get(n)==h for n,h in original_images.items());assert sha(OUT/'animation-references/composite-frame-0.png')in packed.values()
   for obj in objects:
    world=np.array([obj.matrix_world@v.co for v in obj.data.vertices]);uv=np.array([v.uv[:] for v in obj.data.uv_layers[0].data]);faces=[list(p.vertices)for p in obj.data.polygons]
    if label=='baseline':frozen[obj.name]=(world,uv,faces,[p.material_index for p in obj.data.polygons])
@@ -60,7 +64,7 @@ def main():
  source=Image.open(OUT/'animation-references/composite-frame-0.png').convert('RGB');crop=(984,807,1204,967);sheet=Image.new('RGB',(1056,300),'#303030');draw=ImageDraw.Draw(sheet)
  for i,(label,image)in enumerate([('Original source',source.crop(crop).resize((352,256),Image.Resampling.NEAREST)),('Approved fence / unchanged ground',Image.open(out/'baseline-native.png').resize((352,256))),('Candidate / unchanged ground',Image.open(out/'candidate-native.png').resize((352,256)))]):sheet.paste(image.convert('RGB'),(i*352,32));draw.text((i*352+4,8),label,fill='white')
  sheet.save(out/'source-baseline-candidate.png')
- write_json(out/'validation.json',dict(status='Reopened scoped contact proof; visual review pending',model_sha256=sha(D/'model.blend'),ground_model_sha256=sha(GROUND),ground_geometry_uv_signature=sig,ground_RGBA_exact=True,source_camera_first=True,imported_transforms_exact=True,contacts=result,outside_initial_geometry_preserved=outside,applied_state_artifact_sha256=sha(OUT/'fence-state-candidate-v2/worker.blend'),no_model_saved=True))
+ write_json(out/'validation.json',dict(status='Reopened scoped contact proof; visual review pending',model_sha256=sha(D/'model.blend'),ground_model_sha256=sha(GROUND),ground_geometry_uv_signature=sig,ground_RGBA_exact=True,source_camera_first=True,imported_transforms_exact=True,contacts=result,original_material_images_exact=original_images,native_source_png_exact=True,outside_initial_geometry_preserved=outside,applied_state_artifact_sha256=sha(OUT/'fence-state-candidate-v2/worker.blend'),no_model_saved=True))
  print(result,flush=True)
 if __name__=='__main__':
  acquire()
