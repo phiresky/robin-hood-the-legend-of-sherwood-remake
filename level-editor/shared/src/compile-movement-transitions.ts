@@ -38,6 +38,7 @@ export class MovementTransitionLimit extends Error {
 function terrainSlice(
   volume: NonNullable<PlacedTransitionBlocker["terrainVolume"]>,
   receiver: { polygon: Point[]; plane: HeightPlane; worldPlane?: HeightPlane },
+  physical: boolean,
 ): MultiPolygon {
   const plane =
     receiver.worldPlane ??
@@ -76,6 +77,7 @@ function terrainSlice(
     below,
   );
   if (slice.length < 3) return [];
+  if (physical) return polygonClipping.intersection([volume.polygon, ...volume.holes], [slice]);
   return fixedClipping
     .intersection([volume.polygon, ...volume.holes], [slice])
     .map((polygon) =>
@@ -93,6 +95,50 @@ export function compileTransitionObstacles(
   receivers?: NavigationPiece[],
   preserveBoundary = false,
   worldPlane?: HeightPlane,
+) {
+  return compileTransitionObstaclesInFrame(
+    boundary,
+    holes,
+    plane,
+    blockers,
+    warnings,
+    receivers,
+    preserveBoundary,
+    worldPlane,
+    false,
+  );
+}
+
+/** All contours and receiving planes are in world XY; projection is deferred to area emission. */
+export function compilePhysicalTransitionObstacles(
+  boundary: Point[],
+  holes: Point[][],
+  plane: HeightPlane,
+  blockers: PlacedTransitionBlocker[],
+) {
+  return compileTransitionObstaclesInFrame(
+    boundary,
+    holes,
+    plane,
+    blockers,
+    [],
+    undefined,
+    false,
+    plane,
+    true,
+  );
+}
+
+function compileTransitionObstaclesInFrame(
+  boundary: Point[],
+  holes: Point[][],
+  plane: HeightPlane,
+  blockers: PlacedTransitionBlocker[],
+  warnings: string[],
+  receivers: NavigationPiece[] | undefined,
+  preserveBoundary: boolean,
+  worldPlane: HeightPlane | undefined,
+  physical: boolean,
 ) {
   const pairs = new Map<string, number>();
   const obstacles: { state_id: number; polygon: { points: Point[] } }[] = [];
@@ -122,16 +168,18 @@ export function compileTransitionObstacles(
       const fragments = (
         receivers ?? [{ polygon: boundary, blockers: holes, plane, worldPlane }]
       ).flatMap((receiver) => {
-        const slice = terrainSlice(blocker.terrainVolume!, receiver);
+        const slice = terrainSlice(blocker.terrainVolume!, receiver, physical);
         return slice.length
-          ? fixedClipping.intersection(
+          ? (physical ? polygonClipping : fixedClipping).intersection(
               coverage(receiver.polygon, receiver.blockers),
               walkable,
               slice,
             )
           : [];
       });
-      clipped = fragments.length ? fixedClipping.union(fragments[0]!, ...fragments.slice(1)) : [];
+      clipped = fragments.length
+        ? (physical ? polygonClipping : fixedClipping).union(fragments[0]!, ...fragments.slice(1))
+        : [];
     } else if (receivers) {
       const fragments = receivers
         .filter((r) => samePlane(r.plane))
@@ -186,12 +234,9 @@ export function compileTransitionObstacles(
         points,
       ]);
     for (const region of clipped) {
-      const rounded = quantizeGeneratedMotionPolygon(
-        region,
-        Math.round,
-        blocker.transition,
-        warnings,
-      );
+      const rounded = physical
+        ? region
+        : quantizeGeneratedMotionPolygon(region, Math.round, blocker.transition, warnings);
       if (!rounded) continue;
       let pair = pairs.get(blocker.transition);
       if (!blocker.fixed && pair === undefined) {
@@ -200,7 +245,14 @@ export function compileTransitionObstacles(
         pairs.set(blocker.transition, pair);
       }
       const state_id = blocker.fixed ? 0 : (1 << (2 * pair! + (blocker.applied ? 1 : 0))) >>> 0;
-      const rings = rounded.map((ring) => simplifyMotionRing(ring));
+      const rings = rounded.map((ring) => {
+        if (!physical) return simplifyMotionRing(ring);
+        const points = ring.map(([x, y]): Point => [x, y]);
+        const first = points[0],
+          last = points.at(-1);
+        if (first && last && first[0] === last[0] && first[1] === last[1]) points.pop();
+        return points;
+      });
       let pieces: Point[][];
       if (rings.length === 1) pieces = [rings[0]!];
       else {
@@ -221,7 +273,7 @@ export function compileTransitionObstacles(
           const q = points[(i + 1) % points.length]!;
           return sum + p[0] * q[1] - q[0] * p[1];
         }, 0);
-        if (points.length < 3 || Math.abs(area) < 1)
+        if (points.length < 3 || Math.abs(area) < (physical ? 1e-8 : 1))
           throw new Error(`${blocker.transition}: degenerate state-dependent movement blocker`);
         if (area < 0) points.reverse();
         obstacles.push({ state_id, polygon: { points } });

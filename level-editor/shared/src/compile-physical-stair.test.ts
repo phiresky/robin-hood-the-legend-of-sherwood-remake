@@ -6,7 +6,9 @@ import {
   compilePhysicalStairArea,
   type PhysicalStairInput,
 } from "./compile-physical-stair.ts";
-import { planeHeight } from "./gameplay-plane.ts";
+import { heightPlane, planeHeight } from "./gameplay-plane.ts";
+import { compilePhysicalTransitionObstacles } from "./compile-movement-transitions.ts";
+import type { Point } from "./level.ts";
 import type { Vec3 } from "./scene.ts";
 
 const rectangle = (x0: number, y0: number, x1: number, y1: number): Vec3[] => [
@@ -25,6 +27,88 @@ const fixture = (): PhysicalStairInput => ({
     { inside: [400, 310, 110], middle: [400, 300, 100], outside: [400, 290, 100] },
     { inside: [400, 390, 190], middle: [400, 400, 200], outside: [400, 410, 200] },
   ],
+});
+
+test("physical changing barriers retain fractional geometry and state identities through emission", () => {
+  for (const degrees of [0, 37, 90, 180, 270]) {
+    const angle = (degrees * Math.PI) / 180;
+    const move = ([x, y, z]: Vec3): Vec3 => [
+      600 + x * Math.cos(angle) - y * Math.sin(angle),
+      600 + x * Math.sin(angle) + y * Math.cos(angle),
+      z + 40,
+    ];
+    const floor = rectangle(380, 300, 420, 400).map(move);
+    const plane = heightPlane(floor);
+    const xy = (points: Vec3[]): Point[] => points.map(([x, y]) => [x, y]);
+    const thin = xy(rectangle(395.1, 349.1, 395.2, 351.1).map(move));
+    const ring = xy(rectangle(390, 360, 410, 380).map(move));
+    const hole = xy(rectangle(395, 365, 405, 375).map(move));
+    const changing = compilePhysicalTransitionObstacles(xy(floor), [], plane, [
+      { transition: "door", applied: false, polygon: thin, holes: [], plane },
+      { transition: "door", applied: true, polygon: ring, holes: [hole], plane },
+      { transition: "copy", applied: false, polygon: thin, holes: [], plane },
+    ]);
+    assert.deepEqual(
+      [...changing.pairs],
+      [
+        ["door", 0],
+        ["copy", 1],
+      ],
+    );
+    const result = compilePhysicalStairArea({
+      surfaces: [{ polygon: floor, holes: [] }],
+      doors: [],
+      obstacles: changing.obstacles.map((obstacle) => ({
+        stateId: obstacle.state_id,
+        polygon: obstacle.polygon.points.map(([x, y]): Vec3 => [x, y, planeHeight(plane, [x, y])]),
+      })),
+    });
+    const area = (polygon: Point[]) =>
+      Math.abs(
+        polygon.reduce((sum, p, i) => {
+          const q = polygon[(i + 1) % polygon.length]!;
+          return sum + p[0] * q[1] - q[0] * p[1];
+        }, 0),
+      ) / 2;
+    for (const [state, expected] of [
+      [1, 0.2],
+      [2, 300],
+      [4, 0.2],
+    ]) {
+      const total = result.navigation.obstacles.reduce(
+        (sum, obstacle) =>
+          sum +
+          (result.area.obstacles[obstacle.motion_obstacle]!.state_id === state
+            ? area(obstacle.polygon)
+            : 0),
+        0,
+      );
+      assert.ok(Math.abs(total - expected!) < 1e-6, `${degrees} degrees, state ${state}: ${total}`);
+    }
+    assert.equal(changing.initial.length, 2);
+  }
+});
+
+test("physical volume barriers slice the real stair height before projection", () => {
+  const floor = rectangle(380, 300, 420, 400);
+  const plane = heightPlane(floor);
+  const polygon: Point[] = floor.map(([x, y]) => [x, y]);
+  const changing = compilePhysicalTransitionObstacles(polygon, [], plane, [
+    {
+      transition: "shutter",
+      applied: false,
+      polygon,
+      holes: [],
+      plane: [0, 0, 150],
+      terrainVolume: { polygon, holes: [], plane: [0, 0, 150], below: 10, above: 10 },
+    },
+  ]);
+  assert.equal(changing.obstacles.length, 1);
+  const points = changing.obstacles[0]!.polygon.points;
+  assert.equal(Math.min(...points.map(([, y]) => y)), 340);
+  assert.equal(Math.max(...points.map(([, y]) => y)), 360);
+  assert.equal(changing.obstacles[0]!.state_id, 1);
+  assert.ok(points.every((point) => point[1] - planeHeight(plane, point) === 200));
 });
 
 test("physical area emission allocates holes and live obstacle identities together", () => {

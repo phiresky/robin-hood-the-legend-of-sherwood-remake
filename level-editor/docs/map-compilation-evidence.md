@@ -4,6 +4,28 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Physical changing-barrier compilation (2026-10-05)
+
+The movement transition compiler now shares state allocation and hole
+triangulation between projected and physical coordinate paths. The physical
+entry point accepts world contours/planes, slices vertical volumes without
+projecting them, and retains fractional contours until area emission. It does
+not discard barriers merely because they cover less than one projected pixel.
+Ordinary compilation retains its existing quantization and preserved-boundary
+behavior.
+
+An end-to-end compiler test passes changing barriers into the physical stair area
+emitter at five rotations, with elevation, including an exactly edge-on floor.
+It verifies independent control pairs, initial/applied state words, the retained
+area of a 0.1-unit-wide barrier, and a holed barrier's triangulated area through
+the emitted physical-to-motion obstacle references. A separate volume test
+checks that a horizontal height range cuts the expected world-space strip of an
+edge-on stair even though the entire strip projects onto one line.
+
+Both new tests, all four affected compiler suites, both typechecks, focused lint
+and formatting pass. Main export integration remains unfinished; these results
+do not resolve the existing keep placement failures.
+
 ## Retained world planes for collision compilation (2026-10-05)
 
 Placed navigation surfaces now retain their world height plane and footprint.

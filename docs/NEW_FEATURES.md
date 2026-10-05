@@ -23,6 +23,8 @@
   native edge-on traversal tests consume compiler-generated area/navigation data.
   Main compilation retains world planes through static and changing collision
   slicing; physical surface assembly and final emission remain in progress.
+  Changing barriers can also compile in world coordinates, retaining fractional
+  geometry, holes and shared control states before physical area emission.
 
 - **Asset-authored movement headroom.** A permanent gameplay volume can set
   `movementHeadroom` in game-height units. Export excludes walking space that
