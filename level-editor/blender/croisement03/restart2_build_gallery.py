@@ -6,6 +6,8 @@ from build_review_gallery import build
 OUT=ROOT/'level-editor/work/croisement03-refinement';RESTART=OUT/'restart2'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
+    if (RESTART/'approval-round1/decision.json').exists():
+        raise RuntimeError('Round1 is approved and archived; create a separate next-round gallery instead of rewriting its receipts')
     w=RESTART/'fallen-log-v3/assets/croisement03-stream-fallen-log';joint=RESTART/'fallen-log-contact-v3';expected='a8e4d1fd808f70ee17182d302a8c690e1eeca647a80672b80cda39fa70e54d1e'
     assert sha(w/'model.blend')==expected
     limitations=['Isolated log geometry only; no user approval or texture fill yet.','Left hidden continuation is complete geometry with gray unknown texture; fill follows geometry approval.','Twenty-six authored source-boundary pixels remain uncovered, at most one native pixel deep. The source trace is authored, not a native mask.','Contact sheet uses inferred west bank and support rock seated to the riverbed; complete native surrounding terrain remains unfinished.','Water and riverbed depths, hidden log back and concealed end shapes are inferred.','The dark feature below the central trunk is treated as water shadow, not an invented branch.']
