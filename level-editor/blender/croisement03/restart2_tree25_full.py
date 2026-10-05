@@ -137,7 +137,7 @@ def wood_mesh():
 
 
 def main():
-    root = OUT / 'restart2/tree25-full-v7'
+    root = OUT / 'restart2/tree25-full-v8'
     root.mkdir(exist_ok=False)
     worker = root/'assets'/ASSET
     source = Image.open(OUT/'baseline/covered.png').convert('RGBA')
@@ -185,6 +185,11 @@ def main():
         foliage_trees.refine_crown(crown,46,evidence)
         bpy.ops.object.select_all(action='DESELECT');obj.select_set(True);crown.select_set(True)
         bpy.context.view_layer.objects.active=obj;bpy.ops.object.join()
+        # Joining remaps material slots; update the face fallback indices as well.
+        fallback=obj.data.attributes.get('reprojection_fallback_material')
+        assert fallback is not None
+        for polygon in obj.data.polygons:
+            fallback.data[polygon.index].value=polygon.material_index
         # Freeze the whole new construction as its private framing baseline.
         bounds=[max(v.co[i] for v in obj.data.vertices)-min(v.co[i] for v in obj.data.vertices) for i in range(3)]
         assert bounds[1]>=bounds[0], bounds
