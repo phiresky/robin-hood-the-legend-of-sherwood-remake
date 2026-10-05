@@ -1,0 +1,11 @@
+{
+  "asset": "leicester-church-side-tower",
+  "placementGroundHeight": 50.0010129354411,
+  "reference": {
+    "lift": "building-191-lift",
+    "door": "building-191-lift/building-191-endpoint-0",
+    "node": "building-191",
+    "outside": [-80.7822265625, 24.138115484099654, 50.0010129354411]
+  },
+  "review": "Align new drops at the lowest external stair approach rather than the foundation bottom. Verified at three requested elevations and four rotations. Existing Leicester geometry is unchanged. This does not supply missing upper landings or move saved placements."
+}

@@ -4,6 +4,23 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Published church insertion ground elevation (2026-10-05)
+
+The church-side tower now publishes `placementGroundHeight: 50.0010129354411`,
+the local elevation of its lowest external stair approach. New drops align that
+approach with the requested ground elevation while preserving the stair and
+foundation geometry. Twelve actual insertion checks cover ground heights 0,
+40 and 130 at four rotations. Leicester's compiled geometry before and after
+the metadata change is exactly identical.
+
+The reviewed value is recorded in
+`refinement/catalogs/leicester-placement-ground.json`; validation and publication
+snapshots are under `work/map-compile/church-placement-ground-lnFlbN`. The
+Leicester and Wychford descriptor pins are refreshed. Existing placements are
+unchanged, so Wychford's already-elevated church approach still needs supporting
+terrain or an intentional placement edit. These insertion checks do not prove
+that independently placed upper landings connect.
+
 ## Authored placement ground elevation (2026-10-05)
 
 Investigating the church traversal confirmed a physical landing mismatch: its

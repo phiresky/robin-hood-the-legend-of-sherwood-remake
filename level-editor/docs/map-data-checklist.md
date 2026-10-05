@@ -38,6 +38,11 @@ with native construction and apply/reset verified. Its elevated entrance and
 the church traversal remain unresolved. The latest baked Wychford ZIP predates
 this attachment change.
 
+Assets can author a placement ground height for new drops. The church-side
+tower now uses its lower stair approach, verified at three elevations and four
+rotations. Existing placements and Leicester's compiled geometry are unchanged;
+this does not repair Wychford's already-elevated approach automatically.
+
 | Map information | How the editor constructs it | Current evidence / gap |
 |---|---|---|
 | Background and minimap | Render placed models and textures, then downsample. | Browser bake and native ZIP decoding tested. |
