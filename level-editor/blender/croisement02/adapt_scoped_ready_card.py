@@ -13,6 +13,19 @@ def main():
  for filename,digest in evidence.items():
   if sha(filename)!=digest:raise ValueError('Changed ready resource: '+filename)
  evidence[str(receipt)]=sha(receipt)
+ if data.get('worker') and data.get('asset_id'):
+  worker=Path(data['worker']);asset=data['asset_id'];model=data['model_sha256']
+  if evidence.get(str((worker/'model.blend').resolve()))!=model:raise ValueError('Unbound worker model')
+  rows=[('Actual saved model, original camera top left',worker/'inspection/actual-materials/sheet.png'),('Solid geometry, original camera top left',Path(data.get('solid_sheet',worker/'modified/solid.png'))),('Original source and saved model',Path(data['source_trace'])),('Native ground and neighbor comparison',Path(data['source_comparison'])),('Ground and neighbor contact views',Path(data['contact_sheet']))]
+  images=[]
+  for label,path in rows:
+   p=str(path.resolve())
+   if p not in evidence:raise ValueError('Unbound worker presentation image: '+p)
+   images.append(dict(label=label,file=p,source=p,sha256=evidence[p]))
+  title=data.get('name',asset.removeprefix('croisement02-').replace('-',' ').capitalize())
+  member=dict(asset_id=asset,name=title,model_sha256=model,review_revision=data.get('review_revision',sha(receipt)),decision='pending',scope='New geometry only; inferred hidden texture completion remains separate.',notes=data['notes'],evidence=evidence,displayed_images=images)
+  args.output.parent.mkdir(parents=True,exist_ok=True)
+  args.output.write_text(json.dumps(dict(items=[member],cards=[dict(card_id=asset,title=title,asset_ids=[asset])]),indent=2)+'\n');print(args.output);return
  if data.get('states'):
   canonical,=data['asset_ids'];members=[]
   for index,state in enumerate(data['states']):
