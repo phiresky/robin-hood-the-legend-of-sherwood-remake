@@ -19,7 +19,7 @@ from refinement_workspace import _geometry
 from review_evidence import sha
 
 
-def main(number, source, output):
+def main(number, source, output, zero_observed_partition=None):
     if output.exists(): raise ValueError('Use a new immutable derived packet directory')
     manifest=json.loads((source/'views.json').read_text())
     worker=tree_workspace(number)
@@ -28,6 +28,13 @@ def main(number, source, output):
     decisions=[row for row in json.loads((OUT/'user-feedback.json').read_text())['records'] if row['asset_id']==asset]
     if not decisions or decisions[-1]['decision']!='approved':raise ValueError('Explicit current geometry approval required')
     model_hash=sha(worker/'model.blend')
+    zero_authority = None
+    if zero_observed_partition is not None:
+        zero_observed_partition = zero_observed_partition.resolve(strict=True)
+        partition = json.loads(zero_observed_partition.read_text())
+        if partition['observed_foliage_pixels'] != 0:
+            raise ValueError('Expected explicitly zero observed foliage')
+        zero_authority = dict(path=str(zero_observed_partition), sha256=sha(zero_observed_partition))
     if manifest['asset_id']!=asset or derivation_source['asset_id']!=asset:raise ValueError('Native-front bridge asset differs from source packet')
     if derivation_source['status']!='PASS' or derivation_source['model_sha256']!=model_hash or decisions[-1]['model_sha256']!=model_hash:raise ValueError('Native-front bridge must use exact approved source geometry')
     for relative,expected in derivation_source['artifacts'].items():
@@ -39,13 +46,14 @@ def main(number, source, output):
         objects=[scene.objects[name] for name in manifest['object_names']]
         before={o.name:_geometry(o,protect_appearance=True) for o in objects}
         tree,owners,_=_tree(objects)
-        records=[];images={};protected=[]
+        records=[];images={};protected=[];foliage_faces=[]
         for obj in objects:
             evaluated=obj.evaluated_get(bpy.context.evaluated_depsgraph_get());mesh=evaluated.to_mesh()
             try:
                 mesh.calc_loop_triangles();ownership=mesh.color_attributes.get('Source ownership')
                 for triangle in mesh.loop_triangles:
                     material=mesh.materials[triangle.material_index] if mesh.materials else None
+                    foliage_faces.append(bool(material and material.get('foliage_physical_opacity')))
                     if not material or not material.get('foliage_observed'):
                         records.append(None);continue
                     assert material.get('foliage_physical_opacity') and material.get('source_ownership_channel')=='vertex-color-r'
@@ -75,11 +83,17 @@ def main(number, source, output):
             frame=data.view_frame(scene=scene);left,right=min(p.x for p in frame),max(p.x for p in frame);bottom,top=min(p.y for p in frame),max(p.y for p in frame)
             matrix=Matrix(view['camera_matrix_world']);direction=matrix.to_3x3()@Vector((0,0,-1))
             colors=load(source/'views'/f'view-{index}-textured.png');known=load(source/'views'/f'view-{index}-known.png');original=colors.copy();original_known=known.copy();selected=np.zeros((height,width),bool)
+            zero_checked = 0
             for y in range(height):
                 for x in range(width):
                     origin=matrix@Vector((left+(x+.5)*(right-left)/width,bottom+(y+.5)*(top-bottom)/height,0))
                     hit,normal,triangle,_=tree.ray_cast(origin,direction)
-                    if hit is None or records[triangle] is None:continue
+                    if hit is None:continue
+                    if zero_authority and foliage_faces[triangle]:
+                        if original_known[y,x,0] >= .5:
+                            raise ValueError('Off-map inferred foliage was incorrectly marked as observed source')
+                        zero_checked += 1
+                    if records[triangle] is None:continue
                     points,uvs,((iw,ih),pixels),extension=records[triangle]
                     # Match the physical-opacity ray's arithmetic exactly. A
                     # different precision at a texel boundary can select the
@@ -101,6 +115,9 @@ def main(number, source, output):
             _save(output/'views'/f'view-{index}-textured.png',width,height,array('f',colors.ravel()))
             _save(output/'views'/f'view-{index}-known.png',width,height,array('f',known.ravel()))
             textured.append(array('f',colors.ravel()));reports.append(dict(view=index,protected_front_pixels=int(selected.sum()),previously_unknown_front_pixels=int((selected&(original_known[:,:,0]<.5)).sum()),outside_observed_front_unchanged=True))
+            if zero_authority:
+                if selected.any():raise ValueError('Off-map foliage unexpectedly has observed texels')
+                reports[-1]['inferred_foliage_pixels_checked_unknown'] = zero_checked
             bpy.data.cameras.remove(data);print(reports[-1],flush=True)
             if 'counts' in view:
                 transferred=reports[-1]['previously_unknown_front_pixels'];view['counts']['source']+=transferred;view['counts']['unknown']-=transferred
@@ -109,6 +126,9 @@ def main(number, source, output):
         assert before=={o.name:_geometry(o,protect_appearance=True) for o in objects}
         if sha(worker/'model.blend')!=model_hash:raise ValueError('Approved model changed during native-front bridge')
         manifest['native_foliage_ownership_bridge']=dict(version=1,model_sha256=sha(worker/'model.blend'),source_packet=str(source),source_manifest_sha256=sha(source/'views.json'),rule='First visible physical hit with approved foliage_observed material and unanimous per-corner ownership=1 samples its exact native atlas UV. All other ownership and RGB remain unchanged.',protected_atlases=protected,views=reports)
+        if zero_authority:
+            if sha(zero_observed_partition) != zero_authority['sha256']:raise ValueError('Off-map authority changed')
+            manifest['native_foliage_ownership_bridge']['zero_observed_authority'] = zero_authority
         (output/'views.json').write_text(json.dumps(manifest,indent=2)+'\n')
         (output/'native-foliage-preservation.json').write_text(json.dumps(dict(status='PASS',geometry_appearance_unchanged=True,**manifest['native_foliage_ownership_bridge']),indent=2)+'\n')
         derivation=json.loads((source/'derivation.json').read_text())
@@ -118,4 +138,4 @@ def main(number, source, output):
     finally:release()
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('tree',type=int);parser.add_argument('source',type=Path);parser.add_argument('output',type=Path);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:]);main(args.tree,args.source.resolve(),args.output.resolve())
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('tree',type=int);parser.add_argument('source',type=Path);parser.add_argument('output',type=Path);parser.add_argument('--zero-observed-partition',type=Path);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:]);main(args.tree,args.source.resolve(),args.output.resolve(),args.zero_observed_partition)
