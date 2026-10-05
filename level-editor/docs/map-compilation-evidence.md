@@ -4,6 +4,30 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Church upper landing collision isolation (2026-10-05)
+
+The unpublished clearance experiment `church-stair-clearance-Omgdxv` adds only
+the strip swept by the upper landing seam correction. Its placement batch
+`local-stair-placements-noprfL` still passes 24/32 routes: the same eight upper
+flight failures remain. The upper landing motion obstacle is unchanged. This
+clearance is not a fix and is not published.
+
+`refinement/diagnose-church-stair-hole.mjs` isolates the zero-degree placement
+and moves its single upper landing hole obstacle away from the route, retaining
+the obstacle count to preserve sector numbering. Diagnostic batch
+`church-hole-ablation-3df4R3` passes all four routes, compared with two failures
+in the unmodified placement. This deliberately invalid floor is diagnostic only;
+it must never be published. Removing the obstacle entirely invalidates sector
+references and is not an equivalent diagnostic.
+
+The blocker represents an enclosed navigation hole. Landing binding preserves
+the precise outer receiver but clips integer-rounded hole obstacles against it;
+the failed upper seam retains a thin obstacle strip. The next correction needs
+to preserve and validate precise inner collision boundaries without removing
+real holes or changing live obstacle state. The ablation isolates the blocker;
+it does not yet prove a safe precision correction or resolve the upper flight's
+incomplete visible-mesh coverage.
+
 ## Leicester church-side tower seam review (2026-10-05)
 
 Unpublished candidate `local-stair-seams-qCEECD` adjusts both church-side tower

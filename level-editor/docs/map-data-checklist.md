@@ -120,6 +120,10 @@ moved/rotated native traversal checks remain necessary across these assets.
 The first church-side tower candidate emits both physical flights at eight
 placements but passes only 24/32 routes; the upper flight fails at 0/90 degrees.
 Its landing review also finds incomplete mesh coverage, so it remains unpublished.
+An added landing clearance does not fix these failures. A diagnostic that moves
+the upper landing's hole blocker away passes all four zero-degree routes, isolating
+that blocker; preserving precise inner boundaries still needs implementation and
+verification without removing real holes. The diagnostic floor is not publishable.
 Landing mesh checks now include other components in the same asset, since the
 visible floor and receiving surface can belong to different parts.
 The east hall's upper stair now has published floor/landing seam corrections and
