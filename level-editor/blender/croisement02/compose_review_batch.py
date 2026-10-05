@@ -86,14 +86,15 @@ def main():
                 model = model_paths[0]
                 for entry in item['displayed_images']:
                     images.append(dict(label=entry['label'], **resource(path.parent/entry['file'],entry['sha256'])))
-                title, detail = asset, item['scope']
+                title, detail = item.get('name',asset), item['scope']
             else:
                 raise ValueError(f'Unsupported packet kind: {spec["kind"]}')
             notes = item.get('notes', [])
             if isinstance(notes,str): notes=[notes]
             members[asset] = dict(asset_id=asset,title=title,scope=scope,scope_description=detail,
                 model=str(model.resolve()),model_sha256=model_hash,review_revision=item['review_revision'],
-                source_evidence=str(path),source_evidence_sha256=sha(path),images=images,reports=reports,notes=notes,decision='pending')
+                source_evidence=str(path),source_evidence_sha256=sha(path),images=images,reports=reports,notes=notes,decision='pending',
+                **{key:item[key] for key in ('canonical_asset_id','state') if key in item})
         if selected and selected != set(members):
             raise ValueError(f'Missing requested assets: {selected-set(members)}')
         if spec['kind'] in ('geometry-gallery','texture-gallery','scoped-gallery'):

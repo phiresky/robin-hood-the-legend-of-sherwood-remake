@@ -13,6 +13,23 @@ def main():
  for filename,digest in evidence.items():
   if sha(filename)!=digest:raise ValueError('Changed ready resource: '+filename)
  evidence[str(receipt)]=sha(receipt)
+ if data.get('states'):
+  canonical,=data['asset_ids'];members=[]
+  for index,state in enumerate(data['states']):
+   state_id=state['patch001']+'-'+state['patch002'];images=[]
+   for filename,digest in state['files'].items():
+    if filename.endswith('.blend'):continue
+    if 'actual/' in filename:label='Actual eight views: '+state_id
+    elif 'complete-object/' in filename:label='Solid eight views: '+state_id
+    elif 'original-native' in filename:label='Original artwork and native model comparison: '+state_id
+    else:label='Native joint: '+state_id
+    path=str(Path(filename).resolve());images.append(dict(label=label,file=path,source=path,sha256=digest))
+   if index==len(data['states'])-1:
+    path=str(Path(data['presentation']['terrain']).resolve());images.append(dict(label='Foundation and original terrain contact',file=path,source=path,sha256=evidence[path]))
+   members.append(dict(asset_id=canonical+'--'+state_id,canonical_asset_id=canonical,state=state_id,name='York castle great hall — '+state_id,model_sha256=state['model_sha256'],review_revision=data['review_revision'],decision='pending',scope=data['scope'],notes=data['disclosures']+[data['roof_semantics'][index]],evidence=evidence,displayed_images=images))
+  args.output.parent.mkdir(parents=True,exist_ok=True)
+  args.output.write_text(json.dumps(dict(items=members,cards=[dict(card_id=data['id'],title=data['name'],asset_ids=[m['asset_id'] for m in members])]),indent=2)+'\n')
+  print(args.output);return
  model=data.get('assembled_model_sha256',data['candidate_model_sha256'])
  if not any(p.endswith('.blend') and h==model for p,h in evidence.items()):raise ValueError('Missing exact reviewed model')
  images=[]
