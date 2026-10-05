@@ -36,7 +36,7 @@ def groups_for(mesh,world,projection):
     return groups,[root(i) for i in range(len(world))]
 
 
-def bend(obj,detail):
+def bend(obj,detail,allowed_groups=None,field_radius=20):
     mesh=obj.data;mesh.calc_loop_triangles();world=np.array([tuple(obj.matrix_world@v.co) for v in mesh.vertices]);ray=np.array(RAY)
     projection=np.column_stack((world[:,0],-SIN*world[:,1]-COS*world[:,2]))
     groups,roots=groups_for(mesh,world,projection)
@@ -61,8 +61,10 @@ def bend(obj,detail):
     desired={};limits={};samples=defaultdict(int)
     for g,indices in groups.items():
         center=projection[indices].mean(0);distance=np.linalg.norm(sourcepoints-center,axis=1)
-        field=float(np.max(demands*np.exp(-(np.maximum(distance-4,0)/20)**2)))
+        field=float(np.max(demands*np.exp(-(np.maximum(distance-4,0)/field_radius)**2)))
         desired[g]=max(needs[g],field*np.clip((float(world[indices,2].mean())-.5)/80,0,1))
+        if allowed_groups is not None and g not in allowed_groups:desired[g]=0
+        if needs[g]>0 and desired[g]==0:raise ValueError('Required fragment omitted by local correction scope')
         limits[g]=max(0,(float(world[indices,2].min())-.5)/SIN)
     def constrain(g,points):
         if desired[g]<1e-5:return
@@ -107,6 +109,6 @@ def bend(obj,detail):
         for i in indices:mesh.vertices[i].co=inverse@(Vector(world[i])+delta)
         if shift>1e-5 or needs[g]>0:changes.append(dict(component=g,vertices=len(indices),requested=desired[g],required_for_sampled_sign=needs[g],clearance_limit=limits[g],applied=shift,opaque_footprint_samples=samples[g],unresolved=shift+1e-5<needs[g]))
     mesh.update()
-    report=dict(method='Rigid paired fragments follow one smooth source-screen envelope, capped by ground and bank/rock ray clearance over opaque UV texel footprint vertices and centroids. Original front/back spacing and UV are unchanged.',paired_components=len(groups),changed_components=sum(c['applied']>1e-5 for c in changes),required_components=len([c for c in changes if c['required_for_sampled_sign']>0]),unresolved_required_components=sum(c['unresolved'] for c in changes),maximum_shift=max(c['applied'] for c in changes),components=changes,bank_inputs=hashes,context_transform_receipt_sha256=sha(transform_path),verified_context_transforms=transform_receipts,limitations=['Opaque footprint sampling includes every clipped texel cell corner and centroid; bank projection breaklines inside a cell still require reopened crossing verification.','Preexisting bank-interior fragments stay fixed.','Rigid neighboring fragments approximate a smooth envelope; actual oblique review must check gaps.'])
+    report=dict(method='Rigid paired fragments follow one smooth source-screen envelope, capped by ground and bank/rock ray clearance over opaque UV texel footprint vertices and centroids. Original front/back spacing and UV are unchanged.',local_allowed_groups=sorted(allowed_groups) if allowed_groups is not None else None,field_radius=field_radius,paired_components=len(groups),changed_components=sum(c['applied']>1e-5 for c in changes),required_components=len([c for c in changes if c['required_for_sampled_sign']>0]),unresolved_required_components=sum(c['unresolved'] for c in changes),maximum_shift=max(c['applied'] for c in changes),components=changes,bank_inputs=hashes,context_transform_receipt_sha256=sha(transform_path),verified_context_transforms=transform_receipts,limitations=['Opaque footprint sampling includes every clipped texel cell corner and centroid; bank projection breaklines inside a cell still require reopened crossing verification.','Preexisting bank-interior fragments stay fixed.','Rigid neighboring fragments approximate a smooth envelope; actual oblique review must check gaps.'])
 
     return json.loads(json.dumps(report,default=lambda v:v.item()))

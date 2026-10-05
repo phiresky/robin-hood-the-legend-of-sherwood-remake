@@ -21,9 +21,9 @@ def geometry(obj):
     for c in mesh.color_attributes:h.update(c.name.encode());h.update(np.array([v.color[:] for v in c.data]).tobytes())
     return h.hexdigest()
 
-def main():
-    dest=OUT/'restart2-fence/shrub57-sign-bend-v7';dest.mkdir(exist_ok=False)
-    original=OUT/'understory-round-9/assets/croisement02-shrub-57/model.blend';base=OUT/'restart2-fence/shrub57-sign-bend-v6/model.blend';box=[-42,200,116,390]
+def main(base_version=6,version=7):
+    dest=OUT/f'restart2-fence/shrub57-sign-bend-v{version}';dest.mkdir(exist_ok=False)
+    original=OUT/'understory-round-9/assets/croisement02-shrub-57/model.blend';base=OUT/f'restart2-fence/shrub57-sign-bend-v{base_version}/model.blend';box=[-42,200,116,390]
     bpy.ops.wm.open_mainfile(filepath=str(original));expected,known=raster(bpy.data.objects['West Rock Foliage 57'],box)
     bpy.ops.wm.open_mainfile(filepath=str(base));obj=bpy.data.objects['West Rock Foliage 57'];guard=geometry(obj);actual,roles,depth,faces=raster(obj,box,with_details=True)
     assert np.array_equal(expected[:,:,3],actual[:,:,3]);diff=np.any(abs(expected-actual)>1e-5,axis=2);assert np.all(known[diff]==1) and np.all(roles[diff]==2)
