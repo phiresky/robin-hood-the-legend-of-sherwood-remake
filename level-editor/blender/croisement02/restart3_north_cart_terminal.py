@@ -9,7 +9,7 @@ from mathutils.geometry import tessellate_polygon
 
 
 def main():
-    dest=OUT/'restart3-north-cart/terminal-physical-v6';dest.mkdir(exist_ok=False)
+    dest=OUT/'restart3-north-cart/terminal-physical-v9';dest.mkdir(exist_ok=False)
     source=json.loads((OUT/'state-target-evidence/north-cart/manifest.json').read_text());frame=source['parts'][0]['frames'][-1]
     assert sha(frame['image'])==frame['image_sha256']
     rgba=np.array(Image.open(frame['image']).convert('RGBA'));box=[1202,220,1454,362]
@@ -47,12 +47,12 @@ def main():
     prism('Jagged standing front panel',panel,ph,2.5,pp,RAY)
     side=[(109,43),(131,41),(134,58),(138,69),(126,82),(126,102),(117,106),(98,110),(93,94),(102,85),(110,75)]
     sp=claim('cabin-side-owned',side)
-    prism('Retained cabin side behind drapes',side,lambda x,y:rh(x,43-.10*(x-82))-(y-(43-.10*(x-82)))/COS-1.2,2,sp,RAY)
+    prism('Retained cabin side behind drapes',side,lambda x,y:max(2.0,rh(x,43-.10*(x-82))-(y-(43-.10*(x-82)))/COS-1.2),2,sp,RAY)
     # A true broken U-shaped bed leaves the source opening beneath the rear drape empty.
     bed=[(25,99),(43,90),(69,78),(119,65),(150,69),(158,76),(172,89),(171,96),(163,97),(154,89),(155,75),(137,77),(127,83),(127,103),(116,109),(77,115),(33,119),(28,114)]
     bp=claim('broken-bed-owned',bed)
     bh=lambda x,y:3+21*max(0,min(1,(x-27)/62))-17*max(0,min(1,(x-153)/9))*max(0,min(1,(y-73)/16))
-    prism('Broken notched bed',bed,bh,3,bp)
+    prism('Broken notched bed',bed,bh,3/SIN,bp,RAY)
     timber=[
       ('diagonal-front-plank',[(23,71),(30,70),(56,89),(57,99),(46,94),(28,79)],lambda x,y:bh(x,y)+2.5),
       ('left-jagged-shaft',[(0,89),(7,89),(10,88),(13,90),(16,90),(18,92),(23,94),(27,94),(33,93),(38,94),(43,97),(39,102),(29,103),(23,100),(18,98),(15,97),(11,95),(8,95),(8,93),(3,92),(0,92)],lambda x,y:1.5+.13*x),
@@ -63,9 +63,9 @@ def main():
         p=claim(name+'-owned',poly);prism(name,poly,h,1.3,p,RAY)
     # The upright near wheel is a finite annulus and spokes, not a textured disk.
     wheelpoly=[(128,98),(131,102),(133,111),(132,120),(128,127),(122,132),(114,134),(107,131),(102,127),(99,121),(101,115),(104,108),(108,104),(117,102),(124,99)]
-    wp=claim('upright-wheel-owned',wheelpoly);u=Vector((math.cos(math.pi/4),math.sin(math.pi/4),0));v=Vector((u.y,-u.x,0));Z=Vector((0,0,1))
-    center=point(1318.5,335.5,20);n=48
-    def wheel(name,c,a,b,normal,radius,inner,depth,paint):
+    wp=claim('upright-wheel-owned',wheelpoly);u=Vector((math.cos(.8113042059988309),math.sin(.8113042059988309),0));v=Vector((u.y,-u.x,0));Z=Vector((0,0,1))
+    center=point(1320.6394510139792,335.33766190067347,19.72279719558539);n=48
+    def wheel(name,c,a,b,normal,radius,inner,depth,paint,phase=0,spoke_radius=.9):
         m=Mesh()
         for off,r in [(-depth/2,radius),(-depth/2,inner),(depth/2,radius),(depth/2,inner)]:
             for i in range(n):m.vertices.append(tuple(c+normal*off+(a*math.cos(i*math.tau/n)+b*math.sin(i*math.tau/n))*r))
@@ -74,9 +74,9 @@ def main():
             for aa,bb in [(0,n),(2*n,3*n),(0,2*n),(n,3*n)]:m.faces.append((aa+i,aa+j,bb+j,bb+i))
         solid(name+' rim',m.vertices,m.faces,paint)
         m=Mesh();hub_half=3 if name=='Near upright wheel' else min(3,depth/2);m.tube(c-normal*hub_half,c+normal*hub_half,3.3,n=12)
-        for i in range(10):m.tube(c,c+(a*math.cos(i*math.tau/10)+b*math.sin(i*math.tau/10))*(inner+.5),.9,n=6)
+        for i in range(10):m.tube(c,c+(a*math.cos(i*math.tau/10+phase)+b*math.sin(i*math.tau/10+phase))*(inner+.5),spoke_radius,n=6)
         solid(name+' spokes and hub',m.vertices,m.faces,paint)
-    wheel('Near upright wheel',center,u,Z,v,20,16.2,3,wp)
+    wheel('Near upright wheel',center,u,Z,v,19.72279719558539,14.80848723565496,3,wp,phase=.600288685951353,spoke_radius=1.592369924515233)
     flatpoly=[(158,92),(165,90),(170,92),(175,96),(176,102),(173,105),(166,109),(157,107),(155,103),(155,96)]
     fp=claim('fallen-wheel-owned',flatpoly)
     wheel('Displaced ground wheel',point(1368,320,2),Vector((1,0,0)),Vector((0,1,0)),Z,11.2,7.8,4,fp)
@@ -90,6 +90,18 @@ def main():
     cp=claim('box-owned',boxpoly)
     top=[point(1202+x,220+y,20) for x,y in [(230,103),(256,104),(255,119),(228,118)]];bottom=[Vector((p.x-6,p.y,0)) for p in top]
     solid('Detached finite box',bottom+top,[(0,3,2,1),(4,5,6,7),(0,1,5,4),(1,2,6,5),(2,3,7,6),(3,0,4,7)],cp)
+    # Only the already traced post/roof overlap is eligible for this material split.
+    rgb=rgba[:,:,:3].astype(float)
+    post_overlap=requested_masks['roof-owned']&requested_masks['broken-front-panel-owned']&(rgb[:,:,0]>rgb[:,:,1]*1.1)&(rgb[:,:,1]>rgb[:,:,2]*1.1)
+    requested_masks['roof-owned'] &= ~post_overlap
+    # The orange timber tongue continues across the upper ring's traced bounding domain.
+    yy=np.indices(labels.shape)[0]
+    tongue_overlap=requested_masks['fallen-wheel-owned']&requested_masks['broken-bed-owned']&(yy<=97)
+    requested_masks['fallen-wheel-owned'] &= ~tongue_overlap
+    write_json(dest/'tongue-ring-role.json',dict(source_sha256=frame['image_sha256'],pixels=int(tongue_overlap.sum()),rule='Traced broken-bed overlap above the independently inspected ring rim at native y98 belongs to the continuous orange timber tongue.'))
+    Image.fromarray((tongue_overlap*255).astype(np.uint8)).save(dest/'tongue-ring-role.png')
+    write_json(dest/'post-roof-role.json',dict(source_sha256=frame['image_sha256'],pixels=int(post_overlap.sum()),rule='Brown pixels within the independently traced front-post and roof overlap belong to the structural post; no new source domain is granted.'))
+    Image.fromarray((post_overlap*255).astype(np.uint8)).save(dest/'post-roof-role.png')
     labels[:]=0
     priority=['roof-owned','front-drape-owned','rear-drape-owned','upright-wheel-owned','fallen-wheel-owned','diagonal-front-plank-owned','left-jagged-shaft-owned','upper-broken-shaft-owned','raised-foretimber-owned','rear-facing-splinter-owned','broken-front-panel-owned','cabin-side-owned','broken-bed-owned','box-owned']
     for name in priority:
