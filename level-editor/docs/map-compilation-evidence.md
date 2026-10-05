@@ -42,6 +42,13 @@ and focused JavaScript lint/format checks pass. The refreshed local-anchor audit
 Leicester down to 6/8 and Derby still 0/10. These checks do not establish complete
 rendered or alternate-state traversal parity.
 
+Fresh published batch `saved-map-exports-XWHhHL` reopens and compiles all ten
+saved scenes. Native geometry construction and all **71 control apply/reset
+checks** pass; Derby retains **28/28 directed stair routes** with the updated
+runtime. Published Leicester geometry matches `church-terrace-level-MJAhPD`
+exactly after excluding warning text. This batch contains descriptors, not newly
+baked ZIPs; complete image/resource and rendered round trips remain outstanding.
+
 ## Church assembly visibility and complete-level gate (2026-10-06)
 
 The seam reviewer now casts projected floor/head rays through initially visible
