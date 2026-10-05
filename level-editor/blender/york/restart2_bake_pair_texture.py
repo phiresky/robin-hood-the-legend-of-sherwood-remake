@@ -43,7 +43,7 @@ report=apply(manifest,args.generation/'generated-preserved.png',args.output,
 if before!={o.name:_geometry(o) for o in scene.objects}:raise ValueError('Bake changed geometry')
 if outside!={o.name:_geometry(o,protect_appearance=True) for o in scene.objects if o.name in outside}:
     raise ValueError('Bake changed outside objects or materials')
-bpy.ops.wm.save_as_mainfile(filepath=str(args.output/'model.blend'))
+bpy.ops.wm.save_as_mainfile(filepath=str(args.output/'model.blend'),compress=True)
 report.update(geometry_verified=True,outside_objects_preserved=len(outside),
               approved_model_sha256=sha(model),baked_model_sha256=sha(args.output/'model.blend'),
               scope='Private texture candidate; actual rendered review and user texture approval pending')
