@@ -4,6 +4,41 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Precise landing receivers and unresolved keep binding (2026-10-05)
+
+The compiler retains pre-grid receiving contours when a clipped source region
+rounds to the same emitted navigation boundary. Physical stair landings use this
+contour, including zero-height landings when fractional geometry needs preserving.
+Integer-aligned zero-height landings keep their existing implicit receiver. Rings
+are normalized without repeating their closing vertex.
+
+Runtime landing binding combines active coplanar receivers owned by the same
+motion sector/layer. It accepts their precise boundary only if rounding reproduces
+the motion boundary; otherwise it retains the motion/receiver intersection. Live
+collision continues to use the actual motion area's obstacle state. A native
+regression accepts a quarter-unit seam lost by integer rounding while rejecting
+short and unrelated oversized receivers. An editor regression verifies the
+zero-height fractional receiver and its physical door endpoint.
+
+The staged eight-placement batch `work/map-compile/keep-placements-us6eTG` still
+fails **all 80 directed actor routes**. A filtered diagnostic in
+`work/map-compile/keep-precision-binding-y5lnsdoc` rejects all seven landing doors
+in the unrotated, zero-elevation placement as not reaching their physical doors.
+Exported receiver-to-midpoint distances there are below 0.0000004 world units;
+the remaining runtime seam rejection needs investigation. No keep definition is
+published by this change, and these results do not establish traversal parity.
+A fresh batch after ring normalization, `work/map-compile/keep-placements-sq7ORI`,
+also fails all 80 routes. In its unrotated placement, six of seven door receivers
+have rounded symmetric-difference areas of 4.5–33 square units against their
+owning motion boundary; one matches exactly. These are final emitted receiving
+contours, so pre-material contour matching alone is insufficient. Both final
+receiver identity and numerical seam binding remain open.
+
+Validation: 191 focused editor/compiler tests, both TypeScript typechecks, focused
+lint, eleven native stair-navigation tests and 190 movement tests pass (twelve
+movement tests ignored). The game build passes. The existing native descriptor
+fixtures remain unchanged.
+
 ## Staged keep seams expose landing precision loss (2026-10-05)
 
 `work/map-compile/keep-door-seams-WR2Oyl` stages asset-local seam corrections from

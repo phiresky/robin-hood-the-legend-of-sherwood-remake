@@ -26,6 +26,54 @@ mod tests {
     use super::*;
 
     #[test]
+    fn landing_binding_preserves_matching_pre_grid_receiver() {
+        let mut stair = BoundPhysicalStair {
+            definition: robin_level_data::physical_stair::PhysicalStairNavigation {
+                plane: [0., 1., -200.25],
+                boundary: vec![
+                    [380., 300.25],
+                    [420., 300.25],
+                    [420., 400.25],
+                    [380., 400.25],
+                ],
+                obstacles: vec![],
+                doors: vec![robin_level_data::physical_stair::PhysicalStairDoor {
+                    inside: [400., 310.25, 110.],
+                    middle: [400., 300.25, 100.],
+                    outside: [400., 290., 100.],
+                }],
+            },
+            layer: 2,
+            area: 0,
+            obstacle_states: vec![],
+            landings: vec![],
+        };
+        let motion = serde_json::from_value(serde_json::json!({
+            "is_lift":false, "state_id":0, "flags":0, "skeleton_segments":[], "obstacles":[],
+            "polygon":{"points":[[380,170],[420,170],[420,200],[380,200]]}
+        }))
+        .unwrap();
+        for end in [299.75, 301.] {
+            let receiver =
+                polygon(&[[380., 270.], [420., 270.], [420., end], [380., end]]).unwrap();
+            assert!(
+                stair
+                    .bind_landing(0, &motion, 0, 0, 0, [0., 0., 100.], Some(&receiver))
+                    .is_err(),
+                "a short or unrelated receiver must not bridge a missing landing"
+            );
+        }
+        assert!(stair.landings.is_empty());
+        let receiver =
+            polygon(&[[380., 270.], [420., 270.], [420., 300.25], [380., 300.25]]).unwrap();
+        stair
+            .bind_landing(0, &motion, 0, 0, 0, [0., 0., 100.], Some(&receiver))
+            .unwrap();
+        assert!(stair.supports_landing_neighbour(0, 0, [400., 300.125, 100.]));
+        assert!(!stair.supports_landing_neighbour(0, 0, [400., 300.5, 100.]));
+    }
+
+    #[test]
     fn landing_binding_rejects_wrong_heights_and_incomplete_receivers() {
         let mut stair = BoundPhysicalStair {
             definition: robin_level_data::physical_stair::PhysicalStairNavigation {
@@ -211,7 +259,14 @@ impl BoundPhysicalStair {
         };
         let floor = unproject(&motion.polygon.points)?;
         let mut support = if let Some(receiver) = receiver {
-            floor.intersection(receiver)
+            // Exact receiving geometry may encode the same motion boundary
+            // before integer-grid rounding. Use it only when that identity is
+            // proven, so unrelated overhanging receivers cannot widen support.
+            if receiver_matches_motion(receiver, motion, plane) {
+                geo::MultiPolygon::from(vec![receiver.clone()])
+            } else {
+                floor.intersection(receiver)
+            }
         } else {
             geo::MultiPolygon::from(vec![floor])
         };
@@ -316,4 +371,44 @@ impl BoundPhysicalStair {
         });
         Ok(())
     }
+}
+
+fn receiver_matches_motion(
+    receiver: &Polygon<f32>,
+    motion: &crate::level_data::RawMotionArea,
+    plane: [f64; 3],
+) -> bool {
+    let [a, b, c] = plane;
+    let project = |line: &LineString<f32>| {
+        let mut points = line
+            .points()
+            .map(|p| {
+                let x = f64::from(p.x());
+                let y = f64::from(p.y());
+                // Match the exporter's nearest-integer ties toward positive infinity.
+                ((x + 0.5).floor(), (y - (a * x + b * y + c) + 0.5).floor())
+            })
+            .collect::<Vec<_>>();
+        points.dedup();
+        LineString::from(points)
+    };
+    let rounded = Polygon::new(
+        project(receiver.exterior()),
+        receiver.interiors().iter().map(project).collect(),
+    );
+    if !rounded.is_valid() {
+        return false;
+    }
+    let raw = Polygon::new(
+        LineString::from(
+            motion
+                .polygon
+                .points
+                .iter()
+                .map(|&(x, y)| (f64::from(x), f64::from(y)))
+                .collect::<Vec<_>>(),
+        ),
+        Vec::new(),
+    );
+    raw.xor(&rounded).unsigned_area() < 1e-6
 }

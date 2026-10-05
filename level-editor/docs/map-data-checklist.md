@@ -90,7 +90,12 @@ A staged seam correction now emits all three physical stairs at all eight
 placements, but fails all 80 actor routes at entry: rounded landing navigation
 and some receiver contours do not meet the exact door seams. This unpublished
 candidate is not a replacement for the current definitions. Exact authored
-landing support still needs preserving through export and runtime binding.
+landing support now survives export when its rounded contour matches one motion
+region. Runtime binding accepts matching pre-grid receivers, including combined
+coplanar fragments, while retaining live motion collision. A fractional-edge
+regression passes and rejects short/unrelated receivers. The staged keep still
+fails all 80 routes: preserving precision alone has not resolved runtime seam
+binding. Further seam diagnostics and rotated traversal checks remain necessary.
 Physical transitions
 now wait at a reached world target until animation completion, or preserve
 unfinished distance in the next movement order. An edge-on actor-loop test

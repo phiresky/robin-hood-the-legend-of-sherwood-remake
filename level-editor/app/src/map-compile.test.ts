@@ -1176,6 +1176,29 @@ test("lift asset export matches the native traversal fixture", async () => {
   assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
 });
 
+test("physical stair landings retain fractional receiving boundaries at zero height", () => {
+  const { document, assets, hut } = liftAssetCompilerFixture();
+  for (const surface of hut.gameplay!.surfaces) surface.preserveMovementPrecision = true;
+  document.groups[0]!.transform.dx += 0.25;
+  const geometry = compileMap(document, [0, 0, 2000, 2000], assets).descriptor.asset_geometry!;
+  const lift = geometry.lifts![0]!;
+  assert.ok(lift.physical_navigation);
+  const door = lift.doors[0]!;
+  const receivers = geometry.sight_obstacles!.filter(
+    (obstacle) =>
+      obstacle.projection_area?.[0] === door.sector_out &&
+      obstacle.projection_area[1] === door.layer_out,
+  );
+  assert.equal(receivers.length, 1);
+  const receiver = receivers[0]!;
+  assert.ok(receiver.points.every((point) => point.z_top === 0));
+  assert.ok(
+    receiver.points.some((point) => point.x === lift.physical_navigation!.doors[0]!.middle[0]),
+  );
+  assert.ok(receiver.points.some((point) => point.x % 1 === 0.25));
+  assert.notDeepEqual(receiver.points[0], receiver.points.at(-1));
+});
+
 test("changing climb exports match native placed traversal fixtures", async () => {
   const fixtures = JSON.parse(
     await readFile(

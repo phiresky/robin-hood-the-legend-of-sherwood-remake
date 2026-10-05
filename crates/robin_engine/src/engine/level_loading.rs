@@ -2443,6 +2443,36 @@ impl EngineInner {
                     );
                     [f64::from(p.az), f64::from(p.bz), f64::from(p.dz)]
                 });
+                let receiver_geometry = receiver.and_then(|_| {
+                    use geo::{BooleanOps, Intersects};
+                    let obstacles = self.sight_obstacles(assets);
+                    let mut coverage = geo::MultiPolygon::new(Vec::new());
+                    for (id, candidate) in obstacles.iter_indexed() {
+                        if !obstacles.is_active(id as usize)
+                            || !candidate.projection_area.is_some_and(|area| {
+                                area.sector == index && area.layer.get() == door.layer_out
+                            })
+                        {
+                            continue;
+                        }
+                        let p = crate::position_interface::PlaneZCoeffs::from_plane_points(
+                            &candidate.top_plane_points,
+                        );
+                        if [p.az, p.bz, p.dz]
+                            .iter()
+                            .zip(plane)
+                            .any(|(value, expected)| (f64::from(*value) - expected).abs() > 1e-6)
+                        {
+                            continue;
+                        }
+                        coverage = coverage.union(candidate.polygon.as_geo());
+                    }
+                    let outside = bound.definition.doors[door_index].outside;
+                    coverage
+                        .0
+                        .into_iter()
+                        .find(|patch| patch.intersects(&geo::Point::new(outside[0], outside[1])))
+                });
                 if let Err(error) = bound.bind_landing(
                     door_index,
                     landing_motion,
@@ -2450,7 +2480,9 @@ impl EngineInner {
                     landing_area,
                     door.sector_out,
                     plane,
-                    receiver.map(|receiver| receiver.polygon.as_geo()),
+                    receiver_geometry
+                        .as_ref()
+                        .or_else(|| receiver.map(|receiver| receiver.polygon.as_geo())),
                 ) {
                     tracing::warn!(sector=lift.motion_area_index, door=door_index, %error,
                         "physical stair landing support could not be bound");

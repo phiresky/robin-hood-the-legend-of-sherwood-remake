@@ -1539,6 +1539,15 @@ function compileAssetGameplayAttempt(
       );
       if (!quantized) continue;
       const boundary = ring(quantized[0]!, `Merged movement boundary on layer ${layer}`);
+      const receivingCandidates = merged.filter((candidate) => {
+        const rounded = quantizeGeneratedMotionPolygon(
+          candidate,
+          quantize,
+          "Receiving boundary",
+          [],
+        );
+        return rounded && polygonClipping.xor([rounded[0]!], [boundary]).length === 0;
+      });
       const blockers = quantized
         .slice(1)
         .map((r) => ring(r, `Merged movement hole on layer ${layer}`));
@@ -1549,6 +1558,9 @@ function compileAssetGameplayAttempt(
         lift,
         navigationRegion,
         polygon: boundary,
+        ...(receivingCandidates.length === 1
+          ? { receivingPolygon: ring(receivingCandidates[0]![0]!, "Receiving boundary") }
+          : {}),
         blockers,
       });
     }
@@ -1741,9 +1753,29 @@ function compileAssetGameplayAttempt(
           );
         receiver.projection_area = [sector, layer];
       }
-      for (const material of partitionProjectionMaterials(piece.polygon, supports, warnings)) {
+      const physicalLanding =
+        !lift &&
+        doors.some(
+          (door) =>
+            door.lift &&
+            physicalStairs.has(door.lift) &&
+            containsNavigationAnchor(piece, door.outsideAnchor, { allowBlocked: true }),
+        );
+      const receivingPolygon = physicalLanding
+        ? (piece.receivingPolygon ?? piece.polygon)
+        : piece.polygon;
+      const preciseLanding =
+        physicalLanding &&
+        polygonClipping.xor(polygon(receivingPolygon), polygon(piece.polygon)).length > 0;
+      for (const material of partitionProjectionMaterials(receivingPolygon, supports, warnings)) {
         if (material.obstacleIndex !== undefined) continue;
-        if (!lift && !material.explicit && !piece.plane.some((n) => Math.abs(n) > 1e-7)) continue;
+        if (
+          !lift &&
+          !preciseLanding &&
+          !material.explicit &&
+          !piece.plane.some((n) => Math.abs(n) > 1e-7)
+        )
+          continue;
         const receivingPlane = material.planePoints
           ? heightPlane(material.planePoints.map(([x, y, z]) => [x, y - z, z]))
           : piece.plane;
