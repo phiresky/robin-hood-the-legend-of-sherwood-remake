@@ -31,6 +31,8 @@ def sha(path):
 def main():
     output = OUT / 'canopy-texture-review'
     output.mkdir(exist_ok=True)
+    decisions_path = output / 'decisions.json'
+    decisions = json.loads(decisions_path.read_text())['decisions'] if decisions_path.exists() else []
     rows, cards = [], []
     for number, relative in CHOICES.items():
         asset = f'croisement02-tree-{number:02d}'
@@ -58,14 +60,19 @@ def main():
                           f'<a href="{link(path)}"><img loading="lazy" src="{link(path)}" alt="{html.escape(label)}"></a></figure>'
                           for label, path in images)
         note = 'Original approved wood retained exactly; generated foliage only.' if number in (11, 13) else 'Geometry and native source pixels preserved; inferred texture candidate.'
-        cards.append(f'<section id="{asset}"><h2>{asset}</h2><p>{note} Texture approval pending.</p>'
+        approved = any(d['asset_id'] == asset and d['decision'] == 'approved'
+                       and d['model_sha256'] == sha(worker)
+                       and all(Path(p).exists() and sha(Path(p)) == h for p, h in d['evidence_sha256'].items())
+                       for d in decisions)
+        approval_label = 'Texture approved by user.' if approved else 'Texture approval pending.'
+        cards.append(f'<section id="{asset}"><h2>{asset}</h2><p>{note} {approval_label}</p>'
                      f'<div class="images">{figures}</div><p><a href="{link(review_path)}">Material review evidence</a></p></section>')
         paths = [worker, actual, baseline, review_path, experiment / 'input.png', generation / 'generated-preserved.png']
         rows.append(dict(asset_id=asset, candidate=str(candidate), model_sha256=sha(worker),
-                         geometry_approval=bridge['source_decision'], texture_approval='pending',
+                         geometry_approval=bridge['source_decision'], texture_approval='approved' if approved else 'pending',
                          evidence={str(path): sha(path) for path in paths}))
     (output / 'evidence.json').write_text(json.dumps(dict(status='private coordinator review', items=rows), indent=2) + '\n')
-    body = '<!doctype html><meta charset="utf-8"><title>Croisement02 canopy textures</title><style>body{margin:28px;background:#17191c;color:#e5e8eb;font:16px system-ui}h1,h2{font-weight:600}p{color:#bbc2cb}section{margin:36px 0;padding:20px;background:#24272c;border-radius:8px}.images{display:grid;grid-template-columns:1fr 1fr;gap:12px}figure{margin:0}figcaption{padding:8px 0}img{width:100%;background:#111}a{color:#9fcaff}@media(max-width:900px){.images{grid-template-columns:1fr}}</style><h1>Croisement02 canopy texture review</h1><p>Thirteen texture candidates on approved geometry. Each candidate has passed its own saved-model review. Coordinator and user texture approval remain pending.</p><p>Open an image for all eight views at full size. Existing grazing-angle foliage bands belong to the approved geometry and remain visible.</p>'
+    body = '<!doctype html><meta charset="utf-8"><title>Croisement02 canopy textures</title><style>body{margin:28px;background:#17191c;color:#e5e8eb;font:16px system-ui}h1,h2{font-weight:600}p{color:#bbc2cb}section{margin:36px 0;padding:20px;background:#24272c;border-radius:8px}.images{display:grid;grid-template-columns:1fr 1fr;gap:12px}figure{margin:0}figcaption{padding:8px 0}img{width:100%;background:#111}a{color:#9fcaff}@media(max-width:900px){.images{grid-template-columns:1fr}}</style><h1>Croisement02 canopy texture review</h1><p>Thirteen texture candidates on approved geometry. Each candidate has passed its own saved-model review. Exact user approval is shown per candidate; integration remains separate.</p><p>Open an image for all eight views at full size. Existing grazing-angle foliage bands belong to the approved geometry and remain visible.</p>'
     (output / 'index.html').write_text(body + '\n'.join(cards) + '\n')
     print(output / 'index.html')
 
