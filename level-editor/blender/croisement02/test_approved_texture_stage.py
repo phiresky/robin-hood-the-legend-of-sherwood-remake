@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import shutil
 import unittest
-from approved_texture_stage import FLAGS, select
+from approved_texture_stage import FLAGS, select, select_native_front
 from evidence_io import sha
 
 
@@ -209,6 +209,81 @@ class CanopySelectionTests(unittest.TestCase):
         self.freeze_grouped([self.model, self.sheet, proof, root])
         with self.assertRaisesRegex(ValueError, 'parent bake changed'):
             select(self.decisions, {'tree': self.base})
+
+
+class NativeFrontSelectionTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.base = self.root / 'base.blend'
+        self.base.write_bytes(b'approved geometry')
+        self.candidate = self.root / 'native-front-retained-v1'
+        self.candidate.mkdir()
+        (self.candidate / 'actual').mkdir()
+        (self.candidate / 'actual/textured.png').write_bytes(b'eight reviewed views')
+        (self.candidate / 'worker.blend').write_bytes(b'native and generated material')
+        parent = self.root / 'bake-v1'
+        parent.mkdir()
+        (parent / 'worker.blend').write_bytes(b'parent generated material')
+        self.write(parent / 'validation.json', {'source_mask_evidence': {}})
+        self.write(parent / 'reopened-preservation.json', dict(status='PASS',
+            reopened_preservation='PASS', model_sha256=sha(self.base),
+            candidate_model_sha256=sha(parent / 'worker.blend'),
+            bake_validation_sha256=sha(parent / 'validation.json'),
+            evidence_sha256={}, receiver_names=['Added roots'], **{key: True for key in FLAGS}))
+        constraints = self.root / 'constraints.json'
+        self.write(constraints, {'records': [dict(asset_id='prop', model_sha256=sha(self.base),
+            editable_object='Added roots', original_meshes_fully_protected={'Original stump': {}})]})
+        self.manifest = self.root / 'views.json'
+        self.write(self.manifest, dict(object_names=['Original stump', 'Added roots'],
+            root_texture_constraints=dict(path=str(constraints), sha256=sha(constraints))))
+        self.proof = self.candidate / 'native-front-preservation.json'
+        self.write(self.proof, dict(asset_id='prop', status='PASS', reopened_preservation='PASS',
+            geometry_unchanged=True, original_prop_geometry_uv_material_images_unchanged=True,
+            native_front_rgba_packed_bytes_and_uv_exact=True,
+            candidate_model_sha256=sha(self.candidate / 'worker.blend'),
+            approved_geometry_sha256=sha(self.base), parent_model_sha256=sha(parent / 'worker.blend'),
+            parent_reopened_preservation_sha256=sha(parent / 'reopened-preservation.json'),
+            source_constraint_sha256=sha(constraints)))
+        for name in ['root-review.json', 'agent-material-review.json']:
+            self.write(self.candidate / name, dict(status='PASS scoped appearance',
+                all_eight_actual_views_inspected=True,
+                candidate_model_sha256=sha(self.candidate / 'worker.blend'),
+                actual_sheet_sha256=sha(self.candidate / 'actual/textured.png')))
+        self.hashes = {str(p): sha(p) for p in [self.proof, self.manifest, constraints,
+            self.candidate / 'root-review.json', self.candidate / 'agent-material-review.json']}
+
+    def write(self, path, value):
+        path.write_text(json.dumps(value))
+
+    def selected(self):
+        return select_native_front({'asset_id': 'prop'}, self.base, self.candidate, self.hashes)
+
+    def test_complete_prop_receiver_scope(self):
+        self.assertEqual(self.selected()['receiver_names'], ['Added roots', 'Original stump'])
+
+    def test_omitted_original_receiver_rejected(self):
+        data = json.loads(self.manifest.read_text())
+        data['object_names'] = ['Added roots']
+        self.write(self.manifest, data)
+        self.hashes[str(self.manifest)] = sha(self.manifest)
+        with self.assertRaisesRegex(ValueError, 'receiver scope'):
+            self.selected()
+
+    def test_changed_parent_rejected(self):
+        (self.root / 'bake-v1/worker.blend').write_bytes(b'other parent')
+        with self.assertRaisesRegex(ValueError, 'parent model'):
+            self.selected()
+
+    def test_held_independent_review_rejected(self):
+        path = self.candidate / 'root-review.json'
+        data = json.loads(path.read_text())
+        data['status'] = 'HOLD'
+        self.write(path, data)
+        self.hashes[str(path)] = sha(path)
+        with self.assertRaisesRegex(ValueError, 'Independent native front actual review'):
+            self.selected()
 
 
 if __name__ == '__main__':

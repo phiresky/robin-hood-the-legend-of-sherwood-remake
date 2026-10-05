@@ -78,6 +78,8 @@ def select_canopy(document, decision, base):
     geometry_decision = decision['geometry_approval']
     require(geometry_decision['decision'] == 'approved' and geometry_decision['scope'] == 'geometry'
             and geometry_decision['model_sha256'] == sha(base), 'Canopy current geometry changed')
+    if (candidate / 'native-front-preservation.json').exists():
+        return select_native_front(decision, base, candidate, hashes)
     retained = (candidate / 'preservation.json').exists()
     restored = (candidate / 'native-boundary-preservation.json').exists()
     require(not (retained and restored), 'Ambiguous texture derivative')
@@ -169,6 +171,67 @@ def select_canopy(document, decision, base):
     if retained:
         require(set(receivers) == set(proof['wood_objects'] + proof['foliage_objects']),
                 'Retained wood receiver scope changed')
+    return dict(decision=decision, model=str(model), proof=str(proof_path),
+                proof_sha256=sha(proof_path), receiver_names=receivers)
+
+
+def select_native_front(decision, base, candidate, hashes):
+    """Select scoped prop fills while retaining every original prop receiver."""
+    asset = decision['asset_id']
+    proof_path = candidate / 'native-front-preservation.json'
+    proof = json.loads(proof_path.read_text())
+    model = candidate / 'worker.blend'
+    require(str(proof_path) in hashes and sha(proof_path) == hashes[str(proof_path)],
+            'Native front proof absent from frozen approval')
+    require(proof['asset_id'] == asset and proof['status'] == 'PASS'
+            and proof['reopened_preservation'] == 'PASS'
+            and proof['geometry_unchanged'] is True
+            and proof['original_prop_geometry_uv_material_images_unchanged'] is True
+            and proof['native_front_rgba_packed_bytes_and_uv_exact'] is True,
+            'Incomplete native front preservation')
+    require(proof['candidate_model_sha256'] == sha(model)
+            and proof['approved_geometry_sha256'] == sha(base), 'Native front model changed')
+    experiment = candidate.parent
+    baked = experiment / 'bake-v1'
+    parent_path = baked / 'reopened-preservation.json'
+    parent = json.loads(parent_path.read_text())
+    require(sha(parent_path) == proof['parent_reopened_preservation_sha256']
+            and parent['status'] == 'PASS' and parent['reopened_preservation'] == 'PASS'
+            and all(parent.get(flag) is True for flag in FLAGS), 'Native front parent proof changed')
+    require(parent['model_sha256'] == sha(base)
+            and parent['candidate_model_sha256'] == sha(baked / 'worker.blend')
+            and proof['parent_model_sha256'] == parent['candidate_model_sha256'],
+            'Native front parent model changed')
+    for path, expected in parent['evidence_sha256'].items():
+        require(sha(Path(path)) == expected, 'Native front bake evidence changed: ' + path)
+    validation_path = baked / 'validation.json'
+    require(sha(validation_path) == parent['bake_validation_sha256'], 'Native front validation changed')
+    for path, expected in json.loads(validation_path.read_text())['source_mask_evidence'].items():
+        require(sha(Path(path)) == expected, 'Native front source evidence changed: ' + path)
+    manifest_path = experiment / 'views.json'
+    require(str(manifest_path) in hashes, 'Native front receiver manifest not frozen')
+    manifest = json.loads(manifest_path.read_text())
+    binding = manifest['root_texture_constraints']
+    constraints_path = Path(binding['path'])
+    require(str(constraints_path) in hashes and sha(constraints_path) == binding['sha256']
+            == proof['source_constraint_sha256'], 'Native front source constraints changed')
+    rule = next(row for row in json.loads(constraints_path.read_text())['records']
+                if row['asset_id'] == asset)
+    require(rule['model_sha256'] == sha(base), 'Native front constraint base changed')
+    receivers = sorted(set(rule['original_meshes_fully_protected']) | {rule['editable_object']})
+    require(set(manifest['object_names']) == set(receivers)
+            and set(parent['receiver_names']) == {rule['editable_object']},
+            'Native front receiver scope changed')
+    for filename, reviewer in [('root-review.json', 'Independent'),
+                               ('agent-material-review.json', 'Author')]:
+        path = candidate / filename
+        require(str(path) in hashes, reviewer + ' native front review not frozen')
+        review = json.loads(path.read_text())
+        require(review.get('status', '').startswith('PASS')
+                and review.get('all_eight_actual_views_inspected') is True
+                and review.get('candidate_model_sha256') == sha(model)
+                and review.get('actual_sheet_sha256') == sha(candidate / 'actual/textured.png'),
+                reviewer + ' native front actual review changed')
     return dict(decision=decision, model=str(model), proof=str(proof_path),
                 proof_sha256=sha(proof_path), receiver_names=receivers)
 
