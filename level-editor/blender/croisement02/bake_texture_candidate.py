@@ -120,7 +120,8 @@ def preflight(experiment):
     return manifest, scene, names, state, report
 
 
-def run(experiment, output=None, review_path=None, texels_per_unit=2., view_selection=None):
+def run(experiment, output=None, review_path=None, texels_per_unit=2., view_selection=None,
+        foliage_sample_grid=0):
     experiment = experiment.resolve(strict=True)
     acquire()
     try:
@@ -160,11 +161,16 @@ def run(experiment, output=None, review_path=None, texels_per_unit=2., view_sele
             Image.open(raw).crop((box['left'], box['top'], box['left'] + box['width'], box['top'] + box['height'])).save(raw_content)
         evidence = {str(path): sha(path) for path in [review_path, raw, generated, experiment / 'views.json', experiment / 'approved-model.blend']}
         bake_manifest = experiment / 'views.json'
-        if view_selection is not None:
-            require(view_selection == 'best-facing-single', 'Unsupported diagnostic sampling policy')
+        if view_selection is not None or foliage_sample_grid:
+            require(view_selection in (None, 'best-facing-single'), 'Unsupported diagnostic sampling policy')
+            require(foliage_sample_grid in (0, 4, 8), 'Unsupported foliage sample grid')
             bake_manifest = experiment / (output.name + '-sampling-views.json')
             require(not bake_manifest.exists(), 'Diagnostic sampling manifest already exists')
-            sampling = dict(manifest, texture_view_selection=view_selection)
+            sampling = dict(manifest)
+            if view_selection is not None:
+                sampling['texture_view_selection'] = view_selection
+            if foliage_sample_grid:
+                sampling['texture_foliage_sample_grid'] = foliage_sample_grid
             bake_manifest.write_text(json.dumps(sampling, indent=2) + '\n')
             evidence[str(bake_manifest)] = sha(bake_manifest)
         scene.render.engine = 'CYCLES'
@@ -204,5 +210,8 @@ if __name__ == '__main__':
     parser.add_argument('--texels-per-unit', type=float, default=2.)
     parser.add_argument('--view-selection', choices=['best-facing-single'],
                         help='Private sampling diagnostic; original camera manifest remains unchanged')
+    parser.add_argument('--foliage-sample-grid', type=int, choices=(0, 4, 8), default=0,
+                        help='Resample inferred foliage through a subtexel grid without changing approved UVs')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
-    run(args.experiment, args.output, args.review, args.texels_per_unit, args.view_selection)
+    run(args.experiment, args.output, args.review, args.texels_per_unit, args.view_selection,
+        args.foliage_sample_grid)
