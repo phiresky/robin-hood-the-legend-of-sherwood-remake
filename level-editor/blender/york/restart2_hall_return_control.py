@@ -29,6 +29,8 @@ if args.preserve_coplanar:
  from mathutils import Vector
  from mathutils.geometry import closest_point_on_tri, barycentric_transform
  previous.calc_loop_triangles()
+ for layer in previous.uv_layers:
+  if layer.name not in mesh.uv_layers:mesh.uv_layers.new(name=layer.name)
  for material in previous.materials:mesh.materials.append(material)
  gray=bpy.data.materials.new('New791 cut surfaces pending texture');gray.diffuse_color=(.18,.18,.18,1);mesh.materials.append(gray)
  transferred=[]
@@ -44,7 +46,10 @@ if args.preserve_coplanar:
     t=best[1];uvs=[previous.uv_layers.active.data[i].uv for i in t.loops];samples.append(barycentric_transform(point,*[previous.vertices[i].co for i in t.vertices],*[Vector((u.x,u.y,0)) for u in uvs]))
    if len(samples)==len(points):
     face.material_index=original.material_index
-    for li,uv in zip(face.loop_indices,samples[1:]):mesh.uv_layers.active.data[li].uv=uv.xy
+    for layer in previous.uv_layers:
+     for li,point in zip(face.loop_indices,points[1:]):
+      t=min(tris,key=lambda tri:(point-closest_point_on_tri(point,*[previous.vertices[i].co for i in tri.vertices])).length)
+      uvs=[layer.data[i].uv for i in t.loops];uv=barycentric_transform(point,*[previous.vertices[i].co for i in t.vertices],*[Vector((u.x,u.y,0)) for u in uvs]);mesh.uv_layers[layer.name].data[li].uv=uv.xy
     transferred.append({'new_face':face.index,'original_face':original.index});break
  (out/'coplanar-material-transfer.json').write_text(json.dumps({'scope':'Existing appearance transferred only on coincident planar faces for inspection; new faces neutral','faces':transferred},indent=2)+'\n')
 else:
