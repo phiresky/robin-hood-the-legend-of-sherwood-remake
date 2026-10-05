@@ -4,6 +4,22 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Authored placement ground elevation (2026-10-05)
+
+Investigating the church traversal confirmed a physical landing mismatch: its
+lower approach is authored around local height 50, while its geometry extends
+down to the local base. Snapping an endpoint down to terrain would not extend
+the stairs. New asset insertion now accepts optional
+`gameplay.placementGroundHeight` to place a reviewed ground/entrance elevation
+on the requested terrain, leaving foundations below it. Without the field,
+the existing lowest-surface/collision placement rule remains in use.
+
+Insertion, save/reopen and invalid-value checks pass among thirteen asset-command
+tests; app typechecking and targeted lint pass. This mechanism does not move
+existing placements or change compiled endpoints. The church asset's specific
+placement height has not yet been published, and its existing Wychford placement
+still lacks the required lower landing.
+
 ## Published west-tower reveal terrain attachment (2026-10-05)
 
 The west tower's appearance/mask-only reveal now owns a finite receiver probe

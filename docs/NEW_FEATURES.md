@@ -1,5 +1,11 @@
 # Post-port Features
 
+- **Asset placement ground height.** An optional asset-local
+  `gameplay.placementGroundHeight` aligns new drops with terrain at a reviewed
+  entrance/ground elevation, allowing foundations below that elevation. Assets
+  without it retain lowest-geometry placement. Saved placements keep their
+  existing transforms; compilation does not silently reposition them.
+
 - **Wall export follows source deformation.** The editor derives spline source
   measurements from its loaded asset models before export, including source
   rotation, trimming and cross-section straightening. Physical volumes and

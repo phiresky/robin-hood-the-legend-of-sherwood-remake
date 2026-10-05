@@ -371,6 +371,46 @@ test("inserting a split part retains its scoped footprint and source provenance"
   assert.equal(result.document.objects[0].node, "asset:house:building-000--component-west");
 });
 
+test("authored placement ground height keeps foundations below the requested terrain", () => {
+  const { descriptor, reference, document } = assetFixture();
+  const authored = parseProjectionAssetDescriptor({
+    ...descriptor,
+    gameplay: {
+      version: 1,
+      collision: "none",
+      surfaces: [],
+      doors: [],
+      placementGroundHeight: 50,
+    },
+  });
+  const inserted = insertProjectionAsset(document, authored, reference, [50, 50, 80]);
+  assert.equal(inserted.document.groups[0]!.transform.dz, 30);
+  assert.equal(document.groups.length, 0);
+  const saved = serializeStoredMap(inserted.document, new Map([[authored.id, authored]]));
+  const reopened = parseStoredMap(saved, new Map([[authored.id, authored]]));
+  assert.equal(reopened.groups[0]!.transform.dz, 30);
+  for (const height of [NaN, Infinity, "50"])
+    assert.throws(
+      () =>
+        insertProjectionAsset(
+          document,
+          parseProjectionAssetDescriptor({
+            ...authored,
+            gameplay: {
+              version: 1,
+              collision: "none",
+              surfaces: [],
+              doors: [],
+              placementGroundHeight: height,
+            },
+          }),
+          reference,
+          [50, 50, 80],
+        ),
+      /placement ground height/,
+    );
+});
+
 test("elevated asset local geometry rests on the requested terrain height", () => {
   const { descriptor, reference, document } = assetFixture();
   for (const part of descriptor.parts)

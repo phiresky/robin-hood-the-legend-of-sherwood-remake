@@ -124,6 +124,8 @@ export interface AssetMaterialRegion {
   obstacles: string[];
 }
 export interface AssetGameplay {
+  /** Local game-space elevation to rest on terrain when inserting this asset. */
+  placementGroundHeight?: number;
   version: 1;
   /** Model calibration for deforming gameplay with a spline; authored from the asset model. */
   spline?: {
@@ -443,6 +445,8 @@ export function validateAssetGameplay(
   };
   if (!value || typeof value !== "object") fail("missing gameplay definition");
   const data = value as AssetGameplay;
+  if (data.placementGroundHeight !== undefined && !Number.isFinite(data.placementGroundHeight))
+    fail("invalid placement ground height");
   const disabledParts = new Set(
     descriptor.parts.filter((part) => part.collision === "none").map((part) => part.node),
   );

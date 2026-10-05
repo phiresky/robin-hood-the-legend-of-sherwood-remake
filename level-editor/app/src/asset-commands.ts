@@ -102,14 +102,20 @@ export function insertProjectionAsset(
     name: part.name,
     ...(part.default_hidden ? { hidden: true } : {}),
   }));
-  // Place the lowest authored surface or collision base on the terrain. Some
-  // reusable models retain an elevated local origin after extraction.
-  const surfaces = (descriptor as GameplayAssetDescriptor).gameplay?.surfaces ?? [];
+  // A reviewed ground height allows foundations below an asset's entrance.
+  // Otherwise retain the lowest authored surface/collision placement rule.
+  const gameplay = (descriptor as GameplayAssetDescriptor).gameplay;
+  if (
+    gameplay?.placementGroundHeight !== undefined &&
+    !Number.isFinite(gameplay.placementGroundHeight)
+  )
+    throw new Error(`Asset ${descriptor.id}: invalid placement ground height`);
+  const surfaces = gameplay?.surfaces ?? [];
   const heights = [
     ...surfaces.flatMap((s) => (typeof s.height === "number" ? [s.height] : s.height)),
     ...descriptor.parts.flatMap((p) => p.obstacle_local_game?.points.map((v) => v.z_bottom) ?? []),
   ];
-  const baseHeight = heights.length ? Math.min(...heights) : 0;
+  const baseHeight = gameplay?.placementGroundHeight ?? (heights.length ? Math.min(...heights) : 0);
   const next: Level3D = {
     ...document,
     assetSources: [
