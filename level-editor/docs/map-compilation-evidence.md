@@ -4,6 +4,29 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## East-bailey stair and terrain contact publication (2026-10-05)
+
+The terrain contact staging tool now also handles the explicitly reviewed
+east-bailey contact. Candidate `derby-stair-ground-contact-VvZ10Z` projects the
+terrain edge `[1581,1609]`–`[1629,1619]` onto the corrected stair's zero-height
+seam. Endpoint shifts are 1.164712 and 0.015989 units. All 205 sampled points
+between the old/new boundaries intersect the pinned terrain mesh at height zero.
+The stair candidate `local-stair-seams-sXM21T` has regular 7.5-unit treads,
+774/783 sampled mesh hits, uncovered edge strips at most 0.374 units wide and a
+maximum floor-boundary shift of 0.435 units. Its smooth walking ramp follows the
+reviewed tread footprint; this is not a rendered actor-compositing certification.
+
+Combined full Derby `east-bailey-ground-full-sXZx9L` passes native construction,
+28/28 directed stair routes and all five control apply/reset checks. Publication
+backs up both asset definitions and the refreshed Derby scene pins in
+`east-bailey-ground-publication-20261005`. All ten saved scenes reopen, and a
+fresh published Derby compile exactly equals the native-tested candidate.
+Published placements `local-stair-placements-M0PdP7` exactly match all eight
+previously tested descriptors (16/16 routes); eight 20-unit raised entrances
+correctly omit traversal. The refreshed audit `stair-anchor-support-9Qme5Q`
+finds 45/53 unsupported local stair definitions, including three remaining Derby
+stairs. No export-time source data or gap repair was introduced.
+
 ## Physical stair exit receiver handoff (2026-10-05)
 
 The split-landing actor regression failed before the fix: the exit retained the

@@ -19,7 +19,7 @@
       "model": "3d-assets/derby/derby-terrain/model.glb",
       "model_sha256": "d0f986fc567b41019463fb5db9908b8b6cd148eca9135575276d0f39d9e2b5fd",
       "descriptor": "3d-assets/derby/derby-terrain/asset.json",
-      "descriptor_sha256": "11856907518a51f24299e68eebb1ead74d81258a0aa5f54a69d450040e32f021"
+      "descriptor_sha256": "8fab1eb1b78377ff001c8905f9c6ea938fb7519fc154b26f35ebc8354151936b"
     }
   ],
   "assetSources": [
@@ -188,7 +188,7 @@
       "model": "3d-assets/derby/derby-east-bailey-east-curtain/model.glb",
       "model_sha256": "a61cdbe98e974d5f9a08915aede4c5fe1d79d4b2125639b4b1e113d9d4ca2851",
       "descriptor": "3d-assets/derby/derby-east-bailey-east-curtain/asset.json",
-      "descriptor_sha256": "dea46aec53ec5c2c795c97da45e0eb2d892f21bce07328f9ba86f8536274f848",
+      "descriptor_sha256": "e21fde51aa0a7fcf0d4ec469a53ad7a94ebfa31e582d98c818eb11b4066523a3",
       "id": "derby-east-bailey-east-curtain"
     },
     {

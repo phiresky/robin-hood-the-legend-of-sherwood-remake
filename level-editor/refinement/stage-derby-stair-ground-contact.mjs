@@ -12,12 +12,29 @@ const [staged, compiledFile] = process.argv.slice(2);
 assert.ok(staged && compiledFile, "Provide stair edits and their compiled Derby descriptor");
 const edits = JSON.parse(await fs.readFile(`${staged}/edits.json`, "utf8"));
 assert.equal(edits.length, 1);
-assert.equal(edits[0].asset, "derby-east-hall");
+const contacts = {
+  "derby-east-hall": {
+    outside: [1403, 1383, 0],
+    edge: [
+      [1375, 1381],
+      [1411, 1365],
+    ],
+  },
+  "derby-east-bailey-east-curtain": {
+    outside: [1594, 1624, 0],
+    edge: [
+      [1581, 1609],
+      [1629, 1619],
+    ],
+  },
+};
+const contact = contacts[edits[0].asset];
+assert.ok(contact, "No reviewed terrain contact for this asset");
 const bytes = await fs.readFile(compiledFile);
 const compiled = JSON.parse(bytes).asset_geometry;
 const matches = compiled.lifts.filter((lift) =>
   lift.physical_navigation?.doors.some(
-    (door) => Math.hypot(door.outside[0] - 1403, door.outside[1] - 1383, door.outside[2]) < 1e-5,
+    (door) => Math.hypot(...door.outside.map((value, axis) => value - contact.outside[axis])) < 1e-5,
   ),
 );
 assert.equal(matches.length, 1, "Expected reviewed lower stair placement");
@@ -31,10 +48,7 @@ const descriptor = JSON.parse(terrainBytes);
 const gameplay = structuredClone(descriptor.gameplay);
 const surface = gameplay.surfaces.find((surface) => surface.id === "ground-section-0-0");
 assert.ok(surface.height.every((z) => z === 0));
-const before = [
-  [1375, 1381],
-  [1411, 1365],
-];
+const before = contact.edge;
 const positions = before.map((point) =>
   surface.polygon.findIndex((p) => p[0] === point[0] && p[1] === point[1]),
 );
