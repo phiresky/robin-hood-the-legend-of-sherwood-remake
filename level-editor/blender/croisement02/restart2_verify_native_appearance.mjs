@@ -22,7 +22,7 @@ const closed=new Promise(r=>chrome.on('close',r));let ws,id=0;
 function command(method,params){return new Promise((resolve,reject)=>{const request=++id;const listener=event=>{const data=JSON.parse(event.data);if(data.id===request){ws.removeEventListener('message',listener);data.error?reject(Error(JSON.stringify(data.error))):resolve(data.result);}};ws.addEventListener('message',listener);ws.send(JSON.stringify({id:request,method,params}));});}
 try{
   const endpoint=new URL(await chromeEndpoint(chrome));const pages=await(await fetch('http://'+endpoint.host+'/json/list')).json();ws=new WebSocket(pages.find(p=>p.type==='page').webSocketDebuggerUrl);await socketOpen(ws);
-  for(const assembly of ['log-trap','rock-trap']){
+  for(const assembly of (process.argv.slice(2).length?process.argv.slice(2):['log-trap','rock-trap'])){
     const folder=join(base,assembly+'-native-appearance-v1');await command('Page.navigate',{url:origin+'/@fs/'+join(folder,'index.html')});
     let state;
     for(let i=0;i<150;i++){state=await evaluate(ws,++id,'window.nativeAppearance && ({loaded:window.nativeAppearance.loaded,error:window.nativeAppearance.error})');if(state)break;await new Promise(r=>setTimeout(r,100));}
@@ -33,6 +33,6 @@ try{
     const manifest=JSON.parse(await readFile(join(folder,'manifest.json'),'utf8'));result={...result,glb_sha256:createHash('sha256').update(await readFile(join(folder,'native-appearance.glb'))).digest('hex')};
     await writeFile(join(folder,'browser-verification.json'),JSON.stringify(result,null,2)+'\n');if(result.status!=='PASS')throw Error(JSON.stringify(result));
     for(const tick of [0,Math.floor(manifest.terminal_tick/2),manifest.terminal_tick]){const data=await evaluate(ws,++id,`window.nativeAppearance.show(${tick});window.nativeAppearance.capture()`);await writeFile(join(folder,`browser-tick-${tick}.png`),Buffer.from(data.split(',')[1],'base64'));}
-    console.log(assembly,result.status,result.samples.length,'phases; terminal clamped');
+    console.log(assembly,result.status,result.samples.length,'phases; clamp/wrap verified');
   }
 }finally{ws?.close();chrome.kill('SIGTERM');await closed;await new Promise(r=>server.close(r));await rm(profile,{recursive:true,force:true});}

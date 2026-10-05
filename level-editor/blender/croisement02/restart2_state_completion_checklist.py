@@ -16,6 +16,8 @@ def main():
       'rock-trap':['restart2-state/root-endpoint-reviews-v3.json','rock-trap-state-candidate-v14/manifest.json','rock-trap-state-candidate-v14/contact-audit.json','rock-state-shrub-joint-v7/manifest.json','restart2-state/rock-trap-native-appearance-v1/manifest.json','restart2-state/rock-trap-native-appearance-v1/browser-verification.json','restart2-state/rock-trap-native-appearance-v1/self-review.json'],
       'net-rigging':['restart2-state/root-endpoint-reviews-v3.json','restart2-state/net-attached-v1/manifest.json','restart2-state/net-attached-v1/reopened-audit.json','restart2-state/net-attached-v1/wood-contact-audit-v2.json','restart2-state/net-attached-v1/joint-wood-only-v2/manifest.json','restart2-state/net-attached-v1/self-review.json'],
       'scoped-fence-clearing':['restart2-state/root-endpoint-reviews-v3.json'],
+      'arrow-interaction-markers':['restart2-state/marker-source-export-v1/manifest.json','restart2-state/marker-source-export-v1/archive-verification.json','restart2-state/marker-body-native-appearance-v1/browser-verification.json','restart2-state/marker-body-native-appearance-v1/self-review.json'],
+      'map-animations':['restart2-state/butterfly-export-verification-v1.json'],
       'north-cart':['north-cart-initial-candidate-v5/manifest.json','north-cart-initial-candidate-v5/self-review.json','north-cart-initial-candidate-v5/support-audit.json'],
     }
     for row in result['items']:
@@ -23,7 +25,7 @@ def main():
             row['historical_evidence']=[e for e in row['evidence']if 'candidate-v8/'in e['path']or 'shrub-joint-v2/'in e['path']]
             row['evidence']=[e for e in row['evidence']if e not in row['historical_evidence']]
             row['private_candidate_review']='Root scoped endpoint-volume PASS for v14: two initial and five applied complete bodies. Appearance and temporal identity remain incomplete.'
-            row['remaining'][0]='Finish bounded 67-pixel rim diagnosis with exact tree03/tree04/shrub62 context; resolve uncovered source samples and rear textures.'
+            row['remaining'][0]='Bounded exact-context rim diagnosis is complete: 55 remaining native edge pixels lie within 2.24 pixels of known coverage; all tested outline shrinks lose known samples. Resolve narrow inferred edge appearance, uncovered source samples and rear textures while retaining reviewed geometry.'
         if row['id']=='log-trap':
             row['remaining'][0]='Endpoint geometry has root scoped PASS. Finish source-view appearance, projected texture distortion and rear/end fill, retaining saved contact checks.'
         if row['id']in ['log-trap','rock-trap']:
@@ -35,6 +37,12 @@ def main():
         if row['id']=='scoped-fence-clearing':
             row['verified_milestones']=['Root scoped cleared-gap geometry PASS; surviving runs and capped ends reviewed.']
             row['remaining'][0]='Retain scoped root geometry decision and exact outside-domain guards through state integration.'
+        if row['id']=='arrow-interaction-markers':
+            row['verified_milestones']=['All 45 native mission/script identities and actions 0/210/211 exported with exact raw artwork and separate reserved shadow masks.','Body-only standard GLB loop: all 20 phases, 60-tick cycle and wrap browser verified; companion archive roundtrip exact.']
+            row['remaining']=['Implement ambient destination-darkening composition for the preserved 1060 reserved shadow pixels across the 20 phases.','Integrate mission-scoped instances, original script identities and action visibility; validate full-scene presentation.']
+        if row['id']=='map-animations':
+            row['verified_milestones']=['Seven butterfly effects exported with exact source anchors, native flags and polylines; all 693 phases and seven 198-tick loops browser verified with exact alpha and RGB.']
+            row['remaining']=['Complete eight canopy animation groups against refined physical geometry and owned source RGBA.','Integrate all 15 animation instances, native ordering and static-plus-animated composition into the full scene.','Verify editor/library playback, independent cloned bindings and mission target overlays.']
         if row['id']=='mission-signposts':
             row['verified_milestones']=['Five source instances and native placements bound.','Reusable 97-channel standard STEP GLB and all 32 phases plus wrap verified in browser.']
             row['remaining']=['Finish independent review and exact current physical full-scene foreground/canopy composition.','Integrate mission-only visibility, original script identities and reusable playback into the editor/library state contract.']
@@ -43,6 +51,8 @@ def main():
             row['evidence']=[e for e in row['evidence']if e['path']!=name]
             row['evidence'].append(dict(path=name,sha256=sha(path)))
         assert row['status']=='incomplete'
+    result['integration_plan']=dict(path='restart2-state/editor-state-integration-plan-v1.json',sha256=sha(OUT/'restart2-state/editor-state-integration-plan-v1.json'))
+    result['rock_edge_diagnostic']=[dict(path=name,sha256=sha(OUT/name))for name in ['restart2-state/rock-full-context-v1/manifest.json','restart2-state/rock-rim-candidate-v1/experiment.json']]
     result['status']='Finite scoped state checklist '+args.version+'; reviewed endpoint geometry and native appearance export milestones are distinct from completed state integration'
     dest=OUT/'restart2-state'/('state-completion-checklist-'+args.version);dest.mkdir(exist_ok=False)
     (dest/'manifest.json').write_text(json.dumps(result,indent=2)+'\n')
