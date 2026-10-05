@@ -19,8 +19,8 @@ ASSET = 'croisement02-shrub-93'
 
 
 def main():
-    source = OUT / 'restart2-vegetation/shrub93-boundary-v3'
-    dest = OUT / 'restart2-vegetation/shrub93-package-v2'
+    source = OUT / 'restart2-vegetation/shrub93-boundary-v4'
+    dest = OUT / 'restart2-vegetation/shrub93-package-v3'
     dest.mkdir(exist_ok=False, parents=True)
     original = scenery_workspace(ASSET)
     protected = {str(p): sha(p) for p in [source / 'model.blend', original / 'model.blend']}
@@ -104,7 +104,7 @@ def main():
         limitations=['Canonical selection unchanged; source roles and geometry await root review.',
                      '25 additive fragments use inferred hidden depth beside the existing oak-base foliage.',
                      'Observed503 and inferred6003 remain distinct source masks.',
-                     'Pair evidence is in restart2-vegetation/shrub93-boundary-v3/review-v3.']))
+                     'Pair evidence is in restart2-vegetation/shrub93-boundary-v4/review-v3.']))
     print(worker)
 
 

@@ -22,7 +22,7 @@ def main():
     asset = 'croisement02-shrub-93'
     original = scenery_workspace(asset)
     digest = sha(original/'model.blend')
-    destination = OUT/'restart2-vegetation/shrub93-boundary-v3'
+    destination = OUT/'restart2-vegetation/shrub93-boundary-v4'
     destination.mkdir(exist_ok=False, parents=True)
     boundary_path = OUT/'mixed-wood-audit/boundary-roles76-93-v1/93-foliage93.png'
     boundary = np.asarray(Image.open(boundary_path).convert('L')) > 0
@@ -58,10 +58,13 @@ def main():
         target = np.array([sx+.5, sy+.5])
         nearest = int(np.argmin(np.sum((screen-target)**2, axis=1)))
         center = points[nearest]+right*(target[0]-screen[nearest, 0])+down*(target[1]-screen[nearest, 1])
-        advance = 0.
+        # Avoid coplanar transparent-front traversal without changing source projection.
+        center += ray*.05
+        advance = .05
         if [int(sx), int(sy)] == blocked['pixel']:
-            advance = max(0., .6-float(np.dot(center-np.asarray(blocked['hit']), ray)))
-            center += ray*advance
+            blocker_advance = max(0., .6-float(np.dot(center-np.asarray(blocked['hit']), ray)))
+            center += ray*blocker_advance
+            advance += blocker_advance
         corners = [center+right*dx+down*dy for dx, dy in [(-.5, -.5), (.5, -.5), (.5, .5), (-.5, .5)]]
         if np.dot(np.cross(corners[1]-corners[0], corners[2]-corners[0]), ray) < 0:
             corners.reverse()

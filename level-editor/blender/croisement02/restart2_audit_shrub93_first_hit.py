@@ -57,8 +57,18 @@ def main():
             origin=Vector((float(x)+.5,-(float(y)+.5)/SIN,0))+RAY*5000
             hit,normal,index,distance=tree.ray_cast(origin,-RAY)
             owner=owners[index] if hit is not None else None
+            trace=[]
+            if owner is None and hasattr(tree,'tree'):
+                from physical_opacity import _alpha
+                start=origin.copy();previous=None;step=.001
+                for _ in range(200):
+                    point,norm,idx,_=tree.tree.ray_cast(start,-RAY)
+                    if point is None:break
+                    rec=tree.records[idx]
+                    trace.append(dict(object=owners[idx].name,point=list(point),alpha=_alpha(rec,point) if rec else 1.,normal_dot=norm.dot(-RAY),step=step))
+                    step=step*2 if idx==previous else .001;previous=idx;start=point-RAY*step
             rows.append(dict(pixel=[int(x),int(y)],object=owner.name if owner else None,
-                             asset=owner.get('asset_group') if owner else None,hit=list(hit) if hit else None))
+                             asset=owner.get('asset_group') if owner else None,hit=list(hit) if hit else None,miss_trace=trace))
         write_json(output/'pixel-center-rays.json',dict(joint_evidence_sha256=sha(joint/'evidence.json'),workers=evidence['workers'],records=rows,
                     method='Shared physical-alpha BVH, exact source pixel centers and one-sided material rules; no image sampling budget.'))
         print([(r['pixel'],r['asset'])for r in rows]);return
