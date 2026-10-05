@@ -384,3 +384,10 @@ Any accepted lower footprint change must also be reconciled into the covered
 shell. Candle scenery geometry does not itself integrate the native flame
 frames. All candidates require actual eight-view, native joint, source-mask,
 and support review before appearing in an approval gallery.
+
+`restart2_hall_source_states.py` preserves four separate source combinations
+for cover patches 001 and 002, including their overlapping pixels and removal
+sets. `restart2_hall_state_depth.py` places those references above the matching
+layer-4 occlusion-threshold previews with mask IDs. Inspect these together:
+the threshold images show which native masks remain active, not physical wall
+heights or automatically approved texture ownership.
