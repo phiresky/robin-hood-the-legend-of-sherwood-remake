@@ -13,7 +13,7 @@ OUT=ROOT/'level-editor/work/croisement03-refinement';R=OUT/'restart2'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
     wall=R/'texture-wall10/croisement03-southeast-stone-wall/experiment/baked-preserved-v1'
-    wood=R/'texture-batch-v7/croisement03-tree-25/experiment/baked-preserved-v3'
+    wood=R/'texture-batch-v7/croisement03-tree-25/experiment/baked-preserved-v5'
     out=R/'tree25-wall-texture-joint-v1';out.mkdir(exist_ok=False)
     assert sha(wall/'worker.blend')=='53d24242abd7abefda29aa5d6066c4140830445605e3f92d54559863b5709ddf'
     assert json.loads((wall/'validation.json').read_text())['geometry_verified'] is True
