@@ -2409,11 +2409,52 @@ impl EngineInner {
             let &(layer, area, definition) = areas
                 .get(&lift.motion_area_index)
                 .expect("physical stair has no registered motion area");
-            let bound =
+            let mut bound =
                 crate::stair_navigation::BoundPhysicalStair::bind(lift, definition, layer, area)
                     .unwrap_or_else(|error| {
                         panic!("invalid physical stair {}: {error}", lift.motion_area_index)
                     });
+            for (door_index, door) in lift.doors.iter().enumerate() {
+                let &(landing_layer, landing_area, landing_motion) = areas
+                    .get(&door.sector_out)
+                    .expect("physical landing has no motion area");
+                assert_eq!(landing_layer, usize::from(door.layer_out));
+                let number = crate::sector::SectorNumber::new(door.sector_out as i16);
+                let index = self.world.fast_grid.level.sector_number_map[&number];
+                let index = crate::fast_find_grid::SectorIndex::new(index as u32)
+                    .expect("physical landing sector uses the null identity");
+                let handle = crate::position_interface::SectorHandle::from_number(number)
+                    .with_arena_index(index);
+                let receiver = self
+                    .find_projection_area_at(
+                        assets,
+                        door.layer_out,
+                        handle,
+                        MapPoint::new(f32::from(door.point_out.0), f32::from(door.point_out.1)),
+                    )
+                    .map(|index| {
+                        self.sight_obstacles(assets)
+                            .get(usize::from(index))
+                            .expect("physical landing receiver disappeared")
+                    });
+                let plane = receiver.map_or([0.0; 3], |receiver| {
+                    let p = crate::position_interface::PlaneZCoeffs::from_plane_points(
+                        &receiver.top_plane_points,
+                    );
+                    [f64::from(p.az), f64::from(p.bz), f64::from(p.dz)]
+                });
+                if let Err(error) = bound.bind_landing(
+                    door_index,
+                    landing_motion,
+                    landing_layer,
+                    landing_area,
+                    plane,
+                    receiver.map(|receiver| receiver.polygon.as_geo()),
+                ) {
+                    tracing::warn!(sector=lift.motion_area_index, door=door_index, %error,
+                        "physical stair landing support could not be bound");
+                }
+            }
             assert!(
                 physical.insert(lift.motion_area_index, bound).is_none(),
                 "duplicate physical stair sector"

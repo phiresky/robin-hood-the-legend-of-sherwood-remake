@@ -146,6 +146,156 @@ fn physical_walker(
 }
 
 #[test]
+fn physical_stair_landing_collision_follows_its_own_live_control() {
+    let mut document = physical_stair_fixture();
+    let geometry = &mut document["asset_geometry"];
+    geometry["motion_data"]["layers"][0][0]["obstacles"] = serde_json::json!([
+        {"state_id":1,"polygon":{"points":[[387,340],[390,340],[390,360],[387,360]]}}
+    ]);
+    geometry["movement_transitions"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({
+            "id":"landing-barrier", "waypoint":[350,320], "sector":0, "layer":0,
+            "active":true, "definitive":false,
+            "apply_polygon":{"points":[]}, "no_apply_polygon":{"points":[]},
+            "motion_changes":[{"sector":0,"layer":0,"changing_obstacle":0}]
+        }));
+    let (mut engine, assets) = compiled_walkway(&serde_json::to_vec(&document).unwrap());
+    let stair = &assets.navigation.physical_stairs[&3];
+    let route = |engine: &EngineInner| {
+        stair
+            .route(
+                &engine.world.pathfinder,
+                [395., 350.],
+                [390., 350.],
+                crate::coordinates::MoveBoxHalfDiagonal::new(6., 3.),
+            )
+            .unwrap()
+    };
+    let sim = crate::sim_rng::test_context();
+    engine.apply_patch(
+        TickCtx::new(&sim, &assets),
+        crate::patch::PatchIndex::new(0).unwrap(),
+    );
+    assert!(
+        route(&engine).is_none(),
+        "closed landing barrier must block the stair footprint"
+    );
+    engine.apply_patch(
+        TickCtx::new(&sim, &assets),
+        crate::patch::PatchIndex::new(1).unwrap(),
+    );
+    assert!(
+        route(&engine).is_some(),
+        "opening the landing barrier must expose its real floor"
+    );
+    let restored = engine.world.pathfinder.clone();
+    engine.apply_patch(
+        TickCtx::new(&sim, &assets),
+        crate::patch::PatchIndex::new(1).unwrap(),
+    );
+    assert!(route(&engine).is_none());
+    engine.world.pathfinder = restored;
+    assert!(
+        route(&engine).is_some(),
+        "restored state must drive landing clearance too"
+    );
+}
+
+#[test]
+fn physical_stair_actor_crosses_both_doors_using_bound_landing_support() {
+    for endpoint in 0..2 {
+        for direct in [true, false] {
+            let (mut engine, mut assets) =
+                compiled_walkway(&serde_json::to_vec(&edge_on_physical_stair_fixture()).unwrap());
+            let door = engine.script_domains.interactables.doors[endpoint].clone();
+            let definition = assets.navigation.physical_stairs[&2].definition.clone();
+            let physical = &definition.doors[endpoint];
+            let (point, layer, number, index) = if direct {
+                (
+                    door.point_out,
+                    door.layer_out,
+                    door.sector_out,
+                    door.sector_out_index,
+                )
+            } else {
+                (
+                    door.point_in,
+                    door.layer_in,
+                    door.sector_in,
+                    door.sector_in_index,
+                )
+            };
+            let sector = crate::position_interface::SectorHandle::from_number(number)
+                .with_arena_index(index.unwrap());
+            let owner = walking_pc(&mut engine, &mut assets, point, layer, sector);
+            if direct {
+                let receiver = engine.get_projection_area_index(&assets, sector, layer, point);
+                engine.set_obstacle_and_material(&assets, owner, receiver);
+            } else {
+                let [az, bz, dz] = definition.plane.map(|value| value as f32);
+                engine
+                    .ent_mut(owner)
+                    .position_iface_mut()
+                    .set_obstacle_at_ground_position(
+                        None,
+                        Some(crate::position_interface::PlaneZCoeffs { az, bz, dz }),
+                        crate::coordinates::GroundPoint::new(
+                            physical.inside[0],
+                            physical.inside[1],
+                        ),
+                    )
+                    .unwrap();
+            }
+            let mut element = SequenceElement::new_movement(
+                1,
+                Command::PassDoor,
+                Some(owner),
+                OrderType::WalkingUpright,
+            );
+            let crate::sequence::SequenceElementData::Movement { gate_id, .. } = &mut element.data
+            else {
+                unreachable!()
+            };
+            *gate_id = Some(crate::gate::DoorIndex::new(endpoint as u32).unwrap());
+            let sequence = engine.t_launch_in_progress(&assets, element);
+            engine.select_sequence_element(owner, Some((sequence, 0)));
+            let reference = crate::sequence::SequenceElementRef::new(sequence, 0);
+            engine.stamp_element_transition_state(owner, reference);
+            engine.instruct_pass_door(
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
+                &mut vec![],
+                owner,
+                reference,
+            );
+            let expected = if direct {
+                physical.inside
+            } else {
+                physical.outside
+            };
+            for _ in 0..100 {
+                engine.t_tick_actor_owner_envelopes(&assets);
+                let point = engine.ent(owner).position_iface().get_position();
+                if [point.x, point.y, point.z] == expected {
+                    break;
+                }
+            }
+            let point = engine.ent(owner).position_iface().get_position();
+            assert_eq!(
+                [point.x, point.y, point.z],
+                expected,
+                "door {endpoint}, direct={direct}"
+            );
+            assert_eq!(
+                engine.ent(owner).element_data().sector().unwrap().get(),
+                if direct { 2 } else { endpoint as u16 }
+            );
+        }
+    }
+}
+
+#[test]
 fn physical_stair_door_orders_keep_world_goals_on_the_inside_walk() {
     for endpoint in 0..2 {
         for direct in [true, false] {
@@ -371,7 +521,10 @@ fn physical_stair_actor_avoids_neighbour_at_the_same_screen_position() {
     }
     assert!(
         reached && detoured,
-        "physical neighbour was ignored or blocked a usable route"
+        "physical neighbour was ignored or blocked a usable route: position={:?}, order={:?}, blocked={}",
+        engine.ent(owner).position_iface().get_position(),
+        engine.actor_installed_order(owner),
+        engine.ent(owner).position_iface().blocked_count
     );
 }
 

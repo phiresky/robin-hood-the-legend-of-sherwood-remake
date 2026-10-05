@@ -56,16 +56,19 @@ needs navigation coordinates independent of rendering projection. The short
 gallery stair also needs landing-overlap support, not merely a skewed footprint.
 A separate landing-support route query now computes supported actor centers while
 keeping the route on the stair itself; rotated seams, missing support and blocked
-detours have focused coverage. Binding actual landing geometry and live collision
-into actor movement remains unfinished.
+detours have focused coverage. Runtime loading now binds actual motion/receiver
+geometry and the landing's own live collision state. Complete actor-loop entry
+and exit pass at both doors of an edge-on fixture. Incompatible or unsupported
+landing geometry warns without inventing walking space; broader placement and
+performance coverage remains open.
 Physical-plane conversion and distance-bounded stepping now have native unit
 coverage, including stationary screen positions. Physical collision routing also
 passes native unit checks for obstacles, rotations and landing support using the
 existing pathfinder. Explicit physical distance orders now use these APIs in the
 actor loop, including an edge-on floor, nearby actors and live barriers. Door
 orders now retain world endpoints, and entry/exit callbacks transfer the physical
-floor and landing receiver. These callbacks have focused coverage; automatic
-route creation and complete door crossings remain unfinished, so the failed
+floor and landing receiver. Complete door passes now have focused coverage; automatic
+between-door route creation remains unfinished, so the failed
 keep routes remain unresolved.
 The sprite motion API and ground-coordinate receiver entry now also support
 edge-on planes, with animation-distance and position-state round-trip coverage.
@@ -73,9 +76,10 @@ Compiler emission and automatic actor order creation still need integration.
 An optional physical-stair descriptor and runtime binding now retain ground-space
 collision with references to the normal movement obstacles. Physical route queries
 read their current state rather than maintaining separate switch state. Compiler
-emission, complete door traversal, landing support and complete movement effects
-are still unfinished. Physical orders currently use hard neighbour collision; soft
-repulsion and water-particle emission remain to be integrated.
+emission, complete multi-door traversal and movement effects are still unfinished.
+Physical orders currently use hard neighbour collision; neighbours and crushing
+across landing-sector boundaries, soft repulsion and water-particle emission
+remain to be integrated.
 Best-effort export now warns instead of aborting on collapsed mask boundaries or
 collision-split stair regions, retaining independent usable features. These
 fallbacks do not repair the missing traversal.

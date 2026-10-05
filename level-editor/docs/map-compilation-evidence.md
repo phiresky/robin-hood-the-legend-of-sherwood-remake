@@ -4,6 +4,39 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Physical stair landing binding and complete door passes (2026-10-05)
+
+Loading now binds landing support from each door's current motion area and actual
+projection receiver. Navigation is converted onto that receiver's height plane
+and clipped to its real footprint; the receiver plane is not extrapolated over
+an entire multi-height area. Implicit ground uses its zero-height plane. Binding
+requires matching doorway heights and a shared, height-matched floor edge.
+Missing, overlapping, singular or incompatible support emits a warning and does
+not provide extra walking space. Holed collision clips are also still unsupported.
+
+Landing holes and collision are retained separately. Collision reads its own
+motion area's current state, including restored state; it does not inherit the
+stair area's switches. Physical actor steps now use the landing-aware query.
+Complete actor-loop passes enter and leave both doors of the edge-on fixture,
+retaining world height and the outside receiving plane. A separate fixture closes,
+opens and restores a landing barrier under the stair footprint.
+
+This integration exposed a re-planning failure at rounded obstacle tangents.
+Visibility now uses the same f32 coordinate-error budget as endpoint seating;
+the nearby-actor detour and a captured tangent-position regression both pass.
+
+Automatic between-door route creation and compiler emission remain unfinished.
+Crushing across landing-sector boundaries, neighbours across those boundaries,
+soft repulsion, transition choreography and movement effects still need work.
+The 24 failed keep routes have not been rerun or resolved. Full-scene performance
+of physical routing also remains unverified.
+
+Verification: eleven focused physical-stair tests, ten routing/binding tests,
+195 movement tests (twelve ignored), 40 level-loading tests (three ignored),
+33 door-pass tests and 26 patch-effect tests (four ignored) pass. Formatting and
+whitespace checks pass. The updated game build passes:
+`RUSTC_WRAPPER= cargo build -p robin_rs --bin robin -j1`.
+
 ## Physical stair landing-support routing (2026-10-05)
 
 A new route query separates support for the actor's footprint from ownership of

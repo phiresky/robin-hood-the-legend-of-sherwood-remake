@@ -10,6 +10,7 @@ use crate::coordinates::{MapBBox, MapPoint, MoveBoxHalfDiagonal};
 use crate::fast_find_grid::{FastFindGrid, GridLine};
 use crate::pathfinder::{MotionArea, MotionObstacle, PathFinder, PathGraph};
 
+mod landing_binding;
 mod landing_support;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,6 +30,8 @@ pub struct BoundPhysicalStair {
     layer: usize,
     area: usize,
     obstacle_states: Vec<u32>,
+    #[serde(default)]
+    landings: Vec<landing_binding::BoundLanding>,
 }
 
 impl BoundPhysicalStair {
@@ -86,6 +89,7 @@ impl BoundPhysicalStair {
                 .iter()
                 .map(|obstacle| obstacle.state_id)
                 .collect(),
+            landings: Vec::new(),
         })
     }
 
@@ -109,7 +113,7 @@ impl BoundPhysicalStair {
         half_diagonal: MoveBoxHalfDiagonal,
         extra_obstacles: &[Vec<[f32; 2]>],
     ) -> Result<Option<Vec<[f32; 2]>>, String> {
-        let geometry = StairRouteGeometry {
+        let mut geometry = StairRouteGeometry {
             boundary: self.definition.boundary.clone(),
             obstacles: self
                 .definition
@@ -126,7 +130,27 @@ impl BoundPhysicalStair {
                 .chain(extra_obstacles.iter().cloned())
                 .collect(),
         };
-        geometry.route(source, goal, half_diagonal)
+        if self.landings.is_empty() {
+            return geometry.route(source, goal, half_diagonal);
+        }
+        let support = self
+            .landings
+            .iter()
+            .map(|landing| landing.boundary.clone())
+            .collect::<Vec<_>>();
+        for landing in &self.landings {
+            geometry.obstacles.extend(landing.holes.iter().cloned());
+            geometry.obstacles.extend(
+                landing
+                    .obstacles
+                    .iter()
+                    .filter(|(state, _)| {
+                        pathfinder.is_motion_obstacle_active(landing.layer, landing.area, *state)
+                    })
+                    .map(|(_, polygon)| polygon.clone()),
+            );
+        }
+        geometry.route_with_landing_support(source, goal, half_diagonal, &support)
     }
 }
 

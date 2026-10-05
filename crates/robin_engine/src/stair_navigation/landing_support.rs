@@ -1,7 +1,9 @@
 //! Configuration-space routing with separate foot support and center ownership.
 
 use super::*;
-use geo::{BooleanOps, Closest, ClosestPoint, ConvexHull, MultiPoint, MultiPolygon, Relate};
+use geo::{
+    BooleanOps, Buffer, Closest, ClosestPoint, ConvexHull, MultiPoint, MultiPolygon, Relate,
+};
 
 impl StairRouteGeometry {
     /// Landings supply foot support only. The actor center remains on this
@@ -103,6 +105,20 @@ impl StairRouteGeometry {
         if source == goal {
             return Ok(Some(vec![original_source, original_goal]));
         }
+        // A committed f32 step can round onto either side of a tangent. Even
+        // the closest-point calculation can leave a sub-ULP residual. Use the
+        // same coordinate-error budget for visibility as for endpoint seating;
+        // otherwise re-planning at an obstacle tangent can strand the actor.
+        let rounding = source
+            .x()
+            .abs()
+            .max(source.y().abs())
+            .max(goal.x().abs())
+            .max(goal.y().abs())
+            .max(1.0)
+            * f64::from(f32::EPSILON)
+            * 2.0;
+        let visibility_region = region.buffer(rounding);
         // A polygonal free space has a shortest path through visible boundary
         // vertices. Retain hole vertices too; they represent blocked footprints.
         let mut points = vec![source, goal];
@@ -134,7 +150,7 @@ impl StairRouteGeometry {
                     continue;
                 }
                 let segment = geo::Line::new(points[current].0, points[next].0);
-                if region.relate(&segment).is_covers() {
+                if visibility_region.relate(&segment).is_covers() {
                     distance[next] = distance[current] + length;
                     previous[next] = Some(current);
                 }
@@ -272,5 +288,36 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn rounded_tangent_can_be_replanned_without_stranding_the_actor() {
+        let radius = 4.0_f32 / (std::f32::consts::PI / 16.0).cos();
+        let obstacle = (0..16)
+            .map(|i| {
+                let angle = i as f32 * std::f32::consts::TAU / 16.0;
+                [400.0 + radius * angle.cos(), 350.0 + radius * angle.sin()]
+            })
+            .collect();
+        let geometry = StairRouteGeometry {
+            boundary: rectangle(380., 300., 420., 400.),
+            obstacles: vec![obstacle],
+        };
+        let landings = vec![
+            rectangle(380., 270., 420., 300.),
+            rectangle(380., 400., 420., 430.),
+        ];
+        let route = geometry
+            .route_with_landing_support(
+                [390.95352, 347.83972],
+                [400., 380.],
+                MoveBoxHalfDiagonal::new(6., 3.),
+                &landings,
+            )
+            .unwrap();
+        assert!(
+            route.is_some(),
+            "a rounded tangent must retain a route around its neighbour"
+        );
     }
 }
