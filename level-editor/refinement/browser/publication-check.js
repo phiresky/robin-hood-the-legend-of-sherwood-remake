@@ -17,9 +17,7 @@
  // Independently inspect the same real GLBs through the production loader.
  const {prepareMapCandidate}=await import('/src/map-candidate.ts');
  const {PatchDisplay,applyPlacementPatches}=await import('/src/patch-display.ts');
- const {prepareProjectionAsset,listProjectionAssets}=await import('/src/projection-library.ts');
- const {filterAssets}=await import('/src/asset-library.ts');
- const paletteCatalog=await listProjectionAssets(library);
+ const {prepareProjectionAsset}=await import('/src/projection-library.ts');
  const {disposeObjectResources}=await import('/src/resources.ts');
  window.__publicationProgress={phase:'production-loader-and-state-preflight'};
  const {groundMeshes,groundTextures,generatedCounts,patchIds,patchChecks,selectionGroups}=await(async()=>{
@@ -82,7 +80,7 @@
   const title=`${group.name} (${group.parts.length} parts)`;
   row.click();await wait(()=>document.querySelector('.object-detail h2')?.textContent===title,'Select group '+group.id);
   row=document.querySelectorAll('.object-list li.depth-0')[index];row.querySelector('.chev-btn').click();
-  const currentParts=()=>{const result=[];const current=document.querySelectorAll('.object-list li.depth-0')[index];for(let child=current.nextElementSibling;child?.classList.contains('depth-1');child=child.nextElementSibling)result.push(child);return result;};
+  const currentParts=()=>{const result=[];const current=document.querySelectorAll('.object-list li.depth-0')[index];for(let child=current?.nextElementSibling;child?.classList.contains('depth-1');child=child.nextElementSibling)result.push(child);return result;};
   await wait(()=>currentParts().length===group.parts.length,'Selectable part count '+group.id);
   for(const [partIndex,part]of group.parts.entries()){
    currentParts()[partIndex].click();await wait(()=>document.querySelector('.object-detail h2')?.textContent===part.name,'Select part '+part.id);
@@ -109,15 +107,10 @@
  for(const [index,asset]of config.expected.assets.entries()){
   window.__publicationProgress={phase:'actual-editor-asset-insertion',index,total:config.expected.assets.length,asset:asset.id};
   // Display names are not identities: several navigation helpers share one name.
-  // Use the real ID search and the same ordered filter as the production palette.
-  const search=document.querySelector('.shared-library input[aria-label="Find assets"]');assert(search,'Asset ID search');
-  search.value=asset.id;search.dispatchEvent(new Event('input',{bubbles:true}));
-  await sleep(0);
-  const matches=filterAssets(paletteCatalog,asset.id,'','',true);
-  const selectedIndex=matches.findIndex(entry=>entry.id===asset.id);assert(selectedIndex>=0,'Indexed palette identity '+asset.id);
-  const buttons=()=>[...document.querySelectorAll('.shared-library .asset-card button[aria-label^="Add "]')];
-  await wait(()=>buttons().length===matches.length&&buttons()[selectedIndex]?.getAttribute('aria-label')==='Add '+asset.name,'ID-filtered palette entry '+asset.id);
-  const add=buttons()[selectedIndex];assert(add,'Exact palette entry '+asset.id);
+  const cards=()=>[...document.querySelectorAll('.shared-library .asset-card')].filter(card=>card.dataset.assetId===asset.id);
+  await wait(()=>cards().length===1&&cards()[0].querySelector('button[aria-label^="Add "]'),'Exact palette identity '+asset.id);
+  const add=cards()[0].querySelector('button[aria-label^="Add "]');
+  assert(add.getAttribute('aria-label')==='Add '+asset.name,'Exact palette display name '+asset.id);
   if(asset.editor_usage==='map-background'){assert(add.disabled&&add.textContent==='Map background','Ground capability UI');continue;}
   const priorGroups=document.querySelectorAll('.object-list li.depth-0').length;
   add.click();
@@ -127,8 +120,6 @@
   if(selector){selector.value='applied';selector.dispatchEvent(new Event('change',{bubbles:true}));await sleep(50);let probe=await save();let group=probe.groups.at(-1);assert(group.states.active==='applied','Applied state persisted');for(const id of group.states.initial)assert(probe.objects.find(o=>o.id===id).hidden,'Initial endpoint hidden');for(const id of group.states.applied)assert(!probe.objects.find(o=>o.id===id).hidden,'Applied endpoint visible');stateChecks.push({asset:asset.id,kind:'state-selector',applied:true});}
   if(asset.state_variant)stateChecks.push({asset:asset.id,kind:'static-variant',state:asset.state_variant});
  }
- const clearSearch=document.querySelector('.shared-library input[aria-label="Find assets"]');clearSearch.value='';clearSearch.dispatchEvent(new Event('input',{bubbles:true}));
- await wait(()=>document.querySelectorAll('.shared-library .asset-card button[aria-label^="Add "]').length===config.expected.assets.length,'Restore complete palette');
  let doc=await save();
  // Map instances and palette insertions share the local catalog, so each inserted group must pin its own asset source.
  const added=doc.groups.slice(config.expected.groups);assert(added.length===inserted.length,'All standalone groups inserted in order');

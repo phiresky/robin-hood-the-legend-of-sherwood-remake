@@ -181,6 +181,7 @@ export default function AssetLibrary(props: {
               return (
                 <article
                   class="asset-card"
+                  data-asset-id={entry.id}
                   draggable={
                     props.canInsert && entry.editor_usage !== "map-background" ? "true" : "false"
                   }
