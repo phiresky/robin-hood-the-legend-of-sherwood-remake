@@ -79,20 +79,33 @@ def select_canopy(document, decision, base):
     require(geometry_decision['decision'] == 'approved' and geometry_decision['scope'] == 'geometry'
             and geometry_decision['model_sha256'] == sha(base), 'Canopy current geometry changed')
     retained = (candidate / 'preservation.json').exists()
-    proof_path = candidate / ('preservation.json' if retained else 'reopened-preservation.json')
+    restored = (candidate / 'native-boundary-preservation.json').exists()
+    require(not (retained and restored), 'Ambiguous texture derivative')
+    proof_path = candidate / ('native-boundary-preservation.json' if restored else
+                             'preservation.json' if retained else 'reopened-preservation.json')
     proof = json.loads(proof_path.read_text())
-    require(proof['asset_id'] == asset and proof['status'] == 'PASS'
-            and proof['reopened_preservation'] == 'PASS', 'Failed canopy preservation')
+    if restored:
+        require(str(proof_path) in hashes and sha(proof_path) == hashes[str(proof_path)],
+                'Observed boundary restoration must be frozen in the approval')
+        require(proof['status'].startswith('PASS scoped native boundary restoration')
+                and proof['geometry_uv_alpha_ownership_unchanged'] is True
+                and proof['other_materials_unchanged'] is True
+                and proof['native_boundary_rgba_exact'] is True,
+                'Failed observed boundary restoration')
+    else:
+        require(proof['asset_id'] == asset and proof['status'] == 'PASS'
+                and proof['reopened_preservation'] == 'PASS', 'Failed canopy preservation')
     require(proof['candidate_model_sha256'] == sha(model), 'Canopy proof model changed')
     flags = ('geometry_unchanged', 'foreign_appearance_unchanged',
              'original_wood_appearance_and_uv_unchanged', 'generated_foliage_unchanged',
              'physical_alpha_native_rgba_and_ownership_unchanged') if retained else FLAGS
-    require(all(proof.get(flag) is True for flag in flags), 'Incomplete canopy preservation')
-    require(proof['original_model_sha256' if retained else 'model_sha256'] == sha(base),
+    require(restored or all(proof.get(flag) is True for flag in flags), 'Incomplete canopy preservation')
+    base_key = 'source_model_sha256' if restored else 'original_model_sha256' if retained else 'model_sha256'
+    require(proof[base_key] == sha(base),
             'Canopy proof base changed')
     for path, expected in proof['evidence_sha256'].items():
         require(sha(Path(path)) == expected, 'Canopy bake evidence changed: ' + path)
-    baked = candidate.parent / 'bake-v1' if retained else candidate
+    baked = candidate.parent / 'bake-v1' if retained or restored else candidate
     bake_proof = json.loads((baked / 'reopened-preservation.json').read_text())
     require(bake_proof['status'] == 'PASS' and bake_proof['reopened_preservation'] == 'PASS'
             and all(bake_proof.get(flag) is True for flag in FLAGS), 'Failed underlying canopy bake')
@@ -102,13 +115,38 @@ def select_canopy(document, decision, base):
     if retained:
         require(proof['baked_foliage_model_sha256'] == bake_proof['candidate_model_sha256'],
                 'Retained wood foliage chain changed')
+    if restored:
+        require(proof['parent_candidate_sha256'] == bake_proof['candidate_model_sha256'],
+                'Observed boundary parent bake changed')
     for path, expected in bake_proof['evidence_sha256'].items():
         require(sha(Path(path)) == expected, 'Underlying canopy bake evidence changed: ' + path)
     validation_path = baked / 'validation.json'
     require(sha(validation_path) == bake_proof['bake_validation_sha256'], 'Canopy validation changed')
     for path, expected in json.loads(validation_path.read_text())['source_mask_evidence'].items():
         require(sha(Path(path)) == expected, 'Canopy source mask changed: ' + path)
-    review = json.loads((candidate / 'agent-material-review.json').read_text())
+    review_path = candidate / 'agent-material-review.json'
+    review = json.loads(review_path.read_text()) if review_path.exists() else {}
+    # Frozen grouped galleries bind the independent actual review and guards
+    # together. Preserve older receipts rather than rewriting their schema.
+    root_path = candidate / 'root-review.json'
+    grouped = (str(root_path) in hashes and str(proof_path) in hashes)
+    if grouped:
+        root = json.loads(root_path.read_text())
+        grouped = (root.get('status', '').startswith('PASS scoped ')
+                   and root.get('all_eight_actual_views_inspected') is True
+                   and root.get('candidate_model_sha256') == sha(model)
+                   and root.get('actual_sheet_sha256') == sha(candidate / 'actual/textured.png'))
+    if grouped:
+        if not restored:
+            require(review.get('all_eight_actual_views_inspected') is True
+                    and review.get('candidate_model_sha256') == sha(model)
+                    and review.get('actual_sheet_sha256') == sha(candidate / 'actual/textured.png'),
+                    'Grouped saved-model review changed')
+            review_proof = review.get('preservation_sha256') or review.get('reopened_preservation_sha256')
+            require(review_proof == sha(proof_path), 'Grouped reviewed preservation proof changed')
+        return dict(decision=decision, model=str(model), proof=str(proof_path),
+                    proof_sha256=sha(proof_path), receiver_names=bake_proof['receiver_names'])
+    require(not restored, 'Observed boundary restoration needs frozen independent actual review')
     review_proof = review.get('preservation_report_sha256') or review.get('reopened_preservation_sha256')
     require(review_proof == sha(proof_path), 'Canopy reviewed preservation proof changed')
     ready = review.get('ready_for_coordinator_review') is True

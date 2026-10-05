@@ -135,6 +135,74 @@ class CanopySelectionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'reviewed preservation proof'):
             select(self.decisions, {'tree': self.base})
 
+    def freeze_grouped(self, files):
+        document = json.loads(self.decisions.read_text())
+        row = document['decisions'][0]
+        row.update(candidate=str(self.candidate), model_sha256=sha(self.model),
+                   evidence_sha256={str(p): sha(p) for p in files}, archived_evidence={})
+        for index, path in enumerate(files):
+            archived = self.archive / f'grouped-{index}-{path.name}'
+            shutil.copy2(path, archived)
+            row['archived_evidence'][str(path)] = str(archived)
+        self.decisions.write_text(json.dumps(document))
+        shutil.copy2(self.decisions, self.archive / 'decisions.json')
+
+    def grouped_review(self):
+        root = self.candidate / 'root-review.json'
+        root.write_text(json.dumps(dict(status='PASS scoped texture appearance',
+            all_eight_actual_views_inspected=True, candidate_model_sha256=sha(self.model),
+            actual_sheet_sha256=sha(self.sheet))))
+        self.review.write_text(json.dumps(dict(all_eight_actual_views_inspected=True,
+            candidate_model_sha256=sha(self.model), actual_sheet_sha256=sha(self.sheet),
+            reopened_preservation_sha256=sha(self.proof))))
+        self.freeze_grouped([self.model, self.sheet, self.review, self.proof, root])
+        return root
+
+    def test_grouped_actual_review_and_changed_guard(self):
+        self.grouped_review()
+        self.assertEqual(set(select(self.decisions, {'tree': self.base})), {'tree'})
+        proof = json.loads(self.proof.read_text())
+        proof['physical_alpha_unchanged'] = False
+        self.proof.write_text(json.dumps(proof))
+        with self.assertRaisesRegex(ValueError, 'Stale approved canopy evidence'):
+            select(self.decisions, {'tree': self.base})
+
+    def test_grouped_review_requires_all_views(self):
+        root = self.grouped_review()
+        data = json.loads(root.read_text())
+        data['all_eight_actual_views_inspected'] = False
+        root.write_text(json.dumps(data))
+        self.freeze_grouped([self.model, self.sheet, self.review, self.proof, root])
+        with self.assertRaises(ValueError):
+            select(self.decisions, {'tree': self.base})
+
+    def test_restored_observed_boundary_requires_parent_chain(self):
+        parent_model = self.model
+        self.candidate = self.root / 'restored'
+        self.candidate.mkdir()
+        self.model = self.candidate / 'worker.blend'
+        self.model.write_bytes(b'exact observed RGB restored')
+        (self.candidate / 'actual').mkdir()
+        self.sheet = self.candidate / 'actual/textured.png'
+        self.sheet.write_bytes(b'restored actual eight views')
+        proof = self.candidate / 'native-boundary-preservation.json'
+        data = dict(status='PASS scoped native boundary restoration',
+            candidate_model_sha256=sha(self.model), source_model_sha256=sha(self.base),
+            parent_candidate_sha256=sha(parent_model), geometry_uv_alpha_ownership_unchanged=True,
+            other_materials_unchanged=True, native_boundary_rgba_exact=True, evidence_sha256={})
+        proof.write_text(json.dumps(data))
+        root = self.candidate / 'root-review.json'
+        root.write_text(json.dumps(dict(status='PASS scoped texture appearance',
+            all_eight_actual_views_inspected=True, candidate_model_sha256=sha(self.model),
+            actual_sheet_sha256=sha(self.sheet))))
+        self.freeze_grouped([self.model, self.sheet, proof, root])
+        self.assertEqual(set(select(self.decisions, {'tree': self.base})), {'tree'})
+        data['parent_candidate_sha256'] = 'wrong parent'
+        proof.write_text(json.dumps(data))
+        self.freeze_grouped([self.model, self.sheet, proof, root])
+        with self.assertRaisesRegex(ValueError, 'parent bake changed'):
+            select(self.decisions, {'tree': self.base})
+
 
 if __name__ == '__main__':
     unittest.main()
