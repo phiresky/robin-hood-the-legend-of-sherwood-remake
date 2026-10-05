@@ -103,19 +103,24 @@ def main():
         # Basal support is a surface joint, not a single touching vertex.
         # Camera-ray movement retains every observed image-space position.
         minimum=min((obj.matrix_world@v.co).z for v in obj.data.vertices)
-        inverse=obj.matrix_world.inverted();changed=[]
+        inverse=obj.matrix_world.inverted();changed=[];unsupported=[]
+        foot=np.asarray(alpha)>127
+        flare_width=max((np.ptp(np.flatnonzero(row))+1 for row in foot[220:] if row.any()),default=0)
+        maximum_ray_shift=flare_width/COS
         for vertex in obj.data.vertices:
             point=obj.matrix_world@vertex.co;native_y=-point.y*SIN-point.z*COS
             if point.z>minimum+9 or native_y<236:continue
-            hit=terrain.ray_cast(point+ray*5000,-ray,10000)[0]
-            if hit is None:raise ValueError('Missing support under basal foot')
+            hit=terrain.ray_cast(point+ray*maximum_ray_shift,-ray,maximum_ray_shift*2)[0]
+            if hit is None:
+                unsupported.append(dict(vertex=vertex.index,native_position=[point.x,native_y]))
+                continue
             target=hit+ray*.12;distance=(target-point).length
-            if distance>25:raise ValueError(f'Basal support inference too large: {distance}')
+            if distance>maximum_ray_shift:raise ValueError(f'Basal support exceeds observed flare-width depth bound: {distance} > {maximum_ray_shift}')
             vertex.co=inverse@target
             changed.append(dict(vertex=vertex.index,ray_distance=(target-point).dot(ray),native_position=[point.x,native_y]))
         if len(changed)<12:raise ValueError('Insufficient distributed basal support')
         obj.data.update()
-        (dest/'basal-support-joint.json').write_text(json.dumps(dict(method='Conform existing low basal foot to the first archival bank surface along original camera rays; source projection unchanged.',moved_vertices=len(changed),maximum_ray_shift=max(abs(v['ray_distance']) for v in changed),support_gap=.12,vertices=changed,limitation='Archival bank remains provisional; actual contact and source silhouette require saved-model review.'),indent=2)+'\n')
+        (dest/'basal-support-joint.json').write_text(json.dumps(dict(method='Conform existing low basal foot to local archival bank surfaces within the observed flare-depth bound along original camera rays; distant foreground bank intersections are excluded and source projection stays unchanged.',moved_vertices=len(changed),unsupported_vertices=unsupported,maximum_ray_shift=max(abs(v['ray_distance']) for v in changed),support_gap=.12,native_flare_width=int(flare_width),maximum_inferred_ray_shift=maximum_ray_shift,depth_bound_reason='Hidden basal support may span the observed35-pixel root flare width; camera-ray movement has horizontal depth equal to ray distance times cosine35.',vertices=changed,limitation='Archival bank remains provisional; actual contact and source silhouette require saved-model review.'),indent=2)+'\n')
     uv=mesh.uv_layers.new(name='Source UV');known=mesh.color_attributes.new(name='Source ownership',type='FLOAT_COLOR',domain='CORNER');mesh.color_attributes.active_color=known
     for loop in mesh.loops:
         p=mesh.vertices[loop.vertex_index].co;uv.data[loop.index].uv=(p.x/1408,1-(-p.y*SIN-p.z*COS)/960);known.data[loop.index].color=(0,1,1,1)
