@@ -15,8 +15,8 @@ from sign_context_import import append_verified
 from evidence_io import sha,write_json
 
 
-def main():
- base=OUT/'restart3-tree06-root/collar-v3';dest=base/'root-close';dest.mkdir(exist_ok=False)
+def main(variant='collar-v3'):
+ base=OUT/'restart3-tree06-root'/variant;dest=base/'root-close';dest.mkdir(exist_ok=False)
  bank=OUT/'restart2-bank321/packaged-v1/assets/croisement02-north-woodland-bank/model.blend'
  bpy.ops.wm.open_mainfile(filepath=str(bank));bpy.context.view_layer.update()
  names=[o.name for o in bpy.context.scene.objects if o.type=='MESH' and o.get('asset_group')=='croisement02-north-woodland-bank']
@@ -40,5 +40,5 @@ def main():
 
 if __name__=='__main__':
  acquire()
- try:main()
+ try:main(sys.argv[sys.argv.index('--')+1] if '--' in sys.argv else 'collar-v3')
  finally:release()
