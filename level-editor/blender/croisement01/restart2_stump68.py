@@ -97,6 +97,7 @@ def main():
             framing_padding=1.2, lighting=dict(toward_sun=[-.6, -.4, .7], ambient=.22, diffuse=.78, shadow_epsilon=.05))
     validate(worker)
     modified(worker)
+    (worker / 'inspection').mkdir(exist_ok=True)
     import render_candidate
     sys.argv = ['render', '--', str(worker)]
     render_candidate.main()

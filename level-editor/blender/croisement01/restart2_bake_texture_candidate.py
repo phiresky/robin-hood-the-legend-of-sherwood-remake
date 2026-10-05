@@ -121,7 +121,7 @@ def preflight(experiment):
 
 
 def run(experiment, output=None, review_path=None, texels_per_unit=2., view_selection=None,
-        foliage_sample_grid=0, reconciliation_gain_mode=None):
+        foliage_sample_grid=0, reconciliation_gain_mode=None, reconciliation_fade_pixels=None, reconciliation_minimum_gain=None):
     experiment = experiment.resolve(strict=True)
     acquire()
     try:
@@ -161,7 +161,7 @@ def run(experiment, output=None, review_path=None, texels_per_unit=2., view_sele
             Image.open(raw).crop((box['left'], box['top'], box['left'] + box['width'], box['top'] + box['height'])).save(raw_content)
         evidence = {str(path): sha(path) for path in [review_path, raw, generated, experiment / 'views.json', experiment / 'approved-model.blend']}
         bake_manifest = experiment / 'views.json'
-        if view_selection is not None or foliage_sample_grid or reconciliation_gain_mode is not None:
+        if view_selection is not None or foliage_sample_grid or reconciliation_gain_mode is not None or reconciliation_fade_pixels is not None or reconciliation_minimum_gain is not None:
             require(reconciliation_gain_mode in (None, 'rgb', 'luminance'), 'Unsupported reconciliation gain mode')
             require(view_selection in (None, 'best-facing-single'), 'Unsupported diagnostic sampling policy')
             require(foliage_sample_grid in (0, 4, 8), 'Unsupported foliage sample grid')
@@ -170,6 +170,12 @@ def run(experiment, output=None, review_path=None, texels_per_unit=2., view_sele
             sampling = dict(manifest)
             if reconciliation_gain_mode is not None:
                 sampling['texture_reconciliation_gain_mode'] = reconciliation_gain_mode
+            if reconciliation_fade_pixels is not None:
+                require(1 <= reconciliation_fade_pixels <= 1024, 'Invalid reconciliation fade')
+                sampling['texture_reconciliation_fade_pixels'] = reconciliation_fade_pixels
+            if reconciliation_minimum_gain is not None:
+                require(.01 <= reconciliation_minimum_gain <= 1, 'Invalid minimum gain')
+                sampling['texture_reconciliation_minimum_gain'] = reconciliation_minimum_gain
             if view_selection is not None:
                 sampling['texture_view_selection'] = view_selection
             if foliage_sample_grid:
@@ -217,6 +223,8 @@ if __name__ == '__main__':
                         help='Resample inferred foliage through a subtexel grid without changing approved UVs')
     parser.add_argument('--reconciliation-gain-mode', choices=('rgb', 'luminance'),
                         help='Explicit private unknown-color adjustment; approved cameras and known RGBA remain unchanged')
+    parser.add_argument('--reconciliation-fade-pixels', type=float)
+    parser.add_argument('--reconciliation-minimum-gain', type=float)
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
     run(args.experiment, args.output, args.review, args.texels_per_unit, args.view_selection,
-        args.foliage_sample_grid, args.reconciliation_gain_mode)
+        args.foliage_sample_grid, args.reconciliation_gain_mode, args.reconciliation_fade_pixels, args.reconciliation_minimum_gain)
