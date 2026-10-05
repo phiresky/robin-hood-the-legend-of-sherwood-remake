@@ -12,12 +12,15 @@ from texture_camera import depth_clip_range
 OUT=ROOT/'level-editor/work/croisement03-refinement';R=OUT/'restart2'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
-    wall=R/'stone-wall-v1/assets/croisement03-southeast-stone-wall';wood=R/'tree25-wood-v5/assets/croisement03-tree-25';out=R/'tree25-wall-joint-v1';out.mkdir(exist_ok=False)
+    wall=R/'stone-wall-v1/assets/croisement03-southeast-stone-wall';wood=R/'tree25-wood-v5/assets/croisement03-tree-25';out=R/'tree25-wall-joint-v2';out.mkdir(exist_ok=False)
     hashes={str(p):sha(p) for p in [wall/'model.blend',wood/'model.blend']};acquire();bpy.ops.wm.open_mainfile(filepath=str(wall/'model.blend'));bpy.context.preferences.filepaths.save_version=0
     scene=bpy.data.scenes.new('Private tree25 wall contact');objects=[]
-    for original in bpy.data.collections['Croisement03 Working'].all_objects:
-        if original.type=='MESH' and original.get('asset_group')=='croisement03-southeast-stone-wall':
-            obj=original.copy();obj.parent=None;obj.matrix_world=original.matrix_world.copy();obj.hide_render=False;scene.collection.objects.link(obj);objects.append(obj)
+    originals=tuple(bpy.data.collections['Croisement03 Working'].all_objects)
+    assert all(obj is not None for obj in originals)
+    wall_objects=[obj for obj in originals if obj.type=='MESH' and obj.get('asset_group')=='croisement03-southeast-stone-wall']
+    assert len(wall_objects)==7
+    for original in wall_objects:
+        obj=original.copy();obj.parent=None;obj.matrix_world=original.matrix_world.copy();obj.hide_render=False;scene.collection.objects.link(obj);objects.append(obj)
     with bpy.data.libraries.load(str(wood/'model.blend'),link=False) as (src,dst):dst.objects=src.objects
     for obj in dst.objects:
         if obj is not None and obj.type=='MESH' and obj.get('asset_group')=='croisement03-tree-25':
