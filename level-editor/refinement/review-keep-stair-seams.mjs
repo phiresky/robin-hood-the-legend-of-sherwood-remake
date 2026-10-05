@@ -6,6 +6,8 @@ import { loadSceneModel } from "../pipeline/src/scene-assets.ts";
 import { maskRecoveryMesh, maskRecoveryTextures } from "../pipeline/src/mask-recovery-mesh.ts";
 import { sceneToGame, gltfToScene } from "../shared/src/geometry.ts";
 import { heightPlane, planeHeight } from "../shared/src/gameplay-plane.ts";
+import { gameToScene } from "../shared/src/scene.ts";
+import { gameTransformMatrix } from "../shared/src/level3d.ts";
 
 const [directory] = process.argv.slice(2);
 assert.ok(directory, "Provide staged component edits directory");
@@ -90,6 +92,7 @@ for (const edit of edits) {
       .filter((part) => part.node !== lift.node)
       .map((part) => ({
         node: part.node,
+        initiallyVisible: !part.default_hidden,
         triangles: maskRecoveryMesh(
           model,
           part.node,
@@ -97,6 +100,25 @@ for (const edit of edits) {
           textures,
         ),
       }));
+    const visibleAssembly = [
+      {
+        node: lift.node,
+        initiallyVisible: !descriptor.parts.find((p) => p.node === lift.node)?.default_hidden,
+        triangles,
+      },
+      ...neighbours,
+    ].filter((part) => part.initiallyVisible);
+    const projectedAssembly = visibleAssembly.map(({ node, triangles }) => ({
+      node,
+      triangles: triangles.map((triangle) => triangle.map(([x, y, z]) => [x, y - z, z])),
+    }));
+    const occluders = ([x, y], height) =>
+      projectedAssembly.flatMap(({ node, triangles }) => {
+        const hits = triangles
+          .map((triangle) => meshHeight([x, y - height], triangle))
+          .filter((z) => z !== undefined && z > height + 0.1);
+        return hits.length ? [{ node, height: Math.max(...hits) }] : [];
+      });
     const treadProfiles = triangles
       .filter(
         (triangle) =>
@@ -189,10 +211,17 @@ for (const edit of edits) {
         const hits = triangles
           .map((triangle) => meshHeight(point, triangle))
           .filter((z) => z !== undefined);
+        const floor = planeHeight(plane, point);
         samples.push({
           point,
-          floor: planeHeight(plane, point),
+          floor,
           mesh: hits.length ? Math.max(...hits) : null,
+          ...(hits.length
+            ? {}
+            : {
+                initialFootOccluders: occluders(point, floor),
+                initialHeadOccluders: occluders(point, floor + 80),
+              }),
         });
       }
     const residuals = samples
@@ -208,6 +237,43 @@ for (const edit of edits) {
           ),
         ),
       );
+    const rotatedUncoveredFloorVisibility = [0, 37, 90, 180].map((rotation) => {
+      const matrix = gameTransformMatrix(
+        camera,
+        { dx: 0, dy: 0, dz: 0, rot_deg: rotation },
+        [0, 0],
+      );
+      const rotate = (point) => {
+        const [x, y, z] = gameToScene(camera, ...point);
+        return sceneToGame(camera, [
+          matrix[0] * x + matrix[4] * y + matrix[8] * z + matrix[12],
+          matrix[1] * x + matrix[5] * y + matrix[9] * z + matrix[13],
+          matrix[2] * x + matrix[6] * y + matrix[10] * z + matrix[14],
+        ]);
+      };
+      const geometry = visibleAssembly.flatMap(({ triangles }) =>
+        triangles.map((triangle) =>
+          triangle.map((point) => {
+            const [x, y, z] = rotate(point);
+            return [x, y - z, z];
+          }),
+        ),
+      );
+      const uncovered = samples.filter((sample) => sample.mesh === null);
+      const visible = (sample, offset) => {
+        const [x, y, z] = rotate([...sample.point, sample.floor + offset]);
+        return !geometry.some((triangle) => {
+          const hit = meshHeight([x, y - z], triangle);
+          return hit !== undefined && hit > z + 0.1;
+        });
+      };
+      return {
+        rotation,
+        samples: uncovered.length,
+        visibleFeet: uncovered.filter((s) => visible(s, 0)).length,
+        visibleHeads: uncovered.filter((s) => visible(s, 80)).length,
+      };
+    });
     const treadHeights = [
       ...new Set(
         triangles
@@ -252,6 +318,14 @@ for (const edit of edits) {
       sampledFloorPoints: samples.length,
       sampledMeshHits: residuals.length,
       maximumUncoveredMeshEdgeDistance: Math.max(0, ...uncoveredDistances),
+      initialUncoveredFloorVisibility: {
+        scope:
+          "Sampled floor/head rays through initially visible asset parts; not full sprite or alternate-state verification",
+        samples: uncoveredDistances.length,
+        occludedFeet: samples.filter((s) => s.initialFootOccluders?.length).length,
+        occludedHeads: samples.filter((s) => s.initialHeadOccluders?.length).length,
+      },
+      rotatedUncoveredFloorVisibility,
       treadHeights,
       meshMinusFloorQuantiles: [0, 0.1, 0.5, 0.9, 1].map(
         (q) => residuals[Math.round(q * (residuals.length - 1))],

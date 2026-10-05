@@ -4,6 +4,38 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Church assembly visibility and complete-level gate (2026-10-06)
+
+The seam reviewer now casts projected floor/head rays through initially visible
+asset parts, using the editor's placement transform at 0/37/90/180 degrees.
+Physical cutout alpha is included through the existing mesh reader. This is
+sampled mesh evidence, not a rendered character or alternate-state certificate.
+The upper flight has 731 samples without its own floor mesh: at zero degrees,
+693 feet and all 731 heads are occluded. The remaining 38 visible feet lie at
+heights 95.289–106.409 near the lower entrance. All sampled missing-floor feet
+and heads are occluded at the other three rotations. The lower flight has no
+uncovered samples. Results are in the candidate's `mesh-review.json` and
+`assembled-visibility-review.json` under `local-stair-seams-qCEECD`.
+
+Complete-level batch `church-complete-level-fEhMg4` compares the published
+Leicester scene with the candidate. The published scene passes 16/16 directed
+routes; the candidate passes only 14/16. Both pass all twelve control apply/reset
+checks. The two failures are the lower church flight in opposite directions:
+physical sector 98, doors 59/60. Its external landing fails binding because the
+receiver does not reach the corrected physical seam. The upper flight passes.
+The candidate remains unpublished despite its passing independent-placement tests.
+
+The external receiver belongs to `leicester-lower-bailey-terrace`, part
+`building-123`, whose world edge runs approximately [1542,945] → [1613,966]
+at height 50.001003. It currently has a projection receiver but no owned walkable
+surfaces. Navigation underneath comes from `leicester-terrain`, including
+`ground-section-1-0`; the relevant authored edge starts [1543,894] → [1593,909]
+in its zero-height navigation frame. The corrected stair midpoint is
+[1559.7191,950.03815,50.001003]. Fixing this needs a reviewed external-floor
+connection and ownership check, not a global runtime gap tolerance. The filtered
+`candidate-trace.log` records the binding warning; its filtered actor report
+contains candidate results only, while the initial full audit checked both.
+
 ## Preserve exact landing-hole collision contours (2026-10-06)
 
 Compiled motion obstacles can now carry a `precise_polygon` in projected

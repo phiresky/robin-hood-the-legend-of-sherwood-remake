@@ -124,7 +124,12 @@ matching precise hole contours; native loading validates their grid footprint an
 physical landing collision preserves their obstacle identities and live states.
 All 32/32 routes and eight control apply/reset checks now pass, and eight raised
 external approaches still reject. The landing review still finds incomplete mesh
-coverage, so the asset corrections remain unpublished. The earlier diagnostic
+coverage; 38 missing-floor foot samples are visible near the lower entrance in
+the default view. Full Leicester also exposes a separate external-landing gap:
+the published scene passes 16/16 routes, but the corrected candidate passes 14/16.
+The lower flight needs a connection to the terrace-owned receiver and underlying
+terrain navigation. Both versions pass twelve control apply/reset checks.
+The asset corrections remain unpublished. The earlier diagnostic
 that removed the blocker is not a publishable floor definition.
 Landing mesh checks now include other components in the same asset, since the
 visible floor and receiving surface can belong to different parts.
