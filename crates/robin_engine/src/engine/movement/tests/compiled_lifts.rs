@@ -146,6 +146,116 @@ fn physical_walker(
 }
 
 #[test]
+fn physical_stair_door_orders_keep_world_goals_on_the_inside_walk() {
+    for endpoint in 0..2 {
+        for direct in [true, false] {
+            let (mut engine, mut assets) =
+                compiled_walkway(&serde_json::to_vec(&edge_on_physical_stair_fixture()).unwrap());
+            let door = engine.script_domains.interactables.doors[endpoint].clone();
+            let physical = assets.navigation.physical_stairs[&2].definition.doors[endpoint].clone();
+            let owner = if direct {
+                let sector = crate::position_interface::SectorHandle::from_number(door.sector_out)
+                    .with_arena_index(door.sector_out_index.unwrap());
+                walking_pc(
+                    &mut engine,
+                    &mut assets,
+                    door.point_out,
+                    door.layer_out,
+                    sector,
+                )
+            } else {
+                physical_walker(
+                    &mut engine,
+                    &mut assets,
+                    2,
+                    [physical.inside[0], physical.inside[1]],
+                    [physical.inside[0], physical.inside[1]],
+                )
+            };
+            let mut element = SequenceElement::new_movement(
+                1,
+                Command::PassDoor,
+                Some(owner),
+                OrderType::WalkingUpright,
+            );
+            let crate::sequence::SequenceElementData::Movement { gate_id, .. } = &mut element.data
+            else {
+                unreachable!()
+            };
+            *gate_id = Some(crate::gate::DoorIndex::new(endpoint as u32).unwrap());
+            let sequence = engine.orders.sequence_manager.insert_element(element);
+            let reference = crate::sequence::SequenceElementRef::new(sequence, 0);
+            engine.stamp_element_transition_state(owner, reference);
+            engine.instruct_pass_door(
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
+                &mut vec![],
+                owner,
+                reference,
+            );
+            let orders = &engine.seq().get_element(sequence, 0).unwrap().orders;
+            assert_eq!(orders.len(), 4);
+            let inside = if direct { 2 } else { 0 };
+            assert_eq!(orders[inside].physical_stair, Some(2));
+            assert_eq!(
+                orders[inside].destination_3d,
+                if direct {
+                    physical.inside
+                } else {
+                    physical.middle
+                }
+            );
+            assert_eq!(orders[2 - inside].physical_stair, None);
+        }
+    }
+}
+
+#[test]
+fn physical_stair_door_handoffs_preserve_distinct_world_endpoints() {
+    for endpoint in 0..2 {
+        let (mut engine, mut assets) =
+            compiled_walkway(&serde_json::to_vec(&edge_on_physical_stair_fixture()).unwrap());
+        let door = engine.script_domains.interactables.doors[endpoint].clone();
+        let physical = assets.navigation.physical_stairs[&2].definition.doors[endpoint].clone();
+        let sector = crate::position_interface::SectorHandle::from_number(door.sector_out)
+            .with_arena_index(door.sector_out_index.unwrap());
+        let owner = walking_pc(
+            &mut engine,
+            &mut assets,
+            door.point_mid,
+            door.layer_out,
+            sector,
+        );
+        let index = crate::gate::DoorIndex::new(endpoint as u32).unwrap();
+        let rng = crate::sim_rng::test_context();
+        engine.execute_pass_door(TickCtx::new(&rng, &assets), owner, index, true);
+        let expected = crate::coordinates::WorldPoint3D::new(
+            physical.middle[0],
+            physical.middle[1],
+            physical.middle[2],
+        );
+        assert_eq!(engine.ent(owner).position_iface().get_position(), expected);
+        assert_eq!(engine.ent(owner).element_data().sector().unwrap().get(), 2);
+        assert_eq!(
+            engine.ent(owner).element_data().position_map(),
+            MapPoint::new(400., 200.)
+        );
+        engine.execute_pass_door(TickCtx::new(&rng, &assets), owner, index, false);
+        assert_eq!(engine.ent(owner).position_iface().get_position(), expected);
+        assert_eq!(
+            engine.ent(owner).element_data().sector().unwrap().get(),
+            endpoint as u16
+        );
+        // The restored landing receiver must also govern the subsequent step.
+        engine
+            .ent_mut(owner)
+            .element_data_mut()
+            .set_position_map(door.point_out);
+        let position = engine.ent(owner).position_iface().get_position();
+        assert_eq!([position.x, position.y, position.z], physical.outside);
+    }
+}
+
+#[test]
 fn physical_stair_actor_executes_edge_on_motion_in_both_directions() {
     for (source, goal) in [([400., 320.], [400., 380.]), ([400., 380.], [400., 320.])] {
         let (mut engine, mut assets) =

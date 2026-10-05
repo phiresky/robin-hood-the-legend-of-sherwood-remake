@@ -4,6 +4,26 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Physical stair door identities and receiver handoffs (2026-10-05)
+
+Stair door translation now retains the world destination for the inside walk.
+It resolves endpoints by owning lift and local door ordinal, so lower and upper
+doors remain distinct even when their projected positions coincide. Outside
+walks continue to use the landing's normal movement path and animation.
+
+Entry binds the physical floor at the shared world-space door midpoint. Exit
+restores the outside receiver and preserves that midpoint before the next step.
+The edge-on fixture checks both endpoint heights and that a subsequent outside
+step follows the correct landing plane. Translation checks cover both directions
+at both doors. These are focused order/callback tests, not complete crossings:
+landing-footprint support and automatic between-door routes remain unfinished.
+Compiler emission remains disabled; the 24 failed keep routes are still open.
+
+Verification: all nine focused physical-stair checks pass, as do 33 door-pass
+tests and 193 movement tests (twelve external-fixture checks ignored). Formatting
+and whitespace checks pass. The updated game build passes:
+`RUSTC_WRAPPER= cargo build -p robin_rs --bin robin -j1`.
+
 ## Physical stair actor execution (2026-10-05)
 
 Explicit physical distance orders now execute in the normal actor update loop.
