@@ -50,6 +50,14 @@ def bind(out,worker,catalog_path,review_paths,review_text):
  for name in ('model.blend','workspace.json','source-masks.json','validation.json','modified/views.json','modified/solid.png','modified/textured.png'):paths.add(worker/name)
  for name in ('crown-wood-composition.json','composed-root-review.json','refinement.json','saved-model-audit.json','source-coverage/report.json','source-coverage/difference.png','actual-materials/evidence.json','actual-materials/opacity-bounds.json','actual-materials/sheet.png'):paths.add(worker/'inspection'/name)
  crown=Path(proof['crown_worker']);paths.update([crown/'model.blend',crown/'inspection/envelope-preservation.json']);crown_input=Path(read(crown/'inspection/envelope-preservation.json')['source_worker']);paths.add(crown_input/'inspection/prototype-preservation.json')
+ envelope=read(crown/'inspection/envelope-preservation.json')
+ if 'parent_combined' in envelope:
+  parent=envelope['parent_combined'];parent_worker=Path(parent['worker']);parent_proof=Path(parent['composition_proof']);prior=crown/'inspection/prior-crown-envelope.json'
+  require(sha(parent_worker/'model.blend')==parent['model_sha256'] and sha(parent_proof)==parent['composition_sha256'],'Support correction parent changed')
+  require(parent['retained_wood_model_sha256']==proof['wood_model_sha256'] and sha(prior)==envelope['prior_envelope_sha256'],'Support correction wood or prior crown changed')
+  paths.update([parent_worker/'model.blend',parent_proof,prior])
+  for path,digest in envelope.get('dependency_recipes',{}).items():
+   require(sha(Path(path))==digest,'Support correction recipe changed');paths.add(Path(path))
  write_json(receipt,dict(kind='exact-crown-and-scoped-wood-composition',worker=str(worker),model_sha256=sha(worker/'model.blend'),part_ids=read(worker/'workspace.json')['part_ids'],approval='pending',texture_status='HOLD: unknown bark completion after geometry approval',files={str(p.resolve()):sha(p) for p in sorted(paths)},limitations=['Independent geometry review does not inherit prior user approval.','Gray unknown bark awaits authorized texture completion; only permitted native/Leicester references.','Crown and scoped wood retain separate source and inference receipts.']))
  require(selected_workspace(out,mask,catalog_path)==worker,'Combined selector validation failed')
  return receipt
