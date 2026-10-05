@@ -17,6 +17,7 @@ from evidence_io import sha, write_json
 from render_slots import acquire, release
 from tree_geometry import SIN, COS, RAY
 from stage_review_scene import signature
+from sign_object_mask import setup as setup_object_mask
 
 NEIGHBORS = {
     4: ['east-stone-wall-and-gate', 'east-rail-fence', 'shrub-74'],
@@ -24,7 +25,7 @@ NEIGHBORS = {
     6: ['north-woodland-bank', 'west-shrub-bank', *range(24, 30)],
     7: ['north-woodland-bank', 'west-rock-outcrop', 'southwest-rock-outcrop',
         'northwest-boundary-shrub-54', 'shrub-57', 2],
-    8: ['north-woodland-bank', 15, 16, 17, 18],
+    8: ['north-woodland-bank', 14, 15, 16, 17, 18],
 }
 
 
@@ -40,7 +41,7 @@ def camera_to(camera, center, direction):
 
 
 def main():
-    dest = OUT / 'restart2-fence/sign-neighbors-v3'
+    dest = OUT / 'restart2-fence/sign-neighbors-v4'
     dest.mkdir(parents=True, exist_ok=False)
     base = OUT / 'state-sign-candidate'
     assembly = json.loads((base / 'five-instances-v3/assembly.json').read_text())
@@ -103,6 +104,7 @@ def main():
         scene.render.resolution_percentage = 100
         scene.view_settings.view_transform = 'Standard'
         scene.view_settings.look = 'None'
+        setup_object_mask(scene, [scene.objects[n] for n in selected if 'native_body_frame' in scene.objects[n]], neighbors)
         data = bpy.data.cameras.new('Physical sign neighborhood camera')
         data.type = 'ORTHO'
         data.sensor_fit = 'HORIZONTAL'
@@ -121,6 +123,7 @@ def main():
         sheet = Image.new('RGB', (864, 4*312), (70, 70, 70))
         for ordinal, phase in enumerate([0, 8, 16, 24]):
             scene.frame_set(1+phase*2)
+            scene.render.use_compositing = False
             actual = render(scene, target_dir / f'pose-{phase:02}-actual.png')
             native = background.crop(box).resize((288, 288), Image.Resampling.NEAREST)
             f = frames[phase]
@@ -144,17 +147,7 @@ def main():
                       if 'native_body_frame' in scene.objects[n] and scene.objects[n].scale.x > .5]
             shadows = [scene.objects[n] for n in selected if 'native_frame' in scene.objects[n]]
             assert len(bodies) == 2
-            mat = bpy.data.materials.new(f'Sign body diagnostic {phase}')
-            mat.use_nodes = True
-            mat.node_tree.nodes.clear()
-            emit = mat.node_tree.nodes.new('ShaderNodeEmission')
-            emit.inputs[0].default_value = (1, 0, 1, 1)
-            out = mat.node_tree.nodes.new('ShaderNodeOutputMaterial')
-            mat.node_tree.links.new(emit.outputs[0], out.inputs[0])
-            saved = [(o, [s.material for s in o.material_slots]) for o in bodies]
-            for obj, materials in saved:
-                for slot in obj.material_slots:
-                    slot.material = mat
+            scene.render.use_compositing = True
             for obj in shadows:
                 obj.hide_render = True
             joint = np.asarray(render(scene, target_dir / f'pose-{phase:02}-body-first-hit.png'))[1::3, 1::3]
@@ -162,7 +155,7 @@ def main():
                 obj.hide_render = True
             alone = np.asarray(render(scene, target_dir / f'pose-{phase:02}-body-alone.png'))[1::3, 1::3]
             def body(a):
-                return (a[:, :, 0] > 245) & (a[:, :, 1] < 10) & (a[:, :, 2] > 245) & (a[:, :, 3] > 127)
+                return a[:, :, 0] > 127
             before, after = body(alone), body(joint)
             diagnostics.append(dict(sign_pose=phase, physical_body_pixels=int(before.sum()),
                                     physical_body_hidden_by_neighbors=int((before & ~after).sum())))
@@ -170,9 +163,7 @@ def main():
                 obj.hide_render = False
             for obj in shadows:
                 obj.hide_render = False
-            for obj, materials in saved:
-                for slot, original in zip(obj.material_slots, materials):
-                    slot.material = original
+            scene.render.use_compositing = False
         sheet.save(target_dir / 'native-physical-comparison.png')
         scene.frame_set(1)
         center = Vector(row['world_anchor']) + Vector((0, 0, 22))
@@ -186,11 +177,15 @@ def main():
         write_json(target_dir / 'report.json', result)
     assert sha(model) == assembly['model_sha256']
     assert all(sha(Path(r['worker']) / 'model.blend') == r['model_sha256'] for r in inputs.values())
+    previous = json.loads((OUT / 'restart2-fence/sign-neighbors-v3/manifest.json').read_text())
+    changes = {str(k): dict(previous=previous['inputs'].get(str(k), {}).get('model_sha256'), current=v['model_sha256'])
+               for k, v in inputs.items() if previous['inputs'].get(str(k), {}).get('model_sha256') != v['model_sha256']}
     write_json(dest / 'manifest.json', dict(
         status='Read-only scoped physical neighborhood proof; visual assessment pending',
         sign_model_sha256=assembly['model_sha256'], native_order_sha256=sha(order_path),
         inputs={str(k): v for k, v in inputs.items()}, results=results,
-        diagnostic_sampling='BOX0.01 center rays; fixed seed0, adaptive sampling/compositing/dither off. Avoids treating filtered sign-edge color mixtures as foreground blockers.',
+        diagnostic_sampling='Object-index777 compositor mask; alpha threshold0.5, antialiasing off. Actual appearances are separate untouched-material renders. BOX0.01, fixed seed0, adaptive sampling/dither off.',
+        selector_model_changes_since_v3=changes,
         limitations=['Neighbor census uses catalog asset source bounds; this is not the complete staged map.',
                      'Native reference uses overlay frame0. Physical tree hypotheses are static and require separate phase handling.',
                      'Native butterfly is shown in reference only; no physical ambient actor is fabricated.',

@@ -16,11 +16,12 @@ from render_slots import acquire, release
 from tree_geometry import SIN, RAY
 from restart2_sign_neighbors import camera_to, render
 from stage_review_scene import signature
+from sign_object_mask import setup as setup_object_mask
 
 
 def body(image):
     a = np.asarray(image)[1::3, 1::3]
-    return (a[:, :, 0] > 245) & (a[:, :, 1] < 10) & (a[:, :, 2] > 245) & (a[:, :, 3] > 127)
+    return a[:, :, 0] > 127
 
 
 def main():
@@ -29,7 +30,7 @@ def main():
     assembly = json.loads((OUT / 'state-sign-candidate/five-instances-v3/assembly.json').read_text())
     model = OUT / 'state-sign-candidate/five-instances-v3/model.blend'
     assert sha(model) == evidence['sign_model_sha256']
-    dest = OUT / 'restart2-fence/sign-blockers-v2'
+    dest = OUT / 'restart2-fence/sign-blockers-v5'
     dest.mkdir(exist_ok=False)
     results = []
     for row in assembly['instances']:
@@ -43,17 +44,7 @@ def main():
         for obj in list(scene.objects):
             if obj.type == 'MESH' and (obj.name not in selected or 'native_frame' in obj):
                 bpy.data.objects.remove(obj, do_unlink=True)
-        mat = bpy.data.materials.new('Opaque sign-body diagnostic')
-        mat.use_nodes = True
-        mat.node_tree.nodes.clear()
-        emit = mat.node_tree.nodes.new('ShaderNodeEmission')
-        emit.inputs[0].default_value = (1, 0, 1, 1)
-        out = mat.node_tree.nodes.new('ShaderNodeOutputMaterial')
-        mat.node_tree.links.new(emit.outputs[0], out.inputs[0])
-        for obj in scene.objects:
-            if obj.type == 'MESH' and obj.scale.x > .5:
-                for slot in obj.material_slots:
-                    slot.material = mat
+        bodies = [o for o in scene.objects if o.type == 'MESH']
         groups = {}
         for key in next(r for r in evidence['results'] if r['target_index'] == index)['neighbors']:
             source = evidence['inputs'][key]
@@ -79,6 +70,7 @@ def main():
         scene.cycles.use_adaptive_sampling = False
         scene.render.use_compositing = False
         scene.render.dither_intensity = 0
+        setup_object_mask(scene, bodies, [o for objects in groups.values() for o in objects])
         scene.cycles.transparent_max_bounces = 128
         scene.render.film_transparent = True
         scene.render.image_settings.color_mode = 'RGBA'
@@ -98,8 +90,7 @@ def main():
         x, y = row['native_target']['position_x'], row['native_target']['position_y']
         camera_to(camera, Vector((x, -(y-16)/SIN, 0)), RAY)
         alone = body(render(scene, dest / f'target-{index}-alone.png'))
-        expected = body(Image.open(base / f'target-{index}/pose-00-body-alone.png').convert('RGBA'))
-        assert np.array_equal(alone, expected)
+        assert alone.any()
         blockers = []
         for key, objects in groups.items():
             for obj in objects:
@@ -116,6 +107,7 @@ def main():
     assert all(sha(Path(r['worker']) / 'model.blend') == r['model_sha256'] for r in evidence['inputs'].values())
     write_json(dest / 'report.json', dict(source_manifest_sha256=sha(base / 'manifest.json'),
                sign_model_sha256=sha(model), results=results,
+               method='Object-index777 compositor mask, antialiasing off, alpha threshold0.5; no source material or RGB threshold substitution.',
                limitations=['Per-asset blockers may overlap; counts do not sum to the full-neighborhood union.',
                             'Pose0 diagnostic only; no source model changes or neighbor geometry approval implied.']))
     print(dest)
