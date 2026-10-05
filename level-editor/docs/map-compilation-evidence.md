@@ -4,6 +4,42 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Lower-west stair: independent landing fixtures and open precision gap (2026-10-05)
+
+Candidate `local-stair-seams-onfJOY` corrects the two external endpoints of
+`derby-lower-west-access-stair`. The maximum floor shift is 0.256274 units;
+723/725 sampled points hit the mesh, with uncovered edge distance at most 0.123.
+The tread spacing is about 8.33 units. No landing geometry is added to the stair
+asset, and neither endpoint borrows a source-level receiver during export.
+
+`refinement/check-external-stair-landings.mjs` authors two separate synthetic
+landing assets and places two independent assemblies at each of four rotations
+and two elevations. It accounts for the groups' different rotation pivots.
+Landing pads extend 20 units beyond each side of the stair and 80 units outward.
+These static gameplay fixtures have no real model resources and are not editor
+library publications or rendered tests. Removing or raising either landing of
+either copy omits only that copy's stair; all 64 negative cases pass.
+
+With `--preserve-landings`, exports `external-stair-landings-mkbpMW` pass all
+32 directed native actor routes. Ordinary landings in
+`external-stair-landings-cSu35w` fail 16/32 routes at 90/180 degrees. Collision
+and integer-grid normalization split the upper landing into several motion
+regions. The compiler only preserves an exact receiving contour when one raw
+contour rounds to exactly one emitted region; these split pieces fall back to
+rounded receivers. Runtime correctly reports that the upper receiver no longer
+reaches the physical seam. Preserved boundaries demonstrate the correction
+needed but are not a general fix for ordinary split landings. An earlier
+stair-width-only pad fixture (`external-stair-landings-BRzqdR`) also failed eight
+approach routes; it is not a passing narrow-landing guarantee.
+
+Full Derby candidate `lower-west-seam-full-7vCsxi` fails two of 28 routes at this
+stair. The lower contact belongs to terrain edge `[407,1768]`–`[442,1760]`; the
+upper receiver belongs to `derby-lower-west-curtain/building-045-walk-0`.
+Projected candidate endpoint shifts for those neighbouring edges are under two
+units, but their mesh support has not yet been reviewed or published. The stair
+candidate remains unpublished until both placed connections and ordinary split
+landing export are resolved. The library anchor count remains 44/53 unsupported.
+
 ## Gatehouse seams and partial landing receiver binding (2026-10-05)
 
 The gatehouse floor omitted part of its upper tread. Baseline mesh review is

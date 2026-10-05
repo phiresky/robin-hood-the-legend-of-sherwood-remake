@@ -146,6 +146,13 @@ fits inside a joined movement region, even when another receiver occupies the
 rest at a different height. Overhanging or unsupported receivers still reject.
 Fresh published exports exactly match the tested candidates and all ten scenes
 reopen. These remain initial-state traversal checks, not full rendered parity.
+The lower-west access stair has an unpublished mesh-reviewed seam correction.
+Two independent copies connected to synthetic landing assets pass 32/32 routes
+when landing boundaries are preserved; 64 missing/raised-landing cases reject.
+Ordinary collision-split landings lose exact receiving contours and fail 16/32
+routes at 90/180 degrees. This compiler precision gap remains open. Full Derby
+also fails both routes at this stair's two external contacts, so its definition
+is not published on the strength of the synthetic checks.
 Physical transitions
 now wait at a reached world target until animation completion, or preserve
 unfinished distance in the next movement order. An edge-on actor-loop test
