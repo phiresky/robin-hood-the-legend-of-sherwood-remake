@@ -99,6 +99,9 @@ def main():
         audit(output)
         record_recipe(output, __file__)
         record_recipe(output, Path(__file__).with_name('smooth_native_crown_candidate.py'))
+        for recipe, expected in trial_proof.get('dependency_recipes', {}).items():
+            require(sha(Path(recipe)) == expected, 'Trial dependency recipe changed')
+            record_recipe(output, Path(recipe))
         require(sha(output / 'model.blend') == sha(trial / 'model.blend'), 'Exact reviewed trial changed')
         print('PASS: exact trial packaged against approved baseline', flush=True)
     finally:

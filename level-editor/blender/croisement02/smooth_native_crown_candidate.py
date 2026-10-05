@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path[:0] = [str(Path(__file__).parent), str(ROOT / 'level-editor/refinement'),
                 str(ROOT / 'level-editor/refinement/blender')]
 from approved_texture_stage import geometry, appearance, require
-from evidence_io import sha, write_json
+from evidence_io import sha, write_json, record_recipe
 from render_slots import acquire, release
 from render_tree import render_workspace
 from tree_geometry import SIN, COS, RAY, replace_mesh
@@ -154,12 +154,15 @@ def main():
                            if o.type == 'MESH' and o != crown}, 'Foreign or wood receiver changed')
         output.mkdir(parents=True)
         west_completion = None
+        dependency_recipes = {}
         if args.west_edge_completion:
             from complete_northern_caps import cap
             (output / 'inspection').mkdir()
             west_completion = cap(crown, source / 'inspection/source-packet/partition.json',
                                   int(cfg['asset_id'].rsplit('-', 1)[1]), output / 'inspection', edge='west',
                                   west_native_frame=args.west_native_frame)
+            saved_recipe = record_recipe(output, Path(__file__).with_name('complete_northern_caps.py'))
+            dependency_recipes[str(output / saved_recipe['recipe'])] = saved_recipe['recipe_sha256']
         for relative in ['workspace.json', 'source-masks.json', 'modified/views.json',
                          'inspection/refinement.json', 'inspection/source-coverage/report.json']:
             target = output / relative
@@ -177,6 +180,7 @@ def main():
             fragment_jitter=args.fragment_jitter,
             soft_branch_envelope=args.soft_branch_envelope,
             west_edge_completion=west_completion,
+            dependency_recipes=dependency_recipes,
             retained_inferred_faces=retained_faces, mesh=result,
             non_crown_geometry_and_appearance_unchanged=True,
             method='Smooth native-source leaf envelope over branch-scale ellipsoids; original hidden leaf clusters and off-map continuation retained',

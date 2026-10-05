@@ -78,6 +78,8 @@ def cap(crown, packet_path, mask, destination, edge='north', west_native_frame=F
         edge_points = world[[v for v in observed_indices if world[v,0] <= 8]]
         if not len(edge_points):raise ValueError('Native west boundary fragments missing')
         native_depth = float(np.median(-edge_points[:,1]*COS+edge_points[:,2]*SIN))
+        edge_source_y = -edge_points[:,1]*SIN-edge_points[:,2]*COS
+        edge_depths = -edge_points[:,1]*COS+edge_points[:,2]*SIN
     if not patches:
         raise ValueError('No local native leaf palette')
     rng = np.random.default_rng(74000 + mask)
@@ -101,7 +103,9 @@ def cap(crown, packet_path, mask, destination, edge='north', west_native_frame=F
             if edge=='west' and position[0]>=0:continue
             if west_native_frame:
                 source_y = center_x + direction[2]*radius_x*irregular
-                depth = native_depth+radius_y*.15+direction[1]*radius_y*irregular
+                nearest = np.argsort(np.abs(edge_source_y-source_y))[:16]
+                local_depth = float(np.mean(edge_depths[nearest]))
+                depth = local_depth-radius_y*.12+direction[1]*radius_y*.28*irregular
                 position[1] = -source_y*SIN-depth*COS
                 position[2] = -source_y*COS+depth*SIN
         axis = Vector(rng.normal(size=3)).normalized()
