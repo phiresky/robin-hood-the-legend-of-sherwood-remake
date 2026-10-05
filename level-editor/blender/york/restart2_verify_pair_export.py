@@ -24,11 +24,11 @@ for asset in report['assets']:
   for primitive in doc['meshes'][node['mesh']]['primitives']:
    positions=accessor(primitive['attributes']['POSITION']);uvs=accessor(primitive['attributes']['TEXCOORD_0']);matched=[]
    for pos in positions:
-    index=min(range(len(vertices)),key=lambda i:(vertices[i]-Vector(pos)).length);error=(vertices[index]-Vector(pos)).length;maxerror=max(maxerror,error);assert error<.001;matched.append(index)
+    index=min(range(len(vertices)),key=lambda i:(vertices[i]-Vector(pos)).length);error=(vertices[index]-Vector(pos)).length;maxerror=max(maxerror,error);assert error<.001;matched.append([i for i,v in enumerate(vertices) if (v-Vector(pos)).length<.001])
    for layer in obj.data.uv_layers:
     lookup={i:[] for i in range(len(vertices))}
     for loop in obj.data.loops:lookup[loop.vertex_index].append(layer.data[loop.index].uv)
-    if all(any(abs(u.x-uv[0])<2e-6 and abs(1-u.y-uv[1])<2e-6 for u in lookup[i]) for i,uv in zip(matched,uvs)):uv_layers.add(layer.name)
+    if all(any(abs(u.x-uv[0])<2e-6 and abs(1-u.y-uv[1])<2e-6 for i in indices for u in lookup[i]) for indices,uv in zip(matched,uvs)):uv_layers.add(layer.name)
    assert uv_layers,(asset,key,'UV mismatch')
    material=doc['materials'][primitive['material']];image_index=doc['textures'][material['pbrMetallicRoughness']['baseColorTexture']['index']]['source'];image=doc['images'][image_index];view=doc['bufferViews'][image['bufferView']];png=binary[view.get('byteOffset',0):view.get('byteOffset',0)+view['byteLength']];decoded=Image.open(io.BytesIO(png)).convert('RGBA')
    textures=[n.image for slot in obj.material_slots if slot.material and slot.material.use_nodes for n in slot.material.node_tree.nodes if n.type=='TEX_IMAGE' and n.image]

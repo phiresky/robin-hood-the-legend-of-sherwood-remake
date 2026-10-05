@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 ROOT=Path(__file__).resolve().parents[3]
 BASE=ROOT/'level-editor/work/york-refinement/restart2'
-parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--model',type=Path);parser.add_argument('--output',type=Path);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
+parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--model',type=Path);parser.add_argument('--output',type=Path);parser.add_argument('--pixels',help='JSON list of native pixel [x,y] pairs');args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
 OUT=args.output or BASE/'hall-crosspiece-study-v1'
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
@@ -19,6 +19,7 @@ s,c=math.sin(math.radians(35)),math.cos(math.radians(35))
 direction=Vector((0,-c,s))
 points=[(2795,515),(2800,515),(2805,512),(2810,508),(2820,500),(2830,491),
         (2795,535),(2805,535),(2820,530),(2765,530)]
+if args.pixels:points=json.loads(args.pixels)
 records=[]
 for model in ([args.model] if args.model else [BASE/'hall-four-state-review-v1/approval-batch-v3/applied-applied.blend',
               BASE/'hall-textures-v1/applied-applied/bake-v1/model.blend']):
