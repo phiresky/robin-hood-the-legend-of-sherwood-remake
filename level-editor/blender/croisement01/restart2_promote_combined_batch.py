@@ -57,6 +57,9 @@ def main():
     assert sum(e['id']==residual for e in before['assets'])==1
     updated['assets'] += [replacements[a] for a in cases.values()]
     assert [e for e in updated['assets'] if e['id'] not in scoped]==[e for e in before['assets'] if e['id'] not in scoped]
+    if '--check' in sys.argv:
+        print(json.dumps(dict(status='PASS',mode='read-only promotion preflight',scene_sha256=sha(scene),index_sha256=index_hash,assets=sorted(scoped))))
+        return
     backup=stage/'publication-backup-v1';backup.mkdir(exist_ok=False)
     shutil.copy2(scene,backup/scene.name);shutil.copy2(index,backup/'asset-index.json');shutil.copytree(target_base/residual,backup/residual)
     protected={str(p.relative_to(library)):sha(p) for p in (target_base).rglob('*') if p.is_file() and residual not in p.parts}
