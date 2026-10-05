@@ -22,7 +22,7 @@ const closed=new Promise(r=>chrome.on('close',r));let ws,id=0;
 function command(method,params){return new Promise((resolve,reject)=>{const request=++id;const listener=event=>{const data=JSON.parse(event.data);if(data.id===request){ws.removeEventListener('message',listener);data.error?reject(Error(JSON.stringify(data.error))):resolve(data.result);}};ws.addEventListener('message',listener);ws.send(JSON.stringify({id:request,method,params}));});}
 try{
   const endpoint=new URL(await chromeEndpoint(chrome));const pages=await(await fetch('http://'+endpoint.host+'/json/list')).json();ws=new WebSocket(pages.find(p=>p.type==='page').webSocketDebuggerUrl);await socketOpen(ws);
-  const folder=join(base,'scoped-geometry-review-v1/gallery');
+  const folder=join(base,process.argv[2]||'scoped-geometry-review-v2','gallery');
   await command('Emulation.setDeviceMetricsOverride',{width:1440,height:1100,deviceScaleFactor:1,mobile:false});
   await command('Page.navigate',{url:origin+'/@fs/'+join(folder,'index.html')});
   for(let i=0;i<150;i++){if(await evaluate(ws,++id,'document.querySelectorAll("article").length===4'))break;await new Promise(r=>setTimeout(r,100));}
