@@ -673,6 +673,13 @@ export class EditorViewport {
   setDeliveredStatePlaying(playing: boolean) {
     this.stateDelivery.setPlaying(playing);
   }
+  deliveredStateStatus(family: string) {
+    return {
+      ready: this.stateDelivery.ready,
+      tick: this.stateDelivery.ready ? this.stateDelivery.familyTick(family) : undefined,
+      playing: this.stateDelivery.ready && this.stateDelivery.native.isPlaying,
+    };
+  }
   private nativeSurface: NativeArtworkSurface | undefined;
   private nativeControlState: { orbit: boolean; gizmo: boolean } | undefined;
   get statePresentationMode(): "physical" | "native-art" {

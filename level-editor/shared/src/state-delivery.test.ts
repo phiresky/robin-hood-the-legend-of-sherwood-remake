@@ -71,3 +71,13 @@ test("delivery requires independent physical endpoints and exact native terminal
   c.native.elements[0]!.loop = true;
   assert.throws(() => validateStateDelivery(c), /transition element/);
 });
+
+test("physical placement accepts finite scene translations and rejects invalid vectors", () => {
+  const c = deliveryFixture();
+  c.families[0]!.physical.initial[0]!.position = [1, -2, 3];
+  validateStateDelivery(c);
+  c.families[0]!.physical.initial[0]!.position = [1, NaN, 3];
+  assert.throws(() => validateStateDelivery(c), /physical source/);
+  c.families[0]!.physical.initial[0]!.position = [1, 2] as unknown as [number, number, number];
+  assert.throws(() => validateStateDelivery(c), /physical source/);
+});

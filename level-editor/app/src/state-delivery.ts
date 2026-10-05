@@ -100,6 +100,7 @@ export class StateDelivery {
                 "Physical endpoint contains animation; endpoint-only contract required",
               );
             const clone = asset.clone(true);
+            if (binding.position) clone.position.add(new THREE.Vector3(...binding.position));
             clone.userData = {
               ...clone.userData,
               family: family.id,

@@ -208,3 +208,32 @@ test("reset restores the separately pinned stationary target artwork", async () 
   assert.deepEqual(Array.from(player.native.pixels().data), [10, 90, 220, 255]);
   player.dispose();
 });
+
+test("mission translation preserves the reusable root transform and independent endpoint bounds", async () => {
+  const f = await fixture();
+  f.template.position.set(1, 2, 3);
+  f.template.rotation.y = 0.4;
+  f.template.scale.set(2, 1, 3);
+  f.contract.families[0]!.physical.initial[0]!.position = [10, 20, 30];
+  const player = new StateDelivery(() => ({ load: async () => f.template, dispose() {} }));
+  await player.set(f.contract, f.source, f.library, f.read);
+  const initial = player.physical.children[0]!.children[0]!,
+    applied = player.physical.children[1]!.children[0]!;
+  assert.deepEqual(initial.position.toArray(), [11, 22, 33]);
+  assert.deepEqual(applied.position.toArray(), [1, 2, 3]);
+  assert.deepEqual(initial.quaternion.toArray(), f.template.quaternion.toArray());
+  assert.deepEqual(initial.scale.toArray(), f.template.scale.toArray());
+  const a = new THREE.Box3().setFromObject(initial),
+    b = new THREE.Box3().setFromObject(applied);
+  for (const key of ["min", "max"] as const)
+    assert.ok(
+      a[key]
+        .clone()
+        .sub(b[key])
+        .distanceTo(new THREE.Vector3(10, 20, 30)) < 1e-10,
+    );
+  initial.position.x = 99;
+  assert.equal(applied.position.x, 1);
+  assert.equal(f.template.position.x, 1);
+  player.dispose();
+});

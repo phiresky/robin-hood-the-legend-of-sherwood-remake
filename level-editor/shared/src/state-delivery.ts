@@ -5,6 +5,14 @@ import {
   type NativeStatePresentationContract,
 } from "./native-state-presentation.ts";
 
+export type PhysicalStateBinding = SceneAssetSource & {
+  /** Mission placement of the reusable local origin, in glTF Y-up scene units.
+   * Added to the loaded root translation; existing rotation, scale and local transforms survive.
+   * Omission means zero translation for existing private preview contracts.
+   */
+  position?: [number, number, number];
+};
+
 /** Exact artwork transitions and independently reviewed physical endpoints. */
 export interface StateDeliveryContract {
   version: 1;
@@ -16,7 +24,7 @@ export interface StateDeliveryContract {
     background_ids: string[];
     /** Terminal entry of the last visible target; receiver completion retains its own clock. */
     body_terminal_tick: number;
-    physical: { initial: SceneAssetSource[]; applied: SceneAssetSource[] };
+    physical: { initial: PhysicalStateBinding[]; applied: PhysicalStateBinding[] };
   }[];
 }
 export function validateStateDelivery(value: unknown): asserts value is StateDeliveryContract {
@@ -89,6 +97,10 @@ export function validateStateDelivery(value: unknown): asserts value is StateDel
           !safeLibraryPath(source.model) ||
           !hash(source.model_sha256) ||
           !Array.isArray(source.resources) ||
+          (source.position !== undefined &&
+            (!Array.isArray(source.position) ||
+              source.position.length !== 3 ||
+              !source.position.every(Number.isFinite))) ||
           (source.model_scene !== undefined &&
             (typeof source.model_scene !== "string" || !source.model_scene))
         )

@@ -4,6 +4,7 @@ import { parseLevel3D, type Level3D, type Vec3 } from "@rle/shared";
 import type { EditorViewport } from "./editor-viewport.ts";
 import ScrubNumber from "./ScrubNumber";
 import MissionCharacterChoices from "./MissionCharacterChoices";
+import StatePreview from "./StatePreview";
 import { followMissionTerrain } from "./terrain-follow.ts";
 import {
   DEFAULT_CHARACTER_DIRECTION,
@@ -239,6 +240,13 @@ export default function MissionPanel(props: {
   return (
     <section class="view-settings mission-settings">
       <h2>Mission</h2>
+      <StatePreview
+        document={() => props.document()}
+        library={() => props.library?.() ?? null}
+        viewport={props.viewport}
+        active={props.active}
+        onError={(message) => props.onError(message)}
+      />
       <label>
         <input
           type="checkbox"
