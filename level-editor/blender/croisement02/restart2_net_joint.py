@@ -11,7 +11,7 @@ from render_slots import acquire,release
 
 
 def main():
-    base=OUT/'restart2-state/net-attached-v1';wood_only='--wood-only'in sys.argv;dest=base/('joint-wood-only'if wood_only else 'joint');dest.mkdir(exist_ok=True);assert not(dest/'manifest.json').exists()
+    base=OUT/'restart2-state/net-attached-v1';wood_only='--wood-only'in sys.argv;dest=base/('joint-wood-only-v2'if wood_only else 'joint-v2');dest.mkdir(exist_ok=True);assert not(dest/'manifest.json').exists()
     frozen=sha(base/'worker.blend');assert frozen==json.loads((base/'manifest.json').read_text())['model_sha256']
     acquire()
     try:
@@ -32,13 +32,13 @@ def main():
             obj=bpy.data.objects[name]
             for receiver in wood:
                 test=obj.copy();test.data=obj.data.copy();scene.collection.objects.link(test);bpy.context.view_layer.objects.active=test
-                mod=test.modifiers.new('Independent wood contact probe','BOOLEAN');mod.operation='INTERSECT';mod.solver='EXACT';mod.object=receiver
+                mod=test.modifiers.new('Independent wood contact probe','BOOLEAN');mod.operation='INTERSECT';mod.solver='EXACT';mod.use_self=True;mod.object=receiver
                 bpy.ops.object.modifier_apply(modifier=mod.name);bm=bmesh.new();bm.from_mesh(test.data);volume=abs(bm.calc_volume(signed=True));bm.free();intersections.append(dict(body=name,tree_object=receiver.name,intersection_volume=volume));bpy.data.objects.remove(test,do_unlink=True)
         center=point(1330,1010,135);scene.camera.data.ortho_scale=245;scene.render.resolution_x=scene.render.resolution_y=640;scene.cycles.samples=16;records=[]
-        for name,direction in [('source',RAY),('front-left',Vector((-1,1,.8)).normalized()),('front-right',Vector((1,1,.8)).normalized()),('reverse',Vector((0,-1,.8)).normalized())]:
+        for name,direction in [('source',RAY),('front-left',Vector((-1,1,.8)).normalized()),('front-right',Vector((1,1,.8)).normalized()),('reverse',Vector((0,1,.8)).normalized())]:
             scene.camera.location=center+direction*3000;scene.camera.rotation_euler=(center-scene.camera.location).to_track_quat('-Z','Y').to_euler();path=dest/(name+'.png');scene.render.filepath=str(path);
             if not path.exists():bpy.ops.render.render(write_still=True)
-            records.append(dict(view=name,image=path.name,sha256=sha(path)))
+            records.append(dict(view=name,image=path.name,sha256=sha(path),camera_direction=list(direction)))
         assert sha(base/'worker.blend')==frozen
         (dest/'manifest.json').write_text(json.dumps(dict(status='Private joint context proof; visual and physical review pending',net_sha256=frozen,tree_bindings=bindings,body_tree_intersections=intersections,renders=records,limitations=['Trees are imported unchanged for context only.','Cord endpoints intentionally meet the selected branch; this audit tests the two larger bodies separately.']),indent=2)+'\n');print(intersections)
     finally:release()
