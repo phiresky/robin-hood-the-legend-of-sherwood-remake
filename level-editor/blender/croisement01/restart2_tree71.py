@@ -37,7 +37,7 @@ def tube(name,centers,radii):
 
 def main():
  if shutil.disk_usage(OUT).free<25*1024**3:raise ValueError('Disk floor25GiB')
- dest=OUT/'restart2/tree71-v4';dest.mkdir(exist_ok=False)
+ dest=OUT/'restart2/tree71-v5';dest.mkdir(exist_ok=False)
  acquire();bpy.ops.wm.open_mainfile(filepath=str(OUT/'croisement01-grouped.blend'));bpy.context.preferences.filepaths.save_version=0
  working=bpy.data.collections['Croisement01 Working'];asset='croisement01-tree-71';name='Eastern Leaning Oak'
  objects={int(o['source_node'].split('-')[-1]):o for o in working.all_objects if o.type=='MESH' and o.get('source_node') in ['building-062','building-063']};assert len(objects)==2
@@ -52,10 +52,10 @@ def main():
  native['masks'].append(dict(row,index=271,png=str(dest/'wood-domain.png')))
  base_y=-520/SIN
  def point(x,y):return Vector((x,base_y,(520-y)/COS))
- trace=[(1341,520,29),(1336,495,29),(1338,465,36),(1347,430,38),(1359,395,36),(1370,360,32),(1388,325,27),(1408,290,27),(1428,250,26)]
+ trace=[(1341,520,29),(1336,495,29),(1338,465,36),(1347,430,40),(1358,395,37),(1370,360,32),(1386,325,27),(1407,290,27),(1428,250,26)]
  centers=[point(x,y) for x,y,r in trace]+[Vector((1470,base_y-12,405)),Vector((1520,base_y-20,480)),Vector((1550,base_y-25,530))]
  body=tube('Continuous leaning wood',centers,[r for x,y,r in trace]+[22,15,4]);body['defer_union']=True
- union(body,tube('Source snapped left fork',[point(1350,425),point(1342,388),point(1332,349),point(1321,319)],[17,15,12,5.5]))
+ union(body,tube('Source snapped left fork',[point(1350,425),point(1342,388),point(1330,349),point(1318,319)],[17,15,12,6]))
  rng=random.Random(717101)
  for i in range(8):
   a=math.tau*i/8;start=Vector((1520,base_y-20,460+i*7));tip=Vector((1550+math.cos(a)*92,base_y-25+math.sin(a)*118,540+rng.uniform(-15,40)))

@@ -23,12 +23,19 @@ def main(destination='ready-trees18-20-v2', cases=CASES, map_title='Crossings01 
             evidence[relative]=sha(w/relative)
         bound=receipt.get('files',receipt.get('hashes',{}))
         for relative,digest in bound.items():assert sha(w/relative)==digest
+        for relative in ['inspection/saved-wood-surface-union.json','inspection/root-contact-detail/evidence.json']:
+            if (w/relative).exists():
+                evidence[relative]=sha(w/relative)
+                supplemental=dest/'receipts'/asset/relative;supplemental.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(w/relative,supplemental)
         frozen=dest/'models'/f'{asset}-{expected[:16]}.blend';shutil.copy2(w/'model.blend',frozen);assert sha(frozen)==expected
         notes=['Geometry review only. Hidden bark and the complete inferred off-map crown are gray because appearance fill is pending.','The first/top-left tile is the original game orthographic camera in every geometry, actual-material and contact sheet.','Crown depth is greater than width. Only the Leicester southeast cottage and moat bank trees informed external tree construction references.','Foreground foliage/neighboring branch ownership and final scene integration remain separate unfinished work. Approval here covers this tree geometry, not those joints or whole-map completion.']
         if notes_override is not None:notes=list(notes_override)
         review=dest/'receipts'/f'{asset}.json';review.write_text(json.dumps(dict(status='ready-for-user-geometry-review',model_sha256=expected,root_receipt=receipt,self_review=json.loads((w/'inspection/self-review.json').read_text()),evidence=evidence,limitations=notes,user_approved=False,texture_approved=False),indent=2)+'\n')
         ownership=[p for p in (w/'projection').glob('*/ownership.json') if p.parent.name!='input'];assert len(ownership)==1
         items.append(dict(id=asset,name=name,status='ready-for-user',technical_eligible=True,model=str(frozen),solid=str(labeled_sheet(w,'modified/solid.png')),textured=str(labeled_sheet(w,'modified/textured.png')),context=str(w/'modified/context.png'),stored_material_textured=str(labeled_sheet(w,'inspection/actual-materials/sheet.png')),source_comparison=str(w/'inspection/native-source/comparison.png'),source_comparison_label='Original game artwork, actual saved material and overlay',source_comparison_secondary=str(labeled_sheet(w,'inspection/terrain-contact/sheet.png')),source_comparison_secondary_label='Ground contact against provisional archival terrain; original camera first',validation=str(w/'validation.json'),ownership=str(ownership[0]),review=str(review),notes=notes))
+        if (w/'inspection/root-contact-detail/sheet.png').exists():
+            items[-1]['source_trace']=str(labeled_sheet(w,'inspection/root-contact-detail/sheet.png'))
+            items[-1]['source_trace_label']='Root contact detail; original camera first, provisional terrain'
         archive.append(dict(asset_id=asset,model=str(frozen.relative_to(dest)),model_sha256=expected,worker=str(w),evidence=evidence))
     manifest=dest/'review-candidates.json';manifest.write_text(json.dumps(dict(map=map_title,items=items,status_counts={'ready for geometry review':len(items),'user approved':0}),indent=2)+'\n')
     build(manifest,dest/'gallery',pending_only=True)

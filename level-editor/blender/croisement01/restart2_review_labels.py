@@ -13,7 +13,7 @@ def labeled_sheet(worker,relative):
     expected=[0,-math.cos(math.radians(35)),math.sin(math.radians(35))]
     if first['index']!=0 or max(abs(a-b) for a,b in zip(axis,expected))>1e-5:
         raise ValueError(f'First camera is not the original orthographic direction: {worker}')
-    if 'terrain-contact' in relative:
+    if 'terrain-contact' in relative or 'root-contact-detail' in relative:
         evidence=json.loads((source.parent/'evidence.json').read_text())
         if evidence['camera_indices'][0]!=0:raise ValueError('Contact sheet starts at a different camera')
     digest=hashlib.sha256(source.read_bytes()).hexdigest()
