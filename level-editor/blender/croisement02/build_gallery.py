@@ -221,6 +221,17 @@ def main():
                 item['notes']+=reviewed.get('notes',[])
                 if reviewed.get('ready_for_geometry_review') and technical:
                     item['status']='ready-for-user';item['technical_eligible']=True
+        from fence_cap_candidate import geometry_review_ready
+        fence_ready=geometry_review_ready(OUT,group['id'],model_hash)
+        if fence_ready:
+            joint=Path(fence_ready['joint'])
+            item['source_trace']=str(joint/'source-comparison.png')
+            item['source_trace_label']='Current tree38 / shrub75 / fence95 native source comparison'
+            item['source_comparison_secondary']=str(joint/'contact-sheet.png')
+            item['source_comparison_secondary_label']='Current neighboring geometry: four contact views'
+            item['notes']+=fence_ready['notes']
+            if technical:
+                item['status']='ready-for-user';item['technical_eligible']=True
         bank_receipt=workspace/'inspection/bank-candidate.json'
         if bank_receipt.exists():
             bank=json.loads(bank_receipt.read_text())
