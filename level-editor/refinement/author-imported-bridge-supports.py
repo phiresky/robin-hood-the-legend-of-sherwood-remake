@@ -7,6 +7,7 @@ import hashlib
 import json
 import math
 import struct
+import sys
 from pathlib import Path
 import numpy as np
 from scipy.spatial import ConvexHull
@@ -76,3 +77,52 @@ for index, ids in enumerate(supports):
 output = Path('work/map-compile/imported-bridge-support-hulls.json')
 output.write_text(json.dumps({'modelSha256': review['modelSha256'], 'supports': result}, indent=2) + '\n')
 print(json.dumps({'output': str(output), 'supports': len(result), 'hullFaces': sum(len(s['faces']) for s in result)}))
+
+if '--structure' in sys.argv:
+    structures = []
+    components = sorted(groups.values(), key=lambda ids: tuple(vertices[ids].mean(axis=0)))
+    for component, ids in enumerate(components):
+        points = np.unique(vertices[ids], axis=0)
+        lo, hi = points.min(axis=0), points.max(axis=0)
+        if lo[2] < 2:
+            continue  # Already supplied by the reviewed support hulls.
+        if component == 68:
+            continue  # Deck thickness follows its paired mesh vertices below.
+        sections = [points]
+        if hi[1] - lo[1] > 300:
+            # Split long arched rails at the mesh's profile stations. One box
+            # around the whole rail would close its lower arch.
+            stations = []
+            for point in sorted(points, key=lambda p: p[1]):
+                if not stations or point[1] - stations[-1][-1][1] > 2:
+                    stations.append([])
+                stations[-1].append(point)
+            assert len(stations) >= 8
+            sections = [np.array(a + b) for a, b in zip(stations, stations[1:])]
+        for segment, section in enumerate(sections):
+            # A fitted oriented box is an explicit, compact collision proxy
+            # for this wood piece. Its bounds enclose all reviewed vertices.
+            center = section.mean(axis=0)
+            _, axes = np.linalg.eigh(np.cov((section - center).T))
+            local = (section - center) @ axes
+            low, high = local.min(axis=0), local.max(axis=0)
+            corners = np.array([[x, y, z] for x in [low[0], high[0]]
+                                for y in [low[1], high[1]] for z in [low[2], high[2]]]) @ axes.T + center
+            corners *= [1, -math.sin(math.radians(35)), math.cos(math.radians(35))]
+            hull = ConvexHull(corners)
+            structures.append({'id': f'wood-{component:03}-{segment:02}', 'vertices': corners.tolist(),
+                               'volume': hull.volume, 'component': component,
+                               'faces': [{'indices': f.tolist(), 'plane': p.tolist()}
+                                         for f, p in zip(hull.simplices, hull.equations)]})
+    deck = np.unique(vertices[components[68]], axis=0)
+    assert deck[:, 1].max() - deck[:, 1].min() > 330 and deck[:, 0].max() - deck[:, 0].min() > 60
+    thickness = []
+    for face in review['triangleIndices']:
+        top = vertices[faces[face]]
+        bottom = [deck[(deck[:, :2] == point[:2]).all(axis=1), 2].min() for point in top]
+        assert all(low < point[2] for point, low in zip(top, bottom))
+        thickness.append({'face': face, 'bottomHeights': [float(z * math.cos(math.radians(35))) for z in bottom]})
+    output = Path('work/map-compile/imported-bridge-structure-hulls.json')
+    output.write_text(json.dumps({'modelSha256': review['modelSha256'], 'supports': structures,
+                                 'deckThickness': thickness}, indent=2) + '\n')
+    print(json.dumps({'output': str(output), 'woodProxies': len(structures), 'deckTriangles': len(thickness)}))

@@ -100,19 +100,40 @@ descriptor.gameplay = {
   },
 };
 let supportHulls;
-if (process.argv.includes("--supports")) {
+if (process.argv.includes("--supports") || process.argv.includes("--structure")) {
   const require = createRequire(new URL("../pipeline/package.json", import.meta.url));
   const clipping = require("polygon-clipping");
   supportHulls = JSON.parse(
     await fs.readFile("work/map-compile/imported-bridge-support-hulls.json"),
   );
   assert.equal(supportHulls.modelSha256, review.modelSha256);
+  const structure = process.argv.includes("--structure")
+    ? JSON.parse(await fs.readFile("work/map-compile/imported-bridge-structure-hulls.json"))
+    : undefined;
+  if (structure) assert.equal(structure.modelSha256, review.modelSha256);
   descriptor.gameplay.volumes = [];
-  for (const support of supportHulls.supports) {
+  for (const support of [...supportHulls.supports, ...(structure?.supports ?? [])]) {
     let totalVolume = 0;
-    const upper = support.faces.filter((f) => f.plane[2] > 1e-8),
-      lower = support.faces.filter((f) => f.plane[2] < -1e-8);
-    const ring = (f) => f.indices.map((i) => support.vertices[i].slice(0, 2));
+    const mergeFaces = (faces) => {
+      const groups = [];
+      for (const face of faces) {
+        let group = groups.find((g) => g.plane.every((n, i) => Math.abs(n - face.plane[i]) < 1e-8));
+        if (!group) {
+          group = { plane: face.plane, polygons: [] };
+          groups.push(group);
+        }
+        group.polygons.push([face.indices.map((i) => support.vertices[i].slice(0, 2))]);
+      }
+      return groups.flatMap((group) =>
+        clipping.union(...group.polygons).map((polygon) => {
+          assert.equal(polygon.length, 1);
+          return { plane: group.plane, ring: polygon[0] };
+        }),
+      );
+    };
+    const upper = mergeFaces(support.faces.filter((f) => f.plane[2] > 1e-8)),
+      lower = mergeFaces(support.faces.filter((f) => f.plane[2] < -1e-8));
+    const ring = (f) => f.ring;
     const height = (f, [x, y]) => -(f.plane[0] * x + f.plane[1] * y + f.plane[3]) / f.plane[2];
     let piece = 0;
     for (const top of upper)
@@ -120,7 +141,10 @@ if (process.argv.includes("--supports")) {
         for (const polygon of clipping.intersection([ring(top)], [ring(bottom)])) {
           assert.equal(polygon.length, 1);
           const points = polygon[0].slice(0, -1);
-          if (Math.abs(signedPolygonArea(points)) < 1e-9) continue;
+          // Coplanar box faces can intersect in numerical dust. Keep cells
+          // large enough to define a height plane; volume conservation below
+          // still bounds the amount discarded for each complete hull.
+          if (Math.abs(signedPolygonArea(points)) < 1e-7) continue;
           const shapePoints = points.map((p) => {
             const low = height(bottom, p),
               high = height(top, p);
@@ -152,8 +176,33 @@ if (process.argv.includes("--supports")) {
       `Partition changed support volume: ${support.id}`,
     );
   }
+  for (const thickness of structure?.deckThickness ?? []) {
+    const surface = surfaces.find((s) => s.id === `deck-face-${thickness.face}`);
+    assert.ok(surface);
+    const triangle = indices
+      .slice(thickness.face * 3, thickness.face * 3 + 3)
+      .map((i) => sceneToGame(camera, vertices[i]));
+    descriptor.gameplay.volumes.push({
+      id: `deck-body-${thickness.face}`,
+      node: node.name,
+      shape: {
+        points: surface.polygon.map(([x, y], i) => {
+          const source = triangle.findIndex((p) => Math.hypot(p[0] - x, p[1] - y) < 1e-7);
+          assert.ok(source >= 0);
+          return { x, y, z_bottom: thickness.bottomHeights[source], z_top: surface.height[i] };
+        }),
+        solid: true,
+        opaque: true,
+        mouse: true,
+        show_shadow_polygon: true,
+        default_material: 1,
+      },
+    });
+  }
   descriptor.gameplay.draft.issues = [
-    "Unpublished bridge candidate: railing, deck-body and brace collision remain unauthored; support hulls and underpass routes are under review.",
+    structure
+      ? "Unpublished bridge candidate: fitted wood collision, complete clearance and projectile/sight behavior are under review."
+      : "Unpublished bridge candidate: railing, deck-body and brace collision remain unauthored; support hulls and underpass routes are under review.",
   ];
 }
 validateAssetGameplay(descriptor.gameplay, descriptor);
@@ -186,6 +235,15 @@ const reference = {
 const endHeight = surfaces.flatMap((s) => s.navigationJoins ?? [])[0][0][2];
 const results = [];
 const landingChecks = [];
+const receiverAreas = (result, material) =>
+  new Set(
+    result.descriptor.asset_geometry.sight_obstacles
+      .filter(
+        (obstacle) =>
+          Array.isArray(obstacle.projection_area) && obstacle.default_material === material,
+      )
+      .map((obstacle) => JSON.stringify(obstacle.projection_area)),
+  );
 for (const rotation of [0, 37, 90, 180, 270]) {
   const empty = {
     version: 1,
@@ -208,7 +266,16 @@ for (const rotation of [0, 37, 90, 180, 270]) {
   );
   const areaCount = (result) =>
     result.descriptor.asset_geometry.motion_data.layers.reduce((n, layer) => n + layer.length, 0);
-  assert.equal(areaCount(compiled), 1, "Matching landing must share navigation with the deck");
+  const file = `bridge-${rotation}.level.json`;
+  await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
+  const groundAreas = receiverAreas(compiled, 3);
+  const sharedAreas = [...receiverAreas(compiled, 1)].filter((area) => groundAreas.has(area));
+  assert.equal(
+    sharedAreas.length,
+    1,
+    "Matching landings and deck must share one navigation region",
+  );
+  const [routeSector, routeLayer] = JSON.parse(sharedAreas[0]);
   for (const offset of [-1, 1]) {
     const mismatched = structuredClone(document);
     mismatched.terrain = createTerrainGrid([0, 0, 1000, 1000], 250, endHeight + offset);
@@ -218,11 +285,15 @@ for (const rotation of [0, 37, 90, 180, 270]) {
       new Map([[descriptor.id, descriptor]]),
       { bestEffort: false },
     );
-    assert.equal(areaCount(rejected), 2, "A mismatched landing must not connect to the deck");
+    const woodAreas = receiverAreas(rejected, 1),
+      groundAreas = receiverAreas(rejected, 3);
+    assert.ok(woodAreas.size > 0 && groundAreas.size > 0);
+    assert.ok(
+      [...woodAreas].every((area) => !groundAreas.has(area)),
+      "A mismatched landing must not share navigation with the deck",
+    );
     landingChecks.push({ rotation, heightOffset: offset, navigationRegions: areaCount(rejected) });
   }
-  const file = `bridge-${rotation}.level.json`;
-  await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
   const matrix = partMatrix(camera, document, document.objects[0]);
   const project = (p) => {
     const [x, y, z] = sceneToGame(camera, applyAffineMatrix(matrix, gameToScene(camera, ...p)));
@@ -239,6 +310,9 @@ for (const rotation of [0, 37, 90, 180, 270]) {
   results.push({
     file,
     map: file,
+    layer: routeLayer,
+    sector: routeSector,
+    navigationRegions: areaCount(compiled),
     warnings: compiled.warnings,
     routes: [[project(outward[0]), project(outward[1])]],
   });

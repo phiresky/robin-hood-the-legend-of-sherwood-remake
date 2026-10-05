@@ -4,6 +4,36 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Collision subtraction recovery and bridge structure candidate (2026-10-05)
+
+The fitted bridge structure exposed a floating-point sweep failure while
+subtracting a solid from navigation. The compiler now preserves successful
+subtractions exactly and retries failed ones using the existing fixed-point
+geometry operations. No solid is dropped. The captured regression checks
+158,400 point occupancies against independent subject-minus-cut membership,
+including retained free space and existing holes. All 120 focused compiler,
+clipping and subtraction tests pass, along with editor/pipeline typechecks,
+focused lint and the production editor build.
+
+The structure candidate is generated with the same two authoring commands below,
+adding `--structure` to each. It fits 150 oriented wood-piece proxies, splitting
+long rails along their arched profile. Eighteen deck prisms use the mesh's paired
+bottom vertices, retaining its varying thickness. These proxies are deliberate
+collision approximations, not a claim of exact mesh occupancy. Coplanar face
+merging reduces the complete candidate from 3,499 to 1,527 volumes while the
+per-hull volume checks still pass. Numerical dust below 1e-7 square local units
+is discarded before it can create a degenerate height plane.
+
+`work/map-compile/imported-bridge-deck-SMVEnH` compiles strictly at five rotations
+and passes thirty directed native deck/underpass routes and all sixty blocked
+support-foot probes. Ten mismatched landing cases have disjoint wood/terrain
+navigation references. Matching cases share a region used for actual traversal;
+the fixture no longer assumes that adding collision cannot create extra regions.
+A small isolated 0.5-square-unit walking fragment was observed at 37 degrees
+before coplanar face merging, so region counts alone cannot certify these routes.
+The candidate remains unpublished pending direct sight/projectile queries and
+visual/body-clearance review; the library still has 35 missing definitions.
+
 ## Imported wood bridge deck candidate (2026-10-05)
 
 The support follow-up is reproducible from pinned mesh data with:
@@ -115,6 +145,11 @@ native construction and all three control apply/reset checks. Both snapshots
 also pass all four available directed stair routes, with no failures. This small
 geometric difference is not an exact round trip, nor by itself evidence of a
 gameplay regression; native traversal checks are recorded separately.
+The current calibrated snapshot's full receiving-seam audit subsequently
+completed: 17,482 directed actor crossings pass across 8,741 eligible receiver
+pairs. Its complete report is
+`wychford-wall-calibration-EFEmVR/current-check/actor-receiver-crossing-report.json`.
+This covers sampled initial-state crossings, not every route or control state.
 
 ## Composite keep placement and best-effort failures (2026-10-05)
 

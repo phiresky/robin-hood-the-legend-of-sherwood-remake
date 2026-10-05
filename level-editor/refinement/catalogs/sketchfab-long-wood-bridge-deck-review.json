@@ -16,9 +16,15 @@
     "footVertexMaximumSceneZ": 2,
     "maximumFootExtensionSceneUnits": 1.397323489189148
   },
+  "structureAuthoring": {
+    "option": "--structure",
+    "woodPieceProxies": 150,
+    "shape": "fitted oriented boxes, with long arched rails split at mesh profile stations",
+    "deckThickness": "paired bottom vertex at each of the eighteen reviewed top triangles",
+    "publication": "staged only"
+  },
   "remaining": [
-    "Author railing, deck-body and cross-brace collision without filling the underpass.",
-    "Review complete projectile and sight obstruction independently of walking surfaces.",
-    "Verify under-bridge clearance again after adding deck and brace collision."
+    "Verify complete projectile and sight obstruction independently of walking surfaces.",
+    "Review fitted collision and rendered actor body clearance before publication."
   ]
 }

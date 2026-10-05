@@ -25,9 +25,10 @@ The imported bridge and two old ground assets have no component-owner match.
 An unpublished mesh-derived bridge deck candidate passes ten complete native
 crossings and 754 sampled receiving-seam crossings at five rotations. Adding
 twelve inclined support hulls preserves those ten complete crossings, passes
-twenty underpass routes and blocks sixty sampled support-foot positions. Railings,
-deck thickness and cross-braces still need collision definitions and clearance
-checks; it is not yet a complete replacement for the missing definition.
+twenty underpass routes and blocks sixty sampled support-foot positions. A newer
+candidate adds fitted rail/brace collision and mesh-derived deck thickness and
+passes those same route/foot checks plus ten landing-height rejections. Direct
+sight/projectile and visual/body-clearance review remain before publication.
 
 The staged composite keep preserves Derby's door permissions, room memberships
 and lift endpoints; both assemblies pass 28 native stair routes and five control
@@ -58,8 +59,9 @@ build and native stair/control checks passed. Wychford loads with its spline wal
 and passes control apply/reset. The terrain-junction correction passes the
 synthetic four-triangle fan, all 48 crossings in the reduced Wychford case, and
 182 movement tests (five skipped). The updated game build passes. The full
-Wychford receiving-seam audit passes 17,468 directed actor crossings over 8,734
-eligible pairs. This samples initial-state routes; it does not verify every
+Wychford receiving-seam audit with the published stair precision settings passes
+17,482 directed actor crossings over 8,741 eligible pairs. This samples
+initial-state routes; it does not verify every
 possible route, control state or feature category.
 
 A fresh all-map batch exposed stale Lincoln spire appearance bindings, now
