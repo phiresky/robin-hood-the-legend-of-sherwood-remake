@@ -4,6 +4,36 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Physical stair sprite execution and receiver entry (2026-10-05)
+
+The sprite motion API now accepts an explicit physical destination while sharing
+its animation/frame progression with ordinary motion. It initializes the cached
+3D increment forward, distinguishes world-space arrival from coincident screen
+endpoints, and rejects a changed physical goal under the same order identity.
+The position interface can attach a receiver at a supplied ground point, computing
+height forward instead of dividing by the screen-projection determinant. Existing
+screen-motion and receiver APIs retain their behavior.
+
+The test binds a receiver with height plane `z = y + 40`, animates WalkingStairs
+in both directions using the script's actual per-frame distances, and advances
+the physical route while its screen position stays fixed. It round-trips the
+position interface mid-route, checks exact endpoint arrival and rejects a
+same-order-ID change to a different physical endpoint with the same projection.
+All 37 sprite tests, 46 position-interface tests and 185 movement tests pass
+against the final source; twelve movement tests requiring external exports or
+animation resources are skipped. Formatting, whitespace checks and
+`RUSTC_WRAPPER= cargo build -p robin_rs --bin robin -j1` pass.
+
+The physical route owner must still perform collision checks and commit world
+positions. Compiler metadata, route-order creation, door handoffs and actor-loop
+dispatch remain unfinished; ordinary editor exports still use the existing stair
+path. These APIs do not by themselves resolve the 24 failing keep routes.
+The descriptor validator still requires every lift motion area to have at least
+three projected polygon points. Door translation stores screen destinations, and
+door transitions snap through screen-coordinate receiver lookup. Integration must
+carry physical endpoint identities through those boundaries as well as the actor
+movement loop; allowing a collapsed polygon alone would not fix traversal.
+
 ## Physical stair collision routing foundation (2026-10-05)
 
 `robin_engine::stair_navigation::StairRouteGeometry` builds an independent

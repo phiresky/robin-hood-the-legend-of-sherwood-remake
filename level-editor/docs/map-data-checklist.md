@@ -59,6 +59,9 @@ coverage, including stationary screen positions. Physical collision routing also
 passes native unit checks for obstacles, rotations and landing support using the
 existing pathfinder. Runtime traversal is not yet wired to these APIs, so the
 failed routes remain unresolved.
+The sprite motion API and ground-coordinate receiver entry now also support
+edge-on planes, with animation-distance and position-state round-trip coverage.
+Compiler metadata and actor order dispatch still need integration.
 Best-effort export now warns instead of aborting on collapsed mask boundaries or
 collision-split stair regions, retaining independent usable features. These
 fallbacks do not repair the missing traversal.

@@ -1884,6 +1884,87 @@ impl Sprite {
         motion_method: MotionMethod,
         dest_already_at_pos: bool,
     ) -> (MotionState, f32) {
+        self.perform_motion_in_space(
+            sim,
+            motion_order,
+            anim,
+            direction,
+            progression,
+            force_init,
+            motion_method,
+            dest_already_at_pos,
+            None,
+        )
+        .expect("screen motion has no physical coordinate initialization")
+    }
+
+    /// Animate an explicitly physical route. Arrival is measured in world space,
+    /// including stairs whose distinct endpoints project to the same screen point.
+    /// The movement owner remains responsible for collision and position commits.
+    pub fn perform_physical_motion(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        motion_order: MotionOrderContext,
+        destination: crate::coordinates::WorldPoint3D,
+        anim: OrderType,
+        direction: u16,
+        progression: FrameProgression,
+        motion_method: MotionMethod,
+    ) -> Result<(MotionState, f32), &'static str> {
+        let position = self.position_iface.get_position();
+        let displacement = (destination.x - position.x)
+            .hypot(destination.y - position.y)
+            .hypot(destination.z - position.z);
+        if [
+            position.x,
+            position.y,
+            position.z,
+            destination.x,
+            destination.y,
+            destination.z,
+            motion_order.destination.x,
+            motion_order.destination.y,
+            displacement,
+        ]
+        .iter()
+        .any(|value| !value.is_finite())
+        {
+            return Err("physical motion requires finite positions and displacement");
+        }
+        if destination.to_map() != motion_order.destination {
+            return Err("physical motion destination differs from its screen goal");
+        }
+        if self.last_processed_order_id == motion_order.order_id.get()
+            && self.position_iface.physical_movement_goal() != destination
+        {
+            return Err("physical motion goal changed without a new order identity");
+        }
+        let arrived = self.position_iface.get_position() == destination;
+        self.perform_motion_in_space(
+            sim,
+            Some(motion_order),
+            anim,
+            direction,
+            progression,
+            false,
+            motion_method,
+            arrived,
+            Some(destination),
+        )
+    }
+
+    fn perform_motion_in_space(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        motion_order: Option<MotionOrderContext>,
+        anim: OrderType,
+        direction: u16,
+        progression: FrameProgression,
+        force_init: bool,
+        motion_method: MotionMethod,
+        dest_already_at_pos: bool,
+        physical_destination: Option<crate::coordinates::WorldPoint3D>,
+    ) -> Result<(MotionState, f32), &'static str> {
         let order_id = motion_order.map(|ctx| ctx.order_id);
         let starts_new_motion_order =
             order_id.is_some_and(|order_id| self.last_processed_order_id != order_id.get());
@@ -1911,14 +1992,24 @@ impl Sprite {
                 // the last processed order ID in this exact-arrival branch
                 // during action completion. The caller retires the order, so
                 // the stale cache identity is intentional and observable.
-                return (self.record_motion_state(MotionState::Terminated), 0.0);
+                return Ok((self.record_motion_state(MotionState::Terminated), 0.0));
             }
         }
 
         if let Some(ctx) = motion_order
             && self.last_processed_order_id != ctx.order_id.get()
         {
-            self.initialize_motion_order(ctx);
+            if let Some(destination) = physical_destination {
+                let pi = &mut self.position_iface;
+                pi.set_reversed_movement(ctx.reverse);
+                pi.set_tolerance(ctx.tolerance, ctx.directional_tolerance);
+                pi.set_goal_next_valid(false);
+                pi.set_physical_movement_goal(destination, ctx.compute_direction)?;
+                pi.set_target_element(ctx.target_element);
+                pi.reset_box_blocked();
+            } else {
+                self.initialize_motion_order(ctx);
+            }
         }
 
         // The original game selects the sprite row only after motion
@@ -2006,7 +2097,7 @@ impl Sprite {
         // DONE -> START when a fresh waypoint begins on the prior action-done
         // frame). The actor observes the final motion result, so
         // keep the shared motion latch on that same final state.
-        (self.record_motion_state(state), distance)
+        Ok((self.record_motion_state(state), distance))
     }
 
     // -- Bounding box --
@@ -2977,6 +3068,124 @@ mod tests {
         assert_eq!(sprite.current_frame, 0);
         assert_eq!(sprite.frame_count, 0);
         assert_eq!(distance, 3.0);
+    }
+
+    #[test]
+    fn physical_stair_animation_keeps_progress_when_screen_endpoints_coincide() {
+        use crate::coordinates::WorldPoint3D;
+        use robin_level_data::stair_navigation::StairNavigationPlane;
+        let sim = crate::sim_rng::test_context();
+        let plane = StairNavigationPlane::new([0.0, 1.0, 40.0]).unwrap();
+        for (from, to) in [(30.0_f32, 80.0_f32), (80.0, 30.0)] {
+            let mut sprite = make_test_sprite();
+            std::sync::Arc::make_mut(&mut sprite.conversion)[OrderType::WalkingStairs as usize] = 0;
+            sprite
+                .position_iface
+                .set_obstacle_at_ground_position(
+                    Some(crate::position_interface::ObstacleHandle::new(1).unwrap()),
+                    Some(crate::position_interface::PlaneZCoeffs {
+                        az: 0.0,
+                        bz: 1.0,
+                        dz: 40.0,
+                    }),
+                    crate::coordinates::GroundPoint::new(12.0, from),
+                )
+                .unwrap();
+            let destination = WorldPoint3D::new(12.0, to, to + 40.0);
+            let ctx = MotionOrderContext {
+                order_id: std::num::NonZeroU32::new(900).unwrap(),
+                destination: destination.to_map(),
+                reverse: false,
+                tolerance: 0.0,
+                directional_tolerance: false,
+                compute_direction: true,
+                next_destination_same_action: None,
+                target_element: None,
+            };
+            assert_eq!(sprite.position_iface.map_position(), ctx.destination);
+            let mut completed = false;
+            for tick in 0..200 {
+                let (state, distance) = sprite
+                    .perform_physical_motion(
+                        &sim,
+                        ctx,
+                        destination,
+                        OrderType::WalkingStairs,
+                        0,
+                        FrameProgression::Default,
+                        MotionMethod::Walk,
+                    )
+                    .unwrap();
+                assert!(!matches!(
+                    state,
+                    MotionState::Terminated | MotionState::Aborted
+                ));
+                if tick == 0 {
+                    assert_eq!(state, MotionState::Start);
+                    assert!(distance > 0.0);
+                }
+                assert!(sprite.motion_order_state_mismatch(ctx).is_none());
+                let position = sprite.position_iface.get_position();
+                let step = plane
+                    .advance(
+                        [f64::from(position.x), f64::from(position.y)],
+                        [12.0, f64::from(to)],
+                        f64::from(distance),
+                    )
+                    .unwrap();
+                sprite.position_iface.set_position(WorldPoint3D::new(
+                    step.world[0] as f32,
+                    step.world[1] as f32,
+                    step.world[2] as f32,
+                ));
+                assert!((sprite.position_iface.map_position().y + 40.0).abs() < 1e-5);
+                if tick == 5 {
+                    let saved = serde_json::to_vec(&sprite.position_iface).unwrap();
+                    sprite.position_iface = serde_json::from_slice(&saved).unwrap();
+                }
+                if step.reached {
+                    completed = true;
+                    break;
+                }
+            }
+            assert!(
+                completed,
+                "physical route must reach its endpoint using animation distances"
+            );
+            assert_eq!(sprite.position_iface.get_position(), destination);
+            let changed_goal = WorldPoint3D::new(12.0, to + 1.0, to + 41.0);
+            assert!(
+                sprite
+                    .perform_physical_motion(
+                        &sim,
+                        ctx,
+                        changed_goal,
+                        OrderType::WalkingStairs,
+                        0,
+                        FrameProgression::Default,
+                        MotionMethod::Walk
+                    )
+                    .is_err()
+            );
+            let arrived = MotionOrderContext {
+                order_id: std::num::NonZeroU32::new(901).unwrap(),
+                ..ctx
+            };
+            assert_eq!(
+                sprite
+                    .perform_physical_motion(
+                        &sim,
+                        arrived,
+                        destination,
+                        OrderType::WalkingStairs,
+                        0,
+                        FrameProgression::Default,
+                        MotionMethod::Walk
+                    )
+                    .unwrap(),
+                (MotionState::Terminated, 0.0)
+            );
+        }
     }
 
     #[test]
