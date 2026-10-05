@@ -4,6 +4,34 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Leicester church-side tower seam review (2026-10-05)
+
+Unpublished candidate `local-stair-seams-qCEECD` adjusts both church-side tower
+flights. The upper flight's lower receiving edge requires 2.571–4.991 units of
+movement, exceeding the default two-unit authoring limit. The staging tool now
+accepts an explicit `--landing-shift-limit=5.1` and records it in the review;
+the default stays two and no compiler/runtime tolerance changes. This is a
+review candidate, not authorization to publish arbitrary gaps.
+
+The lower flight has 790/790 mesh hits, a maximum floor shift of 0.766 units,
+and mesh-minus-floor heights 0.006–4.996. The upper flight has only 225/956
+stair-part mesh hits, with uncovered distances up to 12.175 units; its visible
+mesh and complete traversal still require review. The reviewer now records hits
+from every component for each changed landing-edge sample. In this asset,
+`building-197` supplies the 95-unit lower landing, with 41/41 assembled mesh
+hits even though the receiving surface belongs to `building-192`. Two other
+changed landing edges have 31/41 and 41/41 assembled hits; the upper receiving
+edge has only 8/41. Missing own-part hits must not be mistaken for missing
+assembled geometry, but neither should other-height roof hits count as support.
+
+Placement batch `local-stair-placements-B1EBnR` emits both physical flights at
+four rotations and two elevations. Native tests pass 24/32 directed routes;
+all eight failures involve the upper flight at 0 or 90 degrees. All eight
+raised external-approach cases reject during compilation. The lower-only staging
+attempt is `local-stair-seams-EomcNr`; neither candidate is published. Focused
+lint/format checks and the mesh-review execution pass. Current published asset
+definitions and the 42/53 unsupported-anchor audit are unchanged.
+
 ## Publish mesh-derived upper-west stair and terrain contact (2026-10-05)
 
 The upper-west floor candidate `upper-west-mesh-floor-JSFFSf` is now published

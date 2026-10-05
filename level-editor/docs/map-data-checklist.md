@@ -117,6 +117,11 @@ definitions: Derby 0/10, Leicester 8/8, Lincoln 6/6, Nottingham 11/12,
 Sherwood 1/1 and York 16/16. All audited floors are planar. This checks local
 definitions, not placed connectivity or actual route failures; corrections and
 moved/rotated native traversal checks remain necessary across these assets.
+The first church-side tower candidate emits both physical flights at eight
+placements but passes only 24/32 routes; the upper flight fails at 0/90 degrees.
+Its landing review also finds incomplete mesh coverage, so it remains unpublished.
+Landing mesh checks now include other components in the same asset, since the
+visible floor and receiving surface can belong to different parts.
 The east hall's upper stair now has published floor/landing seam corrections and
 passes 48 directed routes across four rotations and two elevations. Full Derby
 passes 28/28 stair routes and all five control checks with this correction.

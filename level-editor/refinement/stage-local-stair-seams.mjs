@@ -15,8 +15,18 @@ const floorLimits = arguments_.filter((value) => value.startsWith("--floor-shift
 assert.ok(floorLimits.length <= 1, "Provide at most one floor shift limit");
 const floorShiftLimit = floorLimits.length ? Number(floorLimits[0].split("=")[1]) : 2;
 assert.ok(Number.isFinite(floorShiftLimit) && floorShiftLimit > 0, "Invalid floor shift limit");
+const landingLimits = arguments_.filter((value) => value.startsWith("--landing-shift-limit="));
+assert.ok(landingLimits.length <= 1, "Provide at most one landing shift limit");
+const landingShiftLimit = landingLimits.length ? Number(landingLimits[0].split("=")[1]) : 2;
+assert.ok(
+  Number.isFinite(landingShiftLimit) && landingShiftLimit > 0,
+  "Invalid landing shift limit",
+);
 const ids = arguments_.filter(
-  (value) => !value.startsWith("--external=") && !value.startsWith("--floor-shift-limit="),
+  (value) =>
+    !value.startsWith("--external=") &&
+    !value.startsWith("--floor-shift-limit=") &&
+    !value.startsWith("--landing-shift-limit="),
 );
 const usedExternal = new Set();
 assert.ok(asset && ids.length, "Provide an asset and selected stair lift IDs");
@@ -118,7 +128,7 @@ for (const id of ids) {
       const next = landing.polygon[j];
       if (
         [point, next].every(
-          (p) => Math.abs(planeHeight(plane, p) - door.outside[2]) / length <= 2,
+          (p) => Math.abs(planeHeight(plane, p) - door.outside[2]) / length <= landingShiftLimit,
         ) &&
         Math.min(high, Math.max(sideways(point), sideways(next))) >
           Math.max(low, Math.min(sideways(point), sideways(next)))
@@ -159,6 +169,7 @@ await fs.writeFile(
       asset,
       descriptorSha256,
       floorShiftLimit,
+      landingShiftLimit,
       changes,
     },
     null,

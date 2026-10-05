@@ -148,7 +148,13 @@ for (const edit of edits) {
           const hits = mesh
             .map((triangle) => meshHeight(point, triangle))
             .filter((z) => z !== undefined);
-          return { point, hits };
+          const assemblyHits = [{ node: lift.node, triangles }, ...neighbours].flatMap((part) => {
+            const heights = part.triangles
+              .map((triangle) => meshHeight(point, triangle))
+              .filter((z) => z !== undefined);
+            return heights.length ? [{ node: part.node, heights }] : [];
+          });
+          return { point, hits, assemblyHits };
         });
         landingEdgeReviews.push({
           surface: landing.id,
@@ -158,6 +164,11 @@ for (const edit of edits) {
           after: [landing.polygon[i], landing.polygon[j]],
           supported: samples.filter((sample) =>
             sample.hits.some((z) => Math.abs(z - heights[0]) < 0.1),
+          ).length,
+          assemblySupported: samples.filter((sample) =>
+            sample.assemblyHits.some((part) =>
+              part.heights.some((z) => Math.abs(z - heights[0]) < 0.1),
+            ),
           ).length,
           samples,
         });
