@@ -1,4 +1,5 @@
-"""Archive the explicit four-card texture approval against frozen evidence."""
+"""Archive the explicitly approved texture rounds against frozen evidence."""
+import argparse
 import json
 import shutil
 import sys
@@ -14,22 +15,27 @@ def write(path, data):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--round', type=int, choices=[1, 2], default=1)
+    number = parser.parse_args().round
+    count, exact_text = ((4, 'All four textures approved') if number == 1
+                         else (1, 'Firewood texture approved'))
     root = ROOT / 'level-editor/work/croisement03-refinement/restart2'
-    reviewed = root / 'texture-review-round1'
+    reviewed = root / f'texture-review-round{number}'
     frozen = json.loads((reviewed / 'freeze.json').read_text())
     assert sha(reviewed / 'texture-candidates.json') == frozen['manifest_sha256']
     for relative, digest in frozen['gallery_files'].items():
         assert sha(reviewed / relative) == digest, relative
     displayed = json.loads((reviewed / 'gallery/evidence.json').read_text())['items']
-    assert len(displayed) == 4
-    archive = root / 'texture-approval-round1'
+    assert len(displayed) == count
+    archive = root / f'texture-approval-round{number}'
     archive.mkdir(exist_ok=False)
     shutil.copytree(reviewed / 'gallery', archive / 'gallery')
     for filename in ['freeze.json', 'texture-candidates.json']:
         shutil.copyfile(reviewed / filename, archive / filename)
     batch = dict(scope='texture', decision='approved', approved_by='user',
-                 exact_user_text='All four textures approved',
-                 authorization='Explicit user approval for the frozen four-card texture-review-round1, relayed by root.',
+                 exact_user_text=exact_text,
+                 authorization=f'Explicit user approval for the frozen {count}-card texture-review-round{number}, relayed by root.',
                  freeze_sha256=sha(archive / 'freeze.json'),
                  limitation='Isolated appearances approved; surrounding scene and final map integration remain unfinished.')
     write(archive / 'decision.json', batch)
