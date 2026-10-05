@@ -13,6 +13,9 @@ def require(value,message):
 
 
 def selected_workspace(out,mask,catalog_path):
+    if mask in (35,43,45,46):
+        from restart2_boundary_selections import selected_workspace as boundary_workspace
+        return boundary_workspace(out,mask,catalog_path)
     if mask not in (32,38):return None
     path=out/'restart2-wood/selections'/f'tree-{mask}.json'
     if not path.exists():return None
