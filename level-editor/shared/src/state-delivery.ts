@@ -1,5 +1,5 @@
 import { safeLibraryPath } from "./projection-assets.ts";
-import type { SceneAssetSource } from "./level3d.ts";
+import type { SceneAssetSource, Level3D, GameTransform } from "./level3d.ts";
 import {
   validateNativeStatePresentation,
   type NativeStatePresentationContract,
@@ -13,6 +13,22 @@ export type PhysicalStateBinding = SceneAssetSource & {
   position?: [number, number, number];
 };
 
+/** An absent target is distinct from an unprepared or failed endpoint. */
+export type PhysicalEndpoint = PhysicalStateBinding[] | { kind: "absent" };
+export function physicalEndpointSources(endpoint: PhysicalEndpoint): PhysicalStateBinding[] {
+  return Array.isArray(endpoint) ? endpoint : [];
+}
+/** Exact saved placement replaced only during the corresponding physical preview. */
+export interface StaticStateReplacement {
+  object_id: string;
+  node: string;
+  asset_id: string;
+  model_sha256: string;
+  transform: GameTransform;
+  group_id?: string;
+  group_transform?: GameTransform;
+}
+
 /** Exact artwork transitions and independently reviewed physical endpoints. */
 export interface StateDeliveryContract {
   version: 1;
@@ -24,7 +40,8 @@ export interface StateDeliveryContract {
     background_ids: string[];
     /** Terminal entry of the last visible target; receiver completion retains its own clock. */
     body_terminal_tick: number;
-    physical: { initial: PhysicalStateBinding[]; applied: PhysicalStateBinding[] };
+    physical: { initial: PhysicalEndpoint; applied: PhysicalEndpoint };
+    static_replacements?: { initial: StaticStateReplacement[]; applied: StaticStateReplacement[] };
   }[];
 }
 export function validateStateDelivery(value: unknown): asserts value is StateDeliveryContract {
@@ -84,8 +101,46 @@ export function validateStateDelivery(value: unknown): asserts value is StateDel
       members.add(id);
     }
     if (!family.physical) fail("missing physical endpoints");
-    for (const sources of [family.physical.initial, family.physical.applied]) {
-      if (!Array.isArray(sources) || !sources.length) fail("missing physical endpoint");
+    if (family.static_replacements !== undefined) {
+      const transform = (t: unknown): t is GameTransform => {
+        if (!t || typeof t !== "object") return false;
+        const value = t as GameTransform;
+        return [value.dx, value.dy, value.dz, value.rot_deg].every(Number.isFinite);
+      };
+      for (const state of ["initial", "applied"] as const) {
+        const rows = family.static_replacements[state];
+        if (!Array.isArray(rows)) fail("invalid static replacements");
+        const objects = new Set<string>();
+        for (const row of rows) {
+          if (
+            !row ||
+            ![row.object_id, row.node, row.asset_id].every(
+              (v) => typeof v === "string" && v.length > 0,
+            ) ||
+            objects.has(row.object_id) ||
+            !hash(row.model_sha256) ||
+            !transform(row.transform) ||
+            (row.group_id === undefined) !== (row.group_transform === undefined) ||
+            (row.group_id !== undefined &&
+              (typeof row.group_id !== "string" ||
+                !row.group_id ||
+                !transform(row.group_transform)))
+          )
+            fail("invalid static replacement");
+          objects.add(row.object_id);
+        }
+      }
+    }
+    for (const endpoint of [family.physical.initial, family.physical.applied]) {
+      if (
+        endpoint &&
+        !Array.isArray(endpoint) &&
+        endpoint.kind === "absent" &&
+        Object.keys(endpoint).length === 1
+      )
+        continue;
+      if (!Array.isArray(endpoint) || !endpoint.length) fail("missing physical endpoint");
+      const sources = endpoint as PhysicalStateBinding[];
       const sourceIds = new Set<string>();
       for (const source of sources) {
         if (
@@ -112,4 +167,71 @@ export function validateStateDelivery(value: unknown): asserts value is StateDel
       }
     }
   }
+}
+
+/** Reject edited or unrelated placements before any visible node is suppressed. */
+export function verifyStaticStateReplacements(
+  contract: StateDeliveryContract,
+  document: Level3D,
+): void {
+  validateStateDelivery(contract);
+  const sameTransform = (a: GameTransform, b: GameTransform) =>
+    a.dx === b.dx && a.dy === b.dy && a.dz === b.dz && a.rot_deg === b.rot_deg;
+  for (const family of contract.families)
+    for (const rows of Object.values(family.static_replacements ?? {}))
+      for (const row of rows) {
+        const object = document.objects.find((o) => o.id === row.object_id);
+        const asset = document.assetSources?.find((a) => a.id === row.asset_id);
+        const group =
+          row.group_id === undefined
+            ? undefined
+            : document.groups.find((g) => g.id === row.group_id);
+        if (
+          !object ||
+          object.node !== row.node ||
+          object.node.split(":")[1] !== row.asset_id ||
+          !asset ||
+          asset.model_sha256 !== row.model_sha256 ||
+          !sameTransform(object.transform, row.transform) ||
+          object.group !== row.group_id ||
+          (row.group_id !== undefined &&
+            (!group || !sameTransform(group.transform, row.group_transform!)))
+        )
+          throw new Error(
+            `State replacement differs from the displayed placement: ${row.object_id}`,
+          );
+      }
+}
+
+/** Source artwork loop preview; independent ambient elements retain their own clocks. */
+export interface NativeLoopPreviewContract {
+  version: 1;
+  scope: "controlled-native-loop-preview";
+  native: NativeStatePresentationContract;
+  focus_element_id: string;
+}
+export function validateNativeLoopPreview(
+  value: unknown,
+): asserts value is NativeLoopPreviewContract {
+  if (!value || typeof value !== "object") throw new Error("Missing native loop preview");
+  const contract = value as NativeLoopPreviewContract;
+  if (contract.version !== 1 || contract.scope !== "controlled-native-loop-preview")
+    throw new Error("Invalid native loop preview");
+  validateNativeStatePresentation(contract.native);
+  const focus = contract.native.elements.find((e) => e.id === contract.focus_element_id);
+  if (
+    !focus ||
+    !focus.active ||
+    !focus.loop ||
+    !focus.frames.length ||
+    contract.native.background_states?.length ||
+    contract.native.elements.some((e) => e.frames.length && !e.loop)
+  )
+    throw new Error("Native loop preview requires a visible looping focus and independent loops");
+}
+export function nativeLoopPreviewPeriod(contract: NativeLoopPreviewContract): number {
+  validateNativeLoopPreview(contract);
+  return contract.native.elements
+    .find((e) => e.id === contract.focus_element_id)!
+    .frames.reduce((ticks, frame) => ticks + frame.delay + 1, 0);
 }

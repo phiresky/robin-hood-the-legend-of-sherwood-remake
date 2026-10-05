@@ -1,7 +1,11 @@
 import { For, Show, createEffect, createSignal, onCleanup } from "solid-js";
 import type { Level3D } from "@rle/shared";
 import type { EditorViewport } from "./editor-viewport.ts";
-import type { StateDeliveryContract } from "../../shared/src/state-delivery.ts";
+import {
+  nativeLoopPreviewPeriod,
+  type NativeLoopPreviewContract,
+  type StateDeliveryContract,
+} from "../../shared/src/state-delivery.ts";
 import {
   loadMissionStateCatalog,
   loadMissionStatePreview,
@@ -18,6 +22,7 @@ export default function StatePreview(props: {
   const [entries, setEntries] = createSignal<MissionStateCatalogEntry[]>([]),
     [selected, setSelected] = createSignal(""),
     [contract, setContract] = createSignal<StateDeliveryContract | null>(null),
+    [loopContract, setLoopContract] = createSignal<NativeLoopPreviewContract | null>(null),
     [family, setFamily] = createSignal(""),
     [status, setStatus] = createSignal(""),
     [mode, setMode] = createSignal<"art" | "initial" | "applied">("art"),
@@ -30,6 +35,8 @@ export default function StatePreview(props: {
     lastMission = "";
   const current = () => contract()?.families.find((f) => f.id === family());
   const lastTick = () => {
+    const loop = loopContract();
+    if (loop) return nativeLoopPreviewPeriod(loop) - 1;
     const c = contract(),
       f = current();
     if (!c || !f) return 0;
@@ -44,7 +51,8 @@ export default function StatePreview(props: {
     );
   };
   function applyMode(view: "art" | "initial" | "applied", familyId: string) {
-    if (view === "art") props.viewport.setDeliveredStateMode("native-art");
+    if (loopContract()) props.viewport.setStatePresentationMode("native-art");
+    else if (view === "art") props.viewport.setDeliveredStateMode("native-art");
     else {
       props.viewport.setDeliveredStateMode("physical-endpoint");
       props.viewport.selectDeliveredEndpoint(familyId, view === "initial" ? "initial" : "applied");
@@ -59,16 +67,29 @@ export default function StatePreview(props: {
     const attempt = ++request;
     setSelected(entry.id);
     setContract(null);
+    setLoopContract(null);
     setStatus("Loading state preview…");
     setPlaying(false);
-    props.viewport.clearStateDelivery();
+    props.viewport.clearNativeArtPresentation();
     try {
       const loaded = await loadMissionStatePreview(root, entry);
       if (context !== generation || attempt !== request) return;
-      const ready = await props.viewport.setStateDelivery(loaded.contract, root, loaded.source);
+      const ready =
+        loaded.kind === "native-loop"
+          ? await props.viewport.setNativeArtPresentation(
+              loaded.contract.native,
+              root,
+              loaded.source,
+            )
+          : await props.viewport.setStateDelivery(loaded.contract, root, loaded.source);
       if (!ready || context !== generation || attempt !== request) return;
-      setContract(loaded.contract);
-      setFamily(loaded.contract.families[0]!.id);
+      if (loaded.kind === "native-loop") {
+        setLoopContract(loaded.contract);
+        setFamily(loaded.contract.focus_element_id);
+      } else {
+        setContract(loaded.contract);
+        setFamily(loaded.contract.families[0]!.id);
+      }
       setMode("art");
       setTick(0);
       setStatus("");
@@ -93,10 +114,11 @@ export default function StatePreview(props: {
       request++;
       setEntries([]);
       setContract(null);
+      setLoopContract(null);
       setSelected("");
       setStatus("");
       setPlaying(false);
-      props.viewport.clearStateDelivery();
+      props.viewport.clearNativeArtPresentation();
       if (!root || !map || !mission) return;
       void loadMissionStateCatalog(root, map, mission)
         .then((rows) => {
@@ -112,7 +134,12 @@ export default function StatePreview(props: {
     },
   );
   createEffect(
-    () => ({ active: props.active, loaded: contract(), familyId: family(), view: mode() }),
+    () => ({
+      active: props.active,
+      loaded: contract() ?? loopContract(),
+      familyId: family(),
+      view: mode(),
+    }),
     ({ active, loaded, familyId, view }) => {
       if (!active) {
         props.viewport.setStatePresentationMode("physical");
@@ -121,12 +148,14 @@ export default function StatePreview(props: {
     },
   );
   const timer = setInterval(() => {
-    if (!contract()) return;
-    const s = props.viewport.deliveredStateStatus(family());
+    if (!contract() && !loopContract()) return;
+    const s = loopContract()
+      ? props.viewport.nativeArtStatus()
+      : props.viewport.deliveredStateStatus(family());
     if (!s.ready) return;
-    setTick(Math.min(lastTick(), s.tick ?? 0));
+    setTick(loopContract() ? (s.tick ?? 0) % (lastTick() + 1) : Math.min(lastTick(), s.tick ?? 0));
     setPlaying(s.playing);
-    if (s.playing && (s.tick ?? 0) >= lastTick()) {
+    if (!loopContract() && s.playing && (s.tick ?? 0) >= lastTick()) {
       props.viewport.setDeliveredStatePlaying(false);
       setPlaying(false);
     }
@@ -135,9 +164,14 @@ export default function StatePreview(props: {
     generation++;
     request++;
     clearInterval(timer);
-    props.viewport.clearStateDelivery();
+    props.viewport.clearNativeArtPresentation();
   });
   function play() {
+    if (loopContract()) {
+      props.viewport.setNativeArtPlaying(!playing());
+      setPlaying(!playing());
+      return;
+    }
     if (playing()) {
       props.viewport.setDeliveredStatePlaying(false);
       setPlaying(false);
@@ -150,6 +184,13 @@ export default function StatePreview(props: {
     setPlaying(true);
   }
   function reset() {
+    if (loopContract()) {
+      props.viewport.setNativeArtPlaying(false);
+      props.viewport.seekNativeArt(0);
+      setTick(0);
+      setPlaying(false);
+      return;
+    }
     props.viewport.setDeliveredStatePlaying(false);
     props.viewport.resetDeliveredState(family());
     setTick(0);
@@ -180,10 +221,11 @@ export default function StatePreview(props: {
             </select>
           </label>
         </Show>
-        <Show when={contract()}>
+        <Show when={contract() || loopContract()}>
           <p class="hint">
-            Original artwork plays the recorded transition. 3D views show the initial and final
-            models.
+            {loopContract()
+              ? "Original artwork repeats the selected animation. Nearby animation keeps its own timing."
+              : "Original artwork plays the recorded transition. 3D views show the object when present in each state."}
           </p>
           <Show when={(contract()?.families.length ?? 0) > 1}>
             <label>
@@ -207,6 +249,7 @@ export default function StatePreview(props: {
             View
             <select
               aria-label="State preview view"
+              disabled={!!loopContract()}
               value={mode()}
               onChange={(event) => {
                 props.viewport.setDeliveredStatePlaying(false);
@@ -214,10 +257,21 @@ export default function StatePreview(props: {
               }}
             >
               <option value="art">Original artwork</option>
-              <option value="initial">3D initial</option>
-              <option value="applied">3D final</option>
+              <Show when={contract()}>
+                <option value="initial">3D initial</option>
+                <option value="applied">3D final</option>
+              </Show>
             </select>
           </label>
+          <Show
+            when={
+              mode() !== "art" &&
+              !!current() &&
+              !Array.isArray(current()!.physical[mode() === "initial" ? "initial" : "applied"])
+            }
+          >
+            <p class="hint">No object is present in this state.</p>
+          </Show>
           <Show when={mode() === "art"}>
             <div class="actions">
               <button type="button" onClick={play}>
@@ -237,9 +291,14 @@ export default function StatePreview(props: {
                 step="1"
                 value={tick()}
                 onInput={(event) => {
-                  props.viewport.setDeliveredStatePlaying(false);
                   const t = Number(event.currentTarget.value);
-                  props.viewport.seekDeliveredState(family(), t);
+                  if (loopContract()) {
+                    props.viewport.setNativeArtPlaying(false);
+                    props.viewport.seekNativeArt(t);
+                  } else {
+                    props.viewport.setDeliveredStatePlaying(false);
+                    props.viewport.seekDeliveredState(family(), t);
+                  }
                   setTick(t);
                   setPlaying(false);
                 }}

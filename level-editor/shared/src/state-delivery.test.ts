@@ -81,3 +81,83 @@ test("physical placement accepts finite scene translations and rejects invalid v
   c.families[0]!.physical.initial[0]!.position = [1, 2] as unknown as [number, number, number];
   assert.throws(() => validateStateDelivery(c), /physical source/);
 });
+
+test("an explicitly absent endpoint is valid but an unprepared empty model list is not", async () => {
+  const { physicalEndpointSources } = await import("./state-delivery.ts");
+  const c = deliveryFixture();
+  c.families[0]!.physical.initial = { kind: "absent" };
+  validateStateDelivery(c);
+  assert.deepEqual(physicalEndpointSources(c.families[0]!.physical.initial), []);
+  c.families[0]!.physical.applied = [];
+  assert.throws(() => validateStateDelivery(c), /physical endpoint/);
+});
+
+test("static replacements bind the exact source, object and both placement transforms", async () => {
+  const { verifyStaticStateReplacements } = await import("./state-delivery.ts");
+  const c = deliveryFixture();
+  const transform = { dx: 1, dy: 2, dz: 3, rot_deg: 0 };
+  const groupTransform = { dx: 20, dy: 30, dz: 0, rot_deg: 15 };
+  c.families[0]!.static_replacements = {
+    initial: [],
+    applied: [
+      {
+        object_id: "fence",
+        node: "asset:timber:part",
+        asset_id: "timber",
+        model_sha256: "b".repeat(64),
+        transform,
+        group_id: "placed-fence",
+        group_transform: groupTransform,
+      },
+    ],
+  };
+  const document = {
+    objects: [{ id: "fence", node: "asset:timber:part", transform, group: "placed-fence" }],
+    groups: [{ id: "placed-fence", transform: groupTransform }],
+    assetSources: [{ id: "timber", model_sha256: "b".repeat(64) }],
+  } as unknown as import("./level3d.ts").Level3D;
+  verifyStaticStateReplacements(c, document);
+  for (const mutate of [
+    (d: typeof document) => {
+      d.objects[0]!.node = "asset:other:part";
+    },
+    (d: typeof document) => {
+      d.assetSources![0]!.model_sha256 = "c".repeat(64);
+    },
+    (d: typeof document) => {
+      d.objects[0]!.transform.dx += 1;
+    },
+    (d: typeof document) => {
+      d.groups[0]!.transform.rot_deg += 1;
+    },
+  ]) {
+    const changed = structuredClone(document);
+    mutate(changed);
+    assert.throws(() => verifyStaticStateReplacements(c, changed), /displayed placement/);
+  }
+});
+
+test("loop preview timeline uses the selected loop while other effects keep independent periods", async () => {
+  const { validateNativeLoopPreview, nativeLoopPreviewPeriod } =
+    await import("./state-delivery.ts");
+  const native = deliveryFixture().native;
+  native.elements[0]!.active = true;
+  native.elements[0]!.loop = true;
+  native.elements.push({
+    ...structuredClone(native.elements[0]!),
+    id: "ambient",
+    source: { kind: "map-animation", index: 0, sha256: "b".repeat(64) },
+    creation_order: 1,
+    frames: [{ ...native.elements[0]!.frames[0]!, delay: 8 }],
+  });
+  const c = {
+    version: 1 as const,
+    scope: "controlled-native-loop-preview" as const,
+    native,
+    focus_element_id: "body",
+  };
+  validateNativeLoopPreview(c);
+  assert.equal(nativeLoopPreviewPeriod(c), 6);
+  c.native.elements[0]!.loop = false;
+  assert.throws(() => validateNativeLoopPreview(c), /visible looping focus/);
+});

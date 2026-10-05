@@ -148,3 +148,31 @@ test("declared missing source and altered source semantics fail explicitly", asy
   f.entry.mission_data = await f.pin(f.entry.mission_data.path, { targets: [] });
   await assert.rejects(loadMissionStatePreview(f.root, f.entry), /source or camera changed/);
 });
+
+test("native loop catalog entries validate their own source contract without fabricated physical endpoints", async () => {
+  const f = await fixture();
+  const native = structuredClone(f.contract.native);
+  native.elements[0]!.active = true;
+  native.elements[0]!.loop = true;
+  const loop = {
+    version: 1,
+    scope: "controlled-native-loop-preview",
+    native,
+    focus_element_id: "body",
+  };
+  const entry = {
+    ...f.entry,
+    kind: "native-loop" as const,
+    contract: await f.pin("mission-states/loop.json", loop),
+  };
+  const result = await loadMissionStatePreview(f.root, entry);
+  assert.equal(result.kind, "native-loop");
+  assert.equal("families" in result.contract, false);
+  loop.focus_element_id = "missing";
+  entry.contract = await f.pin("mission-states/loop.json", loop);
+  await assert.rejects(loadMissionStatePreview(f.root, entry), /looping focus/);
+  assert.throws(
+    () => parseMissionStateCatalog({ version: 1, entries: [{ ...entry, kind: "guess" }] }),
+    /catalog/,
+  );
+});

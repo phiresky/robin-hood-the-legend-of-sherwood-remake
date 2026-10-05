@@ -6,7 +6,10 @@ import { MissionEntities } from "./mission.ts";
 import { MissionStateLayer, type MissionStateSource } from "./mission-state-layer.ts";
 import type { MissionStateContract } from "../../shared/src/mission-state.ts";
 import type { NativeStatePresentationContract } from "../../shared/src/native-state-presentation.ts";
-import type { StateDeliveryContract } from "../../shared/src/state-delivery.ts";
+import {
+  verifyStaticStateReplacements,
+  type StateDeliveryContract,
+} from "../../shared/src/state-delivery.ts";
 import { StateDelivery, type StateDeliveryMode } from "./state-delivery.ts";
 import {
   NativeStatePresentation,
@@ -579,12 +582,15 @@ export class EditorViewport {
   private deliveryFamilies = new Map<string, Set<number>>();
   private deliveryFamily: string | undefined;
   private deliveryEndpointActive = false;
+  private deliveryEndpoint: "initial" | "applied" = "initial";
+  private deliveryStaticContract: StateDeliveryContract | undefined;
   private deliveryEntitiesVisible = true;
   private refinedMissionTargets = new Set<number>();
   private get currentNativeArt() {
     return this.stateDelivery.ready ? this.stateDelivery.native : this.nativeArt;
   }
   private syncRefinedMissionTargets() {
+    this.syncDeliveredStaticPlacements();
     if (!(this.entities instanceof MissionEntities)) return;
     const indices = new Set(
       this.entities.missionName === this.stateMission ? this.refinedMissionTargets : [],
@@ -597,6 +603,26 @@ export class EditorViewport {
       for (const index of this.deliveryFamilies.get(this.deliveryFamily) ?? []) indices.add(index);
     this.entities.setRefinedTargets(this.entities.missionName, indices);
   }
+  private syncDeliveredStaticPlacements(document = this.bindings.document()) {
+    if (!document) return;
+    const suppressed = new Set<string>();
+    if (this.stateDelivery.physical.visible && this.deliveryFamily && this.deliveryStaticContract) {
+      try {
+        verifyStaticStateReplacements(this.deliveryStaticContract, document);
+      } catch (error) {
+        this.clearStateDelivery();
+        this.bindings.onError?.(String(error));
+        return;
+      }
+      const family = this.deliveryStaticContract.families.find((f) => f.id === this.deliveryFamily);
+      for (const replacement of family?.static_replacements?.[this.deliveryEndpoint] ?? [])
+        suppressed.add(replacement.object_id);
+    }
+    for (const object of document.objects) {
+      const view = this.partViews.get(object.id);
+      if (view) view.wrapper.visible = !object.hidden && !suppressed.has(object.id);
+    }
+  }
   async setStateDelivery(
     contract: StateDeliveryContract,
     library: FileSystemDirectoryHandle,
@@ -605,6 +631,19 @@ export class EditorViewport {
     if (this.disposed) throw new Error("Disposed viewport");
     this.clearNativeArtPresentation();
     const frozen = structuredClone(contract);
+    const hasReplacements = frozen.families.some(
+      (f) =>
+        (f.static_replacements?.initial.length ?? 0) +
+          (f.static_replacements?.applied.length ?? 0) >
+        0,
+    );
+    const validatePlacements = () => {
+      if (!hasReplacements) return;
+      const document = this.bindings.document();
+      if (!document) throw new Error("State replacements require a displayed map");
+      verifyStaticStateReplacements(frozen, document);
+    };
+    validatePlacements();
     if (this.entities instanceof MissionEntities && this.entities.missionName !== source.name)
       throw new Error("State delivery does not match the displayed mission");
     try {
@@ -615,6 +654,9 @@ export class EditorViewport {
         nativeLibraryReader(library),
       );
       if (!loaded) return false;
+      validatePlacements();
+      this.deliveryStaticContract = frozen;
+      this.deliveryEndpoint = "initial";
       this.deliveryMission = frozen.native.mission;
       this.deliveryFamilies = new Map(
         frozen.families.map((family) => [
@@ -630,6 +672,7 @@ export class EditorViewport {
       this.clippingBoundsDirty = true;
       return true;
     } catch (error) {
+      this.clearStateDelivery();
       this.bindings.onError?.(String(error));
       throw error;
     }
@@ -639,6 +682,8 @@ export class EditorViewport {
     this.stateDelivery.clear();
     this.deliveryMission = "";
     this.deliveryFamilies.clear();
+    this.deliveryStaticContract = undefined;
+    this.deliveryEndpoint = "initial";
     this.deliveryFamily = undefined;
     this.syncRefinedMissionTargets();
     this.clippingBoundsDirty = true;
@@ -656,6 +701,7 @@ export class EditorViewport {
   selectDeliveredEndpoint(family: string, endpoint: "initial" | "applied") {
     this.stateDelivery.selectEndpoint(family, endpoint);
     this.deliveryFamily = family;
+    this.deliveryEndpoint = endpoint;
     this.syncRefinedMissionTargets();
     this.clippingBoundsDirty = true;
   }
@@ -743,6 +789,13 @@ export class EditorViewport {
     this.setStatePresentationMode("physical");
     this.nativeArt.clear();
     this.clearStateDelivery();
+  }
+  nativeArtStatus() {
+    return {
+      ready: this.currentNativeArt.ready,
+      tick: this.currentNativeArt.tick,
+      playing: this.currentNativeArt.isPlaying,
+    };
   }
   setNativeArtPlaying(playing: boolean) {
     if (this.stateDelivery.ready) this.stateDelivery.setPlaying(playing);
@@ -2026,6 +2079,7 @@ export class EditorViewport {
       v.wrapper.parent?.remove(v.wrapper);
       this.partViews.delete(id);
     }
+    this.syncDeliveredStaticPlacements(d);
     if (!rebuildFraming) {
       // Incremental revisions still change lighting, casters, and terrain bounds.
       this.refreshSunLighting(d);

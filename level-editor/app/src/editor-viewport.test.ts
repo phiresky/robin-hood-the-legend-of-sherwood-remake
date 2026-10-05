@@ -1432,7 +1432,7 @@ async function deliveredFixture(load?: () => Promise<THREE.Object3D>) {
   const { MissionEntities } = await import("./mission.ts");
   const { missionStateDataHash } = await import("./mission-state-layer.ts");
   const { encode } = await import("fast-png");
-  const { viewport } = fixture();
+  const { viewport, publish } = fixture();
   const entities = new MissionEntities();
   Object.assign(entities, { sourceMission: "test" });
   const legacy = new THREE.Group();
@@ -1530,7 +1530,16 @@ async function deliveredFixture(load?: () => Promise<THREE.Object3D>) {
     },
   }));
   Object.assign(viewport, { stateDelivery: delivery });
-  return { viewport, delivery, legacy, source, contract, library, disposals: () => disposed };
+  return {
+    viewport,
+    publish,
+    delivery,
+    legacy,
+    source,
+    contract,
+    library,
+    disposals: () => disposed,
+  };
 }
 
 test("delivered endpoints suppress legacy targets only after load and only in physical endpoint mode", async () => {
@@ -1577,6 +1586,121 @@ test("mission replacement retires an in-flight delivered state and its late erro
   assert.equal(await loading, false);
   assert.equal(f.delivery.ready, false);
   assert.equal(f.delivery.physical.children.length, 0);
+  assert.equal(f.disposals(), 1);
+  f.viewport.dispose();
+});
+
+async function staticDeliveredFixture(load?: () => Promise<THREE.Object3D>) {
+  const f = await deliveredFixture(load);
+  const asset = new THREE.Group();
+  const part = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial());
+  part.userData.reveal_hide_when_applied = ["independent-patch"];
+  asset.add(part);
+  f.viewport.replaceMap(asset, null, new Map([["asset:timber:part", part]]));
+  const document = documentFixture();
+  document.groups = [];
+  document.assetSources = [
+    {
+      id: "timber",
+      model: "timber.glb",
+      model_sha256: "b".repeat(64),
+      descriptor: "timber.json",
+      descriptor_sha256: "c".repeat(64),
+    },
+  ];
+  document.objects = [
+    {
+      ...document.objects[0]!,
+      id: "fence",
+      node: "asset:timber:part",
+      group: undefined,
+      transform: { dx: 0, dy: 0, dz: 0, rot_deg: 0 },
+    },
+    {
+      ...document.objects[0]!,
+      id: "already-hidden",
+      node: "asset:timber:part",
+      group: undefined,
+      hidden: true,
+      transform: { dx: 40, dy: 0, dz: 0, rot_deg: 0 },
+    },
+  ];
+  f.publish(document);
+  f.contract.families[0]!.static_replacements = {
+    initial: [],
+    applied: [
+      {
+        object_id: "fence",
+        node: "asset:timber:part",
+        asset_id: "timber",
+        model_sha256: "b".repeat(64),
+        transform: { ...document.objects[0]!.transform },
+      },
+    ],
+  };
+  const parts = (
+    f.viewport as unknown as { partViews: Map<string, { wrapper: THREE.Group; rot: THREE.Group }> }
+  ).partViews;
+  return { ...f, document, parts };
+}
+
+test("static replacement switches only the pinned endpoint and restores hidden/patch baselines", async () => {
+  const f = await staticDeliveredFixture();
+  const { document, parts } = f;
+  await f.viewport.setStateDelivery(f.contract, f.library, f.source);
+  f.viewport.setDeliveredStateMode("physical-endpoint");
+  assert.equal(parts.get("fence")!.wrapper.visible, true);
+  f.viewport.selectDeliveredEndpoint("trap", "applied");
+  assert.equal(parts.get("fence")!.wrapper.visible, false);
+  assert.equal(parts.get("already-hidden")!.wrapper.visible, false);
+  f.viewport.setPatchRevealed("independent-patch", true);
+  f.viewport.selectDeliveredEndpoint("trap", "initial");
+  assert.equal(parts.get("fence")!.wrapper.visible, true);
+  assert.equal(
+    parts.get("fence")!.rot.children[0]!.visible,
+    false,
+    "independent patch visibility survives endpoint switching",
+  );
+  f.viewport.selectDeliveredEndpoint("trap", "applied");
+  f.viewport.clearStateDelivery();
+  assert.equal(parts.get("fence")!.wrapper.visible, true);
+  assert.equal(parts.get("already-hidden")!.wrapper.visible, false);
+  document.objects[0]!.transform.dx = 10;
+  f.publish(document);
+  await assert.rejects(
+    f.viewport.setStateDelivery(f.contract, f.library, f.source),
+    /displayed placement/,
+  );
+  assert.equal(parts.get("fence")!.wrapper.visible, true);
+  f.viewport.dispose();
+});
+
+test("a placement edited during loading prevents atomic replacement and leaves its original visible", async () => {
+  let resolve!: (asset: THREE.Object3D) => void, started!: () => void;
+  const began = new Promise<void>((done) => {
+    started = done;
+  });
+  let calls = 0;
+  const f = await staticDeliveredFixture(async () => {
+    if (calls++ === 0) {
+      started();
+      return new Promise<THREE.Object3D>((done) => {
+        resolve = done;
+      });
+    }
+    return new THREE.Group();
+  });
+  const loading = f.viewport.setStateDelivery(f.contract, f.library, f.source);
+  await began;
+  assert.equal(f.parts.get("fence")!.wrapper.visible, true);
+  f.document.objects[0]!.transform.dx += 1;
+  f.publish(f.document);
+  resolve(new THREE.Group());
+  await assert.rejects(loading, /displayed placement/);
+  assert.equal(f.delivery.ready, false);
+  assert.equal(f.delivery.physical.children.length, 0);
+  assert.equal(f.parts.get("fence")!.wrapper.visible, true);
+  assert.equal(f.parts.get("already-hidden")!.wrapper.visible, false);
   assert.equal(f.disposals(), 1);
   f.viewport.dispose();
 });

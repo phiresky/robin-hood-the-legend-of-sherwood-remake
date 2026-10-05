@@ -237,3 +237,26 @@ test("mission translation preserves the reusable root transform and independent 
   assert.equal(f.template.position.x, 1);
   player.dispose();
 });
+
+test("absent initial state loads no placeholder and switching to the reviewed final state is explicit", async () => {
+  const f = await fixture();
+  f.contract.families[0]!.physical.initial = { kind: "absent" };
+  const calls: string[] = [];
+  const player = new StateDelivery(() => ({
+    load: async (binding) => {
+      calls.push(binding.id);
+      return f.template;
+    },
+    dispose() {},
+  }));
+  await player.set(f.contract, f.source, f.library, f.read);
+  assert.deepEqual(calls, ["applied"]);
+  assert.equal(player.physical.children[0]!.children.length, 0);
+  player.selectMode("physical-endpoint");
+  assert.equal(player.physical.children[1]!.visible, false);
+  player.selectEndpoint("trap", "applied");
+  assert.equal(player.physical.children[1]!.visible, true);
+  assert.equal(player.physical.children[1]!.children.length, 1);
+  player.clear();
+  assert.equal(player.physical.children.length, 0);
+});

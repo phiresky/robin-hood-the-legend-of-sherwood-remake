@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import {
   validateStateDelivery,
+  physicalEndpointSources,
   type StateDeliveryContract,
 } from "../../shared/src/state-delivery.ts";
 import { NativeStatePresentation, type NativeResourceReader } from "./native-state-presentation.ts";
@@ -91,7 +92,7 @@ export class StateDelivery {
       for (const family of frozen.families) {
         const pair = { initial: new THREE.Group(), applied: new THREE.Group() };
         for (const state of ["initial", "applied"] as const) {
-          for (const binding of family.physical[state]) {
+          for (const binding of physicalEndpointSources(family.physical[state])) {
             const asset = await loader.load(binding);
             owned.add(asset);
             if (!current()) return false;
