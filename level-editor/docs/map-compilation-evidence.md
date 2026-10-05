@@ -4,6 +4,22 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Retained world planes for collision compilation (2026-10-05)
+
+Placed navigation surfaces now retain their world height plane and footprint.
+Terrain clipping updates the retained footprint, and static-solid slicing uses
+the original plane instead of fitting it again from a projected outline. The
+broad-phase bounds include both the authored footprint and the integer outline's
+extent so rounding does not exclude nearby collision.
+
+Navigation pieces carry the retained plane through assembly into changing-volume
+slicing. Older standalone callers can still reconstruct it when not provided.
+This prepares the main pipeline for physical stair compilation; projected surface
+assembly and final emission remain unchanged, and the keep failures remain open.
+
+Verification: all four affected compiler suites pass, both app/pipeline typechecks
+pass, and focused lint and formatting checks pass.
+
 ## Physical stair area emission and native contract fixture (2026-10-05)
 
 The world-space compiler now emits a complete motion-area fragment together with

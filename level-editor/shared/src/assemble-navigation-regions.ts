@@ -8,6 +8,8 @@ import { closeNavigationSeams } from "./close-navigation-seams.ts";
 
 export interface NavigationPiece {
   plane: HeightPlane;
+  /** Plane fitted before projection/rounding, retained for physical collision slices. */
+  worldPlane?: HeightPlane;
   layer: number;
   lift?: string;
   navigationRegion?: string;

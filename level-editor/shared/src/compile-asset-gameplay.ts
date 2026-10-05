@@ -349,6 +349,8 @@ function compileAssetGameplayAttempt(
     polygon: Point[];
     holes: Point[][];
     plane: HeightPlane;
+    worldPlane: HeightPlane;
+    worldPolygon: Point[];
     lift?: string;
     navigationRegion?: string;
     preserveMovementBoundary?: boolean;
@@ -914,6 +916,7 @@ function compileAssetGameplayAttempt(
           ? points
           : local.map(([x, y]) => transform(surface.node, [x, y, navigationHeight]));
       const plane = heightPlane(navigationPoints.map(([x, y, z]) => [x, y - z, z]));
+      const worldPlane = heightPlane(navigationPoints);
       const target = gameplay.movementClearances?.includes(surface)
         ? movementClearances
         : gameplay.movementBlockers?.includes(surface)
@@ -936,6 +939,8 @@ function compileAssetGameplayAttempt(
             : `${placement.id}/${surface.navigationRegion}`,
         polygon: ring(points.map(projectMovement), `${placement.id}/${surface.id}`, minimumArea),
         plane,
+        worldPlane,
+        worldPolygon: navigationPoints.map(([x, y]): Point => [x, y]),
         ...(gameplay.lifts?.find((l) => l.surface === surface.id)
           ? { lift: `${placement.id}/${gameplay.lifts.find((l) => l.surface === surface.id)!.id}` }
           : {}),
@@ -1131,6 +1136,10 @@ function compileAssetGameplayAttempt(
         replacement.push({
           ...surface,
           polygon: ring(polygon[0]!),
+          worldPolygon: polygon[0]!.map(([x, y]): Point => [
+            x,
+            y + planeHeight(surface.plane, [x, y]),
+          ]),
           holes: polygon.slice(1).map((h) => ring(h)),
         });
     }
@@ -1409,16 +1418,16 @@ function compileAssetGameplayAttempt(
     }
     // Intersect solids with this surface's plane in world XY, then project
     // the resulting slice. Bounding-box clipping also handles concave solids.
-    const worldPlane = heightPlane(
-      group[0]!.polygon.map(([x, y]) => {
-        const z = planeHeight(plane, [x, y]);
-        return [x, y + z, z];
-      }),
-    );
+    // Retain the plane fitted to placed 3D vertices. Refitting a world plane
+    // from an already projected/rounded outline amplifies projection error.
+    const worldPlane = group[0]!.worldPlane;
     const worldBounds = boundsOf(
-      group.flatMap((surface) =>
-        surface.polygon.map(([x, y]): Point => [x, y + planeHeight(plane, [x, y])]),
-      ),
+      group.flatMap((surface) => [
+        ...surface.worldPolygon,
+        // The emitted integer outline can extend slightly past the authored
+        // floor. Include it in broad-phase bounds so nearby solids still cut it.
+        ...surface.polygon.map(([x, y]): Point => [x, y + planeHeight(plane, [x, y])]),
+      ]),
     );
     const wallCuts: Polygon[] = [];
     // An explicit clearance identical to the whole deck already excludes these
@@ -1512,6 +1521,7 @@ function compileAssetGameplayAttempt(
         plane,
         navigationRegion,
         preserveMovementBoundary: true,
+        worldPlane,
         ...preserveMovementBoundary(group[0]!.polygon, cutouts, warnings, contourGroups),
       });
       continue;
@@ -1527,6 +1537,7 @@ function compileAssetGameplayAttempt(
           plane,
           navigationRegion,
           closeDeformationSeams: true,
+          worldPlane,
           polygon: ring(polygon[0]!, "Wall navigation piece", 1e-7),
           blockers: polygon.slice(1).map((h) => ring(h, "Wall navigation hole", 1e-7)),
         });
@@ -1555,7 +1566,15 @@ function compileAssetGameplayAttempt(
       const blockers = quantized
         .slice(1)
         .map((r) => ring(r, `Merged movement hole on layer ${layer}`));
-      navigationPieces.push({ layer, plane, lift, navigationRegion, polygon: boundary, blockers });
+      navigationPieces.push({
+        layer,
+        plane,
+        worldPlane,
+        lift,
+        navigationRegion,
+        polygon: boundary,
+        blockers,
+      });
     }
   }
   let navigationRegions: ReturnType<typeof assembleNavigationRegions>;
@@ -1594,6 +1613,7 @@ function compileAssetGameplayAttempt(
       warnings,
       pieces.length > 1 ? pieces : undefined,
       pieces[0]!.preserveMovementBoundary === true,
+      pieces[0]!.worldPlane,
     );
     for (const [id, pair] of changing.pairs)
       transitions

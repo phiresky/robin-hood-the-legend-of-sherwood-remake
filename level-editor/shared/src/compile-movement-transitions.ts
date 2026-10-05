@@ -37,14 +37,16 @@ export class MovementTransitionLimit extends Error {
 /** Intersect an authored vertical volume with a receiving plane before projecting into movement space. */
 function terrainSlice(
   volume: NonNullable<PlacedTransitionBlocker["terrainVolume"]>,
-  receiver: { polygon: Point[]; plane: HeightPlane },
+  receiver: { polygon: Point[]; plane: HeightPlane; worldPlane?: HeightPlane },
 ): MultiPolygon {
-  const plane = heightPlane(
-    receiver.polygon.map(([x, y]) => {
-      const z = planeHeight(receiver.plane, [x, y]);
-      return [x, y + z, z];
-    }),
-  );
+  const plane =
+    receiver.worldPlane ??
+    heightPlane(
+      receiver.polygon.map(([x, y]) => {
+        const z = planeHeight(receiver.plane, [x, y]);
+        return [x, y + z, z];
+      }),
+    );
   const xs = volume.polygon.map(([x]) => x),
     ys = volume.polygon.map(([, y]) => y);
   const minX = Math.min(...xs),
@@ -90,6 +92,7 @@ export function compileTransitionObstacles(
   warnings: string[],
   receivers?: NavigationPiece[],
   preserveBoundary = false,
+  worldPlane?: HeightPlane,
 ) {
   const pairs = new Map<string, number>();
   const obstacles: { state_id: number; polygon: { points: Point[] } }[] = [];
@@ -116,18 +119,18 @@ export function compileTransitionObstacles(
     if (!blocker.terrainVolume && !receivers && !samePlane(plane)) continue;
     let clipped: MultiPolygon;
     if (blocker.terrainVolume) {
-      const fragments = (receivers ?? [{ polygon: boundary, blockers: holes, plane }]).flatMap(
-        (receiver) => {
-          const slice = terrainSlice(blocker.terrainVolume!, receiver);
-          return slice.length
-            ? fixedClipping.intersection(
-                coverage(receiver.polygon, receiver.blockers),
-                walkable,
-                slice,
-              )
-            : [];
-        },
-      );
+      const fragments = (
+        receivers ?? [{ polygon: boundary, blockers: holes, plane, worldPlane }]
+      ).flatMap((receiver) => {
+        const slice = terrainSlice(blocker.terrainVolume!, receiver);
+        return slice.length
+          ? fixedClipping.intersection(
+              coverage(receiver.polygon, receiver.blockers),
+              walkable,
+              slice,
+            )
+          : [];
+      });
       clipped = fragments.length ? fixedClipping.union(fragments[0]!, ...fragments.slice(1)) : [];
     } else if (receivers) {
       const fragments = receivers

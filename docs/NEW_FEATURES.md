@@ -21,6 +21,8 @@
   it through surface/collision assembly before exporting the new metadata.
   Its motion-area emitter allocates holes and live collision identities together;
   native edge-on traversal tests consume compiler-generated area/navigation data.
+  Main compilation retains world planes through static and changing collision
+  slicing; physical surface assembly and final emission remain in progress.
 
 - **Asset-authored movement headroom.** A permanent gameplay volume can set
   `movementHeadroom` in game-height units. Export excludes walking space that

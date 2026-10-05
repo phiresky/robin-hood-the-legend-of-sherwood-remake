@@ -80,6 +80,10 @@ space before normal exports can emit that data.
 The new area emitter now allocates permanent holes and live obstacle IDs together
 and produces the data consumed by the native edge-on traversal fixture. This
 checks the compiler/runtime contract but does not yet change normal exports.
+The main compiler now retains planes fitted from placed 3D vertices for static
+and changing collision cuts, rather than reconstructing them from rounded
+projected outlines. Surface assembly and final stair emission still need the
+physical coordinate path.
 An optional physical-stair descriptor and runtime binding now retain ground-space
 collision with references to the normal movement obstacles. Physical route queries
 read their current state rather than maintaining separate switch state. Compiler
