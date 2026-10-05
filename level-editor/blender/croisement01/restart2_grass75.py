@@ -1,4 +1,4 @@
-"""Private coherent leaf surfaces for the branch's native foreground grass."""
+"""Private rooted-grass comparison retaining each native source pixel."""
 import json
 import argparse
 import math
@@ -23,10 +23,10 @@ from refinement_inventory import inventory
 
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--mask',type=int,choices=[74,75,82],default=75);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
+    parser=argparse.ArgumentParser();parser.add_argument('--mask',type=int,choices=[74,75,82],default=75);parser.add_argument('--revision',type=int,default=12);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
     mask=args.mask
     acquire()
-    dest = OUT/f'restart2/grass{mask}-volume-v11'
+    dest = OUT/f'restart2/grass{mask}-volume-v{args.revision}'
     dest.mkdir(exist_ok=False)
     source = dest/'source'; source.mkdir()
     branch = OUT/'restart2/branch-source-fit-v3/branch-round-10/assets/croisement01-east-fallen-branch'
@@ -166,6 +166,12 @@ def main():
     asset=f'croisement01-grass-{mask}';node=f'foliage-native-grass{mask}';name={74:'Southwest Field Grass',75:'East Branch Foreground Grass',82:'Southeast Field Grass'}[mask]
     obj=bpy.data.objects.new(name,mesh);working.objects.link(obj)
     for k,v in dict(source_node=node,asset_group=asset,asset_name=name,part_name='Rooted native leaves',projection_component='crown',projection_preserve=True,foliage_physical_opacity=True).items():obj[k]=v
+    rgba.save(source/'complete-source.png');rgba.save(source/'observed-source.png')
+    from ground_plant_geometry import build
+    generic_report=build(obj,dict(directory=str(source),native_bbox=[x,y,w,h],bbox=[x,y,w,h],native_mask=mask,ground_z=root.z))
+    for mat in obj.data.materials:
+        mat['texture_provenance']=f'Observed Croisement01 grass{mask} front' if mat.get('foliage_observed') else f'Inferred reverse using only this Croisement01 grass{mask} source'
+    (source/'generic-construction.json').write_text(json.dumps(generic_report,indent=2)+'\n')
     catalog=json.loads((OUT/'catalog.json').read_text());catalog['version']=2
     catalog['canonical_owners']={f"building-{p['obstacle']:03}":g['id'] for g in catalog['groups'] for p in g['parts']}
     catalog['canonical_owners'][node]=asset
@@ -181,7 +187,7 @@ def main():
     prepare(worker,asset_id=asset,scene_name='Croisement01 Refinement',collection_name=working.name,source_path=OUT/'baseline/covered.png',grouping_manifest=catalog_path,inventory_path=dest/'inventory/inventory.json',review_path=grouping,source_mask_manifest=masks,width=256,height=256,framing_padding=1.25,lighting=dict(toward_sun=[-.6,-.4,.7],ambient=.22,diffuse=.78,shadow_epsilon=.05))
     validate(worker);modified(worker)
     inspection=worker/'inspection';inspection.mkdir(exist_ok=True)
-    (inspection/'construction.json').write_text(json.dumps(dict(status='private inferred leaf geometry; no approval',native_mask=mask,leaf_count=leaves['leaf_count'],source_pixels=len(leaves['observed_pixels']),model_sha256=sha(worker/'model.blend'),root_world=list(root),branch_context_sha256=sha(branch/'model.blend'),foreground_factors=factors,foreground_offsets=offsets,foreground_constraints=constraints,limitations=['Native grass domain retained; hidden leaf depth and reverse appearance inferred from own source.','Independent per-leaf depth fields may still show unconvincing splits; inspect all oblique views.','Archival terrain support is provisional; full bank refinement remains.']),indent=2)+'\n')
+    (inspection/'construction.json').write_text(json.dumps(dict(status='private inferred leaf geometry; no approval',native_mask=mask,leaf_count=leaves['leaf_count'],source_pixels=len(leaves['observed_pixels']),model_sha256=sha(worker/'model.blend'),final_geometry=generic_report,unused_intermediate_leaf_hypothesis=dict(root_world=list(root),foreground_factors=factors,foreground_offsets=offsets,foreground_constraints=constraints),branch_context_sha256=sha(branch/'model.blend'),limitations=['Native grass domain retained; hidden leaf depth and reverse appearance inferred from own source.','Final geometry uses rooted blades and independent native pixel fragments; the intermediate leaf hypothesis is replaced, including its foreground constraints.','Archival terrain support is provisional; full bank refinement remains.']),indent=2)+'\n')
     import render_candidate
     sys.argv=['render_candidate','--',str(worker)];render_candidate.main()
 
