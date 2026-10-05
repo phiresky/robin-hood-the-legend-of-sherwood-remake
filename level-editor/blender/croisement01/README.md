@@ -101,3 +101,12 @@ cap face from its shaft without changing any surface, UV, material or corner
 ownership value. Both references, walking/projection surfaces, jump zones,
 paired edges and cross-asset segments must survive publication. Metadata
 adapters reject unfamiliar fields rather than silently discarding them.
+
+The private east-border leaning-tree recipe transports tube frames continuously
+through changes in lean. Switching the ring basis at a tangent threshold caused
+a pinched shaft in an earlier candidate. Native references62/63 partition the
+unchanged outer surface; `restart2_tree71_surface_union.py` checks that their
+combined surface is one closed, nondegenerate component. Per-part seam edges
+are intentional, and no internal cap or separate floating wood joint is added.
+This construction evidence does not replace native silhouette, terrain-contact
+or grouped user review.
