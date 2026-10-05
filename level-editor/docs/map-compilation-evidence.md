@@ -60,6 +60,18 @@ result. The geometry difference still needs assessment with calibrated spline
 assets and preserved before/after descriptors. Wychford geometry equality is not
 claimed. The composite keep remains unpublished, and no ZIP is rebaked.
 
+The subsequent calibrated comparison in
+`work/map-compile/wychford-wall-calibration-EFEmVR` preserves both descriptors
+before comparing them. Only obstacle 21,321's points differ, with its projection
+area `[449, 22]` unchanged. All other geometry and descriptor fields, and the
+warning lists, are exactly equal. Polygon XOR measures about 0.000658 square
+game units in physical XY and 0.001043 square map units in projected coverage.
+The descriptor retains 21,323 sight obstacles. The current snapshot passes
+native construction and all three control apply/reset checks. Both snapshots
+also pass all four available directed stair routes, with no failures. This small
+geometric difference is not an exact round trip, nor by itself evidence of a
+gameplay regression; native traversal checks are recorded separately.
+
 ## Composite keep placement and best-effort failures (2026-10-05)
 
 The revised candidate `work/map-compile/keep-reassembly-yEL2X5` explicitly

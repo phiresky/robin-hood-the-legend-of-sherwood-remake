@@ -22,6 +22,10 @@ represented in newer gameplay-bearing assets, often larger state assemblies.
 Their standalone definitions still need restoring with local control dependencies
 and coordinate frames; matching parts alone does not make them interchangeable.
 The imported bridge and two old ground assets have no component-owner match.
+An unpublished mesh-derived bridge deck candidate passes ten complete native
+crossings and 754 sampled receiving-seam crossings at five rotations. Its
+supports, railings and underpass collision remain unfinished; it is not yet a
+usable replacement for the missing definition.
 
 The staged composite keep preserves Derby's door permissions, room memberships
 and lift endpoints; both assemblies pass 28 native stair routes and five control
