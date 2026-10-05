@@ -56,6 +56,9 @@ def main(variant='depth-v1'):
         receipts.append(dict(version=tag,imports=receipt))
         render(scene,dest/f'native-bank-{tag}.png')
         if tag=='after':
+            if variant.startswith('collar-'):
+                from restart3_tree06_verify_native import main as verify_native
+                verify_native(variant)
             sheet=Image.new('RGB',(1536,816),(65,65,65))
             for o in neighbors:o.hide_render=True
             bounds=np.array([tuple(o.matrix_world@v.co) for o in objects for v in o.data.vertices])

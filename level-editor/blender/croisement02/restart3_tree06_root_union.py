@@ -12,7 +12,7 @@ from restart3_tree06_root_correction import fingerprint
 
 
 def main():
- base=OUT/'restart3-tree06-root';source=base/'collar-v3/model.blend';dest=base/'collar-v5';dest.mkdir(exist_ok=False)
+ base=OUT/'restart3-tree06-root';source=base/'collar-v3/model.blend';dest=base/'collar-v6';dest.mkdir(exist_ok=False)
  assert sha(source)=='a9afd2b584cf283c82768a4b12f16d4f44af3e2d530da8882714b180fbfdea90'
  bpy.ops.wm.open_mainfile(filepath=str(source));bpy.context.view_layer.update()
  obj=bpy.data.objects['Northwest Tree 06 / Root collar continuation']
@@ -21,7 +21,10 @@ def main():
  # Only the inferred underside changes before union. The measured front is
  # retained and the new connection stays below the verified Z43.949 bank.
  for v in obj.data.vertices:
-  if v.co.z<43.:v.co.z=32.
+  if v.co.z<43.:
+   delta=32.-v.co.z
+   v.co.y-=COS/SIN*delta
+   v.co.z=32.
  obj.data.update()
  bpy.ops.object.select_all(action='DESELECT');obj.select_set(True);bpy.context.view_layer.objects.active=obj
  bevel=obj.modifiers.new('Subpixel rounded root edges','BEVEL');bevel.width=.18;bevel.segments=3;bevel.limit_method='ANGLE';bevel.angle_limit=math.radians(60)
