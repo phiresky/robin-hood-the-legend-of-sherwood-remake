@@ -304,13 +304,6 @@
       "id": "croisement03-group-048"
     },
     {
-      "model": "3d-assets/croisement03/croisement03-group-049/model.glb",
-      "model_sha256": "f88b5164e71f4f7a08aa320b08cf8ef6e272758a33476685ebc1c87192445c63",
-      "descriptor": "3d-assets/croisement03/croisement03-group-049/asset.json",
-      "descriptor_sha256": "aba39432203b430376d6019ca1a72cc3241ed1509de3362b3551785c1fd4b52e",
-      "id": "croisement03-group-049"
-    },
-    {
       "model": "3d-assets/croisement03/croisement03-group-050/model.glb",
       "model_sha256": "5ba5df9710b14139a2c0c39d40a958fc556dad69ac80cc269caa107fa4df7382",
       "descriptor": "3d-assets/croisement03/croisement03-group-050/asset.json",
@@ -708,6 +701,46 @@
       "descriptor_sha256": "e5973d2ec611c11ebb10ecdc4fe0f385c1196ad9ca682c9e0fd8e3a2a92d2d2a",
       "model": "3d-assets/croisement03-southwest-state-assembly/model.glb",
       "model_sha256": "ff55ad60deec97e9e42d9c29564c36ea4181354a02e33205e7fde57cf97d8fce"
+    },
+    {
+      "id": "croisement03-fern-35",
+      "descriptor": "3d-assets/croisement03/croisement03-fern-35/asset.json",
+      "descriptor_sha256": "168adbba1be1159fee6bf74b24001da52d004413425b41b3aed06b97349db303",
+      "model": "3d-assets/croisement03/croisement03-fern-35/model.glb",
+      "model_sha256": "49db5543100f5a28305b3ef72e6f3772458aac36ffe12d82c42c4306db8f3c55",
+      "model_scene": "default"
+    },
+    {
+      "id": "croisement03-fern-76",
+      "descriptor": "3d-assets/croisement03/croisement03-fern-76/asset.json",
+      "descriptor_sha256": "bf7e507c1f9a9bf0883105b803ae3365e71bed0f828e4cb965207f7d21ad5ffc",
+      "model": "3d-assets/croisement03/croisement03-fern-76/model.glb",
+      "model_sha256": "a0a2e9d92379486779aac3bc2bb678daedfe652b805260dc83ed8dd5e3954827",
+      "model_scene": "default"
+    },
+    {
+      "id": "croisement03-southwest-firewood-stack",
+      "descriptor": "3d-assets/croisement03/croisement03-southwest-firewood-stack/asset.json",
+      "descriptor_sha256": "933afc6122bf9ce570b8615ba759288b3b11465d017b9098acaa4731ff082957",
+      "model": "3d-assets/croisement03/croisement03-southwest-firewood-stack/model.glb",
+      "model_sha256": "adea251f2e36570bb8fcfb1f044f7b71cc9b39a96e14571823ed48cd95d3936a",
+      "model_scene": "default"
+    },
+    {
+      "id": "croisement03-stream-fallen-log",
+      "descriptor": "3d-assets/croisement03/croisement03-stream-fallen-log/asset.json",
+      "descriptor_sha256": "d1446212c8086c780a6601fcaea1f1648a6f4c15464f5cbe1766f34377a3df52",
+      "model": "3d-assets/croisement03/croisement03-stream-fallen-log/model.glb",
+      "model_sha256": "de741427559185cf70fda9ddbeede614c2aceecf2368f7af2f7b2266859a0920",
+      "model_scene": "default"
+    },
+    {
+      "id": "croisement03-timber-bridge",
+      "descriptor": "3d-assets/croisement03/croisement03-timber-bridge/asset.json",
+      "descriptor_sha256": "2df7d2fdb91eb73c66695fd5a1f10987bac424a4e4b4d250ec9dabd0462ad2b4",
+      "model": "3d-assets/croisement03/croisement03-timber-bridge/model.glb",
+      "model_sha256": "ae661c35e3b06214620f25e236b9202a3026a0366361be694e813d6d79fc96d6",
+      "model_scene": "default"
     }
   ],
   "sceneMetadata": {},
@@ -1191,18 +1224,6 @@
       },
       "assets": [
         "croisement03-group-048"
-      ]
-    },
-    {
-      "id": "group-049",
-      "transform": {
-        "dx": 418,
-        "dy": 778.9168005647206,
-        "dz": 0,
-        "rot_deg": 0
-      },
-      "assets": [
-        "croisement03-group-049"
       ]
     },
     {
@@ -1989,6 +2010,66 @@
       },
       "assets": [
         "croisement03-southwest-state-assembly"
+      ]
+    },
+    {
+      "id": "croisement03-fern-35",
+      "transform": {
+        "dx": 1058.6953125,
+        "dy": 117.16781315136099,
+        "dz": 0.04092803607424974,
+        "rot_deg": 0
+      },
+      "assets": [
+        "croisement03-fern-35"
+      ]
+    },
+    {
+      "id": "croisement03-fern-76",
+      "transform": {
+        "dx": 1014.5,
+        "dy": 186.9253888523422,
+        "dz": 0.04091326032793981,
+        "rot_deg": 0
+      },
+      "assets": [
+        "croisement03-fern-76"
+      ]
+    },
+    {
+      "id": "croisement03-southwest-firewood-stack",
+      "transform": {
+        "dx": 432.54986572265625,
+        "dy": 777.6417972803025,
+        "dz": -0.00019074594087343594,
+        "rot_deg": 0
+      },
+      "assets": [
+        "croisement03-southwest-firewood-stack"
+      ]
+    },
+    {
+      "id": "croisement03-stream-fallen-log",
+      "transform": {
+        "dx": 671.0018920898438,
+        "dy": 898.8510592691547,
+        "dz": -1.239704035194229e-06,
+        "rot_deg": 0
+      },
+      "assets": [
+        "croisement03-stream-fallen-log"
+      ]
+    },
+    {
+      "id": "croisement03-timber-bridge",
+      "transform": {
+        "dx": 950.6657104492188,
+        "dy": 693.1482888500905,
+        "dz": -51.91740121869381,
+        "rot_deg": 0
+      },
+      "assets": [
+        "croisement03-timber-bridge"
       ]
     }
   ]
