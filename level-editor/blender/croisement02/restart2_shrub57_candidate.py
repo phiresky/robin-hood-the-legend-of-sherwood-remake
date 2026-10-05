@@ -26,6 +26,14 @@ def selected_workspace(out, asset, catalog_path):
         if sha(Path(file)) != digest:
             raise ValueError('Approved shrub57 evidence changed: ' + file)
     worker = Path(receipt['workspace'])
+    companion=worker/'inspection/source-authority-companion-v1.json'
+    if companion.exists():
+        if sha(companion)!='8d2ed04245a515097fb892aeed6c1edc8044870419387d633111cc04c78c4f54':raise ValueError('Approved shrub57 source companion changed')
+        source=json.loads(companion.read_text())
+        if source['model_sha256']!=DIGEST or sha(Path(source['parent_authority']))!=source['parent_authority_sha256']:
+            raise ValueError('Approved shrub57 source companion authority changed')
+        for filename,digest in source['files'].items():
+            if sha(Path(filename))!=digest:raise ValueError('Approved shrub57 source metadata changed: '+filename)
     if sha(worker / 'model.blend') != DIGEST:
         raise ValueError('Approved shrub57 model changed')
     return worker

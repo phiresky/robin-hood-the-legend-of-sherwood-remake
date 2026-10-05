@@ -49,7 +49,7 @@ def main():
                 raise ValueError(f'Duplicate decision scope: {key}')
             seen.add(key)
             images, reports = [], []
-            if spec['kind'] in ('geometry-gallery','texture-gallery'):
+            if spec['kind'] in ('geometry-gallery','texture-gallery','scoped-gallery'):
                 if item['status'] != 'ready-for-user' or not item.get('technical_eligible'):
                     raise ValueError(f'Not ready: {asset}')
                 model = Path(item['model'])
@@ -60,14 +60,14 @@ def main():
                 if revision != item['review_revision']:
                     raise ValueError(f'Revision mismatch: {asset}')
                 # Actual stored material, preferably full bounds, is shown first.
-                order = sorted(item['images'], key=lambda k: (0 if 'full-crown_textured' in k else 1 if k=='stored_material_textured' else 2 if k=='context' else 3, k))
+                order = sorted(item['images'], key=lambda k: (-1 if k==spec.get('primary_image') else 0 if 'full-crown_textured' in k else 1 if k=='stored_material_textured' else 2 if k=='context' else 3, k))
                 for label in order:
                     entry = item['images'][label]
                     images.append(dict(label=item.get(label+'_label',label.replace('_',' ')), **resource(path.parent / entry['file'],entry['sha256'])))
                 for label,entry in item['reports'].items():
                     reports.append(dict(label=label, **resource(path.parent / entry['file'],entry['sha256'])))
                 title = item['name']
-                detail = ('Geometry only. Texture completion and mission-state behavior are separate decisions.' if scope=='geometry' else 'Texture appearance only on previously approved geometry; no new geometry or mission-state approval.')
+                detail = spec.get('scope_description') or ('Geometry only. Texture completion and mission-state behavior are separate decisions.' if scope=='geometry' else 'Texture appearance only on previously approved geometry; no new geometry or mission-state approval.')
             elif spec['kind'] in ('endpoint-textures','bound-members'):
                 if item.get('texture_approval',item.get('decision')) != 'pending':
                     raise ValueError(f'Already decided: {asset}')
@@ -96,8 +96,8 @@ def main():
                 source_evidence=str(path),source_evidence_sha256=sha(path),images=images,reports=reports,notes=notes,decision='pending')
         if selected and selected != set(members):
             raise ValueError(f'Missing requested assets: {selected-set(members)}')
-        if spec['kind'] in ('geometry-gallery','texture-gallery'):
-            cards.extend(dict(card_id=m['scope']+'-'+m['asset_id'],title=m['title'],scope=m['scope'],members=[m]) for m in members.values())
+        if spec['kind'] in ('geometry-gallery','texture-gallery','scoped-gallery'):
+            cards.extend(dict(card_id=m['scope'].replace(' ','-')+'-'+m['asset_id'],title=m['title'],scope=m['scope'],members=[m]) for m in members.values())
         else:
             used=set()
             for card in packet['cards']:
@@ -106,7 +106,7 @@ def main():
                 if included != set(card['asset_ids']):
                     raise ValueError('Cannot silently split a paired endpoint card')
                 used |= included
-                cards.append(dict(card_id=scope+'-'+card['card_id'],title=card['title'],scope=scope,members=[members[a] for a in card['asset_ids']]))
+                cards.append(dict(card_id=scope.replace(' ','-')+'-'+card['card_id'],title=card['title'],scope=scope,members=[members[a] for a in card['asset_ids']]))
             if used!=set(members): raise ValueError('Uncarded texture member')
     for entry in config.get('supplementary_evidence',[]):
         sources.append(dict(kind='supplementary provenance',evidence=resource(entry['file'],entry['sha256'])))
@@ -117,7 +117,7 @@ def main():
         if sha(out/rel)!=entry['sha256']: raise ValueError(f'Copy mismatch: {rel}')
     evidence=dict(status='Frozen pending user review',title=config['title'],cards=cards,sources=sources,
         resources=resources,card_count=len(cards),decision_count=sum(len(c['members']) for c in cards),
-        approval_policy='Only explicit decisions for these exact member revisions apply; geometry and texture scopes remain separate.')
+        approval_policy='Only explicit decisions for these exact member revisions apply; Each geometry, texture and source-state application scope remains separate.')
     (out/'evidence.json').write_text(json.dumps(evidence,indent=2)+'\n')
     escaped=lambda s:html.escape(str(s),quote=True)
     sections=[]
@@ -135,7 +135,7 @@ try{const saved=JSON.parse(localStorage.getItem(storageKey)||'null');if(saved)ca
 document.querySelectorAll('select,textarea[data-note]').forEach(e=>e.addEventListener('input',()=>{try{localStorage.setItem(storageKey,JSON.stringify(read()))}catch(e){}}));
 document.querySelector('#export').onclick=()=>{const lines=[];cards.forEach((c,n)=>{const d=document.querySelector(`[data-card="${n}"]`).value;if(!d)return;const note=document.querySelector(`[data-note="${n}"]`).value;for(const m of c.members)lines.push(`${m.asset_id}: ${d} (${m.scope})${note?' — '+note:''} [review ${m.review_revision}]`)});document.querySelector('#feedback').value=lines.join('\\n');};""".replace('DATA',json.dumps(cards).replace('</','<\\/'))
     navigation=''.join(f'<li><a href="#{escaped(c["card_id"])}">{escaped(c["title"])} — {c["scope"]}</a></li>' for c in cards)
-    page=f'''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{escaped(config['title'])}</title><style>body{{font:16px system-ui;background:#15181c;color:#eef0f4;margin:24px auto;max-width:1450px;padding:0 20px}}a{{color:#a7d4ff}}article{{border:1px solid #555;border-radius:10px;margin:28px 0;padding:20px}}h2 span{{font-size:14px;background:#384861;padding:5px}}img{{width:100%;height:auto;background:#242831}}figure{{margin:16px 0}}figcaption,.revision{{color:#b5c1d0}}details{{overflow-wrap:anywhere}}textarea{{display:block;width:98%;background:#222;color:white}}select,button{{padding:10px}}li{{margin:6px 0}}</style><h1>{escaped(config['title'])}</h1><p>{len(cards)} cards, {evidence['decision_count']} exact model decisions. Each card states whether it reviews geometry or texture. Paired endpoint cards apply one decision to both displayed members. Native camera is top left in eight-view sheets. Click any image for full resolution.</p><p><a href="evidence.json">Frozen evidence manifest</a>. Decisions below prepare feedback; they do not modify any model or approval record.</p><details><summary>Jump to a review card</summary><ul>{navigation}</ul></details>{''.join(sections)}<button id="export">Prepare review feedback</button><textarea id="feedback" rows="12" readonly></textarea><script>{script}</script></html>'''
+    page=f'''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{escaped(config['title'])}</title><style>body{{font:16px system-ui;background:#15181c;color:#eef0f4;margin:24px auto;max-width:1450px;padding:0 20px}}a{{color:#a7d4ff}}article{{border:1px solid #555;border-radius:10px;margin:28px 0;padding:20px}}h2 span{{font-size:14px;background:#384861;padding:5px}}img{{width:100%;height:auto;background:#242831}}figure{{margin:16px 0}}figcaption,.revision{{color:#b5c1d0}}details{{overflow-wrap:anywhere}}textarea{{display:block;width:98%;background:#222;color:white}}select,button{{padding:10px}}li{{margin:6px 0}}</style><h1>{escaped(config['title'])}</h1><p>{len(cards)} cards, {evidence['decision_count']} exact model decisions. Each card states its exact review scope. Grouped cards apply one decision to every displayed member. Native camera is top left in eight-view sheets. Click any image for full resolution.</p><p><a href="evidence.json">Frozen evidence manifest</a>. Decisions below prepare feedback; they do not modify any model or approval record.</p><details><summary>Jump to a review card</summary><ul>{navigation}</ul></details>{''.join(sections)}<button id="export">Prepare review feedback</button><textarea id="feedback" rows="12" readonly></textarea><script>{script}</script></html>'''
     (out/'index.html').write_text(page)
     print(json.dumps(dict(output=str(out),cards=len(cards),decisions=evidence['decision_count'],resources=len(resources))))
 
