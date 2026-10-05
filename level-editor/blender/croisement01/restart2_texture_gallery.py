@@ -10,6 +10,9 @@ sys.path.insert(0, str(ROOT / 'level-editor/refinement/blender'))
 from build_review_gallery import build
 
 CASES = {
+    '71': ('tree71-v5', 'experiment', 'baked-v1-luminance', 'East Border Leaning Tree'),
+    'stump64': ('stump64-wood-v4', 'experiment', 'baked-v1-luminance', 'Southwest Broken Stump — WOOD ONLY'),
+    'stump69': ('stump69-wood-v1', 'experiment', 'baked-v1-luminance', 'Central Ivy Stump — WOOD ONLY'),
     '18': ('tree18-v4', 'experiment-v3', 'baked-v1', 'Northeast Forked Forest Tree'),
     '20': ('tree20-v3', 'experiment-v2-dark-bark', 'baked-v4-dark-bark', 'Northern Shaded Forest Tree'),
     '22': ('tree22-v8', 'experiment', 'baked-v1-luminance', 'Eastern Sloping Bank Tree'),
@@ -34,7 +37,10 @@ def main():
     for number in args.trees:
         original, experiment, bake, name = CASES[number]
         asset = {'stump66':'croisement01-south-cut-stump', 'rock29':'croisement01-small-bank-stones', 'stump68':'croisement01-southeast-small-stump', 'stump65':'croisement01-southwest-cut-stump'}.get(number, 'croisement01-tree-' + number)
+        asset = {'stump64':'croisement01-southwest-broken-stump','stump69':'croisement01-central-ivy-stump'}.get(number,asset)
         root = OUT / {'22':'approved-tree22-fill-v1', 'stump66':'approved-stump66-wood-fill-v1', 'rock29':'approved-rock29-fill-v2', 'stump68':'approved-stump68-wood-fill-v1', 'stump65':'approved-stump65-wood-fill-v1', '21':'approved-tree21-fill-v1'}.get(number, 'approved-tree-fills-v1') / asset
+        if number in ['71','stump64','stump69']:
+            root=OUT/('approved-tree71-fill-v1' if number=='71' else 'approved-'+number+'-wood-fill-v1')/asset
         e, b = root / experiment, root / bake
         w = b / 'actual-review-v1'
         geometry = OUT / original / 'assets' / asset
@@ -75,6 +81,11 @@ def main():
             notes[2:] = ['Own native bark and only the two permitted Leicester leaf references supplemented the inferred materials.', 'The complete off-map crown and hidden bark are inferred. Neighboring foliage ownership and final scene joints remain separate unfinished work.']
         if number == 'stump68':
             notes[2:] = ['WOOD ONLY: only this stump’s own native cut wood and bark supplemented the inferred materials.', 'The 786 native surrounding foliage pixels remain a separate unfinished obligation. Hidden reverse bark and cut grain are inferred; this card does not approve the surrounding foliage.']
+        if number in ['stump64','stump69']:
+            excluded={'stump64':1424,'stump69':1106}[number]
+            notes[2:]=['WOOD ONLY: own native wood supplemented the inferred cap, hidden bark and lower extension.',f'{excluded} native ivy/mixed foreground pixels remain separately unfinished. Inferred grain can be finer than the native front; no foliage approval is implied.']
+        if number=='71':
+            notes[2:]=['Own native wood and only the permitted two Leicester leaf examples supplemented inferred bark and complete off-map crown.','2963 foreground foliage pixels remain separately unfinished. The archival bank remains provisional; geometry and native62/63 surface partition are unchanged.']
         review = dest / 'receipts' / f'{asset}-review.json'
         review.write_text(json.dumps(dict(status='ready-for-user-texture-review', model_sha256=model_hash,
             root_review=receipt, self_review=json.loads((w / 'inspection/self-review.json').read_text()),
