@@ -38,7 +38,7 @@ def main():
         light_data=bpy.data.lights.new('Boundary sun','SUN');light_data.energy=2;light=bpy.data.objects.new(light_data.name,light_data);scene.collection.objects.link(light);light.rotation_euler=(.5,-.4,-.5)
         packet=json.loads((worker/'modified/views.json').read_text());packet['scene_name']=scene.name;packet['object_names']=[o.name for o in clones];packet.pop('render_object_names',None)
         for i,view in enumerate(packet['views']):
-            az=math.radians(i*45);el=math.radians(25);position=target+Vector((math.sin(az)*math.cos(el),-math.cos(az)*math.cos(el),math.sin(el)))*5000;rotation=(target-position).to_track_quat('-Z','Y').to_euler();matrix=rotation.to_matrix().to_4x4();matrix.translation=position
+            az=math.radians(i*45);el=math.radians(35);position=target+Vector((math.sin(az)*math.cos(el),-math.cos(az)*math.cos(el),math.sin(el)))*5000;rotation=(target-position).to_track_quat('-Z','Y').to_euler();matrix=rotation.to_matrix().to_4x4();matrix.translation=position
             view.update(camera_location=list(position),camera_rotation_euler=list(rotation),camera_matrix_world=[list(r) for r in matrix],ortho_scale=scale,crop=dict(width=256,height=256))
         write_json(out/f'{state}-views.json',packet);render(out/f'{state}-views.json',out/state,modes=('solid','textured'),width=256)
         for mode in ['solid','textured']:
