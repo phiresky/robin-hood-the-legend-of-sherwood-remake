@@ -2532,3 +2532,7 @@ Map compilation now retains asset-local changing barriers on ladders and climbab
 walls. Placed fixtures verify collision, pathfinding and complete actor traversal
 before applying the barrier, while closed and after reset, including a barrier
 near an entrance whose inner endpoint moves during actor-clearance adjustment.
+
+Spline masks now retain disconnected receiving-probe fragments after trimming.
+Asset masks can author `receiverPolylines`; export intersects each fragment
+independently and rejects competing receiving layers without connecting the gaps.

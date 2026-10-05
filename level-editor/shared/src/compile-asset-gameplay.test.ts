@@ -201,6 +201,60 @@ test("bounded physical receivers bind terrain without flattening their geometry"
   );
 });
 
+test("disconnected mask probes do not bridge gaps and reject competing layers", () => {
+  const { document, assets, hut } = maskAssetCompilerFixture();
+  const gameplay = hut.gameplay!;
+  gameplay.doors = [];
+  gameplay.movementTransitions = [];
+  const baseline = compileAssetGameplay(document, assets, bounds).masks;
+  for (const mask of gameplay.masks!)
+    mask.receiverPolylines = [
+      [
+        [45, 45, -20],
+        [45, 45, -10],
+      ],
+      [
+        [45, 45, 10],
+        [45, 45, 20],
+      ],
+    ];
+  assert.throws(() => compileAssetGameplay(document, assets, bounds), /receiving anchor/);
+  for (const mask of gameplay.masks!)
+    mask.receiverPolylines!.push([
+      [45, 45, -2],
+      [45, 45, 2],
+    ]);
+  assert.deepEqual(compileAssetGameplay(document, assets, bounds).masks, baseline);
+  gameplay.surfaces.push({ ...structuredClone(gameplay.surfaces[0]!), id: "upper", height: 15 });
+  assert.throws(() => compileAssetGameplay(document, assets, bounds), /receiving anchor.*found 2/);
+  const mask = gameplay.masks![0]!;
+  mask.receiverPolyline = [
+    [45, 45, -2],
+    [45, 45, 2],
+  ];
+  assert.throws(() => validateAssetGameplay(gameplay, hut), /invalid mask receiving polylines/);
+  delete mask.receiverPolyline;
+  for (const lines of [
+    [],
+    [[[45, 45, 0]]],
+    [
+      [
+        [45, 45, 0],
+        [45, 45, 0],
+      ],
+    ],
+    [
+      [
+        [45, 45, 0],
+        [45, 45, NaN],
+      ],
+    ],
+  ]) {
+    Object.assign(mask, { receiverPolylines: lines });
+    assert.throws(() => validateAssetGameplay(gameplay, hut), /invalid mask receiving polylines/);
+  }
+});
+
 test("interior receiving segments move approach points onto sloped terrain", () => {
   const { document, assets, hut } = interiorAssetCompilerFixture();
   const gameplay = hut.gameplay!;

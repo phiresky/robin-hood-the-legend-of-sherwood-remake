@@ -200,3 +200,20 @@ export function wallAutomaticLightFixture() {
   path.repeatLength = splineCurve(path, document.camera).getLength();
   return fixture;
 }
+
+export function wallDisconnectedMaskFixture() {
+  const fixture = wallMaterialFixture();
+  const { document, asset } = fixture;
+  const local = (x: number, y: number, z: number) => sceneToGame(document.camera, [x, y, z]);
+  const mask = asset.gameplay!.masks![0]!;
+  delete mask.receiverSegment;
+  mask.receiverPolyline = [
+    local(-40, 0, -10),
+    local(-40, 0, 10),
+    local(80, 0, 10),
+    local(80, 10, -10),
+    local(-20, 10, -10),
+    local(-20, 10, 10),
+  ];
+  return fixture;
+}

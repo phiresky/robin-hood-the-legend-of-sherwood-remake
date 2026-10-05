@@ -382,6 +382,7 @@ function compileAssetGameplayAttempt(
     anchor: Vec3;
     receiverSegment?: [Vec3, Vec3];
     receiverPolyline?: Vec3[];
+    receiverPolylines?: Vec3[][];
     triangles: MaskTriangle[];
     rules: Omit<import("./level.ts").Mask, "layer" | "box_top_left" | "box_size" | "mask_data">;
   }[] = [];
@@ -702,6 +703,13 @@ function compileAssetGameplayAttempt(
       placedMasks.push({
         id: `${placement.id}/${mask.id}`,
         anchor: transform(mask.node, mask.anchor),
+        ...(mask.receiverPolylines
+          ? {
+              receiverPolylines: mask.receiverPolylines.map((line) =>
+                line.map((p) => transform(mask.node, p)),
+              ),
+            }
+          : {}),
         ...(mask.receiverPolyline
           ? { receiverPolyline: mask.receiverPolyline.map((p) => transform(mask.node, p)) }
           : {}),
@@ -1756,19 +1764,27 @@ function compileAssetGameplayAttempt(
     const point = project(mask.anchor);
     const heightPoint: Point = [mask.anchor[0], mask.anchor[1] - mask.anchor[2]];
     let segmentError: string | undefined;
-    const probe = mask.receiverPolyline ?? mask.receiverSegment;
+    const probe =
+      mask.receiverPolylines ??
+      (mask.receiverPolyline
+        ? [mask.receiverPolyline]
+        : mask.receiverSegment
+          ? [mask.receiverSegment]
+          : undefined);
     const receivingPoints = (plane: HeightPlane): Point[] => {
       if (!probe)
         return Math.abs(planeHeight(plane, heightPoint) - mask.anchor[2]) < 1e-4 ? [point] : [];
       try {
-        return probe.slice(1).flatMap((end, i): Point[] => {
-          const intersection = lightReceiverIntersection(
-            [probe[i]!, end],
-            plane,
-            `Mask ${mask.id}`,
-          );
-          return intersection ? [[intersection[0], intersection[1] - intersection[2]]] : [];
-        });
+        return probe.flatMap((line) =>
+          line.slice(1).flatMap((end, i): Point[] => {
+            const intersection = lightReceiverIntersection(
+              [line[i]!, end],
+              plane,
+              `Mask ${mask.id}`,
+            );
+            return intersection ? [[intersection[0], intersection[1] - intersection[2]]] : [];
+          }),
+        );
       } catch (error) {
         if (!options.bestEffort || !(error instanceof Error)) throw error;
         segmentError = error.message;

@@ -354,23 +354,35 @@ export function wallSplineGameplay(
             : end;
           const anchorSource = source(mask.node, mask.anchor);
           const anchorCropped = run && (anchorSource[axis] < start || anchorSource[axis] > limit);
-          if (anchorCropped && !mask.receiverSegment && !mask.receiverPolyline) {
+          if (
+            anchorCropped &&
+            !mask.receiverSegment &&
+            !mask.receiverPolyline &&
+            !mask.receiverPolylines
+          ) {
             warnings.push(
               `Wall spline ${path.id}, mask ${mask.id}, repeat ${repeat}: cropped receiving anchor; mask omitted.`,
             );
             continue;
           }
-          const receiver = (mask.receiverPolyline ?? mask.receiverSegment)?.map((p) =>
-            source(mask.node, p),
-          );
+          const receiver = (
+            mask.receiverPolylines ??
+            (mask.receiverPolyline
+              ? [mask.receiverPolyline]
+              : mask.receiverSegment
+                ? [mask.receiverSegment]
+                : undefined)
+          )?.map((line) => line.map((p) => source(mask.node, p)));
           const receiverFragments = receiver
             ? run
-              ? clipSplinePolyline(receiver, axis, start, limit, stations)
-              : [receiver]
+              ? receiver
+                  .flatMap((line) => clipSplinePolyline(line, axis, start, limit, stations))
+                  .filter((line) => line.length >= 2)
+              : receiver
             : [];
-          if (receiver && (receiverFragments.length !== 1 || receiverFragments[0]!.length < 2)) {
+          if (receiver && !receiverFragments.length) {
             warnings.push(
-              `Wall spline ${path.id}, mask ${mask.id}: cropped or disconnected receiving probe; mask omitted.`,
+              `Wall spline ${path.id}, mask ${mask.id}: cropped receiving probe; mask omitted.`,
             );
             continue;
           }
@@ -427,9 +439,14 @@ export function wallSplineGameplay(
             triangles,
             anchor,
             receiverSegment: receiver ? undefined : receiverSegment,
-            receiverPolyline: receiver
-              ? receiverFragments[0]!.map((p) => warp(p, repeat))
-              : undefined,
+            receiverPolyline:
+              receiver && receiverFragments.length === 1
+                ? receiverFragments[0]!.map((p) => warp(p, repeat))
+                : undefined,
+            receiverPolylines:
+              receiverFragments.length > 1
+                ? receiverFragments.map((line) => line.map((p) => warp(p, repeat)))
+                : undefined,
             obstacles,
             ...(characterBoundary ? { characterBoundary } : {}),
             ...(projectileBoundary ? { projectileBoundary } : {}),

@@ -4,6 +4,23 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Disconnected spline-mask receiving probes (2026-10-05)
+
+Mask authoring now supports disconnected `receiverPolylines`, mutually exclusive
+with the existing single segment/polyline forms. Spline clipping retains all
+surviving fragments instead of dropping the mask. Each fragment is transformed
+and intersected independently; the compiler still requires one receiving layer.
+Tests reject an invented connection across a gap, competing layers, empty or
+degenerate fragments and conflicting probe forms. Curved and partially trimmed
+walls retain the fragments without altering the input asset.
+
+The split-probe export exactly matches `asset-spline-material.level.json`, and
+the native mask regression passes bitmap coverage, character/projectile boundary,
+altitude and independent obstacle ownership checks. Disconnected application
+boundaries remain unsupported; this change resolves receiving probes only.
+All 129 focused editor/compiler tests pass, along with app/pipeline typechecking
+and targeted lint.
+
 ## Changing climb barriers and corrected fixture diagnosis (2026-10-05)
 
 Follow-up verification covers copied controls and closing a barrier during a

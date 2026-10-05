@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { wallSplineFixture, wallMaterialFixture } from "../test-fixtures/wall-spline.ts";
+import {
+  wallSplineFixture,
+  wallMaterialFixture,
+  wallDisconnectedMaskFixture,
+} from "../test-fixtures/wall-spline.ts";
 import { wallSplineGameplay } from "./wall-spline-gameplay.ts";
 import { compileAssetGameplay } from "./compile-asset-gameplay.ts";
 import { validateAssetGameplay } from "./asset-gameplay.ts";
@@ -215,9 +219,7 @@ test("wall lighting follows repeated and turned paths and preserves ambience fil
   );
   assert.ok(Array.isArray(ground?.projection_area));
   const groundLayer = ground.projection_area[1];
-  assert.ok(
-    bentCompiled.light_sectors!.every((light) => light.layer !== groundLayer),
-  );
+  assert.ok(bentCompiled.light_sectors!.every((light) => light.layer !== groundLayer));
   delete asset.gameplay!.lights[0]!.receiverSegments;
   assert.deepEqual(
     compileAssetGameplay(document, assets, bounds).light_sectors,
@@ -395,6 +397,39 @@ test("a surviving mask probe retains a cropped repeat when its point anchor is t
   const pointOnly = wallSplineGameplay(document, assets, true);
   assert.equal(pointOnly.descriptors[0]!.gameplay!.masks!.length, 2);
   assert.ok(pointOnly.warnings.some((warning) => warning.includes("cropped receiving anchor")));
+});
+
+test("spline masks keep disconnected probe fragments after clipping", () => {
+  const base = wallMaterialFixture();
+  const baseline = compileAssetGameplay(base.document, base.assets, base.bounds).masks;
+  const { document, asset, assets, bounds } = wallDisconnectedMaskFixture();
+  const mask = asset.gameplay!.masks![0]!;
+  const before = structuredClone(mask);
+  const generated = wallSplineGameplay(document, assets, false);
+  assert.deepEqual(generated.warnings, []);
+  for (const part of generated.descriptors) {
+    validateAssetGameplay(part.gameplay, part);
+    for (const output of part.gameplay!.masks!) {
+      assert.equal(output.receiverPolyline, undefined);
+      assert.equal(output.receiverSegment, undefined);
+      assert.equal(output.receiverPolylines!.length, 2);
+    }
+  }
+  assert.deepEqual(compileAssetGameplay(document, assets, bounds).masks, baseline);
+  assert.deepEqual(mask, before);
+  document.splines![0]!.curved = true;
+  document.splines![0]!.points = [
+    [100, 200, 0],
+    [220, 300, 0],
+    [345, 200, 0],
+  ];
+  const curved = wallSplineGameplay(document, assets, false);
+  base.document.splines = structuredClone(document.splines);
+  assert.deepEqual(curved.warnings, wallSplineGameplay(base.document, base.assets, false).warnings);
+  assert.ok(
+    curved.descriptors[0]!.gameplay!.masks!.some((part) => part.receiverPolylines?.length === 2),
+  );
+  assert.ok(compileAssetGameplay(document, assets, bounds).masks!.length > 0);
 });
 
 test("wall collision follows moved paths, crops repeats and participates in terrain navigation", () => {

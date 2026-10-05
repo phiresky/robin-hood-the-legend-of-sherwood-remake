@@ -288,10 +288,19 @@ anchor and scale as the renderer. Raised spans preserve the space underneath.
 Prepared strips initially use conservative continuous barriers measured from their
 own models. Recipes declare material and sight opacity; wood fences allow sight
 through. Openings and walkable wall tops must be authored explicitly. Export warns
-about this approximation. It also warns and omits unsupported uncalibrated sources,
-cross-section straightening, source rotation and stateful wall geometry. Local
-doors, lifts, masks, lights, sounds and material regions are not deformed with a
-spline; use ordinary asset placements for those features.
+about this approximation. Cross-section straightening and source rotation require
+matching mesh calibration; uncalibrated or stateful sources are omitted with
+warnings. Material regions, lighting, mask coverage/boundaries and spatial sounds
+are deformed along the path. Doors, lifts, interiors and saved jump connections
+still require ordinary asset placements.
+
+Masks may author one `receiverSegment`, one `receiverPolyline`, or disconnected
+`receiverPolylines`. These forms are mutually exclusive. Export transforms and
+intersects each fragment separately and requires exactly one receiving layer;
+it never connects gaps between fragments. Spline trimming preserves surviving
+probe fragments and subdivides them at bends. Disconnected application boundaries,
+point-only anchors removed by trimming, global sounds and disconnected sound crops
+remain explicit omissions. See the checklist for detailed verification limits.
 
 Re-author existing prepared strips and calibrate selectable corners without
 changing models:
