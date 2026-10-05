@@ -71,6 +71,8 @@ The physical region compiler combines asset-local floors and holes, solid height
 slices, owner-scoped clearances and changing barriers with shared collision/state
 identities. Tests cover rotated/elevated placements, headroom and fractional
 barriers; the native edge-on fixture consumes emitted area/navigation data.
+Export-frame clipping also operates in world space, preserving edge-on floors
+and reallocating collision identities when cropping changes holes or barriers.
 The main compiler shares world-space surface placement and volume-height slicing,
 but its subsequent area assembly, receiving-feature binding and lift emission
 still depend on projected geometry. **Normal exports do not yet emit physical

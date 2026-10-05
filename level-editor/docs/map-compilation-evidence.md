@@ -4,6 +4,26 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Physical stair export-frame clipping (2026-10-05)
+
+Physical region assembly now accepts the visible export rectangle. It converts
+the screen bounds to linear inequalities on the world height plane and clips
+the physical floor before collision assembly. No inverse projection is required,
+so an edge-on floor keeps its physical area when its projected line is visible.
+The clipped floor retains its height, holes and current control bindings.
+
+Tests cover clipping an edge-on floor, retaining an interior hole and live
+barrier, and turning a hole into a boundary notch. In the latter case the
+remaining barrier receives the correct new motion-obstacle reference. A sloped
+floor test checks the actual world boundary produced by screen-Y limits. Floors
+outside the frame, invalid rectangles, disconnected cropped islands and door
+anchors left without floor support reject instead of inventing navigation.
+
+All six affected compiler suites pass (147 tests), both typechecks pass, and
+focused lint, formatting and whitespace checks pass. The physical region path
+still needs wiring into normal export; existing keep placement failures are not
+resolved by this component check.
+
 ## Crushing across bound stair/landing boundaries (2026-10-05)
 
 Landing collision pieces now retain their owning motion-obstacle index as well

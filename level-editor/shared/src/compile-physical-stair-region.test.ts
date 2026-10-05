@@ -1,9 +1,153 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { compilePhysicalStairRegion } from "./compile-physical-stair-region.ts";
+import {
+  compilePhysicalStairRegion,
+  type PhysicalStairRegionInput,
+} from "./compile-physical-stair-region.ts";
 import { heightPlane, type HeightPlane } from "./gameplay-plane.ts";
 import type { Point } from "./level.ts";
 import type { Vec3 } from "./scene.ts";
+
+test("export cropping preserves edge-on floor area, holes and local control bindings", () => {
+  const rectangle = (x0: number, y0: number, x1: number, y1: number): Vec3[] => [
+    [x0, y0, y0 - 200],
+    [x1, y0, y0 - 200],
+    [x1, y1, y1 - 200],
+    [x0, y1, y1 - 200],
+  ];
+  const input: PhysicalStairRegionInput = {
+    surfaces: [{ polygon: rectangle(380, 300, 420, 400), holes: [rectangle(395, 330, 405, 340)] }],
+    solids: [],
+    clearances: [],
+    doors: [],
+    blockers: [
+      {
+        transition: "gate",
+        applied: false,
+        plane: [0, 1, -200],
+        polygon: [
+          [380, 350],
+          [420, 350],
+          [420, 352],
+          [380, 352],
+        ],
+        holes: [],
+      },
+    ],
+  };
+  const full = compilePhysicalStairRegion({ ...input, frame: [370, 199, 430, 201] });
+  assert.equal(full.navigation.obstacles.length, 2);
+  const cropped = compilePhysicalStairRegion({ ...input, frame: [390, 199, 410, 201] });
+  assert.deepEqual(cropped.navigation.boundary, [
+    [390, 300],
+    [410, 300],
+    [410, 400],
+    [390, 400],
+  ]);
+  assert.deepEqual([...cropped.pairs], [["gate", 0]]);
+  assert.deepEqual(
+    cropped.area.obstacles.map((obstacle) => obstacle.state_id),
+    [0, 1],
+  );
+  assert.ok(
+    cropped.navigation.obstacles.every((obstacle) =>
+      obstacle.polygon.every(([x]) => x >= 390 && x <= 410),
+    ),
+  );
+  assert.ok(cropped.area.polygon.points.every(([, y]) => y === 200));
+  // Cropping through the hole turns it into a boundary notch. Only the live
+  // barrier remains an obstacle, and its physical reference must be reallocated.
+  const notch = compilePhysicalStairRegion({ ...input, frame: [400, 199, 410, 201] });
+  assert.equal(notch.area.obstacles.length, 1);
+  assert.equal(notch.area.obstacles[0]!.state_id, 1);
+  assert.equal(notch.navigation.obstacles[0]!.motion_obstacle, 0);
+  assert.throws(
+    () => compilePhysicalStairRegion({ ...input, frame: [370, 201, 430, 220] }),
+    /no floor inside/,
+  );
+  assert.throws(
+    () => compilePhysicalStairRegion({ ...input, frame: [410, 199, 390, 201] }),
+    /export frame/,
+  );
+  assert.throws(
+    () =>
+      compilePhysicalStairRegion({
+        ...input,
+        frame: [390, 199, 410, 201],
+        doors: [
+          {
+            inside: [385, 310, 110],
+            middle: [385, 300, 100],
+            outside: [385, 290, 100],
+          },
+        ],
+      }),
+    /floor support/,
+  );
+});
+
+test("export cropping cannot invent a connection between separated floor islands", () => {
+  assert.throws(
+    () =>
+      compilePhysicalStairRegion({
+        surfaces: [
+          {
+            polygon: [
+              [0, 0, 0],
+              [30, 0, 0],
+              [30, 30, 0],
+              [20, 30, 0],
+              [20, 10, 0],
+              [10, 10, 0],
+              [10, 30, 0],
+              [0, 30, 0],
+            ],
+            holes: [],
+          },
+        ],
+        solids: [],
+        clearances: [],
+        blockers: [],
+        doors: [],
+        frame: [0, 15, 30, 30],
+      }),
+    /connected floor/,
+  );
+});
+
+test("sloping floor export cropping applies screen Y limits without flattening height", () => {
+  const result = compilePhysicalStairRegion({
+    surfaces: [
+      {
+        polygon: [
+          [0, 0, 0],
+          [100, 0, 0],
+          [100, 100, 50],
+          [0, 100, 50],
+        ],
+        holes: [],
+      },
+    ],
+    solids: [],
+    clearances: [],
+    blockers: [],
+    doors: [],
+    frame: [20, 10, 80, 40],
+  });
+  assert.deepEqual(result.navigation.plane, [0, 0.5, 0]);
+  assert.deepEqual(result.navigation.boundary, [
+    [20, 20],
+    [80, 20],
+    [80, 80],
+    [20, 80],
+  ]);
+  assert.deepEqual(result.area.polygon.points, [
+    [20, 10],
+    [80, 10],
+    [80, 40],
+    [20, 40],
+  ]);
+});
 
 test("physical regions retain solid heights, owner clearances, holes and controls after placement", () => {
   for (const degrees of [0, 37, 90, 180, 270])

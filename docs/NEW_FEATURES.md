@@ -27,6 +27,8 @@
   geometry, holes and shared control states before physical area emission.
   Physical region assembly combines these with solid height slices and
   owner-scoped clearances; it shares volume-height slicing with ordinary export.
+  Export-frame clipping preserves world-space floors and holes even when their
+  screen projection collapses, rebuilding collision identities after cropping.
   Asset surface placement now retains world-space floor and hole geometry before
   projection, including separate physical/navigation heights for clearances.
   Physical stair steps now share ordinary movement's water-splash emission,
