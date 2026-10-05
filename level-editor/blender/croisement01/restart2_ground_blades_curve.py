@@ -11,7 +11,7 @@ from tree_geometry import material,one_sided,replace_mesh,RAY,SIN,COS
 def build(obj,source,guide,ground):
     source=Path(source);rgba=np.asarray(Image.open(source/'native.png').convert('RGBA'));alpha=rgba[:,:,3]>127
     x0,y0,w,h=guide['native_bbox'];root=np.asarray(guide['root_source_local'],float)
-    ground_paths=set(range(7))|set(range(19,27)) if guide['native_mask']==82 else set()
+    ground_paths=set()
     paths=[];curves=[]
     for index,raw in enumerate(guide['paths']):
         p=np.asarray([root,*list(reversed(raw))],float)+.5
@@ -24,8 +24,9 @@ def build(obj,source,guide,ground):
     def point(px,py,leaf):
         p=paths[leaf];arc,height=curves[leaf];q=np.asarray([px-x0,py-y0]);a=p[:-1];d=p[1:]-a
         f=np.clip(np.sum((q-a)*d,axis=1)/np.maximum(np.sum(d*d,axis=1),1e-8),0,1)
-        near=a+d*f[:,None];k=int(np.argmin(np.sum((near-q)**2,axis=1)));t=arc[k]+f[k]*(arc[k+1]-arc[k])
-        z=ground+.06 if leaf in ground_paths else ground+.06+height*t*(1+.12*math.sin(math.pi*t))
+        axis=p[-1]-root;t=float(np.clip(np.dot(q-root,axis)/max(np.dot(axis,axis),1e-8),0,1))
+        low=axis[1]>-8
+        z=ground+.06+height*(.28*math.sin(math.pi*t) if low else math.sin(math.pi*.55*t))
         return Vector((px,-(py+z*COS)/SIN,z))
     mats=[material(obj.name+' protected observed blades',source/'native.png',True),material(obj.name+' inferred blade fronts',source/'native.png',True)]
     known_pixels=rgba[alpha];palette=known_pixels[(known_pixels[:,1]>60)&(known_pixels[:,0]>55)&(known_pixels[:,1]>known_pixels[:,2]*1.3)]
@@ -77,5 +78,5 @@ def build(obj,source,guide,ground):
                 tri([points[i] for i in ids],[coords[i] for i in ids],1,True)
                 tri([points[i]-Vector(RAY)*.012 for i in ids],[pal]*3,2,False,True)
     result=replace_mesh(obj,vertices,faces,uvs,mats,slots,owns);components,total=label(alpha,np.ones((3,3)));sizes=np.bincount(components.ravel())[1:]
-    result.update(geometry_version='continuous-native-leaf-supports-v3-ground-domain',ground_path_hypothesis=sorted(ground_paths),ground_domain_status='Private manual source classification hypothesis; root review required' ,native_mask=guide['native_mask'],rooted_source_paths=len(paths),extra_inferred_blades=30,native_connected_components=int(total),native_component_sizes=sorted(sizes.tolist(),reverse=True),source_rgba_changed=False,limitations=['Leaf associations and hidden curvature are inferred from native leaf paths.','Native isolated source tips remain isolated in alpha, with narrow inferred reverse supports.','Source painted low basal regions still require semantic review.'])
+    result.update(geometry_version='continuous-native-leaf-supports-v4-monotone-path' ,ground_path_hypothesis=sorted(ground_paths),ground_domain_status='No native ground ownership reclassification; low leaves use rooted arch curves' ,native_mask=guide['native_mask'],rooted_source_paths=len(paths),extra_inferred_blades=30,native_connected_components=int(total),native_component_sizes=sorted(sizes.tolist(),reverse=True),source_rgba_changed=False,limitations=['Leaf associations and hidden curvature are inferred from native leaf paths.','Native isolated source tips remain isolated in alpha, with narrow inferred reverse supports.','Source painted low basal regions still require semantic review.'])
     return result
