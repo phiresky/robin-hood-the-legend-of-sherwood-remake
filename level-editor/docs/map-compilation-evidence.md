@@ -4,6 +4,30 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Published Derby postern ladders (2026-10-06)
+
+Stage `local-stair-seams-0fxVDU` corrects both southwest-postern ladder floors,
+door midpoints and local landing edges. The lower entrance remains an external
+connection. Geometry matches reviewed candidate `local-stair-seams-bTRQ7j`;
+the final stage adds an explicit mesh/rendering warning. Floor vertices shift
+at most 1.506 units on the lower ladder and 0.104 on the upper ladder.
+Mesh review finds 429/800 and 338/806 floor sample hits respectively; uncovered
+samples include exposed feet and heads. Landing discrepancies reach 0.166 units.
+This is navigation progress, not complete rendered parity.
+
+`local-stair-placements-vfBoCM` passes 32/32 complete-animation routes at
+0/37/90/180 degrees and elevations 0/40. Eight raised-ground negative cases
+omit the disconnected lower ladder and preserve the independent upper ladder.
+Full Derby `postern-ladder-level-x6hvXh` passes 4/4 climb routes, 28/28 stair
+routes and all five control apply/reset checks.
+
+Publication backup is `postern-ladder-publication-20261006`; Derby and Wychford
+pins are refreshed. Fresh `local-stair-placements-z2pPhL` descriptors exactly
+match all eight tested candidates. All ten saved scenes reopen successfully.
+Anchor audit `lift-anchor-support-qC9zlQ` now reports unsupported floor anchors
+in 38/53 stairs, 4/8 ladders and 9/9 walls. Fresh baked ZIPs and rendered
+character checks remain outstanding.
+
 ## Physical ladders and published east-moat correction (2026-10-06)
 
 Compatible planar ladders now use the existing physical floor/collision machinery.

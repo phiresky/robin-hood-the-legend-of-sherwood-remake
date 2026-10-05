@@ -161,9 +161,9 @@ surfaces retain their precision until final grid rounding; ladder movement
 orders use exact world endpoints while transition animations keep their own
 posture and membership effects. Compiler checks require a landing to support
 both the outside point and seam before enabling physical traversal. Unsupported
-definitions retain projected navigation with a warning, including the older
-Derby postern and Lincoln shed ladders whose landing heights still disagree.
-The expanded local-anchor audit finds 5/8 ladder definitions and 9/9 wall
+definitions retain projected navigation with a warning, including the Lincoln
+shed ladders whose landing heights still disagree.
+The expanded local-anchor audit finds 4/8 ladder definitions and 9/9 wall
 definitions with unsupported floor anchors. Those counts do not check landing
 height compatibility or certify placed routes. Physical walls remain unfinished.
 All 84 climb routes in the ten saved-scene exports now pass, as do all 71 control
@@ -175,6 +175,14 @@ retains an explicit rendered-integration warning.
 The tower also retains all 16/16 rotated stair routes. Clipped landing collision
 keeps its computed precision through route and footprint queries; rounding those
 small intersections back to runtime floats could otherwise create invalid polygons.
+Both Derby southwest-postern ladders now have published floor and landing seam
+corrections. All 32/32 complete-animation routes pass at four rotations and two
+elevations; eight raised-ground approaches correctly omit the disconnected lower
+ladder while retaining the upper one. Full Derby retains 4/4 climbing routes,
+28/28 stair routes and all five control apply/reset checks. Published placement
+descriptors match the tested candidates, and all ten scenes reopen. Both ladders
+retain explicit mesh/rendering warnings: uncovered sampled feet and heads remain
+visible at reviewed rotations. These checks do not certify rendered integration.
 The east hall's upper stair now has published floor/landing seam corrections and
 passes 48 directed routes across four rotations and two elevations. Full Derby
 passes 28/28 stair routes and all five control checks with this correction.
