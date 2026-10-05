@@ -37,6 +37,9 @@ def bank_workspace(asset):
 
 
 def scenery_workspace(asset):
+    from kindling_selections import selected_workspace as kindling_workspace
+    kindling=kindling_workspace(OUT,asset,reviewed_catalog())
+    if kindling is not None:return kindling
     from prop_completion_candidates import selected_workspace as prop_workspace
     completed_prop=prop_workspace(OUT,asset,reviewed_catalog())
     if completed_prop is not None:return completed_prop
