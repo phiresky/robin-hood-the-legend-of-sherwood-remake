@@ -5241,6 +5241,25 @@ impl EngineInner {
             return MovePathOutcome::Refused;
         }
 
+        let physical_goal = tcx
+            .assets
+            .navigation
+            .physical_stairs
+            .contains_key(&entity_sector)
+            .then(|| {
+                self.orders
+                    .sequence_manager
+                    .get_element(seq_id, elem_idx)
+                    .and_then(|element| match &element.data {
+                        crate::sequence::SequenceElementData::Movement { gate_id, .. } => *gate_id,
+                        _ => None,
+                    })
+                    .and_then(|gate| self.physical_stair_door(tcx.assets, gate))
+                    .filter(|(sector, _, _)| *sector == entity_sector)
+                    .map(|(sector, _, door)| (sector, door.inside))
+            })
+            .flatten();
+
         // Before queuing a path request, if the move is flagged
         // MAP / STRAIGHT, or the source→dest segment is
         // thick-reachable, skip the pathfinder entirely and emit a
@@ -5291,12 +5310,13 @@ impl EngineInner {
         // terminal-door seam the stored goal layer can lag behind the actor,
         // so defer to the same current-layer thick-reachability result that
         // Original performs instead of forcing either outcome.
-        let straight_ok = movement_path_dispatch_is_direct(
-            move_flags,
-            movement_goal_crosses_layer,
-            post_door_route_handoff,
-            current_layer_reachable,
-        );
+        let straight_ok = physical_goal.is_some()
+            || movement_path_dispatch_is_direct(
+                move_flags,
+                movement_goal_crosses_layer,
+                post_door_route_handoff,
+                current_layer_reachable,
+            );
 
         // Before submitting a path request, check whether the actor's
         // move box is in an authorized position. Direct MAP / STRAIGHT /
@@ -5466,6 +5486,23 @@ impl EngineInner {
         }
 
         self.finish_move_path(tcx.sim, request, vec![source, dest]);
+        if let Some((sector, goal)) = physical_goal {
+            let element = self
+                .orders
+                .sequence_manager
+                .get_element_mut(seq_id, elem_idx)
+                .expect("physical route element disappeared during emission");
+            let order = element
+                .orders
+                .iter_mut()
+                .rev()
+                .find(|order| order.order_type == move_action)
+                .expect("physical route lost its movement order");
+            order.physical_stair = Some(sector);
+            order.destination_3d = goal;
+            order.target_x = goal[0];
+            order.target_y = goal[1] - goal[2];
+        }
         MovePathOutcome::Success
     }
 

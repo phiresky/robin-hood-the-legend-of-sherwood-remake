@@ -67,16 +67,16 @@ passes native unit checks for obstacles, rotations and landing support using the
 existing pathfinder. Explicit physical distance orders now use these APIs in the
 actor loop, including an edge-on floor, nearby actors and live barriers. Door
 orders now retain world endpoints, and entry/exit callbacks transfer the physical
-floor and landing receiver. Complete door passes now have focused coverage; automatic
-between-door route creation remains unfinished, so the failed
-keep routes remain unresolved.
+floor and landing receiver. Normal two-door gate routes now cross an edge-on
+stair in both directions, including mid-route barrier closure and reopening.
+Compiler emission remains unfinished, so the failed keep routes remain unresolved.
 The sprite motion API and ground-coordinate receiver entry now also support
 edge-on planes, with animation-distance and position-state round-trip coverage.
-Compiler emission and automatic actor order creation still need integration.
+Compiler emission and general point/seek order creation still need integration.
 An optional physical-stair descriptor and runtime binding now retain ground-space
 collision with references to the normal movement obstacles. Physical route queries
 read their current state rather than maintaining separate switch state. Compiler
-emission, complete multi-door traversal and movement effects are still unfinished.
+emission, broader multi-door traversal and movement effects are still unfinished.
 Physical orders currently use hard neighbour collision; neighbours and crushing
 across landing-sector boundaries, soft repulsion and water-particle emission
 remain to be integrated.

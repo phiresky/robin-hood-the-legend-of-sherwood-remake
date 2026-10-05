@@ -146,6 +146,177 @@ fn physical_walker(
 }
 
 #[test]
+fn physical_stair_gate_routes_cross_between_landings_in_both_directions() {
+    for (reverse, controlled) in [false, true]
+        .into_iter()
+        .flat_map(|reverse| [false, true].map(|controlled| (reverse, controlled)))
+    {
+        let mut document = edge_on_physical_stair_fixture();
+        if controlled {
+            let geometry = &mut document["asset_geometry"];
+            geometry["motion_data"]["layers"][2][0]["obstacles"] = serde_json::json!([
+                {"state_id":1,"polygon":{"points":[[380,200],[420,200],[420,200],[380,200]]}}
+            ]);
+            geometry["lifts"][0]["physical_navigation"]["obstacles"] = serde_json::json!([
+                {"motion_obstacle":0,"polygon":[[380,349],[420,349],[420,351],[380,351]]}
+            ]);
+            geometry["movement_transitions"] = serde_json::json!([{
+                "id":"edge-on-stair-barrier","waypoint":[400,180],"sector":0,"layer":0,
+                "active":true,"definitive":false,"apply_polygon":{"points":[]},"no_apply_polygon":{"points":[]},
+                "motion_changes":[{"sector":2,"layer":2,"changing_obstacle":0}]
+            }]);
+        }
+        let (mut engine, mut assets) = compiled_walkway(&serde_json::to_vec(&document).unwrap());
+        let (source, source_number, goal, goal_number, expected) = if reverse {
+            (
+                MapPoint::new(400., 220.),
+                1,
+                MapPoint::new(400., 180.),
+                0,
+                [400., 280., 100.],
+            )
+        } else {
+            (
+                MapPoint::new(400., 180.),
+                0,
+                MapPoint::new(400., 220.),
+                1,
+                [400., 420., 200.],
+            )
+        };
+        let handle = |engine: &EngineInner, number: u16| {
+            let index = engine.world.fast_grid.level.sector_number_map
+                [&crate::sector::SectorNumber::new(number as i16)];
+            crate::position_interface::SectorHandle::new(number)
+                .unwrap()
+                .with_arena_index(crate::fast_find_grid::SectorIndex::new(index as u32).unwrap())
+        };
+        let source_sector = handle(&engine, source_number);
+        let goal_sector = handle(&engine, goal_number);
+        let owner = walking_pc(
+            &mut engine,
+            &mut assets,
+            source,
+            source_number,
+            source_sector,
+        );
+        let receiver =
+            engine.get_projection_area_index(&assets, source_sector, source_number, source);
+        engine.set_obstacle_and_material(&assets, owner, receiver);
+        let authorization = engine.ent(owner).actor_auth_info();
+        let path = crate::gate::find_path_gates_with_sector_indices(
+            &engine.script_domains.interactables.doors,
+            (source.x, source.y),
+            source_number,
+            source_sector.arena_index(),
+            (goal.x, goal.y),
+            goal_number,
+            goal_sector.arena_index(),
+            Some(&authorization),
+            false,
+            &|_| true,
+            &|number| {
+                engine
+                    .world
+                    .fast_grid
+                    .level
+                    .sectors
+                    .iter()
+                    .find(|sector| sector.sector_number == number)
+                    .and_then(|sector| sector.lift_type)
+            },
+        )
+        .expect("physical stair must retain a two-door gate route");
+        assert_eq!(path.len(), 2);
+        let sim = crate::sim_rng::test_context();
+        let patch = crate::patch::PatchIndex::new(0).unwrap();
+        if controlled {
+            engine.apply_patch(TickCtx::new(&sim, &assets), patch);
+        }
+        engine
+            .launch_gate_movement_sequence(
+                TickCtx::new(&sim, &assets),
+                &mut vec![],
+                GateRouteRequest {
+                    entity_id: owner,
+                    source_sector: Some(source_sector),
+                    gate_path: path,
+                    goal: GoalShape::Point {
+                        point: goal,
+                        tolerance: 0.,
+                    },
+                    goal_layer: goal_number,
+                    base_action: OrderType::WalkingUpright,
+                    move_after_last_door: true,
+                    speed_factor: 1.,
+                    initial_flags: crate::sequence::MoveFlags::empty(),
+                    prefix_elements: vec![],
+                    tail_elements: vec![],
+                    append_arrival_speech: false,
+                    append_recovery: false,
+                },
+            )
+            .unwrap();
+        let mut middle_ticks = 0;
+        let mut closed_at = None;
+        let mut held_position = None;
+        let mut reopened = false;
+        for tick in 0..600 {
+            engine.control.frame_counter += 1;
+            engine.t_hourglass_phase_sequences(&assets);
+            engine.hourglass_phase_paths(TickCtx::new(&sim, &assets));
+            engine.t_tick_actor_owner_envelopes(&assets);
+            let position = engine.ent(owner).position_iface().get_position();
+            if controlled
+                && closed_at.is_none()
+                && if reverse {
+                    position.z < 175. && position.z > 170.
+                } else {
+                    position.z > 125. && position.z < 130.
+                }
+            {
+                engine.apply_patch(TickCtx::new(&sim, &assets), patch);
+                closed_at = Some(tick);
+                held_position = Some(position);
+            } else if let Some(closed) = closed_at
+                && !reopened
+            {
+                assert_eq!(
+                    Some(position),
+                    held_position,
+                    "a closed barrier must stop the in-flight route"
+                );
+                if tick >= closed + 8 {
+                    engine.apply_patch(TickCtx::new(&sim, &assets), patch);
+                    reopened = true;
+                }
+            }
+            if position.z > 130. && position.z < 170. {
+                middle_ticks += 1;
+            }
+            if [position.x, position.y, position.z] == expected {
+                break;
+            }
+        }
+        let position = engine.ent(owner).position_iface().get_position();
+        assert_eq!(
+            [position.x, position.y, position.z],
+            expected,
+            "reverse={reverse}, order={:?}",
+            engine.actor_installed_order(owner)
+        );
+        assert!(
+            middle_ticks > 10,
+            "the route must walk the physical span rather than skip coincident screen endpoints"
+        );
+        assert!(
+            !controlled || reopened,
+            "controlled route must exercise closure and reopening"
+        );
+    }
+}
+
+#[test]
 fn physical_stair_landing_collision_follows_its_own_live_control() {
     let mut document = physical_stair_fixture();
     let geometry = &mut document["asset_geometry"];

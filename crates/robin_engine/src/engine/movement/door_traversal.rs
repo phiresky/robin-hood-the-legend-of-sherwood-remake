@@ -214,7 +214,7 @@ impl EngineInner {
             ended_early: false,
         };
         let emission =
-            self.append_gate_elements(tcx.sim, &request, &gate_shots, has_lockpick, emission);
+            self.append_gate_elements(tcx, &request, &gate_shots, has_lockpick, emission);
         let GateRouteEmission {
             mut seq,
             mut level,
@@ -279,7 +279,7 @@ impl EngineInner {
     /// Append the selected gates in path order, stopping after an intermediate lockpick.
     fn append_gate_elements(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         request: &GateRouteRequest,
         gate_shots: &[GateShot],
         has_lockpick: bool,
@@ -287,6 +287,7 @@ impl EngineInner {
     ) -> GateRouteEmission {
         use crate::element::Command;
         use crate::sequence::{Field, FieldValue, MoveFlags, SequenceElement, SequenceElementData};
+        let sim = tcx.sim;
         let entity_id = request.entity_id;
         let goal = request.goal;
         let initial_flags = request.initial_flags;
@@ -458,10 +459,17 @@ impl EngineInner {
                     destination: shot.entry,
                     layer: 0,
                     sector: None,
-                    // Original gate-approach MOVE uses the plain
-                    // point+victim construction and does not assign a gate;
-                    // only WAIT_FREE_LIFT/PASS_DOOR carry the gate.
-                    gate_id: None,
+                    // Physical stairs need endpoint identity: opposite doors
+                    // can have the same projected entry point. Other approach
+                    // moves retain their ordinary point-only representation.
+                    gate_id: (!shot.is_jump
+                        && !shot.direct
+                        && tcx
+                            .assets
+                            .navigation
+                            .physical_stairs
+                            .contains_key(&u16::from(shot.old_sector)))
+                    .then_some(shot.door_index),
                     line_id: None,
                     element: gate_seek_target,
                     flags: gate_flags,

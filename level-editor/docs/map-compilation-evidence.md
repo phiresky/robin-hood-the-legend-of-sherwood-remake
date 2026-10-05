@@ -4,6 +4,30 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Physical stair gate-route dispatch (2026-10-05)
+
+Gate-route assembly now retains the destination door identity for an approach
+inside a physical stair. Movement dispatch resolves that door's world endpoint
+and emits a physical order through the normal movement-element lifecycle. It
+does not ask the projected pathfinder to repair a source on a collapsed floor.
+Physical collision and current barriers remain checked before each actor step.
+Ordinary point-only approaches retain their existing representation.
+
+A native fixture constructs a normal two-door gate route between the lower and
+upper landings of an edge-on stair. Both directions complete through sequence,
+path and actor ticks, with many intermediate world-height samples proving that
+coincident screen endpoints do not skip the stair. Two further journeys close a
+full-width physical barrier mid-route, verify eight stationary ticks, reopen it
+and reach the opposite landing. The barrier's projected polygon is collapsed too.
+
+Compiler emission is still missing, so this does not resolve or supersede the
+24 failed keep routes. General point/seek requests on physical floors, transitions,
+cross-sector neighbour/crushing behavior and full movement effects remain open.
+Verification: 196 movement tests pass (twelve external-fixture checks ignored),
+as do 33 door-pass tests and 26 patch-effect tests (four ignored). Formatting and
+whitespace checks pass. The updated game build passes:
+`RUSTC_WRAPPER= cargo build -p robin_rs --bin robin -j1`.
+
 ## Physical stair landing binding and complete door passes (2026-10-05)
 
 Loading now binds landing support from each door's current motion area and actual

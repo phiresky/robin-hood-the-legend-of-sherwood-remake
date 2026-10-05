@@ -9,8 +9,10 @@
   loop, including live barriers and hard neighbour collision. Door orders retain
   physical endpoints, and entry/exit callbacks transfer floor ownership without
   inverting the stair projection. The editor does not emit this metadata yet;
-  automatic between-door route creation and full movement effects remain
-  unfinished. Loading binds landing support from the actual motion/receiver
+  general point/seek requests and full movement effects remain unfinished.
+  Normal gate routes retain physical door identities and traverse between
+  landings, including closure/reopening of an in-flight barrier. Loading binds
+  landing support from the actual motion/receiver
   geometry and its own live collision state. Physical movement accounts for
   the actor footprint across adjoining floors while constraining its center to
   the stair; complete passes at edge-on door endpoints have native coverage.

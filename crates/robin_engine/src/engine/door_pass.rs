@@ -1503,7 +1503,7 @@ impl EngineInner {
     }
 
     /// Resolve a placed lift-local endpoint without using projected coordinates.
-    fn physical_stair_door(
+    pub(super) fn physical_stair_door(
         &self,
         assets: &LevelAssets,
         index: crate::gate::DoorIndex,
