@@ -99,6 +99,23 @@ def main():
             for vertex in target.data.vertices:vertex.co=inverse@(target.matrix_world@vertex.co+shift)
             target.data.update()
         (dest/'root-support-placement.json').write_text(json.dumps(dict(method='Translate complete tree along original camera ray to raised archival bank; native projection unchanged.',native_root=[1266,243],support_height=hit.z,world_shift=list(shift),terrain_nodes=sorted(terrain_nodes)),indent=2)+'\n')
+    if args.revision>=3:
+        # Basal support is a surface joint, not a single touching vertex.
+        # Camera-ray movement retains every observed image-space position.
+        minimum=min((obj.matrix_world@v.co).z for v in obj.data.vertices)
+        inverse=obj.matrix_world.inverted();changed=[]
+        for vertex in obj.data.vertices:
+            point=obj.matrix_world@vertex.co;native_y=-point.y*SIN-point.z*COS
+            if point.z>minimum+9 or native_y<236:continue
+            hit=terrain.ray_cast(point+ray*5000,-ray,10000)[0]
+            if hit is None:raise ValueError('Missing support under basal foot')
+            target=hit+ray*.12;distance=(target-point).length
+            if distance>25:raise ValueError(f'Basal support inference too large: {distance}')
+            vertex.co=inverse@target
+            changed.append(dict(vertex=vertex.index,ray_distance=(target-point).dot(ray),native_position=[point.x,native_y]))
+        if len(changed)<12:raise ValueError('Insufficient distributed basal support')
+        obj.data.update()
+        (dest/'basal-support-joint.json').write_text(json.dumps(dict(method='Conform existing low basal foot to the first archival bank surface along original camera rays; source projection unchanged.',moved_vertices=len(changed),maximum_ray_shift=max(abs(v['ray_distance']) for v in changed),support_gap=.12,vertices=changed,limitation='Archival bank remains provisional; actual contact and source silhouette require saved-model review.'),indent=2)+'\n')
     uv=mesh.uv_layers.new(name='Source UV');known=mesh.color_attributes.new(name='Source ownership',type='FLOAT_COLOR',domain='CORNER');mesh.color_attributes.active_color=known
     for loop in mesh.loops:
         p=mesh.vertices[loop.vertex_index].co;uv.data[loop.index].uv=(p.x/1408,1-(-p.y*SIN-p.z*COS)/960);known.data[loop.index].color=(0,1,1,1)

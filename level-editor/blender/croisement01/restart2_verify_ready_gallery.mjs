@@ -4,7 +4,9 @@ import {resolve, join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {chromeEndpoint, socketOpen, evaluate} from '../../app/tests/cdp.mjs';
 
-const out=resolve('level-editor/work/croisement01-refinement/restart2/ready-trees18-20-v2/gallery');
+const out=resolve(process.argv[2]??'level-editor/work/croisement01-refinement/restart2/ready-trees18-20-v2/gallery');
+const artifactStem=process.argv[3]??'ready-trees18-20';
+if(!/^[a-zA-Z0-9_-]+$/.test(artifactStem))throw Error('Unsafe artifact stem');
 const evidence=JSON.parse(await readFile(join(out,'evidence.json'),'utf8'));
 const target=evidence.items.find(item=>item.id==='croisement01-tree-18')??evidence.items[0];
 if(!target)throw Error('No pending asset to exercise review controls');
@@ -65,8 +67,8 @@ try {
     const listener=event=>{const data=JSON.parse(event.data);if(data.id!==request)return;clearTimeout(timer);socket.removeEventListener('message',listener);data.error?reject(data.error):resolve(data.result.data)};
     socket.addEventListener('message',listener);socket.send(JSON.stringify({id:request,method:'Page.captureScreenshot',params:{format:'png'}}));
   });
-  await writeFile(join(out,'../../ready-trees18-20-browser.png'),Buffer.from(screenshot,'base64'));
-  await writeFile(join(out,'../../ready-trees18-20-browser-verification.json'),JSON.stringify(checks,null,2)+'\n');
+  await writeFile(join(out,'../../'+artifactStem+'-browser.png'),Buffer.from(screenshot,'base64'));
+  await writeFile(join(out,'../../'+artifactStem+'-browser-verification.json'),JSON.stringify(checks,null,2)+'\n');
   console.log(JSON.stringify(checks));
 }finally{
   socket?.close();chrome.kill('SIGTERM');await closed;await rm(profile,{recursive:true,force:true});
