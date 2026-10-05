@@ -1912,6 +1912,24 @@ test("light receiver anchors preserve one contour across elevations and move wit
   assert.throws(() => compileAssetGameplay(document, assets, bounds), /invalid light receivers/);
 });
 
+test("light receiver coverage uses the authored contour before integer rounding", () => {
+  const { hut, document, assets } = lightAssetCompilerFixture();
+  const light = hut.gameplay!.lights![0]!;
+  light.polygon = [
+    [10.49, 10.49, 0],
+    [40.49, 10.49, 0],
+    [40.49, 20.49, 0],
+    [10.49, 20.49, 0],
+  ];
+  light.receivers = [[40.25, 15, 0]];
+  hut.gameplay!.lights = [light];
+  const compiled = compileAssetGameplay(document, assets, bounds);
+  assert.equal(compiled.light_sectors!.length, 1);
+  assert.ok(compiled.light_sectors![0]!.polygon.points.flat().every(Number.isInteger));
+  light.receivers = [[40.6, 15, 0]];
+  assert.throws(() => compileAssetGameplay(document, assets, bounds), /outside the light contour/);
+});
+
 test("subdivided light contours share anchor coverage only within their explicit group", () => {
   const { hut, document, assets } = lightAssetCompilerFixture();
   const light = hut.gameplay!.lights![0]!;

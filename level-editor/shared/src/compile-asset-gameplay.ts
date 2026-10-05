@@ -379,6 +379,7 @@ function compileAssetGameplayAttempt(
     id: string;
     receiverGroup?: string;
     polygon: Point[];
+    receiverContour: Point[];
     plane: HeightPlane;
     ambiences: number;
     receivers?: Vec3[];
@@ -539,6 +540,11 @@ function compileAssetGameplayAttempt(
         id: `${placement.id}/${light.id}`,
         ...(light.receiverGroup ? { receiverGroup: `${placement.id}/${light.receiverGroup}` } : {}),
         polygon: ring(points.map(project), `${placement.id}/${light.id}`),
+        receiverContour: ring(
+          points.map(([x, y, z]): Point => [x, y - z]),
+          `${placement.id}/${light.id} receiver coverage`,
+          1e-8,
+        ),
         plane: heightPlane(points.map(([x, y, z]): Vec3 => [x, y - z, z])),
         ambiences: light.ambiences,
         ...(light.receivers
@@ -2260,7 +2266,7 @@ function compileAssetGameplayAttempt(
   for (const light of lights) {
     if (!light.receiverGroup) continue;
     const contours = lightCoverage.get(light.receiverGroup) ?? [];
-    contours.push(light.polygon);
+    contours.push(light.receiverContour, light.polygon);
     lightCoverage.set(light.receiverGroup, contours);
   }
   const compiled: CompiledAssetGeometry = {
@@ -2302,15 +2308,17 @@ function compileAssetGameplayAttempt(
               });
               const layers = new Set(
                 [...(light.receivers ?? []), ...segmentReceivers].flatMap((point, index) => {
-                  // These anchors select a layer and are not serialized as integer
-                  // geometry. Rounding can move a valid interior anchor outside.
+                  // Layer-selection anchors can belong to the authored contour
+                  // or its emitted integer contour. Rounding either side alone
+                  // can reject valid probes, including deformed spline probes.
                   const projected: Point = [point[0], point[1] - point[2]];
                   const coverage = light.receiverGroup
                     ? lightCoverage.get(light.receiverGroup)!
-                    : [light.polygon];
+                    : [light.receiverContour, light.polygon];
                   if (!coverage.some((contour) => inside(projected, contour)))
                     throw new Error(
                       `${light.id}: receiver ${index} lies outside the light contour`,
+                      { cause: { receiver: point, projected, coverage } },
                     );
                   try {
                     return [

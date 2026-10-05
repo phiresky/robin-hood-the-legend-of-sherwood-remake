@@ -4,6 +4,51 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Published keep component seam corrections (2026-10-05)
+
+The composite candidate's eight floor edits, seven door-midpoint edits and three
+full-stair clearances now belong to the reusable central gallery and west tower.
+`refinement/stage-keep-component-seams.mjs` checks source descriptor pins, local
+coordinate frames and baseline surfaces before transferring only reviewed fields.
+Permissions, room membership, appearance and control definitions are retained.
+Review artifacts are in `work/map-compile/keep-component-seams-Dccpop`.
+
+`refinement/check-keep-component-seams.mjs` independently inserts all four keep
+components over authored terrain at rotations 0/37/90/180 and elevations 0/40.
+Placement accounts for each component's rotation pivot and camera foreshortening;
+transformed part coordinates are checked against the composite assembly.
+`work/map-compile/keep-component-placements-ow6STQ` passes **80/80 directed native
+actor routes** and all eight control apply/reset checks. This is initial-state
+walking without complete sprites, not rendered traversal certification.
+
+`refinement/review-keep-stair-seams.mjs` checks pinned models and overlays the
+published/candidate floors with the mesh. Vertical sampling finds stepped treads
+about 6.4–6.5 units apart on stairs 156 and 134, explaining why few complete mesh
+triangles lie within two units of the smooth navigation ramp. Upper-mesh minus
+floor residuals range from -0.05 to 6.41 and -0.16 to 6.34 respectively; stair 154
+has residuals 0.004–0.129. Across the three floors, 763/772, 746/748 and 872/888
+samples intersect the mesh. Uncovered samples lie within 0.238, 0.015 and 0.066
+units of mesh edges. This sampled geometry review does not replace actor rendering.
+
+Publication through `configureAssetGameplay` updates both descriptors and the
+Derby/Wychford scene pins, with backups in
+`work/map-compile/keep-component-seams-publication-20261005`.
+The verification script's `--published` mode reads installed gameplay rather than
+overriding it; all eight descriptors in `keep-component-placements-RcPYq9` exactly
+match the native-tested staged exports. The composite asset itself is not published.
+All ten saved scenes reopen with valid descriptor pins. A fresh full Derby export
+constructs twelve lifts and passes native apply/reset for all five controls.
+Seven other stairs still warn that authored endpoints lack physical floor support
+and retain projected navigation: buildings 078, 081, 196, 012, 038, 265 and 114.
+The keep corrections do not resolve those independent asset seams.
+
+An independent light-probe regression also exposed rounding rejection of a valid
+authored contour anchor. Layer selection now accepts coverage by either the raw
+authored contour or its emitted integer contour; serialized geometry is unchanged.
+The outside-both regression still rejects, and deformed spline probes retain their
+existing behavior. All 197 affected compiler/export/spline tests and focused lint
+pass. Both TypeScript typechecks, formatting and whitespace checks also pass.
+
 ## Rounded landing seams and keep clearance diagnostics (2026-10-05)
 
 Material clipping inserts vertices along straight receiving edges. Rounding those

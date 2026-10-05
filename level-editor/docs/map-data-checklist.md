@@ -102,8 +102,16 @@ collision strips across the stairs. A separate unpublished clearance candidate
 now passes **80/80 directed native actor routes** at 0/37/90/180 degrees and
 elevations 0/40. All eight exports construct native geometry and apply/reset their
 control. These are initial-state actor-loop checks, not complete-sprite or rendered
-verification. Asset geometry/ownership review and migration into reusable component
-definitions still precede publication; the published assets are unchanged.
+verification. The corrections now also pass 80/80 routes with independently placed
+gallery and west-tower components and asset-scoped clearances. Mesh review finds
+stepped treads above the smooth navigation ramps; sampled uncovered edge strips
+are at most 0.24 game units wide. The component corrections are published, with
+Derby/Wychford pins refreshed. All eight fresh component exports exactly match
+the native-tested staged descriptors. The composite keep remains unpublished;
+complete-sprite and rendered verification remain open.
+All ten scenes reopen after publication, and full Derby passes all five control
+apply/reset checks. Seven other Derby stairs still retain projected navigation
+because their authored endpoints lack physical floor support.
 Physical transitions
 now wait at a reached world target until animation completion, or preserve
 unfinished distance in the next movement order. An edge-on actor-loop test
