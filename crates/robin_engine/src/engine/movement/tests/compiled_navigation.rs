@@ -404,7 +404,10 @@ fn tick_walkway_crossing(
     let sequence = engine.t_launch_in_progress(&assets, movement);
     engine.select_sequence_element(owner, Some((sequence, 0)));
     let mut samples = Vec::new();
-    for _ in 0..200 {
+    // The fixture walks about one map unit per tick. Keep a finite allowance
+    // for startup and slower movement when auditing an entire placed bridge.
+    let tick_limit = 200.max(((goal - source).length() * 2.).ceil() as usize + 20);
+    for _ in 0..tick_limit {
         engine.t_tick_actor_owner_envelopes(&assets);
         let position = engine.ent(owner).element_data().position_map();
         assert_actor_receiver(&engine, &assets, owner, handle, layer, position);

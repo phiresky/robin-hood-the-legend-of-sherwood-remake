@@ -4,6 +4,39 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Asset-owned footbridge deck and endpoint traversal (2026-10-05)
+
+The unpublished east-village footbridge candidate now has explicit navigation
+sockets on both short deck edges. `work/map-compile/check-footbridge-endpoints.mjs`
+places this asset above two separately authored terrain landings at 0, 45, 90,
+180 and 270 degrees. Each assembly compiles to one navigation region. Raising
+both landings by 20 units instead leaves both endpoints unmatched in all five
+cases; the compiler does not invent a connection across the height gap.
+
+`work/map-compile/footbridge-endpoints-RVRKim` contains the descriptors, explicit
+routes, candidate gameplay and rejected-landing checks. Native test
+`exported_endpoint_routes_support_actor_crossings` passes 30 directed routes:
+each endpoint and the complete landing-to-landing span, in both directions at
+every rotation. It checks actor receiver and height updates throughout. The
+test helper's finite tick allowance now scales with route length: the previous
+200-tick limit expired during uninterrupted movement along the longer rotated
+span. Runtime movement behavior is unchanged.
+
+Reproduction uses `ROBIN_ASSET_MAP_DIAGNOSTICS` pointing at that artifact directory
+with `cargo test -p robin_engine --lib exported_endpoint_routes_support_actor_crossings
+-j1 -- --ignored --nocapture`. The endpoint audit requires explicit routes and a
+single exported navigation region, rather than relying on sampled eligible seams.
+
+The candidate remains unpublished. Staged original-scene exports in
+`work/map-compile/footbridge-deck-Zak8FY` still report both endpoints unmatched.
+Leicester's previous receiver shares navigation owned by the terrain asset;
+the ownership migration must preserve traversability while making the deck
+movable. Wychford also has a placement mismatch: the deck-end midpoints are at
+66.000008 and 16.000005 units, while other receivers beneath their projected
+positions are at approximately 4.246223 and 7.829813. Merely adding sockets cannot
+make those landings meet. These measurements come from the uncalibrated staged
+descriptor and do not certify the surrounding routes.
+
 ## Sloped asset sockets meeting authored terrain (2026-10-05)
 
 Exterior navigation sockets now compare the receiving terrain plane at both

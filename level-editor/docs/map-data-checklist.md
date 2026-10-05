@@ -46,10 +46,13 @@ across 37 affected receiver pairs passing. Twelve new placements bind and four
 out-of-reach cases reject. Three physical-receiver omissions remain: the footbridge,
 edge bank and watermill. The latest baked ZIP predates this change too.
 
-The east-village footbridge has a modeled sloping deck but no asset-owned walkable
-surface. A staged deck definition passes native construction but creates an
-independent navigation layer with no sampled receiver crossings. It remains
-unpublished pending endpoint connections and navigation-ownership corrections.
+The published east-village footbridge has a modeled sloping deck but no asset-owned
+walkable surface. A staged candidate supplies its deck and both end sockets and
+passes 30 directed native
+actor routes across new terrain landings at five rotations, including complete
+bridge crossings. It rejects raised, mismatched landings. Publication still needs
+Leicester's navigation-ownership migration; Wychford's current bridge ends also
+sit above their terrain receivers and require appropriate landings or placement.
 
 Sloped asset sockets now connect to authored terrain using the shared edge's
 heights, avoiding false rejection from an offset height probe. Matching and

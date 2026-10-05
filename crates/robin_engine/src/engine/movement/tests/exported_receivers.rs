@@ -1,6 +1,54 @@
 use super::*;
 
 #[test]
+#[ignore = "requires single-region assembly exports and endpoint routes via ROBIN_ASSET_MAP_DIAGNOSTICS"]
+fn exported_endpoint_routes_support_actor_crossings() {
+    let directory = std::path::PathBuf::from(std::env::var("ROBIN_ASSET_MAP_DIAGNOSTICS").unwrap());
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(directory.join("diagnostics.json")).unwrap())
+            .unwrap();
+    assert_eq!(manifest["complete"], true);
+    let mut checked = 0;
+    for result in manifest["results"].as_array().unwrap() {
+        let file = result["file"].as_str().unwrap();
+        let bytes = std::fs::read(directory.join(file)).unwrap();
+        let descriptor: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let layers = descriptor["asset_geometry"]["motion_data"]["layers"]
+            .as_array()
+            .unwrap();
+        assert_eq!(
+            layers
+                .iter()
+                .map(|layer| layer.as_array().unwrap().len())
+                .sum::<usize>(),
+            1,
+            "endpoint audit requires a single navigation region: {file}"
+        );
+        assert_eq!(layers[0].as_array().unwrap().len(), 1);
+        let (engine, assets) = compiled_walkway(&bytes);
+        let routes = result["routes"]
+            .as_array()
+            .expect("endpoint routes are required");
+        assert!(!routes.is_empty(), "no endpoint routes in {file}");
+        for route in routes {
+            let point = |i: usize| {
+                MapPoint::new(
+                    route[i][0].as_f64().unwrap() as f32,
+                    route[i][1].as_f64().unwrap() as f32,
+                )
+            };
+            for (source, goal) in [(point(0), point(1)), (point(1), point(0))] {
+                eprintln!("{file}: endpoint crossing {source:?} -> {goal:?}");
+                tick_walkway_crossing(engine.clone(), assets.clone(), 0, 0, source, goal);
+                checked += 1;
+            }
+        }
+    }
+    assert!(checked > 0, "no endpoint crossings tested");
+    eprintln!("{checked} directed endpoint crossings passed");
+}
+
+#[test]
 #[ignore = "requires current exports via ROBIN_ASSET_MAP_DIAGNOSTICS"]
 fn exported_receiving_seams_support_actor_crossings() {
     check_exported_receiver_crossings(false);
