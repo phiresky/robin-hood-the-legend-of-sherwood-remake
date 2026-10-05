@@ -248,20 +248,6 @@
       "id": "croisement01-group-051"
     },
     {
-      "model": "3d-assets/croisement01/croisement01-group-052/model.glb",
-      "model_sha256": "6930db2df740fa82070a0119af4271bafff2b2dc295f80e294e35b03a4d47141",
-      "descriptor": "3d-assets/croisement01/croisement01-group-052/asset.json",
-      "descriptor_sha256": "7b12deaf64387d96518f8d6bcacf0261d7219c71e2edff9f53862e5f3bb009ba",
-      "id": "croisement01-group-052"
-    },
-    {
-      "model": "3d-assets/croisement01/croisement01-group-053/model.glb",
-      "model_sha256": "b880db1430157a0818f3eb61b622e753490b44d578abba0b6f2562dfbdd81f97",
-      "descriptor": "3d-assets/croisement01/croisement01-group-053/asset.json",
-      "descriptor_sha256": "acde3ec099f51fa3cca11d22b82598f05320d8aa5f31765c7ef1d73e9d01e43e",
-      "id": "croisement01-group-053"
-    },
-    {
       "model": "3d-assets/croisement01/croisement01-group-054/model.glb",
       "model_sha256": "26d6ffd2ecc4ff44caa7ee714586e6be81cf40dc861427205f8a08c738c91715",
       "descriptor": "3d-assets/croisement01/croisement01-group-054/asset.json",
@@ -442,6 +428,13 @@
       "descriptor_sha256": "ffcdd7b33142762da3a5e211df6ee0ff6466facb14461c581747480e3986bedf",
       "model": "3d-assets/croisement01-north-state-assembly/model.glb",
       "model_sha256": "4b8d2f7d172aa30325d05bf45245a649c2cb024e0046de05515e46a286ab8a53"
+    },
+    {
+      "id": "croisement01-tree-18",
+      "model": "3d-assets/croisement01/croisement01-tree-18/model.glb",
+      "model_sha256": "9efbf07f44bca210c00634b806037b4916a32b10364871e0cc648dd29d3b4be5",
+      "descriptor": "3d-assets/croisement01/croisement01-tree-18/asset.json",
+      "descriptor_sha256": "0bd9545823b952fbda7c397e1290b4dd4d9fa00b10071739247314a72563b56b"
     }
   ],
   "sceneMetadata": {},
@@ -832,30 +825,6 @@
       ]
     },
     {
-      "id": "group-052",
-      "transform": {
-        "dx": 1078,
-        "dy": 216.8118929406954,
-        "dz": 0,
-        "rot_deg": 0
-      },
-      "assets": [
-        "croisement01-group-052"
-      ]
-    },
-    {
-      "id": "group-053",
-      "transform": {
-        "dx": 1092,
-        "dy": 207.06109352272762,
-        "dz": 0,
-        "rot_deg": 0
-      },
-      "assets": [
-        "croisement01-group-053"
-      ]
-    },
-    {
       "id": "group-054",
       "transform": {
         "dx": 1028,
@@ -1206,6 +1175,18 @@
       },
       "assets": [
         "croisement01-north-state-assembly"
+      ]
+    },
+    {
+      "id": "tree-18-approved",
+      "transform": {
+        "dx": 1076.9720458984375,
+        "dy": 224.14293427197092,
+        "dz": 0.016374804307427902,
+        "rot_deg": 0
+      },
+      "assets": [
+        "croisement01-tree-18"
       ]
     }
   ]
