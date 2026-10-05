@@ -15,6 +15,7 @@ from asset_index import write_asset_index
 WORK = ROOT / 'level-editor/work/croisement03-refinement/restart2'
 STAGE = WORK / 'publication-five-v1'
 LIVE = ROOT / 'level-editor/library'
+BROWSER_RESULT = STAGE / 'browser-retry2/result.json'
 
 
 def write(path, data):
@@ -22,7 +23,7 @@ def write(path, data):
 
 
 def prepare():
-    assert json.loads((STAGE / 'browser/result.json').read_text())['status'] == 'PASS'
+    assert json.loads(BROWSER_RESULT.read_text())['status'] == 'PASS'
     evidence = json.loads((STAGE / 'preparation.json').read_text())
     for path, expected in evidence['live_guards'].items():
         assert sha(Path(path)) == expected, path
@@ -72,7 +73,7 @@ def prepare():
     manifest = dict(status='PREPARED_NOT_APPLIED',stage=str(STAGE),library=str(LIVE),files=records,
         protected_files=[dict(path=p,sha256=h) for p,h in evidence['live_guards'].items()
                          if p != str(LIVE / 'scenes/croisement03.rhlos-map.json') and p != str(LIVE / '3d-assets' / old['descriptor'])],
-        index_generation=dict(target=str(live_index)),browser_check=dict(status='PASS',result=str(STAGE / 'browser/result.json')),
+        index_generation=dict(target=str(live_index)),browser_check=dict(status='PASS',result=str(BROWSER_RESULT)),
         scope=dict(replaced=old['id'],approved=sorted(selected),unrelated_entries_unchanged=len(other(prior['assets']))))
     write(STAGE / 'palette-before.json', prior)
     write(STAGE / 'promotion.json', manifest)
