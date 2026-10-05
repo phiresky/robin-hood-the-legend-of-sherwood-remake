@@ -37,6 +37,14 @@ def main():
         if row['id']=='scoped-fence-clearing':
             row['verified_milestones']=['Root scoped cleared-gap geometry PASS; surviving runs and capped ends reviewed.']
             row['remaining'][0]='Retain scoped root geometry decision and exact outside-domain guards through state integration.'
+        if row['id']in ['south-cart','north-cart']:
+            clip='restart2-state/'+row['id']+'-native-appearance-v1/'
+            current.setdefault(row['id'],[]).extend(clip+name for name in ['manifest.json','browser-verification.json','self-review.json'])
+            row['verified_milestones']=['All separately timed target phases exported and browser verified at 25 Hz with exact source alpha and RGB; terminal clamp retained.','Native target identities, independent starts, source positions, sound-event bindings and metadata/background associations preserved.']
+            row['motion_distinction']='Planar target artwork is source-supported. Mobile horse-team actors and recovered physical cart motion remain separate requirements.'
+            if row['id']=='south-cart':
+                current[row['id']].append('restart2-state/south-cart-wheel-pair-v2/full-context-correction.json')
+                row['remaining'][1]='Build a coherent covered/applied cart body and axle assembly. Isolated wheel solids exist but ground placement was rejected after full native context review.'
         if row['id']=='arrow-interaction-markers':
             row['verified_milestones']=['All 45 native mission/script identities and actions 0/210/211 exported with exact raw artwork and separate reserved shadow masks.','Body-only standard GLB loop: all 20 phases, 60-tick cycle and wrap browser verified; companion archive roundtrip exact.']
             row['remaining']=['Implement ambient destination-darkening composition for the preserved 1060 reserved shadow pixels across the 20 phases.','Integrate mission-scoped instances, original script identities and action visibility; validate full-scene presentation.']
@@ -51,7 +59,7 @@ def main():
             row['evidence']=[e for e in row['evidence']if e['path']!=name]
             row['evidence'].append(dict(path=name,sha256=sha(path)))
         assert row['status']=='incomplete'
-    result['integration_plan']=dict(path='restart2-state/editor-state-integration-plan-v1.json',sha256=sha(OUT/'restart2-state/editor-state-integration-plan-v1.json'))
+    result['integration_plan']=dict(path='restart2-state/editor-state-integration-plan-v2.json',sha256=sha(OUT/'restart2-state/editor-state-integration-plan-v2.json'))
     result['rock_edge_diagnostic']=[dict(path=name,sha256=sha(OUT/name))for name in ['restart2-state/rock-full-context-v1/manifest.json','restart2-state/rock-rim-candidate-v1/experiment.json']]
     result['status']='Finite scoped state checklist '+args.version+'; reviewed endpoint geometry and native appearance export milestones are distinct from completed state integration'
     dest=OUT/'restart2-state'/('state-completion-checklist-'+args.version);dest.mkdir(exist_ok=False)
