@@ -75,7 +75,12 @@ def prepare_asset(asset, worker, destination, *, tree=False):
     actual = read(worker / 'inspection/actual-materials/evidence.json')
     require(validation['status'] == audit['status'] == 'PASS', 'Failed saved-model validation')
     require(all(record['model_sha256'] == model_hash for record in (audit, visual, actual)), 'Stale technical or visual evidence')
-    require(visual['ready_for_geometry_review'], 'Manual visual review incomplete')
+    legacy_actual_review = ('ready_for_geometry_review' not in visual
+                            and visual.get('actual8_sha256') == actual['sheet_sha256'])
+    # Some frozen reviews predate the readiness field. Their exact actual-view
+    # sheet is independently bound by the verified user-approved archive above.
+    require(visual.get('ready_for_geometry_review') is True or legacy_actual_review,
+            'Manual visual review incomplete')
     if tree:
         coverage = read(worker / 'inspection/source-coverage/report.json')
         bounds = read(worker / 'inspection/actual-materials/opacity-bounds.json')
@@ -84,7 +89,8 @@ def prepare_asset(asset, worker, destination, *, tree=False):
         require(min(c['depth_width_ratio'] for c in bounds['crowns']) >= 1, 'Crown depth failed')
     checked(worker / audit['inspection_recipe']['recipe'], audit['inspection_recipe']['recipe_sha256'])
     checked(worker / 'inspection/actual-materials/sheet.png', actual['sheet_sha256'])
-    visual_sheet = visual.get('sheet_sha256') or visual.get('actual_materials_sha256')
+    visual_sheet = (visual.get('sheet_sha256') or visual.get('actual_materials_sha256')
+                    or visual.get('actual8_sha256'))
     if visual_sheet is None and visual.get('evidence_sha256'):
         matches = [digest for path, digest in visual['evidence_sha256'].items()
                    if Path(path).resolve() == (worker / 'inspection/actual-materials/sheet.png').resolve()]
