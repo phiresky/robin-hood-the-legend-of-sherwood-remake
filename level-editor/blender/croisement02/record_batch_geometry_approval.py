@@ -5,7 +5,7 @@ from catalog import OUT
 sys.path.insert(0,str(Path(__file__).resolve().parents[3]/'level-editor/refinement/blender'))
 from evidence_io import sha,write_json
 
-def main(receipt_path):
+def main(receipt_path, assets=None):
     receipt=json.loads(receipt_path.read_text())
     if receipt['decision']!='approved' or receipt['scope']!='all displayed cards' or not receipt['exact_user_text'].strip():
         raise ValueError('Explicit approval of the displayed batch required')
@@ -13,6 +13,10 @@ def main(receipt_path):
     if sha(evidence)!=receipt['batch_evidence_sha256']:raise ValueError('Approved batch changed')
     data=json.loads(evidence.read_text())
     members=[m for c in data['cards'] for m in c['members'] if m['scope']=='geometry' and m['asset_id'].startswith('croisement02-')]
+    if assets:
+        wanted=set(assets)
+        members=[m for m in members if m['asset_id'] in wanted]
+        if {m['asset_id'] for m in members}!=wanted:raise ValueError('Requested asset absent from approved geometry scope')
     if not members:raise ValueError('No Croisement02 geometry decisions in approved batch')
     # Verify every scoped model and displayed resource before the first ledger write.
     for m in members:
@@ -41,4 +45,4 @@ def main(receipt_path):
     print('Archived exact geometry decisions:',len(records))
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('receipt',type=Path);main(parser.parse_args().receipt.resolve())
+    parser=argparse.ArgumentParser();parser.add_argument('receipt',type=Path);parser.add_argument('--asset',action='append');args=parser.parse_args();main(args.receipt.resolve(),args.asset)
