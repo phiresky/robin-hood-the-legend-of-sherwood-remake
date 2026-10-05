@@ -9,6 +9,13 @@ import { validateAssetGameplay } from "../shared/src/asset-gameplay.ts";
 // placed actor checks; this never repairs a scene silently during compilation.
 const [asset, ...arguments_] = process.argv.slice(2);
 const localLandingEdges = arguments_.includes("--local-landing-edges");
+const draftIssues = arguments_
+  .filter((value) => value.startsWith("--draft-issue="))
+  .map((value) => value.slice(14));
+assert.ok(
+  draftIssues.every((issue) => issue.trim().length > 0),
+  "Draft issues cannot be empty",
+);
 const external = new Set(
   arguments_.filter((value) => value.startsWith("--external=")).map((value) => value.slice(11)),
 );
@@ -27,6 +34,7 @@ const ids = arguments_.filter(
   (value) =>
     !value.startsWith("--external=") &&
     value !== "--local-landing-edges" &&
+    !value.startsWith("--draft-issue=") &&
     !value.startsWith("--floor-shift-limit=") &&
     !value.startsWith("--landing-shift-limit="),
 );
@@ -123,6 +131,7 @@ for (const id of ids) {
       high = Math.max(...seam.map(sideways));
     const oldLanding = structuredClone(landing);
     const vertices = new Set();
+    const matchingEdges = new Set();
     // A receiving edge can extend beyond both sides of a narrower stair.
     // Adjust the complete near-coplanar edge, not only vertices inside its span.
     landing.polygon.forEach((point, i) => {
@@ -135,18 +144,28 @@ for (const id of ids) {
         Math.min(high, Math.max(sideways(point), sideways(next))) >
           Math.max(low, Math.min(sideways(point), sideways(next)))
       ) {
+        matchingEdges.add(i);
         vertices.add(i);
         vertices.add(j);
       }
     });
     assert.ok(vertices.size >= 2, `${door.id}: no matching landing edge`);
+    const middleSide = sideways(door.middle);
+    assert.ok(
+      [...matchingEdges].some((i) => {
+        const a = sideways(oldLanding.polygon[i]);
+        const b = sideways(oldLanding.polygon[(i + 1) % oldLanding.polygon.length]);
+        return middleSide >= Math.min(a, b) - 1e-6 && middleSide <= Math.max(a, b) + 1e-6;
+      }),
+      `${door.id}: matching landing edges miss the door midpoint; review the landing shift limit`,
+    );
     if (localLandingEdges) {
       // Keep the rest of a longer receiving edge unchanged. Only its overlap
       // with the physical stair needs to meet the exact seam.
       landing.polygon = oldLanding.polygon.flatMap((point, i) => {
         const j = (i + 1) % oldLanding.polygon.length;
         const next = oldLanding.polygon[j];
-        if (!vertices.has(i) || !vertices.has(j)) return [point];
+        if (!matchingEdges.has(i)) return [point];
         const start = sideways(point),
           end = sideways(next);
         const delta = end - start;
@@ -192,6 +211,10 @@ for (const id of ids) {
   changes.push({ clearance: clearance.id, after: clearance });
 }
 assert.deepEqual(usedExternal, external, "Unused external endpoint selection");
+if (draftIssues.length) {
+  gameplay.draft ??= { issues: [] };
+  gameplay.draft.issues = [...new Set([...gameplay.draft.issues, ...draftIssues])];
+}
 validateAssetGameplay(gameplay, descriptor);
 const output = await fs.mkdtemp("work/map-compile/local-stair-seams-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify([{ asset, descriptorSha256, gameplay }]));

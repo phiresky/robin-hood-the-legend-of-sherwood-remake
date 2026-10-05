@@ -4,6 +4,46 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Published east-moat stair; remaining rotated ladder limitation (2026-10-06)
+
+The remaining upper stair failure came from authoring edge selection. The
+default two-unit landing shift limit admitted a short edge near a corner but
+excluded the edge across the doorway: its far endpoint needs 2.055524 units.
+The tool now requires a selected edge to span the door midpoint, and local
+adjustment tracks selected edges explicitly instead of inferring them from
+selected vertices. This also avoids treating duplicate/perpendicular neighbouring
+edges as seam edges. The previous invocation now rejects with a clear midpoint
+error; an explicit reviewed `--landing-shift-limit=2.1` generates the correction.
+
+Candidate `local-stair-seams-bLq2oG` passes **16/16 native stair routes** at
+0/37/90/180 degrees and elevations 0/40 (`local-stair-placements-NnbCXs`). Full
+Leicester candidate `east-moat-tower-level-0FqnhN` passes **16/16 stair routes**,
+**22/22 complete-animation ladder/wall routes** and **12 control apply/reset
+checks**. No clearance experiment is retained.
+
+Mesh review finds 309/713 upper-flight samples with its own mesh. All 404 missing
+samples have both feet and heads occluded at the four tested rotations. Lower
+landing seams have full assembly support; changed upper edges have maximum
+uncovered distance 0.386149 units. These sampled checks do not replace rendered
+character integration.
+
+The isolated tower's ladder passes **12/16 complete-animation routes**, failing
+both directions at 180 degrees at both elevations. Baseline fixture
+`local-stair-placements-mu8NKO`, from `east-moat-baseline-mG49fq`, has the same
+four failures. The change does not certify this rotation; the published draft
+explicitly warns about it. Climb audits use the shared RobinTown animation bank,
+not source-level navigation data.
+
+Final stage `local-stair-seams-jkyjcj` differs from the tested candidate only by
+two explicit draft issues, authored with `--draft-issue`. Publication backup is
+`east-moat-stair-publication-20261006`. Published placement batch
+`local-stair-placements-3gX5jX` and fresh Leicester exports match the tested
+geometry exactly after excluding those two added warnings. All ten scenes reopen;
+Wychford updates an unused reference and has no east-moat tower placement.
+Local-anchor audit `stair-anchor-support-MBkpRk` reports **38/53 unsupported stair
+definitions**, with Leicester 4/8. Focused authoring-tool lint/format checks pass.
+New baked ZIPs, alternate-state visual checks and the rotated ladder remain open.
+
 ## Preserve obstacle contours when rounding closes a notch (2026-10-06)
 
 Stair landing obstacles can now recover exact contours even when grid

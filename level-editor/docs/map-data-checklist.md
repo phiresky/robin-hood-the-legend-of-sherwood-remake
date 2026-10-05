@@ -112,8 +112,8 @@ complete-sprite and rendered verification remain open.
 All ten scenes reopen after publication, and full Derby passes all five control
 apply/reset checks. All ten Derby stair definitions now pass local floor-anchor
 support checks after the upper-west publication below.
-A library-wide local-anchor audit finds unsupported anchors in 39 of 53 authored stair
-definitions: Derby 0/10, Leicester 5/8, Lincoln 6/6, Nottingham 11/12,
+A library-wide local-anchor audit finds unsupported anchors in 38 of 53 authored stair
+definitions: Derby 0/10, Leicester 4/8, Lincoln 6/6, Nottingham 11/12,
 Sherwood 1/1 and York 16/16. All audited floors are planar. This checks local
 definitions, not placed connectivity or actual route failures; corrections and
 moved/rotated native traversal checks remain necessary across these assets.
@@ -146,14 +146,17 @@ short connecting edges extend at most 0.156 units beyond mesh. The terrace edge
 has a maximum 0.268-unit discrepancy. Both drafts retain rendered-integration
 warnings. Published descriptors equal the tested candidates and all ten scenes
 reopen; the isolated turret/terrace pair contains no switches.
-The next east-moat tower candidate remains unpublished: all sixteen moved stair
-routes stall against landing collision, and full Leicester falls to 14/16 routes.
-Movement-grid normalization closes an open notch into a new obstacle hole.
-The compiler now recovers matching exact contours from the original blocked
-coverage without changing the integer obstacle. The lower entrance now completes
-its door handoff, but all sixteen complete routes still fail toward or at the
-upper landing. Clearance experiments did not repair it and were removed. The
-remaining landing collision and incomplete stair mesh need further review.
+The east-moat tower stair is now published after 16/16 moved routes and another
+complete Leicester check: 16/16 stair routes, 22/22 ladder/wall routes and twelve
+control checks pass. Its upper landing required a reviewed 2.056-unit edge
+adjustment; the authoring tool now rejects nearby edges that miss the doorway
+and adjusts only edges actually selected. Exact obstacle recovery also preserves
+the lower landing's rounded notch. Fresh exports match the tested geometry and
+all ten scenes reopen. The stair mesh remains incomplete, with missing samples
+occluded at all four reviewed rotations; landing discrepancies reach 0.387 units.
+The isolated ladder passes 12/16 routes: four failures at 180 degrees also occur
+in the old published definition. Both visual and rotated-ladder limitations
+remain explicit draft warnings and are not certified as parity.
 The east hall's upper stair now has published floor/landing seam corrections and
 passes 48 directed routes across four rotations and two elevations. Full Derby
 passes 28/28 stair routes and all five control checks with this correction.
