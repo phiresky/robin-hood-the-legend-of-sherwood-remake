@@ -48,3 +48,16 @@ def expose():
     print(target)
 
 if __name__=='__main__':expose()
+
+
+def geometry_review_ready(out,asset,model_sha256):
+    """Read supplemental current-neighbor readiness without editing frozen cap evidence."""
+    if asset!=ASSET:return None
+    path=out/'restart2-fence/fence95-root-ready-v1.json'
+    if not path.exists():return None
+    receipt=json.loads(path.read_text())
+    if receipt['model_sha256']!=model_sha256:raise ValueError('Fence95 supplemental geometry review is stale')
+    if not receipt['status'].startswith('PASS') or not receipt['ready_for_geometry_review']:return None
+    for name,digest in receipt['files'].items():
+        if sha(Path(name))!=digest:raise ValueError('Fence95 supplemental evidence changed: '+name)
+    return receipt
