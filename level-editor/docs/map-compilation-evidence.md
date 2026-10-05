@@ -4,6 +4,31 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Reopening barriers during climbing (2026-10-05)
+
+All five native `changing_climb` tests pass, including 72 reopening cases across
+ladder and both wall-top passage types, four rotations and both directions.
+The test closes the barrier after the actor enters the climb area and starts
+its movement instruction, then reopens through ordinary control activation.
+Reopening before path failure completes the route. Reopening while a failed
+request waits, or after its timeout, does not automatically restart that route.
+Failed requests retain the existing 100-frame timeout; forced reset deliberately
+does not notify actors to replan. These checks use complete character animation
+data but do not verify rendered traversal or every possible placement.
+
+## Library-wide missing-definition audit (2026-10-05)
+
+The saved-scene audit does not cover every asset available for new maps.
+`work/map-compile/library-missing-gameplay-20261005.json` records the library
+index hash, descriptor hashes, part counts and physical-part counts for all
+35 missing definitions among 1,288 indexed assets. All 35 are absent from both
+their index entries and descriptors, rather than merely being stale index data.
+They include fourteen Croisement groups, the composite Derby keep, Leicester's
+older ground background, five Nottingham entries, an imported wood bridge and
+thirteen York entries. None is placed in the ten saved scenes. These require
+individual authoring/ownership review; buildings and bridges cannot receive
+empty scenery declarations merely to remove export warnings.
+
 ## Published Lincoln static-prop definitions (2026-10-05)
 
 Five recently added scenery assets had no gameplay declaration: the barn tool,

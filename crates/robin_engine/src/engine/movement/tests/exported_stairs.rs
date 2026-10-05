@@ -575,6 +575,162 @@ fn changing_climb_barriers_stop_an_actor_already_climbing() {
 
 #[test]
 #[ignore = "requires ROBIN_CLIMB_RHS"]
+fn changing_climb_barriers_reopen_before_or_after_path_failure() {
+    let sprite = complete_climb_sprite();
+    let fixtures: Vec<serde_json::Value> = serde_json::from_slice(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/asset-changing-climbs.levels.json"
+    )))
+    .unwrap();
+    let mut checked = 0;
+    for hold_ticks in [0, 8, 120] {
+        for (index, fixture) in fixtures.iter().enumerate() {
+            let (engine, assets) = compiled_walkway(&serde_json::to_vec(fixture).unwrap());
+            for (entrance, exit) in [(0, 1), (1, 0)] {
+                let mut applied = false;
+                let mut reopened = false;
+                let mut stationary = 0;
+                let mut previous = None;
+                let mut route = None;
+                let sim = crate::sim_rng::test_context();
+                let patch = crate::patch::PatchIndex::new(0).unwrap();
+                let goal = engine.script_domains.interactables.doors[exit].point_in;
+                let lift_sector =
+                    engine.script_domains.interactables.doors[entrance].sector_in_index;
+                let result = walk_exported_lift_with_tick(
+                    engine.clone(),
+                    assets.clone(),
+                    entrance,
+                    exit,
+                    Some(&sprite),
+                    |engine, assets, owner| {
+                        if reopened {
+                            return;
+                        }
+                        let element = engine.ent(owner).element_data();
+                        if !matches!(element.posture(), Posture::OnLadder | Posture::OnWall)
+                            || element.sector().and_then(|sector| sector.arena_index())
+                                != lift_sector
+                        {
+                            return;
+                        }
+                        let position = element.position_map();
+                        let layer = element.layer();
+                        if !applied {
+                            let Some((sequence, element_index)) =
+                                engine.entities().current_element_for_actor(owner)
+                            else {
+                                return;
+                            };
+                            if engine
+                                .seq()
+                                .get_element(sequence, element_index)
+                                .unwrap()
+                                .command
+                                != crate::element::Command::MoveOk
+                            {
+                                return;
+                            }
+                            if crate::engine::ai::selected_actor_is_passing_door(
+                                &engine.entities(),
+                                &engine.seq(),
+                                owner,
+                            ) {
+                                return;
+                            }
+                            assert!(
+                                engine
+                                    .world
+                                    .fast_grid
+                                    .is_reachable_thin(position, goal, layer),
+                                "open climb before closure, fixture={index}, entrance={entrance}, hold={hold_ticks}"
+                            );
+                            route = Some(sequence);
+                            engine.apply_patch(TickCtx::new(&sim, assets), patch);
+                            applied = true;
+                        }
+                        assert!(
+                            !engine
+                                .world
+                                .fast_grid
+                                .is_reachable_thin(position, goal, layer),
+                            "closed barrier must remain ahead, fixture={index}, entrance={entrance}"
+                        );
+                        stationary = if previous == Some(position) {
+                            stationary + 1
+                        } else {
+                            0
+                        };
+                        previous = Some(position);
+                        if stationary == hold_ticks {
+                            assert_eq!(
+                                engine
+                                    .orders
+                                    .failed_path_requests
+                                    .iter()
+                                    .any(|request| request.owner == owner),
+                                hold_ticks == 8,
+                                "failed request before reopening, fixture={index}, entrance={entrance}, hold={hold_ticks}"
+                            );
+                            let aborted = engine
+                                .seq()
+                                .get_sequence(route.unwrap())
+                                .unwrap()
+                                .elements
+                                .iter()
+                                .any(|element| {
+                                    element.state == crate::sequence::SequenceState::Impossible
+                                });
+                            assert_eq!(
+                                aborted,
+                                hold_ticks == 120,
+                                "route state before reopening, fixture={index}, entrance={entrance}, hold={hold_ticks}"
+                            );
+                            // Reopening is a normal activation. A forced reset restores
+                            // geometry without notifying actors to replan their routes.
+                            engine.apply_patch(TickCtx::new(&sim, assets), patch);
+                            assert!(!engine.script_domains.interactables.patches[0].applied);
+                            assert!(
+                                engine
+                                    .world
+                                    .fast_grid
+                                    .is_reachable_thin(position, goal, layer),
+                                "open climb after toggle, fixture={index}, entrance={entrance}, hold={hold_ticks}"
+                            );
+                            reopened = true;
+                        }
+                    },
+                );
+                assert!(
+                    applied && reopened,
+                    "actor must wait before reopening, fixture={index}, entrance={entrance}: {result:?}"
+                );
+                if hold_ticks == 0 {
+                    assert_eq!(
+                        result,
+                        Ok(true),
+                        "reopened before path failure, fixture={index}, entrance={entrance}"
+                    );
+                } else {
+                    assert!(
+                        result
+                            .as_ref()
+                            .is_err_and(|error| error.starts_with("lift route stalled")),
+                        "a failed request must not redispatch when geometry opens, fixture={index}, entrance={entrance}, hold={hold_ticks}: {result:?}"
+                    );
+                }
+                checked += 1;
+            }
+        }
+    }
+    assert_eq!(checked, 72);
+    eprintln!(
+        "{checked} mid-climb reopening checks passed: early reopening completes; failed requests retain their timeout"
+    );
+}
+
+#[test]
+#[ignore = "requires ROBIN_CLIMB_RHS"]
 fn changing_climb_barrier_near_entrance_blocks_actor_approach() {
     let sprite = complete_climb_sprite();
     let fixtures: Vec<serde_json::Value> = serde_json::from_slice(include_bytes!(concat!(

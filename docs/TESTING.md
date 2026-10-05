@@ -364,6 +364,13 @@ to additionally check complete actor routes and a barrier near the entrance.
 The included `changing_climb_barriers_stop_an_actor_already_climbing` test
 applies the barrier after the actor has climbing posture and occupies the lift
 sector, verifies that the barrier is ahead, and requires traversal to stall.
+`changing_climb_barriers_reopen_before_or_after_path_failure` tests normal
+activation again to reopen the barrier during that route. It distinguishes
+reopening before path failure, during the failed request's waiting period and
+after timeout. It checks the failed-request list and sequence state before the
+toggle. Early reopening completes the existing route; failed requests retain
+their timeout and do not silently redispatch. Forced reset is a different API:
+it restores geometry without notifying actors to replan.
 `compiled_climb_barriers_remain_independent_after_copying` uses the same sprite
 and verifies independent apply/reset on two copies for each climb type. Its
 `asset-changing-climbs-copied.levels.json` fixtures are checked against fresh editor

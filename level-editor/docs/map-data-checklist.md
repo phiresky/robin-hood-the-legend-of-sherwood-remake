@@ -11,6 +11,13 @@ not certification of every library asset or gameplay case. Best-effort exports
 warn about omissions and preserve initial states where possible; warnings are
 not evidence that an omitted feature works.
 
+The library-wide audit still finds 35 of 1,288 indexed assets without gameplay
+definitions, including the composite Derby keep, several Nottingham buildings,
+York market props and the imported wood bridge. None is placed in the ten saved
+scenes, but placing one in a new map still omits its gameplay with a warning.
+These need individual ownership/geometry review; empty scenery definitions would
+be incorrect for buildings and bridges.
+
 The watermill now publishes asset-owned body collision and a platform clearance
 projected after placement onto its foundation navigation plane. Twenty-four new
 placements at eight rotations and three elevations retain all three entrances,
@@ -107,7 +114,7 @@ this does not repair Wychford's already-elevated approach automatically.
 | Projection/elevation receivers | Derive height planes and crossing boundaries from placed receiving surfaces. | Fractional seams, slopes, copies and sampled actor crossings tested; complete placement coverage remains open. |
 | Doors, gates and locks | Transform endpoints; resolve current neighbours and local initial/alternate permissions. | Compiler/runtime fixtures pass; incomplete assets still warn. |
 | Building interiors | Connect entrances in each asset-local room automatically; use editor links or passage sockets between assets. | Separate, joined, moved, rotated and copied assemblies and editable ZIP round trips tested. |
-| Stairs, ladders and climbable walls | Assemble local traversal surfaces/sockets and endpoints; derive independent layers and receiving approaches. | Changing stair barriers pass native rotation/copy checks; complete-animation climbing passes 2,166 directed routes. Changing ladder/wall barriers pass 84 actor/state checks covering four rotations, both wall-top door types and a barrier near the entrance, plus native collision/pathfinder checks. Independent copied controls pass 48 further checks; closing a barrier during climbing passes 24 directed checks. Broader placements, reopening during an existing movement sequence and rendered traversal remain open. |
+| Stairs, ladders and climbable walls | Assemble local traversal surfaces/sockets and endpoints; derive independent layers and receiving approaches. | Changing stair barriers pass native rotation/copy checks; complete-animation climbing passes 2,166 directed routes. Changing ladder/wall barriers pass 84 actor/state checks covering four rotations, both wall-top door types and a barrier near the entrance, plus native collision/pathfinder checks. Independent copied controls pass 48 further checks; closing a barrier during climbing passes 24 directed checks. Another 72 checks cover reopening during an existing climb: reopening before path failure completes the route; failed requests retain their timeout without automatic retry. Broader placements and rendered traversal remain open. |
 | Jump zones and paired edges | Derive from marked surfaces or transform authored edges; find current destinations and trim blocked approaches/flights. | Moved/cross-asset destinations, skills and nearby state changes tested; broader authoring/traversal coverage remains open. |
 | Surface materials | Transform local material regions and rebuild ground/obstacle/receiver links. | Compiler/native lookup fixtures and published definitions exist; complete geometry coverage remains open. |
 | Lighting and shadow regions | Transform local contours and bind to current receiving planes/layers. | Published definitions and focused native queries tested; complete placement/query coverage remains open. |
