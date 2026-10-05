@@ -85,6 +85,11 @@ def prepare_asset(asset, worker, destination, *, tree=False):
     checked(worker / audit['inspection_recipe']['recipe'], audit['inspection_recipe']['recipe_sha256'])
     checked(worker / 'inspection/actual-materials/sheet.png', actual['sheet_sha256'])
     visual_sheet = visual.get('sheet_sha256') or visual.get('actual_materials_sha256')
+    if visual_sheet is None and visual.get('evidence_sha256'):
+        matches = [digest for path, digest in visual['evidence_sha256'].items()
+                   if Path(path).resolve() == (worker / 'inspection/actual-materials/sheet.png').resolve()]
+        require(len(matches) == 1, 'Visual review must bind one exact actual-material sheet')
+        visual_sheet = matches[0]
     if visual_sheet is None:
         visual_sheet = visual['reviewed_images'][f'assets/{asset}/inspection/actual-materials/sheet.png']
     checked(worker / 'inspection/actual-materials/sheet.png', visual_sheet)
