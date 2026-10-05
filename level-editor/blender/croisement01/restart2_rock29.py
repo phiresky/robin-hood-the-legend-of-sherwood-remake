@@ -19,20 +19,31 @@ from evidence_io import sha
 from render_slots import acquire
 
 
-def stone(contour,ground,depth):
+def stone(contour,ground,depth,relief=False):
+    if relief:
+        contour=[(a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t) for a,b in zip(contour,contour[1:]+contour[:1]) for t in (0,.25,.5,.75)]
     center=Vector((sum(x for x,y in contour)/len(contour),sum(y for x,y in contour)/len(contour)))
+    fractions=(.025,.12,.24,.38,.52,.66,.8,.9,1) if relief else (.06,.35,.7,1)
+    rings=len(fractions)
     bottom=max(y for x,y in contour);vertices=[];faces=[];n=len(contour)
     # Both hemispheres retain genuine depth. The external native contour is
     # the common equator, with a flattened hidden underside on the bank.
     for side in (1,-1):
-        for fraction in (.06,.35,.7,1):
+        for fraction in fractions:
             for x,y in contour:
                 sx=center.x+(x-center.x)*fraction;sy=center.y+(y-center.y)*fraction
                 z=max(ground+.04,ground+(bottom-sy)*.74+side*depth*math.sqrt(max(0,1-fraction*fraction))*.5*SIN)
-                vertices.append((sx,-(sy+z*COS)/SIN,z))
-        start=(0 if side==1 else 4*n)
+                point=Vector((sx,-(sy+z*COS)/SIN,z))
+                if relief and side==1:
+                    def bump(cx,cy,rx,ry):return math.exp(-((sx-cx)/rx)**2-((sy-cy)/ry)**2)
+                    inset=-8*bump(465,461,5.7,7.5)-3*bump(462,471,4,6)
+                    ridge=3*bump(461,454,7,3.5)+2*bump(456,463,3,8)
+                    lobe=5*bump(470,470,4.2,7)
+                    point+=Vector((0,-COS,SIN))*(inset+ridge+lobe)*min(1,(1-fraction)*6)
+                vertices.append(point)
+        start=(0 if side==1 else rings*n)
         faces.append(tuple(start+i for i in range(n)))
-        for ring in range(3):
+        for ring in range(rings-1):
             for j in range(n):faces.append((start+ring*n+j,start+ring*n+(j+1)%n,start+(ring+1)*n+(j+1)%n,start+(ring+1)*n+j))
     # Weld the equator shared by the front and rear hemispheres.
     mesh=bpy.data.meshes.new('Rounded angular source stone');mesh.from_pydata(vertices,[],faces);mesh.update()
@@ -60,7 +71,7 @@ def main():
         rear=[(476,449),(478,443),(482,439),(487,436),(491,434),(497,434),(500,437),(499,445),(497,452),(493,460),(485,467),(479,462),(475,455)]
     vertices=[];faces=[]
     for contour,depth in ((rear,34),(front,29)):
-        mesh=stone(contour,ground,depth);offset=len(vertices);vertices.extend(v.co.copy() for v in mesh.vertices);faces.extend(tuple(offset+i for i in f.vertices) for f in mesh.polygons)
+        mesh=stone(contour,ground,depth,relief=args.revision>=4 and contour is front);offset=len(vertices);vertices.extend(v.co.copy() for v in mesh.vertices);faces.extend(tuple(offset+i for i in f.vertices) for f in mesh.polygons)
     mesh=bpy.data.meshes.new('Two separate closed bank stones');mesh.from_pydata(vertices,[],faces);mesh.update();assign_mesh(obj,mesh)
     conform=[]
     if args.revision>=2:
@@ -92,7 +103,7 @@ def main():
     worker=dest/'assets'/asset
     prepare(worker,asset_id=asset,scene_name='Croisement01 Refinement',collection_name=working.name,source_path=OUT/'baseline/covered.png',grouping_manifest=catalog_path,inventory_path=dest/'inventory/inventory.json',review_path=review,source_mask_manifest=masks,width=256,height=256,framing_padding=1.3,lighting=dict(toward_sun=[-.6,-.4,.7],ambient=.22,diffuse=.78,shadow_epsilon=.05))
     validate(worker);modified(worker);inspection=worker/'inspection';inspection.mkdir(exist_ok=True)
-    (inspection/'construction.json').write_text(json.dumps(dict(status='private candidate; self-review pending',model_sha256=sha(worker/'model.blend'),native_mask=29,native_part=18,front_trace=front,rear_trace=rear,bank_height=ground,limitations=['Rear stone depth and hidden surfaces are inferred.','Native source contours have one-to-three-pixel tracing uncertainty.','Two closed components are intentional separate stones; native source ownership remains one obstacle.']),indent=2)+'\n')
+    (inspection/'construction.json').write_text(json.dumps(dict(status='private candidate; self-review pending',model_sha256=sha(worker/'model.blend'),native_mask=29,native_part=18,front_trace=front,rear_trace=rear,bank_height=ground,front_relief='Shallow physical pocket behind hooked upper-left ridge and protruding small front lobe; no through-hole.' if args.revision>=4 else 'Rounded initial volume',limitations=['Rear stone depth and hidden surfaces are inferred.','Native source contours have one-to-three-pixel tracing uncertainty.','Two closed components are intentional separate stones; native source ownership remains one obstacle.']),indent=2)+'\n')
     import render_candidate
     sys.argv=['render_candidate','--',str(worker)];render_candidate.main()
 
