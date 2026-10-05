@@ -37,6 +37,9 @@ def bank_workspace(asset):
 
 
 def scenery_workspace(asset):
+    from prop_completion_candidates import selected_workspace as prop_workspace
+    completed_prop=prop_workspace(OUT,asset,reviewed_catalog())
+    if completed_prop is not None:return completed_prop
     from rock_candidates import selected_workspace as rock_workspace
     rock=rock_workspace(OUT,asset,reviewed_catalog())
     if rock is not None:return rock

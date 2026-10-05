@@ -14,7 +14,7 @@ from refinement_workspace import validate
 from render_slots import acquire,release
 
 
-def audit(workspace):
+def audit(workspace, *, inferred_constant_materials=()):
     validate(workspace)
     objects=[o for o in bpy.data.collections['Croisement02 Working'].all_objects if o.type=='MESH' and o.get('asset_group')==workspace.name]
     records=[]
@@ -25,6 +25,13 @@ def audit(workspace):
         for index in used:
             mat=obj.data.materials[index]
             images=[n.image for n in mat.node_tree.nodes if n.type=='TEX_IMAGE' and n.image]
+            if not images and mat.name in inferred_constant_materials:
+                principled=mat.node_tree.nodes.get('Principled BSDF')
+                if principled is None or any(socket.is_linked for socket in principled.inputs):
+                    raise ValueError('Declared constant material is not constant: '+mat.name)
+                materials.append(dict(name=mat.name,images=[],source_role='Explicitly inferred constant hidden surface',
+                                      base_color=list(principled.inputs['Base Color'].default_value)))
+                continue
             if not images or not all(i.packed_file for i in images):raise ValueError('Unpacked or untextured used material: '+obj.name)
             materials.append(dict(name=mat.name,images=[dict(name=i.name,size=list(i.size),packed_sha256=__import__('hashlib').sha256(i.packed_file.data).hexdigest()) for i in images]))
         row=dict(object=obj.name,source_node=obj['source_node'],vertices=len(obj.data.vertices),faces=len(obj.data.polygons),used_materials=materials)
