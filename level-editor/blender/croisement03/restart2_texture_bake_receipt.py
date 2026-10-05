@@ -33,9 +33,9 @@ def verify_protected_rgba(source, result, mask):
     return int(np.count_nonzero(editable))
 
 
-def audit(experiment):
+def audit(experiment, bake_name='baked-preserved-v1', launch_name='bake-launch.json'):
     experiment = experiment.resolve()
-    bake = experiment / 'baked-preserved-v1'
+    bake = experiment / bake_name
     validation = read(bake / 'validation.json')
     if validation.get('geometry_verified') is not True:
         raise ValueError('Saved bake did not verify approved geometry')
@@ -51,7 +51,7 @@ def audit(experiment):
     source = np.array(Image.open(experiment / 'input.png').convert('RGBA'))
     result = np.array(Image.open(preserved).convert('RGBA'))
     verify_protected_rgba(source, result, Image.open(experiment / 'mask.png'))
-    launch = read(experiment / 'bake-launch.json')
+    launch = read(experiment / launch_name)
     if sha(launch['recipe']) != launch['recipe_sha256']:
         raise ValueError('Archived launch recipe changed')
     manifest = read(experiment / 'views.json')
@@ -85,4 +85,7 @@ def audit(experiment):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('experiment', type=Path)
-    print(json.dumps(audit(parser.parse_args().experiment), indent=2))
+    parser.add_argument('--bake', default='baked-preserved-v1')
+    parser.add_argument('--launch', default='bake-launch.json')
+    args = parser.parse_args()
+    print(json.dumps(audit(args.experiment, args.bake, args.launch), indent=2))
