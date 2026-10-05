@@ -62,7 +62,7 @@ for name in sorted(set(before) | set(after)):
 report = {'baseline': str(baseline), 'candidate': str(args.candidate),
           'baseline_sha256': hashlib.sha256(baseline.read_bytes()).hexdigest(),
           'candidate_sha256': hashlib.sha256(args.candidate.read_bytes()).hexdigest(),
-          'scope': 'Visible evaluated meshes outside explicitly changed groups; both saved scenes reopened, linked scene and dependency graph updated before measurement.',
+          'scope': 'Evaluated scene meshes with their own render flag enabled, outside explicitly changed groups. Includes collection-hidden reference meshes. Both saved scenes reopened and dependency graph updated before measurement.',
           'excluded_groups': args.exclude_group, 'baseline_meshes': len(before),
           'candidate_meshes': len(after), 'differences': differences,
           'preserved': not differences}

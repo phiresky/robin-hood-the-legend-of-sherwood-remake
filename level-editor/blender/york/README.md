@@ -354,3 +354,33 @@ and joint renders. Its supplemental framing includes the complete geometry;
 it never replaces the fixed input/modified comparison cameras. Use `--output`
 for a fresh inspection revision and `--crop LEFT TOP RIGHT BOTTOM` for an
 explicit native source region.
+
+### Private restart2 controls
+
+The `restart2_*` recipes write only under `work/york-refinement/restart2/` and
+refuse existing output directories. They preserve the installed grouping,
+canonical catalog, and existing gallery. `progress.json` and model-hash-bound
+self-reviews distinguish diagnostic candidates from approved geometry.
+
+`restart2_camera_audit.py` checks that view 0 uses the native orthographic
+direction at 35 degrees elevation. New inspection packets include labeled
+companion sheets; prior images remain intact. `restart2_context_audit.py`
+reopens both the frozen grounding and candidate, updates the dependency graph,
+and compares evaluated world geometry and transforms outside changed groups.
+Its scene-wide count also includes collection-hidden reference meshes.
+
+The paired-house controls retain the upper gable, fit the attached bay recess,
+and separately test the lower doorway return and front eave. A broad facade
+match is insufficient: enlarged source comparison exposed a missing lower
+doorway triangle in the earlier recess. Native mask 216 contains both real
+doorway pixels and unrelated foreground or ground, so neither its entire
+silhouette nor the current candidate's first-hit region defines final ownership.
+
+The hall controls separate furniture, retained roof strip, covered shell and
+revealed-room hypotheses. A roof-only joint render is not a complete room
+state. The revealed-room recipe must preserve neighboring component materials,
+the hall/tower partition, and the independently controlled native cover patches.
+Any accepted lower footprint change must also be reconciled into the covered
+shell. Candle scenery geometry does not itself integrate the native flame
+frames. All candidates require actual eight-view, native joint, source-mask,
+and support review before appearing in an approval gallery.
