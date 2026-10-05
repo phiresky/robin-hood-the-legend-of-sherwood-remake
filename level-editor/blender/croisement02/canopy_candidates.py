@@ -10,6 +10,10 @@ from catalog_schema import source_for_part
 
 
 def selected_workspace(out, mask, catalog_path):
+    from restart2_composed_selections import selected_workspace as composed_revision
+    composed = composed_revision(out, mask, catalog_path)
+    if composed is not None:
+        return composed
     from wood_revision_candidates import selected_workspace as wood_revision
     wood = wood_revision(out, mask, catalog_path)
     if wood is not None:
