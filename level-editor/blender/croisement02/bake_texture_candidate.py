@@ -48,10 +48,25 @@ def pixels(image):
     return values.reshape(image.size[1], image.size[0], 4)
 
 
+def foreign_appearance(obj, cache):
+    state = appearance_state(obj, cache)
+    for material in state['materials']:
+        if material is None:
+            continue
+        for node in material.get('nodes', []):
+            image = node.get('image')
+            if (image and image.get('packed_sha256') is not None
+                    and image.get('filepath', '').startswith('//')):
+                # Saving to another directory rebases packed image paths.
+                # Preserve their resolved target and every content fingerprint.
+                image['filepath'] = str(Path(bpy.path.abspath(image['filepath'])).resolve())
+    return digest(state)
+
+
 def snapshot(scene, receiver_names):
     cache = {}
     result = {'geometry': {obj.name: _geometry(obj) for obj in scene.objects},
-              'outside_appearance': {obj.name: digest(appearance_state(obj, cache))
+              'outside_appearance': {obj.name: foreign_appearance(obj, cache)
                   for obj in scene.objects if obj.type == 'MESH' and obj.name not in receiver_names},
               'physical_foliage': {}}
     for name in sorted(receiver_names):
