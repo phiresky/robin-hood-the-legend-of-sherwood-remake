@@ -23,5 +23,5 @@ def main():
  'The approved cleared-state terminal artwork remains applied-only and unchanged. The API has not run; a generated result will need its own visual review.'
  ])
  index=d/'review-candidates.json';write_json(index,dict(map='Croisement02 initial fence floor input',items=[item],without_packets=[],status_counts={'pending source region and fill input':1}));build(index,d/'gallery')
- page=d/'gallery/index.html';text=page.read_text().replace('model review','fill input review').replace('Geometry candidates, not generated textures. Gray means no accepted original texture.','Proposed source region and fill input only. Orange identifies the editable floor; all other gray regions remain protected.');page.write_text(text)
+ page=d/'gallery/index.html';text=page.read_text().replace('Croisement02 initial fence floor input model review','Croisement02 initial fence floor — input review').replace('Geometry candidates, not generated textures. Gray means no accepted original texture.','Proposed source region and fill input only. Orange identifies the editable floor; all other gray regions remain protected.');page.write_text(text)
 if __name__=='__main__':main()
