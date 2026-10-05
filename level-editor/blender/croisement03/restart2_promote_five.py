@@ -45,6 +45,13 @@ def prepare():
     old_folder = LIVE / '3d-assets' / Path(old['descriptor']).parent
     rollback = STAGE / 'retired-group049-complete-backup'
     shutil.copytree(old_folder, rollback)
+    old_descriptor = json.loads((LIVE / '3d-assets' / old['descriptor']).read_text())
+    for resource in old_descriptor.get('resources', []):
+        path = LIVE / resource['path']
+        assert sha(path) == resource['sha256']
+        destination = rollback / 'resources' / resource['path']
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, destination)
     # Keep old geometry payloads on disk; retire just its discoverable descriptor.
     pairs.append((None, LIVE / '3d-assets' / old['descriptor']))
     pairs.sort(key=lambda pair: pair[1].name == 'asset.json')
@@ -103,6 +110,9 @@ def main():
                 for path in old_path.parent.rglob('*'):
                     if path.is_file():
                         assert sha(path) == sha(STAGE/'retired-group049-complete-backup'/path.relative_to(old_path.parent))
+                for resource in old.get('resources', []):
+                    assert sha(LIVE/resource['path']) == resource['sha256']
+                    assert sha(STAGE/'retired-group049-complete-backup/resources'/resource['path']) == resource['sha256']
 
             promotion.check_gameplay_preserved = retirement_check
             try:
