@@ -33,11 +33,15 @@ def nearest(points, target):
     return float(np.linalg.norm(q[index] - target)), q[index], world
 
 
-def main(kind):
+def main(kind, supplement=None, output_name=None):
     folder = 'logging-branches-v5' if kind == 'logging' else 'southwest-branches-v1'
     worker = OUT / 'restart2-vegetation' / folder; proposal = json.loads((worker / 'proposal.json').read_text())
     targets = np.array([r['pixel'] for r in proposal['hits'] if r['object'] is None], float) + .5
     segments = [(a, b) for path in proposal['traced_source_paths'] for a, b in zip(path, path[1:])]
+    original_segment_count=len(segments)
+    if supplement:
+        additional=json.loads(supplement.read_text())
+        segments.extend((a,b) for path in additional['source_paths'] for a,b in zip(path,path[1:]))
     parts = [tube(a, b) for a, b in segments]; originals = [p.copy() for p in parts]
     source = np.asarray(Image.open(worker / 'front-source.png')); additions = []
     remaining = list(range(len(targets))); rejected = []
@@ -71,11 +75,13 @@ def main(kind):
     covered = np.zeros(len(targets), bool)
     for points in parts:
         covered |= inside(screen(points), targets)
-    dest = OUT / 'restart2-vegetation' / (kind + '-convex-contour-research'); dest.mkdir(exist_ok=True)
+    dest = OUT / 'restart2-vegetation' / (output_name or kind + '-convex-contour-research'); dest.mkdir(exist_ok=True)
     report = dict(status='Private analytic convex-volume proposal; independent BVH/material/neighbor review required', original_model_sha256=proposal['model_sha256'], targets=len(targets), covered=int(covered.sum()), residual_pixels=(targets[~covered] - .5).astype(int).tolist(), additions=additions, parts=[dict(segment=i, original_vertices=originals[i].tolist(), vertices=p.tolist(), triangles=ConvexHull(p).simplices.tolist()) for i, p in enumerate(parts)], limitations=['Each closed convex tube volume is retained; local contour points only added.', 'Source ownership unchanged; inferred geometry point placement is not observed depth.', 'Native material assignment, contacts and source extras require independent Blender review.'])
+    report['original_segment_count']=original_segment_count
+    if supplement:report['additional_source_paths']=additional
     (dest / 'proposal.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps(dict(kind=kind, targets=len(targets), covered=int(covered.sum()), additions=len(additions), added_foreign_sum=sum(r['added_foreign'] for r in additions))))
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(); parser.add_argument('kind', choices=['logging', 'southwest']); main(parser.parse_args().kind)
+    parser = argparse.ArgumentParser(); parser.add_argument('kind', choices=['logging', 'southwest']); parser.add_argument('--supplement',type=Path); parser.add_argument('--output-name'); args=parser.parse_args(); main(args.kind,args.supplement,args.output_name)
