@@ -59,7 +59,7 @@ def crown_packet(root, source, level):
     output = root / 'crown-source'
     output.mkdir()
     lobes, union = [], np.zeros_like(alpha)
-    depth_radii = [250,250,210,100,110,100,90,65]
+    depth_radii = [170,150,140,115,110,100,95,75]
     for number, (cx, cy) in enumerate(seeds):
         owned = alpha & (labels == number)
         radius = math.sqrt(float(distances[:,:,number][owned].max())) * 1.2
@@ -96,6 +96,10 @@ def crown_packet(root, source, level):
     lx,ty,rx,by = max(x0,x),max(y0,y),min(x1,x+width),min(y1,y+height)
     native_support[ty-y0:by-y0,lx-x0:rx-x0] = alpha[ty-y:by-y,lx-x:rx-x]
     support &= (xx >= source.width) | native_support
+    # Infer leaf coverage beyond the crop from this tree's adjacent edge pattern.
+    mirror_x=np.minimum(xx,2*source.width-xx-1)
+    edge_coverage=alpha[np.clip(yy-y,0,height-1),np.clip(mirror_x-x,0,width-1)]
+    support &= (xx < source.width) | edge_coverage
     rgba = np.zeros((*support.shape,4),dtype=np.uint8)
     rgba[:,:,:3] = 105; rgba[:,:,3] = support * 255; rgba[~support,:3] = 0
     inferred = output / 'lobe-08-off-map-unknown.png'
@@ -137,7 +141,7 @@ def wood_mesh():
 
 
 def main():
-    root = OUT / 'restart2/tree25-full-v8'
+    root = OUT / 'restart2/tree25-full-v9'
     root.mkdir(exist_ok=False)
     worker = root/'assets'/ASSET
     source = Image.open(OUT/'baseline/covered.png').convert('RGBA')
@@ -151,6 +155,7 @@ def main():
         domain = ImageChops.subtract(domain,native(number))
     ImageDraw.Draw(domain).rectangle((0,792,source.width,source.height),fill=0)
     domain.save(root/'observed-bark.png')
+    ImageChops.lighter(domain,native(116)).save(root/'observed-static-union.png')
     masks=json.loads((OUT/'baseline/masks/manifest.json').read_text())
     for row in masks['masks']:row['png']=str(OUT/'baseline/masks'/row['png'])
     masks['masks'].append(dict(index=131,layer=0,layer_index=131,png=str(root/'observed-bark.png'),
@@ -158,7 +163,7 @@ def main():
     write(root/'mask-inventory.json',masks)
     write(root/'source-masks.json',dict(version=1,mask_inventory=str(root/'mask-inventory.json'),
          projections={'exterior':dict(state='Native wood excludes foreground wall/leaves; physical crown has separate opacity and ownership',
-         source_sha256=sha(OUT/'baseline/covered.png'),assignments=[dict(reviewed=True,asset_group=ASSET,mask_indices=[131])])}))
+         source_sha256=sha(OUT/'baseline/covered.png'),assignments=[dict(reviewed=True,asset_group=ASSET,mask_indices=[131,116])])}))
     evidence = crown_packet(root,source,level)
     write(root/'source-trace.json',dict(paths=PATHS,ground_source_y=800,
          depth='Branch and crown depth is an explicit source-ray inference; upper branch row centers/widths measured against native25.',
@@ -181,8 +186,17 @@ def main():
         crown=bpy.data.objects.new('Tree25 native static crown',bpy.data.meshes.new('Tree25 crown placeholder'))
         collection.objects.link(crown);crown['asset_group']=ASSET;crown['source_node']='building-046';crown['projection_component']='native-static-crown-116'
         foliage_trees.CONFIG[46]=dict(ground=800.)
-        foliage_trees.DEPTHS=[0.,0.,0.,0.,0.,0.,0.,0.,-30.]
+        foliage_trees.DEPTHS=[-80.,70.,10.,-45.,35.,-20.,55.,20.,-30.]
         foliage_trees.refine_crown(crown,46,evidence)
+        # Centre each rounded lobe in the camera plane rather than stretching
+        # a vertical sheet into a long diagonal volume. Source rays stay fixed.
+        per_lobe=2*81+8
+        assert len(crown.data.vertices)==per_lobe*len(evidence['lobes'])
+        for lobe in evidence['lobes']:
+            cy=(lobe['bbox_source'][1]+lobe['bbox_source'][3])/2
+            for vertex in crown.data.vertices[lobe['index']*per_lobe:(lobe['index']+1)*per_lobe]:
+                source_y=-vertex.co.y*SINE-vertex.co.z*COSINE
+                vertex.co+=RAY*((source_y-cy)*SINE/COSINE)
         bpy.ops.object.select_all(action='DESELECT');obj.select_set(True);crown.select_set(True)
         bpy.context.view_layer.objects.active=obj;bpy.ops.object.join()
         # Joining remaps material slots; update the face fallback indices as well.
