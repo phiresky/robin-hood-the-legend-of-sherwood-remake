@@ -37,12 +37,16 @@ def main():
                         help='Add inferred own-source leaf continuation strictly outside the west map edge')
     parser.add_argument('--west-native-frame', action='store_true',
                         help='Align west continuation with native boundary depth and projected vertical span')
+    parser.add_argument('--east-edge-completion', action='store_true',
+                        help='Add inferred own-source leaf continuation strictly outside the east map edge')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
     source, output = args.source.resolve(), args.output.resolve()
     require(not output.exists(), 'Use a fresh candidate destination')
     require(0 <= args.fragment_jitter <= 12, 'Fragment jitter must be in0..12 native pixels')
     require(not args.west_native_frame or args.west_edge_completion,
             'West native frame requires west edge completion')
+    require(not (args.west_edge_completion and args.east_edge_completion),
+            'Use a separately reviewed trial for each boundary continuation')
     source_hash = sha(source / 'model.blend')
     cfg = json.loads((source / 'workspace.json').read_text())
     refinement = json.loads((source / 'inspection/refinement.json').read_text())
@@ -155,11 +159,12 @@ def main():
         output.mkdir(parents=True)
         west_completion = None
         dependency_recipes = {}
-        if args.west_edge_completion:
+        if args.west_edge_completion or args.east_edge_completion:
             from complete_northern_caps import cap
             (output / 'inspection').mkdir()
             west_completion = cap(crown, source / 'inspection/source-packet/partition.json',
-                                  int(cfg['asset_id'].rsplit('-', 1)[1]), output / 'inspection', edge='west',
+                                  int(cfg['asset_id'].rsplit('-', 1)[1]), output / 'inspection',
+                                  edge='west' if args.west_edge_completion else 'east',
                                   west_native_frame=args.west_native_frame)
             saved_recipe = record_recipe(output, Path(__file__).with_name('complete_northern_caps.py'))
             dependency_recipes[str(output / saved_recipe['recipe'])] = saved_recipe['recipe_sha256']
@@ -179,7 +184,8 @@ def main():
             inferred_native_ray_depth_scale=depth_scale,
             fragment_jitter=args.fragment_jitter,
             soft_branch_envelope=args.soft_branch_envelope,
-            west_edge_completion=west_completion,
+            west_edge_completion=west_completion if args.west_edge_completion else None,
+            east_edge_completion=west_completion if args.east_edge_completion else None,
             dependency_recipes=dependency_recipes,
             retained_inferred_faces=retained_faces, mesh=result,
             non_crown_geometry_and_appearance_unchanged=True,
