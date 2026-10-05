@@ -140,6 +140,12 @@ routes but its visible stair mesh and authored floor disagree, so it remains
 unpublished. Per-tread review confirms exposed tread centers up to 14.84 units
 below navigation, with the top two treads outside the floor. Adjacent asset
 meshes do not cover these samples; endpoint snapping alone cannot repair this.
+A mesh-derived replacement now follows the tread outline and revises its local
+platform seam, material plane and clearance. It emits physical navigation at all
+eight placements, but passes only 14/16 routes: lower entry stalls at 180 degrees.
+Full Derby passes 26/28 with this unpublished replacement. Mesh review samples
+751/755 hits, with uncovered edge strips at most 0.364 units wide. Landing contact
+and collision review remain necessary before replacing the published definition.
 The upper gatehouse stair is now published after a mesh-reviewed 2.567-unit
 corner correction. Its eight placements pass 16/16 actor routes and eight
 control apply/reset checks; full Derby passes 28/28 routes and all five controls.

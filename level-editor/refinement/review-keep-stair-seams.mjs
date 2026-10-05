@@ -207,9 +207,22 @@ for (const edit of edits) {
       sampleFile: `${file}-samples.json`,
       nearFloorTriangles: floorTriangles.length,
       treadProfiles,
-      maximumFloorXYShift: Math.max(
-        ...before.polygon.map((p, i) =>
-          Math.hypot(p[0] - after.polygon[i][0], p[1] - after.polygon[i][1]),
+      maximumFloorXYShift:
+        before.polygon.length === after.polygon.length
+          ? Math.max(
+              ...before.polygon.map((p, i) =>
+                Math.hypot(p[0] - after.polygon[i][0], p[1] - after.polygon[i][1]),
+              ),
+            )
+          : null,
+      maximumFloorBoundaryVertexDistance: Math.max(
+        ...[
+          [before.polygon, after.polygon],
+          [after.polygon, before.polygon],
+        ].flatMap(([from, to]) =>
+          from.map((p) =>
+            Math.min(...to.map((q, i) => edgeDistance(p, q, to[(i + 1) % to.length]))),
+          ),
         ),
       ),
       plane,

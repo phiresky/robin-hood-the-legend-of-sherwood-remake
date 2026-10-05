@@ -4,6 +4,34 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Mesh-derived upper-west floor candidate (2026-10-05)
+
+`refinement/stage-upper-west-mesh-floor.mjs` derives a smooth ramp from the pinned
+flight's lower edge and upper tread center, retaining the union of tread outlines
+rather than the wider underside. Duplicate decoded tread vertices are joined on
+a 0.001-unit authoring grid. The end corners are seated on the approach heights;
+the asset-local platform seam, door approaches, material plane/footprint and
+movement clearance are updated together. No runtime or compiler tolerance changes.
+
+Candidate `upper-west-mesh-floor-JSFFSf` emits physical navigation in all eight
+placement exports (`local-stair-placements-XJDe5H`). Native actor tests pass
+14/16 directed routes; both failures are lower entry at 180 degrees, with a
+rounded lower-boundary blocker while the actor is already in the stair sector.
+All eight raised-ground rejection cases pass during fixture compilation.
+The full saved Derby candidate `upper-west-mesh-full-cqrjt3` passes 26/28 routes.
+This candidate is unpublished and does not replace the passing published Derby.
+
+Mesh review has 751/755 sampled hits, maximum uncovered edge distance 0.364,
+and mesh-minus-ramp heights -2.405 to +8.208 units. The boundary moves up to
+12.503 units from the previous definition, reflecting the full visible flight.
+The review now reports nearest-boundary vertex distance for topology changes;
+index-corresponding vertex shifts are reported only for equal vertex counts.
+The earlier underside-quad candidate (`upper-west-mesh-floor-FAaool`) also passed
+14/16 routes but included side strips with large height disagreement. It was
+superseded by the tread-outline candidate. Focused lint and formatting pass.
+Remaining gates include exact landing/ground contact, the 180-degree entry
+blocker, complete placed traversal, and visual review of the changed platform.
+
 ## Upper-west stair profile review (2026-10-05)
 
 The mesh review now samples each horizontal triangle's center, records its
