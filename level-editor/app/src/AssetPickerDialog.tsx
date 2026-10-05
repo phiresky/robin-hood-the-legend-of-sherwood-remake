@@ -79,17 +79,22 @@ export default function AssetPickerDialog(props: {
       >
         <For each={entries()}>
           {(entry) => (
-            <button
-              class="asset-card"
-              aria-pressed={props.selected === entry.id ? "true" : "false"}
-              onClick={() => props.onSelect(entry.id)}
-            >
+            <div class="asset-card" onClick={() => props.onSelect(entry.id)}>
               <AssetPreview entry={entry} root={props.root} renderer={renderer} />
-              <span class="asset-card-info">
+              <button
+                type="button"
+                class="asset-card-info"
+                style={{ width: "100%", "text-align": "left" }}
+                aria-pressed={props.selected === entry.id ? "true" : "false"}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  props.onSelect(entry.id);
+                }}
+              >
                 <strong>{entry.name}</strong>
                 <small>{entry.source_map}</small>
-              </span>
-            </button>
+              </button>
+            </div>
           )}
         </For>
       </LibraryBrowser>

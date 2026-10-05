@@ -1,6 +1,7 @@
-import { createEffect, createSignal, onCleanup, Show } from "solid-js";
+import { createEffect, createSignal, onCleanup, Show, For } from "solid-js";
 import * as THREE from "three";
 import type { ProjectionAssetEntry } from "@rle/shared";
+import { AssetPreviewPlaybackClock, type AssetPreviewPlayback } from "./asset-preview-playback.ts";
 import { AssetPreviewCache } from "./asset-preview-cache";
 import { loadSceneryThumbnail } from "./scenery-thumbnail.ts";
 import { libraryFile } from "./projection-library.ts";
@@ -9,6 +10,7 @@ import { decodeSpritePixels } from "./entity-projection.ts";
 /** One context for the whole catalog, regardless of how many cards are visible. */
 export class AssetPreviewRenderer {
   readonly cache = new AssetPreviewCache();
+  readonly clock = new AssetPreviewPlaybackClock();
   private renderer?: THREE.WebGLRenderer;
   render(scene: THREE.Scene, camera: THREE.Camera, canvas: HTMLCanvasElement) {
     const renderer = (this.renderer ??= new THREE.WebGLRenderer({ antialias: true, alpha: true }));
@@ -20,6 +22,7 @@ export class AssetPreviewRenderer {
     context.drawImage(renderer.domElement, 0, 0);
   }
   dispose() {
+    this.clock.dispose();
     this.cache.dispose();
     this.renderer?.dispose();
     this.renderer?.forceContextLoss();
@@ -33,6 +36,29 @@ export default function AssetPreview(props: {
   renderer: AssetPreviewRenderer;
 }) {
   const [status, setStatus] = createSignal("Loading 3D preview…");
+  const [playback, setPlayback] = createSignal<AssetPreviewPlayback>();
+  const [frame, setFrame] = createSignal(0);
+  const [playing, setPlaying] = createSignal(false);
+  const [lastFrame, setLastFrame] = createSignal(0);
+  const [loop, setLoop] = createSignal(false);
+  let unsubscribePlayback: (() => void) | undefined;
+  let angle = 0.45;
+  const syncPlayback = () => {
+    const value = playback();
+    if (!value) return;
+    setFrame(value.tick);
+    setPlaying(value.playing);
+    setLastFrame(value.lastTick);
+    setLoop(value.loop);
+    draw?.(angle);
+  };
+  const changePlayback = (change: (value: AssetPreviewPlayback) => void) => {
+    const value = playback();
+    if (!value) return;
+    change(value);
+    syncPlayback();
+    props.renderer.clock.request();
+  };
   let canvas: HTMLCanvasElement;
   let releaseLease: (() => void) | undefined;
   let observer: IntersectionObserver;
@@ -43,6 +69,9 @@ export default function AssetPreview(props: {
   function release() {
     generation++;
     draw = undefined;
+    unsubscribePlayback?.();
+    unsubscribePlayback = undefined;
+    setPlayback(undefined);
     releaseLease?.();
     releaseLease = undefined;
   }
@@ -117,7 +146,8 @@ export default function AssetPreview(props: {
       const center = box.getCenter(new THREE.Vector3());
       const radius = Math.max(box.getBoundingSphere(new THREE.Sphere()).radius, 0.01);
       const camera = new THREE.PerspectiveCamera(35, 320 / 220, radius / 100, radius * 20);
-      draw = (angle) => {
+      draw = (nextAngle) => {
+        angle = nextAngle;
         camera.position
           .copy(center)
           .add(
@@ -127,6 +157,11 @@ export default function AssetPreview(props: {
         props.renderer.render(scene, camera, canvas);
       };
       draw(0.45);
+      if (loaded.playback) {
+        setPlayback(loaded.playback);
+        unsubscribePlayback = props.renderer.clock.register(loaded.playback, syncPlayback);
+        syncPlayback();
+      }
       setStatus("");
     } catch (error) {
       if (current === generation) {
@@ -152,6 +187,7 @@ export default function AssetPreview(props: {
   return (
     <div
       class="asset-preview"
+      style={{ "aspect-ratio": playback() ? "auto" : undefined }}
       onPointerMove={(event) => {
         if (!draw) return;
         const rect = event.currentTarget.getBoundingClientRect();
@@ -163,6 +199,7 @@ export default function AssetPreview(props: {
         width="320"
         height="220"
         aria-label={`3D preview of ${props.entry.name}`}
+        style={{ height: playback() ? "auto" : undefined, "aspect-ratio": "320 / 220" }}
         ref={(element) => {
           canvas = element;
           observer = new IntersectionObserver((entries) => {
@@ -177,6 +214,69 @@ export default function AssetPreview(props: {
           observer.observe(element);
         }}
       />
+      <Show when={playback()}>
+        {(value) => (
+          <div
+            class="preview-playback"
+            style={{
+              position: "relative",
+              background: "#202833ee",
+              padding: "6px",
+              display: "flex",
+              "flex-wrap": "wrap",
+              gap: "6px",
+              "font-size": "12px",
+            }}
+            onClick={(event) => event.stopPropagation()}
+            onPointerMove={(event) => event.stopPropagation()}
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <Show when={value().clips.length > 1}>
+              <select
+                aria-label="Preview animation"
+                onChange={(event) => changePlayback((p) => p.select(event.currentTarget.value))}
+              >
+                <For each={value().clips}>
+                  {(clip) => <option value={clip.name}>{clip.name}</option>}
+                </For>
+              </select>
+            </Show>
+            <button
+              type="button"
+              onClick={() => changePlayback((p) => (p.playing ? p.pause() : p.play()))}
+            >
+              {playing() ? "Pause" : "Play"}
+            </button>
+            <label>
+              Preview behavior{" "}
+              <select
+                value={loop() ? "loop" : "once"}
+                onChange={(event) =>
+                  changePlayback((p) => p.setLoop(event.currentTarget.value === "loop"))
+                }
+              >
+                <option value="once">Play once</option>
+                <option value="loop">Loop</option>
+              </select>
+            </label>
+            <label style={{ "min-width": "0", width: "100%" }}>
+              Frame {frame()}{" "}
+              <input
+                aria-label="Preview frame"
+                style={{ width: "100%", "min-width": "0", "box-sizing": "border-box" }}
+                type="range"
+                min="0"
+                max={lastFrame()}
+                step="1"
+                value={frame()}
+                onInput={(event) =>
+                  changePlayback((p) => p.seek(Number(event.currentTarget.value)))
+                }
+              />
+            </label>
+          </div>
+        )}
+      </Show>
       <Show when={status()}>
         <span class="preview-status">{status()}</span>
       </Show>

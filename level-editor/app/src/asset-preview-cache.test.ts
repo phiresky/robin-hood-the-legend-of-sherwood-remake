@@ -204,3 +204,35 @@ test("memory estimate counts shared buffers and texture sources once plus GPU st
   group.add(f.asset, f.asset.clone());
   assert.equal(estimatePreviewBytes(group), 24 * 2 + 16 * 2);
 });
+
+test("animated leases retain independent playback and retire resources only after all clones release", async () => {
+  const f = fixture();
+  f.asset.name = "animated";
+  f.asset.animations = [
+    new THREE.AnimationClip("preview", -1, [
+      new THREE.VectorKeyframeTrack(
+        f.asset.uuid + ".position",
+        [0, 2 / 25],
+        [0, 0, 0, 2, 0, 0],
+        THREE.InterpolateDiscrete,
+      ),
+    ]),
+  ];
+  const cache = new AssetPreviewCache({ load: async () => f.asset });
+  const a = await cache.acquire(root, entry());
+  const b = await cache.acquire(root, entry());
+  assert.ok(a.playback);
+  assert.ok(b.playback);
+  assert.equal(a.playback.playing, false);
+  a.playback.seek(2);
+  assert.equal(a.playback.player.content.position.x, 2);
+  assert.equal(b.playback.player.content.position.x, 0);
+  assert.equal(f.asset.position.x, 0);
+  cache.dispose();
+  a.release();
+  assert.deepEqual(f.disposed, [0, 0, 0]);
+  assert.throws(() => a.playback!.seek(0), /disposed/);
+  b.playback.seek(2);
+  b.release();
+  assert.deepEqual(f.disposed, [1, 1, 1]);
+});

@@ -2,11 +2,14 @@ import * as THREE from "three";
 import type { ProjectionAssetEntry } from "@rle/shared";
 import { loadProjectionAssetPreview } from "./projection-library.ts";
 import { disposeObjectResources } from "./resources.ts";
+import { captureLoadedStateAppearance } from "./scene-assets.ts";
+import { AssetPreviewPlayback } from "./asset-preview-playback.ts";
 import { TextureDisplay } from "./texture-display.ts";
 
 export interface AssetPreviewLease {
   /** Independent transform hierarchy; geometry, materials and textures belong to the cache. */
   asset: THREE.Object3D;
+  playback?: AssetPreviewPlayback;
   release(): void;
 }
 
@@ -139,8 +142,12 @@ export class AssetPreviewCache {
     }
     record.leases++;
     let asset: THREE.Object3D;
+    let playback: AssetPreviewPlayback | undefined;
     try {
-      asset = (await record.pending).clone(true);
+      const source = await record.pending;
+      const appearance = captureLoadedStateAppearance(source);
+      playback = appearance ? new AssetPreviewPlayback(appearance) : undefined;
+      asset = playback ? playback.asset : source.clone(true);
     } catch (error) {
       this.release(record);
       throw error;
@@ -148,9 +155,11 @@ export class AssetPreviewCache {
     let released = false;
     return {
       asset,
+      playback,
       release: () => {
         if (released) return;
         released = true;
+        playback?.dispose();
         asset.removeFromParent();
         this.release(record);
       },
