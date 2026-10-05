@@ -4,6 +4,24 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Imported wood bridge deck candidate (2026-10-05)
+
+Mesh review identifies eighteen top-facing triangles spanning nine arched deck
+panels, excluding the lower beams and railings. Their pinned face selection is
+recorded in `refinement/catalogs/sketchfab-long-wood-bridge-deck-review.json`.
+The staged definition uses local game coordinates, wood receiving material,
+one multi-plane navigation region and two end sockets. It compiles strictly at
+0, 37, 90, 180 and 270 degrees. The review script is
+`work/map-compile/stage-imported-bridge-deck.mjs`; the resulting descriptors,
+source pins and routes are in `work/map-compile/imported-bridge-deck-O5SOR0`.
+
+Native endpoint tests pass ten directed complete crossings. Native receiving
+seam tests pass another 754 sampled crossings. The fixture terrain is at the
+deck-end height, so these checks verify deck/landing traversal, not an underpass.
+Support and railing collision, projectile/sight obstruction and under-bridge
+clearance remain unauthored. The candidate explicitly warns about those gaps
+and is not published; the missing-definition count remains 35.
+
 ## Keep stair precision and projected actor clearance (2026-10-05)
 
 The clearance experiment `work/map-compile/keep-placements-FgNcOp` adds complete
@@ -34,9 +52,13 @@ after Derby exports and transactional publication backups. Derby's complete
 compiled geometry is exactly unchanged; both snapshots pass all 28 native stair
 routes and five control apply/reset checks. Scene pins are refreshed without
 moving placements. All ten saved scenes reopen with current descriptor pins
-(`scene-pin-check.json`). The fresh Wychford/Derby export comparison is still
-running; Wychford geometry equality is not yet claimed. The composite keep
-remains unpublished, and no ZIP is rebaked.
+(`scene-pin-check.json`). A subsequent uncalibrated Wychford comparison failed
+exact descriptor equality: precision changed a receiving polygon linked to
+projection area `[314, 15]`. That assertion stopped the batch before it saved
+the Wychford snapshots or reached Derby; it supplies no new native traversal
+result. The geometry difference still needs assessment with calibrated spline
+assets and preserved before/after descriptors. Wychford geometry equality is not
+claimed. The composite keep remains unpublished, and no ZIP is rebaked.
 
 ## Composite keep placement and best-effort failures (2026-10-05)
 

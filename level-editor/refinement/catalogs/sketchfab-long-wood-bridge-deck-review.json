@@ -1,0 +1,16 @@
+{
+  "description": "Reviewed mesh triangles for an unpublished bridge deck candidate; not a complete gameplay definition or publication recipe.",
+  "asset": "sketchfab-long-wood-bridge",
+  "descriptorSha256": "091b24580805ccad1ded2741dc0ac0096bcefbaa65af89efc7766cdc0095c936",
+  "modelSha256": "06e8d1939dafc704709cf589244b055240ff77c334ce763b328db98d34a7e8a2",
+  "node": "scenery-long-wood-bridge",
+  "primitive": 0,
+  "triangleIndices": [2088, 2089, 2090, 2091, 2092, 2093, 2106, 2107, 2116, 2117, 2118, 2119, 2122, 2123, 2130, 2131, 2132, 2133],
+  "defaultMaterial": 1,
+  "navigationRegion": "bridge-deck",
+  "remaining": [
+    "Author support and railing collision without filling the underpass.",
+    "Review projectile and sight obstruction independently of walking surfaces.",
+    "Verify under-bridge routes and mismatched landing rejection before publication."
+  ]
+}
