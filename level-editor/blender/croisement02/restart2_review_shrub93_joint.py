@@ -1,4 +1,7 @@
 """Review boundary-completed shrub93 beside exact existing neighbours."""
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import inspect_leaf_clump_joint as joint
 from catalog import OUT, scenery_workspace
 from render_slots import acquire, release

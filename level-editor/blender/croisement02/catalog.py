@@ -77,6 +77,9 @@ def tree_workspace(mask):
     from canopy_candidates import selected_workspace
     cleanup=selected_workspace(OUT,mask,reviewed_catalog())
     if cleanup is not None:return cleanup
+    from restart2_wood_revisions import selected_workspace as revised_wood_workspace
+    revised_wood=revised_wood_workspace(OUT,mask,reviewed_catalog())
+    if revised_wood is not None:return revised_wood
     asset=f'croisement02-tree-{mask:02}'
     completed=OUT/'forest-v4-round-3/assets'/asset
     if (completed/'inspection/northern-cap-revision.json').exists():return completed
