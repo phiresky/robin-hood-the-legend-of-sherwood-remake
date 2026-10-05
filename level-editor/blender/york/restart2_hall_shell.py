@@ -1,5 +1,6 @@
 """Private closed hall shell from reviewed ownership and native upper-floor datum."""
 import hashlib
+import argparse
 import json
 import math
 from pathlib import Path
@@ -7,7 +8,11 @@ import sys
 
 ROOT=Path(__file__).resolve().parents[3]
 OUT=ROOT/'level-editor/work/york-refinement'
-DEST=OUT/'restart2/hall-shell-v1'
+parser=argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--version',default='hall-shell-v1')
+parser.add_argument('--roof-cap-junction',action='store_true')
+args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
+DEST=OUT/'restart2'/args.version
 if DEST.exists():raise FileExistsError(DEST)
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
@@ -26,8 +31,9 @@ for n in (769,795):
     if partition['axis_coefficients']!=[.305,1.] or partition['boundaries']!=[1838.5]:
         raise ValueError('Reviewed hall/tower boundary changed')
 objects=[o for o in bpy.data.collections['york Working'].all_objects if o.type=='MESH' and not o.hide_render]
-targets=[o for o in objects if o.get('asset_group')=='york-castle-great-hall' and o.get('source_node') in {f'building-{n}' for n in (769,793,795,799)}]
-if len(targets)!=4:raise ValueError('Expected four hall shell components')
+shell_nodes=(769,791,793,795,799) if args.roof_cap_junction else (769,793,795,799)
+targets=[o for o in objects if o.get('asset_group')=='york-castle-great-hall' and o.get('source_node') in {f'building-{n}' for n in shell_nodes}]
+if len(targets)!=len(shell_nodes):raise ValueError('Missing hall shell components')
 def fingerprint(o):
     return hashlib.sha256(json.dumps({'v':[list(o.matrix_world@v.co) for v in o.data.vertices],
         'f':[list(f.vertices) for f in o.data.polygons],
@@ -38,6 +44,11 @@ rows=[]
 for obj in targets:
     n=int(obj['source_node'].split('-')[1]);before=fingerprint(obj)
     profile=[(p['x'],p['y'],p['z_top']) for p in native['sight_obstacles'][n]['points']]
+    if n==791:
+        import numpy as np
+        roof=native['sight_obstacles'][799]['points'][:3]
+        a,b,c=np.linalg.solve([[p['x'],p['y'],1] for p in roof],[p['z_top'] for p in roof])
+        profile=[(x,y,min(z,float(a*x+b*y+c)-2.5)) for x,y,z in profile]
     if n in (769,795):
         clipped=[]
         for a,b in zip(profile,profile[1:]+profile[:1]):
@@ -72,5 +83,6 @@ config=json.loads((OUT/'geometry-pass-01/assets/york-castle-great-hall/workspace
 (DEST/'workspace.json').write_text(json.dumps(config,indent=2)+'\n')
 (DEST/'geometry.json').write_text(json.dumps({'status':'HOLD: private closed shell, no source projection or appearance approval',
     'changes':rows,'outside_preserved':len(outside),
+    'roof_cap_junction_control':args.roof_cap_junction,
     'inferred':['Close hall/tower partition with hidden caps.','Roof underside thickness 2.5 game units.'],
     'remaining':['Part791 upper junction still needs source-led reconstruction.','Partial roof/facade cover for patch002 and overlapping patch001.','Revealed room floor/wall and furniture source projection.','Joint hall/tower and terrain review.']},indent=2)+'\n')

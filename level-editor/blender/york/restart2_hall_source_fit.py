@@ -9,6 +9,7 @@ ROOT=Path(__file__).resolve().parents[3]
 OUT=ROOT/'level-editor/work/york-refinement'
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--version',required=True)
+parser.add_argument('--include-candle',action='store_true')
 args=parser.parse_args(sys.argv[sys.argv.index('--')+1:])
 worker=OUT/'restart2'/args.version
 destination=worker/'source-fit'
@@ -26,13 +27,15 @@ destination.mkdir()
 source=OUT/'baseline/revealed.png'
 mask_ids={824:631,825:634,826:633,827:640,828:632,829:636}
 label='hall-furniture-isolated'
-nodes=[f'building-{n}' for n in mask_ids]
+assignments=[(f'building-{n}',index) for n,index in mask_ids.items()]
+if args.include_candle:assignments.append(('scenery-york-great-hall-candle-stand',635))
+nodes=[node for node,index in assignments]
 manifest={'version':1,'mask_inventory':str(OUT/'baseline/masks/manifest.json'),
           'projections':{label:{'source_sha256':hashlib.sha256(source.read_bytes()).hexdigest(),
             'state':'Revealed source artwork; six furniture receivers inspected independently. Full room and neighboring fireplace state still pending.',
-            'assignments':[{'reviewed':True,'source_node':f'building-{n}','mask_indices':[index],
+            'assignments':[{'reviewed':True,'source_node':node,'mask_indices':[index],
                             'review_evidence':'Individually inspected native silhouettes in restart2/hall-furniture-native-masks.png.'}
-                           for n,index in mask_ids.items()]}}}
+                           for node,index in assignments]}}}
 authority=destination/'source-masks.json'
 authority.write_text(json.dumps(manifest,indent=2)+'\n')
 bake('york',source,destination/'projection.json',receiver_nodes=nodes,occluder_nodes=nodes,

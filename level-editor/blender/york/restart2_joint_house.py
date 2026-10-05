@@ -22,6 +22,7 @@ def main():
     parser.add_argument('--retain-upper-gable', action='store_true')
     parser.add_argument('--gable-eave', action='store_true')
     parser.add_argument('--extend-left-roof', action='store_true')
+    parser.add_argument('--fitted-bay-recess', action='store_true')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
     destination = OUT / 'restart2' / args.version
     if destination.exists():
@@ -75,10 +76,23 @@ def main():
         # The native dark gable above the attached roof survives the lower
         # recess. Its lower edge projects to source row 1228 on the original
         # front datum. This upper cantilever remains an explicit hypothesis.
-        cutter_vertices = [(x,-y/sine,80/cosine) for x,y in footprint]
-        cutter_vertices += [(x,-y/sine,(.475*x-28 if args.retain_upper_gable else 400)/cosine)
-                            for x,y in footprint]
-        cutter_faces = [(3,2,1,0),(4,5,6,7),(0,1,5,4),(1,2,6,5),(2,3,7,6),(3,0,4,7)]
+        fractions=(0,.65,.8,1) if args.fitted_bay_recess else (0,1)
+        cutter_vertices=[]
+        for t in fractions:
+            for index,(x,y) in enumerate(footprint):
+                upper=.475*x-28 if args.retain_upper_gable else 400
+                z=80+t*(upper-80)
+                if args.fitted_bay_recess and index<2:
+                    blend=max(0,min(1,(z-220)/20))
+                    # Lower niche meets the bay's observed rear footprint;
+                    # upper recession preserves the reviewed roof clearance.
+                    y=(1-blend)*(.475*x+1170.15)+blend*y
+                cutter_vertices.append((x,-y/sine,z/cosine))
+        last=4*(len(fractions)-1)
+        cutter_faces=[(3,2,1,0),tuple(last+i for i in range(4))]
+        for ring in range(len(fractions)-1):
+            a=ring*4;b=a+4
+            cutter_faces += [(a+i,a+(i+1)%4,b+(i+1)%4,b+i) for i in range(4)]
         cutter = object_for('Private attached bay recess', cutter_vertices, cutter_faces)
         modifier = body.modifiers.new('Attached bay recess', 'BOOLEAN')
         modifier.operation = 'DIFFERENCE'
@@ -274,6 +288,7 @@ def main():
               'retain_upper_gable': args.retain_upper_gable,
               'gable_eave': args.gable_eave,
               'extend_left_roof': args.extend_left_roof,
+              'fitted_bay_recess': args.fitted_bay_recess,
               'changes': changes, 'outside_meshes_preserved': len(outside),
               'inferred': ['Main gable body recessed below unchanged roof tops.',
                            'Roof underside thickness 2.5 native height units; body and roof are separate closed volumes.'],
