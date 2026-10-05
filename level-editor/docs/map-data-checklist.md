@@ -110,10 +110,10 @@ Derby/Wychford pins refreshed. All eight fresh component exports exactly match
 the native-tested staged descriptors. The composite keep remains unpublished;
 complete-sprite and rendered verification remain open.
 All ten scenes reopen after publication, and full Derby passes all five control
-apply/reset checks. One other Derby stair still retains projected navigation
-because its authored endpoints lack physical floor support.
-A library-wide local-anchor audit finds this issue in 43 of 53 authored stair
-definitions: Derby 1/10, Leicester 8/8, Lincoln 6/6, Nottingham 11/12,
+apply/reset checks. All ten Derby stair definitions now pass local floor-anchor
+support checks after the upper-west publication below.
+A library-wide local-anchor audit finds unsupported anchors in 42 of 53 authored stair
+definitions: Derby 0/10, Leicester 8/8, Lincoln 6/6, Nottingham 11/12,
 Sherwood 1/1 and York 16/16. All audited floors are planar. This checks local
 definitions, not placed connectivity or actual route failures; corrections and
 moved/rotated native traversal checks remain necessary across these assets.
@@ -135,19 +135,17 @@ entrances reject, and full Derby passes 28/28 routes plus all five controls.
 All 205 terrain-contact samples have mesh support; the largest terrain edge shift
 is 1.165 units. Fresh published exports match the tested candidates and all ten
 scenes reopen. Stair handoffs query the actual seam, with a bounded floating-point
-boundary probe, instead of the outside waypoint. The upper-west candidate passes
-routes but its visible stair mesh and authored floor disagree, so it remains
-unpublished. Per-tread review confirms exposed tread centers up to 14.84 units
-below navigation, with the top two treads outside the floor. Adjacent asset
-meshes do not cover these samples; endpoint snapping alone cannot repair this.
-A mesh-derived replacement now follows the tread outline and revises its local
-platform seam, material plane and clearance. It emits physical navigation at all
-eight placements and now passes 16/16 routes after a runtime entry-handoff fix.
-The callback retains world position and physical floor ownership before the next
-walking order is installed. Full Derby still passes only 26/28 with this
-unpublished replacement; its actual terrain contact needs correction. Mesh review samples
-751/755 hits, with uncovered edge strips at most 0.364 units wide. Landing contact
-and collision review remain necessary before replacing the published definition.
+boundary probe, instead of the outside waypoint. The upper-west stair now has a
+published mesh-derived floor, local platform seam, material plane and clearance.
+This replaces a floor up to 14.84 units above exposed tread centers. The corrected
+flight emits physical navigation at all eight placements and passes 16/16 routes.
+Entry callbacks retain world position and physical floor ownership before the
+next walking order is installed. A mesh-supported terrain contact restores full
+Derby's 28/28 routes and all five control checks. The ground strip has 205/205
+mesh hits; the revised platform edge has 41/41. Flight samples hit 751/755 points,
+with uncovered edge strips at most 0.364 units wide. Published exports match the
+native-tested candidates and all ten scenes reopen. Complete rendered actor
+verification and broader placement/state coverage remain open.
 The upper gatehouse stair is now published after a mesh-reviewed 2.567-unit
 corner correction. Its eight placements pass 16/16 actor routes and eight
 control apply/reset checks; full Derby passes 28/28 routes and all five controls.

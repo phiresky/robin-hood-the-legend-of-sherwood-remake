@@ -19,7 +19,7 @@
       "model": "3d-assets/derby/derby-terrain/model.glb",
       "model_sha256": "d0f986fc567b41019463fb5db9908b8b6cd148eca9135575276d0f39d9e2b5fd",
       "descriptor": "3d-assets/derby/derby-terrain/asset.json",
-      "descriptor_sha256": "75441fa7eaba1927f632e33041ce4edbf449ac00f97b39e032568c7cedb7692f"
+      "descriptor_sha256": "2c706d5f83f91da428dbde17c3f8fa5c5e9b5606e5c50f7e63207c9114fe1614"
     }
   ],
   "assetSources": [
@@ -167,7 +167,7 @@
       "model": "3d-assets/derby/derby-upper-west-curtain/model.glb",
       "model_sha256": "8563829559f79d1052b54d76fb65e7fae935a18819fc1021191b6cac27e66b4a",
       "descriptor": "3d-assets/derby/derby-upper-west-curtain/asset.json",
-      "descriptor_sha256": "426d652d677e1b152f098da6208705d468ee189cb0ca9be12e16b673c553d36b",
+      "descriptor_sha256": "cc8e35194362b8aac1dd240d884c42153df8d76deba87ecf74023c31d1c00b36",
       "id": "derby-upper-west-curtain"
     },
     {

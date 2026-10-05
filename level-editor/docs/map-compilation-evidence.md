@@ -4,6 +4,31 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Publish mesh-derived upper-west stair and terrain contact (2026-10-05)
+
+The upper-west floor candidate `upper-west-mesh-floor-JSFFSf` is now published
+with its local platform edge, material plane and clearance. The mesh reviewer
+also checks changed flat landing edges against their own asset parts: the upper
+platform edge passes 41/41 height samples. The flight's prior mesh review has
+751/755 hits and uncovered edge strips no wider than 0.364 game units.
+
+Terrain authoring stage `derby-stair-ground-contact-1CpQD0` corrects the edge in
+`ground-section-1-0`: [224,1185] → [224.145420,1184.293687] and [258,1191] →
+[257.947882,1191.253142]. All 205 strip samples hit terrain at zero height.
+The explicit contact recipe now selects its terrain surface; previous recipes
+retain their original default. The combined descriptor
+`upper-west-ground-full-bMuSRP` passes native construction, all 28 directed stair
+routes and five control apply/reset checks.
+
+Backup `upper-west-mesh-publication-20261005` records publication and verification.
+All ten saved scenes reopen with valid pins. Fresh Derby geometry exactly matches
+the tested candidate. Eight published placement exports `local-stair-placements-8YjPwf`
+exactly match `local-stair-placements-XJDe5H`, which passed 16/16 native routes
+after the entry-handoff fix; all eight raised-ground rejections still pass.
+Anchor audit `stair-anchor-support-1lmeBH` reports 42/53 unsupported definitions,
+with Derby 0/10. This is local-anchor coverage, not certification of every route,
+visual state or arbitrary placement. Rendered actor verification remains open.
+
 ## Physical stair entry callback preserves floor ownership (2026-10-05)
 
 The upper-west 180-degree fixture exposed a handoff error: after entering the

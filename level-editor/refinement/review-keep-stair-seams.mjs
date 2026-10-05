@@ -122,6 +122,47 @@ for (const edit of edits) {
           covering,
         };
       });
+    const landingEdgeReviews = [];
+    for (const landing of edit.gameplay.surfaces) {
+      const previous = descriptor.gameplay.surfaces.find((surface) => surface.id === landing.id);
+      const heights = Array.isArray(landing.height) ? landing.height : [landing.height];
+      if (
+        !previous ||
+        previous.polygon.length !== landing.polygon.length ||
+        !heights.every((z) => Math.abs(z - heights[0]) < 1e-6)
+      )
+        continue;
+      const changed = landing.polygon.map(
+        (point, i) =>
+          Math.hypot(point[0] - previous.polygon[i][0], point[1] - previous.polygon[i][1]) > 1e-6,
+      );
+      const mesh = neighbours.find((part) => part.node === landing.node)?.triangles;
+      if (!mesh) continue;
+      for (let i = 0; i < landing.polygon.length; i++) {
+        const j = (i + 1) % landing.polygon.length;
+        if (!changed[i] || !changed[j]) continue;
+        const samples = Array.from({ length: 41 }, (_, step) => {
+          const point = landing.polygon[i].map(
+            (v, axis) => v + ((landing.polygon[j][axis] - v) * step) / 40,
+          );
+          const hits = mesh
+            .map((triangle) => meshHeight(point, triangle))
+            .filter((z) => z !== undefined);
+          return { point, hits };
+        });
+        landingEdgeReviews.push({
+          surface: landing.id,
+          node: landing.node,
+          height: heights[0],
+          before: [previous.polygon[i], previous.polygon[j]],
+          after: [landing.polygon[i], landing.polygon[j]],
+          supported: samples.filter((sample) =>
+            sample.hits.some((z) => Math.abs(z - heights[0]) < 0.1),
+          ).length,
+          samples,
+        });
+      }
+    }
     const samples = [];
     const bounds = [0, 1].map((axis) => [
       Math.min(...after.polygon.map((p) => p[axis])),
@@ -207,6 +248,7 @@ for (const edit of edits) {
       sampleFile: `${file}-samples.json`,
       nearFloorTriangles: floorTriangles.length,
       treadProfiles,
+      landingEdgeReviews,
       maximumFloorXYShift:
         before.polygon.length === after.polygon.length
           ? Math.max(

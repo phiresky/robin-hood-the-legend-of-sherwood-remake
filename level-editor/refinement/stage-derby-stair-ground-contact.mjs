@@ -13,6 +13,14 @@ assert.ok(staged && compiledFile, "Provide stair edits and their compiled Derby 
 const edits = JSON.parse(await fs.readFile(`${staged}/edits.json`, "utf8"));
 assert.equal(edits.length, 1);
 const contacts = {
+  "derby-upper-west-curtain": {
+    surface: "ground-section-1-0",
+    outside: [240.483797466348, 1199.9092256411143, 0],
+    edge: [
+      [224, 1185],
+      [258, 1191],
+    ],
+  },
   "derby-lower-west-access-stair": {
     outside: [429, 1775, 0],
     edge: [
@@ -54,7 +62,9 @@ const terrainBytes = await fs.readFile(`library/3d-assets/${entry.descriptor}`);
 assert.equal(hash(terrainBytes), entry.descriptor_sha256);
 const descriptor = JSON.parse(terrainBytes);
 const gameplay = structuredClone(descriptor.gameplay);
-const surface = gameplay.surfaces.find((surface) => surface.id === "ground-section-0-0");
+const surface = gameplay.surfaces.find(
+  (surface) => surface.id === (contact.surface ?? "ground-section-0-0"),
+);
 assert.ok(surface.height.every((z) => z === 0));
 const before = contact.edge;
 const positions = before.map((point) =>
