@@ -32,10 +32,23 @@ objects before mutation. Seventeen traced stone-edge pixels and separate
 unresolved/ivy/ground domains remain disclosed. Gray rear and off-map masonry
 await texture fill after geometry approval.
 
-Tree 25 remains private and unapproved. Its crown retains native foliage and
-complete inferred depth; bark fitting is being constrained against both source
-bark and the visible gaps between branches. The wall card uses tree16 only as
-unapproved contact context. Future tree changes require fresh joint evidence. Wind animation, other trees,
+Tree 25 version 17 has a frozen, independently reviewed static geometry card in
+`restart2/geometry-round2-tree25-v17/review-candidates.json`; user review is
+pending in the next consolidated batch. Its crown retains native foliage and
+complete inferred depth. Eight one-pixel bark-edge misses and 52 small
+background-edge overshoot pixels remain disclosed, along with gray inferred
+surfaces and the buried trunk closure. Joint version 11 verifies contact with
+wall10. The wall card retains tree16 only as unapproved contact context; future
+tree changes require fresh joint evidence.
+
+The central shrub boulder version 2 is private and awaits independent review.
+Its saved eight-view materials, native comparison and diagnostic ground contact
+have been inspected. Mask 97 mixes stone with foreground vegetation, so the
+authored rock trace excludes part of that mask; a remaining 83-pixel overlap
+with foreground mask 48 is explicitly unresolved. Gray rear stone needs texture
+fill after geometry approval. No actual surrounding vegetation is complete.
+
+Wind animation, other trees,
 undergrowth, rocks, terrain, water and mission appearances remain unfinished.
 The exhaustive source-mask/group ledger is `restart2/finite-backlog.json`.
 
