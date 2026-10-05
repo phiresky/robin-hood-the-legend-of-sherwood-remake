@@ -43,7 +43,12 @@ def main():
         assert all(g[k]==[] for k in ['doors','lifts','interiors']) and g['collision']=='parts'
         if combined is None:
             combined={k:copy.deepcopy(g[k]) for k in ['version','collision','draft']};combined['sightOrder']={}
-        assert all(combined[k]==g[k] for k in ['version','collision','draft'])
+        assert all(combined[k]==g[k] for k in ['version','collision'])
+        # Draft issues describe the retained records; merge their full union.
+        assert set(g['draft'])==set(combined['draft'])=={'issues'}
+        assert all(isinstance(issue,str) and issue for issue in g['draft']['issues'])
+        combined['draft']['issues']=list(dict.fromkeys(combined['draft']['issues']+g['draft']['issues']))
+        assert set(g['draft']['issues'])<=set(combined['draft']['issues'])
         assert not set(combined['sightOrder'])&set(g['sightOrder']);combined['sightOrder'].update(g['sightOrder'])
         for key in list_fields:
             if key not in g:continue
@@ -54,7 +59,7 @@ def main():
             for av,bv in zip(a['points'],b['points']):
                 for k,i in [('x',0),('y',1),('z_bottom',2),('z_top',2)]:errors.append(abs(av[k]+before[i]-bv[k]-after[i]))
         assert max(errors,default=0)<1e-9
-        records.append(dict(source_asset=old_id,source_descriptor_sha256=sha(p),source_placement=placement,world_coordinate_max_error=max(errors,default=0),preserved_counts={k:len(g[k]) for k in list_fields if k in g},ids_zone_links_node_ownership_and_flags_preserved=True))
+        records.append(dict(source_asset=old_id,source_descriptor_sha256=sha(p),source_placement=placement,world_coordinate_max_error=max(errors,default=0),preserved_counts={k:len(g[k]) for k in list_fields if k in g},source_draft=copy.deepcopy(g['draft']),ids_zone_links_node_ownership_and_flags_preserved=True))
     backup=R/'original-export-asset.json';assert not backup.exists();backup.write_text(json.dumps(original,indent=2)+'\n');d['gameplay']=combined;path.write_text(json.dumps(d,indent=2)+'\n');write_asset_index(R/'assets')
     (R/'metadata-preservation.json').write_text(json.dumps(dict(status='PASS',scope='Exact baseline gameplay56/67 merged with world coordinates preserved; no new parity claim',source_scene_sha256=sha(LIB/'scenes/croisement01.rhlos-map.json'),records=records,descriptor_sha256=sha(path)),indent=2)+'\n');print('PASS both stump references and jump links preserved')
 if __name__=='__main__':main()

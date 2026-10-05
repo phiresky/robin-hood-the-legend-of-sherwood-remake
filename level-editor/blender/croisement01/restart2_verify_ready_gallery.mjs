@@ -53,7 +53,7 @@ try {
   checks.persistence=restored;checks.clear=true;
   await evaluate(socket,++id,`(() => {
     const images=[...document.querySelectorAll('#${target.id} img')];
-    if(images.length!==6)throw Error('Expected six review images');
+    if(images.length!==${Object.keys(target.images).length})throw Error('Review image count differs from frozen evidence');
     for(const image of images)image.loading='eager';
   })()`);
   checks.images=false;
