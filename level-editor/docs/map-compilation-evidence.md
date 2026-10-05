@@ -4,6 +4,23 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Changing climb barrier runtime failure (2026-10-05)
+
+The new ignored native regression
+`changing_climbs_stop_actor_traversal_and_reset` uses complete character animation
+and the changing-stair fixtures with ladder/wall traversal types. It attempts
+both directions before applying a barrier, while closed, and after reset, over
+four placements. Unrotated ladder/wall checks pass, but the expanded run fails:
+wall type 3 at rotation index 1 (90 degrees), entrance 0, completes the closed
+route (`Ok(true)`). This is an actor traversal failure, not merely an export
+validation limitation.
+
+The compiler rejection of changing ladder/wall barriers remains intact. A trial
+removal passed editor compilation and fixture equality but was reverted after
+the native failure. The regression remains explicitly ignored as a known failure
+requiring `ROBIN_CLIMB_RHS`; it is not passing acceptance evidence. Correcting
+animation-driven collision/state handling is required before enabling export.
+
 ## Published church insertion ground elevation (2026-10-05)
 
 The church-side tower now publishes `placementGroundHeight: 50.0010129354411`,
