@@ -115,6 +115,25 @@ def main():
             for vertex in target.data.vertices:vertex.co=inverse@(target.matrix_world@vertex.co+shift)
             target.data.update()
         (dest/'root-support-placement.json').write_text(json.dumps(dict(method='Move complete asset along original camera ray to measured archival bank; native image coordinates unchanged.',original_foot=list(foot),support=list(hit),shift=list(shift),status='Provisional contact; saved geometry and joint review required'),indent=2)+'\n')
+        if args.revision>=4:
+            foot=foot+shift
+            verts=[];faces=[];count=24
+            for height,radius in [(0,6.5),(5,7.),(16,5.)]:
+                for j in range(count):
+                    angle=math.tau*j/count
+                    x=foot.x+radius*math.cos(angle);y=foot.y+radius*math.sin(angle)
+                    support=terrain.ray_cast(Vector((x,y,foot.z+40)),Vector((0,0,-1)),100)[0]
+                    if support is None:raise ValueError('Missing local basal flare support')
+                    z=support.z-.4 if height==0 else foot.z+height
+                    verts.append(Vector((x,y,z)))
+            faces.append(tuple(reversed(range(count))))
+            for k in range(2):
+                for j in range(count):faces.append((k*count+j,k*count+(j+1)%count,(k+1)*count+(j+1)%count,(k+1)*count+j))
+            faces.append(tuple(range(2*count,3*count)))
+            root_mesh=bpy.data.meshes.new('Continuous bank root flare');root_mesh.from_pydata(verts,[],faces);root_mesh.update()
+            bm=bmesh.new();bm.from_mesh(root_mesh);bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces));bm.to_mesh(root_mesh);bm.free()
+            root=bpy.data.objects.new('Continuous bank root flare',root_mesh);bpy.context.scene.collection.objects.link(root);union(obj,root)
+            (dest/'basal-flare.json').write_text(json.dumps(dict(method='Connected short rounded flare whose lower ring follows measured local bank; shallow seating replaces a point contact.',foot=list(foot),radii=[6.5,7.,5.],heights=[0,5,16],support_penetration=.4,scope='Inferred basal wood behind deferred source foliage; known bark remains authoritative'),indent=2)+'\n')
     uv=mesh.uv_layers.new(name='Source UV');known=mesh.color_attributes.new(name='Source ownership',type='FLOAT_COLOR',domain='CORNER');mesh.color_attributes.active_color=known
     for loop in mesh.loops:
         p=mesh.vertices[loop.vertex_index].co;uv.data[loop.index].uv=(p.x/1408,1-(-p.y*SIN-p.z*COS)/960);known.data[loop.index].color=(0,1,1,1)

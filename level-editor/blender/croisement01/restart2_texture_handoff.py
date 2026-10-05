@@ -14,6 +14,7 @@ def read(p): return json.loads(p.read_text())
 def write(p, d): p.write_text(json.dumps(d, indent=2) + '\n')
 def main(kind='tree18'):
     cases = dict(tree18=('approved-tree-fills-v1/croisement01-tree-18','ready-tree18-texture-v2','experiment-v3','baked-v1'), rock29=('approved-rock29-fill-v2/croisement01-small-bank-stones','ready-rock29-texture-v1','experiment','baked-v1-luminance'))
+    cases.update(tree20=('approved-tree-fills-v1/croisement01-tree-20','ready-tree20-texture-v1','experiment-v2-dark-bark','baked-v4-dark-bark'), stump68=('approved-stump68-wood-fill-v1/croisement01-southeast-small-stump','ready-stump68-wood-texture-v1','experiment','baked-v1-luminance'))
     folder, ready_name, experiment, bake = cases[kind]
     case = R / folder
     approval = read(case / 'user-texture-decision.json')

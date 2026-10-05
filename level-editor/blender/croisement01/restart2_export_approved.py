@@ -1,0 +1,25 @@
+"""Export approved single-asset texture candidates privately with geometry guards."""
+import json
+import sys
+from pathlib import Path
+ROOT=Path(__file__).resolve().parents[3]
+sys.path.insert(0,str(ROOT/'level-editor/refinement'))
+sys.path.insert(0,str(ROOT/'level-editor/refinement/blender'))
+from render_slots import acquire,release
+from texture_staging import validate_texture_handoff,verify_baked_geometry
+from export_editor import export_asset_library
+from review_evidence import sha
+R=ROOT/'level-editor/work/croisement01-refinement/restart2'
+kind=sys.argv[sys.argv.index('--')+1]
+folder,asset={'tree20':('approved-tree-fills-v1','croisement01-tree-20'),'stump68':('approved-stump68-wood-fill-v1','croisement01-southeast-small-stump')}[kind]
+case=R/folder/asset
+acquire()
+try:
+ h=validate_texture_handoff(case/'review-manifest.json',asset,case/'texture-handoff-v1/decisions.json',case/'decisions.json')
+ proof=verify_baked_geometry(h)
+ out=R/(kind+'-integration-v1');out.mkdir(exist_ok=False)
+ catalog=json.loads((case/'approved-workspace/reference/grouping.json').read_text())
+ report=export_asset_library('Croisement01',out/'assets',ROOT/'level-editor/work/croisement01-refinement/baseline/Croisement01.rhp.json',asset_ids=[asset],catalog=catalog)
+ (out/'export-proof.json').write_text(json.dumps(dict(scope='Private exact approved asset export; live map unchanged',geometry=proof,export=report,approved_user_decision_sha256=sha(case/'user-texture-decision.json')),indent=2)+'\n')
+ print(out,flush=True)
+finally:release()
