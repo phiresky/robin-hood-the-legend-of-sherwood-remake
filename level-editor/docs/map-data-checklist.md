@@ -154,17 +154,27 @@ and adjusts only edges actually selected. Exact obstacle recovery also preserves
 the lower landing's rounded notch. Fresh exports match the tested geometry and
 all ten scenes reopen. The stair mesh remains incomplete, with missing samples
 occluded at all four reviewed rotations; landing discrepancies reach 0.387 units.
-The isolated ladder passes 12/16 routes: four failures at 180 degrees also occur
-in the old published definition. Both visual and rotated-ladder limitations
-remain explicit draft warnings and are not certified as parity.
-The expanded local-anchor audit also checks ladders and climbable walls:
-6/8 ladder definitions and 9/9 wall definitions have unsupported floor anchors.
-These are geometric compatibility checks for physical navigation, not proof that
-their current projected routes fail. The east-moat ladder's door midpoints lie
-0.209 and 0.181 units outside its floor, with landing-height discrepancies of
-0.404 and 0.411 units. Its rotated projected corridor failure therefore needs
-both independent navigation coordinates and reviewed endpoint seams; enabling
-physical stair navigation for climb types alone would not repair it.
+The east-moat ladder now also has published endpoint and landing corrections.
+Physical ladder navigation fixes its narrow projected corridor: all 16/16
+complete-animation routes pass at four rotations and two elevations. Landing
+surfaces retain their precision until final grid rounding; ladder movement
+orders use exact world endpoints while transition animations keep their own
+posture and membership effects. Compiler checks require a landing to support
+both the outside point and seam before enabling physical traversal. Unsupported
+definitions retain projected navigation with a warning, including the older
+Derby postern and Lincoln shed ladders whose landing heights still disagree.
+The expanded local-anchor audit finds 5/8 ladder definitions and 9/9 wall
+definitions with unsupported floor anchors. Those counts do not check landing
+height compatibility or certify placed routes. Physical walls remain unfinished.
+All 84 climb routes in the ten saved-scene exports now pass, as do all 71 control
+apply/reset checks and Derby's 28/28 stair routes. The published tower matches
+its native-tested candidate; Leicester retains 22/22 climb and 16/16 stair
+routes. The ladder mesh remains incomplete: three sampled feet are exposed at
+one reviewed rotation, and landing discrepancies reach 0.141 units. Its draft
+retains an explicit rendered-integration warning.
+The tower also retains all 16/16 rotated stair routes. Clipped landing collision
+keeps its computed precision through route and footprint queries; rounding those
+small intersections back to runtime floats could otherwise create invalid polygons.
 The east hall's upper stair now has published floor/landing seam corrections and
 passes 48 directed routes across four rotations and two elevations. Full Derby
 passes 28/28 stair routes and all five control checks with this correction.
@@ -255,7 +265,7 @@ invented across that gap. New drops use the correct foundation height. Native
 mouse queries also now reject loaded movement-obstacle interiors. These focused
 checks do not establish every platform route or complete asset coverage.
 
-Latest editor validation (2026-10-06): 837 tests passed, two skipped. Fresh
+Latest editor validation (2026-10-06): 845 tests passed, two skipped. Fresh
 descriptors for all ten saved scenes pass native loading and all 71 control
 apply/reset checks; Derby retains 28/28 stair routes. The game
 build and native stair/control checks passed. Wychford loads with its spline wall

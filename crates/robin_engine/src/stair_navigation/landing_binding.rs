@@ -18,12 +18,68 @@ pub(super) struct BoundLanding {
 pub(super) struct BoundLandingObstacle {
     pub motion_obstacle: u16,
     pub state: u32,
-    pub polygon: Vec<[f32; 2]>,
+    pub polygon: Vec<[f64; 2]>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clipped_landing_collision_retains_valid_subpixel_edges() {
+        let (collision, support): (Vec<[f32; 2]>, Vec<[f32; 2]>) =
+            serde_json::from_slice(include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/precise-landing-clip.json"
+            )))
+            .unwrap();
+        let clipped = landing_collision_intersection(
+            &polygon(&collision).unwrap(),
+            &polygon(&support).unwrap(),
+        );
+        assert!(clipped.iter().all(|solid| solid.is_valid()));
+        assert!(clipped.iter().any(|solid| {
+            !solid
+                .map_coords(|p| geo::Coord {
+                    x: p.x as f32,
+                    y: p.y as f32,
+                })
+                .is_valid()
+        }));
+        let obstacles = clipped
+            .iter()
+            .map(|solid| {
+                solid
+                    .exterior()
+                    .points()
+                    .map(|p| [p.x(), p.y()])
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let geometry = StairRouteGeometry {
+            boundary: vec![
+                [1600., 1700.],
+                [1800., 1700.],
+                [1800., 1900.],
+                [1600., 1900.],
+            ],
+            obstacles: Vec::new(),
+        };
+        let source = [1678., 1778.];
+        let half = MoveBoxHalfDiagonal::new(6., 3.);
+        assert!(
+            geometry
+                .route_with_precise_landing_support(source, source, half, &[], &[])
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            geometry
+                .route_with_precise_landing_support(source, source, half, &[], &obstacles)
+                .unwrap()
+                .is_none()
+        );
+    }
 
     #[test]
     fn seam_roundoff_cleanup_preserves_real_and_standalone_thin_obstacles() {
@@ -388,7 +444,10 @@ impl BoundPhysicalStair {
         position: [f32; 2],
         half: MoveBoxHalfDiagonal,
     ) -> bool {
-        let actor = actor_footprint(position, half);
+        let actor = actor_footprint(position, half).map_coords(|point| geo::Coord {
+            x: f64::from(point.x),
+            y: f64::from(point.y),
+        });
         self.landings
             .iter()
             .filter(|landing| landing.layer == usize::from(layer) && landing.sector == sector)
@@ -586,9 +645,13 @@ impl BoundPhysicalStair {
                         .collect::<Vec<_>>(),
                 )?
             };
-            for clipped in collision.intersection(support) {
+            for clipped in landing_collision_intersection(&collision, support) {
+                let rounded = clipped.map_coords(|point| geo::Coord {
+                    x: point.x as f32,
+                    y: point.y as f32,
+                });
                 if !obstacle.precise_polygon.is_empty()
-                    && rounded_seam_sliver(&clipped, &collision, &stair, tolerance)
+                    && rounded_seam_sliver(&rounded, &collision, &stair, tolerance)
                 {
                     continue;
                 }
@@ -601,7 +664,11 @@ impl BoundPhysicalStair {
                     motion_obstacle: u16::try_from(index)
                         .map_err(|_| "too many landing motion obstacles")?,
                     state: obstacle.state_id,
-                    polygon: ring(clipped.exterior()),
+                    polygon: clipped
+                        .exterior()
+                        .points()
+                        .map(|p| [p.x(), p.y()])
+                        .collect(),
                 });
             }
         }
@@ -616,6 +683,19 @@ impl BoundPhysicalStair {
         });
         Ok(())
     }
+}
+
+fn landing_collision_intersection(
+    collision: &Polygon<f32>,
+    support: &Polygon<f32>,
+) -> geo::MultiPolygon<f64> {
+    let promote = |point: geo::Coord<f32>| geo::Coord {
+        x: f64::from(point.x),
+        y: f64::from(point.y),
+    };
+    collision
+        .map_coords(promote)
+        .intersection(&support.map_coords(promote))
 }
 
 /// Clipping independently encoded f32 contours can leave a strip on their shared

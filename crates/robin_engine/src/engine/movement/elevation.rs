@@ -244,9 +244,7 @@ impl EngineInner {
                 stair.definition.plane,
             )
             .expect("loaded physical stair has invalid plane");
-            let on_floor = plane
-                .world_position(source.map(f64::from))
-                .is_ok_and(|world| (world[2] - f64::from(position.z)).abs() <= 0.001);
+            let on_floor = plane.contains_runtime_position([position.x, position.y, position.z]);
             let supported = on_floor
                 && stair
                     .route(

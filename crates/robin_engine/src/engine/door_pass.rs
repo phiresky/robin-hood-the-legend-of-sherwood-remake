@@ -903,7 +903,44 @@ impl EngineInner {
         match door_type {
             DoorType::Building | DoorType::BuildingTrap => translate_building(&ctx, &mut orders),
             DoorType::LiftHigh | DoorType::LiftHighCrenel | DoorType::LiftLow => match lift_type {
-                Some(LiftType::Ladder) => translate_ladder(&ctx, &mut orders),
+                Some(LiftType::Ladder) => {
+                    translate_ladder(&ctx, &mut orders);
+                    if let Some((sector, _, physical)) = physical_door {
+                        // The entry callback seats the actor on the physical
+                        // floor. Keep the following climb's exact world goal.
+                        // Exit transitions retain their own positional and
+                        // membership effects, so only climbing orders use this
+                        // floor, not the animation that leaves it.
+                        let mut inside = !direct;
+                        for order in orders.element.orders.iter_mut().skip(first_order) {
+                            if order.order_type == OrderType::PassingDoor {
+                                inside = direct;
+                                if !direct {
+                                    break;
+                                }
+                                continue;
+                            }
+                            let target = if direct { ctx.point_in } else { ctx.point_mid };
+                            if inside
+                                && matches!(
+                                    order.order_type,
+                                    OrderType::ClimbingLadderUp | OrderType::ClimbingLadderDown
+                                )
+                                && MapPoint::new(order.target_x, order.target_y) == target
+                            {
+                                let destination = if direct {
+                                    physical.inside
+                                } else {
+                                    physical.middle
+                                };
+                                order.physical_stair = Some(sector);
+                                order.destination_3d = destination;
+                                order.target_x = destination[0];
+                                order.target_y = destination[1] - destination[2];
+                            }
+                        }
+                    }
+                }
                 Some(LiftType::Wall) => translate_wall(&ctx, &mut orders),
                 Some(LiftType::Stairs) | Some(LiftType::Normal) => {
                     translate_stairs(&ctx, &mut orders);

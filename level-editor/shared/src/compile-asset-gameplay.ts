@@ -952,7 +952,12 @@ function compileAssetGameplayAttempt(
       // Clearances are intermediate cutouts. Snapping their intersections before
       // clipping solids bends otherwise straight movement boundaries.
       const clearance = target === movementClearances;
-      const continuous = clearance || surface.preserveMovementPrecision === true;
+      // Physical ladders need their authored landing seams before final grid
+      // rounding; rounding individual surfaces can disconnect a rotated entry.
+      const continuous =
+        clearance ||
+        surface.preserveMovementPrecision === true ||
+        gameplay.lifts?.some((lift) => lift.type === 2) === true;
       const projectMovement = continuous ? ([x, y, z]: Vec3): Point => [x, y - z] : project;
       const minimumArea = continuous ? 1e-8 : 0.5;
       const placed = {
@@ -1659,11 +1664,29 @@ function compileAssetGameplayAttempt(
   allocateLightReceivingLayers(navigationRegions, lights, layers.length - 1, inside);
   const liftLayer = compactNavigationLayers(navigationRegions);
   const physicalStairs = new Map<string, ReturnType<typeof compilePhysicalStairRegion>>();
-  for (const lift of lifts.filter((lift) => lift.type === 1)) {
+  for (const lift of lifts.filter((lift) => lift.type === 1 || lift.type === 2)) {
     const floor = surfaces.filter((surface) => surface.lift === lift.id);
     const worldRing = (points: Point[], plane: HeightPlane): Vec3[] =>
       points.map(([x, y]) => [x, y, planeHeight(plane, [x, y])]);
     try {
+      if (lift.type === 2)
+        for (const door of doors.filter((door) => door.lift === lift.id)) {
+          const supported = surfaces.some((surface) => {
+            if (surface.lift) return false;
+            const area = {
+              coordinateSpace: "world" as const,
+              plane: surface.worldPlane,
+              polygon: surface.worldPolygon,
+              blockers: surface.worldHoles,
+            };
+            return (
+              containsNavigationAnchor(area, door.outside) &&
+              containsNavigationAnchor(area, door.worldMiddle)
+            );
+          });
+          if (!supported)
+            throw new Error(`Landing does not reach physical ladder door ${door.name}`);
+        }
       physicalStairs.set(
         lift.id,
         compilePhysicalStairRegion({

@@ -62,8 +62,8 @@ pub struct PhysicalStairDoor {
 impl PhysicalStairNavigation {
     /// Check ownership and forward projection before runtime geometry binding.
     pub fn validate(&self, lift: &RawLift, area: &RawMotionArea) -> Result<(), String> {
-        if lift.lift_type != 1 || !area.is_lift {
-            return Err("physical stair navigation requires a stair motion area".into());
+        if !(1..=2).contains(&lift.lift_type) || !area.is_lift {
+            return Err("physical navigation requires a stair or ladder motion area".into());
         }
         let plane = StairNavigationPlane::new(self.plane)?;
         let check_polygon = |points: &[[f32; 2]]| -> Result<(), String> {
@@ -149,7 +149,7 @@ impl PhysicalStairNavigation {
                 {
                     return Err("physical stair door differs from its projected identity".into());
                 }
-                if on_floor && (plane.world_position([x, y])?[2] - z).abs() > 0.001 {
+                if on_floor && !plane.contains_runtime_position(world) {
                     return Err("physical stair door is not on its floor".into());
                 }
                 if on_floor && !contains_rounded_anchor(&boundary, [world[0], world[1]]) {

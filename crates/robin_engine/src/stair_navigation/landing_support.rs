@@ -19,6 +19,19 @@ impl StairRouteGeometry {
         half: MoveBoxHalfDiagonal,
         landings: &[Vec<[f32; 2]>],
     ) -> Result<Option<Vec<[f32; 2]>>, String> {
+        self.route_with_precise_landing_support(source, goal, half, landings, &[])
+    }
+
+    /// Keep intersection vertices in their computed precision. Rounding a thin
+    /// clipped solid back to f32 can turn valid edges into crossing spikes.
+    pub(super) fn route_with_precise_landing_support(
+        &self,
+        source: [f32; 2],
+        goal: [f32; 2],
+        half: MoveBoxHalfDiagonal,
+        landings: &[Vec<[f32; 2]>],
+        precise_obstacles: &[Vec<[f64; 2]>],
+    ) -> Result<Option<Vec<[f32; 2]>>, String> {
         if source.iter().chain(&goal).any(|value| !value.is_finite())
             || !half.x.is_finite()
             || !half.y.is_finite()
@@ -94,6 +107,7 @@ impl StairRouteGeometry {
             .obstacles
             .iter()
             .map(|ring| convert(ring))
+            .chain(precise_obstacles.iter().map(|ring| polygon(ring)))
             .collect::<Result<Vec<_>, _>>()?
             .into_iter()
             .flat_map(|solid| solid.intersection(&neighborhood).0)

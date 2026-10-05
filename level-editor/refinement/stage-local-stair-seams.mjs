@@ -9,9 +9,13 @@ import { validateAssetGameplay } from "../shared/src/asset-gameplay.ts";
 // placed actor checks; this never repairs a scene silently during compilation.
 const [asset, ...arguments_] = process.argv.slice(2);
 const localLandingEdges = arguments_.includes("--local-landing-edges");
+const climbSeams = arguments_.includes("--climb-seams");
 const draftIssues = arguments_
   .filter((value) => value.startsWith("--draft-issue="))
   .map((value) => value.slice(14));
+const resolvedIssues = arguments_
+  .filter((value) => value.startsWith("--resolve-draft-issue="))
+  .map((value) => value.slice(22));
 assert.ok(
   draftIssues.every((issue) => issue.trim().length > 0),
   "Draft issues cannot be empty",
@@ -34,12 +38,14 @@ const ids = arguments_.filter(
   (value) =>
     !value.startsWith("--external=") &&
     value !== "--local-landing-edges" &&
+    value !== "--climb-seams" &&
     !value.startsWith("--draft-issue=") &&
+    !value.startsWith("--resolve-draft-issue=") &&
     !value.startsWith("--floor-shift-limit=") &&
     !value.startsWith("--landing-shift-limit="),
 );
 const usedExternal = new Set();
-assert.ok(asset && ids.length, "Provide an asset and selected stair lift IDs");
+assert.ok(asset && ids.length, "Provide an asset and selected lift IDs");
 const index = JSON.parse(await fs.readFile("library/3d-assets/index.json", "utf8")).assets;
 const entry = index.find((entry) => entry.id === asset);
 assert.ok(entry, asset);
@@ -51,7 +57,10 @@ const gameplay = structuredClone(descriptor.gameplay);
 const changes = [];
 for (const id of ids) {
   const lift = gameplay.lifts.find((lift) => lift.id === id);
-  assert.equal(lift?.type, 1, `${id}: not a stair`);
+  assert.ok(
+    climbSeams ? lift?.type === 2 || lift?.type === 3 : lift?.type === 1,
+    `${id}: not a selected ${climbSeams ? "climb" : "stair"} type`,
+  );
   const floor = gameplay.surfaces.find((surface) => surface.id === lift.surface);
   assert.ok(floor && !floor.holes?.length, `${id}: requires separate hole review`);
   const before = structuredClone(floor);
@@ -211,6 +220,10 @@ for (const id of ids) {
   changes.push({ clearance: clearance.id, after: clearance });
 }
 assert.deepEqual(usedExternal, external, "Unused external endpoint selection");
+for (const issue of resolvedIssues) {
+  assert.ok(gameplay.draft?.issues.includes(issue), `Unknown resolved draft issue: ${issue}`);
+  gameplay.draft.issues = gameplay.draft.issues.filter((value) => value !== issue);
+}
 if (draftIssues.length) {
   gameplay.draft ??= { issues: [] };
   gameplay.draft.issues = [...new Set([...gameplay.draft.issues, ...draftIssues])];
@@ -222,7 +235,7 @@ await fs.writeFile(
   `${output}/review.json`,
   JSON.stringify(
     {
-      scope: "unpublished local stair seam candidate",
+      scope: `unpublished local ${climbSeams ? "climb" : "stair"} seam candidate`,
       asset,
       descriptorSha256,
       floorShiftLimit,

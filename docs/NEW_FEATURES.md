@@ -1,5 +1,17 @@
 # Post-port Features
 
+- **Physical ladder navigation.** Compatible planar ladders export world-space
+  floors and live collision alongside stairs. Ladder entry/exit climbing orders
+  retain exact endpoints after placement, while transition animations keep their
+  posture and membership effects. Landing surfaces retain precision until final
+  grid rounding. Physical routes can resume when a barrier reopens before their
+  blocked-motion timeout; projected routes retain their existing failed-request
+  behavior. Steep-floor validation accounts for independently rounded runtime
+  coordinates without accepting real height gaps. Climbable walls and complete
+  rendered climbing integration remain unfinished.
+  Clipped landing obstacles retain their computed precision through routing and
+  footprint collision, avoiding self-intersecting contours after float rounding.
+
 - **Mission state previews.** Crossroads 2's 05 · Ambush mission offers log and
   rock trap artwork playback, seeking, and independently reviewed 3D endpoint
   views. These controlled previews do not run mission scripts or synthesize

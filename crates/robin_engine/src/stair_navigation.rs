@@ -142,9 +142,10 @@ impl BoundPhysicalStair {
             .iter()
             .map(|landing| landing.boundary.clone())
             .collect::<Vec<_>>();
+        let mut precise_obstacles = Vec::new();
         for landing in &self.landings {
             geometry.obstacles.extend(landing.holes.iter().cloned());
-            geometry.obstacles.extend(
+            precise_obstacles.extend(
                 landing
                     .obstacles
                     .iter()
@@ -158,7 +159,13 @@ impl BoundPhysicalStair {
                     .map(|obstacle| obstacle.polygon.clone()),
             );
         }
-        geometry.route_with_landing_support(source, goal, half_diagonal, &support)
+        geometry.route_with_precise_landing_support(
+            source,
+            goal,
+            half_diagonal,
+            &support,
+            &precise_obstacles,
+        )
     }
 }
 
@@ -176,7 +183,7 @@ fn actor_footprint(position: [f32; 2], half: MoveBoxHalfDiagonal) -> Polygon<f32
     .to_polygon()
 }
 
-fn polygon(points: &[[f32; 2]]) -> Result<Polygon<f32>, String> {
+fn polygon<T: geo::GeoFloat>(points: &[[T; 2]]) -> Result<Polygon<T>, String> {
     if points.len() < 3 || points.iter().flatten().any(|x| !x.is_finite()) {
         return Err("physical stair polygon requires at least three finite points".into());
     }
@@ -184,7 +191,7 @@ fn polygon(points: &[[f32; 2]]) -> Result<Polygon<f32>, String> {
         LineString::from(points.iter().map(|p| (p[0], p[1])).collect::<Vec<_>>()),
         Vec::new(),
     );
-    if !polygon.is_valid() || polygon.unsigned_area() <= 0.0 {
+    if !polygon.is_valid() || polygon.unsigned_area() <= T::zero() {
         return Err("physical stair polygon is degenerate or self-intersecting".into());
     }
     Ok(polygon)

@@ -39,11 +39,8 @@ impl EngineInner {
         let position = entity.position_iface().get_position();
         let goal = selected.physical_goal;
         for point in [position, goal] {
-            let world = plane
-                .world_position([f64::from(point.x), f64::from(point.y)])
-                .expect("invalid physical stair position");
             assert!(
-                (world[2] - f64::from(point.z)).abs() <= 0.001,
+                plane.contains_runtime_position([point.x, point.y, point.z]),
                 "physical stair motion must start and end on its floor"
             );
         }

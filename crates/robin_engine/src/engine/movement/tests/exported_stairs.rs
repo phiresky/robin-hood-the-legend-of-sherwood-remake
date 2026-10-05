@@ -614,6 +614,7 @@ fn changing_climb_barriers_reopen_before_or_after_path_failure() {
     let mut checked = 0;
     for hold_ticks in [0, 8, 120] {
         for (index, fixture) in fixtures.iter().enumerate() {
+            let physical = !fixture["asset_geometry"]["lifts"][0]["physical_navigation"].is_null();
             let (engine, assets) = compiled_walkway(&serde_json::to_vec(fixture).unwrap());
             for (entrance, exit) in [(0, 1), (1, 0)] {
                 let mut applied = false;
@@ -698,7 +699,7 @@ fn changing_climb_barriers_reopen_before_or_after_path_failure() {
                                     .failed_path_requests
                                     .iter()
                                     .any(|request| request.owner == owner),
-                                hold_ticks == 8,
+                                !physical && hold_ticks == 8,
                                 "failed request before reopening, fixture={index}, entrance={entrance}, hold={hold_ticks}"
                             );
                             let aborted = engine
@@ -734,11 +735,11 @@ fn changing_climb_barriers_reopen_before_or_after_path_failure() {
                     applied && reopened,
                     "actor must wait before reopening, fixture={index}, entrance={entrance}: {result:?}"
                 );
-                if hold_ticks == 0 {
+                if hold_ticks == 0 || (physical && hold_ticks == 8) {
                     assert_eq!(
                         result,
                         Ok(true),
-                        "reopened before path failure, fixture={index}, entrance={entrance}"
+                        "reopened before route abortion, fixture={index}, entrance={entrance}"
                     );
                 } else {
                     assert!(
@@ -754,7 +755,7 @@ fn changing_climb_barriers_reopen_before_or_after_path_failure() {
     }
     assert_eq!(checked, 72);
     eprintln!(
-        "{checked} mid-climb reopening checks passed: early reopening completes; failed requests retain their timeout"
+        "{checked} mid-climb reopening checks passed: physical routes resume before abortion; failed projected requests retain their timeout"
     );
 }
 
@@ -770,6 +771,12 @@ fn changing_climb_barrier_near_entrance_blocks_actor_approach() {
     for lift_type in [2, 3] {
         let mut fixture = fixtures[0].clone();
         fixture["asset_geometry"]["lifts"][0]["lift_type"] = lift_type.into();
+        // This fixture edits projected collision only. Physical barriers are
+        // covered by the compiler-generated ladder fixtures above.
+        fixture["asset_geometry"]["lifts"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("physical_navigation");
         fixture["asset_geometry"]["motion_data"]["layers"][2][0]["obstacles"][0]["polygon"]["points"] =
             serde_json::json!([[1293, 1165], [1295, 1155], [1295, 1255], [1293, 1265]]);
         let (mut engine, assets) = compiled_walkway(&serde_json::to_vec(&fixture).unwrap());

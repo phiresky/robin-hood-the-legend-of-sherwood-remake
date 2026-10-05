@@ -64,6 +64,29 @@ impl StairNavigationPlane {
         Ok([x, screen_y])
     }
 
+    /// Runtime coordinates round independently to f32. On a steep floor, XY
+    /// rounding can exceed the ordinary height tolerance after plane evaluation.
+    pub fn contains_runtime_position(&self, point: [f32; 3]) -> bool {
+        if point.iter().any(|value| !value.is_finite()) {
+            return false;
+        }
+        let [x, y, z] = point.map(f64::from);
+        let Ok(world) = self.world_position([x, y]) else {
+            return false;
+        };
+        let half_ulp = |value: f32| {
+            ((f64::from(value.next_up()) - f64::from(value))
+                .max(f64::from(value) - f64::from(value.next_down())))
+                * 0.5
+        };
+        let [a, b, c] = self.coefficients;
+        let rounding = a.abs() * half_ulp(point[0])
+            + b.abs() * half_ulp(point[1])
+            + half_ulp(point[2])
+            + (a.abs() * x.abs() + b.abs() * y.abs() + c.abs()) * f64::EPSILON * 4.0;
+        rounding.is_finite() && (world[2] - z).abs() <= rounding.max(0.001)
+    }
+
     /// Physical progress remains measurable even when screen displacement is zero.
     pub fn route_distance(&self, from: [f64; 2], to: [f64; 2]) -> Result<f64, &'static str> {
         let from = self.world_position(from)?;
@@ -111,6 +134,31 @@ impl StairNavigationPlane {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn steep_floor_accepts_runtime_rounding_but_rejects_real_height_gaps() {
+        let plane = StairNavigationPlane::new([
+            -2.7598610838044366,
+            -11.249315735773262,
+            29507.430579073047,
+        ])
+        .unwrap();
+        let point = plane.world_position([590.0, 2476.882235227299]).unwrap();
+        let rounded = point.map(|value| value as f32);
+        assert!(
+            (plane
+                .world_position([f64::from(rounded[0]), f64::from(rounded[1])])
+                .unwrap()[2]
+                - f64::from(rounded[2]))
+            .abs()
+                > 0.001
+        );
+        assert!(plane.contains_runtime_position(rounded));
+        for delta in [-0.01, 0.01] {
+            assert!(!plane.contains_runtime_position([rounded[0], rounded[1], rounded[2] + delta]));
+        }
+        assert!(!plane.contains_runtime_position([f32::NAN, 0.0, 0.0]));
+    }
 
     #[test]
     fn edge_on_stair_retains_world_progress_when_screen_points_coincide() {

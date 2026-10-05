@@ -155,12 +155,37 @@ test("changing ladder and wall barriers retain their traversal state bindings", 
       const compiled = compileAssetGameplay(document, assets, bounds);
       assert.equal(compiled.lifts!.length, 1);
       assert.equal(compiled.movement_transitions!.length, 1);
+      const lift = compiled.lifts![0]!;
+      if (type === 2) {
+        assert.ok(
+          lift.physical_navigation,
+          compiled.warnings?.join("\n") ?? "Missing physical ladder",
+        );
+        assert.equal(lift.physical_navigation.doors.length, 2);
+        assert.equal(lift.physical_navigation.obstacles.length, 1);
+        assert.equal(lift.physical_navigation.obstacles[0]!.motion_obstacle, 0);
+      }
       assert.equal(
         compiled.movement_transitions![0]!.motion_changes[0]!.sector,
         compiled.lifts![0]!.motion_area_index,
       );
     }
   }
+});
+
+test("physical ladders require landing support at both the outside point and seam", () => {
+  const { document, assets, hut } = changingClimbCompilerFixture(2);
+  hut.gameplay!.surfaces[0]!.height = 1;
+  hut.gameplay!.lifts![0]!.doors[0]!.outside[2] = 1;
+  hut.gameplay!.movementTransitions![0]!.waypoint[2] = 1;
+  const compiled = compileAssetGameplay(document, assets, bounds);
+  assert.equal(compiled.lifts!.length, 1);
+  assert.equal(compiled.lifts![0]!.physical_navigation, undefined);
+  assert.ok(
+    compiled.warnings?.some((warning) =>
+      warning.includes("Landing does not reach physical ladder"),
+    ),
+  );
 });
 
 test("best-effort terrain retries preserve input and subsequent terrain edits", () => {

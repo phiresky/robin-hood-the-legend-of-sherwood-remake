@@ -4,6 +4,65 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Physical ladders and published east-moat correction (2026-10-06)
+
+Compatible planar ladders now use the existing physical floor/collision machinery.
+Entry/exit climbing orders retain exact world endpoints; transition animations
+keep their positional, posture and sector-change effects. Landing geometry in
+ladder assets remains precise until final grid quantization. A physical ladder
+requires authored receiving support at both the outside point and midpoint.
+This catches the old Derby postern and Lincoln shed height mismatches before
+loading; they retain projected navigation with explicit warnings.
+
+Runtime floor checks now bound the error from independently rounded f32 world
+coordinates. A captured steep-floor case exceeds the previous 0.001 threshold
+by 0.0000014 units; the regression accepts its rounding and rejects real
+0.01-unit height gaps. Loader, source authorization and movement share this check.
+
+Authoring candidate `local-stair-seams-Ozmxuf` uses `--climb-seams`,
+`--local-landing-edges` and a reviewed `--landing-shift-limit=12`. Floor vertices
+move at most 0.337 units; the larger upper-landing adjustment restores the
+approach across mesh-supported floor. Landing edge discrepancies reach 0.141
+units. The ladder has 351/658 sampled mesh hits, with three uncovered foot
+samples visible at 90 degrees; full sprite integration remains unverified.
+Intermediate candidates failed due to rounded landing collision; preserving
+all surrounding asset surfaces through final rounding resolves those failures.
+
+Final stage `local-stair-seams-nOBhY7` removes the obsolete 180-degree route
+warning and retains an explicit ladder mesh/rendering warning. Publication
+backup is `east-moat-ladder-publication-20261006`; Leicester and Wychford pins
+are refreshed. `local-stair-placements-YmmHHe` passes 16/16 complete-animation
+climb routes at 0/37/90/180 degrees and elevations 0/40. Fresh published exports
+`local-stair-placements-FpyfRu` match those descriptors exactly. Full Leicester
+`east-moat-ladder-level-3lab2Y` passes 22/22 climbs, 16/16 stairs and twelve
+control apply/reset checks; fresh full-map geometry matches after excluding
+the revised draft warning text.
+
+The expanded placement checks exposed a stair collision regression at 37 degrees:
+rounding a clipped landing solid back to f32 turned its edges into crossing
+spikes. Landing collision now retains f64 intersection coordinates through
+routing and footprint checks, preserving its live obstacle identity. The captured
+`precise-landing-clip.json` regression demonstrates that f32 conversion invalidates
+the contour and verifies that the retained solid still blocks the actor. All
+16/16 published tower stair routes pass alongside the sixteen ladder routes.
+
+Batch `saved-map-exports-FZ3QnW` compiles all ten saved scenes. Native checks
+pass 84/84 climb routes, all 71 control apply/reset checks, and Derby's 28/28
+stairs. Updated compiler-generated fixtures cover physical ladder controls and
+projected walls, including copied isolation, mid-climb barrier closure and 72
+reopening checks. Physical routes resume before their blocked-motion abortion;
+projected failed requests retain their previous timeout behavior. The focused
+movement suite passes 191 tests (twelve ignored); five coordinate tests pass.
+All seventeen physical navigation tests pass, including thin-obstacle preservation.
+Editor validation passes 845 tests (two skipped), focused lint, formatting,
+the app typecheck and production build. The pipeline typecheck is currently
+blocked by separate `state-delivery.test.ts` errors. The game build passes.
+
+Anchor audit `lift-anchor-support-duQZVA` finds unsupported floor anchors in
+38/53 stairs, 5/8 ladders and 9/9 walls. These counts omit landing compatibility
+and are not traversal certification. Fresh baked ZIPs, rendered climbing,
+broader rotations and physical wall transitions remain open.
+
 ## Climb floor-anchor audit (2026-10-06)
 
 `node refinement/audit-stair-anchor-support.mjs library --all-lifts` extends
