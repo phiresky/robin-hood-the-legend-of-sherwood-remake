@@ -16,7 +16,7 @@ def main():
  if data.get('worker') and data.get('asset_id'):
   worker=Path(data['worker']);asset=data['asset_id'];model=data['model_sha256']
   if evidence.get(str((worker/'model.blend').resolve()))!=model:raise ValueError('Unbound worker model')
-  rows=[('Actual saved model, original camera top left',worker/'inspection/actual-materials/sheet.png'),('Solid geometry, original camera top left',Path(data.get('solid_sheet',worker/'modified/solid.png'))),('Original source and saved model',Path(data['source_trace'])),('Native ground and neighbor comparison',Path(data['source_comparison'])),('Ground and neighbor contact views',Path(data['contact_sheet']))]
+  rows=[('Actual saved model, original camera top left',Path(data.get('actual_sheet',worker/'inspection/actual-materials/sheet.png'))),('Solid geometry, original camera top left',Path(data.get('solid_sheet',worker/'modified/solid.png'))),('Original source and saved model',Path(data['source_trace'])),('Native ground and neighbor comparison',Path(data['source_comparison'])),('Ground and neighbor contact views',Path(data['contact_sheet']))]
   images=[]
   for label,path in rows:
    p=str(path.resolve())
