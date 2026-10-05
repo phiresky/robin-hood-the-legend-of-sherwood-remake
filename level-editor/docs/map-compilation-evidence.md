@@ -4,6 +4,24 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Library stair-anchor support audit (2026-10-05)
+
+`refinement/audit-stair-anchor-support.mjs` reads hash-verified library descriptors
+without source maps or inferred ground. It records each stair's planar residual,
+inside/middle anchor containment and height error, distance to the floor edge,
+middle-to-landing height difference and possible flat local landing owners.
+Results are in `work/map-compile/stair-anchor-support-SdVBJ4/report.json`.
+All 53 authored stair floors are planar, but 49 have at least one unsupported
+anchor: Derby 7/10, Leicester 8/8, Lincoln 6/6, Nottingham 11/12, Sherwood 1/1
+and York 16/16. Derby's unsupported middles are 0.033–0.954 units from their
+floor boundary and lie on the extrapolated plane to numerical precision.
+
+This is an asset-local audit, not a count of failed exported routes. It does not
+resolve neighbouring assets, deform splines or test actor footprints and control
+states. Missing local landing candidates can legitimately be terrain or separate
+assets. Corrections must preserve those external connections and be checked after
+placement; no gameplay definitions are changed by the audit.
+
 ## Published keep component seam corrections (2026-10-05)
 
 The composite candidate's eight floor edits, seven door-midpoint edits and three
