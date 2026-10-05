@@ -31,6 +31,21 @@ def main():
     for i,im in enumerate(images):sheet.paste(im,((i%4)*tw,(i//4)*th))
     sheet.save(actual/'sheet.png');write_json(actual/'evidence.json',dict(model_sha256=digest,sheet_sha256=sha(actual/'sheet.png'),render_config=dict(engine='CYCLES',samples=4,transparent_max_bounces=256)))
     objects=[o for o in bpy.data.collections['Croisement03 Working'].all_objects if o.type=='MESH' and o.get('asset_group')==w.name]
+    mixed_rows=[]
+    for obj in objects:
+        ownership=obj.data.color_attributes.get('Source ownership')
+        for polygon in obj.data.polygons:
+            mat=obj.data.materials[polygon.material_index]
+            if not mat.get('foliage_mixed_source_ownership'):continue
+            assert ownership is not None
+            xs=[(obj.matrix_world@obj.data.vertices[i].co).x for i in polygon.vertices]
+            values=[ownership.data[i].color[0] for i in polygon.loop_indices]
+            expected=1. if sum(xs)/len(xs)<1408 else 0.
+            assert max(xs)<=1408.0001 or min(xs)>=1407.9999, xs
+            assert all(abs(v-expected)<1e-6 for v in values),(xs,values)
+            mixed_rows.append(dict(known=bool(expected),vertices=len(xs)))
+    if mixed_rows:
+        write_json(w/'inspection/mixed-ownership-audit.json',dict(model_sha256=digest,status='PASS',boundary_x=1408,known_faces=sum(r['known'] for r in mixed_rows),unknown_faces=sum(not r['known'] for r in mixed_rows),note='Each mixed front face lies wholly on one side of the native image boundary and carries the corresponding exact source ownership value.'))
     foliage_points=[];opaque_foliage_samples=[];wood_points=[]
     for obj in objects:
         uv=obj.data.uv_layers.get('Foliage UV') or obj.data.uv_layers.active
