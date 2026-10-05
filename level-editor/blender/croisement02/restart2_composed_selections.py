@@ -27,13 +27,14 @@ def validate(worker):
 
 def selected_workspace(out,mask,catalog_path):
  if mask not in (31,32,35,38,43,45,46):return None
- receipt=out/'restart2-wood/composed-selections'/f'tree-{mask:02}-gallery-v3.json'
+ receipt=out/'restart2-wood/composed-selections'/f'tree-{mask:02}-gallery-v4.json'
+ if not receipt.exists():receipt=out/'restart2-wood/composed-selections'/f'tree-{mask:02}-gallery-v3.json'
  if not receipt.exists():receipt=out/'restart2-wood/composed-selections'/f'tree-{mask:02}-gallery-v2.json'
  if not receipt.exists():receipt=out/'restart2-wood/composed-selections'/f'tree-{mask:02}.json'
  if not receipt.exists():return None
  record=read(receipt)
  if 'previous_receipt_sha256' in record:
-  previous=receipt.with_name(f'tree-{mask:02}-gallery-v2.json' if receipt.name.endswith('-v3.json') else f'tree-{mask:02}.json')
+  previous=receipt.with_name(f'tree-{mask:02}-gallery-v3.json' if receipt.name.endswith('-v4.json') else f'tree-{mask:02}-gallery-v2.json' if receipt.name.endswith('-v3.json') else f'tree-{mask:02}.json')
   require(sha(previous)==record['previous_receipt_sha256'],'Composed receipt history changed')
  worker=Path(record['worker']);require(record['approval']=='pending' and record['model_sha256']==sha(worker/'model.blend'),'Invalid composed selection')
  require(worker.name==f'croisement02-tree-{mask:02}','Wrong composed asset')
