@@ -142,8 +142,10 @@ below navigation, with the top two treads outside the floor. Adjacent asset
 meshes do not cover these samples; endpoint snapping alone cannot repair this.
 A mesh-derived replacement now follows the tread outline and revises its local
 platform seam, material plane and clearance. It emits physical navigation at all
-eight placements, but passes only 14/16 routes: lower entry stalls at 180 degrees.
-Full Derby passes 26/28 with this unpublished replacement. Mesh review samples
+eight placements and now passes 16/16 routes after a runtime entry-handoff fix.
+The callback retains world position and physical floor ownership before the next
+walking order is installed. Full Derby still passes only 26/28 with this
+unpublished replacement; its actual terrain contact needs correction. Mesh review samples
 751/755 hits, with uncovered edge strips at most 0.364 units wide. Landing contact
 and collision review remain necessary before replacing the published definition.
 The upper gatehouse stair is now published after a mesh-reviewed 2.567-unit

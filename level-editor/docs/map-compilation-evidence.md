@@ -4,6 +4,33 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Physical stair entry callback preserves floor ownership (2026-10-05)
+
+The upper-west 180-degree fixture exposed a handoff error: after entering the
+physical stair sector, the installed order can still be the passage callback
+rather than the following physical walk. The post-execution line-crossing guard
+looked only at the installed order, so it applied a projected elevation receiver
+again. Reconstructing the fractional seam through that plane shifted the actor
+off its supported world boundary. This was not an obstacle in the physical floor.
+
+The guard now also recognizes membership in a physical stair sector. Entry
+receiver installation retains the authored world seam rather than the rounded
+plane evaluation. Script, sound and patch callbacks remain dispatched through
+the existing crossing path. A committed descriptor fixture reproduces the whole
+actor loop in both directions; it failed before the guard correction and passes
+after it. A separate exact-outline geometry query confirms that the supported
+seam itself is traversable. Stalled-route diagnostics now include world position
+and queued orders to distinguish receiver drift from route/collision failures.
+
+With the fix, `local-stair-placements-XJDe5H` passes all 16/16 directed routes
+across four rotations and two elevations. Published Derby
+`lower-west-contacts-full-wgsNlT` retains 28/28 passing routes. The full Derby
+mesh-floor candidate `upper-west-mesh-full-cqrjt3` remains 26/28: this separate
+asset/terrain contact problem is not fixed by the runtime change. The candidate
+remains unpublished. All 15 stair-navigation tests, 191 movement tests and 33
+door-passage tests pass (12 environment-dependent movement tests ignored).
+The game build and workspace formatting check pass.
+
 ## Mesh-derived upper-west floor candidate (2026-10-05)
 
 `refinement/stage-upper-west-mesh-floor.mjs` derives a smooth ramp from the pinned

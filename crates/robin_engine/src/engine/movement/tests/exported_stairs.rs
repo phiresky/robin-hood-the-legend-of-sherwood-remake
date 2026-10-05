@@ -1,6 +1,21 @@
 use super::*;
 
 #[test]
+fn physical_stair_fractional_seams_preserve_actor_world_position() {
+    let (engine, assets) = compiled_walkway(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/physical-stair-fractional-seam.level.json"
+    )));
+    for (entrance, exit) in [(0, 1), (1, 0)] {
+        assert_eq!(
+            walk_exported_stairs(engine.clone(), assets.clone(), entrance, exit),
+            Ok(true),
+            "fractional physical seam {entrance}->{exit}"
+        );
+    }
+}
+
+#[test]
 fn compiled_stair_barriers_stop_actor_traversal_and_reset() {
     let fixtures: Vec<serde_json::Value> = serde_json::from_slice(include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -393,8 +408,14 @@ fn walk_exported_lift_with_tick(
                 .current_element_for_actor(owner)
                 .and_then(|(id, index)| engine.seq().get_element(id, index))
                 .map(|element| element.command);
+            let selected_orders = engine
+                .entities()
+                .current_element_for_actor(owner)
+                .and_then(|(id, index)| engine.seq().get_element(id, index))
+                .map(|element| &element.orders);
+            let world_position = engine.ent(owner).position_iface().get_position();
             return Err(format!(
-                "lift route stalled at {position:?}, layer {}, sector {sector:?}, goal {:?}, crossed={crossed}, bounds={bounds:?}, blockers={blockers:?}, selected={selected:?}, route={route_states:?}",
+                "lift route stalled at {position:?}, layer {}, sector {sector:?}, goal {:?}, crossed={crossed}, bounds={bounds:?}, blockers={blockers:?}, selected={selected:?}, route={route_states:?}, world={world_position:?}, orders={selected_orders:?}",
                 element.layer(),
                 leave.point_out,
             ));

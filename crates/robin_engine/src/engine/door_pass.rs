@@ -1396,6 +1396,15 @@ impl EngineInner {
                     crate::coordinates::GroundPoint::new(physical.middle[0], physical.middle[1]),
                 )
                 .expect("invalid physical stair door receiver");
+                // Installing the receiver evaluates its f32 plane. Keep the
+                // authored world seam authoritative instead of inheriting that
+                // evaluation's cancellation error at a rotated boundary.
+                pi.set_position(crate::coordinates::WorldPoint3D::new(
+                    physical.middle[0],
+                    physical.middle[1],
+                    physical.middle[2],
+                ));
+                pi.reset_increment_computed();
             } else {
                 // Receiver selection above establishes the outside floor. Retain
                 // the shared world-space seam instead of inverting its projection.

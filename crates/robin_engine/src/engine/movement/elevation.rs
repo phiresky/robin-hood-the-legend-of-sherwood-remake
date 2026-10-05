@@ -736,7 +736,16 @@ impl EngineInner {
         observe_post_execute_crossing(self, entity_id);
         let physical_stair = self
             .actor_installed_order(entity_id)
-            .is_some_and(|order| order.physical_stair.is_some());
+            .is_some_and(|order| order.physical_stair.is_some())
+            || self
+                .get_entity(entity_id)
+                .and_then(|entity| entity.element_data().sector())
+                .is_some_and(|sector| {
+                    tcx.assets
+                        .navigation
+                        .physical_stairs
+                        .contains_key(&sector.get())
+                });
         let (old_pos, new_pos, layer, posture, is_carried, is_human) = {
             let entity = self
                 .world
@@ -791,7 +800,9 @@ impl EngineInner {
             .collect::<Vec<_>>();
 
         // Physical traversal owns its floor until the door handoff. Projected
-        // overlaps must not reattach it to an unrelated receiving plane.
+        // overlaps must not reattach it to an unrelated receiving plane. The
+        // entry callback changes sector before the first physical walking
+        // order is installed, so membership also authorizes the physical floor.
         let crossed_elevation = !physical_stair
             && self.check_for_elevation_line_crossing_indices(
                 tcx.assets,
