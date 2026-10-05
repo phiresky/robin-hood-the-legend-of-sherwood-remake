@@ -1,6 +1,7 @@
 """Archive a scoped batch-v7 geometry approval and prepare its unchanged texture packet."""
 import hashlib,json,shutil,sys
 from pathlib import Path
+from PIL import Image
 ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from prepare_texture_packet import prepare
@@ -51,5 +52,20 @@ def main():
     write(output/'review-manifest.json',dict(version=1,items=[item]))
     write(output/'decisions.json',dict(version=1,decisions=[record]))
     result=prepare(output/'review-manifest.json',ASSET,output/'experiment',output/'decisions.json')
-    write(output/'prepared.json',result);print(json.dumps(result,indent=2))
+    write(output/'prepared.json',result)
+    if KEY=='tree25':
+        experiment=output/'experiment';refs=experiment/'material-references';refs.mkdir()
+        rows=[]
+        permitted=[('leicester-southeast-cottage-tree','9a8974c11e28d00c9729745d71fdc25d00385fb48a002e8b51833e5809fd5312'),
+                   ('leicester-moat-bank-tree','6a18f955edc12e45fc5f05892022419f07aa527b9960c16a651645ce8c593392')]
+        for donor,revision in permitted:
+            source=ROOT/'level-editor/work/leicester-refinement/round-1/texture-review/approved-evidence'/donor/revision/'textured.png'
+            image=Image.open(source);w,h=image.size;box=(0,0,w//4,h//2)
+            target=refs/(donor+'.png')
+            image.crop(box).resize((w//4*3,h//2*3),Image.Resampling.NEAREST).save(target)
+            rows.append(dict(source='material',file=str(target.resolve()),sha256=sha(target),asset_id=donor,
+                role='User-permitted supplementary leaf and bark texture character only. Match the target tree olive/lime native palette and leaf scale, not this donor color, shape, thin depth or lighting. Do not copy gray unknown patches.',
+                parent_image=str(source.resolve()),parent_sha256=sha(source),crop=box,nearest_scale=3))
+        write(experiment/'auxiliary-references.json',dict(version=1,input_sha256=sha(experiment/'input.png'),lighting_sha256=sha(experiment/'solid.png'),references=rows))
+    print(json.dumps(result,indent=2))
 if __name__=='__main__':main()
