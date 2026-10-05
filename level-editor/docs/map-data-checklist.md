@@ -54,6 +54,9 @@ the three stairs: nonzero physical floors project to zero-area polygons. A
 screen-space footprint adjustment cannot solve arbitrary rotation; traversal
 needs navigation coordinates independent of rendering projection. The short
 gallery stair also needs landing-overlap support, not merely a skewed footprint.
+Physical-plane conversion and distance-bounded stepping now have native unit
+coverage, including stationary screen positions; runtime traversal is not yet
+wired to them, so the failed routes remain unresolved.
 Best-effort export now warns instead of aborting on collapsed mask boundaries or
 collision-split stair regions, retaining independent usable features. These
 fallbacks do not repair the missing traversal.

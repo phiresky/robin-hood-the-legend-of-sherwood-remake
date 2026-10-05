@@ -4,6 +4,23 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Physical stair coordinate and stepping foundation (2026-10-05)
+
+`robin_level_data::stair_navigation` now provides a validated physical height
+plane and forward world/screen projection, plus distance-bounded advancement
+along a physical route segment. It does not invert the screen projection or
+use screen displacement to determine arrival. Tests walk both directions along
+an exactly edge-on segment whose screen endpoints coincide, preserving height
+progress and exact endpoint arrival. Further tests cover projection reversal,
+near-singular slopes, serialization and nonfinite/overflow rejection.
+
+The level-data suite passes 80 tests with seven ignored, and the game build
+passes. This API is groundwork:
+the editor does not emit a physical stair-navigation field yet, and actor
+movement does not consume it. Physical collision/landing support, door handoffs,
+movement-loop integration and native failing-route reruns remain required.
+The existing 24 failures are not reclassified as passing by these unit tests.
+
 ## Stair footprint projection and singular placements (2026-10-05)
 
 `refinement/audit-stair-footprints.mjs` audits the authored stair planes using
