@@ -1,4 +1,4 @@
-"""Private continuous upper branches grafted to retained native lower stem/root volume."""
+"""Private complete continuous wood volume from the native branch and root traces."""
 import argparse,json,sys
 from pathlib import Path
 import bpy,bmesh,numpy as np
