@@ -4,6 +4,35 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Composite keep placement and best-effort failures (2026-10-05)
+
+The revised candidate `work/map-compile/keep-reassembly-yEL2X5` explicitly
+preserves each component's choice of implicit solid versus authored-contour
+movement collision. Concatenating components without that distinction silently
+changes collision. The comparison in `keep-reassembly-comparison-NFpDXX`
+preserves all 17 ordinary doors, 14 building groups and 12 lifts, including
+door coordinates/permissions, room memberships and traversal endpoint identities.
+Runtime indices reorder. Both the original component assembly and the candidate
+pass all 28 directed native stair routes and five control apply/reset checks.
+
+`work/map-compile/keep-placements-wVlmPz` tests new placements on authored terrain
+at rotations 0, 37, 90 and 180 degrees and elevations 0 and 40. All eight exports
+now construct and pass their one available control's apply/reset checks. The
+stair audit is **not green**: 56 of 68 directed routes pass. Both 90-degree
+placements fail two routes; both 180-degree placements fail four routes and omit
+one additional disconnected stair. Failed actors stall inside narrow traversal
+regions. This needs geometry/runtime diagnosis before publication; no asset
+definition or saved placement has been changed by these staged checks.
+
+The placement batch exposed two best-effort export aborts, now fixed. Collapsed
+character/projectile mask boundaries warn and lose only the unusable rule;
+independent view/obstacle rules remain. Masks with no surviving rule are omitted
+without dangling state references. A collision-split lift region raises a typed
+placement error so the existing retry omits its complete traversal assembly while
+retaining collision and independent gameplay. Strict export retains both errors.
+Compiler, mask and navigation suites pass 127 tests; app typecheck, focused lint
+and the production editor build pass. These fallbacks are omissions, not parity.
+
 ## Standalone gameplay frame migration (2026-10-05)
 
 `pipeline/src/translate-gameplay-frames.ts` provides an authoring-only conversion

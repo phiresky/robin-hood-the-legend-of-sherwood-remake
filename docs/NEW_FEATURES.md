@@ -1,5 +1,12 @@
 # Post-port Features
 
+- **Best-effort exports retain independent mask and traversal features.** If a
+  placed mask boundary collapses in projection, export warns and omits that
+  boundary rule while preserving usable view and obstacle-based rules. A stair
+  region split by collision now uses the existing traversal-omission fallback,
+  retaining collision and independent floors. Strict export still rejects both
+  conditions; neither fallback certifies complete gameplay.
+
 - **Physical clearances on shared navigation planes.** Asset receiver anchors and
   movement clearances may specify a local `navigationHeight` independently of the
   physical footprint's height. Projection happens after placement, so raised

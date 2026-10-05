@@ -44,6 +44,70 @@ import {
 
 import { heightPlane, planeHeight } from "./gameplay-plane.ts";
 
+test("best-effort collapsed mask boundaries retain independent rules and control bindings", () => {
+  for (const obstacles of [true, false]) {
+    const { document, assets, hut } = maskAssetCompilerFixture();
+    for (const mask of hut.gameplay!.masks!) {
+      mask.characterBoundary = [
+        [40, 40, 0],
+        [40, 50, 0],
+      ];
+      mask.characterBoundaryClosed = false;
+      mask.projectileBoundary = [
+        [40, 40, 0],
+        [40, 50, 0],
+      ];
+      mask.projectileBoundaryClosed = false;
+      if (!obstacles) mask.obstacles = [];
+    }
+    assert.throws(() => compileAssetGameplay(document, assets, bounds), /boundary collapses/);
+    const compiled = compileAssetGameplay(document, assets, bounds, { bestEffort: true });
+    assert.equal(compiled.masks!.length, 2);
+    for (const mask of compiled.masks!) {
+      assert.equal(mask.mask_type, obstacles ? 22 : 4);
+      assert.equal(mask.character_polyline, null);
+      assert.deepEqual(mask.projectile_polyline, obstacles ? [] : null);
+    }
+    assert.equal(compiled.warnings.filter((w) => w.includes("boundary omitted")).length, 4);
+    assert.equal(compiled.movement_transitions!.length, 1);
+    for (const mask of hut.gameplay!.masks!) {
+      mask.view = false;
+      mask.obstacles = [];
+    }
+    const empty = compileAssetGameplay(document, assets, bounds, { bestEffort: true });
+    assert.deepEqual(empty.masks ?? [], []);
+    assert.equal(empty.movement_transitions!.length, 0);
+  }
+});
+
+test("best-effort collision-split stairs retain solid obstacles and independent floors", () => {
+  const { document, assets, hut } = liftAssetCompilerFixture();
+  hut.gameplay!.movementSolids = ["building-999"];
+  hut.gameplay!.movementBlockers = [
+    {
+      id: "split-ramp",
+      node: "building-999",
+      polygon: [
+        [99, -10],
+        [101, -10],
+        [101, 110],
+        [99, 110],
+      ],
+      height: [45, 55, 55, 45],
+    },
+  ];
+  assert.throws(() => compileAssetGameplay(document, assets, bounds), /connected traversal area/);
+  const compiled = compileAssetGameplay(document, assets, bounds, { bestEffort: true });
+  assert.equal(compiled.lifts?.length ?? 0, 0);
+  assert.ok(compiled.sight_obstacles.some((o) => o.solid));
+  assert.ok(compiled.motion_data.layers.flat().length >= 2);
+  assert.ok(
+    compiled.warnings.some(
+      (w) => w.includes("traversal omitted") && w.includes("connected traversal area"),
+    ),
+  );
+});
+
 test("changing stair barriers follow translated and rotated traversal areas", () => {
   for (const rotation of [0, 90, 180, 270]) {
     const { document, assets } = changingLiftCompilerFixture();

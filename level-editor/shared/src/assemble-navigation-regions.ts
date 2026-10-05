@@ -24,6 +24,13 @@ export interface NavigationRegion {
   pieces: NavigationPiece[];
 }
 const shape = (p: NavigationPiece): Polygon => [p.polygon, ...p.blockers];
+export class DisconnectedLiftRegion extends Error {
+  readonly lift: string;
+  constructor(lift: string) {
+    super(`Lift ${lift}: joined surfaces must form one connected traversal area`);
+    this.lift = lift;
+  }
+}
 function movementRing(points: Point[], minimumArea = 0.5): Point[] {
   const ring = simplifyMotionRing(points);
   const area = ring.reduce((sum, p, i) => {
@@ -115,10 +122,7 @@ export function assembleNavigationRegions(
         "Joined navigation region",
         warnings,
       );
-      if (first.lift && merged.length !== 1)
-        throw new Error(
-          `Lift ${first.lift}: joined surfaces must form one connected traversal area`,
-        );
+      if (first.lift && merged.length !== 1) throw new DisconnectedLiftRegion(first.lift);
       const assembled = merged.map((region) => ({
         layer,
         lift: first.lift,

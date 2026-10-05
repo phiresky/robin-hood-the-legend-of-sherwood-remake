@@ -7,7 +7,11 @@ import { compileSoundSource } from "./compile-sound-source.ts";
 import { compileSceneryAnimation } from "./compile-scenery-animation.ts";
 import { fixedPolygonBoolean } from "./fixed-polygon-boolean.ts";
 import { unionMovementSurfaces } from "./union-movement-surfaces.ts";
-import { assembleNavigationRegions, type NavigationPiece } from "./assemble-navigation-regions.ts";
+import {
+  assembleNavigationRegions,
+  DisconnectedLiftRegion,
+  type NavigationPiece,
+} from "./assemble-navigation-regions.ts";
 import { allocateLightReceivingLayers } from "./allocate-light-receiving-layers.ts";
 import { compactNavigationLayers } from "./compact-navigation-layers.ts";
 import { lightReceiverIntersection } from "./light-receiver-segment.ts";
@@ -707,16 +711,32 @@ function compileAssetGameplayAttempt(
     );
     for (const mask of gameplay.masks ?? []) {
       if (unavailableAppliedMasks.has(mask.id)) continue;
-      const boundary = (points: Vec3[] | undefined, projected: boolean, closed = true) =>
-        points
-          ? maskBoundaryPolyline(
-              points.map((point): Point => {
-                const p = transform(mask.node, point);
-                return projected ? project(p) : [quantize(p[0]), quantize(p[1])];
-              }),
-              closed,
-            )
-          : null;
+      const boundary = (points: Vec3[] | undefined, projected: boolean, closed = true) => {
+        if (!points) return null;
+        const placed = points.map((point): Point => {
+          const p = transform(mask.node, point);
+          return projected ? project(p) : [quantize(p[0]), quantize(p[1])];
+        });
+        try {
+          return maskBoundaryPolyline(placed, closed);
+        } catch (error) {
+          if (!options.bestEffort || !(error instanceof Error)) throw error;
+          warnings.push(
+            `Mask ${placement.id}/${mask.id}: ${projected ? "character" : "projectile"} boundary omitted: ${error.message}; this masking rule is incomplete.`,
+          );
+          return null;
+        }
+      };
+      const characterBoundary = boundary(
+        mask.characterBoundary,
+        true,
+        mask.characterBoundaryClosed,
+      );
+      const projectileBoundary = boundary(
+        mask.projectileBoundary,
+        false,
+        mask.projectileBoundaryClosed,
+      );
       placedMasks.push({
         id: `${placement.id}/${mask.id}`,
         anchor: transform(mask.node, mask.anchor),
@@ -745,14 +765,12 @@ function compileAssetGameplayAttempt(
         ]),
         rules: {
           mask_type:
-            (mask.characterBoundary ? 1 : 0) |
-            (mask.projectileBoundary || mask.obstacles.length ? 2 : 0) |
+            (characterBoundary ? 1 : 0) |
+            (projectileBoundary || mask.obstacles.length ? 2 : 0) |
             (mask.view ? 4 : 0) |
             (mask.obstacles.length ? 16 : 0),
-          character_polyline: boundary(mask.characterBoundary, true, mask.characterBoundaryClosed),
-          projectile_polyline:
-            boundary(mask.projectileBoundary, false, mask.projectileBoundaryClosed) ??
-            (mask.obstacles.length ? [] : null),
+          character_polyline: characterBoundary,
+          projectile_polyline: projectileBoundary ?? (mask.obstacles.length ? [] : null),
           obstacle_indices: mask.obstacles.map((id) => {
             const shape = partSight.get(id);
             if (!shape)
@@ -1538,7 +1556,17 @@ function compileAssetGameplayAttempt(
       navigationPieces.push({ layer, plane, lift, navigationRegion, polygon: boundary, blockers });
     }
   }
-  const navigationRegions = assembleNavigationRegions(navigationPieces, warnings);
+  let navigationRegions: ReturnType<typeof assembleNavigationRegions>;
+  try {
+    navigationRegions = assembleNavigationRegions(navigationPieces, warnings);
+  } catch (error) {
+    if (!(error instanceof DisconnectedLiftRegion) || !options.bestEffort) throw error;
+    const segments = [...assembledLifts.identities]
+      .filter(([, lift]) => lift === error.lift)
+      .map(([id]) => id);
+    if (!segments.length) throw error;
+    throw new UnavailableLiftPlacement(error.lift, error.message, false, segments);
+  }
   for (const region of navigationRegions)
     if (region.pieces.every((p) => p.navigationRegion?.startsWith("wall-spline-"))) {
       const count = region.blockers.length;
@@ -1777,6 +1805,10 @@ function compileAssetGameplayAttempt(
   const masks: NonNullable<CompiledAssetGeometry["masks"]> = [];
   const maskIndices = new Map<string, number[]>();
   for (const mask of placedMasks) {
+    if (mask.rules.mask_type === 0) {
+      maskIndices.set(mask.id, []);
+      continue;
+    }
     if (cropped && outsideAnchor(mask.anchor)) {
       warnings.push(`Mask ${mask.id}: omitted because its anchor lies outside the export frame.`);
       maskIndices.set(mask.id, []);

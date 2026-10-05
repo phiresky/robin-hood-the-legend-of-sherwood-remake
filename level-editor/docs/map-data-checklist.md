@@ -23,6 +23,15 @@ Their standalone definitions still need restoring with local control dependencie
 and coordinate frames; matching parts alone does not make them interchangeable.
 The imported bridge and two old ground assets have no component-owner match.
 
+The staged composite keep preserves Derby's door permissions, room memberships
+and lift endpoints; both assemblies pass 28 native stair routes and five control
+apply/reset checks. New placements expose remaining rotation problems: the
+eight-placement audit has 12 failed stair routes out of 68 tested, and the
+180-degree cases omit one disconnected stair. The candidate remains unpublished.
+Best-effort export now warns instead of aborting on collapsed mask boundaries or
+collision-split stair regions, retaining independent usable features. These
+fallbacks do not repair the missing traversal.
+
 The watermill now publishes asset-owned body collision and a platform clearance
 projected after placement onto its foundation navigation plane. Twenty-four new
 placements at eight rotations and three elevations retain all three entrances,
