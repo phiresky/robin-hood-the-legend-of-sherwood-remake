@@ -4,6 +4,32 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Crushing across bound stair/landing boundaries (2026-10-05)
+
+Landing collision pieces now retain their owning motion-obstacle index as well
+as their state word. A control callback can identify the exact newly appeared
+piece after clipping to a receiver, rather than treating all landing collision
+as interchangeable.
+
+Closing controls check physical actor footprints across an explicitly bound
+stair/landing connection in both directions. A landing obstacle can crush an
+overlapping stair actor, and a stair obstacle can crush an overlapping landing
+actor. Landing actors must match the bound sector, layer, receiving footprint
+and height. The existing unreachable/damage behavior is reused; an unaffected
+physical movement order retains its identity and world destination. Only local
+paths inside the changed area undergo ordinary retranslation.
+
+Two native tests cover both directions, nearby clear footprints and reopening
+without new crushing. They also verify that an unaffected selected physical
+order survives a landing control change. Verification passes: 200 movement tests
+(12 ignored), 26 patch-effect tests (4 ignored), 10 stair-routing/binding tests
+and 40 loading tests (3 ignored).
+The game build, formatting and whitespace checks also pass.
+
+Reciprocal neighbour avoidance for ordinary landing movers, soft repulsion,
+general point/seek orders, transition choreography, broader placement/state
+coverage and normal physical-stair export integration remain open.
+
 ## Physical stair collision with landing neighbours (2026-10-05)
 
 Bound landings now retain their runtime sector identity and receiving height

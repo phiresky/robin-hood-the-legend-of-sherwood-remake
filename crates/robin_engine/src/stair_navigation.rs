@@ -43,17 +43,7 @@ impl BoundPhysicalStair {
         position: [f32; 2],
         half: MoveBoxHalfDiagonal,
     ) -> bool {
-        let actor = geo::Rect::new(
-            geo::Coord {
-                x: position[0] - half.x,
-                y: position[1] - half.y,
-            },
-            geo::Coord {
-                x: position[0] + half.x,
-                y: position[1] + half.y,
-            },
-        )
-        .to_polygon();
+        let actor = actor_footprint(position, half);
         self.definition
             .obstacles
             .iter()
@@ -144,14 +134,32 @@ impl BoundPhysicalStair {
                 landing
                     .obstacles
                     .iter()
-                    .filter(|(state, _)| {
-                        pathfinder.is_motion_obstacle_active(landing.layer, landing.area, *state)
+                    .filter(|obstacle| {
+                        pathfinder.is_motion_obstacle_active(
+                            landing.layer,
+                            landing.area,
+                            obstacle.state,
+                        )
                     })
-                    .map(|(_, polygon)| polygon.clone()),
+                    .map(|obstacle| obstacle.polygon.clone()),
             );
         }
         geometry.route_with_landing_support(source, goal, half_diagonal, &support)
     }
+}
+
+fn actor_footprint(position: [f32; 2], half: MoveBoxHalfDiagonal) -> Polygon<f32> {
+    geo::Rect::new(
+        geo::Coord {
+            x: position[0] - half.x,
+            y: position[1] - half.y,
+        },
+        geo::Coord {
+            x: position[0] + half.x,
+            y: position[1] + half.y,
+        },
+    )
+    .to_polygon()
 }
 
 fn polygon(points: &[[f32; 2]]) -> Result<Polygon<f32>, String> {

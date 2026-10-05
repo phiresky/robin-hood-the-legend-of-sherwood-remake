@@ -389,11 +389,30 @@ impl EngineInner {
             let Some((id, entity)) = self.world.entities.get_legacy_slot(slot as u32) else {
                 continue;
             };
-            if entity.actor_data().is_none()
-                || entity.element_data().layer() != layer
-                || entity.element_data().sector()
-                    != crate::position_interface::SectorHandle::new(sector)
-            {
+            if entity.actor_data().is_none() {
+                continue;
+            }
+            let own_sector = entity.element_data().sector();
+            let same_area = entity.element_data().layer() == layer
+                && own_sector == crate::position_interface::SectorHandle::new(sector);
+            let physical_owner = own_sector
+                .and_then(|owner| tcx.assets.navigation.physical_stairs.get(&owner.get()));
+            let physical_collision = physical_owner
+                .filter(|stair| same_area || stair.has_landing(layer, sector))
+                .map(|stair| (stair, same_area))
+                .or_else(|| {
+                    let owner = own_sector?;
+                    let stair = tcx.assets.navigation.physical_stairs.get(&sector)?;
+                    let position = entity.position_iface().get_position();
+                    stair
+                        .supports_landing_neighbour(
+                            entity.element_data().layer(),
+                            owner.get(),
+                            [position.x, position.y, position.z],
+                        )
+                        .then_some((stair, true))
+                });
+            if !same_area && physical_collision.is_none() {
                 continue;
             }
             // Read destination and action from the selected movement,
@@ -402,6 +421,11 @@ impl EngineInner {
             let retranslate =
                 self.current_sequence_element_for_actor(id)
                     .and_then(|(seq_id, elem_idx)| {
+                        // Only paths inside the changed area need retranslation.
+                        // Physical routes query adjoining state before each step.
+                        if !same_area {
+                            return None;
+                        }
                         let elem = self.orders.sequence_manager.get_element(seq_id, elem_idx)?;
                         if elem.command != crate::element::Command::MoveOk {
                             return None;
@@ -522,23 +546,32 @@ impl EngineInner {
             let physical_half = entity.position_iface().get_half_diagonal();
             for sector_index in appeared {
                 let obstacle = &self.world.fast_grid.level.sectors[sector_index.get() as usize];
-                let intersects =
-                    if let Some(stair) = tcx.assets.navigation.physical_stairs.get(&sector) {
-                        let local_obstacle = u16::from(obstacle.sector_number)
-                            .checked_sub(sector)
-                            .and_then(|offset| offset.checked_sub(1))
-                            .expect("physical control references an unrelated motion obstacle");
+                let intersects = if let Some((stair, obstacle_on_stair)) = physical_collision {
+                    let local_obstacle = u16::from(obstacle.sector_number)
+                        .checked_sub(sector)
+                        .and_then(|offset| offset.checked_sub(1))
+                        .expect("physical control references an unrelated motion obstacle");
+                    if obstacle_on_stair {
                         stair.obstacle_intersects_actor(
                             local_obstacle,
                             [physical_position.x, physical_position.y],
                             physical_half,
                         )
                     } else {
-                        move_box.is_somewhere()
-                            && obstacle.bounding_box.is_somewhere()
-                            && obstacle.bounding_box.intersects_bbox(&move_box)
-                            && obstacle.intersects_bbox(&move_box)
-                    };
+                        stair.landing_obstacle_intersects_actor(
+                            layer,
+                            sector,
+                            local_obstacle,
+                            [physical_position.x, physical_position.y],
+                            physical_half,
+                        )
+                    }
+                } else {
+                    move_box.is_somewhere()
+                        && obstacle.bounding_box.is_somewhere()
+                        && obstacle.bounding_box.intersects_bbox(&move_box)
+                        && obstacle.intersects_bbox(&move_box)
+                };
                 if intersects {
                     if let Some(entity) = self.get_entity_mut(id) {
                         entity.element_data_mut().unreachable = true;

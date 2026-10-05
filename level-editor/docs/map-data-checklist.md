@@ -82,8 +82,11 @@ Physical stair movers now include hard collision from actors on explicitly bound
 landings. Checks require matching sector, layer, receiver footprint and height;
 overlapping radii count even when the neighbour's center lies outside the stair.
 Native coverage verifies waiting and resuming at a blocked endpoint and rejecting
-an actor at a different height. Ordinary landing movers' reciprocal handling,
-crushing across landing-sector boundaries and soft repulsion remain unfinished.
+an actor at a different height. Closing barriers now check full actor footprints
+across bound stair/landing sector boundaries in both directions; native tests
+verify crushing, clear-footprint rejection and preserved unaffected orders.
+Reciprocal neighbour avoidance for ordinary landing movers and soft repulsion
+remain unfinished, alongside broader placement/state coverage.
 Water-particle emission now shares ordinary movement's animation-distance
 threshold and cadence, with an edge-on actor-loop check of particle world
 positions and layers. Complete rendered movement-effect coverage remains open.

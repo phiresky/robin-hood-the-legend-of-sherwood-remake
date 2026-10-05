@@ -11,7 +11,14 @@ pub(super) struct BoundLanding {
     pub area: usize,
     pub sector: u16,
     pub plane: [f64; 3],
-    pub obstacles: Vec<(u32, Vec<[f32; 2]>)>,
+    pub obstacles: Vec<BoundLandingObstacle>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct BoundLandingObstacle {
+    pub motion_obstacle: u16,
+    pub state: u32,
+    pub polygon: Vec<[f32; 2]>,
 }
 
 #[cfg(test)]
@@ -76,6 +83,34 @@ mod tests {
 }
 
 impl BoundPhysicalStair {
+    pub(crate) fn has_landing(&self, layer: u16, sector: u16) -> bool {
+        self.landings
+            .iter()
+            .any(|landing| landing.layer == usize::from(layer) && landing.sector == sector)
+    }
+
+    /// A newly closed landing obstacle can overlap a stair actor's supported footprint.
+    pub(crate) fn landing_obstacle_intersects_actor(
+        &self,
+        layer: u16,
+        sector: u16,
+        motion_obstacle: u16,
+        position: [f32; 2],
+        half: MoveBoxHalfDiagonal,
+    ) -> bool {
+        let actor = actor_footprint(position, half);
+        self.landings
+            .iter()
+            .filter(|landing| landing.layer == usize::from(layer) && landing.sector == sector)
+            .flat_map(|landing| &landing.obstacles)
+            .filter(|obstacle| obstacle.motion_obstacle == motion_obstacle)
+            .any(|obstacle| {
+                polygon(&obstacle.polygon)
+                    .expect("bound landing obstacle is invalid")
+                    .intersects(&actor)
+            })
+    }
+
     /// Only actors on an explicitly bound adjoining floor can disturb this stair.
     pub(crate) fn supports_landing_neighbour(
         &self,
@@ -192,14 +227,19 @@ impl BoundPhysicalStair {
         let ring =
             |line: &LineString<f32>| line.points().map(|p| [p.x(), p.y()]).collect::<Vec<_>>();
         let mut obstacles = Vec::new();
-        for obstacle in &motion.obstacles {
+        for (index, obstacle) in motion.obstacles.iter().enumerate() {
             for clipped in unproject(&obstacle.polygon.points)?.intersection(support) {
                 if !clipped.interiors().is_empty() {
                     return Err(
                         "landing collision clipping produced an unsupported holed solid".into(),
                     );
                 }
-                obstacles.push((obstacle.state_id, ring(clipped.exterior())));
+                obstacles.push(BoundLandingObstacle {
+                    motion_obstacle: u16::try_from(index)
+                        .map_err(|_| "too many landing motion obstacles")?,
+                    state: obstacle.state_id,
+                    polygon: ring(clipped.exterior()),
+                });
             }
         }
         self.landings.push(BoundLanding {

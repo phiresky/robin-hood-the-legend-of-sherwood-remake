@@ -314,8 +314,7 @@ fn physical_stair_gate_routes_cross_between_landings_in_both_directions() {
     }
 }
 
-#[test]
-fn physical_stair_landing_collision_follows_its_own_live_control() {
+fn physical_stair_landing_control_fixture() -> serde_json::Value {
     let mut document = physical_stair_fixture();
     let geometry = &mut document["asset_geometry"];
     geometry["motion_data"]["layers"][0][0]["obstacles"] = serde_json::json!([
@@ -330,6 +329,12 @@ fn physical_stair_landing_collision_follows_its_own_live_control() {
             "apply_polygon":{"points":[]}, "no_apply_polygon":{"points":[]},
             "motion_changes":[{"sector":0,"layer":0,"changing_obstacle":0}]
         }));
+    document
+}
+
+#[test]
+fn physical_stair_landing_collision_follows_its_own_live_control() {
+    let document = physical_stair_landing_control_fixture();
     let (mut engine, assets) = compiled_walkway(&serde_json::to_vec(&document).unwrap());
     let stair = &assets.navigation.physical_stairs[&3];
     let route = |engine: &EngineInner| {
@@ -370,6 +375,88 @@ fn physical_stair_landing_collision_follows_its_own_live_control() {
         route(&engine).is_some(),
         "restored state must drive landing clearance too"
     );
+}
+
+#[test]
+fn landing_barrier_crushes_only_overlapping_physical_stair_footprints() {
+    let document = physical_stair_landing_control_fixture();
+    let (mut engine, mut assets) = compiled_walkway(&serde_json::to_vec(&document).unwrap());
+    let sim = crate::sim_rng::test_context();
+    let stair_patch = crate::patch::PatchIndex::new(0).unwrap();
+    let landing_patch = crate::patch::PatchIndex::new(1).unwrap();
+    engine.apply_patch(TickCtx::new(&sim, &assets), stair_patch);
+    engine.apply_patch(TickCtx::new(&sim, &assets), landing_patch);
+    let overlapping = physical_walker(&mut engine, &mut assets, 3, [392., 350.], [408., 350.]);
+    let clear = physical_walker(&mut engine, &mut assets, 3, [397., 350.], [408., 350.]);
+    let selected_order = |engine: &EngineInner| {
+        let (sequence, element) = engine.current_sequence_element_for_actor(clear).unwrap();
+        let order = engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, element)
+            .unwrap()
+            .current_order()
+            .unwrap();
+        (
+            order.storage_slot,
+            order.physical_stair,
+            order.destination_3d,
+        )
+    };
+    let selected = selected_order(&engine);
+    assert_eq!(selected.1, Some(3));
+    assert!(!engine.ent(overlapping).element_data().unreachable);
+    assert!(!engine.ent(clear).element_data().unreachable);
+    engine.apply_patch(TickCtx::new(&sim, &assets), landing_patch);
+    assert!(
+        engine.ent(overlapping).element_data().unreachable,
+        "the actor's center is on the stair, but its footprint overlaps the closed landing barrier"
+    );
+    assert!(!engine.ent(clear).element_data().unreachable);
+    assert_eq!(
+        selected_order(&engine),
+        selected,
+        "a landing control must not replace the unaffected physical order"
+    );
+    engine.apply_patch(TickCtx::new(&sim, &assets), landing_patch);
+    assert!(
+        !engine.ent(clear).element_data().unreachable,
+        "reopening does not create a crushing obstacle"
+    );
+}
+
+#[test]
+fn stair_barrier_crushes_only_overlapping_bound_landing_footprints() {
+    let document = physical_stair_fixture();
+    let (mut engine, mut assets) = compiled_walkway(&serde_json::to_vec(&document).unwrap());
+    let sim = crate::sim_rng::test_context();
+    let patch = crate::patch::PatchIndex::new(0).unwrap();
+    engine.apply_patch(TickCtx::new(&sim, &assets), patch);
+    let index =
+        engine.world.fast_grid.level.sector_number_map[&crate::sector::SectorNumber::new(0)];
+    let sector = crate::position_interface::SectorHandle::new(0)
+        .unwrap()
+        .with_arena_index(crate::fast_find_grid::SectorIndex::new(index as u32).unwrap());
+    let overlapping = walking_pc(
+        &mut engine,
+        &mut assets,
+        MapPoint::new(388., 350.),
+        0,
+        sector,
+    );
+    let clear = walking_pc(
+        &mut engine,
+        &mut assets,
+        MapPoint::new(380., 350.),
+        0,
+        sector,
+    );
+    engine.apply_patch(TickCtx::new(&sim, &assets), patch);
+    assert!(
+        engine.ent(overlapping).element_data().unreachable,
+        "the actor's center is on the landing, but its footprint overlaps the closed stair barrier"
+    );
+    assert!(!engine.ent(clear).element_data().unreachable);
 }
 
 #[test]
