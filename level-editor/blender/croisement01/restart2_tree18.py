@@ -99,10 +99,12 @@ def fit_native_width(obj,alpha,role,x0=1059,y0=0):
     inverse=obj.matrix_world.inverted();displacements=[]
     for vertex,p,uv in zip(mesh.vertices,points,projected):
         sy=uv[1]
-        if sy<samples[0]-16 or sy>samples[-1]+1:continue
+        tail=20 if role=='west-cut' else 1
+        if sy<samples[0]-16 or sy>samples[-1]+tail:continue
         lo=np.interp(sy,samples,old_min);hi=np.interp(sy,samples,old_max);left=np.interp(sy,samples,target_min);right=np.interp(sy,samples,target_max)
         if hi-lo<1e-4:continue
         mapped=left+(p[0]-lo)*(right-left)/(hi-lo);weight=min(1,max(0,(sy-samples[0]+16)/16));dx=(mapped-p[0])*weight
+        if role=='west-cut' and sy>samples[-1]:dx*=max(0,1-(sy-samples[-1])/20)
         vertex.co=inverse@Vector((p[0]+dx,p[1],p[2]));displacements.append(float(dx))
     mesh.update()
     return dict(role=role,method='Full-volume horizontal contour fit; world depth and height unchanged; smoothed native edge targets.',minimum_x_change=min(displacements),maximum_x_change=max(displacements),samples=len(samples))

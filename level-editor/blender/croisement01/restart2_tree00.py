@@ -15,7 +15,7 @@ from restart2_tree71 import tube
 
 def main():
  if shutil.disk_usage(OUT).free<25*1024**3:raise ValueError('Disk floor25GiB')
- dest=OUT/'restart2/tree00-v2';dest.mkdir(exist_ok=False)
+ dest=OUT/'restart2/tree00-v3';dest.mkdir(exist_ok=False)
  acquire();bpy.ops.wm.open_mainfile(filepath=str(OUT/'croisement01-grouped.blend'));bpy.context.preferences.filepaths.save_version=0
  working=bpy.data.collections['Croisement01 Working'];asset='croisement01-tree-00';name='Western Foreground Forest Tree'
  objects={int(o['source_node'].split('-')[-1]):o for o in working.all_objects if o.type=='MESH' and o.get('source_node') in ['building-030']};assert len(objects)==1
@@ -39,7 +39,9 @@ def main():
   a=math.tau*i/9;start=Vector((-20,base_y-15,850+i*7));tip=Vector((-15+math.cos(a)*105,base_y-15+math.sin(a)*128,965+rng.uniform(-15,45)))
   union(body,tube('Inferred crown bough'+str(i),[start,start.lerp(tip,.55)+Vector((0,0,12)),tip],[8,4,.8]))
  bpy.context.view_layer.objects.active=body;mod=body.modifiers.new('Continuous wood junctions','REMESH');mod.mode='VOXEL';mod.voxel_size=1.15;mod.use_remove_disconnected=False;bpy.ops.object.modifier_apply(modifier=mod.name)
- fit=fit_native_width(body,np.asarray(wood)>0,'west-cut',x0=0,y0=0)
+ contour=np.asarray(wood)>0;contour[500:]=False
+ fit=fit_native_width(body,contour,'west-cut',x0=0,y0=0)
+ fit['scope']='Upper continuous trunk only; do not shrink the complete foot to a tapered semantic wood mask. Last20 pixels transition smoothly to the existing full-depth foot.'
  (dest/'native-contour-fit.json').write_text(json.dumps(fit,indent=2)+'\n')
  mesh=body.data.copy();bpy.data.objects.remove(body,do_unlink=True);assign_mesh(objects[30],mesh)
  verts=[];faces=[]
