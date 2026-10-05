@@ -1426,3 +1426,157 @@ test("native artwork mode requires a loaded mounted preview and retires on missi
   viewport.dispose();
   assert.throws(() => viewport.setStatePresentationMode("native-art"), /not ready/);
 });
+
+async function deliveredFixture(load?: () => Promise<THREE.Object3D>) {
+  const { StateDelivery } = await import("./state-delivery.ts");
+  const { MissionEntities } = await import("./mission.ts");
+  const { missionStateDataHash } = await import("./mission-state-layer.ts");
+  const { encode } = await import("fast-png");
+  const { viewport } = fixture();
+  const entities = new MissionEntities();
+  Object.assign(entities, { sourceMission: "test" });
+  const legacy = new THREE.Group();
+  legacy.userData.nativeTargetIndex = 0;
+  entities.root.add(legacy);
+  viewport.replaceEntities(entities);
+  const bytes = encode({
+    width: 1,
+    height: 1,
+    channels: 4,
+    data: new Uint8Array([90, 40, 10, 255]),
+  });
+  const hash = Array.from(
+    new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array(bytes))),
+    (n) => n.toString(16).padStart(2, "0"),
+  ).join("");
+  const row = {
+    position_x: 0,
+    position_y: 0,
+    action_position_x: 0,
+    action_position_y: 0,
+    polyline: [],
+  };
+  const source = {
+    name: "test",
+    data: { targets: [row] },
+    level: { animations: [], patches: [] },
+    camera: { kind: "oblique-orthographic", elevation_deg: 35 },
+  } as unknown as import("./mission-state-layer.ts").MissionStateSource;
+  const frame = {
+    path: "frame.png",
+    sha256: hash,
+    width: 1,
+    height: 1,
+    offset: [0, 0] as [number, number],
+    delay: 2,
+  };
+  const asset = (id: string) => ({
+    id,
+    role: "objects" as const,
+    model: id + ".glb",
+    model_sha256: "a".repeat(64),
+    resources: [],
+  });
+  const contract: import("../../shared/src/state-delivery.ts").StateDeliveryContract = {
+    version: 1,
+    scope: "controlled-state-preview",
+    native: {
+      version: 1,
+      mission: "test",
+      mission_data_sha256: await missionStateDataHash(source.data),
+      level_data_sha256: await missionStateDataHash(source.level),
+      camera_elevation_deg: 35,
+      scope: "map-art-and-listed-effects",
+      background: frame,
+      origin: [0, 0],
+      elements: [
+        {
+          id: "target",
+          source: { kind: "mission-target", index: 0, sha256: await missionStateDataHash(row) },
+          active: false,
+          frames: [frame, frame],
+          initial_frame: frame,
+          loop: false,
+          display_position: [0, 0],
+          sort_position: [0, 0],
+          display_order: 0,
+          creation_order: 0,
+          polyline: [],
+        },
+      ],
+    },
+    families: [
+      {
+        id: "trap",
+        element_ids: ["target"],
+        background_ids: [],
+        body_terminal_tick: 3,
+        physical: { initial: [asset("initial")], applied: [asset("applied")] },
+      },
+    ],
+  };
+  const library = {
+    getFileHandle: async () => ({
+      getFile: async () => new File([new Uint8Array(bytes)], "frame.png"),
+    }),
+  } as unknown as FileSystemDirectoryHandle;
+  let disposed = 0;
+  const template = new THREE.Group();
+  template.add(new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial()));
+  const delivery = new StateDelivery(() => ({
+    load: load ?? (async () => template),
+    dispose() {
+      disposed++;
+    },
+  }));
+  Object.assign(viewport, { stateDelivery: delivery });
+  return { viewport, delivery, legacy, source, contract, library, disposals: () => disposed };
+}
+
+test("delivered endpoints suppress legacy targets only after load and only in physical endpoint mode", async () => {
+  const f = await deliveredFixture();
+  assert.equal(await f.viewport.setStateDelivery(f.contract, f.library, f.source), true);
+  assert.equal(f.legacy.visible, true);
+  f.viewport.setDeliveredStateMode("physical-endpoint");
+  assert.equal(f.legacy.visible, false);
+  assert.equal(f.delivery.physical.visible, true);
+  f.viewport.setEntitiesVisible(false);
+  assert.equal(f.delivery.physical.visible, false);
+  f.viewport.setEntitiesVisible(true);
+  assert.equal(f.delivery.physical.visible, true);
+  f.viewport.selectDeliveredEndpoint("trap", "applied");
+  assert.equal(f.delivery.physical.children[1]!.visible, true);
+  assert.throws(() => f.viewport.setNativeArtPlaying(true), /no transition playback/);
+  f.viewport.setStatePresentationMode("physical");
+  assert.equal(f.legacy.visible, true);
+  assert.equal(f.delivery.physical.visible, false);
+  f.viewport.activateDeliveredState("trap");
+  f.viewport.seekDeliveredState("trap", 4);
+  assert.equal(f.delivery.familyTick("trap"), 4);
+  f.viewport.resetDeliveredState("trap");
+  assert.equal(f.delivery.familyTick("trap"), undefined);
+  f.viewport.clearStateDelivery();
+  assert.equal(f.delivery.ready, false);
+  assert.equal(f.disposals(), 1);
+  f.viewport.dispose();
+  assert.equal(f.disposals(), 1);
+});
+
+test("mission replacement retires an in-flight delivered state and its late error", async () => {
+  let reject!: (error: Error) => void, started!: () => void;
+  const began = new Promise<void>((resolve) => (started = resolve));
+  const f = await deliveredFixture(async () => {
+    started();
+    return new Promise((_resolve, fail) => (reject = fail));
+  });
+  const loading = f.viewport.setStateDelivery(f.contract, f.library, f.source);
+  await began;
+  assert.equal(f.legacy.visible, true);
+  f.viewport.replaceEntities(null);
+  reject(new Error("late resource failure"));
+  assert.equal(await loading, false);
+  assert.equal(f.delivery.ready, false);
+  assert.equal(f.delivery.physical.children.length, 0);
+  assert.equal(f.disposals(), 1);
+  f.viewport.dispose();
+});

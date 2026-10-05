@@ -6,6 +6,8 @@ import { MissionEntities } from "./mission.ts";
 import { MissionStateLayer, type MissionStateSource } from "./mission-state-layer.ts";
 import type { MissionStateContract } from "../../shared/src/mission-state.ts";
 import type { NativeStatePresentationContract } from "../../shared/src/native-state-presentation.ts";
+import type { StateDeliveryContract } from "../../shared/src/state-delivery.ts";
+import { StateDelivery, type StateDeliveryMode } from "./state-delivery.ts";
 import {
   NativeStatePresentation,
   NativeArtworkSurface,
@@ -370,6 +372,9 @@ export class EditorViewport {
   }
   setEntitiesVisible(visible: boolean) {
     this.missionStates.root.visible = visible;
+    this.deliveryEntitiesVisible = visible;
+    this.stateDelivery.physical.visible = this.deliveryEndpointActive && visible;
+    this.syncRefinedMissionTargets();
     if (this.entities) this.entities.root.visible = visible;
   }
   private updateDepthRange(camera: THREE.OrthographicCamera | THREE.PerspectiveCamera) {
@@ -569,6 +574,105 @@ export class EditorViewport {
   private readonly missionMarkers = new MissionLayer();
   private stateMission = "";
   private readonly nativeArt = new NativeStatePresentation();
+  private readonly stateDelivery = new StateDelivery();
+  private deliveryMission = "";
+  private deliveryFamilies = new Map<string, Set<number>>();
+  private deliveryFamily: string | undefined;
+  private deliveryEndpointActive = false;
+  private deliveryEntitiesVisible = true;
+  private refinedMissionTargets = new Set<number>();
+  private get currentNativeArt() {
+    return this.stateDelivery.ready ? this.stateDelivery.native : this.nativeArt;
+  }
+  private syncRefinedMissionTargets() {
+    if (!(this.entities instanceof MissionEntities)) return;
+    const indices = new Set(
+      this.entities.missionName === this.stateMission ? this.refinedMissionTargets : [],
+    );
+    if (
+      this.entities.missionName === this.deliveryMission &&
+      this.stateDelivery.physical.visible &&
+      this.deliveryFamily
+    )
+      for (const index of this.deliveryFamilies.get(this.deliveryFamily) ?? []) indices.add(index);
+    this.entities.setRefinedTargets(this.entities.missionName, indices);
+  }
+  async setStateDelivery(
+    contract: StateDeliveryContract,
+    library: FileSystemDirectoryHandle,
+    source: MissionStateSource,
+  ) {
+    if (this.disposed) throw new Error("Disposed viewport");
+    this.clearNativeArtPresentation();
+    const frozen = structuredClone(contract);
+    if (this.entities instanceof MissionEntities && this.entities.missionName !== source.name)
+      throw new Error("State delivery does not match the displayed mission");
+    try {
+      const loaded = await this.stateDelivery.set(
+        frozen,
+        { ...source, level: this.bindings.level() ?? source.level },
+        library,
+        nativeLibraryReader(library),
+      );
+      if (!loaded) return false;
+      this.deliveryMission = frozen.native.mission;
+      this.deliveryFamilies = new Map(
+        frozen.families.map((family) => [
+          family.id,
+          new Set(
+            family.element_ids.map(
+              (id) => frozen.native.elements.find((e) => e.id === id)!.source.index,
+            ),
+          ),
+        ]),
+      );
+      this.deliveryFamily = frozen.families[0]!.id;
+      this.clippingBoundsDirty = true;
+      return true;
+    } catch (error) {
+      this.bindings.onError?.(String(error));
+      throw error;
+    }
+  }
+  clearStateDelivery() {
+    this.setStatePresentationMode("physical");
+    this.stateDelivery.clear();
+    this.deliveryMission = "";
+    this.deliveryFamilies.clear();
+    this.deliveryFamily = undefined;
+    this.syncRefinedMissionTargets();
+    this.clippingBoundsDirty = true;
+  }
+  setDeliveredStateMode(mode: StateDeliveryMode) {
+    if (!this.stateDelivery.ready) throw new Error("State delivery is not ready");
+    this.setStatePresentationMode(mode === "native-art" ? "native-art" : "physical");
+    this.stateDelivery.selectMode(mode);
+    this.deliveryEndpointActive = mode === "physical-endpoint";
+    this.stateDelivery.physical.visible =
+      this.deliveryEndpointActive && this.deliveryEntitiesVisible;
+    this.syncRefinedMissionTargets();
+    this.clippingBoundsDirty = true;
+  }
+  selectDeliveredEndpoint(family: string, endpoint: "initial" | "applied") {
+    this.stateDelivery.selectEndpoint(family, endpoint);
+    this.deliveryFamily = family;
+    this.syncRefinedMissionTargets();
+    this.clippingBoundsDirty = true;
+  }
+  seekDeliveredState(family: string, tick: number) {
+    this.stateDelivery.seekFamily(family, tick);
+    this.nativeSurface?.update(this.stateDelivery.native.pixels());
+  }
+  resetDeliveredState(family: string) {
+    this.stateDelivery.reset(family);
+    this.nativeSurface?.update(this.stateDelivery.native.pixels());
+  }
+  activateDeliveredState(family: string) {
+    this.seekDeliveredState(family, 0);
+  }
+  setDeliveredStatePlaying(playing: boolean) {
+    this.stateDelivery.setPlaying(playing);
+  }
   private nativeSurface: NativeArtworkSurface | undefined;
   private nativeControlState: { orbit: boolean; gizmo: boolean } | undefined;
   get statePresentationMode(): "physical" | "native-art" {
@@ -596,6 +700,11 @@ export class EditorViewport {
   }
   setStatePresentationMode(mode: "physical" | "native-art") {
     if (mode === "physical") {
+      this.currentNativeArt.setPlaying(false);
+      if (this.stateDelivery.ready) this.stateDelivery.selectMode("physical-endpoint");
+      this.stateDelivery.physical.visible = false;
+      this.deliveryEndpointActive = false;
+      this.syncRefinedMissionTargets();
       this.nativeSurface?.dispose();
       this.nativeSurface = undefined;
       if (this.nativeControlState) {
@@ -606,8 +715,11 @@ export class EditorViewport {
       return;
     }
     if (mode !== "native-art") throw new Error("Unknown state presentation mode");
-    if (this.disposed || !this.container || !this.nativeArt.ready)
+    if (this.disposed || !this.container || !this.currentNativeArt.ready)
       throw new Error("Native artwork preview is not ready");
+    if (this.stateDelivery.ready) this.stateDelivery.selectMode("native-art");
+    this.deliveryEndpointActive = false;
+    this.syncRefinedMissionTargets();
     if (this.nativeSurface) return;
     this.cancelPointerGesture?.();
     this.cancelMissionDrag?.();
@@ -618,23 +730,25 @@ export class EditorViewport {
     if (this.orbit) this.orbit.enabled = false;
     if (this.gizmo) this.gizmo.enabled = false;
     this.nativeSurface = new NativeArtworkSurface(this.container);
-    this.nativeSurface.update(this.nativeArt.pixels());
+    this.nativeSurface.update(this.currentNativeArt.pixels());
   }
   clearNativeArtPresentation() {
     this.setStatePresentationMode("physical");
     this.nativeArt.clear();
+    this.clearStateDelivery();
   }
   setNativeArtPlaying(playing: boolean) {
-    this.nativeArt.setPlaying(playing);
+    if (this.stateDelivery.ready) this.stateDelivery.setPlaying(playing);
+    else this.nativeArt.setPlaying(playing);
   }
   seekNativeArt(tick: number, id?: string) {
-    this.nativeArt.seek(tick, id);
-    this.nativeSurface?.update(this.nativeArt.pixels());
+    this.currentNativeArt.seek(tick, id);
+    this.nativeSurface?.update(this.currentNativeArt.pixels());
   }
   private readonly missionStates = new MissionStateLayer(
     (indices) => {
-      if (this.entities instanceof MissionEntities)
-        this.entities.setRefinedTargets(this.stateMission, indices);
+      this.refinedMissionTargets = new Set(indices);
+      this.syncRefinedMissionTargets();
       this.clippingBoundsDirty = true;
     },
     (message) => this.bindings.onError?.(message),
@@ -786,7 +900,7 @@ export class EditorViewport {
     this.mapRoot.add(this.workspaceFrame);
     this.mapRoot.add(this.missionMarkers.root);
     this.scene.add(this.missionMarkers.spritesRoot);
-    this.scene.add(this.scenery.root, this.missionStates.root);
+    this.scene.add(this.scenery.root, this.missionStates.root, this.stateDelivery.physical);
     this.missionMarkers.setVisible(true);
     this.mapRoot.add(
       this.terrain.root,
@@ -1059,6 +1173,7 @@ export class EditorViewport {
     this.retireMap();
     this.missionStates.dispose();
     this.nativeArt.dispose();
+    this.stateDelivery.dispose();
     for (const control of this.controls.reverse()) control.dispose();
     this.controls = [];
     disposeObjectResources([
@@ -1217,7 +1332,8 @@ export class EditorViewport {
     this.animate((elapsed) => {
       if (!this.renderer || !this.camera) return;
       if (this.nativeSurface) {
-        if (this.nativeArt.advance(elapsed)) this.nativeSurface.update(this.nativeArt.pixels());
+        if (this.currentNativeArt.advance(elapsed))
+          this.nativeSurface.update(this.currentNativeArt.pixels());
         return;
       }
       if (this.missionStates.advance(elapsed)) this.clippingBoundsDirty = true;
@@ -1717,6 +1833,7 @@ export class EditorViewport {
     box.expandByObject(this.objectsRoot);
     box.expandByObject(this.scenery.root);
     box.expandByObject(this.missionStates.root);
+    if (this.stateDelivery.physical.visible) box.expandByObject(this.stateDelivery.physical);
     box.expandByObject(this.splines.root);
     box.expandByObject(this.terrain.root);
     // Initial camera framing is a viewport preference, never an authored boundary.
