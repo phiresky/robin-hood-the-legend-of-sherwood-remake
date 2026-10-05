@@ -4,6 +4,28 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Standalone gameplay frame migration (2026-10-05)
+
+`pipeline/src/translate-gameplay-frames.ts` provides an authoring-only conversion
+between translated part-local frames. It moves surfaces, physical/navigation
+heights, clearances, doors, traversal sockets, volumes, masks and receiver probes,
+materials, lighting, sound positions, scenery and state-control geometry together.
+Relative directions, distances and permissions remain unchanged. Spline metadata
+requires recalibration; a shared placement height requires a shared vertical shift.
+
+Sixteen tests pass, including complete compiled-geometry comparisons for fifteen
+fixtures before/after migration: slopes, clearances, receivers, masks, changing
+stairs, interiors, jumps, controls, materials, sounds and rotated scenery. The
+pipeline typecheck and focused lint pass.
+
+`work/map-compile/keep-reassembly-5HGm6U` stages the composite Derby keep from its
+four gameplay-bearing components. Every one of its 71 physical parts matches
+the corresponding component after translation. The combined gameplay validates
+after separating source-local navigation labels and appearance IDs. This is an
+unpublished authoring candidate: collision ownership, appearance resources and
+native traversal/state comparisons remain required before publication. The
+library's missing-definition count is unchanged.
+
 ## Reopening barriers during climbing (2026-10-05)
 
 All five native `changing_climb` tests pass, including 72 reopening cases across
