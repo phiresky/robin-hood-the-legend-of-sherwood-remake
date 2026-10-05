@@ -76,6 +76,13 @@ def freeze(base, output):
     if set(selected) & set(canopy):
         raise ValueError('Overlapping independent texture decisions need explicit resolution')
     selected.update(canopy)
+    additional_path = OUT / 'texture-review/additional-approved-decisions.json'
+    if additional_path.exists():
+        additional = select(additional_path, models)
+        if set(selected) & set(additional):
+            raise ValueError('Additional approved texture stream overlaps historical selections')
+        selected.update(additional)
+        shutil.copyfile(additional_path, output / 'additional-approved-texture-decisions.json')
     shutil.copyfile(legacy_path, output / 'original-legacy-texture-decisions.json')
     shutil.copyfile(canopy_path, output / 'canopy-texture-decisions.json')
     rows = []
@@ -114,7 +121,8 @@ def freeze(base, output):
                texture_omissions=omitted, records=rows,
                decision_files={name: sha(output / name) for name in
                    ('geometry-decisions.json', 'original-legacy-texture-decisions.json',
-                    'compatible-legacy-texture-decisions.json', 'canopy-texture-decisions.json')},
+                    'compatible-legacy-texture-decisions.json', 'canopy-texture-decisions.json',
+                    'additional-approved-texture-decisions.json') if (output / name).exists()},
                model_copies_created=0, complete_state_integration=False))
     print(json.dumps(dict(output=str(output), groups=len(rows), visible_groups=len(models),
                           approved_textures=len(selected), omitted=omitted)))

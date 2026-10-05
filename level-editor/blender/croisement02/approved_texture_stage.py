@@ -109,9 +109,19 @@ def select_canopy(document, decision, base):
     for path, expected in json.loads(validation_path.read_text())['source_mask_evidence'].items():
         require(sha(Path(path)) == expected, 'Canopy source mask changed: ' + path)
     review = json.loads((candidate / 'agent-material-review.json').read_text())
-    require(review['preservation_report_sha256' if retained else 'reopened_preservation_sha256']
-            == sha(proof_path), 'Canopy reviewed preservation proof changed')
-    require(review['ready_for_coordinator_review'] is True
+    review_proof = review.get('preservation_report_sha256') or review.get('reopened_preservation_sha256')
+    require(review_proof == sha(proof_path), 'Canopy reviewed preservation proof changed')
+    ready = review.get('ready_for_coordinator_review') is True
+    if not ready and review.get('status') == 'PASS':
+        root_path = candidate / 'root-review.json'
+        require(str(root_path) in hashes and sha(root_path) == hashes[str(root_path)],
+                'Explicit review schema requires archived independent review')
+        root = json.loads(root_path.read_text())
+        ready = (root.get('status') == 'PASS' and root.get('all_eight_saved_model_views_inspected') is True
+                 and root.get('model_sha256') == sha(model)
+                 and root.get('actual_sheet_sha256') == sha(candidate / 'actual/textured.png')
+                 and root.get('preservation_report_sha256') == sha(proof_path))
+    require(ready
             and review['all_eight_saved_model_views_inspected'] is True
             and review['model_sha256'] == sha(model)
             and review['actual_sheet_sha256'] == sha(candidate / 'actual/textured.png'),
