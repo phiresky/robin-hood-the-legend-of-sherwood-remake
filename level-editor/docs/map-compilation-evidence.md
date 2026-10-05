@@ -6,6 +6,34 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Imported wood bridge deck candidate (2026-10-05)
 
+The support follow-up is reproducible from pinned mesh data with:
+
+```sh
+cd level-editor
+python3 refinement/author-imported-bridge-supports.py
+node refinement/stage-imported-bridge-gameplay.mjs --supports
+```
+
+The Python authoring step requires NumPy and SciPy. It finds twelve disconnected
+inclined supports and builds a convex hull for each. Only foot vertices below
+two scene units are extended to foundation Z=0; the largest extension is
+1.397324 scene units. These are deliberate collision hulls, not an assertion of
+exact mesh occupancy. Their vertical decomposition produces 590 obstacle pieces;
+integrated piece volume matches each hull within a relative tolerance of 1e-7.
+Each volume carries wood material and solid/opaque/mouse flags. No level data is
+read, and the scripts do not publish the result.
+
+`work/map-compile/imported-bridge-deck-GcCB3a` passes thirty native directed
+routes: ten complete deck crossings and twenty underpass crossings across five
+rotations. All sixty support-foot sample positions are blocked. Ground-route
+endpoints are inside terrain triangles; an earlier fixture put them on ambiguous
+shared boundaries and failed only the final receiver-identity assertion.
+The checked-in scripts reproduce all ten descriptors and the candidate gameplay
+exactly in `imported-bridge-deck-g4Js4g`; focused lint passes. Landing-height
+rejection checks also still pass. Railings, deck thickness and cross-braces remain
+unauthored, so these tests do not certify complete under-bridge body clearance,
+projectile/sight collision or publication readiness.
+
 Mesh review identifies eighteen top-facing triangles spanning nine arched deck
 panels, excluding the lower beams and railings. Their pinned face selection is
 recorded in `refinement/catalogs/sketchfab-long-wood-bridge-deck-review.json`.

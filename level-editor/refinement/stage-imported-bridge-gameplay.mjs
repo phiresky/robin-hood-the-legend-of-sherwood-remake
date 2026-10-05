@@ -1,0 +1,310 @@
+// Run from level-editor; add --supports after author-imported-bridge-supports.py.
+// Writes unpublished candidates and native-test fixtures under work/map-compile.
+import fs from "node:fs/promises";
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
+import { sceneToGame, signedPolygonArea, applyAffineMatrix } from "../shared/src/geometry.ts";
+import { gameToScene } from "../shared/src/scene.ts";
+import { partMatrix } from "../shared/src/level3d.ts";
+import { validateAssetGameplay } from "../shared/src/asset-gameplay.ts";
+import { compileMap } from "../app/src/map-compile.ts";
+import { insertProjectionAsset } from "../app/src/asset-commands.ts";
+import { createTerrainGrid } from "../shared/src/authored-terrain.ts";
+
+const base = "library/3d-assets/sketchfab/sketchfab-long-wood-bridge";
+const descriptorBytes = await fs.readFile(`${base}/asset.json`);
+const descriptor = JSON.parse(descriptorBytes);
+const bytes = await fs.readFile(`${base}/model.glb`);
+const review = JSON.parse(
+  await fs.readFile("refinement/catalogs/sketchfab-long-wood-bridge-deck-review.json", "utf8"),
+);
+assert.equal(createHash("sha256").update(descriptorBytes).digest("hex"), review.descriptorSha256);
+assert.equal(createHash("sha256").update(bytes).digest("hex"), review.modelSha256);
+const jsonLength = bytes.readUInt32LE(12);
+const gltf = JSON.parse(bytes.subarray(20, 20 + jsonLength).toString());
+const binary = bytes.subarray(28 + jsonLength);
+function accessor(index) {
+  const a = gltf.accessors[index],
+    view = gltf.bufferViews[a.bufferView];
+  const width = { SCALAR: 1, VEC3: 3 }[a.type];
+  assert.ok(width);
+  const size = { 5123: 2, 5125: 4, 5126: 4 }[a.componentType];
+  assert.ok(size);
+  const read = { 5123: "readUInt16LE", 5125: "readUInt32LE", 5126: "readFloatLE" }[a.componentType];
+  return Array.from({ length: a.count }, (_, i) =>
+    Array.from({ length: width }, (_, j) =>
+      binary[read](
+        (view.byteOffset ?? 0) +
+          (a.byteOffset ?? 0) +
+          i * (view.byteStride ?? width * size) +
+          j * size,
+      ),
+    ),
+  );
+}
+const node = gltf.nodes.find((n) => n.name === "scenery-long-wood-bridge");
+assert.ok(node);
+assert.equal(node.matrix, undefined);
+assert.equal(node.translation, undefined);
+assert.equal(node.rotation, undefined);
+assert.equal(node.scale, undefined);
+const [primitive] = gltf.meshes[node.mesh].primitives;
+assert.equal(primitive.mode ?? 4, 4);
+const vertices = accessor(primitive.attributes.POSITION),
+  indices = accessor(primitive.indices).flat();
+assert.equal(vertices.length, 2388);
+assert.equal(indices.length, 2708 * 3);
+const camera = { kind: "oblique-orthographic", elevation_deg: 35 };
+// Reviewed top-facing deck triangles; under-deck beams and rails are excluded.
+const faces = review.triangleIndices;
+const surfaces = faces.map((face) => {
+  const scene = indices.slice(face * 3, face * 3 + 3).map((i) => vertices[i]);
+  assert.ok(scene.every((p) => p[2] > 87 && p[2] < 95 && Math.abs(p[0]) < 31));
+  let points = scene.map((p) => sceneToGame(camera, p));
+  if (signedPolygonArea(points.map((p) => p.slice(0, 2))) < 0) points.reverse();
+  const joins = points.flatMap((a, i) => {
+    const b = points[(i + 1) % 3];
+    return Math.abs(Math.abs(a[1]) - 168.42010498046875 * Math.sin((35 * Math.PI) / 180)) < 1e-6 &&
+      Math.abs(a[1] - b[1]) < 1e-6
+      ? [[a, b]]
+      : [];
+  });
+  return {
+    id: `deck-face-${face}`,
+    node: node.name,
+    polygon: points.map((p) => p.slice(0, 2)),
+    height: points.map((p) => p[2]),
+    navigationRegion: "bridge-deck",
+    preserveMovementPrecision: true,
+    projectionMaterials: { defaultMaterial: 1, regions: [] },
+    ...(joins.length
+      ? {
+          navigationJoins: joins,
+          navigationJoinMinimumOverlap: 12,
+          navigationJoinHeightTolerance: 0.01,
+        }
+      : {}),
+  };
+});
+assert.equal(surfaces.flatMap((s) => s.navigationJoins ?? []).length, 2);
+descriptor.gameplay = {
+  version: 1,
+  collision: "none",
+  surfaces,
+  doors: [],
+  draft: {
+    issues: [
+      "Unpublished deck-only authoring candidate: support, railing, projectile and sight collision remain unauthored; under-bridge clearance is not verified.",
+    ],
+  },
+};
+let supportHulls;
+if (process.argv.includes("--supports")) {
+  const require = createRequire(new URL("../pipeline/package.json", import.meta.url));
+  const clipping = require("polygon-clipping");
+  supportHulls = JSON.parse(
+    await fs.readFile("work/map-compile/imported-bridge-support-hulls.json"),
+  );
+  assert.equal(supportHulls.modelSha256, review.modelSha256);
+  descriptor.gameplay.volumes = [];
+  for (const support of supportHulls.supports) {
+    let totalVolume = 0;
+    const upper = support.faces.filter((f) => f.plane[2] > 1e-8),
+      lower = support.faces.filter((f) => f.plane[2] < -1e-8);
+    const ring = (f) => f.indices.map((i) => support.vertices[i].slice(0, 2));
+    const height = (f, [x, y]) => -(f.plane[0] * x + f.plane[1] * y + f.plane[3]) / f.plane[2];
+    let piece = 0;
+    for (const top of upper)
+      for (const bottom of lower)
+        for (const polygon of clipping.intersection([ring(top)], [ring(bottom)])) {
+          assert.equal(polygon.length, 1);
+          const points = polygon[0].slice(0, -1);
+          if (Math.abs(signedPolygonArea(points)) < 1e-9) continue;
+          const shapePoints = points.map((p) => {
+            const low = height(bottom, p),
+              high = height(top, p);
+            assert.ok(high >= low - 1e-7);
+            return { x: p[0], y: p[1], z_bottom: low, z_top: Math.max(low, high) };
+          });
+          for (let i = 1; i + 1 < points.length; i++) {
+            const tri = [0, i, i + 1];
+            totalVolume +=
+              (Math.abs(signedPolygonArea(tri.map((j) => points[j]))) *
+                tri.reduce((sum, j) => sum + shapePoints[j].z_top - shapePoints[j].z_bottom, 0)) /
+              3;
+          }
+          descriptor.gameplay.volumes.push({
+            id: `${support.id}-piece-${piece++}`,
+            node: node.name,
+            shape: {
+              points: shapePoints,
+              solid: true,
+              opaque: true,
+              mouse: true,
+              show_shadow_polygon: true,
+              default_material: 1,
+            },
+          });
+        }
+    assert.ok(
+      Math.abs(totalVolume - support.volume) < support.volume * 1e-7,
+      `Partition changed support volume: ${support.id}`,
+    );
+  }
+  descriptor.gameplay.draft.issues = [
+    "Unpublished bridge candidate: railing, deck-body and brace collision remain unauthored; support hulls and underpass routes are under review.",
+  ];
+}
+validateAssetGameplay(descriptor.gameplay, descriptor);
+const output = await fs.mkdtemp("work/map-compile/imported-bridge-deck-");
+await fs.writeFile(
+  `${output}/candidate.gameplay.json`,
+  JSON.stringify(descriptor.gameplay, null, 2),
+);
+await fs.writeFile(
+  `${output}/source.json`,
+  JSON.stringify(
+    {
+      descriptorSha256: createHash("sha256").update(descriptorBytes).digest("hex"),
+      modelSha256: createHash("sha256").update(bytes).digest("hex"),
+      deckFaces: faces,
+    },
+    null,
+    2,
+  ),
+);
+const reference = {
+  id: descriptor.id,
+  descriptor: base.slice(8) + "/asset.json",
+  descriptor_sha256: createHash("sha256").update(descriptorBytes).digest("hex"),
+  model: base.slice(8) + "/model.glb",
+  model_sha256: createHash("sha256").update(bytes).digest("hex"),
+  model_scene: "default",
+  resources: [],
+};
+const endHeight = surfaces.flatMap((s) => s.navigationJoins ?? [])[0][0][2];
+const results = [];
+const landingChecks = [];
+for (const rotation of [0, 37, 90, 180, 270]) {
+  const empty = {
+    version: 1,
+    map: "Imported bridge deck candidate",
+    camera,
+    size: [1000, 1000],
+    objects: [],
+    groups: [],
+    sceneAssets: [],
+    assetSources: [],
+    terrain: createTerrainGrid([0, 0, 1000, 1000], 250, endHeight),
+  };
+  const { document } = insertProjectionAsset(empty, descriptor, reference, [500, 500, endHeight]);
+  document.groups[0].transform.rot_deg = rotation;
+  const compiled = compileMap(
+    document,
+    [0, 0, 1000, 1000],
+    new Map([[descriptor.id, descriptor]]),
+    { bestEffort: false },
+  );
+  const areaCount = (result) =>
+    result.descriptor.asset_geometry.motion_data.layers.reduce((n, layer) => n + layer.length, 0);
+  assert.equal(areaCount(compiled), 1, "Matching landing must share navigation with the deck");
+  for (const offset of [-1, 1]) {
+    const mismatched = structuredClone(document);
+    mismatched.terrain = createTerrainGrid([0, 0, 1000, 1000], 250, endHeight + offset);
+    const rejected = compileMap(
+      mismatched,
+      [0, 0, 1000, 1000],
+      new Map([[descriptor.id, descriptor]]),
+      { bestEffort: false },
+    );
+    assert.equal(areaCount(rejected), 2, "A mismatched landing must not connect to the deck");
+    landingChecks.push({ rotation, heightOffset: offset, navigationRegions: areaCount(rejected) });
+  }
+  const file = `bridge-${rotation}.level.json`;
+  await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
+  const matrix = partMatrix(camera, document, document.objects[0]);
+  const project = (p) => {
+    const [x, y, z] = sceneToGame(camera, applyAffineMatrix(matrix, gameToScene(camera, ...p)));
+    return [x, y - z];
+  };
+  const ends = surfaces
+    .flatMap((s) => s.navigationJoins ?? [])
+    .map(([a, b]) => a.map((n, i) => (n + b[i]) / 2));
+  const direction = ends[1].map((n, i) => n - ends[0][i]);
+  const length = Math.hypot(direction[0], direction[1]);
+  const outward = ends.map((p, i) =>
+    p.map((n, j) => (j === 2 ? n : n + (((i === 0 ? -1 : 1) * direction[j]) / length) * 24)),
+  );
+  results.push({
+    file,
+    map: file,
+    warnings: compiled.warnings,
+    routes: [[project(outward[0]), project(outward[1])]],
+  });
+  if (supportHulls) {
+    const underpass = structuredClone(document);
+    underpass.terrain = createTerrainGrid([0, 0, 1000, 1000], 250, 0);
+    const lower = compileMap(
+      underpass,
+      [0, 0, 1000, 1000],
+      new Map([[descriptor.id, descriptor]]),
+      { bestEffort: false },
+    );
+    const lowerFile = `underpass-${rotation}.level.json`;
+    await fs.writeFile(`${output}/${lowerFile}`, JSON.stringify(lower.descriptor));
+    let largest,
+      sectorIndex = 0;
+    lower.descriptor.asset_geometry.motion_data.layers.forEach((regions, layer) =>
+      regions.forEach((region) => {
+        const area = Math.abs(signedPolygonArea(region.polygon.points));
+        if (!largest || area > largest.area) largest = { layer, sector: sectorIndex, area };
+        sectorIndex++;
+      }),
+    );
+    const blocked = supportHulls.supports.map((s) => {
+      const foot = s.vertices.filter((v) => v[2] === 0);
+      assert.ok(foot.length >= 3);
+      return project([
+        foot.reduce((n, p) => n + p[0], 0) / foot.length,
+        foot.reduce((n, p) => n + p[1], 0) / foot.length,
+        0,
+      ]);
+    });
+    // Keep endpoints inside a terrain triangle: the native route helper checks
+    // receiver identity, which is ambiguous exactly on a shared triangle edge.
+    results.push({
+      file: lowerFile,
+      map: lowerFile,
+      layer: largest.layer,
+      sector: largest.sector,
+      warnings: lower.warnings,
+      blocked_points: blocked,
+      routes: [
+        [
+          [3.125, -130.375, 0],
+          [3.125, 130.875, 0],
+        ],
+        [
+          [-80.375, 5.125, 0],
+          [80.875, 5.125, 0],
+        ],
+      ].map((pair) => pair.map(project)),
+    });
+  }
+}
+await fs.writeFile(
+  `${output}/diagnostics.json`,
+  JSON.stringify({ scope: "static-geometry-only-not-gameplay-parity", complete: true, results }),
+);
+await fs.writeFile(`${output}/mismatched-landings.json`, JSON.stringify(landingChecks, null, 2));
+console.log(
+  JSON.stringify({
+    output,
+    placements: results.length,
+    surfaces: surfaces.length,
+    endSockets: 2,
+    rejectedLandingChecks: landingChecks.length,
+    supportVolumes: descriptor.gameplay.volumes?.length ?? 0,
+  }),
+);

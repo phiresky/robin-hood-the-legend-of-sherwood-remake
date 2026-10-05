@@ -8,9 +8,17 @@
   "triangleIndices": [2088, 2089, 2090, 2091, 2092, 2093, 2106, 2107, 2116, 2117, 2118, 2119, 2122, 2123, 2130, 2131, 2132, 2133],
   "defaultMaterial": 1,
   "navigationRegion": "bridge-deck",
+  "supportAuthoring": {
+    "script": "refinement/author-imported-bridge-supports.py",
+    "connectedComponents": 12,
+    "shape": "convex hull per inclined support",
+    "foundationSceneZ": 0,
+    "footVertexMaximumSceneZ": 2,
+    "maximumFootExtensionSceneUnits": 1.397323489189148
+  },
   "remaining": [
-    "Author support and railing collision without filling the underpass.",
-    "Review projectile and sight obstruction independently of walking surfaces.",
-    "Verify under-bridge routes before publication."
+    "Author railing, deck-body and cross-brace collision without filling the underpass.",
+    "Review complete projectile and sight obstruction independently of walking surfaces.",
+    "Verify under-bridge clearance again after adding deck and brace collision."
   ]
 }
