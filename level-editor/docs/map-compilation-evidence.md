@@ -4,6 +4,33 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Combined physical stair collision assembly (2026-10-05)
+
+The physical region compiler now joins floor surfaces, slices solid volumes
+against the world height plane, applies only clearances owned by the solid's
+asset on the same plane, and allocates permanent and changing collision pieces
+through the shared state compiler and area emitter. Authored headroom is retained
+in the solid's lower plane. Supporting solids that merely touch the floor from
+below do not block it. Initial collision contours and control-pair identities
+are returned for anchor resolution and runtime binding.
+
+Ordinary static and changing collision compilation now shares the height-slice
+routine with this path. Projection and polygon precision remain chosen by each
+caller, so ordinary export retains its fixed-point clipping behavior.
+
+A combined placement test covers five rotations, elevation and two headroom
+settings. It checks floor holes, a cleared wall, a separately owned post that
+must survive the clearance, a raised beam's intersection with the slope, a
+supporting foundation, fractional changing barriers and independent copied
+controls. Physical pieces reference emitted state records; exact edge-on floor
+projection remains valid.
+
+All five affected compiler suites (142 tests), both typechecks and focused lint
+pass. This is still compiler integration groundwork: ordinary surface placement
+and receiving-feature binding depend on projected geometry, so the normal export
+does not yet invoke the physical region assembler. Keep placement failures remain
+unresolved.
+
 ## Physical changing-barrier compilation (2026-10-05)
 
 The movement transition compiler now shares state allocation and hole

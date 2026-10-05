@@ -53,7 +53,8 @@ import {
   type AssetGameplay,
 } from "./asset-gameplay.ts";
 
-import { heightPlane, planeHeight, clipHeight, type HeightPlane } from "./gameplay-plane.ts";
+import { heightPlane, planeHeight, type HeightPlane } from "./gameplay-plane.ts";
+import { movementVolumeHeightSlice } from "./movement-volume-height-slice.ts";
 import { quantizeGeneratedMotionPolygon, simplifyMotionRing } from "./motion-quantization.ts";
 import { normalizeGeneratedMotion } from "./normalize-generated-motion.ts";
 import { normalizeGameplayStateViews } from "./gameplay-state-views.ts";
@@ -1449,16 +1450,7 @@ function compileAssetGameplayAttempt(
         solidBounds[1] > worldBounds[3]
       )
         continue;
-      let slice: Point[] = [
-        [solidBounds[0], solidBounds[1]],
-        [solidBounds[2], solidBounds[1]],
-        [solidBounds[2], solidBounds[3]],
-        [solidBounds[0], solidBounds[3]],
-      ];
-      const above = top.map((n, i) => n - worldPlane[i]!) as HeightPlane;
-      if (footprint.every((p) => planeHeight(above, p) <= 1e-7)) continue;
-      slice = clipHeight(slice, above);
-      slice = clipHeight(slice, worldPlane.map((n, i) => n - bottom[i]!) as HeightPlane);
+      const slice = movementVolumeHeightSlice(footprint, worldPlane, bottom, top);
       if (slice.length < 3 || Math.abs(signedArea(slice)) < 1e-7) continue;
       const cuts = fixedPolygonBoolean("intersection", polygon(footprint), [polygon(slice)]);
       for (const cut of cuts) {

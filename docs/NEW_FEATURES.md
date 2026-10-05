@@ -25,6 +25,8 @@
   slicing; physical surface assembly and final emission remain in progress.
   Changing barriers can also compile in world coordinates, retaining fractional
   geometry, holes and shared control states before physical area emission.
+  Physical region assembly combines these with solid height slices and
+  owner-scoped clearances; it shares volume-height slicing with ordinary export.
 
 - **Asset-authored movement headroom.** A permanent gameplay volume can set
   `movementHeadroom` in game-height units. Export excludes walking space that

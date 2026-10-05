@@ -89,6 +89,12 @@ volumes against the world plane, retains fractional contours and holes, and
 allocates the same control state pairs used by normal movement areas. Five
 rotated placements pass compiler-to-area-emitter checks. Normal exports do not
 yet call this path.
+A physical region assembler now combines solid height slices, asset-owned
+clearances, permanent floor holes and changing barriers before emitting shared
+collision identities. Rotation/headroom tests cover this combined path. The
+normal compiler shares its volume-height slicing routine, but still needs to
+retain physical surfaces through placement, receiving-feature binding and final
+lift serialization before ordinary exports can use the assembled region.
 An optional physical-stair descriptor and runtime binding now retain ground-space
 collision with references to the normal movement obstacles. Physical route queries
 read their current state rather than maintaining separate switch state. Compiler

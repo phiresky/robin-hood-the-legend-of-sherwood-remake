@@ -2,7 +2,8 @@ import earcut, { flatten } from "earcut";
 import polygonClipping, { type MultiPolygon } from "polygon-clipping";
 import type { NavigationPiece } from "./assemble-navigation-regions.ts";
 import type { Point } from "./level.ts";
-import { clipHeight, heightPlane, planeHeight, type HeightPlane } from "./gameplay-plane.ts";
+import { heightPlane, planeHeight, type HeightPlane } from "./gameplay-plane.ts";
+import { movementVolumeHeightSlice } from "./movement-volume-height-slice.ts";
 import { quantizeGeneratedMotionPolygon, simplifyMotionRing } from "./motion-quantization.ts";
 import { preserveMovementBoundary } from "./preserve-movement-boundary.ts";
 import { assembleMovementContour } from "./assemble-movement-contour.ts";
@@ -48,33 +49,12 @@ function terrainSlice(
         return [x, y + z, z];
       }),
     );
-  const xs = volume.polygon.map(([x]) => x),
-    ys = volume.polygon.map(([, y]) => y);
-  const minX = Math.min(...xs),
-    maxX = Math.max(...xs);
-  const minY = Math.min(...ys),
-    maxY = Math.max(...ys);
-  const above: HeightPlane = [
-    volume.plane[0] - plane[0],
-    volume.plane[1] - plane[1],
-    volume.plane[2] + volume.above - plane[2],
-  ];
-  const below: HeightPlane = [
-    plane[0] - volume.plane[0],
-    plane[1] - volume.plane[1],
-    plane[2] - volume.plane[2] + volume.below,
-  ];
-  const slice = clipHeight(
-    clipHeight(
-      [
-        [minX, minY],
-        [maxX, minY],
-        [maxX, maxY],
-        [minX, maxY],
-      ],
-      above,
-    ),
-    below,
+  const slice = movementVolumeHeightSlice(
+    volume.polygon,
+    plane,
+    [volume.plane[0], volume.plane[1], volume.plane[2] - volume.below],
+    [volume.plane[0], volume.plane[1], volume.plane[2] + volume.above],
+    true,
   );
   if (slice.length < 3) return [];
   if (physical) return polygonClipping.intersection([volume.polygon, ...volume.holes], [slice]);
