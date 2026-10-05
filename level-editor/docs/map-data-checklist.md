@@ -46,6 +46,11 @@ across 37 affected receiver pairs passing. Twelve new placements bind and four
 out-of-reach cases reject. Three physical-receiver omissions remain: the footbridge,
 edge bank and watermill. The latest baked ZIP predates this change too.
 
+The east-village footbridge has a modeled sloping deck but no asset-owned walkable
+surface. A staged deck definition passes native construction but creates an
+independent navigation layer with no sampled receiver crossings. It remains
+unpublished pending endpoint connections and navigation-ownership corrections.
+
 Assets can author a placement ground height for new drops. The church-side
 tower now uses its lower stair approach, verified at three elevations and four
 rotations. Existing placements and Leicester's compiled geometry are unchanged;

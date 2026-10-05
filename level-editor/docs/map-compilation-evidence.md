@@ -4,6 +4,27 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Footbridge deck ownership investigation (2026-10-05)
+
+The published `leicester-east-village-footbridge` has no walkable surfaces. Its
+physical receiving volume has a sloping top matching the modeled deck, but its
+receiver anchor depends on another asset's navigation. This fails in Wychford.
+
+The unpublished experiment `work/map-compile/stage-footbridge-deck.mjs` assigns
+that top to an asset-owned walkable surface using `projectionVolume`. Outputs in
+`work/map-compile/footbridge-deck-UyLvKh` remove the east-footbridge receiver
+warning and pass native construction for both Leicester and Wychford (9.06
+seconds). This is **not a usable fix**: Leicester gains an independent deck layer
+(18), and the focused actor receiver audit for obstacle 385 finds zero eligible
+crossings and fails its nonempty-coverage assertion. The baseline receiver instead
+belongs to the larger navigation region on layer 1. Native construction alone
+would miss this connectivity regression.
+
+Do not publish this candidate. The next work is to author the deck's endpoint
+connections and resolve navigation ownership with its surrounding surfaces,
+then verify traversal in the existing scenes and in newly placed assemblies.
+The staged Wychford descriptor does not include spline mesh calibration.
+
 ## Published woodland-bank terrain attachment (2026-10-05)
 
 `leicester-bank-terrain-attachments.json` now authors a finite vertical probe for
