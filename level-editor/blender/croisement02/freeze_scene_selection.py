@@ -13,6 +13,31 @@ from evidence_io import sha, write_json
 from approved_texture_stage import select
 
 
+def source_frames(worker):
+    frames = worker / 'modified/views.json'
+    if frames.exists():
+        return frames, None
+    authority_path = worker / 'inspection/approved-geometry-authority.json'
+    authority = json.loads(authority_path.read_text())
+    if 'source_authority' not in authority:
+        companion = worker / 'inspection/source-authority-companion-v1.json'
+        document = json.loads(companion.read_text()) if companion.exists() else authority
+        if document is not authority:
+            if (Path(document['parent_authority']) != authority_path
+                    or document['parent_authority_sha256'] != sha(authority_path)):
+                raise ValueError('Approved derivative source parent authority changed')
+            for path, expected in document['files'].items():
+                if sha(Path(path)) != expected:
+                    raise ValueError('Approved derivative source metadata changed')
+            authority, authority_path = document, companion
+    source = authority['source_authority']
+    frames = Path(source['manifest'])
+    if (authority['model_sha256'] != sha(worker / 'model.blend')
+            or sha(frames) != source['manifest_sha256'] or not source.get('purpose')):
+        raise ValueError('Approved derivative source metadata changed')
+    return frames, authority_path
+
+
 def freeze(base, output):
     if output.exists():
         raise FileExistsError(output)
@@ -38,8 +63,14 @@ def freeze(base, output):
     for row in mask_inventory['masks']:
         path = (base / row['png']).resolve()
         sources[str(path)] = sha(path)
-    for worker in workers.values():
-        frames_path = worker / 'modified/views.json'
+    frame_records = {}
+    for asset, worker in workers.items():
+        frames_path, companion = source_frames(worker)
+        frame_records[asset] = dict(path=str(frames_path), sha256=sha(frames_path),
+                                   scope='source/camera metadata only; not a geometry review')
+        if companion:
+            sources[str(companion)] = sha(companion)
+            frame_records[asset]['authority'] = str(companion)
         frames = json.loads(frames_path.read_text())
         sources[str(frames_path)] = sha(frames_path)
         image = Path(frames['source_image']).resolve()
@@ -84,6 +115,7 @@ def freeze(base, output):
         selected.update(additional)
         shutil.copyfile(additional_path, output / 'additional-approved-texture-decisions.json')
     supplementary_files = []
+    superseded_textures = []
     streams_path = OUT / 'texture-review/supplementary-approved-streams.json'
     if streams_path.exists():
         streams_hash = sha(streams_path)
@@ -95,8 +127,10 @@ def freeze(base, output):
             if sha(path) != stream['sha256']:
                 raise ValueError('Supplementary approval stream changed: ' + str(path))
             choices = select(path, models)
-            if set(selected) & set(choices):
-                raise ValueError('Supplementary approval stream overlaps existing selections')
+            for asset in sorted(set(selected) & set(choices)):
+                superseded_textures.append(dict(asset_id=asset, prior=selected[asset],
+                    replacement=choices[asset], authority=str(path),
+                    reason='Later explicitly registered approved stream; both exact current geometry guards passed'))
             selected.update(choices)
             name = f'supplementary-approved-texture-decisions-{index}.json'
             shutil.copyfile(path, output / name)
@@ -122,7 +156,8 @@ def freeze(base, output):
         evidence = {}
         for name in ('workspace.json', 'validation.json', 'inspection/saved-model-audit.json',
                      'inspection/visual-review.json', 'inspection/refinement.json',
-                     'inspection/source-coverage/report.json', 'inspection/feedback-revision-1.json'):
+                     'inspection/source-coverage/report.json', 'inspection/feedback-revision-1.json',
+                     'inspection/approved-geometry-authority.json'):
             path = worker / name
             if path.exists():
                 evidence[str(path)] = sha(path)
@@ -132,7 +167,8 @@ def freeze(base, output):
                          geometry_model=str(models[asset]), geometry_model_sha256=model_hashes[asset],
                          model=str(chosen), model_sha256=sha(chosen),
                          exact_geometry_user_approval=approval[-1] if approval else None,
-                         approved_texture=texture, evidence=evidence))
+                         approved_texture=texture, evidence=evidence,
+                         source_frames=frame_records[asset]))
     if sha(catalog_path) != catalog_hash or any(sha(models[a]) != h for a, h in model_hashes.items()):
         raise ValueError('Selected catalog or worker changed during snapshot')
     if any(sha(Path(row['source'])) != row['sha256'] for row in metadata.values()):
@@ -142,7 +178,7 @@ def freeze(base, output):
     write_json(output / 'selection.json', dict(version=1, status='private immutable selection; not publication',
                catalog_sha256=catalog_hash, metadata=metadata, source_evidence=sources, groups=len(rows),
                visible_groups=len(models), approved_texture_count=len(selected),
-               texture_omissions=omitted, records=rows,
+               texture_omissions=omitted, superseded_approved_textures=superseded_textures, records=rows,
                decision_files={name: sha(output / name) for name in
                    ('geometry-decisions.json', 'original-legacy-texture-decisions.json',
                     'compatible-legacy-texture-decisions.json', 'canopy-texture-decisions.json',

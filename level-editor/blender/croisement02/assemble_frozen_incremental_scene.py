@@ -108,15 +108,39 @@ def main(plan_path, output):
         output.mkdir(parents=True)
         for asset in sorted(updates):
             record = rows[asset]
-            audit = read(Path(record['worker']) / 'inspection/saved-model-audit.json')
-            if audit['status'] != 'PASS' or audit['model_sha256'] != record['geometry_model_sha256']:
-                raise ValueError('Saved worker audit differs: ' + asset)
+            audit_path = Path(record['worker']) / 'inspection/saved-model-audit.json'
             nodes = {source_for_part(p) for p in record['group']['parts']}
-            if {r['source_node'] for r in audit['objects']} != nodes:
-                raise ValueError('Worker does not cover exact group ownership: ' + asset)
+            audit = read(audit_path) if audit_path.exists() else None
+            if audit:
+                if audit['status'] != 'PASS' or audit['model_sha256'] != record['geometry_model_sha256']:
+                    raise ValueError('Saved worker audit differs: ' + asset)
+                if {r['source_node'] for r in audit['objects']} != nodes:
+                    raise ValueError('Worker does not cover exact group ownership: ' + asset)
+            else:
+                path = Path(record['worker']) / 'inspection/approved-geometry-authority.json'
+                checked(path, record['evidence'][str(path)])
+                derivative_authority = read(path)
+                approval = record['exact_geometry_user_approval']
+                if (derivative_authority['model_sha256'] != record['geometry_model_sha256']
+                        or not approval or approval['decision'] != 'approved'
+                        or approval['model_sha256'] != record['geometry_model_sha256']
+                        or derivative_authority['group'] != record['group']):
+                    raise ValueError('Approved derivative authority differs: ' + asset)
+                for path, expected in derivative_authority['files'].items():
+                    checked(path, expected)
             model = checked(record['model'], record['model_sha256'])
             bpy.ops.wm.open_mainfile(filepath=str(model))
-            names = [r['object'] for r in audit['objects']]
+            if audit:
+                names = [r['object'] for r in audit['objects']]
+            else:
+                # Inspect the exact approved derivative now; old source frames
+                # supply camera metadata, never a substitute geometry audit.
+                config = read(Path(record['worker']) / 'workspace.json')
+                objects = [obj for obj in bpy.data.collections[config['collection_name']].all_objects
+                           if obj.type == 'MESH' and obj.get('asset_group') == asset]
+                if not objects or {obj.get('source_node') for obj in objects} != nodes:
+                    raise ValueError('Derivative receiver ownership differs: ' + asset)
+                names = sorted(obj.name for obj in objects)
             refs[asset] = {name: fingerprints(bpy.data.objects[name]) for name in names}
             texture = record['approved_texture']
             if texture and set(names) != set(texture['receiver_names']):

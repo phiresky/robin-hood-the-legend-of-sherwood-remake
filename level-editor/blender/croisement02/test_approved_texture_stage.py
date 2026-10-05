@@ -118,6 +118,13 @@ class CanopySelectionTests(unittest.TestCase):
     def test_exact_canopy_chain(self):
         self.assertEqual(set(select(self.decisions, {'tree': self.base})), {'tree'})
 
+    def test_reopened_proof_wins_over_pre_save_report(self):
+        review = json.loads(self.review.read_text())
+        review['preservation_report_sha256'] = 'separate pre-save report hash'
+        self.review.write_text(json.dumps(review))
+        self.freeze_grouped([self.model, self.sheet, self.review])
+        self.assertEqual(set(select(self.decisions, {'tree': self.base})), {'tree'})
+
     def test_changed_archive(self):
         (self.archive / 'worker.blend').write_bytes(b'other candidate')
         with self.assertRaisesRegex(ValueError, 'Archived canopy evidence'):

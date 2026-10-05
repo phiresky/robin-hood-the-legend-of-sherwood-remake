@@ -142,12 +142,13 @@ def select_canopy(document, decision, base):
                     and review.get('candidate_model_sha256') == sha(model)
                     and review.get('actual_sheet_sha256') == sha(candidate / 'actual/textured.png'),
                     'Grouped saved-model review changed')
-            review_proof = review.get('preservation_sha256') or review.get('reopened_preservation_sha256')
+            review_proof = review.get('preservation_sha256') or review.get('reopened_preservation_sha256') or review.get('reopened_guard_sha256')
             require(review_proof == sha(proof_path), 'Grouped reviewed preservation proof changed')
         return dict(decision=decision, model=str(model), proof=str(proof_path),
                     proof_sha256=sha(proof_path), receiver_names=bake_proof['receiver_names'])
     require(not restored, 'Observed boundary restoration needs frozen independent actual review')
-    review_proof = review.get('preservation_report_sha256') or review.get('reopened_preservation_sha256')
+    review_proof = (review.get('preservation_report_sha256') if retained
+                    else review.get('reopened_preservation_sha256') or review.get('preservation_report_sha256'))
     require(review_proof == sha(proof_path), 'Canopy reviewed preservation proof changed')
     ready = review.get('ready_for_coordinator_review') is True
     if not ready and review.get('status') == 'PASS':
