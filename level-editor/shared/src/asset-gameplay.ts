@@ -149,6 +149,9 @@ export interface AssetGameplay {
   volumes?: {
     id: string;
     node: string;
+    /** Required upright space beneath this permanent movement solid, in world
+     * game-height units. Defaults to zero; sight/projectile geometry is unchanged. */
+    movementHeadroom?: number;
     shape: Omit<SightObstacle, "projection_area" | "material_indices">;
   }[];
   /** Authored contours replace implicit movement derivation; movementSolids can select additional solids. */
@@ -979,6 +982,11 @@ export function validateAssetGameplay(
   const volumes = new Set<string>();
   for (const volume of data.volumes ?? []) {
     feature(volume);
+    if (
+      volume.movementHeadroom !== undefined &&
+      (!Number.isFinite(volume.movementHeadroom) || volume.movementHeadroom < 0)
+    )
+      fail(`invalid movement headroom ${volume.id}`);
     if (nodes.has(volume.id)) fail("gameplay volume IDs must not shadow part nodes");
     volumes.add(volume.id);
     const shape = volume.shape;

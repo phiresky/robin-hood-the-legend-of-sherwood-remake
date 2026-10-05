@@ -3029,6 +3029,131 @@ test("elevation translates motion in projected coordinates while sight remains i
   assert.equal(floor.points[0]!.y, 300);
 });
 
+test("volume headroom blocks low beams after placement without changing physical geometry", () => {
+  for (const rotation of [0, 37, 90, 180]) {
+    const { document, assets, hut } = assetCompilerFixture();
+    const gameplay = hut.gameplay!;
+    gameplay.collision = "none";
+    gameplay.doors = [];
+    gameplay.surfaces = [gameplay.surfaces[0]!];
+    const volume = {
+      id: "overhead-beam",
+      node: "building-999",
+      movementHeadroom: 0,
+      shape: {
+        points: [
+          [40, 20],
+          [60, 20],
+          [60, 80],
+          [40, 80],
+        ].map(([x, y]) => ({ x: x!, y: y!, z_bottom: 40, z_top: 50 })),
+        solid: true,
+        opaque: true,
+        mouse: true,
+        show_shadow_polygon: false,
+        default_material: 1,
+      },
+    };
+    gameplay.volumes = [volume];
+    document.objects[0]!.transform = { ...IDENTITY_TRANSFORM };
+    document.groups[0]!.transform = { dx: 500, dy: 500, dz: 20, rot_deg: rotation };
+    const compile = () => compileAssetGameplay(document, assets, bounds);
+    const obstacleCount = (result: ReturnType<typeof compile>) =>
+      result.motion_data.layers.flat().reduce((n, area) => n + area.obstacles.length, 0);
+    const before = compile();
+    assert.equal(obstacleCount(before), 0);
+    volume.movementHeadroom = 39;
+    assert.equal(obstacleCount(compile()), 0);
+    volume.movementHeadroom = 41;
+    const blocked = compile();
+    assert.equal(obstacleCount(blocked), 1);
+    assert.deepEqual(blocked.sight_obstacles[0], before.sight_obstacles[0]);
+    // The solid's top remains a usable floor; headroom only excludes space below it.
+    gameplay.surfaces[0]!.height = 50;
+    assert.equal(obstacleCount(compile()), 0);
+    for (const invalid of [-1, Infinity, NaN, "80", null])
+      assert.throws(
+        () =>
+          validateAssetGameplay(
+            { ...gameplay, volumes: [{ ...volume, movementHeadroom: invalid }] },
+            hut,
+          ),
+        /invalid movement headroom/,
+      );
+  }
+});
+
+test("raising a headroom volume reopens independent terrain beneath it", () => {
+  const { document, assets, hut } = assetCompilerFixture();
+  const gameplay = hut.gameplay!;
+  gameplay.collision = "none";
+  gameplay.doors = [];
+  gameplay.surfaces = [];
+  gameplay.volumes = [
+    {
+      id: "raised-beam",
+      node: "building-999",
+      movementHeadroom: 80,
+      shape: {
+        points: [
+          [40, 20],
+          [60, 20],
+          [60, 80],
+          [40, 80],
+        ].map(([x, y]) => ({ x: x!, y: y!, z_bottom: 40, z_top: 50 })),
+        solid: true,
+        opaque: true,
+        mouse: true,
+        show_shadow_polygon: false,
+        default_material: 1,
+      },
+    },
+  ];
+  document.terrain = createTerrainGrid([0, 0, 1000, 1000], 250, 0);
+  const obstacleCount = () =>
+    compileAssetGameplay(document, assets, bounds)
+      .motion_data.layers.flat()
+      .reduce((n, area) => n + area.obstacles.length, 0);
+  assert.equal(obstacleCount(), 1);
+  document.groups[0]!.transform.dz = 100;
+  assert.equal(obstacleCount(), 0);
+});
+
+test("volume headroom intersects sloping floors at their current height", () => {
+  const { document, assets, hut } = slopedAssetCompilerFixture();
+  const gameplay = hut.gameplay!;
+  gameplay.collision = "none";
+  gameplay.surfaces[0]!.holes = [];
+  const volume = {
+    id: "sloped-underpass-beam",
+    node: "building-999",
+    movementHeadroom: 0,
+    shape: {
+      points: [
+        [40, 20],
+        [60, 20],
+        [60, 40],
+        [40, 40],
+      ].map(([x, y]) => ({ x: x!, y: y!, z_bottom: 50, z_top: 70 })),
+      solid: true,
+      opaque: true,
+      mouse: true,
+      show_shadow_polygon: false,
+      default_material: 1,
+    },
+  };
+  gameplay.volumes = [volume];
+  assert.equal(
+    compileAssetGameplay(document, assets, bounds).motion_data.layers[0]![0]!.obstacles.length,
+    0,
+  );
+  volume.movementHeadroom = 30;
+  assert.equal(
+    compileAssetGameplay(document, assets, bounds).motion_data.layers[0]![0]!.obstacles.length,
+    1,
+  );
+});
+
 test("sloped surfaces preserve height, holes and the intersecting slice of solids", () => {
   const { document, assets, hut } = slopedAssetCompilerFixture();
   const result = compileAssetGameplay(document, assets, bounds);

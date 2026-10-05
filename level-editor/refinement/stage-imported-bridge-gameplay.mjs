@@ -199,9 +199,13 @@ if (process.argv.includes("--supports") || process.argv.includes("--structure"))
       },
     });
   }
+  if (structure) {
+    for (const volume of descriptor.gameplay.volumes)
+      volume.movementHeadroom = review.structureAuthoring.movementHeadroom;
+  }
   descriptor.gameplay.draft.issues = [
     structure
-      ? "Unpublished bridge candidate: fitted wood collision, complete clearance and projectile/sight behavior are under review."
+      ? "Unpublished bridge candidate: fitted wood collision and authored upright headroom require visual review."
       : "Unpublished bridge candidate: railing, deck-body and brace collision remain unauthored; support hulls and underpass routes are under review.",
   ];
 }
@@ -345,6 +349,8 @@ for (const rotation of [0, 37, 90, 180, 270]) {
         0,
       ]);
     });
+    const headroom = process.argv.includes("--structure");
+    if (headroom) blocked.push(project([0, 0, 0]), project([0, -14, 0]), project([0, 14, 0]));
     // Keep endpoints inside a terrain triangle: the native route helper checks
     // receiver identity, which is ambiguous exactly on a shared triangle edge.
     results.push({
@@ -426,10 +432,15 @@ for (const rotation of [0, 37, 90, 180, 270]) {
           [3.125, -130.375, 0],
           [3.125, 130.875, 0],
         ],
-        [
-          [-80.375, 5.125, 0],
-          [80.875, 5.125, 0],
-        ],
+        headroom
+          ? [
+              [-160.375, 5.125, 0],
+              [160.875, 5.125, 0],
+            ]
+          : [
+              [-80.375, 5.125, 0],
+              [80.875, 5.125, 0],
+            ],
       ].map((pair) => pair.map(project)),
     });
   }

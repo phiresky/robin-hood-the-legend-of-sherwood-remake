@@ -4,6 +4,31 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Authored movement headroom and bridge detours (2026-10-05)
+
+Permanent gameplay volumes can now author `movementHeadroom` in world game-height
+units. After placement, navigation subtracts that height from the solid's bottom
+plane when deriving walking restrictions. Physical sight/projectile geometry is
+unchanged, and standing on the solid's top remains possible. The default is zero;
+no mission character profiles are compiler inputs. Spline copies retain the value.
+Tests cover rotation, elevation, sloping floors, standing on top, raising a solid
+away from independent terrain, repeated spline deformation and invalid values.
+
+The bridge review recipe specifies 80 units. The reproducible candidate
+`work/map-compile/imported-bridge-deck-X16cpf` passes 30 directed native actor
+routes, 75 blocked points and ten landing-height rejection checks across five
+rotations. Ten routes cross the deck; twenty foundation routes detour around
+the now-blocked low structure. The separate native ray test passes all 140
+sight/projectile checks, including gaps below the wood. Ray clearance is not
+walking clearance. Earlier fixture endpoints at 37 degrees shared one receiver
+and failed the crossing helper's precondition; the final route crosses distinct
+receivers without changing that helper or compiled geometry.
+
+All 134 affected compiler, spline and collision-subtraction tests pass, as do
+app/pipeline typechecks, focused lint, formatting and the production editor build.
+The candidate remains unpublished pending rendered collision/actor review; these
+checks do not establish full map parity or posture-dependent crawling behavior.
+
 ## Bridge sight/projectile gaps and body-clearance review (2026-10-05)
 
 `work/map-compile/imported-bridge-deck-y6Ojxi` adds explicit world-space ray

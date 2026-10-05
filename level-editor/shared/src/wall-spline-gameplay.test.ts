@@ -12,6 +12,28 @@ import { validateAssetGameplay } from "./asset-gameplay.ts";
 import { sceneToGame } from "./geometry.ts";
 import { splineCurve } from "./spline-sampling.ts";
 
+test("spline volume headroom survives repeated deformation", () => {
+  const { document, asset, assets } = wallSplineFixture();
+  const shape = asset.gameplay!.volumes![0]!.shape;
+  asset.gameplay!.volumes!.push({
+    id: "overhead",
+    node: "body",
+    movementHeadroom: 80,
+    shape: {
+      points: shape.points,
+      solid: shape.solid,
+      opaque: shape.opaque,
+      mouse: shape.mouse,
+      show_shadow_polygon: shape.show_shadow_polygon,
+      default_material: shape.default_material,
+    },
+  });
+  const result = wallSplineGameplay(document, assets, false);
+  const volumes = result.descriptors.flatMap((d) => d.gameplay!.volumes ?? []);
+  assert.ok(volumes.filter((v) => v.movementHeadroom === 80).length > 1);
+  assert.ok(volumes.some((v) => v.movementHeadroom === undefined));
+});
+
 test("spline clearances never silently lose their separate navigation plane", () => {
   const { document, asset, assets } = wallSplineFixture();
   asset.gameplay!.movementClearances = [

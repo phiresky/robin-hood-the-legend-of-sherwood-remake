@@ -18,13 +18,13 @@
   },
   "structureAuthoring": {
     "option": "--structure",
+    "movementHeadroom": 80,
     "woodPieceProxies": 150,
     "shape": "fitted oriented boxes, with long arched rails split at mesh profile stations",
     "deckThickness": "paired bottom vertex at each of the eighteen reviewed top triangles",
     "publication": "staged only"
   },
   "remaining": [
-    "Resolve navigation body clearance beneath the low cross-braces before publication.",
     "Review fitted collision and rendered actor clearance; passing point rays do not certify a full body route."
   ]
 }

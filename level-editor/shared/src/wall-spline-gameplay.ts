@@ -315,6 +315,9 @@ export function wallSplineGameplay(
           out.volumes!.push({
             id,
             node: "$root",
+            ...(volume.movementHeadroom !== undefined
+              ? { movementHeadroom: volume.movementHeadroom }
+              : {}),
             shape: {
               points,
               solid: volume.shape.solid,

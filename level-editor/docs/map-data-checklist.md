@@ -28,9 +28,14 @@ twelve inclined support hulls preserves those ten complete crossings, passes
 twenty underpass routes and blocks sixty sampled support-foot positions. A newer
 candidate adds fitted rail/brace collision and mesh-derived deck thickness and
 passes those same route/foot checks plus ten landing-height rejections. Another
-140 native sight/projectile checks preserve the tested wood and gaps. Body
-clearance remains unresolved: foot-level navigation alone allows routes beneath
-braces that can intersect an upright character. The candidate is not published.
+140 native sight/projectile checks preserve the tested wood and gaps. The latest
+candidate authors 80 game-height units of upright headroom on its solid volumes.
+It passes 30 native actor routes, 75 blocked support/low-clearance points and ten
+landing-height rejections at five rotations. Foundation routes now detour around
+low wood; deck crossings remain usable and all 140 sight/projectile checks pass.
+The compiler changes pass 134 affected tests, both typechecks, focused lint and
+the production build. Rendered actor/collision review remains; the candidate is
+not published.
 
 The staged composite keep preserves Derby's door permissions, room memberships
 and lift endpoints; both assemblies pass 28 native stair routes and five control
@@ -136,7 +141,7 @@ this does not repair Wychford's already-elevated approach automatically.
 | Character occlusion | Bake 16-bit depth from geometry, including paired appearance states. | Static/changing GPU fixtures pass; complete scene compositing remains open. |
 | View/projectile masks and masking boundaries | Transform and rasterize local coverage; rebuild receiver, obstacle and state links. | Compiler/native state fixtures pass. Library coverage and complete visual integration remain incomplete. Depth alone does not replace these masks. |
 | Walkable regions and layers | Transform surfaces and heights; join matching boundaries, coplanar surfaces and authored multi-plane regions. | Synthetic joins and sampled map routes pass; complete connectivity/traversal remains open. |
-| Movement collision and openings | Intersect placed solids/contours with receiving planes; apply asset-owned clearances. | Compiler/runtime fixtures pass. Recovered geometry still needs review. |
+| Movement collision and openings | Intersect placed solids/contours with receiving planes; apply asset-owned clearances and optional per-volume upright headroom. | Compiler/runtime fixtures pass, including slopes, raised solids and spline headroom. Recovered geometry still needs review. |
 | Spline walls | Measure pinned source meshes and deform local surfaces, collision, material contours, lighting, mask coverage and spatial sound emitters with source rotation, trimming, straightening and path placement. | Geometry comparisons pass 24 combinations; Wychford native loading/state checks pass. Material ownership passes moved/repeated, turned, sloped, corner and fractional-origin compiler checks; native ground/obstacle queries pass for three repeated sections. Explicit point/segment probes pass repeated, rising and curved compiler checks and native-fixture equality; native ambience queries pass. Disconnected lighting probes survive clipping independently and match the native ambience fixture. Automatic curved/rising lighting binds from source surfaces and passes native elevated-layer shadow queries. Spatial sound placement and acoustic settings pass native construction. Broader receiver-material, playback and traversal checks remain open. Repeated masks pass native bitmap, character/projectile boundary, altitude and obstacle-isolation checks; curved/cropped coverage passes editor tests. Longitudinal mask probes preserve bends and reject missing or competing receiving layers. A surviving explicit probe also preserves masks whose point anchor was trimmed. Disconnected receiving probes survive trimming without artificial connections and match the native mask fixture. Point-only cropped mask anchors and disconnected application boundaries remain unsupported, as do stateful sources, global sounds and disconnected sound crops; these emit warnings. |
 | Navigation graph and fast-find grid | Build fresh graph/spatial structures from compiled geometry. | Native initial/switch-state route checks pass; no source grid or graph bytes are copied. Full actor coverage remains open. |
 | Sight/physical obstacles | Transform local shapes, heights and physical/opaque flags. | Native initialization, apply and reset tested; asset ownership coverage remains incomplete. |

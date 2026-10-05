@@ -1,5 +1,12 @@
 # Post-port Features
 
+- **Asset-authored movement headroom.** A permanent gameplay volume can set
+  `movementHeadroom` in game-height units. Export excludes walking space that
+  would put an upright body inside that solid, including beneath raised beams.
+  The height is applied vertically after placement and survives spline
+  deformation. Physical sight/projectile shapes remain unchanged. Existing
+  definitions default to zero; no mission character data is read.
+
 - **Best-effort exports retain independent mask and traversal features.** If a
   placed mask boundary collapses in projection, export warns and omits that
   boundary rule while preserving usable view and obstacle-based rules. A stair

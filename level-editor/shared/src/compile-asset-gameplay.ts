@@ -363,7 +363,7 @@ function compileAssetGameplayAttempt(
     shape: SightObstacle;
   }[] = [];
   const navigationJoins: PlacedNavigationJoin[] = [];
-  const movementSolids: { owner: string; shape: SightObstacle }[] = [];
+  const movementSolids: { owner: string; shape: SightObstacle; headroom?: number }[] = [];
   const movementClearances: typeof surfaces = [];
   const transitionBlockers: PlacedTransitionBlocker[] = [];
   const projectionSupports: (ProjectionMaterialSupport & {
@@ -650,7 +650,8 @@ function compileAssetGameplayAttempt(
       partSight.set(volume.id, shape);
       const order = queryOrder.get(volume.id);
       if (order !== undefined) sightOrders.set(sight.length - 1, order);
-      if (movementSolid(volume.id)) movementSolids.push({ owner: placement.id, shape });
+      if (movementSolid(volume.id))
+        movementSolids.push({ owner: placement.id, shape, headroom: volume.movementHeadroom });
     }
     for (const transition of gameplay.movementTransitions ?? []) {
       if (!fixedTransitions.has(`${placement.id}/${transition.id}`)) continue;
@@ -1344,7 +1345,7 @@ function compileAssetGameplayAttempt(
   };
   const solidGeometry = movementSolids
     .filter(({ shape }) => shape.solid)
-    .map(({ owner, shape }) => {
+    .map(({ owner, shape, headroom = 0 }) => {
       const footprint = shape.points.map((p): Point => [p.x, p.y]);
       return {
         owner,
@@ -1355,7 +1356,7 @@ function compileAssetGameplayAttempt(
           false,
         ),
         bottom: heightPlane(
-          shape.points.map((p) => [p.x, p.y, p.z_bottom]),
+          shape.points.map((p) => [p.x, p.y, p.z_bottom - headroom]),
           false,
         ),
       };
