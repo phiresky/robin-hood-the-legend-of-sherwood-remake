@@ -68,13 +68,13 @@ def assign_mesh(obj,mesh):
     obj.data=mesh
 
 
-def fit_native_width(obj,alpha,role,x0=1059):
+def fit_native_width(obj,alpha,role,x0=1059,y0=0):
     """Adjust the full rounded wood volume to the measured camera silhouette."""
     mesh=obj.data;points=np.asarray([tuple(obj.matrix_world@v.co) for v in mesh.vertices]);projected=np.column_stack([points[:,0],-points[:,1]*SIN-points[:,2]*COS])
     edges=np.asarray([tuple(e.vertices) for e in mesh.edges]);a=projected[edges[:,0]];b=projected[edges[:,1]];dy=b[:,1]-a[:,1]
     samples=[];old_min=[];old_max=[];target_min=[];target_max=[]
     for y in range(alpha.shape[0]):
-        xs=np.flatnonzero(alpha[y]);sy=y+.5
+        xs=np.flatnonzero(alpha[y]);sy=y0+y+.5
         if not len(xs):continue
         active=(np.minimum(a[:,1],b[:,1])<=sy)&(np.maximum(a[:,1],b[:,1])>=sy)&(np.abs(dy)>1e-8)
         if not np.any(active):continue

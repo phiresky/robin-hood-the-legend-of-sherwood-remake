@@ -6,11 +6,13 @@ import sys
 from pathlib import Path
 import bpy
 import bmesh
+import numpy as np
+from PIL import Image
 from mathutils import Vector
 from mathutils.bvhtree import BVHTree
 
 sys.path.insert(0,str(Path(__file__).parent))
-from restart2_tree18 import ROOT,OUT,SIN,COS,assign_mesh
+from restart2_tree18 import ROOT,OUT,SIN,COS,assign_mesh,fit_native_width
 from refinement_workspace import prepare,modified,validate
 from refinement_inventory import inventory
 from evidence_io import sha
@@ -57,6 +59,19 @@ def main():
     for contour,depth in ((rear,34),(front,29)):
         mesh=stone(contour,ground,depth);offset=len(vertices);vertices.extend(v.co.copy() for v in mesh.vertices);faces.extend(tuple(offset+i for i in f.vertices) for f in mesh.polygons)
     mesh=bpy.data.meshes.new('Two separate closed bank stones');mesh.from_pydata(vertices,[],faces);mesh.update();assign_mesh(obj,mesh)
+    conform=[]
+    if args.revision>=2:
+        masks=json.loads((OUT/'baseline/masks/manifest.json').read_text());row=next(r for r in masks['masks'] if r['index']==29)
+        alpha=np.asarray(Image.open(OUT/'baseline/masks'/row['png']).convert('L'))>127
+        fit=fit_native_width(obj,alpha,'single',x0=453,y0=431)
+        inverse=obj.matrix_world.inverted()
+        for vertex in obj.data.vertices:
+            p=obj.matrix_world@vertex.co;support=terrain.ray_cast(p+ray*5000,-ray,10000)[0]
+            if support is None:raise ValueError('Missing bank under stone vertex')
+            delta=max(0,(support.z+.08-p.z)/SIN)
+            if delta:vertex.co=inverse@(p+ray*delta);conform.append(delta)
+        obj.data.update()
+        (dest/'source-contour-and-contact.json').write_text(json.dumps(dict(contour_fit=fit,ray_conformed_vertices=len(conform),maximum_ray_displacement=max(conform,default=0),method='Move buried vertices along original camera rays onto archival bank; preserve native projection.'),indent=2)+'\n')
     obj['asset_group']=asset;obj['asset_name']=name
     catalog=json.loads((OUT/'catalog.json').read_text());groups=[]
     for group in catalog['groups']:
