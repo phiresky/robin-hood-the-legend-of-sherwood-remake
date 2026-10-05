@@ -95,6 +95,16 @@ export class MissionEntities {
   readonly root = new THREE.Group();
   readonly warnings: string[] = [];
   private actors: ActorView[] = [];
+  private sourceMission = "";
+  get missionName() {
+    return this.sourceMission;
+  }
+  setRefinedTargets(mission: string, indices: ReadonlySet<number>) {
+    for (const node of this.root.children)
+      if (Number.isInteger(node.userData.nativeTargetIndex))
+        node.visible =
+          mission !== this.sourceMission || !indices.has(node.userData.nativeTargetIndex);
+  }
   private textures = new Set<THREE.Texture>();
   private geometries = new Set<THREE.BufferGeometry>();
   private materials = new Set<THREE.Material>();
@@ -226,6 +236,7 @@ export class MissionEntities {
     camera: MapCamera,
     current: () => boolean,
   ) {
+    this.sourceMission = mission.name;
     if (!index.root) throw new Error("Game data root missing for mission sprites");
     const config = await subdir(index.root, ["Data", "Configuration"]);
     if (!config) throw new Error("Data/Configuration missing");
@@ -382,6 +393,7 @@ export class MissionEntities {
       );
     }
     for (const [i, entity] of rows(mission.data.targets ?? [], "targets").entries()) {
+      const first = this.root.children.length;
       await addSprite(
         entity,
         `target ${i + 1}`,
@@ -390,6 +402,7 @@ export class MissionEntities {
         "scenery",
         number(entity.action, "target action"),
       );
+      for (const node of this.root.children.slice(first)) node.userData.nativeTargetIndex = i;
     }
     for (const [i, entity] of rows(
       mission.data.mobile_elements ?? [],

@@ -2,6 +2,9 @@ import { FramingBounds } from "./framing-bounds.ts";
 import { nearestSplineSection } from "./spline-insertion.ts";
 import { TerrainControls, type TerrainEditMode } from "./terrain-controls.ts";
 import { MissionLayer } from "./mission-layer.ts";
+import { MissionEntities } from "./mission.ts";
+import { MissionStateLayer, type MissionStateSource } from "./mission-state-layer.ts";
+import type { MissionStateContract } from "../../shared/src/mission-state.ts";
 import { SceneryLayer } from "./scenery-layer.ts";
 import { CHARACTER_DRAG_TYPE } from "./mission-character-catalog.ts";
 import { terrainContours } from "./terrain-contours.ts";
@@ -343,6 +346,7 @@ export class EditorViewport {
     this.spriteOrientationLock = enabled;
   }
   replaceEntities(entities: SceneEntities | null) {
+    this.missionStates.clear();
     this.entities?.dispose();
     this.entities = entities;
     if (entities) this.scene.add(entities.root);
@@ -354,6 +358,7 @@ export class EditorViewport {
     this.entities?.setRoutesVisible?.(value);
   }
   setEntitiesVisible(visible: boolean) {
+    this.missionStates.root.visible = visible;
     if (this.entities) this.entities.root.visible = visible;
   }
   private updateDepthRange(camera: THREE.OrthographicCamera | THREE.PerspectiveCamera) {
@@ -551,6 +556,43 @@ export class EditorViewport {
   }
   private readonly splines = new SplineLayer();
   private readonly missionMarkers = new MissionLayer();
+  private stateMission = "";
+  private readonly missionStates = new MissionStateLayer(
+    (indices) => {
+      if (this.entities instanceof MissionEntities)
+        this.entities.setRefinedTargets(this.stateMission, indices);
+      this.clippingBoundsDirty = true;
+    },
+    (message) => this.bindings.onError?.(message),
+  );
+  async setMissionStates(
+    contract: MissionStateContract,
+    library: FileSystemDirectoryHandle,
+    source: MissionStateSource,
+  ) {
+    if (this.disposed) throw new Error("Disposed viewport");
+    if (this.entities instanceof MissionEntities && this.entities.missionName !== source.name)
+      throw new Error("Refined states do not match the displayed mission");
+    this.stateMission = contract.mission;
+    await this.missionStates.set(contract, library, {
+      ...source,
+      level: this.bindings.level() ?? source.level,
+    });
+  }
+  clearMissionStates() {
+    this.missionStates.clear();
+  }
+  setMissionStatesPlaying(playing: boolean) {
+    this.missionStates.setPlaying(playing);
+  }
+  seekMissionState(id: string, tick: number) {
+    this.missionStates.seek(id, tick);
+    this.clippingBoundsDirty = true;
+  }
+  selectMissionStateAction(id: string, action: number) {
+    this.missionStates.selectAction(id, action);
+    this.clippingBoundsDirty = true;
+  }
   private readonly scenery = new SceneryLayer(
     () => {
       this.clippingBoundsDirty = true;
@@ -670,7 +712,7 @@ export class EditorViewport {
     this.mapRoot.add(this.workspaceFrame);
     this.mapRoot.add(this.missionMarkers.root);
     this.scene.add(this.missionMarkers.spritesRoot);
-    this.scene.add(this.scenery.root);
+    this.scene.add(this.scenery.root, this.missionStates.root);
     this.missionMarkers.setVisible(true);
     this.mapRoot.add(
       this.terrain.root,
@@ -795,10 +837,13 @@ export class EditorViewport {
     this.observer = new ResizeObserver(resize);
     this.observer.observe(element);
   }
-  private animate(render: () => void) {
-    const tick = () => {
+  private animate(render: (elapsed: number) => void) {
+    let previous: number | undefined;
+    const tick = (time = performance.now()) => {
       if (this.disposed) return;
-      render();
+      const elapsed = previous === undefined ? 0 : Math.max(0, time - previous) / 1000;
+      previous = time;
+      render(elapsed);
       if (!this.disposed) this.animationFrame = requestAnimationFrame(tick);
     };
     tick();
@@ -938,6 +983,7 @@ export class EditorViewport {
     if (this.animationFrame) cancelAnimationFrame(this.animationFrame);
     this.observer?.disconnect();
     this.retireMap();
+    this.missionStates.dispose();
     for (const control of this.controls.reverse()) control.dispose();
     this.controls = [];
     disposeObjectResources([
@@ -1093,8 +1139,9 @@ export class EditorViewport {
       },
       { signal: this.listeners.signal },
     );
-    this.animate(() => {
+    this.animate((elapsed) => {
       if (!this.renderer || !this.camera) return;
+      if (this.missionStates.advance(elapsed)) this.clippingBoundsDirty = true;
       this.flushTerrainPreview();
       this.flushSplinePreview();
       if (this.flight) this.stepFlight();
@@ -1590,6 +1637,7 @@ export class EditorViewport {
     if (this.groundNode) box.expandByObject(this.groundNode);
     box.expandByObject(this.objectsRoot);
     box.expandByObject(this.scenery.root);
+    box.expandByObject(this.missionStates.root);
     box.expandByObject(this.splines.root);
     box.expandByObject(this.terrain.root);
     // Initial camera framing is a viewport preference, never an authored boundary.

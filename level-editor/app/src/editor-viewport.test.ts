@@ -1375,3 +1375,28 @@ test("shallow views automatically expose game Z while preserving the manual over
   Object.assign(viewport, { camera: null, gizmo: null });
   viewport.dispose();
 });
+
+test("refined mission target visibility is scoped and mission replacement retires playback", async () => {
+  const { MissionEntities } = await import("./mission.ts");
+  const { viewport } = fixture();
+  const entities = new MissionEntities();
+  Object.assign(entities, { sourceMission: "S03" });
+  const target = new THREE.Group(),
+    other = new THREE.Group();
+  target.userData.nativeTargetIndex = 7;
+  other.userData.nativeTargetIndex = 8;
+  entities.root.add(target, other);
+  viewport.replaceEntities(entities);
+  entities.setRefinedTargets("S03", new Set([7]));
+  assert.equal(target.visible, false);
+  assert.equal(other.visible, true);
+  entities.setRefinedTargets("different mission", new Set([7]));
+  assert.equal(target.visible, true);
+  viewport.setEntitiesVisible(false);
+  assert.equal(entities.root.visible, false);
+  viewport.clearMissionStates();
+  viewport.setMissionStatesPlaying(true);
+  viewport.replaceEntities(null);
+  assert.equal(entities.root.children.length, 0);
+  viewport.dispose();
+});
