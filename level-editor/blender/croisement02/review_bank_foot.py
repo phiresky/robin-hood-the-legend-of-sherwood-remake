@@ -53,6 +53,10 @@ def main():
         matrix=Matrix(json.loads((ground/'geometry-before.json').read_text())['matrix'])
         for obj in loaded.objects:
             scene.collection.objects.link(obj);obj.parent=None;obj.matrix_world=matrix;obj.hide_render=False
+        bpy.context.view_layer.update()
+        for obj in loaded.objects:
+            if np.max(np.abs(np.array(obj.matrix_world)-np.array(matrix))) > .000001:
+                raise ValueError('Ground contact context lost its frozen transform')
         visible=set(bank+loaded.objects)
         for obj in scene.objects:
             if obj.type=='MESH':obj.hide_render=obj not in visible
