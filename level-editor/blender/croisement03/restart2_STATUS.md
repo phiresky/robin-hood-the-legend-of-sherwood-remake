@@ -37,6 +37,11 @@ or protected source pixels. The saved eight-view result under
 is `restart2/texture-review-wall10/texture-candidates.json`. The user approved
 that exact texture in batch-v7; `restart2/texture-approval-wall10/` retains the
 decision. Wall integration remains private and pending.
+`restart2/wall-tree-integration-preflight/` contains the validated approval
+handoff, private seven-part export, and world-obstacle comparison. All seven
+obstacle flags and point counts match, with maximum world-coordinate difference
+below `4e-16`. Canonical conversion, browser checks and the material joint remain
+pending; no live catalog was changed.
 
 Tree 25 version 17 has a frozen, independently reviewed static geometry card in
 `restart2/geometry-round2-tree25-v17/review-candidates.json`; the user approved
@@ -49,6 +54,11 @@ tree changes require fresh joint evidence.
 The dependent texture fill under `restart2/texture-batch-v7/` uses only the two
 permitted Leicester trees as supplementary examples. Generated appearance still
 needs saved-model, independent, and user review; wind remains incomplete.
+The off-map lobe shared a material across protected and unknown faces. A guarded
+preparation moves exactly 64 existing unknown faces into a cloned material slot,
+preserving geometry, UVs, ownership, packed RGBA and protected-face materials.
+The shared foliage guard is unchanged. Its proof is in the texture experiment's
+`material-partition-v1/normalization.json`; the corrected bake is version 3.
 
 The central shrub boulder version 2 has an independently reviewed geometry card
 in `restart2/geometry-round2-boulder-v2/`, approved by the user in batch-v7.
@@ -57,7 +67,9 @@ have been inspected. Mask 97 mixes stone with foreground vegetation, so the
 authored rock trace excludes part of that mask; a remaining 83-pixel overlap
 with foreground mask 48 is explicitly unresolved and excluded from appearance
 approval. The source-protected rear texture has been generated and baked; its
-saved eight-view model passed the worker review and awaits independent review.
+saved eight-view model passed worker and independent review. Its frozen texture
+card is `restart2/texture-review-boulder-v2/texture-candidates.json`, pending the
+next consolidated user decision.
 The 83-pixel fringe remains excluded from appearance approval and unchanged.
 No actual surrounding vegetation is complete.
 
