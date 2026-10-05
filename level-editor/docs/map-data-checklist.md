@@ -48,10 +48,13 @@ edge bank and watermill. The latest baked ZIP predates this change too.
 
 The published east-village footbridge has a modeled sloping deck but no asset-owned
 walkable surface. A staged candidate supplies its deck and both end sockets and
-passes 30 directed native
-actor routes across new terrain landings at five rotations, including complete
-bridge crossings. It rejects raised, mismatched landings. Publication still needs
-Leicester's navigation-ownership migration; Wychford's current bridge ends also
+passes 30 directed native actor routes across new terrain landings at five
+rotations, including complete bridge crossings. It rejects raised, mismatched
+landings. The staged Leicester ownership migration preserves doors, controls and
+sight obstacles exactly, passes its lower actor crossing and removes the old
+walking footprint when the bridge moves. Its upper neighbour remains connected
+through controlled drawbridge passages. Publication and scene-pin refresh remain
+pending; Wychford's current bridge ends also
 sit above their terrain receivers and require appropriate landings or placement.
 
 Sloped asset sockets now connect to authored terrain using the shared edge's

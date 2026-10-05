@@ -4,6 +4,39 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Staged footbridge navigation ownership migration (2026-10-05)
+
+The fixed bridge's upper neighbour is a stateful drawbridge. Its connection must
+retain the existing controlled passages, rather than merging both navigation
+regions. The lower end can join ordinary terrain through an explicit socket.
+
+`work/map-compile/stage-footbridge-ownership.mjs` stages an asset-owned deck,
+subtracts its projected footprint from Leicester's terrain boundary, preserves
+the terrain's authored exclusion contours, and authors a matching lower socket.
+The staged outputs in `work/map-compile/footbridge-ownership-xRp193` retain
+Leicester's doors, controls and physical sight obstacles exactly. Moving the
+bridge 300 units removes its old footprint from terrain navigation. The lower
+connection in the equivalent `footbridge-ownership-WgfrPw` descriptor passes two
+directed native actor crossings, and all twelve controls pass apply/reset. A
+sampled ground-boundary audit found no eligible seam there; the explicit route
+test supplies the actor evidence instead.
+
+This exposed two assembly issues, now fixed: accepted sockets could remain
+separated by a clipping crack below their matching tolerance, and preserved
+terrain boundaries could not join ordinary authored floors. Preserved regions
+now close cracks within 0.0001 map units while retaining larger separations.
+Mixed boundary policies retain crossing exclusions and ordinary floor blockers,
+independently of input order. Six focused assembly tests and 175 compiler/export
+tests pass. The migration's exact bridge metadata also passes the new-placement
+checks in `work/map-compile/footbridge-endpoints-00UfHo`, including all 30 native
+actor routes and five raised-landing rejection cases.
+
+The native endpoint audit now accepts an explicit layer and sector for routes
+inside a larger map and uses the descriptor's actual bounds. Without these
+indices it still requires a single region. The asset and terrain edits remain
+staged, awaiting publication and saved-scene pin refresh. The drawbridge-side
+socket remains unmatched by design in Leicester; its doors provide that route.
+
 ## Asset-owned footbridge deck and endpoint traversal (2026-10-05)
 
 The unpublished east-village footbridge candidate now has explicit navigation

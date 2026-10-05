@@ -56,12 +56,6 @@ export function assembleNavigationRegions(
   return [...groups.values()]
     .flatMap((members): NavigationRegion[] => {
       const first = members[0]!;
-      if (
-        members.length > 1 &&
-        members.some((m) => m.preserveMovementBoundary) &&
-        members.some((m) => !m.preserveMovementBoundary)
-      )
-        throw new Error("Joined navigation pieces must agree on movement boundary preservation");
       const layer = Math.min(...members.map((p) => p.layer));
       if (members.length === 1)
         return [
@@ -73,8 +67,17 @@ export function assembleNavigationRegions(
             pieces: members,
           },
         ];
-      if (first.preserveMovementBoundary) {
-        const boundaries = clipping.union(members.map((m): Polygon => [m.polygon]));
+      // A joining floor can use ordinary clipped obstacles while its terrain
+      // neighbour retains crossing contours. Preserve the combined boundary
+      // when either owner needs it, keeping both owners' remaining exclusions.
+      if (members.some((member) => member.preserveMovementBoundary)) {
+        let boundaries = clipping.union(members.map((m): Polygon => [m.polygon]));
+        // Socket matching tolerates subpixel arithmetic at shared edges. Keep
+        // an accepted region connected when clipping leaves a crack there.
+        if (boundaries.length > 1) {
+          const connected = closeNavigationSeams(boundaries, 0.00005);
+          if (connected.length < boundaries.length) boundaries = connected;
+        }
         // Another surface may provide a route through a cutout that extends
         // beyond its own partition. Preserve only the part no surface opens.
         const cutouts = members.flatMap((m) => {

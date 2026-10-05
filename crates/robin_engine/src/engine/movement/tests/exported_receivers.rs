@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-#[ignore = "requires single-region assembly exports and endpoint routes via ROBIN_ASSET_MAP_DIAGNOSTICS"]
+#[ignore = "requires assembly exports and endpoint routes via ROBIN_ASSET_MAP_DIAGNOSTICS"]
 fn exported_endpoint_routes_support_actor_crossings() {
     let directory = std::path::PathBuf::from(std::env::var("ROBIN_ASSET_MAP_DIAGNOSTICS").unwrap());
     let manifest: serde_json::Value =
@@ -16,16 +16,33 @@ fn exported_endpoint_routes_support_actor_crossings() {
         let layers = descriptor["asset_geometry"]["motion_data"]["layers"]
             .as_array()
             .unwrap();
-        assert_eq!(
-            layers
-                .iter()
-                .map(|layer| layer.as_array().unwrap().len())
-                .sum::<usize>(),
-            1,
-            "endpoint audit requires a single navigation region: {file}"
+        let (layer, sector) = if let (Some(layer), Some(sector)) =
+            (result["layer"].as_u64(), result["sector"].as_u64())
+        {
+            (
+                u16::try_from(layer).unwrap(),
+                usize::try_from(sector).unwrap(),
+            )
+        } else {
+            assert_eq!(
+                layers
+                    .iter()
+                    .map(|layer| layer.as_array().unwrap().len())
+                    .sum::<usize>(),
+                1,
+                "endpoint audit requires a single navigation region: {file}"
+            );
+            assert_eq!(layers[0].as_array().unwrap().len(), 1);
+            (0, 0)
+        };
+        let dimensions = &descriptor["walkable_polygon"][2];
+        let (engine, assets) = compiled_walkway_with_dimensions(
+            &bytes,
+            (
+                dimensions[0].as_f64().unwrap() as f32 + 1.,
+                dimensions[1].as_f64().unwrap() as f32 + 1.,
+            ),
         );
-        assert_eq!(layers[0].as_array().unwrap().len(), 1);
-        let (engine, assets) = compiled_walkway(&bytes);
         let routes = result["routes"]
             .as_array()
             .expect("endpoint routes are required");
@@ -39,7 +56,7 @@ fn exported_endpoint_routes_support_actor_crossings() {
             };
             for (source, goal) in [(point(0), point(1)), (point(1), point(0))] {
                 eprintln!("{file}: endpoint crossing {source:?} -> {goal:?}");
-                tick_walkway_crossing(engine.clone(), assets.clone(), 0, 0, source, goal);
+                tick_walkway_crossing(engine.clone(), assets.clone(), layer, sector, source, goal);
                 checked += 1;
             }
         }

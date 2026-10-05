@@ -2,6 +2,27 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { assembleNavigationRegions, type NavigationPiece } from "./assemble-navigation-regions.ts";
 
+test("preserved navigation joins close arithmetic cracks but retain separate islands", () => {
+  for (const gap of [0.00001, 0.001, 10]) {
+    const pieces: NavigationPiece[] = [0, 1].map((i) => ({
+      navigationRegion: "joined",
+      preserveMovementBoundary: true,
+      plane: [0, 0, 0],
+      layer: i,
+      blockers: [],
+      polygon: [
+        [i * (100 + gap), 0],
+        [i * (100 + gap) + 100, 0],
+        [i * (100 + gap) + 100, 100],
+        [i * (100 + gap), 100],
+      ],
+    }));
+    const result = assembleNavigationRegions(pieces, []);
+    assert.equal(result.length, gap < 0.0001 ? 1 : 2);
+    assert.equal(result.flatMap((r) => r.pieces).length, 2);
+  }
+});
+
 test("rounded wall islands without a receiving plane are omitted without losing usable surfaces", () => {
   const fragments: Pick<NavigationPiece, "polygon" | "plane">[] = [
     {
@@ -107,7 +128,26 @@ test("preserved joined boundaries retain crossing contours without blocking anot
   );
   assert.equal(result!.pieces.length, 2);
   pieces[1]!.preserveMovementBoundary = false;
-  assert.throws(() => assembleNavigationRegions(pieces, []), /must agree/);
+  const [mixed] = assembleNavigationRegions(pieces, []);
+  assert.deepEqual(mixed!.polygon, result!.polygon);
+  assert.deepEqual(mixed!.blockers, result!.blockers);
+  const normalBlocker: [number, number][] = [
+    [15, 1],
+    [19, 1],
+    [19, 3],
+    [15, 3],
+  ];
+  pieces[1]!.blockers.push(normalBlocker);
+  for (const order of [pieces, [...pieces].reverse()]) {
+    const [blocked] = assembleNavigationRegions(order, []);
+    assert.equal(blocked!.blockers.length, 2);
+    assert.ok(
+      blocked!.blockers.some(
+        (ring) =>
+          ring.length === 4 && ring.every(([x, y]) => x >= 15 && x <= 19 && y >= 1 && y <= 3),
+      ),
+    );
+  }
 });
 
 test("joined planes preserve holes with native obstacle winding and disconnected components", () => {

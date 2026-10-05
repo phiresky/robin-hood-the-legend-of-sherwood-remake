@@ -2,7 +2,7 @@ import ClipperLib from "clipper-lib";
 import type { MultiPolygon } from "polygon-clipping";
 
 /** Close cracks within the deformation precision before rounding navigation to whole pixels. */
-export function closeNavigationSeams(regions: MultiPolygon): MultiPolygon {
+export function closeNavigationSeams(regions: MultiPolygon, reach = 1 / 512): MultiPolygon {
   const scale = 1048576;
   const paths = regions.flatMap((region) =>
     region.map((ring, index) => {
@@ -14,11 +14,11 @@ export function closeNavigationSeams(regions: MultiPolygon): MultiPolygon {
   const expand = new ClipperLib.ClipperOffset();
   expand.AddPaths(paths, ClipperLib.JoinType.jtMiter, ClipperLib.EndType.etClosedPolygon);
   const expanded: ClipperLib.Paths = [];
-  expand.Execute(expanded, scale / 512);
+  expand.Execute(expanded, scale * reach);
   const contract = new ClipperLib.ClipperOffset();
   contract.AddPaths(expanded, ClipperLib.JoinType.jtMiter, ClipperLib.EndType.etClosedPolygon);
   const tree = new ClipperLib.PolyTree();
-  contract.Execute(tree, -scale / 512);
+  contract.Execute(tree, -scale * reach);
   const ring = (node: ClipperLib.PolyNode) => {
     const points = node.Contour().map(({ X, Y }): [number, number] => [X / scale, Y / scale]);
     return [...points, points[0]!];
