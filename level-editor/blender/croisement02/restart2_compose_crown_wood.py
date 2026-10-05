@@ -3,7 +3,8 @@ import argparse,json,sys,shutil,hashlib
 from pathlib import Path
 import bpy
 ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(Path(__file__).parent),str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender')]
-from catalog import OUT,tree_workspace
+from catalog import OUT,reviewed_catalog
+from restart2_wood_revisions import selected_workspace as selected_wood
 from evidence_io import sha,write_json
 from refinement_workspace import _geometry,validate,_render
 from workspace_components import appearance_state
@@ -21,7 +22,7 @@ def crown_state(obj):
  return dict(geometry=_geometry(obj,False),appearance_sha256=hashlib.sha256(json.dumps(appearance,sort_keys=True).encode()).hexdigest())
 
 def main():
- p=argparse.ArgumentParser();p.add_argument('--index',type=int,choices=[31,32,35,38,43,45,46],required=True);p.add_argument('--crown',type=Path,required=True);p.add_argument('--crown-sha',required=True);p.add_argument('--output',type=Path,required=True);a=p.parse_args(sys.argv[sys.argv.index('--')+1:]);crown=a.crown.resolve();wood=tree_workspace(a.index);worker=a.output.resolve();wood_hash=sha(wood/'model.blend')
+ p=argparse.ArgumentParser();p.add_argument('--index',type=int,choices=[31,32,35,38,43,45,46],required=True);p.add_argument('--crown',type=Path,required=True);p.add_argument('--crown-sha',required=True);p.add_argument('--output',type=Path,required=True);a=p.parse_args(sys.argv[sys.argv.index('--')+1:]);crown=a.crown.resolve();wood=selected_wood(OUT,a.index,reviewed_catalog());worker=a.output.resolve();wood_hash=sha(wood/'model.blend')
  if worker.name!=wood.name or crown.name!=wood.name or sha(crown/'model.blend')!=a.crown_sha:raise ValueError('Frozen inputs mismatch')
  proof=crown/'inspection/envelope-preservation.json';record=json.loads(proof.read_text())
  if record['model_sha256']!=a.crown_sha or not record['original_native_rgba_image_reused_exactly']:raise ValueError('Crown source proof invalid')
