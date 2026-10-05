@@ -122,7 +122,7 @@ def main():
             bm=bmesh.new();bm.from_mesh(obj.data)
             for vertex in bm.verts:vertex.co=obj.matrix_world@vertex.co
             cut_z=foot.z+(30 if args.revision>=7 else 8)
-            basal_radius=8.5 if args.revision>=7 else 6.5
+            basal_radius=6.5 if args.revision>=8 else (8.5 if args.revision>=7 else 6.5)
             bmesh.ops.bisect_plane(bm,geom=list(bm.verts)+list(bm.edges)+list(bm.faces),dist=.0001,plane_co=Vector((0,0,cut_z)),plane_no=Vector((0,0,1)),clear_inner=True,clear_outer=False)
             boundary=[edge for edge in bm.edges if edge.is_boundary]
             if not boundary or any(abs(v.co.z-cut_z)>.01 for e in boundary for v in e.verts):raise ValueError('Unexpected basal cut boundary')
@@ -142,9 +142,10 @@ def main():
             lower=[]
             for vertex in ring:
                 direction=Vector((vertex.co.x-center.x,vertex.co.y-center.y,0)).normalized()
-                x=center.x+direction.x*basal_radius;y=center.y+direction.y*basal_radius
+                support_center=foot if args.revision>=8 else center
+                x=support_center.x+direction.x*basal_radius;y=support_center.y+direction.y*basal_radius
                 support=terrain.ray_cast(Vector((x,y,cut_z+40)),Vector((0,0,-1)),100)[0]
-                if support is None:raise ValueError('Missing continuous root-ring support')
+                if support is None:raise ValueError(f'Missing continuous root-ring support at {x},{y}; cut={cut_z}; foot={list(foot)}')
                 lower.append(bm.verts.new((x,y,support.z-.4)))
             for j in range(len(ring)):
                 k=(j+1)%len(ring);bm.faces.new((ring[j],lower[j],lower[k],ring[k]))

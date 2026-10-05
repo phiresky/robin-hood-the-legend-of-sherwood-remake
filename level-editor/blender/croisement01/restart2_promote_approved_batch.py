@@ -50,15 +50,18 @@ backup=stage/'publication-backup-v1';backup.mkdir(exist_ok=False)
 shutil.copy2(scene,backup/scene.name);shutil.copy2(index,backup/'asset-index.json')
 write(backup/'receipt.json',dict(scene_sha256=sha(scene),index_sha256=index_hash,selected_references=selected,rollback='Coordinate shared-index rollback with current writer and preserve subsequent additions. Existing replaced asset payloads remain intact; restoring the scene requires comparing current hash.'))
 assert sha(scene)==proof['live_scene_sha256'] and sha(index)==index_hash
+published_files={}
 for asset,e in assets.items():
  target=library/'3d-assets/croisement01'/asset;temporary=Path(tempfile.mkdtemp(prefix='.'+asset+'-',dir=target.parent))
  for file in (stage/'assets'/asset).iterdir():
   assert file.is_file();shutil.copy2(file,temporary/file.name)
  os.rename(temporary,target)
+ for file in (stage/'assets'/asset).iterdir():
+  actual=target/file.name;assert sha(actual)==sha(file);published_files[str(actual.relative_to(library))]=sha(actual)
 validate_asset_index(library/'3d-assets',updated)
 assert sha(scene)==proof['live_scene_sha256'] and sha(index)==index_hash
 index_tmp=index.with_name('.index-croisement01-approved-batch.json');write(index_tmp,updated);os.replace(index_tmp,index)
 assert sha(scene)==proof['live_scene_sha256']
 scene_tmp=scene.with_name('.croisement01-approved-batch.json');shutil.copy2(stage/scene.name,scene_tmp);os.replace(scene_tmp,scene)
-write(stage/'publication.json',dict(status='installed; full live editor check pending',scene_sha256=sha(scene),index_sha256=sha(index),assets=assets,private_full_editor=dict(path=str(full_editor_path),sha256=sha(full_editor_path)),backup=str(backup),unchanged_other_placements=56,all_other_palette_entries_preserved=True,scope=proof['scopes']))
+write(stage/'publication.json',dict(status='installed; full live editor check pending',scene_sha256=sha(scene),index_sha256=sha(index),assets=assets,private_full_editor=dict(path=str(full_editor_path),sha256=sha(full_editor_path)),backup=str(backup),unchanged_other_placements=56,all_other_palette_entries_preserved=True,unchanged_other_palette_entries=len(before_index['assets']),published_files=published_files,scope=proof['scopes']))
 print(stage/'publication.json')
