@@ -49,6 +49,11 @@ changing Derby's compiled geometry. The expanded candidate audit tests 80 routes
 56 pass and 24 fail, including twelve newly available routes. Failed projected
 stair polygons cannot contain the test actor's 12-by-6 movement box anywhere;
 full-surface clearances do not fix them. The composite remains unpublished.
+An affine-footprint audit additionally finds six exact edge-on placements across
+the three stairs: nonzero physical floors project to zero-area polygons. A
+screen-space footprint adjustment cannot solve arbitrary rotation; traversal
+needs navigation coordinates independent of rendering projection. The short
+gallery stair also needs landing-overlap support, not merely a skewed footprint.
 Best-effort export now warns instead of aborting on collapsed mask boundaries or
 collision-split stair regions, retaining independent usable features. These
 fallbacks do not repair the missing traversal.

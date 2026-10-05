@@ -4,6 +4,37 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Stair footprint projection and singular placements (2026-10-05)
+
+`refinement/audit-stair-footprints.mjs` audits the authored stair planes using
+the editor's placement transform. It compares necessary corner containment for
+the 12-by-6 test footprint in physical XY, for the current unchanged screen box,
+for the plane-projected parallelogram and for its axis-aligned bounding box.
+It asserts the affine area invariant and independently verifies analytically
+derived edge-on rotations. The output is
+`work/map-compile/keep-placements-RegQxL/physical-footprint-audit.json`.
+
+All fifteen placement checks and six edge-on checks pass. At 180 degrees, the
+large gallery stair retains about 976 square units of possible physical foot-box
+centers, but none for the unchanged screen box. Its projection determinant is
+0.05648; projecting the footprint with the floor retains about 55.12 square units
+of centers. Using that parallelogram's axis-aligned bounds still leaves zero.
+The west-tower stair shows the same bounding-box failure at 180 degrees.
+
+The three authored stair planes each have two rotations where screen projection
+collapses them to a line. The gallery examples are approximately 122.449 and
+173.942 degrees. Physical areas remain 1,899, 277 and 1,861 square units for the
+three surfaces, respectively; projected areas at their singular rotations are
+below 3e-11. Consequently, neither coordinate precision nor transformed screen
+footprints can provide arbitrary-rotation traversal in the current representation.
+Navigation must retain a nonsingular physical/virtual coordinate frame and map
+actor positions, door approaches and queries to rendered coordinates separately.
+
+The shortest gallery stair has no full physical-box center at 90/270 degrees;
+landing overlap must be considered as well. This audit ignores holes, solids and
+door connectivity and is not a route test. No runtime behavior or asset geometry
+has been changed by it; the 24 of 80 native route failures remain unresolved.
+
 ## Published draft wood bridge and geometric review (2026-10-05)
 
 The bridge is published with an explicit warning that textured actor compositing
