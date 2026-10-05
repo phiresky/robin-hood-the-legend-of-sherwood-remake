@@ -1,5 +1,5 @@
 """Strict dual-source crown and wood composition selection after independent review."""
-import json
+import json,math
 from pathlib import Path
 from evidence_io import sha,write_json
 from catalog_schema import source_for_part
@@ -10,6 +10,8 @@ def require(ok,why):
 
 def validate(worker):
  digest=sha(worker/'model.blend');proof=read(worker/'inspection/crown-wood-composition.json')
+ first=read(worker/'modified/views.json')['views'][0];matrix=first['camera_matrix_world'];direction=[matrix[i][2] for i in range(3)];length=math.sqrt(sum(v*v for v in direction));native=[0,-math.cos(math.radians(35)),math.sin(math.radians(35))]
+ require(first['ortho_scale']>0 and sum(a*b for a,b in zip(direction,native))/length>.999999,'Combined first view is not native orthographic direction')
  require(proof['model_sha256']==digest and proof['non_crown_geometry_appearance_exact'],'Stale composition proof')
  require(proof['crown_before']==proof['crown_after'] and proof['wood_before']==proof['wood_after'],'Composition changed either source component')
  for kind in ('wood','crown'):require(sha(Path(proof[kind+'_worker'])/'model.blend')==proof[kind+'_model_sha256'],'Frozen composition input changed')
