@@ -163,7 +163,8 @@ pub struct ReplayHeader {
 /// Version 57 stores exact cooperative mission teams.
 /// Version 58 adds the combat gate for script-reported mission victory.
 /// Version 59 records cooperative campaign rules and shared Robin inventory.
-pub const REPLAY_SCHEMA_VERSION: u32 = 59;
+/// Version 60 retains physical stair identities on movement orders.
+pub const REPLAY_SCHEMA_VERSION: u32 = 60;
 
 /// Identity of the next lockstep/history transaction to be admitted.
 ///

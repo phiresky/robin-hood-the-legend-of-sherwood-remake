@@ -1,0 +1,194 @@
+//! Physical stair execution through the ordinary actor animation/order loop.
+
+use super::*;
+use crate::coordinates::{WorldPoint3D, WorldVec3D};
+
+impl EngineInner {
+    pub(super) fn commit_physical_stair_step(
+        &mut self,
+        tcx: TickCtx<'_>,
+        owner: EntityId,
+        selected: SelectedMovementOrder,
+        tolerance: FinalTol,
+        speed: f32,
+        fallback: MotionState,
+    ) -> MotionState {
+        let sector = selected
+            .physical_stair
+            .expect("physical order lost its stair");
+        let stair = tcx
+            .assets
+            .navigation
+            .physical_stairs
+            .get(&sector)
+            .expect("physical order references an unloaded stair");
+        let plane =
+            robin_level_data::stair_navigation::StairNavigationPlane::new(stair.definition.plane)
+                .expect("loaded physical stair has invalid plane");
+        let entity = self
+            .world
+            .entities
+            .get(owner)
+            .expect("physical stair owner disappeared");
+        assert_eq!(
+            entity.element_data().sector().map(|sector| sector.get()),
+            Some(sector),
+            "physical order must execute in its owning stair sector"
+        );
+        let position = entity.position_iface().get_position();
+        let goal = selected.physical_goal;
+        for point in [position, goal] {
+            let world = plane
+                .world_position([f64::from(point.x), f64::from(point.y)])
+                .expect("invalid physical stair position");
+            assert!(
+                (world[2] - f64::from(point.z)).abs() <= 0.001,
+                "physical stair motion must start and end on its floor"
+            );
+        }
+        if position == goal {
+            return self.settle_movement_waypoint(
+                tcx,
+                tolerance,
+                selected,
+                owner,
+                MovementArrivalBoundary {
+                    tolerance_arrival: false,
+                    point_seek_post_arrival: false,
+                    arrived_after_committed_step: false,
+                    live_seek_target: None,
+                },
+            );
+        }
+        if speed == 0.0 {
+            return fallback;
+        }
+        assert!(
+            speed.is_finite() && speed > 0.0,
+            "physical stair speed must be finite and nonnegative"
+        );
+
+        let half = entity.position_iface().get_half_diagonal();
+        let mut bounds = MapBBox::new();
+        for point in &stair.definition.boundary {
+            bounds.expand_point(MapPoint::new(point[0], point[1]));
+        }
+        let mut mover = super::super::anti_collision::CollisionMover::new(owner, entity);
+        mover.position_map = MapPoint::new(position.x, position.y);
+        let dynamic = if entity.position_iface().is_anti_collision_on() && mover.active {
+            let (_, neighbours) = self
+                .world
+                .entities
+                .split_owner(owner)
+                .expect("physical owner disappeared");
+            super::super::anti_collision::gather_physical_stair_neighbours(
+                &mover,
+                super::super::anti_collision::CollisionWorld {
+                    neighbours,
+                    profiles: &tcx.assets.profile_manager,
+                },
+                &bounds,
+            )
+            .into_iter()
+            .map(|point| {
+                // Circumscribe the hard personal-space radius; the mover's own
+                // footprint is applied by the physical corridor query.
+                let radius = point.radius / (std::f32::consts::PI / 16.0).cos();
+                (0..16)
+                    .map(|index| {
+                        let angle = index as f32 * std::f32::consts::TAU / 16.0;
+                        [
+                            point.position.x + angle.cos() * radius,
+                            point.position.y + angle.sin() * radius,
+                        ]
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        // Re-evaluate controls and neighbours before every step. A route accepted
+        // earlier is not authority to cross a barrier that has since closed.
+        let route = stair
+            .route_with_obstacles(
+                &self.world.pathfinder,
+                [position.x, position.y],
+                [goal.x, goal.y],
+                half,
+                &dynamic,
+            )
+            .expect("invalid physical stair collision geometry");
+        let Some(route) = route else {
+            let pi = self
+                .world
+                .entities
+                .get_mut(owner)
+                .unwrap()
+                .position_iface_mut();
+            pi.update_forecasted_movement(0.0, 1);
+            pi.update_box_blocked(MapPoint::new(position.x, position.y));
+            if pi.is_blocked() {
+                pi.reset_box_blocked();
+                return MotionState::Aborted;
+            }
+            return fallback;
+        };
+        let target = route
+            .iter()
+            .skip(1)
+            .copied()
+            .find(|point| *point != [position.x, position.y])
+            .expect("nonzero physical route lost its next waypoint");
+        let step = plane
+            .advance(
+                [f64::from(position.x), f64::from(position.y)],
+                target.map(f64::from),
+                f64::from(speed),
+            )
+            .expect("invalid physical stair step");
+        let next = if step.reached && target == [goal.x, goal.y] {
+            goal
+        } else {
+            WorldPoint3D::new(
+                step.world[0] as f32,
+                step.world[1] as f32,
+                step.world[2] as f32,
+            )
+        };
+        let entity = self.world.entities.get_mut(owner).unwrap();
+        let pi = entity.position_iface_mut();
+        pi.set_position(next);
+        pi.reset_box_blocked();
+        pi.set_physical_step_increment(
+            WorldVec3D {
+                x: next.x - position.x,
+                y: next.y - position.y,
+                z: next.z - position.z,
+            },
+            selected.order_compute_direction,
+        );
+        let travelled = (next.x - position.x)
+            .hypot(next.y - position.y)
+            .hypot(next.z - position.z);
+        refresh_motion_forecast(entity.sprite_mut(), travelled);
+        // TODO: share water-particle emission and soft repulsion with ordinary
+        // movement before enabling physical stairs in normal editor exports.
+        if next == goal {
+            self.settle_movement_waypoint(
+                tcx,
+                tolerance,
+                selected,
+                owner,
+                MovementArrivalBoundary {
+                    tolerance_arrival: false,
+                    point_seek_post_arrival: false,
+                    arrived_after_committed_step: true,
+                    live_seek_target: None,
+                },
+            )
+        } else {
+            fallback
+        }
+    }
+}

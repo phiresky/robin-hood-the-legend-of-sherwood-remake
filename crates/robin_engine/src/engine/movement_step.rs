@@ -247,7 +247,8 @@ impl EngineInner {
             .entities
             .get_mut(entity_id)
             .expect("movement owner disappeared during execution");
-        let mut tolerance_arrival = perform_seek_calls_per_execute(order_action) > 0
+        let mut tolerance_arrival = selected_order.physical_stair.is_none()
+            && perform_seek_calls_per_execute(order_action) > 0
             && seek_tolerance_reached(
                 ft,
                 seek_operands.live_seek_target,
@@ -985,16 +986,30 @@ impl EngineInner {
                 let diagnostic_pre =
                     sprite_row_diagnostic.then(|| sprite.sprite_row_diagnostic_pre());
                 let played_direction = u16::from(sprite.position_iface.get_direction().as_u8());
-                let result = sprite.perform_motion(
-                    tcx.sim,
-                    motion_order,
-                    sprite_motion_order_for_nonanimation(anim),
-                    played_direction,
-                    FrameProgression::Default,
-                    false,
-                    motion_method,
-                    dest_already_at_pos,
-                );
+                let result = if selected_order.physical_stair.is_some() {
+                    sprite
+                        .perform_physical_motion(
+                            tcx.sim,
+                            motion_order.expect("physical movement requires an order identity"),
+                            selected_order.physical_goal,
+                            sprite_motion_order_for_nonanimation(anim),
+                            played_direction,
+                            FrameProgression::Default,
+                            motion_method,
+                        )
+                        .expect("invalid physical movement order")
+                } else {
+                    sprite.perform_motion(
+                        tcx.sim,
+                        motion_order,
+                        sprite_motion_order_for_nonanimation(anim),
+                        played_direction,
+                        FrameProgression::Default,
+                        false,
+                        motion_method,
+                        dest_already_at_pos,
+                    )
+                };
                 if let Some(pre) = diagnostic_pre {
                     sprite.emit_sprite_row_diagnostic(
                         "perform_motion",
@@ -1198,7 +1213,20 @@ impl EngineInner {
                     );
                 }
             }
-            let call_motion = if is_transition_anim && !tolerance_arrival {
+            let call_motion = if selected_order.physical_stair.is_some() {
+                assert!(
+                    !is_transition_anim,
+                    "physical stair transitions require explicit world-space choreography"
+                );
+                self.commit_physical_stair_step(
+                    tcx,
+                    entity_id,
+                    selected_order,
+                    ft,
+                    speed,
+                    fallback_motion,
+                )
+            } else if is_transition_anim && !tolerance_arrival {
                 'transition: {
                     let goal_reached = {
                         let SelectedMovementOrder {
@@ -1756,12 +1784,13 @@ impl EngineInner {
                     .entities
                     .get(entity_id)
                     .expect("seeking owner disappeared");
-                tolerance_arrival = seek_tolerance_reached(
-                    ft,
-                    seek_operands.live_seek_target,
-                    entity.element_data().position_map(),
-                    entity.element_data().sector(),
-                );
+                tolerance_arrival = selected_order.physical_stair.is_none()
+                    && seek_tolerance_reached(
+                        ft,
+                        seek_operands.live_seek_target,
+                        entity.element_data().position_map(),
+                        entity.element_data().sector(),
+                    );
             }
         };
         let mut motion_state = motion_state;

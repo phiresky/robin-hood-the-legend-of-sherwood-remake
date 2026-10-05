@@ -1296,6 +1296,27 @@ impl PositionInterface {
     pub(crate) fn physical_movement_goal(&self) -> WorldPoint3D {
         self.goal
     }
+
+    /// Publish the direction of a committed physical step without changing the
+    /// order's destination. A detour's forecast must follow its actual motion.
+    pub(crate) fn set_physical_step_increment(
+        &mut self,
+        step: WorldVec3D,
+        compute_direction: bool,
+    ) {
+        let distance = step.x.hypot(step.y).hypot(step.z);
+        assert!(
+            distance.is_finite() && distance > 0.0,
+            "physical step requires finite nonzero displacement"
+        );
+        self.increment = WorldVec3D {
+            x: step.x / distance,
+            y: step.y / distance,
+            z: step.z / distance,
+        };
+        self.computed_increment = IncrementComputed::INCREMENT;
+        self.compute_increment_all(compute_direction);
+    }
     #[inline]
     pub fn set_next_map_goal(&mut self, pt: MapPoint) {
         self.goal_next_map = pt;

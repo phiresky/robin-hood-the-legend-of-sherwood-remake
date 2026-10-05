@@ -17,6 +17,7 @@ pub(crate) use door_traversal::GateRouteRequest;
 mod elevation;
 mod formation;
 mod path_scheduling;
+mod physical_stair;
 mod rider_charge;
 mod routing;
 // Phase methods of `tick_one_movement_actor`. The file lives next to
@@ -2382,6 +2383,8 @@ struct FinalTol {
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 struct SelectedMovementOrder {
     goal: MapPoint,
+    physical_stair: Option<u16>,
+    physical_goal: crate::coordinates::WorldPoint3D,
     action_state: crate::element::ActionState,
     order_id: Option<std::num::NonZeroU32>,
     door_pass_anim: Option<OrderType>,
@@ -4539,12 +4542,18 @@ impl EngineInner {
             order_tolerance,
             entity.position_iface().is_deviated(),
         ) {
-            entity
-                .element_data_mut()
-                .set_position_map(crate::coordinates::MapPoint {
-                    x: goal.x,
-                    y: goal.y,
-                });
+            if selected_order.physical_stair.is_some() {
+                entity
+                    .position_iface_mut()
+                    .set_position(selected_order.physical_goal);
+            } else {
+                entity
+                    .element_data_mut()
+                    .set_position_map(crate::coordinates::MapPoint {
+                        x: goal.x,
+                        y: goal.y,
+                    });
+            }
             entity.sprite_mut().compute_display_depth();
         }
         let eid = entity_id;
@@ -4791,6 +4800,12 @@ impl EngineInner {
             return None;
         };
         let goal = MapPoint::new(order.target_x, order.target_y);
+        let physical_stair = order.physical_stair;
+        let physical_goal = crate::coordinates::WorldPoint3D::new(
+            order.destination_3d[0],
+            order.destination_3d[1],
+            order.destination_3d[2],
+        );
         let order_id = Some(order.order_id);
         let order_action = order.order_type;
         let order_tolerance = order.tolerance;
@@ -4836,6 +4851,8 @@ impl EngineInner {
             .map(|_| order_action);
         Some(SelectedMovementOrder {
             goal,
+            physical_stair,
+            physical_goal,
             action_state: actor.action_state,
             order_id,
             door_pass_anim,

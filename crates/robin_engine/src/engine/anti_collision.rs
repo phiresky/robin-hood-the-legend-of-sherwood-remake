@@ -346,6 +346,26 @@ pub(super) fn gather_disturbing(
     box_future: &MapBBox,
     increment: MapVec,
 ) -> (Vec<RepulsivePoint>, Vec<crate::repulsive::RepulsiveLine>) {
+    gather_disturbing_in_space(mover, world, box_future, increment, false)
+}
+
+/// Physical stair routing uses the same owner/target/posture filters, but
+/// coincident screen positions must not hide distinct physical neighbours.
+pub(super) fn gather_physical_stair_neighbours(
+    mover: &CollisionMover,
+    world: CollisionWorld<'_>,
+    boundary: &MapBBox,
+) -> Vec<RepulsivePoint> {
+    gather_disturbing_in_space(mover, world, boundary, MapVec::ZERO, true).0
+}
+
+fn gather_disturbing_in_space(
+    mover: &CollisionMover,
+    world: CollisionWorld<'_>,
+    box_future: &MapBBox,
+    increment: MapVec,
+    physical: bool,
+) -> (Vec<RepulsivePoint>, Vec<crate::repulsive::RepulsiveLine>) {
     let mut points = Vec::new();
     let lines = Vec::new();
     for (other_id, other) in world.neighbours.occupied() {
@@ -386,11 +406,15 @@ pub(super) fn gather_disturbing(
             continue;
         }
         let is_object = other.is_object();
+        let position = if physical {
+            let world = elem.position();
+            MapPoint::new(world.x, world.y)
+        } else {
+            elem.position_map()
+        };
         if !is_object {
             // Actor-specific filters.
-            if elem.position_map().x == mover.position_map.x
-                && elem.position_map().y == mover.position_map.y
-            {
+            if position.x == mover.position_map.x && position.y == mover.position_map.y {
                 continue;
             }
             if other.is_human() && elem.posture() == Posture::Carried {
@@ -411,10 +435,10 @@ pub(super) fn gather_disturbing(
                 continue;
             }
         }
-        if !box_future.contains_point(elem.position_map()) {
+        if !box_future.contains_point(position) {
             continue;
         }
-        if !is_object {
+        if !is_object && !physical {
             let rel = MapVec::new(
                 elem.position_map().x - mover.position_map.x,
                 elem.position_map().y - mover.position_map.y,
@@ -424,10 +448,16 @@ pub(super) fn gather_disturbing(
                 continue;
             }
         }
+        let start = points.len();
         if let Some(pt) = entity_repulsive_point(other, world.profiles) {
             points.push(pt);
         }
         points.extend(entity_extra_repulsive_points(other));
+        if physical {
+            for point in &mut points[start..] {
+                point.position.y += elem.position().z;
+            }
+        }
     }
     (points, lines)
 }

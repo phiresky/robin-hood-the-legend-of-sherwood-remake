@@ -406,6 +406,15 @@ impl EngineInner {
                         if elem.command != crate::element::Command::MoveOk {
                             return None;
                         }
+                        if elem
+                            .current_order()
+                            .is_some_and(|order| order.physical_stair == Some(sector))
+                        {
+                            // Physical orders rebuild their route from live state
+                            // before every step. Screen-space retranslation would
+                            // discard their world destination and stair identity.
+                            return None;
+                        }
                         let (dest, action) = match &elem.data {
                             crate::sequence::SequenceElementData::Movement {
                                 destination,
@@ -509,13 +518,28 @@ impl EngineInner {
                 continue;
             };
             let move_box = *entity.position_iface().get_move_box_map();
+            let physical_position = entity.position_iface().get_position();
+            let physical_half = entity.position_iface().get_half_diagonal();
             for sector_index in appeared {
                 let obstacle = &self.world.fast_grid.level.sectors[sector_index.get() as usize];
-                if move_box.is_somewhere()
-                    && obstacle.bounding_box.is_somewhere()
-                    && obstacle.bounding_box.intersects_bbox(&move_box)
-                    && obstacle.intersects_bbox(&move_box)
-                {
+                let intersects =
+                    if let Some(stair) = tcx.assets.navigation.physical_stairs.get(&sector) {
+                        let local_obstacle = u16::from(obstacle.sector_number)
+                            .checked_sub(sector)
+                            .and_then(|offset| offset.checked_sub(1))
+                            .expect("physical control references an unrelated motion obstacle");
+                        stair.obstacle_intersects_actor(
+                            local_obstacle,
+                            [physical_position.x, physical_position.y],
+                            physical_half,
+                        )
+                    } else {
+                        move_box.is_somewhere()
+                            && obstacle.bounding_box.is_somewhere()
+                            && obstacle.bounding_box.intersects_bbox(&move_box)
+                            && obstacle.intersects_bbox(&move_box)
+                    };
+                if intersects {
                     if let Some(entity) = self.get_entity_mut(id) {
                         entity.element_data_mut().unreachable = true;
                     }

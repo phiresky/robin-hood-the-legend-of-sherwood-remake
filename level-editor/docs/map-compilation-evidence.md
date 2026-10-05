@@ -4,6 +4,45 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Physical stair actor execution (2026-10-05)
+
+Explicit physical distance orders now execute in the normal actor update loop.
+Orders retain a stair identity and world destination through native encoding.
+Animation timing and completion use the existing movement handlers, while route
+queries, stepping, arrival and the final position snap use physical coordinates.
+Every step reads current control state and nearby actors' hard repulsive regions.
+Neighbour filtering uses world ground positions so distinct actors at the same
+screen point are not accidentally ignored. Forecasts follow committed motion.
+
+Physical orders retain their destination when a control changes; replacing them
+with an ordinary projected path lost both height and route identity. Appearing
+obstacles test crushing against the physical footprint. Physical floor ownership
+also bypasses projected elevation reattachment during the step. The loader omits
+screen-space passage bonds for physical doors, whose midpoint and inside approach
+may legitimately coincide in projection.
+
+Actor-loop fixtures load a genuinely edge-on floor with real lower/upper landing
+planes. Explicit orders traverse it both ways over many animation ticks while
+screen Y remains constant, including position-state restoration mid-route. Other
+fixtures exercise an equally projected neighbour, control closure/reopening during
+motion, and crushing inside the physical obstacle. These fixtures do not yet
+exercise automatic player route requests or door entry/exit.
+
+Remaining integration: compiler emission, automatic physical route/order creation,
+door handoffs, landing-footprint support, physical transition choreography, soft
+repulsion and shared water-particle emission. Normal editor exports still use the
+existing route pipeline; the 24 failing keep routes have not been resolved.
+Native snapshot version is now 10 and replay schema 60 because order binary
+layout changed. Disk-save version remains 97; the new optional order field has a
+deserialization default.
+
+Verification: movement passes 191 tests (twelve external-fixture checks ignored),
+anti-collision passes ten, patch effects pass 26 (four ignored), snapshots pass
+54, replay tests pass 29 and order tests pass thirteen. The complete level-data
+suite passes 80 (seven ignored), and replay-format passes 26. Formatting and
+whitespace checks pass. The updated game build passes:
+`RUSTC_WRAPPER= cargo build -p robin_rs --bin robin -j1`.
+
 ## Physical stair descriptor and live collision binding (2026-10-05)
 
 An optional lift `physical_navigation` definition retains a world-height plane,

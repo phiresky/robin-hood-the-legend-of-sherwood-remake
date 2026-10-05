@@ -586,6 +586,21 @@ fn derive_with_spatial_index(
     };
     let mut passages = Vec::new();
     for lift in &geometry.lifts {
+        if lift.physical_navigation.is_some() {
+            // Physical doors transfer floors explicitly. Their inside approach
+            // may project to the midpoint, so no screen-space bond can describe
+            // that traversal. Keep the actual outside approach on its landing.
+            for door in &lift.doors {
+                clip_passage_ground_edges(
+                    &mut lines,
+                    door.layer_out,
+                    receiver_at((door.sector_out, door.layer_out), door.point_out),
+                    [f64::from(door.point_mid.0), f64::from(door.point_mid.1)],
+                    [f64::from(door.point_out.0), f64::from(door.point_out.1)],
+                )?;
+            }
+            continue;
+        }
         if matches!(lift.lift_type, 2 | 3) {
             for door in &lift.doors {
                 if lift.endpoint_doors.is_some() {

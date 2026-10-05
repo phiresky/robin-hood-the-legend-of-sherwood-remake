@@ -5,8 +5,10 @@
   world-coordinate door anchors. Collision pieces reference the owning motion
   area's obstacle identities, so physical route queries read normal live control
   state, including restored state. The loader validates ownership and forward
-  projection. The editor does not emit this metadata yet; actor dispatch and
-  physical door handoffs still require integration before it changes gameplay.
+  projection. Explicit physical distance orders now execute through the actor
+  loop, including live barriers and hard neighbour collision. The editor does
+  not emit this metadata yet; automatic route creation, physical door handoffs,
+  landing support and full movement effects remain unfinished.
 
 - **Asset-authored movement headroom.** A permanent gameplay volume can set
   `movementHeadroom` in game-height units. Export excludes walking space that

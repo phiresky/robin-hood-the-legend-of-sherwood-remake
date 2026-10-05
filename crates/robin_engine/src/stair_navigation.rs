@@ -3,7 +3,7 @@
 //! The caller supplies a current collision snapshot, including connected landing
 //! support. Screen projection is deliberately absent from pathfinding.
 
-use geo::{Area, Contains, LineString, Point, Polygon, Validation};
+use geo::{Area, Contains, Intersects, LineString, Point, Polygon, Validation};
 use serde::{Deserialize, Serialize};
 
 use crate::coordinates::{MapBBox, MapPoint, MoveBoxHalfDiagonal};
@@ -30,6 +30,36 @@ pub struct BoundPhysicalStair {
 }
 
 impl BoundPhysicalStair {
+    /// Test crushing against the actual floor footprint, not its potentially
+    /// collapsed screen projection. Several pieces can share a motion identity.
+    pub fn obstacle_intersects_actor(
+        &self,
+        motion_obstacle: u16,
+        position: [f32; 2],
+        half: MoveBoxHalfDiagonal,
+    ) -> bool {
+        let actor = geo::Rect::new(
+            geo::Coord {
+                x: position[0] - half.x,
+                y: position[1] - half.y,
+            },
+            geo::Coord {
+                x: position[0] + half.x,
+                y: position[1] + half.y,
+            },
+        )
+        .to_polygon();
+        self.definition
+            .obstacles
+            .iter()
+            .filter(|obstacle| obstacle.motion_obstacle == motion_obstacle)
+            .any(|obstacle| {
+                polygon(&obstacle.polygon)
+                    .expect("validated physical obstacle")
+                    .intersects(&actor)
+            })
+    }
+
     pub fn bind(
         lift: &crate::level_data::RawLift,
         motion_area: &crate::level_data::RawMotionArea,
@@ -66,6 +96,17 @@ impl BoundPhysicalStair {
         goal: [f32; 2],
         half_diagonal: MoveBoxHalfDiagonal,
     ) -> Result<Option<Vec<[f32; 2]>>, String> {
+        self.route_with_obstacles(pathfinder, source, goal, half_diagonal, &[])
+    }
+
+    pub fn route_with_obstacles(
+        &self,
+        pathfinder: &PathFinder,
+        source: [f32; 2],
+        goal: [f32; 2],
+        half_diagonal: MoveBoxHalfDiagonal,
+        extra_obstacles: &[Vec<[f32; 2]>],
+    ) -> Result<Option<Vec<[f32; 2]>>, String> {
         let geometry = StairRouteGeometry {
             boundary: self.definition.boundary.clone(),
             obstacles: self
@@ -80,6 +121,7 @@ impl BoundPhysicalStair {
                     )
                 })
                 .map(|obstacle| obstacle.polygon.clone())
+                .chain(extra_obstacles.iter().cloned())
                 .collect(),
         };
         geometry.route(source, goal, half_diagonal)

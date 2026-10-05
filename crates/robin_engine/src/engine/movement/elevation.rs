@@ -690,6 +690,9 @@ impl EngineInner {
     ) {
         #[cfg(test)]
         observe_post_execute_crossing(self, entity_id);
+        let physical_stair = self
+            .actor_installed_order(entity_id)
+            .is_some_and(|order| order.physical_stair.is_some());
         let (old_pos, new_pos, layer, posture, is_carried, is_human) = {
             let entity = self
                 .world
@@ -743,15 +746,18 @@ impl EngineInner {
             })
             .collect::<Vec<_>>();
 
-        let crossed_elevation = self.check_for_elevation_line_crossing_indices(
-            tcx.assets,
-            entity_id,
-            old_pos,
-            new_pos,
-            layer,
-            elevation_indices,
-        );
-        if crossed_elevation || crossing_count > 1 {
+        // Physical traversal owns its floor until the door handoff. Projected
+        // overlaps must not reattach it to an unrelated receiving plane.
+        let crossed_elevation = !physical_stair
+            && self.check_for_elevation_line_crossing_indices(
+                tcx.assets,
+                entity_id,
+                old_pos,
+                new_pos,
+                layer,
+                elevation_indices,
+            );
+        if !physical_stair && (crossed_elevation || crossing_count > 1) {
             if is_human {
                 self.update_roll_after_crossing(tcx.assets, entity_id);
             }

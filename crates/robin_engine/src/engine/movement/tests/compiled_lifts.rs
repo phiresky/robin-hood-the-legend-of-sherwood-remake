@@ -27,6 +27,244 @@ fn physical_stair_fixture() -> serde_json::Value {
     document
 }
 
+fn edge_on_physical_stair_fixture() -> serde_json::Value {
+    let mut document = physical_stair_fixture();
+    let geometry = &mut document["asset_geometry"];
+    geometry["movement_transitions"] = serde_json::json!([]);
+    for (layer, points) in [
+        serde_json::json!([[380, 170], [420, 170], [420, 200], [380, 200]]),
+        serde_json::json!([[380, 200], [420, 200], [420, 230], [380, 230]]),
+        serde_json::json!([[380, 200], [420, 200], [420, 200], [380, 200]]),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        geometry["motion_data"]["layers"][layer][0]["polygon"]["points"] = points;
+        geometry["motion_data"]["layers"][layer][0]["obstacles"] = serde_json::json!([]);
+    }
+    let template = geometry["sight_obstacles"][1].clone();
+    let mut receivers = Vec::new();
+    for (sector, z, y) in [(0, 100, 270), (1, 200, 400)] {
+        let mut receiver = template.clone();
+        receiver["projection_area"] = serde_json::json!([sector, sector]);
+        receiver["points"] = serde_json::json!([
+            {"x":380,"y":y,"z_bottom":z,"z_top":z},
+            {"x":420,"y":y,"z_bottom":z,"z_top":z},
+            {"x":420,"y":y+30,"z_bottom":z,"z_top":z},
+            {"x":380,"y":y+30,"z_bottom":z,"z_top":z}
+        ]);
+        receivers.push(receiver);
+    }
+    geometry["sight_obstacles"] = serde_json::json!(receivers);
+    let lift = &mut geometry["lifts"][0];
+    lift["motion_area_index"] = serde_json::json!(2);
+    for (index, outside_y) in [190, 210].into_iter().enumerate() {
+        let door = &mut lift["doors"][index];
+        door["sector_in"] = serde_json::json!(2);
+        door["sector_out"] = serde_json::json!(index);
+        door["point_mid"] = serde_json::json!([400, 200]);
+        door["point_in"] = serde_json::json!([400, 200]);
+        door["point_out"] = serde_json::json!([400, outside_y]);
+    }
+    lift["physical_navigation"] = serde_json::json!({
+        "plane": [0.0,1.0,-200.0],
+        "boundary": [[380,300],[420,300],[420,400],[380,400]],
+        "obstacles": [],
+        "doors": [
+            {"inside":[400,310,110],"middle":[400,300,100],"outside":[400,290,100]},
+            {"inside":[400,390,190],"middle":[400,400,200],"outside":[400,410,200]}
+        ]
+    });
+    document
+}
+
+fn physical_walker(
+    engine: &mut EngineInner,
+    assets: &mut LevelAssets,
+    sector: u16,
+    source: [f32; 2],
+    destination: [f32; 2],
+) -> crate::element::EntityId {
+    let definition = assets.navigation.physical_stairs[&sector]
+        .definition
+        .clone();
+    let plane =
+        robin_level_data::stair_navigation::StairNavigationPlane::new(definition.plane).unwrap();
+    let source_world = plane.world_position(source.map(f64::from)).unwrap();
+    let destination = plane
+        .world_position(destination.map(f64::from))
+        .unwrap()
+        .map(|v| v as f32);
+    let index = engine.world.fast_grid.level.sector_number_map
+        [&crate::sector::SectorNumber::new(sector as i16)];
+    let handle = crate::position_interface::SectorHandle::new(sector)
+        .unwrap()
+        .with_arena_index(crate::fast_find_grid::SectorIndex::new(index as u32).unwrap());
+    let owner = walking_pc(
+        engine,
+        assets,
+        MapPoint::new(
+            source_world[0] as f32,
+            (source_world[1] - source_world[2]) as f32,
+        ),
+        2,
+        handle,
+    );
+    let [a, b, c] = definition.plane.map(|v| v as f32);
+    engine
+        .ent_mut(owner)
+        .position_iface_mut()
+        .set_obstacle_at_ground_position(
+            None,
+            Some(crate::position_interface::PlaneZCoeffs {
+                az: a,
+                bz: b,
+                dz: c,
+            }),
+            crate::coordinates::GroundPoint::new(source[0], source[1]),
+        )
+        .unwrap();
+    let goal =
+        crate::coordinates::WorldPoint3D::new(destination[0], destination[1], destination[2]);
+    let map = goal.to_map();
+    let mut order = crate::order::Order::new(
+        OrderType::WalkingStairs,
+        map.x,
+        map.y,
+        engine.orders.allocate_order_id(),
+    );
+    order.physical_stair = Some(sector);
+    order.destination_3d = destination;
+    // Physical identity and destination must survive the native order encoding.
+    let order = bitcode::decode(&bitcode::encode(&order)).unwrap();
+    let mut movement =
+        SequenceElement::new_movement(1, Command::MoveOk, Some(owner), OrderType::WalkingStairs);
+    movement.orders.push_back(order);
+    let sequence = engine.t_launch_in_progress(assets, movement);
+    engine.select_sequence_element(owner, Some((sequence, 0)));
+    owner
+}
+
+#[test]
+fn physical_stair_actor_executes_edge_on_motion_in_both_directions() {
+    for (source, goal) in [([400., 320.], [400., 380.]), ([400., 380.], [400., 320.])] {
+        let (mut engine, mut assets) =
+            compiled_walkway(&serde_json::to_vec(&edge_on_physical_stair_fixture()).unwrap());
+        let owner = physical_walker(&mut engine, &mut assets, 2, source, goal);
+        let mut reached = false;
+        let mut moves = 0;
+        for tick in 0..300 {
+            let before = engine.ent(owner).position_iface().get_position();
+            engine.t_tick_actor_owner_envelopes(&assets);
+            let position = engine.ent(owner).position_iface().get_position();
+            assert!(
+                (position.z - (position.y - 200.)).abs() < 0.001,
+                "{position:?}"
+            );
+            assert!((engine.ent(owner).element_data().position_map().y - 200.).abs() < 0.001);
+            if position != before {
+                moves += 1;
+            }
+            if tick == 10 {
+                let saved = bitcode::encode(engine.ent(owner).position_iface());
+                *engine.ent_mut(owner).position_iface_mut() = bitcode::decode(&saved).unwrap();
+            }
+            if [position.x, position.y] == goal {
+                reached = true;
+                break;
+            }
+        }
+        assert!(
+            reached && moves > 20,
+            "physical actor failed: {:?}, moves={moves}",
+            engine.ent(owner).position_iface().get_position()
+        );
+    }
+}
+
+#[test]
+fn physical_stair_actor_stops_for_live_control_and_resumes_when_reopened() {
+    let (mut engine, mut assets) =
+        compiled_walkway(&serde_json::to_vec(&physical_stair_fixture()).unwrap());
+    let sim = crate::sim_rng::test_context();
+    let patch = crate::patch::PatchIndex::new(0).unwrap();
+    engine.apply_patch(TickCtx::new(&sim, &assets), patch);
+    let owner = physical_walker(&mut engine, &mut assets, 3, [400., 320.], [400., 380.]);
+    for _ in 0..8 {
+        engine.t_tick_actor_owner_envelopes(&assets);
+    }
+    let stopped = engine.ent(owner).position_iface().get_position();
+    assert!(stopped.y > 320. && stopped.y < 340.);
+    engine.apply_patch(TickCtx::new(&sim, &assets), patch);
+    for _ in 0..8 {
+        engine.t_tick_actor_owner_envelopes(&assets);
+    }
+    assert_eq!(engine.ent(owner).position_iface().get_position(), stopped);
+    assert!(
+        !engine.ent(owner).element_data().unreachable,
+        "projected overlap must not crush a physically clear actor"
+    );
+    engine.apply_patch(TickCtx::new(&sim, &assets), patch);
+    for _ in 0..120 {
+        engine.t_tick_actor_owner_envelopes(&assets);
+        if engine.ent(owner).position_iface().get_position().y == 380. {
+            break;
+        }
+    }
+    assert_eq!(
+        engine.ent(owner).position_iface().get_position().y,
+        380.,
+        "state={:?}, order={:?}, blocked={}",
+        engine.world.pathfinder.states,
+        engine.actor_installed_order(owner),
+        engine.ent(owner).position_iface().blocked_count
+    );
+}
+
+#[test]
+fn physical_stair_control_crushes_an_actor_inside_its_physical_obstacle() {
+    let (mut engine, mut assets) =
+        compiled_walkway(&serde_json::to_vec(&physical_stair_fixture()).unwrap());
+    let sim = crate::sim_rng::test_context();
+    let patch = crate::patch::PatchIndex::new(0).unwrap();
+    engine.apply_patch(TickCtx::new(&sim, &assets), patch);
+    let owner = physical_walker(&mut engine, &mut assets, 3, [400., 350.], [400., 380.]);
+    assert!(!engine.ent(owner).element_data().unreachable);
+    engine.apply_patch(TickCtx::new(&sim, &assets), patch);
+    assert!(engine.ent(owner).element_data().unreachable);
+}
+
+#[test]
+fn physical_stair_actor_avoids_neighbour_at_the_same_screen_position() {
+    let (mut engine, mut assets) =
+        compiled_walkway(&serde_json::to_vec(&edge_on_physical_stair_fixture()).unwrap());
+    let owner = physical_walker(&mut engine, &mut assets, 2, [400., 320.], [400., 380.]);
+    let blocker = physical_walker(&mut engine, &mut assets, 2, [400., 350.], [400., 350.]);
+    let mut detoured = false;
+    let mut reached = false;
+    for _ in 0..300 {
+        engine.t_tick_actor_owner_envelopes(&assets);
+        let position = engine.ent(owner).position_iface().get_position();
+        assert_eq!(engine.ent(blocker).position_iface().get_position().y, 350.);
+        assert!(
+            ((position.x - 400.).abs() - 5.)
+                .max(0.)
+                .hypot(((position.y - 350.).abs() - 2.).max(0.))
+                >= 3.99,
+            "actor overlapped its neighbour: {position:?}"
+        );
+        detoured |= (position.x - 400.).abs() > 8.;
+        if position.y == 380. && position.x == 400. {
+            reached = true;
+            break;
+        }
+    }
+    assert!(
+        reached && detoured,
+        "physical neighbour was ignored or blocked a usable route"
+    );
+}
+
 #[test]
 fn physical_stair_loading_routes_against_live_and_restored_obstacle_state() {
     let bytes = serde_json::to_vec(&physical_stair_fixture()).unwrap();
