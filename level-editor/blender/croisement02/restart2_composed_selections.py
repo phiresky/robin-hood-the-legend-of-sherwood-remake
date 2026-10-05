@@ -31,7 +31,11 @@ def selected_workspace(out,mask,catalog_path):
  if not receipt.exists():receipt=out/'restart2-wood/composed-selections'/f'tree-{mask:02}-gallery-v2.json'
  if not receipt.exists():receipt=out/'restart2-wood/composed-selections'/f'tree-{mask:02}.json'
  if not receipt.exists():return None
- record=read(receipt);worker=Path(record['worker']);require(record['approval']=='pending' and record['model_sha256']==sha(worker/'model.blend'),'Invalid composed selection')
+ record=read(receipt)
+ if 'previous_receipt_sha256' in record:
+  previous=receipt.with_name(f'tree-{mask:02}-gallery-v2.json' if receipt.name.endswith('-v3.json') else f'tree-{mask:02}.json')
+  require(sha(previous)==record['previous_receipt_sha256'],'Composed receipt history changed')
+ worker=Path(record['worker']);require(record['approval']=='pending' and record['model_sha256']==sha(worker/'model.blend'),'Invalid composed selection')
  require(worker.name==f'croisement02-tree-{mask:02}','Wrong composed asset')
  group=next(g for g in read(catalog_path)['groups'] if g['id']==worker.name);require(set(record['part_ids'])=={source_for_part(p) for p in group['parts']},'Composed source ownership changed')
  for path,digest in record['files'].items():require(sha(Path(path))==digest,'Bound composed evidence changed: '+path)
