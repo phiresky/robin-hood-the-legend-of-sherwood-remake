@@ -51,6 +51,9 @@ def cap(crown, packet_path, mask, destination, edge='north'):
     elif edge=='east':
         if not 0 <= 1791-x < width:raise ValueError('Source domain does not reach the east edge')
         edge_x = np.where(alpha[:,1791-x])[0] + y
+    elif edge=='west':
+        if not 0 <= 1-x < width:raise ValueError('Source domain does not reach the west edge')
+        edge_x = np.where(alpha[:,1-x])[0] + y
     else:
         raise ValueError('Unsupported map edge')
     if len(edge_x) < 8:
@@ -61,10 +64,11 @@ def cap(crown, packet_path, mask, destination, edge='north'):
     center_y = (world[:, 1].min() + world[:, 1].max()) / 2
     radius_y = np.ptp(world[:, 1]) / 2
     rise = max(45., min(145., radius_x * .95))
-    if edge=='east':radius_y=max(radius_y,(np.ptp(world[:,0])+rise)*.60)
+    if edge in ('east','west'):radius_y=max(radius_y,(np.ptp(world[:,0])+rise)*.60)
     else:radius_y=min(radius_y,radius_x*1.15)
     patch_ys=range(max(0,-y),min(height-24,-y+130),8) if edge=='north' else range(0,height-24,8)
     patch_xs=range(0,width-24,8) if edge=='north' else range(max(0,width-130),width-24,8)
+    if edge=='west':patch_xs=range(0,min(width-24,130),8)
     patches = [(px, py) for py in patch_ys for px in patch_xs if alpha[py:py+24, px:px+24].mean() > .55]
     if not patches:
         raise ValueError('No local native leaf palette')
@@ -83,9 +87,10 @@ def cap(crown, packet_path, mask, destination, edge='north'):
             position=center+direction*np.array([radius_x,radius_y,rise])*irregular
             if -position[1]*SIN-position[2]*COS>=0:continue
         else:
-            center=np.array([1792+rise*.15,center_y,(-center_x-center_y*SIN)/COS])
+            center=np.array([1792+rise*.15 if edge=='east' else -rise*.15,center_y,(-center_x-center_y*SIN)/COS])
             position=center+direction*np.array([rise,radius_y,radius_x])*irregular
-            if position[0]<=1792:continue
+            if edge=='east' and position[0]<=1792:continue
+            if edge=='west' and position[0]>=0:continue
         axis = Vector(rng.normal(size=3)).normalized()
         other = axis.cross(Vector((0, 0, 1)) if abs(axis.z) < .9 else Vector((1, 0, 0))).normalized()
         third = axis.cross(other).normalized()
@@ -98,7 +103,8 @@ def cap(crown, packet_path, mask, destination, edge='north'):
                 if edge=='north':
                     projected_y = -p[1]*SIN - p[2]*COS
                     if projected_y >= -.01:p[2] += (projected_y + .01) / COS
-                else:p[0]=max(p[0],1792.01)
+                elif edge=='east':p[0]=max(p[0],1792.01)
+                else:p[0]=min(p[0],-.01)
             p0, p1, p2, p3 = points
             samples = ((1-sample_u)[...,None]*(1-sample_v)[...,None]*p0
                 + sample_u[...,None]*(1-sample_v)[...,None]*p1
@@ -110,9 +116,13 @@ def cap(crown, packet_path, mask, destination, edge='north'):
             if edge=='east':
                 ix=np.floor(3584-samples[...,0]-x).astype(int)
                 iy=np.floor(projected-y).astype(int)
+            if edge=='west':
+                ix=np.floor(2-samples[...,0]-x).astype(int)
+                iy=np.floor(projected-y).astype(int)
             valid = (ix>=0)&(ix<width)&(iy>=0)&(iy<height)
             weight = np.clip(1 + projected/24, 0, 1)
             if edge=='east':weight=np.clip(1-(samples[...,0]-1792)/24,0,1)
+            if edge=='west':weight=np.clip(1+samples[...,0]/24,0,1)
             tile = rgba[py:py+24,px:px+24].copy()
             edge_alpha = np.zeros((24,24))
             edge_alpha[valid] = alpha[iy[valid],ix[valid]]
@@ -129,13 +139,13 @@ def cap(crown, packet_path, mask, destination, edge='north'):
             new_faces.extend([(start,start+1,start+2),(start,start+2,start+3)])
             new_uv.extend(coords)
             tiles += 1
-    atlas_path = destination / 'inferred-northern-leaves.png'
+    atlas_path = destination / ('inferred-western-leaves.png' if edge=='west' else 'inferred-northern-leaves.png')
     Image.fromarray(atlas).save(atlas_path)
     # Append to a copy of the original mesh: preserve all prior loops, colours,
     # UVs, faces and material slots. No observed geometry is reconstructed.
     crown.data = crown.data.copy()
     material_index = len(crown.data.materials)
-    crown.data.materials.append(material(crown.name+' inferred northern cap', atlas_path, False))
+    crown.data.materials.append(material(crown.name+(' inferred west cap' if edge=='west' else ' inferred northern cap'), atlas_path, False))
     bm = bmesh.new()
     bm.from_mesh(crown.data)
     uv = bm.loops.layers.uv.get('Foliage UV')
@@ -156,7 +166,8 @@ def cap(crown, packet_path, mask, destination, edge='north'):
     if mesh_prefix(crown.data,*counts) != observed_before:
         raise ValueError('Existing crown geometry, UVs or source ownership changed')
     if edge=='north':assert max(-p[1]*SIN-p[2]*COS for p in new_vertices) < 0
-    else:assert min(p[0] for p in new_vertices)>1792
+    elif edge=='east':assert min(p[0] for p in new_vertices)>1792
+    else:assert max(p[0] for p in new_vertices)<0
     return dict(source_packet_sha256=sha(packet_path), source_image_sha256=sha(source_path),
         native_edge_span=[left,right], inferred_rise=rise, added_faces=len(new_faces),
         map_edge=edge,

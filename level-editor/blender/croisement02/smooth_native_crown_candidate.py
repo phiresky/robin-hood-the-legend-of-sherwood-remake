@@ -33,6 +33,8 @@ def main():
                         help='Bounded deterministic source-ray depth variation per leaf fragment')
     parser.add_argument('--soft-branch-envelope', action='store_true',
                         help='Private smooth branch falloff trial without ellipsoid tangent lips')
+    parser.add_argument('--west-edge-completion', action='store_true',
+                        help='Add inferred own-source leaf continuation strictly outside the west map edge')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
     source, output = args.source.resolve(), args.output.resolve()
     require(not output.exists(), 'Use a fresh candidate destination')
@@ -147,6 +149,12 @@ def main():
         require(foreign == {o.name: (geometry(o), appearance(o)) for o in bpy.data.objects
                            if o.type == 'MESH' and o != crown}, 'Foreign or wood receiver changed')
         output.mkdir(parents=True)
+        west_completion = None
+        if args.west_edge_completion:
+            from complete_northern_caps import cap
+            (output / 'inspection').mkdir()
+            west_completion = cap(crown, source / 'inspection/source-packet/partition.json',
+                                  int(cfg['asset_id'].rsplit('-', 1)[1]), output / 'inspection', edge='west')
         for relative in ['workspace.json', 'source-masks.json', 'modified/views.json',
                          'inspection/refinement.json', 'inspection/source-coverage/report.json']:
             target = output / relative
@@ -163,6 +171,7 @@ def main():
             inferred_native_ray_depth_scale=depth_scale,
             fragment_jitter=args.fragment_jitter,
             soft_branch_envelope=args.soft_branch_envelope,
+            west_edge_completion=west_completion,
             retained_inferred_faces=retained_faces, mesh=result,
             non_crown_geometry_and_appearance_unchanged=True,
             method='Smooth native-source leaf envelope over branch-scale ellipsoids; original hidden leaf clusters and off-map continuation retained',
