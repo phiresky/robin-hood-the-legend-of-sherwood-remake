@@ -16,7 +16,7 @@ from restart3_tree06_root_review import configure
 from restart2_sign_neighbors import camera_to,render
 
 def main():
- base=OUT/'restart3-tree06-root/research-roots-v5';dest=base/'appearance-v2';dest.mkdir(exist_ok=False)
+ base=OUT/'restart3-tree06-root/research-roots-v5';dest=base/'appearance-v3';dest.mkdir(exist_ok=False)
  model=base/'root.blend';audit=json.loads((base/'full-neighborhood-audit.json').read_text());assert sha(model)==audit['model_sha256']
  bpy.ops.wm.open_mainfile(filepath=str(model));obj=next(o for o in bpy.context.scene.objects if o.type=='MESH');obj.data.calc_loop_triangles()
  tree=BVHTree.FromPolygons([tuple(v.co)for v in obj.data.vertices],[tuple(t.vertices)for t in obj.data.loop_triangles],all_triangles=True)
@@ -29,7 +29,7 @@ def main():
  # Resolve subpixel mesh faces independently, so fine remeshing does not leave gray holes.
  for polygon in obj.data.polygons:
   center=polygon.center;x=center.x;y=-SIN*center.y-COS*center.z;ix,iy=math.floor(x)-box[0],math.floor(y)-box[1]
-  if not(0<=ix<w and 0<=iy<h and mask[iy,ix,0]):continue
+  if not(0<=ix<w and 0<=iy<h):continue
   hit,normal,face,d=tree.ray_cast(center+RAY*5000,-RAY,10000)
   if hit is not None and (hit-center).length<.08 and polygon.normal.dot(RAY)>0:polys.add(polygon.index)
  Image.fromarray(mask).save(dest/'observed-mask.png');Image.open(OUT/'baseline/covered.png').crop(box).save(dest/'source.png')
