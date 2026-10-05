@@ -83,6 +83,30 @@ def freeze(base, output):
             raise ValueError('Additional approved texture stream overlaps historical selections')
         selected.update(additional)
         shutil.copyfile(additional_path, output / 'additional-approved-texture-decisions.json')
+    supplementary_files = []
+    streams_path = OUT / 'texture-review/supplementary-approved-streams.json'
+    if streams_path.exists():
+        streams_hash = sha(streams_path)
+        streams = json.loads(streams_path.read_text())
+        if streams.get('version') != 1:
+            raise ValueError('Unsupported supplementary approval stream manifest')
+        for index, stream in enumerate(streams['streams']):
+            path = Path(stream['path'])
+            if sha(path) != stream['sha256']:
+                raise ValueError('Supplementary approval stream changed: ' + str(path))
+            choices = select(path, models)
+            if set(selected) & set(choices):
+                raise ValueError('Supplementary approval stream overlaps existing selections')
+            selected.update(choices)
+            name = f'supplementary-approved-texture-decisions-{index}.json'
+            shutil.copyfile(path, output / name)
+            if sha(output / name) != stream['sha256']:
+                raise ValueError('Supplementary approval stream changed during copy')
+            supplementary_files.append(name)
+        shutil.copyfile(streams_path, output / 'supplementary-approved-streams.json')
+        if sha(output / 'supplementary-approved-streams.json') != streams_hash:
+            raise ValueError('Supplementary approval stream manifest changed during copy')
+        supplementary_files.append('supplementary-approved-streams.json')
     shutil.copyfile(legacy_path, output / 'original-legacy-texture-decisions.json')
     shutil.copyfile(canopy_path, output / 'canopy-texture-decisions.json')
     rows = []
@@ -122,7 +146,7 @@ def freeze(base, output):
                decision_files={name: sha(output / name) for name in
                    ('geometry-decisions.json', 'original-legacy-texture-decisions.json',
                     'compatible-legacy-texture-decisions.json', 'canopy-texture-decisions.json',
-                    'additional-approved-texture-decisions.json') if (output / name).exists()},
+                    'additional-approved-texture-decisions.json', *supplementary_files) if (output / name).exists()},
                model_copies_created=0, complete_state_integration=False))
     print(json.dumps(dict(output=str(output), groups=len(rows), visible_groups=len(models),
                           approved_textures=len(selected), omitted=omitted)))
