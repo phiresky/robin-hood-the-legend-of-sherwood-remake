@@ -2,11 +2,44 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   nativeElementBehind,
+  nativeBackgroundFrames,
   nativePresentationFrame,
   nativePresentationOrder,
   validateNativeStatePresentation,
   type NativePresentationElement,
+  type NativeBackgroundState,
 } from "./native-state-presentation.ts";
+
+test("retained receiver frame and final animation have distinct clocks", () => {
+  const frame = element("source").frames[0]!;
+  const state: NativeBackgroundState = {
+    id: "patch",
+    source: { kind: "mission-patch", index: 0, sha256: "a".repeat(64) },
+    display_position: [0, 0],
+    restore_bounds: [0, 0, 2, 2],
+    definitive: false,
+    initial: [],
+    transition: [
+      { ...frame, path: "first.png", delay: 2 },
+      { ...frame, path: "last.png", delay: 1 },
+    ],
+    final: [
+      { ...frame, path: "final-a.png", delay: 0 },
+      { ...frame, path: "final-b.png", delay: 0 },
+    ],
+    initial_loop: false,
+    final_loop: true,
+  };
+  const paths = (phase: "forward" | "reverse", tick: number) =>
+    nativeBackgroundFrames(state, phase, tick).map((f) => f.path);
+  assert.deepEqual(paths("forward", 2), ["first.png"]);
+  assert.deepEqual(paths("forward", 4), ["last.png"]);
+  assert.deepEqual(paths("forward", 5), ["last.png", "final-a.png"]);
+  assert.deepEqual(paths("forward", 6), ["last.png", "final-b.png"]);
+  assert.deepEqual(paths("reverse", 1), ["last.png"]);
+  assert.deepEqual(paths("reverse", 2), ["first.png"]);
+  assert.deepEqual(paths("reverse", 5), []);
+});
 
 function element(id: string, polyline: [number, number][] = []): NativePresentationElement {
   return {
@@ -160,4 +193,44 @@ test("explicit shadow contracts reject ambiguous color, format and strength", ()
     Object.assign(changed.elements[0]!.frames[0]!, { shadow_key: invalid });
     assert.throws(() => validateNativeStatePresentation(changed), /shadow key/);
   }
+});
+
+test("background restoration rejects overlapping regions and escaped frame bounds", () => {
+  const frame = element("source").frames[0]!;
+  const state: NativeBackgroundState = {
+    id: "patch",
+    source: { kind: "mission-patch", index: 0, sha256: "a".repeat(64) },
+    display_position: [0, 0],
+    restore_bounds: [0, 0, 2, 2],
+    definitive: true,
+    initial: [],
+    transition: [frame],
+    final: [],
+    initial_loop: false,
+    final_loop: false,
+  };
+  const contract = {
+    version: 1,
+    mission: "S03",
+    mission_data_sha256: "a".repeat(64),
+    level_data_sha256: "b".repeat(64),
+    camera_elevation_deg: 35,
+    scope: "map-art-and-listed-effects",
+    background: { path: "background.png", sha256: "c".repeat(64), width: 8, height: 8 },
+    origin: [0, 0],
+    elements: [],
+    background_states: [state],
+  };
+  validateNativeStatePresentation(contract);
+  const other = structuredClone(state);
+  other.id = "other";
+  other.source.index = 1;
+  contract.background_states.push(other);
+  assert.throws(() => validateNativeStatePresentation(contract), /overlapping/);
+  other.display_position = [2, 0];
+  other.restore_bounds = [2, 0, 2, 2];
+  validateNativeStatePresentation(contract);
+  other.transition[0]!.offset = [1, 0];
+  assert.throws(() => validateNativeStatePresentation(contract), /outside restoration/);
+  assert.throws(() => nativeBackgroundFrames(state, "reverse", 0), /transition/);
 });

@@ -2,10 +2,12 @@ import { decode } from "fast-png";
 import {
   nativePresentationFrame,
   nativePresentationOrder,
+  nativeBackgroundFrames,
   validateNativeStatePresentation,
   type NativeImageResource,
   type NativeShadowKey,
   type NativeStatePresentationContract,
+  type NativeBackgroundPhase,
 } from "../../shared/src/native-state-presentation.ts";
 import { missionStateDataHash, type MissionStateSource } from "./mission-state-layer.ts";
 import { subdir } from "./fs.ts";
@@ -154,7 +156,35 @@ export async function verifyNativePresentationSource(
     )
       throw new Error("Native artwork preview is missing a global target ordering boundary");
   }
-  nativePresentationOrder(contract.elements);
+  for (const state of contract.background_states ?? []) {
+    const rows =
+      state.source.kind === "map-patch" ? source.level.patches : source.data.mission_patches;
+    const raw = Array.isArray(rows) ? rows[state.source.index] : undefined;
+    if (!raw || (await missionStateDataHash(raw)) !== state.source.sha256)
+      throw new Error(`Native background source changed: ${state.id}`);
+    const row = raw as unknown as Record<string, unknown>;
+    const fx = row.element_fx as
+      | { sprite?: { position_x?: number; position_y?: number; elevation?: number } }
+      | undefined;
+    if (
+      row.integrate_in_background !== true ||
+      row.definitive !== state.definitive ||
+      row.start_animation_valid !== state.initial.length > 0 ||
+      row.transition_animation_valid !== true ||
+      row.end_animation_valid !== state.final.length > 0 ||
+      fx?.sprite?.position_x !== state.display_position[0] ||
+      fx?.sprite?.position_y !== state.display_position[1] ||
+      fx?.sprite?.elevation !== 0
+    )
+      throw new Error(`Native background semantics changed: ${state.id}`);
+  }
+  nativePresentationOrder(
+    contract.elements.map((e) =>
+      !e.active && e.initial_frame
+        ? { ...e, active: true, frames: [e.initial_frame], loop: false }
+        : e,
+    ),
+  );
 }
 
 /** Resource ownership and integer timing; the containing viewport owns the only clock. */
@@ -164,6 +194,8 @@ export class NativeStatePresentation {
   private images = new Map<string, NativePixels>();
   private contract: NativeStatePresentationContract | undefined;
   private offsets = new Map<string, number>();
+  private activeElements = new Map<string, boolean>();
+  private backgrounds = new Map<string, { phase: NativeBackgroundPhase; offset: number }>();
   private seconds = 0;
   private currentTick = 0;
   private playing = false;
@@ -186,6 +218,8 @@ export class NativeStatePresentation {
     this.images.clear();
     this.contract = undefined;
     this.offsets.clear();
+    this.activeElements.clear();
+    this.backgrounds.clear();
     this.currentTick = 0;
     this.seconds = 0;
     this.playing = false;
@@ -210,7 +244,18 @@ export class NativeStatePresentation {
     }
     if (this.disposed || epoch !== this.epoch) return false;
     const resources = new Map<string, NativeImageResource>();
-    for (const resource of [frozen.background, ...frozen.elements.flatMap((e) => e.frames)]) {
+    const frames = [
+      ...frozen.elements.flatMap((e) => [
+        ...e.frames,
+        ...(e.initial_frame ? [e.initial_frame] : []),
+      ]),
+      ...(frozen.background_states ?? []).flatMap((s) => [
+        ...s.initial,
+        ...s.transition,
+        ...s.final,
+      ]),
+    ];
+    for (const resource of [frozen.background, ...frames]) {
       const prior = resources.get(resource.path);
       if (
         prior &&
@@ -233,7 +278,7 @@ export class NativeStatePresentation {
       }
     }
     if (this.disposed || epoch !== this.epoch) return false;
-    for (const frame of frozen.elements.flatMap((element) => element.frames)) {
+    for (const frame of frames) {
       if (!frame.shadow_key) continue;
       const data = images.get(frame.path)!.data;
       for (let pixel = 0; pixel < data.length; pixel += 4)
@@ -251,6 +296,28 @@ export class NativeStatePresentation {
   }
   setPlaying(value: boolean) {
     this.playing = value;
+  }
+  setElementState(id: string, active: boolean, tick = 0) {
+    if (!this.contract?.elements.some((e) => e.id === id))
+      throw new Error(`Unknown native preview element: ${id}`);
+    if (typeof active !== "boolean" || !Number.isSafeInteger(tick) || tick < 0)
+      throw new Error("Invalid native element state");
+    this.activeElements.set(id, active);
+    this.offsets.set(id, tick - this.currentTick);
+    this.revision++;
+  }
+  setBackgroundState(id: string, phase: NativeBackgroundPhase, tick = 0) {
+    const state = this.contract?.background_states?.find((s) => s.id === id);
+    if (!state) throw new Error(`Unknown native background state: ${id}`);
+    if (
+      !["initial", "forward", "applied", "reverse"].includes(phase) ||
+      !Number.isSafeInteger(tick) ||
+      tick < 0 ||
+      (phase === "reverse" && state.definitive)
+    )
+      throw new Error("Invalid native background state");
+    this.backgrounds.set(id, { phase, offset: tick - this.currentTick });
+    this.revision++;
   }
   seek(tick: number, id?: string) {
     if (!this.contract) throw new Error("Native artwork preview is not loaded");
@@ -290,7 +357,28 @@ export class NativeStatePresentation {
       height: background.height,
       data: new Uint8Array(background.data),
     };
-    for (const element of nativePresentationOrder(this.contract.elements)) {
+    for (const state of this.contract.background_states ?? []) {
+      const selected = this.backgrounds.get(state.id) ?? { phase: "initial" as const, offset: 0 };
+      for (const frame of nativeBackgroundFrames(
+        state,
+        selected.phase,
+        Math.max(0, this.currentTick + selected.offset),
+      ))
+        compositeNativePixels(
+          pixels,
+          this.images.get(frame.path)!,
+          state.display_position[0] + frame.offset[0] - this.contract.origin[0],
+          state.display_position[1] + frame.offset[1] - this.contract.origin[1],
+          frame.shadow_key,
+        );
+    }
+    const elements = this.contract.elements.map((e) => {
+      const active = this.activeElements.get(e.id) ?? e.active;
+      return !active && e.initial_frame
+        ? { ...e, active: true, frames: [e.initial_frame], loop: false }
+        : { ...e, active };
+    });
+    for (const element of nativePresentationOrder(elements)) {
       const index = nativePresentationFrame(
         element,
         Math.max(0, this.currentTick + (this.offsets.get(element.id) ?? 0)),

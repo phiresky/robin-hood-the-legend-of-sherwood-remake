@@ -11,17 +11,33 @@ export interface NativeShadowKey {
   strength_percent: number;
   pixel_format: "rgb565" | "rgb555";
 }
+export type NativePresentationFrame = NativeImageResource & {
+  offset: [number, number];
+  delay: number;
+  shadow_key?: NativeShadowKey;
+};
+export type NativeBackgroundPhase = "initial" | "forward" | "applied" | "reverse";
+/** Independently restored background regions; overlapping regions require another contract. */
+export interface NativeBackgroundState {
+  id: string;
+  source: { kind: "map-patch" | "mission-patch"; index: number; sha256: string };
+  display_position: [number, number];
+  restore_bounds: [number, number, number, number];
+  definitive: boolean;
+  initial: NativePresentationFrame[];
+  transition: NativePresentationFrame[];
+  final: NativePresentationFrame[];
+  initial_loop: boolean;
+  final_loop: boolean;
+}
 export interface NativePresentationElement {
   id: string;
   source: { kind: "map-animation" | "mission-target"; index: number; sha256: string };
   active: boolean;
   /** Empty frames retain an ordering boundary without claiming its appearance. */
-  frames: (NativeImageResource & {
-    offset: [number, number];
-    delay: number;
-    /** Reserved source pixels darken the destination instead of painting this color. */
-    shadow_key?: NativeShadowKey;
-  })[];
+  frames: NativePresentationFrame[];
+  /** Optional stationary source appearance while the transition row is inactive. */
+  initial_frame?: NativePresentationFrame;
   loop: boolean;
   display_position: [number, number];
   sort_position: [number, number];
@@ -40,6 +56,7 @@ export interface NativeStatePresentationContract {
   background: NativeImageResource;
   origin: [number, number];
   elements: NativePresentationElement[];
+  background_states?: NativeBackgroundState[];
 }
 
 export function validateNativeStatePresentation(
@@ -60,6 +77,33 @@ export function validateNativeStatePresentation(
     uint(r.height) &&
     r.height > 0 &&
     r.width * r.height <= 67108864;
+  const frames = (list: NativePresentationFrame[]) => {
+    if (!Array.isArray(list)) fail("invalid frames");
+    let duration = 0;
+    for (const frame of list) {
+      if (
+        !resource(frame) ||
+        !pair(frame.offset) ||
+        !frame.offset.every(Number.isSafeInteger) ||
+        !uint(frame.delay)
+      )
+        fail("invalid frame");
+      const shadow = frame.shadow_key;
+      if (
+        shadow !== undefined &&
+        (!shadow ||
+          !Array.isArray(shadow.rgb) ||
+          shadow.rgb.length !== 3 ||
+          !shadow.rgb.every((c) => uint(c) && c <= 255) ||
+          !uint(shadow.strength_percent) ||
+          shadow.strength_percent > 100 ||
+          !["rgb565", "rgb555"].includes(shadow.pixel_format))
+      )
+        fail("invalid shadow key");
+      duration += frame.delay + 1;
+      if (!Number.isSafeInteger(duration)) fail("invalid frame duration");
+    }
+  };
   if (!value || typeof value !== "object") fail("missing contract");
   const c = value as NativeStatePresentationContract;
   if (
@@ -113,34 +157,75 @@ export function validateNativeStatePresentation(
       fail("invalid element placement");
     for (let i = 1; i < e.polyline.length; i++)
       if (e.polyline[i]![0] <= e.polyline[i - 1]![0]) fail("display polyline must increase in X");
-    let duration = 0;
-    for (const frame of e.frames) {
-      if (
-        !resource(frame) ||
-        !pair(frame.offset) ||
-        !frame.offset.every(Number.isSafeInteger) ||
-        !uint(frame.delay)
-      )
-        fail("invalid frame");
-      const shadow = frame.shadow_key;
-      if (
-        shadow !== undefined &&
-        (!shadow ||
-          !Array.isArray(shadow.rgb) ||
-          shadow.rgb.length !== 3 ||
-          !shadow.rgb.every((c) => uint(c) && c <= 255) ||
-          !uint(shadow.strength_percent) ||
-          shadow.strength_percent > 100 ||
-          !["rgb565", "rgb555"].includes(shadow.pixel_format))
-      )
-        fail("invalid shadow key");
-      duration += frame.delay + 1;
-      if (!Number.isSafeInteger(duration)) fail("invalid frame duration");
+    frames(e.frames);
+    if (e.initial_frame !== undefined) {
+      if (e.source.kind !== "mission-target") fail("initial appearance requires a mission target");
+      frames([e.initial_frame]);
     }
+  }
+  if (c.background_states !== undefined && !Array.isArray(c.background_states))
+    fail("invalid background states");
+  const regions: NativeBackgroundState[] = [];
+  for (const state of c.background_states ?? []) {
+    if (
+      !state ||
+      typeof state.id !== "string" ||
+      !state.id ||
+      ids.has(state.id) ||
+      !state.source ||
+      !["map-patch", "mission-patch"].includes(state.source.kind) ||
+      !uint(state.source.index) ||
+      !hash(state.source.sha256) ||
+      !pair(state.display_position) ||
+      typeof state.definitive !== "boolean" ||
+      typeof state.initial_loop !== "boolean" ||
+      typeof state.final_loop !== "boolean"
+    )
+      fail("invalid background state binding");
+    ids.add(state.id);
+    const key = `${state.source.kind}:${state.source.index}`;
+    if (sources.has(key)) fail("duplicate background source");
+    sources.add(key);
+    const bounds = state.restore_bounds;
+    if (
+      !Array.isArray(bounds) ||
+      bounds.length !== 4 ||
+      !bounds.every(Number.isSafeInteger) ||
+      bounds[2] <= 0 ||
+      bounds[3] <= 0
+    )
+      fail("invalid restoration bounds");
+    for (const list of [state.initial, state.transition, state.final]) frames(list);
+    if (!state.transition.length) fail("background transition requires source frames");
+    for (const frame of [...state.initial, ...state.transition, ...state.final]) {
+      const x = state.display_position[0] + frame.offset[0],
+        y = state.display_position[1] + frame.offset[1];
+      if (
+        x < bounds[0] ||
+        y < bounds[1] ||
+        x + frame.width > bounds[0] + bounds[2] ||
+        y + frame.height > bounds[1] + bounds[3]
+      )
+        fail("frame outside restoration bounds");
+    }
+    for (const other of regions) {
+      const b = other.restore_bounds;
+      if (
+        bounds[0] < b[0] + b[2] &&
+        b[0] < bounds[0] + bounds[2] &&
+        bounds[1] < b[1] + b[3] &&
+        b[1] < bounds[1] + bounds[3]
+      )
+        fail("overlapping background restoration domains are unsupported");
+    }
+    regions.push(state);
   }
 }
 
-export function nativePresentationFrame(element: NativePresentationElement, tick: number): number {
+export function nativePresentationFrame(
+  element: Pick<NativePresentationElement, "frames" | "loop">,
+  tick: number,
+): number {
   if (!Number.isSafeInteger(tick) || tick < 0) throw new Error("Invalid native preview tick");
   if (!element.frames.length) return -1;
   const duration = element.frames.reduce((sum, frame) => sum + frame.delay + 1, 0);
@@ -151,6 +236,31 @@ export function nativePresentationFrame(element: NativePresentationElement, tick
     remaining -= length;
   }
   throw new Error("Native preview frame duration is inconsistent");
+}
+
+export function nativeBackgroundFrames(
+  state: NativeBackgroundState,
+  phase: NativeBackgroundPhase,
+  tick: number,
+): NativePresentationFrame[] {
+  if (!Number.isSafeInteger(tick) || tick < 0) throw new Error("Invalid background tick");
+  if (!state.transition.length || (phase === "reverse" && state.definitive))
+    throw new Error("Invalid background transition");
+  const duration = state.transition.reduce((sum, frame) => sum + frame.delay + 1, 0);
+  if (phase === "forward" && tick >= duration)
+    return nativeBackgroundFrames(state, "applied", tick - duration);
+  if (phase === "reverse" && tick >= duration)
+    return nativeBackgroundFrames(state, "initial", tick - duration);
+  const choose = (frames: NativePresentationFrame[], loop: boolean) => {
+    const index = nativePresentationFrame({ frames, loop }, tick);
+    return index < 0 ? [] : [frames[index]!];
+  };
+  if (phase === "initial") return choose(state.initial, state.initial_loop);
+  if (phase === "forward") return choose(state.transition, false);
+  if (phase === "reverse") return choose([...state.transition].reverse(), false);
+  if (phase === "applied")
+    return [state.transition.at(-1)!, ...choose(state.final, state.final_loop)];
+  throw new Error("Unknown background phase");
 }
 
 export function nativeElementBehind(polyline: [number, number][], point: [number, number]) {

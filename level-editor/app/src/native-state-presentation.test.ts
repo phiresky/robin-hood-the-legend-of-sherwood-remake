@@ -80,6 +80,67 @@ async function fixture() {
     },
   };
 }
+test("background transition completion, retained terminal art and reset remain independent of target timing", async () => {
+  const f = await fixture();
+  const patch = {
+    integrate_in_background: true,
+    definitive: false,
+    start_animation_valid: false,
+    transition_animation_valid: true,
+    end_animation_valid: false,
+    element_fx: { sprite: { position_x: 0, position_y: 0, elevation: 0 } },
+  };
+  f.source.data.mission_patches = [patch];
+  f.contract.mission_data_sha256 = await missionStateDataHash(f.source.data);
+  const frames = f.contract.elements[0]!.frames;
+  f.contract.background_states = [
+    {
+      id: "receiver",
+      source: { kind: "mission-patch", index: 0, sha256: await missionStateDataHash(patch) },
+      display_position: [0, 0],
+      restore_bounds: [0, 0, 2, 2],
+      definitive: false,
+      initial: [],
+      transition: frames,
+      final: [],
+      initial_loop: false,
+      final_loop: false,
+    },
+  ];
+  const a = new NativeStatePresentation(),
+    b = new NativeStatePresentation();
+  await Promise.all([a.set(f.contract, f.source, f.read), b.set(f.contract, f.source, f.read)]);
+  a.setElementState("sign", false);
+  b.setElementState("sign", false);
+  const rgb = (p: NativeStatePresentation) => Array.from(p.pixels().data.slice(0, 3));
+  assert.deepEqual(rgb(a), [20, 30, 40]);
+  a.setBackgroundState("receiver", "forward");
+  assert.deepEqual(rgb(a), [200, 0, 0]);
+  a.setPlaying(true);
+  a.advance(2 / 25);
+  assert.deepEqual(rgb(a), [0, 200, 0]);
+  a.advance(100 / 25);
+  assert.deepEqual(rgb(a), [0, 200, 0]);
+  assert.deepEqual(rgb(b), [20, 30, 40]);
+  a.setBackgroundState("receiver", "reverse");
+  assert.deepEqual(rgb(a), [0, 200, 0]);
+  a.advance(2 / 25);
+  assert.deepEqual(rgb(a), [200, 0, 0]);
+  a.advance(2 / 25);
+  assert.deepEqual(rgb(a), [20, 30, 40]);
+  a.setBackgroundState("receiver", "applied");
+  a.setElementState("sign", true, 0);
+  assert.deepEqual(rgb(a), [200, 0, 0], "target draws after the retained background");
+  a.setElementState("sign", false);
+  a.setBackgroundState("receiver", "initial");
+  assert.deepEqual(rgb(a), [20, 30, 40], "reset restores the exact original background");
+  const bad = structuredClone(f.contract);
+  bad.background_states![0]!.definitive = true;
+  await assert.rejects(a.set(bad, f.source, f.read), /semantics/);
+  assert.equal(a.ready, false);
+  a.dispose();
+  b.dispose();
+});
 test("source-over clips bounds and treats alpha0 RGB as transparent", () => {
   const target: NativePixels = {
     width: 2,
