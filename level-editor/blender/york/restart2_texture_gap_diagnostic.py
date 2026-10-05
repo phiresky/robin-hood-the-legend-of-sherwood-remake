@@ -7,6 +7,7 @@ ROOT=Path(__file__).resolve().parents[3]
 BASE=ROOT/'level-editor/work/york-refinement/restart2/pair-textures-v1'
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--grazing',action='store_true')
+parser.add_argument('--bounded',action='store_true')
 args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
@@ -19,6 +20,8 @@ from PIL import Image
 for asset,experiment,bake in [('york-market-southeast-tall-narrow-house','experiment-v2-shadow','bake-v2-shadow'),('york-southwest-square-west-house','experiment','bake-v1')]:
     if args.grazing:
         experiment,bake=('experiment-v3-grazing','bake-v3-grazing') if 'tall-narrow' in asset else ('experiment-v2-grazing','bake-v2-grazing')
+    if args.bounded:
+        experiment,bake=('experiment-v4-bounded','bake-v4-bounded') if 'tall-narrow' in asset else ('experiment-v3-bounded','bake-v3-bounded')
     work=BASE/asset;manifest=json.loads((work/experiment/'views.json').read_text())
     bpy.ops.wm.open_mainfile(filepath=str(work/bake/'model.blend'))
     scene=bpy.data.scenes['york Refinement'];bpy.context.window.scene=scene;bpy.context.view_layer.update()
@@ -54,6 +57,6 @@ for asset,experiment,bake in [('york-market-southeast-tall-narrow-house','experi
             rows.append({'view':view['index'],'object':owner[0],'face':owner[1],'red_pixels':count,'normal':list(normals[owner]),
                 'camera_cosines':[normals[owner].dot(Matrix(v['camera_matrix_world']).to_3x3()@Vector((0,0,1))) for v in manifest['views']],
                 'precision':precision[owner]})
-    target=work/bake/('gap-faces-precision.json' if args.grazing else 'gap-faces.json')
+    target=work/bake/('gap-faces-precision.json' if args.grazing or args.bounded else 'gap-faces.json')
     if target.exists():raise FileExistsError(target)
     target.write_text(json.dumps({'asset':asset,'faces':rows,'method':'First target geometry hit at explicitly red coverage pixels; diagnostic only, not source ownership authority.'},indent=2)+'\n');print(target)
