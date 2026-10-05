@@ -80,6 +80,7 @@ def main():
             limitations=['Initial cart pose only; horses, harness, approach, breakup and terminal state excluded.',
                         'Unseen canopy depth and eave height inferred to align with unchanged cart bed; exact support review pending.',
                         'Gray hidden source-unknown surfaces are not texture approved.']))
+        (dest/'derived-recipe').mkdir()
         write_json(dest/'derived-recipe.json',dict(recipe=record_recipe(dest/'derived-recipe',Path(__file__)),preserved_running_gear_exact=True))
     finally:release()
 
