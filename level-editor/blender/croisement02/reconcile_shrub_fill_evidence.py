@@ -41,13 +41,16 @@ def run(destination):
         bindings[str(sheet)] = sha(sheet)
         if review.get('sheet_sha256') != bindings[str(sheet)]:
             errors.append('Actual appearance sheet changed since review')
-        preservation = Path(review['preservation_evidence'])
-        bindings[str(preservation)] = sha(preservation)
-        if review.get('preservation_evidence_sha256') != bindings[str(preservation)]:
-            errors.append('Observed RGB preservation evidence changed')
-        preserved = json.loads(preservation.read_text())
-        if preserved.get('status') != 'PASS':
-            errors.append('Observed RGB preservation is not PASS')
+        if review.get('preservation_evidence'):
+            preservation = Path(review['preservation_evidence'])
+            bindings[str(preservation)] = sha(preservation)
+            if review.get('preservation_evidence_sha256') != bindings[str(preservation)]:
+                errors.append('Observed RGB preservation evidence changed')
+            preserved = json.loads(preservation.read_text())
+            if preserved.get('status') != 'PASS':
+                errors.append('Observed RGB preservation is not PASS')
+        else:
+            errors.append('No explicit observed RGB preservation receipt in selected visual review')
         images = []
         for obj in proofs.get('saved-model-audit.json', {}).get('objects', []):
             for material in obj['used_materials']:
@@ -69,7 +72,7 @@ def run(destination):
     image_names = {re.sub(r'\.\d+$', '', image['name'])
                    for row in rows for image in row['images']}
     image_files = {}
-    for folder in OUT.glob('understory*'):
+    for folder in [*OUT.glob('understory*'),OUT/'restart2-vegetation',OUT/'restart2-fence']:
         for path in folder.rglob('*.png'):
             if path.name not in image_names:
                 continue
