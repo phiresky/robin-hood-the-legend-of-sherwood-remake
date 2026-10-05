@@ -23,7 +23,7 @@ from refinement_inventory import inventory
 
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--mask',type=int,choices=[74,75,76,82],default=75);parser.add_argument('--revision',type=int,default=12);parser.add_argument('--construction',choices=['generic','leaf-path','leaf-curve'],default='generic');args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
+    parser=argparse.ArgumentParser();parser.add_argument('--mask',type=int,choices=[74,75,76,82],default=75);parser.add_argument('--revision',type=int,default=12);parser.add_argument('--construction',choices=['generic','leaf-path','leaf-curve','leaf-thin'],default='generic');args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
     mask=args.mask
     acquire()
     dest = OUT/f'restart2/grass{mask}-volume-v{args.revision}'
@@ -169,8 +169,10 @@ def main():
     rgba.save(source/'complete-source.png');rgba.save(source/'observed-source.png')
     from ground_plant_geometry import build
     generic_report=build(obj,dict(directory=str(source),native_bbox=[x,y,w,h],bbox=[x,y,w,h],native_mask=mask,ground_z=root.z))
-    if args.construction in ('leaf-path','leaf-curve'):
-        if args.construction=='leaf-curve':
+    if args.construction in ('leaf-path','leaf-curve','leaf-thin'):
+        if args.construction=='leaf-thin':
+            from restart2_ground_blades_thin import build as build_blades
+        elif args.construction=='leaf-curve':
             from restart2_ground_blades_curve import build as build_blades
         else:
             from restart2_ground_blades import build as build_blades
