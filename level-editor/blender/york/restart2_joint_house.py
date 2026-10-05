@@ -23,6 +23,7 @@ def main():
     parser.add_argument('--gable-eave', action='store_true')
     parser.add_argument('--extend-left-roof', action='store_true')
     parser.add_argument('--extend-front-eave', action='store_true')
+    parser.add_argument('--gable-bracket', action='store_true')
     parser.add_argument('--fitted-bay-recess', action='store_true')
     parser.add_argument('--retain-lower-doorway', action='store_true')
     parser.add_argument('--projected-doorway-return', action='store_true')
@@ -205,6 +206,20 @@ def main():
                     boundary[key] = (a, b)
         faces += [tuple(i+n for i in reversed(face)) for face in faces.copy()]
         faces += [(a, a+n, b+n, b) for a, b in boundary.values()]
+        if node == 'building-311' and args.gable_bracket:
+            # A closed front-gable bracket meets the unchanged roof underside
+            # along its complete native front edge. Unlike the corner-extension
+            # controls, this cannot deform the broad roof plane into the canopy.
+            low=(580.53876,1475.8519,248.33401-2.5)
+            high=(593.9426,1482.1862,262.91702-2.5)
+            tip_x=565
+            tip_y=low[1]+(tip_x-low[0])*(high[1]-low[1])/(high[0]-low[0])
+            triangle=[(tip_x,tip_y,237.5),low,high]
+            start=len(vertices)
+            for depth in (0,2):
+                vertices.extend((x,-(y-depth)/sine,z/cosine) for x,y,z in triangle)
+            faces.extend(tuple(start+i for i in f) for f in
+                         ((0,1,2),(5,4,3),(0,3,4,1),(1,4,5,2),(2,5,3,0)))
         if node == 'building-309':
             # Hidden body recession is an explicit hypothesis. Follow the roof
             # longitudinal axis so its gable stays under the retained planes.
@@ -316,6 +331,7 @@ def main():
               'gable_eave': args.gable_eave,
               'extend_left_roof': args.extend_left_roof,
               'extend_front_eave': args.extend_front_eave,
+              'gable_bracket': args.gable_bracket,
               'fitted_bay_recess': args.fitted_bay_recess,
               'retain_lower_doorway': args.retain_lower_doorway,
               'projected_doorway_return': args.projected_doorway_return,
