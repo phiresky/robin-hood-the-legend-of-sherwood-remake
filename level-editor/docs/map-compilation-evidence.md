@@ -4,6 +4,30 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Published footbridge deck ownership (2026-10-05)
+
+The reviewed bridge and Leicester terrain definitions are now published through
+the transactional gameplay installer. The review catalog is
+`refinement/catalogs/leicester-footbridge-ownership.json`; backups and exact
+edits are in `work/map-compile/footbridge-ownership-xRp193/publication` and its
+parent directory. Models and placements are unchanged. Leicester and Wychford
+scene references now use the updated descriptor hashes.
+
+`work/map-compile/published-footbridge-lpfyyF` contains fresh exports from those
+published definitions. All ten pinned saved scenes reopen. Leicester's complete
+descriptor equals the staged, tested ownership migration. Both affected maps
+pass native construction (14.01 seconds) and all fifteen compiled controls pass
+apply/reset (13.93 seconds). Wychford has 23 movement areas and 17,478 sight
+obstacles in this uncalibrated descriptor; Leicester has 55 areas and 444 sight
+obstacles. These exports do not update the baked browser ZIP.
+
+Wychford's missing footbridge receiver is resolved. Its remaining physical
+receiver omissions are the southwest edge bank and watermill. The bridge ends
+still warn about unmatched sockets because the current terrain does not meet
+their heights. Leicester's upper socket also has no automatic match: its
+existing controlled drawbridge passages remain the intended connection. Neither
+warning establishes a missing deck or justifies bypassing those passage rules.
+
 ## Staged footbridge navigation ownership migration (2026-10-05)
 
 The fixed bridge's upper neighbour is a stateful drawbridge. Its connection must

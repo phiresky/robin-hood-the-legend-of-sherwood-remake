@@ -34,7 +34,7 @@
       "model": "3d-assets/leicester/leicester-terrain/model.glb",
       "model_sha256": "0312aaaa66c8412e522beffb225b3ef836fe6e07f25c00d9e9c45a961f63f199",
       "descriptor": "3d-assets/leicester/leicester-terrain/asset.json",
-      "descriptor_sha256": "afa58164e4b3d962c1c53d9381659bd02c65a2fa04b92669a860d53cd4d03918"
+      "descriptor_sha256": "112252f21072487f2695b5a3e1d969f3041973318f76e7e7fa43baf5ef429cdf"
     }
   ],
   "assetSources": [
@@ -153,7 +153,7 @@
       "model": "3d-assets/leicester/leicester-east-village-footbridge/model.glb",
       "model_sha256": "0612d8742eff8b8fff4dd72af8e68becdb88ed282ac8144592bf45bdbcb9a822",
       "descriptor": "3d-assets/leicester/leicester-east-village-footbridge/asset.json",
-      "descriptor_sha256": "cdab9703109260b8b914699290b0cdd76a236f6bfe8c7e834170905353218eef",
+      "descriptor_sha256": "e9dedc64c411e97d6bd13a2e48279a38b3e292c9f84b393ac06d2e9bfd2ff66e",
       "id": "leicester-east-village-footbridge"
     },
     {

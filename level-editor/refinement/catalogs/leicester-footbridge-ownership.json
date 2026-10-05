@@ -1,0 +1,77 @@
+{
+  "description": "Asset-owned sloping deck; terrain relinquishes the old deck footprint and supplies a lower-end socket. Controlled drawbridge passages remain separate.",
+  "assets": [
+    {
+      "asset": "leicester-east-village-footbridge",
+      "descriptor": "3d-assets/leicester/leicester-east-village-footbridge/asset.json",
+      "descriptorSha256": "cdab9703109260b8b914699290b0cdd76a236f6bfe8c7e834170905353218eef",
+      "publishedDescriptorSha256": "e9dedc64c411e97d6bd13a2e48279a38b3e292c9f84b393ac06d2e9bfd2ff66e",
+      "surfaces": [
+        {
+          "id": "bridge-deck",
+          "node": "building-385",
+          "navigationRegion": "bridge-deck",
+          "navigationJoins": [
+            [
+              [
+                -35.802521093749874,
+                62.00771738141805,
+                57.00000810020084
+              ],
+              [
+                -74.5039210937498,
+                29.310367381418132,
+                57.00000810020084
+              ]
+            ],
+            [
+              [
+                42.36347890624984,
+                -62.22045261858193,
+                7.0000051002008385
+              ],
+              [
+                76.2775789062498,
+                -33.5676826185819,
+                7.0000051002008385
+              ]
+            ]
+          ],
+          "navigationJoinHeightTolerance": 0.01,
+          "navigationJoinMinimumOverlap": 12,
+          "preserveMovementBoundary": true
+        }
+      ]
+    },
+    {
+      "asset": "leicester-terrain",
+      "descriptor": "3d-assets/leicester/leicester-terrain/asset.json",
+      "descriptorSha256": "afa58164e4b3d962c1c53d9381659bd02c65a2fa04b92669a860d53cd4d03918",
+      "publishedDescriptorSha256": "112252f21072487f2695b5a3e1d969f3041973318f76e7e7fa43baf5ef429cdf",
+      "surfaces": [
+        {
+          "id": "ground-section-0-0-deck-cut-0",
+          "node": "$root",
+          "navigationRegion": "ground-section-0",
+          "navigationJoins": [
+            [
+              [
+                2286.1155138015747,
+                828.0941152572632,
+                0
+              ],
+              [
+                2254.3375997543335,
+                801.246129989624,
+                0
+              ]
+            ]
+          ],
+          "navigationJoinHeightTolerance": 0.01,
+          "navigationJoinMinimumOverlap": 12,
+          "preserveMovementBoundary": true
+        }
+      ]
+    }
+  ]
+}

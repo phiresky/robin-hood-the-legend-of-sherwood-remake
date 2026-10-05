@@ -43,19 +43,22 @@ this attachment change.
 The woodland bank now publishes a bounded terrain attachment. Leicester's compiled
 geometry is unchanged; both Wychford copies bind, with 74 sampled actor crossings
 across 37 affected receiver pairs passing. Twelve new placements bind and four
-out-of-reach cases reject. Three physical-receiver omissions remain: the footbridge,
-edge bank and watermill. The latest baked ZIP predates this change too.
+out-of-reach cases reject. Following the footbridge publication below, two physical
+receiver omissions remain in Wychford: the edge bank and watermill. The latest
+baked ZIP predates these changes.
 
-The published east-village footbridge has a modeled sloping deck but no asset-owned
-walkable surface. A staged candidate supplies its deck and both end sockets and
+The published east-village footbridge now owns its sloping walkable deck and both
+end sockets. It
 passes 30 directed native actor routes across new terrain landings at five
 rotations, including complete bridge crossings. It rejects raised, mismatched
-landings. The staged Leicester ownership migration preserves doors, controls and
+landings. The published Leicester ownership migration preserves doors, controls and
 sight obstacles exactly, passes its lower actor crossing and removes the old
 walking footprint when the bridge moves. Its upper neighbour remains connected
-through controlled drawbridge passages. Publication and scene-pin refresh remain
-pending; Wychford's current bridge ends also
-sit above their terrain receivers and require appropriate landings or placement.
+through controlled drawbridge passages. Scene pins are refreshed and all ten maps
+reopen. Fresh exports from the published definitions pass native construction and
+all fifteen control apply/reset checks across Leicester and Wychford. Wychford's
+current bridge ends sit above their terrain receivers and still require appropriate
+landings or placement; the new deck does not silently bridge those height gaps.
 
 Sloped asset sockets now connect to authored terrain using the shared edge's
 heights, avoiding false rejection from an offset height probe. Matching and
