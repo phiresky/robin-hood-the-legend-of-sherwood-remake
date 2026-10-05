@@ -803,6 +803,8 @@ mod tests {
             serde_json::from_value(document["asset_geometry"].clone()).unwrap();
         for lift_type in [0, 1] {
             geometry.lifts[0].lift_type = lift_type;
+            // Physical stairs intentionally omit projected crossing lines.
+            geometry.lifts[0].physical_navigation = None;
             let lines = derive(&geometry).unwrap();
             assert_eq!(lines.len(), 2);
             for (layers, receivers) in [

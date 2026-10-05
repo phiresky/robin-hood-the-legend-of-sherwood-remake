@@ -3210,6 +3210,30 @@ test("sloped asset placement transforms the height plane without mission content
   assert.ok(Math.max(...surface.points.map((p) => p.z_top)) > 129);
 });
 
+test("fractional landing holes retain exact collision contours and grid identities", () => {
+  const { document, assets, hut } = slopedAssetCompilerFixture();
+  hut.gameplay!.surfaces[0]!.height = 100;
+  hut.gameplay!.surfaces[0]!.preserveMovementPrecision = true;
+  for (const point of hut.gameplay!.surfaces[0]!.holes![0]!) {
+    point[0] += 0.25;
+    point[1] += 0.25;
+  }
+  const result = compileAssetGameplay(document, assets, bounds);
+  const obstacles = result.motion_data.layers.flatMap((layer) =>
+    layer.flatMap((area) => area.obstacles),
+  );
+  const hole = obstacles.find((obstacle) =>
+    obstacle.precise_polygon?.some((point) => point.some((v) => v % 1 === 0.25)),
+  );
+  assert.ok(hole?.precise_polygon);
+  assert.equal(hole.state_id, 0);
+  const sorted = (points: number[][]) => points.map((p) => p.join(",")).sort();
+  assert.deepEqual(
+    sorted(hole.precise_polygon.map((point) => point.map(Math.round))),
+    sorted(hole.polygon.points),
+  );
+});
+
 test("non-planar and degenerate surfaces fail instead of silently flattening", () => {
   const { document, assets, hut } = slopedAssetCompilerFixture();
   hut.gameplay!.surfaces[0]!.height = [0, 100, 110, 0];

@@ -18,6 +18,8 @@ export interface NavigationPiece {
   polygon: Point[];
   /** Source-clipped outer receiving boundary that rounds to this navigation piece. */
   receivingPolygon?: Point[];
+  /** Unrounded hole contours, matched to final obstacles before export. */
+  preciseBlockers?: Point[][];
   blockers: Point[][];
 }
 export interface NavigationRegion {

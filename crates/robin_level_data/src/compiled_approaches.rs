@@ -364,6 +364,9 @@ mod tests {
             let mut geometry: CompiledAssetGeometry =
                 serde_json::from_value(document["asset_geometry"].clone()).unwrap();
             geometry.lifts[0].lift_type = kind;
+            // This fixture also carries stair-only world navigation; climbing
+            // exercises the projected approach derivation instead.
+            geometry.lifts[0].physical_navigation = None;
             let high_inside = geometry.lifts[0].doors[1].point_in;
             derive(&mut geometry);
             let low = &geometry.lifts[0].doors[0];

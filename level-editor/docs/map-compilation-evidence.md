@@ -4,6 +4,51 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Preserve exact landing-hole collision contours (2026-10-06)
+
+Compiled motion obstacles can now carry a `precise_polygon` in projected
+coordinates. The compiler retains a uniquely matching unrounded hole contour;
+the loader requires a finite simple polygon with the same integer-grid footprint.
+Grid validation removes exactly collinear vertices and collapsed backtracking
+spikes, matching movement quantization. Unrelated and self-intersecting contours
+reject. Physical landing binding unprojects the exact contour and clips it to
+the supported landing while retaining the same obstacle index and state word.
+Ordinary navigation topology and sector numbering are unchanged.
+Hole candidates are indexed once per surface group and matched by rounded bounds
+before polygon comparison. Optimized placement batch `local-stair-placements-E9TZAB`
+is exactly equal to the native-tested descriptors below.
+
+Church placement batch `local-stair-placements-Zcx280`, built from the unpublished
+`local-stair-seams-qCEECD` asset candidate, passes **32/32 directed native routes**
+at four rotations and two elevations, up from 24/32. All eight control apply/reset
+checks pass and eight raised external approaches still reject. This fixes the
+rounded-hole obstruction without deleting collision or adding an asset clearance.
+The candidate's incomplete mesh coverage remains unresolved; no asset is published
+by this change and the library anchor audit remains 42/53 unsupported definitions.
+
+Regression checks cover exact seam contact, real landing collision/state identity,
+invalid contours, fractional hole export and collapsed grid spikes. The 126
+affected editor tests, both typechecks, 15 stair-navigation tests and 191 movement
+tests pass (12 movement tests ignored). Two older projected-navigation tests now
+explicitly clear the fixture's physical-stair metadata before checking projected
+climb approaches and crossing lines; the level-data suite passes 82 tests with
+eight ignored, including the optional exported-descriptor validator. That validator
+also passes against the refreshed grid-terrain fixture. Four native fixture files
+are refreshed with exact obstacle metadata only; every other descriptor field is
+checked unchanged before regeneration.
+
+Fresh saved-scene batch `saved-map-exports-OpI9ci` compiles all ten scenes and
+passes native engine construction plus all 71 control apply/reset checks.
+Derby also retains 28/28 passing directed stair routes. The full editor suite
+passes 835 tests with two skipped after refreshing the four fixtures.
+`refinement/check-saved-map-exports.mjs` reproduces this check's descriptor inputs
+from saved editor scenes and pinned assets, including terrain and spline walls.
+Wychford takes 208 seconds in this run alongside the game build; other maps take
+0.15–4.01 seconds. This remains a descriptor check, not a fresh baked ZIP or full
+rendered gameplay verification.
+The final game build, editor production build, workspace Rust formatting and
+focused editor lint/format checks pass.
+
 ## Church upper landing collision isolation (2026-10-05)
 
 The unpublished clearance experiment `church-stair-clearance-Omgdxv` adds only

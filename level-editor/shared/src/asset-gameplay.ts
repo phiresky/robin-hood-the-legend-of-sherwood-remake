@@ -352,7 +352,7 @@ export interface CompiledAssetGeometry {
       polygon: { points: Point[] };
       skeleton_segments: never[];
       flags: number;
-      obstacles: { state_id: number; polygon: { points: Point[] } }[];
+      obstacles: { state_id: number; polygon: { points: Point[] }; precise_polygon?: Point[] }[];
     }[][];
     graph_bytes: never[];
   };

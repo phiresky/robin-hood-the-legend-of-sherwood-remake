@@ -112,6 +112,35 @@ function ring(points: Point[], label = "Gameplay polygon", minimumArea = 0.5): P
   return result;
 }
 const polygon = (points: Point[]): Polygon => [[...points, points[0]!]];
+function motionBoundsKey(points: Point[]): string {
+  let minX = Infinity,
+    minY = Infinity,
+    maxX = -Infinity,
+    maxY = -Infinity;
+  for (const [x, y] of points) {
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+  }
+  return `${minX},${minY},${maxX},${maxY}`;
+}
+function indexPreciseBlockers(contours: Point[][]) {
+  const index = new Map<string, { exact: Point[]; rounded: Point[] }[]>();
+  for (const contour of contours) {
+    const exact = simplifyMotionRing(contour, 2 / 1048576);
+    if (!exact.some((point) => point.some((v) => v !== Math.round(v)))) continue;
+    const rounded = simplifyMotionRing(
+      exact.map(([x, y]): Point => [Math.round(x), Math.round(y)]),
+    );
+    if (rounded.length < 3) continue;
+    const key = motionBoundsKey(rounded);
+    const bucket = index.get(key) ?? [];
+    bucket.push({ exact, rounded });
+    index.set(key, bucket);
+  }
+  return index;
+}
 function instances(
   document: Level3D,
   descriptors: ReadonlyMap<string, ProjectionAssetDescriptor>,
@@ -1532,6 +1561,7 @@ function compileAssetGameplayAttempt(
       : merged.flatMap((region) =>
           normalizeGeneratedMotion([region], `Movement layer ${layer}`, warnings),
         );
+    const preciseHoles = indexPreciseBlockers(merged.flatMap((candidate) => candidate.slice(1)));
     for (const poly of normalized) {
       if (wallCuts.length && narrowMovementRing(poly[0]!)) {
         warnings.push(
@@ -1582,6 +1612,11 @@ function compileAssetGameplayAttempt(
         navigationRegion,
         polygon: boundary,
         ...(receivingBoundary ? { receivingPolygon: receivingBoundary } : {}),
+        preciseBlockers: blockers.flatMap((points) =>
+          (preciseHoles.get(motionBoundsKey(points)) ?? [])
+            .filter(({ rounded }) => polygonClipping.xor([rounded], [points]).length === 0)
+            .map(({ exact }) => exact),
+        ),
         blockers,
       });
     }
@@ -1697,6 +1732,9 @@ function compileAssetGameplayAttempt(
           sector,
           changing_obstacle: pair,
         });
+    const preciseBlockers = indexPreciseBlockers(
+      pieces.flatMap((piece) => piece.preciseBlockers ?? []),
+    );
     layers[layer]!.push(
       physical?.area ?? {
         is_lift: !!lift,
@@ -1705,7 +1743,16 @@ function compileAssetGameplayAttempt(
         skeleton_segments: [],
         flags: 0,
         obstacles: [
-          ...blockers.map((points) => ({ state_id: 0, polygon: { points } })),
+          ...blockers.map((points) => {
+            const candidates = (preciseBlockers.get(motionBoundsKey(points)) ?? []).filter(
+              ({ rounded }) => polygonClipping.xor([rounded], [points]).length === 0,
+            );
+            return {
+              state_id: 0,
+              polygon: { points },
+              ...(candidates.length === 1 ? { precise_polygon: candidates[0]!.exact } : {}),
+            };
+          }),
           ...changing.obstacles,
         ],
       },

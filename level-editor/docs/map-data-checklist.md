@@ -118,12 +118,14 @@ Sherwood 1/1 and York 16/16. All audited floors are planar. This checks local
 definitions, not placed connectivity or actual route failures; corrections and
 moved/rotated native traversal checks remain necessary across these assets.
 The first church-side tower candidate emits both physical flights at eight
-placements but passes only 24/32 routes; the upper flight fails at 0/90 degrees.
-Its landing review also finds incomplete mesh coverage, so it remains unpublished.
-An added landing clearance does not fix these failures. A diagnostic that moves
-the upper landing's hole blocker away passes all four zero-degree routes, isolating
-that blocker; preserving precise inner boundaries still needs implementation and
-verification without removing real holes. The diagnostic floor is not publishable.
+placements. It initially passed only 24/32 routes because rounded landing-hole
+boundaries blocked the upper flight at 0/90 degrees. The compiler now retains
+matching precise hole contours; native loading validates their grid footprint and
+physical landing collision preserves their obstacle identities and live states.
+All 32/32 routes and eight control apply/reset checks now pass, and eight raised
+external approaches still reject. The landing review still finds incomplete mesh
+coverage, so the asset corrections remain unpublished. The earlier diagnostic
+that removed the blocker is not a publishable floor definition.
 Landing mesh checks now include other components in the same asset, since the
 visible floor and receiving surface can belong to different parts.
 The east hall's upper stair now has published floor/landing seam corrections and
@@ -216,7 +218,9 @@ invented across that gap. New drops use the correct foundation height. Native
 mouse queries also now reject loaded movement-obstacle interiors. These focused
 checks do not establish every platform route or complete asset coverage.
 
-Latest validation (2026-10-05): 745 editor tests passed, two skipped; the game
+Latest editor validation (2026-10-06): 835 tests passed, two skipped. Fresh
+descriptors for all ten saved scenes pass native loading and all 71 control
+apply/reset checks; Derby retains 28/28 stair routes. The game
 build and native stair/control checks passed. Wychford loads with its spline wall
 and passes control apply/reset. The terrain-junction correction passes the
 synthetic four-triangle fan, all 48 crossings in the reduced Wychford case, and

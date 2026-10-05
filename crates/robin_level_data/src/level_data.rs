@@ -1256,6 +1256,72 @@ pub struct SectorPolygon {
 pub struct RawMotionObstacle {
     pub state_id: u32,
     pub polygon: SectorPolygon,
+    /// Exact projected contour for physical landing collision. Its rounded
+    /// footprint must equal the integer polygon; obstacle identity stays shared.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub precise_polygon: Vec<[f64; 2]>,
+}
+
+impl RawMotionObstacle {
+    pub fn validate_precise_polygon(&self) -> Result<(), String> {
+        use geo::{Area, BooleanOps, Validation};
+        if self.precise_polygon.is_empty() {
+            return Ok(());
+        }
+        if self.precise_polygon.len() < 3
+            || self.precise_polygon.iter().flatten().any(|v| {
+                !v.is_finite() || *v < f64::from(i16::MIN) - 0.5 || *v >= f64::from(i16::MAX) + 0.5
+            })
+        {
+            return Err(
+                "precise motion obstacle needs a finite contour within the movement grid".into(),
+            );
+        }
+        let polygon = |points: Vec<(f64, f64)>| geo::Polygon::new(points.into(), vec![]);
+        let exact = polygon(self.precise_polygon.iter().map(|&[x, y]| (x, y)).collect());
+        let mut grid_points = self
+            .precise_polygon
+            .iter()
+            .map(|&[x, y]| ((x + 0.5).floor(), (y + 0.5).floor()))
+            .collect::<Vec<_>>();
+        // Grid rounding can collapse a narrow corner into a zero-width spike.
+        // Remove only exactly collinear grid vertices, as the compiler does.
+        loop {
+            if grid_points.len() < 3 {
+                return Err("precise motion obstacle collapses on the grid".into());
+            }
+            let redundant = (0..grid_points.len()).find(|&i| {
+                let a = grid_points[(i + grid_points.len() - 1) % grid_points.len()];
+                let b = grid_points[i];
+                let c = grid_points[(i + 1) % grid_points.len()];
+                (b.0 - a.0) * (c.1 - b.1) == (b.1 - a.1) * (c.0 - b.0)
+            });
+            let Some(index) = redundant else {
+                break;
+            };
+            grid_points.remove(index);
+        }
+        let rounded = polygon(grid_points);
+        let raw = polygon(
+            self.polygon
+                .points
+                .iter()
+                .map(|&(x, y)| (f64::from(x), f64::from(y)))
+                .collect(),
+        );
+        exact
+            .check_validation()
+            .map_err(|error| format!("invalid precise motion obstacle: {error:?}"))?;
+        rounded
+            .check_validation()
+            .map_err(|error| format!("invalid rounded precise motion obstacle: {error:?}"))?;
+        raw.check_validation()
+            .map_err(|error| format!("invalid motion obstacle: {error:?}"))?;
+        if exact.unsigned_area() == 0.0 || rounded.xor(&raw).unsigned_area() != 0.0 {
+            return Err("precise motion obstacle does not match its grid contour".into());
+        }
+        Ok(())
+    }
 }
 
 /// A motion area (walkable polygon + skeleton + obstacles).
@@ -2715,6 +2781,7 @@ impl LoadedLevel {
             .iter()
             .filter(|volume| volume.motion_blocking)
             .map(|volume| RawMotionObstacle {
+                precise_polygon: Vec::new(),
                 // Static authored geometry is active in every state.
                 state_id: 0,
                 polygon: SectorPolygon {
@@ -2922,6 +2989,9 @@ impl LoadedLevel {
                         return Err("invalid compiled asset motion area".into());
                     }
                     area_refs.insert((sector, layer as u16));
+                    for obstacle in &area.obstacles {
+                        obstacle.validate_precise_polygon()?;
+                    }
                     motion_area_indices.insert(sector, (layer, area_index));
                     motion_states.insert(
                         (sector, layer as u16),
@@ -3851,6 +3921,7 @@ fn read_motion_data(
                 let obs_state_id = reader.read_u32()?;
                 let obs_polygon = read_sector_polygon(reader, format)?;
                 obstacles.push(RawMotionObstacle {
+                    precise_polygon: Vec::new(),
                     state_id: obs_state_id,
                     polygon: obs_polygon,
                 });
@@ -5964,6 +6035,45 @@ fn read_archery_sectors(
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    #[ignore = "requires ROBIN_COMPILED_GEOMETRY pointing to an exported descriptor"]
+    fn exported_precise_motion_obstacles_validate() {
+        let bytes = fs::read(std::env::var("ROBIN_COMPILED_GEOMETRY").unwrap()).unwrap();
+        LoadedLevel::hackable_from_json(&bytes).unwrap();
+    }
+
+    #[test]
+    fn precise_obstacles_require_the_same_grid_footprint() {
+        let mut obstacle = RawMotionObstacle {
+            state_id: 4,
+            polygon: SectorPolygon {
+                points: vec![(0, 0), (10, 0), (10, 10), (0, 10)],
+            },
+            precise_polygon: vec![[-0.5, 0.25], [10.25, 0.25], [10.25, 10.25], [-0.5, 10.25]],
+        };
+        obstacle.validate_precise_polygon().unwrap();
+        assert_eq!(obstacle.state_id, 4);
+        let mut spike = obstacle.clone();
+        spike.precise_polygon = vec![
+            [0.1, 0.1],
+            [10.1, 0.1],
+            [10.1, 10.1],
+            [5.3, 10.1],
+            [5.2, 12.1],
+            [5.1, 10.1],
+            [0.1, 10.1],
+        ];
+        spike.validate_precise_polygon().unwrap();
+        obstacle.precise_polygon[0][0] = -0.501;
+        assert!(obstacle.validate_precise_polygon().is_err());
+        obstacle.precise_polygon[0][0] = f64::NAN;
+        assert!(obstacle.validate_precise_polygon().is_err());
+        obstacle.precise_polygon = vec![[0., 0.], [10., 10.], [10., 0.], [0., 10.]];
+        assert!(obstacle.validate_precise_polygon().is_err());
+        obstacle.precise_polygon.clear();
+        obstacle.validate_precise_polygon().unwrap();
+    }
 
     #[test]
     fn compiled_scenery_animations_preserve_placement_and_display_rules() {

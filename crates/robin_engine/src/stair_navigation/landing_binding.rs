@@ -113,6 +113,52 @@ mod tests {
             .unwrap();
         assert!(stair.supports_landing_neighbour(0, 0, [400., 300.125, 100.]));
         assert!(!stair.supports_landing_neighbour(0, 0, [400., 300.5, 100.]));
+        let mut with_hole = motion.clone();
+        with_hole.obstacles.push(
+            serde_json::from_value(serde_json::json!({
+                "state_id": 2,
+                "polygon": {"points": [[390,200],[410,200],[410,210],[390,210]]}
+            }))
+            .unwrap(),
+        );
+        let mut bound = stair.clone();
+        bound.landings.clear();
+        bound
+            .bind_landing(0, &with_hole, 0, 0, 0, [0., 0., 100.], Some(&receiver))
+            .unwrap();
+        assert_eq!(
+            bound.landings[0].obstacles.len(),
+            1,
+            "rounded hole overlaps the seam"
+        );
+        with_hole.obstacles[0].precise_polygon = vec![
+            [390., 200.25],
+            [410., 200.25],
+            [410., 210.25],
+            [390., 210.25],
+        ];
+        bound.landings.clear();
+        bound
+            .bind_landing(0, &with_hole, 0, 0, 0, [0., 0., 100.], Some(&receiver))
+            .unwrap();
+        assert!(
+            bound.landings[0].obstacles.is_empty(),
+            "exact hole starts beyond the seam"
+        );
+        // Real landing collision keeps its index and live state after clipping.
+        for point in &mut with_hole.obstacles[0].polygon.points {
+            point.1 -= 10;
+        }
+        for point in &mut with_hole.obstacles[0].precise_polygon {
+            point[1] -= 10.;
+        }
+        bound.landings.clear();
+        bound
+            .bind_landing(0, &with_hole, 0, 0, 0, [0., 0., 100.], Some(&receiver))
+            .unwrap();
+        assert_eq!(bound.landings[0].obstacles.len(), 1);
+        assert_eq!(bound.landings[0].obstacles[0].motion_obstacle, 0);
+        assert_eq!(bound.landings[0].obstacles[0].state, 2);
         for degrees in [37.0_f64, 90., 180., 270.] {
             let (sin, cos) = degrees.to_radians().sin_cos();
             let transform = |[x, y]: [f32; 2]| {
@@ -481,7 +527,19 @@ impl BoundPhysicalStair {
             |line: &LineString<f32>| line.points().map(|p| [p.x(), p.y()]).collect::<Vec<_>>();
         let mut obstacles = Vec::new();
         for (index, obstacle) in motion.obstacles.iter().enumerate() {
-            for clipped in unproject(&obstacle.polygon.points)?.intersection(support) {
+            obstacle.validate_precise_polygon()?;
+            let collision = if obstacle.precise_polygon.is_empty() {
+                unproject(&obstacle.polygon.points)?
+            } else {
+                polygon(
+                    &obstacle
+                        .precise_polygon
+                        .iter()
+                        .map(|&[x, y]| [x as f32, ((y + a * x + c) / (1.0 - b)) as f32])
+                        .collect::<Vec<_>>(),
+                )?
+            };
+            for clipped in collision.intersection(support) {
                 if !clipped.interiors().is_empty() {
                     return Err(
                         "landing collision clipping produced an unsupported holed solid".into(),
