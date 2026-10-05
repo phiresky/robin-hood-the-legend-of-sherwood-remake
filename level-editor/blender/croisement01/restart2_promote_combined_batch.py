@@ -15,8 +15,15 @@ def main():
     full_path=stage/revision/'result.json';full=read(full_path)
     assert full['status']=='PASS' and full['mapGroups']==59 and full['mapParts']==94
     config=read(stage/revision/'config.json')
+    assert full['filesHashVerified']==len(config['files'])
+    assert set(full['insertedAssets'])=={a['id'] for a in config['expected']['assets']}
+    assert len(full['selectionChecks'])==config['expected']['groups']
+    checker_path=stage/revision/'checker-provenance.json'
+    for path,digest in read(checker_path).items():assert sha(ROOT/path)==digest,path
     for path,digest in config['protected_live_files'].items():assert sha(Path(path))==digest,path
     proof=read(stage/'scene-splice-proof.json');partition=read(R/'group061-partition-v1/proof.json')
+    assert sha(stage/'croisement01.rhlos-map.json')==proof['staged_scene_sha256']
+    assert next(f['sha256'] for f in config['files'] if f['path']=='scenes/croisement01.rhlos-map.json')==proof['staged_scene_sha256']
     cases={'tree21':'croisement01-tree-21','tree22':'croisement01-tree-22','stump65':'croisement01-southwest-cut-stump','stump66':'croisement01-south-cut-stump'}
     assert set(cases.values())<=set(full['insertedAssets'])
     for kind,asset in cases.items():
@@ -70,6 +77,6 @@ def main():
     temp=index.with_name('.index-croisement01-combined.json');write(temp,updated);os.replace(temp,index)
     temp=scene.with_name('.croisement01-combined.json');shutil.copy2(stage/scene.name,temp);os.replace(temp,scene)
     assert sha(scene)==proof['staged_scene_sha256']
-    write(stage/'publication.json',dict(status='installed; bounded live proof pending',scene_sha256=sha(scene),index_sha256=sha(index),published_files=installed,private_full_editor=dict(path=str(full_path),sha256=sha(full_path)),backup=str(backup),unchanged_other_placements=proof['unchanged_other_placements'],unrelated_palette_entries_preserved=len(before['assets'])-1,protected_existing_asset_files=len(protected),scope=proof['scopes']))
+    write(stage/'publication.json',dict(status='installed; bounded live proof pending',scene_sha256=sha(scene),index_sha256=sha(index),published_files=installed,private_full_editor=dict(path=str(full_path),sha256=sha(full_path),config_sha256=sha(stage/revision/'config.json'),checker_provenance_sha256=sha(checker_path)),backup=str(backup),unchanged_other_placements=proof['unchanged_other_placements'],unrelated_palette_entries_preserved=len(before['assets'])-1,protected_existing_asset_files=len(protected),scope=proof['scopes']))
     print(stage/'publication.json')
 if __name__=='__main__':main()
