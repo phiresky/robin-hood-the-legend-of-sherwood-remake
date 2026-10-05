@@ -1,5 +1,12 @@
 # Post-port Features
 
+- **Physical clearances on shared navigation planes.** Asset receiver anchors and
+  movement clearances may specify a local `navigationHeight` independently of the
+  physical footprint's height. Projection happens after placement, so raised
+  platforms keep their openings when rotated. Clearances remain limited to their
+  own asset's collision and do not create floors. Spline deformation reports
+  separate clearance heights as unsupported instead of silently changing them.
+
 - **Asset placement ground height.** An optional asset-local
   `gameplay.placementGroundHeight` aligns new drops with terrain at a reviewed
   entrance/ground elevation, allowing foundations below that elevation. Assets

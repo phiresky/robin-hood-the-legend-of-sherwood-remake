@@ -9,6 +9,8 @@ export interface AssetWalkableSurface {
   polygon: Point[];
   /** Constant height or one height per polygon vertex; the surface must be planar. */
   height: number | number[];
+  /** Clearances only: match collision on this local plane while projecting the authored footprint at its physical height. */
+  navigationHeight?: number;
   /** Transition blockers may follow terrain within these finite vertical offsets from their plane. */
   terrainReach?: { below: number; above: number };
   /** Generate reusable long-jump ledges and landing bands from this surface after placement. */
@@ -161,8 +163,10 @@ export interface AssetGameplay {
     id: string;
     node: string;
     volume: string;
-    /** Local unblocked navigation anchor; its elevation belongs to the target walking plane. */
+    /** Local navigation anchor, or physical anchor when navigationHeight supplies the walking plane. */
     anchor: [number, number, number];
+    /** Project the physical anchor onto this local navigation plane after placement. */
+    navigationHeight?: number;
     /** Optional finite local reach selecting navigation beneath the physical receiver. */
     receiverSegment?: [[number, number, number], [number, number, number]];
   }[];
@@ -1002,6 +1006,11 @@ export function validateAssetGameplay(
   for (const receiver of data.projectionReceivers ?? []) {
     feature(receiver);
     if (
+      receiver.navigationHeight !== undefined &&
+      (!Number.isFinite(receiver.navigationHeight) || receiver.receiverSegment !== undefined)
+    )
+      fail(`invalid projection navigation height ${receiver.id}`);
+    if (
       receiver.receiverSegment !== undefined &&
       (!Array.isArray(receiver.receiverSegment) ||
         receiver.receiverSegment.length !== 2 ||
@@ -1070,6 +1079,11 @@ export function validateAssetGameplay(
   ]) {
     feature(surface);
     polygon(surface.polygon);
+    if (
+      surface.navigationHeight !== undefined &&
+      (!Number.isFinite(surface.navigationHeight) || !data.movementClearances?.includes(surface))
+    )
+      fail(`invalid clearance navigation height on ${surface.id}`);
     if (surface.terrainReach !== undefined) {
       const reach = surface.terrainReach;
       if (

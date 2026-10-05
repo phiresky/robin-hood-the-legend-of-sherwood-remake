@@ -2,7 +2,7 @@ import test from "node:test";
 
 import assert from "node:assert/strict";
 import { compileAssetGameplay } from "./compile-asset-gameplay.ts";
-import { validateAssetGameplay } from "./asset-gameplay.ts";
+import { validateAssetGameplay, type AssetWalkableSurface } from "./asset-gameplay.ts";
 import { createTerrainGrid } from "./authored-terrain.ts";
 import { IDENTITY_TRANSFORM } from "./level3d.ts";
 import {
@@ -572,6 +572,98 @@ test("physical receiver anchors reject dangling and conflicting ownership", () =
     () => compileAssetGameplay(document, assets, bounds),
     /invalid projection receiver/,
   );
+});
+
+test("physical clearances project after rotation onto their authored navigation plane", () => {
+  for (const rotation of [0, 37, 45, 90, 137, 225, 315]) {
+    for (const elevation of [0, 60]) {
+      const { document, assets, hut } = anchoredReceiverCompilerFixture();
+      const gameplay = hut.gameplay!;
+      const part = hut.parts[0]!;
+      const receiver = gameplay.projectionReceivers![0]!;
+      receiver.anchor = [50, 50, 25];
+      receiver.navigationHeight = 0;
+      gameplay.movementSolids = [part.node];
+      gameplay.movementClearances = [
+        {
+          id: "deck-clearance",
+          node: part.node,
+          polygon: part.obstacle_local_game!.points.map(({ x, y }) => [x, y]),
+          height: part.obstacle_local_game!.points.map(({ z_top }) => z_top),
+          navigationHeight: 0,
+        },
+      ];
+      gameplay.doors = [
+        {
+          id: "deck-passage",
+          node: part.node,
+          polygon: [],
+          outside: [25, 70, 12.5],
+          inside: [75, 70, 37.5],
+          middle: [50, 70, 25],
+          type: 0,
+          locked: false,
+          unlockable: false,
+          allowContinuous: true,
+        },
+      ];
+      document.objects[0]!.transform.rot_deg = rotation;
+      for (const object of document.objects) object.transform.dz = elevation;
+      const compiled = compileAssetGameplay(document, assets, bounds);
+      assert.deepEqual(compiled.sight_obstacles[0]!.projection_area, [0, 0]);
+      assert.equal(compiled.doors.length, 0);
+      assert.ok(compiled.motion_data.layers[0]![0]!.obstacles.length > 0);
+      gameplay.movementClearances[0]!.holes = [
+        [
+          [20, 65],
+          [30, 65],
+          [30, 75],
+          [20, 75],
+        ],
+      ];
+      assert.throws(() => compileAssetGameplay(document, assets, bounds), /outside must resolve/);
+      delete gameplay.movementClearances[0]!.holes;
+      document.objects[1]!.transform.dz += 1;
+      assert.throws(
+        () => compileAssetGameplay(document, assets, bounds),
+        /navigation anchor must resolve/,
+      );
+    }
+  }
+});
+
+test("navigation-plane overrides reject invalid heights and unrelated feature kinds", () => {
+  const { hut } = anchoredReceiverCompilerFixture();
+  const gameplay = hut.gameplay!;
+  const receiver = gameplay.projectionReceivers![0]!;
+  receiver.navigationHeight = NaN;
+  assert.throws(() => validateAssetGameplay(gameplay, hut), /projection navigation height/);
+  receiver.navigationHeight = 0;
+  receiver.receiverSegment = [
+    [50, 50, -10],
+    [50, 50, 10],
+  ];
+  assert.throws(() => validateAssetGameplay(gameplay, hut), /projection navigation height/);
+  delete receiver.receiverSegment;
+  const clearance: AssetWalkableSurface = {
+    id: "opening",
+    node: hut.parts[0]!.node,
+    polygon: [
+      [0, 0],
+      [100, 0],
+      [100, 100],
+      [0, 100],
+    ],
+    height: 30,
+    navigationHeight: Infinity,
+  };
+  gameplay.movementClearances = [clearance];
+  assert.throws(() => validateAssetGameplay(gameplay, hut), /clearance navigation height/);
+  clearance.navigationHeight = 0;
+  validateAssetGameplay(gameplay, hut);
+  gameplay.movementClearances = [];
+  gameplay.surfaces = [clearance];
+  assert.throws(() => validateAssetGameplay(gameplay, hut), /clearance navigation height/);
 });
 
 test("feature anchors use the physical receiver's elevation within shared ground navigation", () => {

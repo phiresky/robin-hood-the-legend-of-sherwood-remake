@@ -11,17 +11,15 @@ not certification of every library asset or gameplay case. Best-effort exports
 warn about omissions and preserve initial states where possible; warnings are
 not evidence that an omitted feature works.
 
-The latest watermill audit found missing asset-owned body collision on fresh
-terrain. A staged solid/clearance definition preserves Leicester's complete
-compiled geometry and compiles at four cardinal rotations and three elevations,
-but blocks the platform entrance at 45 degrees. It is not published. Its platform
-clearance and receiving geometry must work after arbitrary rotation; an original
-scene passing unchanged is insufficient. Wychford's existing mill also remains
-above its terrain approaches. New drops already use the correct foundation height.
-Native mouse queries now reject loaded movement obstacles, including interior
-points far from boundary lines. The staged watermill passes twelve body-interior
-checks and 24 cardinal-placement actor crossings with this fix; its 45-degree
-entrance failure remains unresolved.
+The watermill now publishes asset-owned body collision and a platform clearance
+projected after placement onto its foundation navigation plane. Twenty-four new
+placements at eight rotations and three elevations retain all three entrances,
+the jump connection and both masks; native checks pass 48 actor crossings and
+24 blocked body points. Leicester's complete compiled geometry remains unchanged.
+Wychford's existing mill still sits above its terrain approaches; no connection is
+invented across that gap. New drops use the correct foundation height. Native
+mouse queries also now reject loaded movement-obstacle interiors. These focused
+checks do not establish every platform route or complete asset coverage.
 
 Latest validation (2026-10-05): 745 editor tests passed, two skipped; the game
 build and native stair/control checks passed. Wychford loads with its spline wall

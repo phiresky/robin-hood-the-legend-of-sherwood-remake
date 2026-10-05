@@ -12,6 +12,34 @@ import { validateAssetGameplay } from "./asset-gameplay.ts";
 import { sceneToGame } from "./geometry.ts";
 import { splineCurve } from "./spline-sampling.ts";
 
+test("spline clearances never silently lose their separate navigation plane", () => {
+  const { document, asset, assets } = wallSplineFixture();
+  asset.gameplay!.movementClearances = [
+    {
+      id: "raised-opening",
+      node: "body",
+      polygon: [
+        [0, 0],
+        [10, 0],
+        [10, 10],
+        [0, 10],
+      ],
+      height: 30,
+      navigationHeight: 0,
+    },
+  ];
+  assert.throws(
+    () => wallSplineGameplay(document, assets, false),
+    /navigation heights are unsupported/,
+  );
+  const result = wallSplineGameplay(document, assets, true);
+  assert.ok(
+    result.warnings.some((warning) => warning.includes("clearance omitted, collision retained")),
+  );
+  assert.equal(result.descriptors[0]!.gameplay!.movementClearances!.length, 0);
+  assert.ok(result.descriptors[0]!.gameplay!.movementSolids!.length > 0);
+});
+
 test("spline materials retain vertical faces and receiver ownership after moving and repeating", () => {
   const { document, asset, assets, bounds } = wallSplineFixture();
   const local = (x: number, y: number, z: number) => sceneToGame(document.camera, [x, y, z]);

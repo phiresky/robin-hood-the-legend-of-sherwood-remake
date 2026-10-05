@@ -666,9 +666,26 @@ function compileAssetGameplayAttempt(
       const shape = partSight.get(receiver.volume);
       if (!shape) throw new Error(`${receiver.id}: missing projection volume ${receiver.volume}`);
       heightPlane(shape.points.slice(0, 3).map((p): Vec3 => [p.x, p.y - p.z_top, p.z_top]));
+      let anchor = transform(receiver.node, receiver.anchor);
+      if (receiver.navigationHeight !== undefined) {
+        const navigationLocal: Vec3[] = [
+          [0, 0, receiver.navigationHeight],
+          [100, 0, receiver.navigationHeight],
+          [0, 100, receiver.navigationHeight],
+        ];
+        const navigationPlane = heightPlane(
+          navigationLocal.map((point) => {
+            const [wx, wy, wz] = transform(receiver.node, point);
+            return [wx, wy - wz, wz];
+          }),
+        );
+        const projected: Point = [anchor[0], anchor[1] - anchor[2]];
+        const height = planeHeight(navigationPlane, projected);
+        anchor = [projected[0], projected[1] + height, height];
+      }
       projectionReceivers.push({
         id: `${placement.id}/${receiver.id}`,
-        anchor: transform(receiver.node, receiver.anchor),
+        anchor,
         ...(receiver.receiverSegment
           ? {
               receiverSegment: [
@@ -871,7 +888,12 @@ function compileAssetGameplayAttempt(
           ]),
         });
       // Fit before integer quantization so height remains exact after placement.
-      const plane = heightPlane(points.map(([x, y, z]) => [x, y - z, z]));
+      const navigationHeight = surface.navigationHeight;
+      const navigationPoints =
+        navigationHeight === undefined
+          ? points
+          : local.map(([x, y]) => transform(surface.node, [x, y, navigationHeight]));
+      const plane = heightPlane(navigationPoints.map(([x, y, z]) => [x, y - z, z]));
       const target = gameplay.movementClearances?.includes(surface)
         ? movementClearances
         : gameplay.movementBlockers?.includes(surface)

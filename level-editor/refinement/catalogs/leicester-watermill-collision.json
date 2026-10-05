@@ -1,0 +1,86 @@
+{
+  "description": "Asset-owned body collision with a physical platform clearance projected onto its foundation navigation plane after placement.",
+  "asset": "leicester-watermill",
+  "descriptor": "3d-assets/leicester/leicester-watermill/asset.json",
+  "descriptorSha256": "255f04d76de7bcded797effe90a49eebfcb26081a5599398fe1e9575a8962304",
+  "publishedDescriptorSha256": "b008913a237417aadef280b0ac3ab8835ea69482aeefa81fc0055833c153c01b",
+  "gameplayChanges": {
+    "projectionReceivers": [
+      {
+        "id": "building-076-receiver",
+        "node": "building-076",
+        "volume": "building-076",
+        "anchor": [
+          -63.849609375,
+          41.24746719144161,
+          82.44808205848743
+        ],
+        "navigationHeight": 70.44708205848742
+      }
+    ],
+    "movementSolids": [
+      "building-077",
+      "building-078",
+      "building-079",
+      "building-080",
+      "building-081",
+      "building-082",
+      "building-083",
+      "building-084",
+      "building-085",
+      "building-086",
+      "building-087"
+    ],
+    "movementClearances": [
+      {
+        "id": "platform-navigation-clearance",
+        "node": "building-076",
+        "polygon": [
+          [
+            193.150390625,
+            38.24646719144164
+          ],
+          [
+            36.150390625,
+            74.24646719144164
+          ],
+          [
+            -41.849609375,
+            79.24646719144164
+          ],
+          [
+            -81.849609375,
+            38.24646719144164
+          ],
+          [
+            -50.185009374999936,
+            30.524967191441647
+          ],
+          [
+            -24.849609375,
+            61.24646719144164
+          ],
+          [
+            24.150390625,
+            56.24646719144164
+          ],
+          [
+            177.150390625,
+            18.24646719144164
+          ]
+        ],
+        "height": [
+          82.44808205848743,
+          82.44808205848743,
+          82.44808205848743,
+          82.44808205848743,
+          82.44808205848743,
+          82.44808205848743,
+          82.44808205848743,
+          82.44808205848743
+        ],
+        "navigationHeight": 70.44708205848742
+      }
+    ]
+  }
+}

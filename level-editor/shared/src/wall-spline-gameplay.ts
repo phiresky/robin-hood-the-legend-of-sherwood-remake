@@ -647,6 +647,12 @@ export function wallSplineGameplay(
       }
       const surfaceSet = `span-${out.surfaces.length}`;
       const appendSurface = (surface: AssetWalkableSurface, target: AssetWalkableSurface[]) => {
+        if (surface.navigationHeight !== undefined) {
+          report(
+            `Wall spline ${path.id}, clearance ${surface.id}: separate physical and navigation heights are unsupported; clearance omitted, collision retained.`,
+          );
+          return;
+        }
         const local = surface.polygon.map(([x, y], i): Vec3 => [
           x,
           y,

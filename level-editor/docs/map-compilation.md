@@ -75,6 +75,20 @@ A descriptor can contain a `gameplay` definition (see
 - Empty building interiors with shared entrances and per-actor door locks.
 - Map geometry without player spawns or NPCs; those belong to missions.
 
+A physical platform can share a lower navigation plane. Its `projectionReceivers`
+anchor may specify `navigationHeight`: the compiler first transforms and projects
+the physical anchor, then selects the authored navigation plane at that projected
+position. This differs from lowering the anchor before rotating it. A receiving
+segment and an explicit navigation height are mutually exclusive.
+
+Likewise, a `movementClearances` polygon may specify `navigationHeight`. Its
+`height` still describes the physical footprint, including sloping vertices and
+holes, while `navigationHeight` selects the local plane whose collision is cleared.
+The clearance only cuts its own asset's solids. It creates neither a walkable floor
+nor a connection across a height gap. Spline deformation does not yet support
+separate clearance heights: strict export rejects them and best-effort export
+warns, retains collision and omits that clearance.
+
 A walkable surface may opt into generated long-jump connections with a `jump`
 property, for example:
 

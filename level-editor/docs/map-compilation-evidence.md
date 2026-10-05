@@ -4,6 +4,40 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Published watermill collision and physical platform clearance (2026-10-05)
+
+The watermill now owns body movement collision. Its platform clearance and
+receiver anchor use physical coordinates plus a local `navigationHeight` for the
+foundation plane. Transforming before projection avoids the diagonal-rotation
+entrance failure recorded below. Clearances retain their physical slope and holes,
+cut only their owner's solids, and do not invent a floor or bridge height gaps.
+Invalid heights and incompatible receiver segments are rejected. Spline exports
+explicitly reject these separate clearance heights, or warn and retain collision
+in best-effort mode.
+
+The compiler/export/spline suites pass 189 tests; app typecheck, focused lint and
+the production editor build pass. Regression cases cover sloped clearances at seven rotations and two
+elevations, holes that must remain blocked, and mismatched navigation heights.
+`work/map-compile/watermill-placement-F6AfOv` contains 24 new placements at eight
+rotations and three elevations, retaining all three entrances, one jump pair and
+both masks. Native checks pass 48 directed platform crossings and 24 blocked
+body-interior points. Generated integer-grid normalization and collapsed-fragment
+warnings remain; these sampled routes do not certify every point on the platform.
+
+`work/map-compile/watermill-collision-2GsrXz` preserves Leicester's complete
+compiled geometry exactly. Both Leicester and Wychford pass native construction
+and all fifteen control apply/reset checks (14.66 seconds). Wychford's existing
+mill still has elevated approaches without supporting terrain, so its receiver,
+two masks, jump and three entrances remain omitted. Compilation does not move it.
+
+The reviewed recipe is `refinement/catalogs/leicester-watermill-collision.json`.
+Publication backups live in the two-map artifact's `publication` directory.
+Leicester/Wychford scene pins are refreshed; all ten saved scenes reopen with the
+tested gameplay. A fresh published Leicester descriptor equals the staged result.
+The 24 fresh published placement descriptors in
+`work/map-compile/watermill-placement-mKTGrj` also equal their native-tested
+counterparts. This publication does not refresh an existing baked mod ZIP.
+
 ## Native movement-obstacle mouse rejection (2026-10-05)
 
 Native level loading registered ordinary movement obstacles with only the motion
