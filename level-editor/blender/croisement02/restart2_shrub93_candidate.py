@@ -28,12 +28,19 @@ def register(out,catalog_path):
     coverage=json.loads((worker/'inspection/source-coverage/report.json').read_text())
     bounds=json.loads((worker/'inspection/actual-materials/opacity-bounds.json').read_text())
     preservation=json.loads((worker/'inspection/package-preservation.json').read_text())
-    if (not visual['ready_for_geometry_review'] or coverage['intersection_over_union']<.98
+    audit=json.loads((worker/'inspection/saved-model-audit.json').read_text())
+    validation=json.loads((worker/'validation.json').read_text())
+    if (any(r['model_sha256']!=digest for r in [visual,coverage,bounds,preservation,audit])
+            or audit['status']!='PASS' or validation['status']!='PASS'
+            or visual['sheet_sha256']!=sha(worker/'inspection/actual-materials/sheet.png')
+            or not visual['ready_for_geometry_review'] or coverage['intersection_over_union']<.98
             or len(bounds['crowns'])!=3 or min(r['depth_width_ratio']for r in bounds['crowns'])<1
             or len(bounds['attached_boundary_fragments'])!=1
             or not preservation['exact_geometry_uv_material_preservation']):raise ValueError('Boundary foliage validation failed')
     joint=json.loads((worker/'inspection/joint-neighbourhood.json').read_text())
     rays=Path(root['first_hit_evidence']);hits=json.loads(rays.read_text())
+    if not any(r['model_sha256']==digest for r in hits['workers']):raise ValueError('Boundary first-hit model differs')
+    if hits['joint_evidence_sha256']!=sha(Path(joint['evidence'])):raise ValueError('Boundary first-hit neighbours differ')
     if len(hits['records'])!=25 or any(r['asset']!=ASSET for r in hits['records']):raise ValueError('Boundary first-hit coverage failed')
     files=[worker/'model.blend',worker/'workspace.json',worker/'source-masks.json',worker/'validation.json',root_path,rays]
     files+=list((worker/'inspection').rglob('*.json'))+list((worker/'inspection').rglob('*.png'))

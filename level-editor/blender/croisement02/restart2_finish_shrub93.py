@@ -13,6 +13,11 @@ from render_tree import render_workspace
 
 def main():
     worker=OUT/'restart2-vegetation/shrub93-package-v3/assets/croisement02-shrub-93'
+    if '--validate-only' in sys.argv:
+        from refinement_workspace import validate
+        bpy.ops.wm.open_mainfile(filepath=str(worker/'model.blend'))
+        write_json(worker/'validation.json',validate(worker))
+        return
     proof=json.loads((worker/'inspection/package-preservation.json').read_text())
     raw=Path(proof['source_candidate'])
     preserved=json.loads((raw/'preservation.json').read_text())
