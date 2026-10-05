@@ -12,7 +12,7 @@ from refinement_workspace import prepare,modified
 ASSET='croisement03-tree-25';SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));RAY=Vector((0,-COS,SIN))
 PATHS=[[(1263, 800, 17), (1263, 767, 16), (1264, 744, 14), (1275, 720, 12), (1283, 694, 10), (1284, 670, 9), (1293, 646, 4.5), (1296, 625, 2.6), (1299, 606, 0.8)], [(1264, 744, 13), (1246, 724, 12), (1232, 709, 11), (1210, 700, 8), (1187, 690, 4), (1165, 680, 1)], [(1232, 709, 7), (1213, 691, 6), (1200, 681, 5), (1188, 672, 4), (1187, 658, 1.5)], [(1283, 704, 6), (1265, 697, 5), (1250, 687, 3.5), (1235, 676, 2), (1234, 652, 0.7)], [(1280, 711, 8), (1303, 699, 5), (1326, 687, 4), (1348, 685, 2.8), (1370, 681, 1)]]
 def main():
-    root=OUT/'restart2/tree25-wood-v4';root.mkdir(exist_ok=False);worker=root/'assets'/ASSET
+    root=OUT/'restart2/tree25-wood-v5';root.mkdir(exist_ok=False);worker=root/'assets'/ASSET
     level=json.loads((OUT/'baseline/Croisement03.rhp.json').read_text());source=Image.open(OUT/'baseline/covered.png');domain=Image.new('L',source.size);d=ImageDraw.Draw(domain)
     # Only the lower continuous bark is positively owned at this stage.
     # Upper branch geometry is present, but its overlapping leaves need their

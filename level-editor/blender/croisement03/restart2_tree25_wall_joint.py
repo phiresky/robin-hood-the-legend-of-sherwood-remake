@@ -12,7 +12,7 @@ from texture_camera import depth_clip_range
 OUT=ROOT/'level-editor/work/croisement03-refinement';R=OUT/'restart2'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
-    wall=R/'stone-wall-v1/assets/croisement03-southeast-stone-wall';wood=R/'tree25-wood-v4/assets/croisement03-tree-25';out=R/'tree25-wall-joint-v1';out.mkdir(exist_ok=False)
+    wall=R/'stone-wall-v1/assets/croisement03-southeast-stone-wall';wood=R/'tree25-wood-v5/assets/croisement03-tree-25';out=R/'tree25-wall-joint-v1';out.mkdir(exist_ok=False)
     hashes={str(p):sha(p) for p in [wall/'model.blend',wood/'model.blend']};acquire();bpy.ops.wm.open_mainfile(filepath=str(wall/'model.blend'));bpy.context.preferences.filepaths.save_version=0
     scene=bpy.data.scenes.new('Private tree25 wall contact');objects=[]
     for original in bpy.data.collections['Croisement03 Working'].all_objects:
