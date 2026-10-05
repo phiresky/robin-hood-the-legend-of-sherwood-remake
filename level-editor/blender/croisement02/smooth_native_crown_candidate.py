@@ -39,12 +39,16 @@ def main():
                         help='Align west continuation with native boundary depth and projected vertical span')
     parser.add_argument('--east-edge-completion', action='store_true',
                         help='Add inferred own-source leaf continuation strictly outside the east map edge')
+    parser.add_argument('--east-native-frame', action='store_true',
+                        help='Align east continuation with local native boundary depths')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
     source, output = args.source.resolve(), args.output.resolve()
     require(not output.exists(), 'Use a fresh candidate destination')
     require(0 <= args.fragment_jitter <= 12, 'Fragment jitter must be in0..12 native pixels')
     require(not args.west_native_frame or args.west_edge_completion,
             'West native frame requires west edge completion')
+    require(not args.east_native_frame or args.east_edge_completion,
+            'East native frame requires east edge completion')
     require(not (args.west_edge_completion and args.east_edge_completion),
             'Use a separately reviewed trial for each boundary continuation')
     source_hash = sha(source / 'model.blend')
@@ -165,7 +169,8 @@ def main():
             west_completion = cap(crown, source / 'inspection/source-packet/partition.json',
                                   int(cfg['asset_id'].rsplit('-', 1)[1]), output / 'inspection',
                                   edge='west' if args.west_edge_completion else 'east',
-                                  west_native_frame=args.west_native_frame)
+                                  west_native_frame=args.west_native_frame,
+                                  east_native_frame=args.east_native_frame)
             saved_recipe = record_recipe(output, Path(__file__).with_name('complete_northern_caps.py'))
             dependency_recipes[str(output / saved_recipe['recipe'])] = saved_recipe['recipe_sha256']
         for relative in ['workspace.json', 'source-masks.json', 'modified/views.json',

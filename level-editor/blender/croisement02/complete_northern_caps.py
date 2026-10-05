@@ -37,7 +37,10 @@ def mesh_prefix(mesh, vertices=None, faces=None, loops=None):
     return hashlib.sha256(json.dumps(payload,sort_keys=True).encode()).hexdigest()
 
 
-def cap(crown, packet_path, mask, destination, edge='north', west_native_frame=False):
+def cap(crown, packet_path, mask, destination, edge='north', west_native_frame=False, east_native_frame=False):
+    native_frame = west_native_frame or east_native_frame
+    if west_native_frame and edge != 'west' or east_native_frame and edge != 'east':
+        raise ValueError('Native boundary frame must match the requested edge')
     counts = (len(crown.data.vertices),len(crown.data.polygons),len(crown.data.loops))
     observed_before = mesh_prefix(crown.data)
     packet = json.loads(packet_path.read_text())
@@ -73,13 +76,13 @@ def cap(crown, packet_path, mask, destination, edge='north', west_native_frame=F
     patch_xs=range(0,width-24,8) if edge=='north' else range(max(0,width-130),width-24,8)
     if edge=='west':patch_xs=range(0,min(width-24,130),8)
     patches = [(px, py) for py in patch_ys for px in patch_xs if alpha[py:py+24, px:px+24].mean() > .55]
-    if west_native_frame:
-        if edge != 'west':raise ValueError('Native west frame only supports west continuation')
+    if native_frame:
         patches = [(px, py) for py in patch_ys for px in patch_xs
                    if .2 < alpha[py:py+24, px:px+24].mean() < .7]
         observed_indices = {v for p in crown.data.polygons if p.material_index == 0 for v in p.vertices}
-        edge_points = world[[v for v in observed_indices if world[v,0] <= 8]]
-        if not len(edge_points):raise ValueError('Native west boundary fragments missing')
+        edge_points = world[[v for v in observed_indices if
+                            (world[v,0] <= 8 if edge == 'west' else world[v,0] >= 1784)]]
+        if not len(edge_points):raise ValueError('Native boundary fragments missing')
         native_depth = float(np.median(-edge_points[:,1]*COS+edge_points[:,2]*SIN))
         edge_source_y = -edge_points[:,1]*SIN-edge_points[:,2]*COS
         edge_depths = -edge_points[:,1]*COS+edge_points[:,2]*SIN
@@ -104,7 +107,7 @@ def cap(crown, packet_path, mask, destination, edge='north', west_native_frame=F
             position=center+direction*np.array([rise,radius_y,radius_x])*irregular
             if edge=='east' and position[0]<=1792:continue
             if edge=='west' and position[0]>=0:continue
-            if west_native_frame:
+            if native_frame:
                 source_y = center_x + direction[2]*radius_x*irregular
                 nearest = np.argsort(np.abs(edge_source_y-source_y))[:16]
                 local_depth = float(np.mean(edge_depths[nearest]))
@@ -115,7 +118,7 @@ def cap(crown, packet_path, mask, destination, edge='north', west_native_frame=F
         other = axis.cross(Vector((0, 0, 1)) if abs(axis.z) < .9 else Vector((1, 0, 0))).normalized()
         third = axis.cross(other).normalized()
         size = rng.uniform(7, 12)
-        if west_native_frame:size=rng.uniform(4,7)
+        if native_frame:size=rng.uniform(4,7)
         px, py = patches[int(rng.integers(len(patches)))]
         for u, v in [(axis, other), (axis, third), (other, third)]:
             points = [position + size*(np.asarray(u)*su + np.asarray(v)*sv)
@@ -160,13 +163,14 @@ def cap(crown, packet_path, mask, destination, edge='north', west_native_frame=F
             new_faces.extend([(start,start+1,start+2),(start,start+2,start+3)])
             new_uv.extend(coords)
             tiles += 1
-    atlas_path = destination / ('inferred-western-leaves.png' if edge=='west' else 'inferred-northern-leaves.png')
+    atlas_path = destination / {'west':'inferred-western-leaves.png',
+        'east':'inferred-eastern-leaves.png','north':'inferred-northern-leaves.png'}[edge]
     Image.fromarray(atlas).save(atlas_path)
     # Append to a copy of the original mesh: preserve all prior loops, colours,
     # UVs, faces and material slots. No observed geometry is reconstructed.
     crown.data = crown.data.copy()
     material_index = len(crown.data.materials)
-    crown.data.materials.append(material(crown.name+(' inferred west cap' if edge=='west' else ' inferred northern cap'), atlas_path, False))
+    crown.data.materials.append(material(crown.name+' inferred '+edge+' cap', atlas_path, False))
     bm = bmesh.new()
     bm.from_mesh(crown.data)
     uv = bm.loops.layers.uv.get('Foliage UV')
@@ -193,6 +197,7 @@ def cap(crown, packet_path, mask, destination, edge='north', west_native_frame=F
         native_edge_span=[left,right], inferred_rise=rise, added_faces=len(new_faces),
         map_edge=edge,
         west_native_frame=west_native_frame,
+        east_native_frame=east_native_frame,
         completion_version='world-aligned-volume-v2',
         added_vertices=len(new_vertices), observed_geometry_preserved=True,
         preserved_crown_prefix_sha256=observed_before,
