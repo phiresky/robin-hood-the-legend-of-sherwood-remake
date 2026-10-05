@@ -9,7 +9,9 @@
   loop, including live barriers and hard neighbour collision. Door orders retain
   physical endpoints, and entry/exit callbacks transfer floor ownership without
   inverting the stair projection. The editor does not emit this metadata yet;
-  general point/seek requests and full movement effects remain unfinished.
+  local point Move requests resolve supported goals on invertible floors to
+  physical orders. Ambiguous edge-on point requests reject; seek/line requests
+  and full movement effects remain unfinished.
   Movement-source authorization preserves supported world positions on physical
   stairs and rejects unsupported sources without projected relocation; physical
   source recovery remains unfinished.

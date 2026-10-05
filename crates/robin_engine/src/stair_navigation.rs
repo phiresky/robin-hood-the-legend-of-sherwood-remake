@@ -35,6 +35,20 @@ pub struct BoundPhysicalStair {
 }
 
 impl BoundPhysicalStair {
+    /// Resolve a screen point only when this floor has a unique inverse.
+    /// Edge-on floors require an explicit world endpoint instead.
+    pub fn world_point_from_screen(&self, point: MapPoint) -> Option<[f32; 3]> {
+        let [a, b, c] = self.definition.plane;
+        let determinant = 1.0 - b;
+        if determinant.abs() < 1e-8 {
+            return None;
+        }
+        let x = f64::from(point.x);
+        let y = (f64::from(point.y) + a * x + c) / determinant;
+        let world = [x as f32, y as f32, (a * x + b * y + c) as f32];
+        world.iter().all(|value| value.is_finite()).then_some(world)
+    }
+
     /// Test crushing against the actual floor footprint, not its potentially
     /// collapsed screen projection. Several pieces can share a motion identity.
     pub fn obstacle_intersects_actor(

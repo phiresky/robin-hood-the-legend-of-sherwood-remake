@@ -81,8 +81,12 @@ construction and lift emission still depend on projected geometry.
 stairs, and the 24 failed keep routes remain unresolved.** Physical transitions
 now wait at a reached world target until animation completion, or preserve
 unfinished distance in the next movement order. An edge-on actor-loop test
-covers both cases. General point/seek order creation, broader transition/seek
-choreography and multi-door coverage remain unfinished.
+covers both cases. Local point Move requests now resolve an invertible stair
+projection to world destinations, validate current goal support, and annotate
+generated movement orders with the physical floor. Ambiguous edge-on clicks,
+off-floor goals and goals inside active barriers reject. Seek and line requests,
+edge-on mouse destination selection, physical-distance transition placement,
+broader transition/seek choreography and multi-door coverage remain unfinished.
 Movement-source authorization now checks physical floor height and live footprint
 support before projected extraction can relocate the actor. Unsupported physical
 sources warn and reject; recovery to a nearby supported world position remains open.

@@ -4,6 +4,26 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Local physical stair point dispatch (2026-10-05)
+
+Local point Move requests on an invertible physical stair now resolve their
+destination to world coordinates and check its footprint against current floor
+and barrier support. They bypass projected pathfinding; emitted movement and
+distance-transition orders retain the physical floor and their own world targets.
+The normal actor loop performs live physical collision routing. Existing gate
+requests retain their explicit world endpoints, including on edge-on floors.
+
+Native tests dispatch plain point movements, ascend and descend between different
+heights, and reach the exact world goals without enqueuing projected paths. Other
+cases reject an ambiguous edge-on point, an off-floor goal and a goal inside a
+closed barrier without relocating the actor. The movement suite passes 205 tests
+(12 ignored), and all 33 door-pass tests pass. The game build, focused formatting
+and whitespace checks pass.
+
+This does not complete seek/line request creation, mouse destination selection on
+edge-on surfaces, physical-distance transition placement, or normal export
+integration. The keep placement failures remain unresolved.
+
 ## Physical movement source authorization (2026-10-05)
 
 Move/seek instruction entry and synchronous control retranslation now validate

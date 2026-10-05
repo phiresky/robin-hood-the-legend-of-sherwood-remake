@@ -662,6 +662,132 @@ fn physical_stair_door_handoffs_preserve_distinct_world_endpoints() {
 }
 
 #[test]
+fn physical_stair_point_dispatch_uses_world_orders_and_reaches_the_goal() {
+    for reverse in [false, true] {
+        let (mut engine, mut assets) =
+            compiled_walkway(&serde_json::to_vec(&physical_stair_fixture()).unwrap());
+        let sim = crate::sim_rng::test_context();
+        engine.apply_patch(
+            TickCtx::new(&sim, &assets),
+            crate::patch::PatchIndex::new(0).unwrap(),
+        );
+        let (source, goal) = if reverse {
+            ([404., 380.], [396., 320.])
+        } else {
+            ([396., 320.], [404., 380.])
+        };
+        let owner = physical_walker(&mut engine, &mut assets, 3, source, goal);
+        let goal_z = 5. * goal[0] - 1950.;
+        let destination = MapPoint::new(goal[0], goal[1] - goal_z);
+        let (sequence, index) = engine.current_sequence_element_for_actor(owner).unwrap();
+        engine.install_actor_order(owner, None);
+        let element = engine
+            .orders
+            .sequence_manager
+            .get_element_mut(sequence, index)
+            .unwrap();
+        element.orders.clear();
+        element.command = Command::Move;
+        if let crate::sequence::SequenceElementData::Movement {
+            destination: stored,
+            layer,
+            sector,
+            ..
+        } = &mut element.data
+        {
+            *stored = destination;
+            *layer = 2;
+            *sector = crate::position_interface::SectorHandle::new(3);
+        }
+        assert!(engine.extract_move_instruction_owner(&assets, owner));
+        assert!(matches!(
+            engine.try_dispatch_move_path(
+                TickCtx::new(&sim, &assets),
+                owner,
+                SequenceElementRef::new(sequence, index),
+                destination,
+                OrderType::WalkingStairs,
+            ),
+            MovePathOutcome::Success
+        ));
+        assert!(engine.orders.pending_path_requests.waiting.is_empty());
+        let element = engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, index)
+            .unwrap();
+        assert!(
+            element
+                .orders
+                .iter()
+                .any(|order| order.physical_stair == Some(3)
+                    && order.destination_3d == [goal[0], goal[1], goal_z])
+        );
+        for _ in 0..300 {
+            engine.t_tick_actor_owner_envelopes(&assets);
+            let position = engine.ent(owner).position_iface().get_position();
+            if [position.x, position.y, position.z] == [goal[0], goal[1], goal_z] {
+                break;
+            }
+        }
+        let position = engine.ent(owner).position_iface().get_position();
+        assert_eq!(
+            [position.x, position.y, position.z],
+            [goal[0], goal[1], goal_z]
+        );
+    }
+}
+
+#[test]
+fn physical_stair_point_dispatch_rejects_ambiguous_and_unsupported_goals() {
+    for (document, sector, destination) in [
+        (
+            edge_on_physical_stair_fixture(),
+            2,
+            MapPoint::new(400., 200.),
+        ),
+        (physical_stair_fixture(), 3, MapPoint::new(600., 330.)),
+        // This goal is on the floor but inside the initially closed barrier.
+        (physical_stair_fixture(), 3, MapPoint::new(400., 300.)),
+    ] {
+        let (mut engine, mut assets) = compiled_walkway(&serde_json::to_vec(&document).unwrap());
+        let owner = physical_walker(&mut engine, &mut assets, sector, [400., 320.], [400., 380.]);
+        let before = engine.ent(owner).position_iface().get_position();
+        let (sequence, index) = engine.current_sequence_element_for_actor(owner).unwrap();
+        let element = engine
+            .orders
+            .sequence_manager
+            .get_element_mut(sequence, index)
+            .unwrap();
+        element.orders.clear();
+        element.command = Command::Move;
+        if let crate::sequence::SequenceElementData::Movement {
+            destination: stored,
+            layer,
+            sector: stored_sector,
+            ..
+        } = &mut element.data
+        {
+            *stored = destination;
+            *layer = 2;
+            *stored_sector = crate::position_interface::SectorHandle::new(sector);
+        }
+        assert!(matches!(
+            engine.try_dispatch_move_path(
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
+                owner,
+                SequenceElementRef::new(sequence, index),
+                destination,
+                OrderType::WalkingStairs,
+            ),
+            MovePathOutcome::Refused
+        ));
+        assert!(engine.orders.pending_path_requests.waiting.is_empty());
+        assert_eq!(engine.ent(owner).position_iface().get_position(), before);
+    }
+}
+
+#[test]
 fn physical_stair_source_authorization_preserves_world_position() {
     for (source, supported) in [
         ([400., 320.], true),

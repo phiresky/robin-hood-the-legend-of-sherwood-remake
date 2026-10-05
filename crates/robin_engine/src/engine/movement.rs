@@ -5250,7 +5250,7 @@ impl EngineInner {
             return MovePathOutcome::Refused;
         }
 
-        let physical_goal = tcx
+        let mut physical_goal = tcx
             .assets
             .navigation
             .physical_stairs
@@ -5268,6 +5268,33 @@ impl EngineInner {
                     .map(|(sector, _, door)| (sector, door.inside))
             })
             .flatten();
+
+        let mut physical_point = false;
+        if physical_goal.is_none()
+            && let Some(stair) = tcx.assets.navigation.physical_stairs.get(&entity_sector)
+            && self.orders.sequence_manager.get_element(seq_id, elem_idx)
+                .is_some_and(|element| matches!(&element.data,
+                    crate::sequence::SequenceElementData::Movement {
+                        layer, sector, element: None, flags, ..
+                    } if *layer == entity_layer
+                        && sector.is_none_or(|sector| sector.get() == entity_sector)
+                        && !flags.intersects(crate::sequence::MoveFlags::SEEK | crate::sequence::MoveFlags::LINE)
+                ))
+        {
+            let Some(goal) = stair.world_point_from_screen(dest) else {
+                tracing::warn!(?owner, ?dest, "physical stair point requires an unambiguous world endpoint");
+                return MovePathOutcome::Refused;
+            };
+            let ground = [goal[0], goal[1]];
+            if stair.route(&self.world.pathfinder, ground, ground, half_diagonal)
+                .expect("invalid physical stair destination geometry").is_none()
+            {
+                tracing::warn!(?owner, ?dest, "unsupported physical stair point destination");
+                return MovePathOutcome::Refused;
+            }
+            physical_goal = Some((entity_sector, goal));
+            physical_point = true;
+        }
 
         // Before queuing a path request, if the move is flagged
         // MAP / STRAIGHT, or the source→dest segment is
@@ -5311,8 +5338,9 @@ impl EngineInner {
                 source,
                 entity_layer,
             );
-        let current_layer_reachable =
-            self.world
+        let current_layer_reachable = physical_goal.is_none()
+            && self
+                .world
                 .fast_grid
                 .is_reachable_thick(source, dest, entity_layer, half_diagonal);
         // A normal explicit cross-layer goal must be routed. At the exact
@@ -5501,6 +5529,23 @@ impl EngineInner {
                 .sequence_manager
                 .get_element_mut(seq_id, elem_idx)
                 .expect("physical route element disappeared during emission");
+            if physical_point {
+                let stair = &tcx.assets.navigation.physical_stairs[&sector];
+                for order in element
+                    .orders
+                    .iter_mut()
+                    .filter(|order| order_turns_before_motion(order.order_type))
+                {
+                    let world = stair
+                        .world_point_from_screen(MapPoint::new(order.target_x, order.target_y))
+                        .expect("physical point order lost its invertible floor");
+                    order.physical_stair = Some(sector);
+                    order.destination_3d = world;
+                    order.target_x = world[0];
+                    order.target_y = world[1] - world[2];
+                }
+                return MovePathOutcome::Success;
+            }
             let order = element
                 .orders
                 .iter_mut()
