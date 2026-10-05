@@ -9,7 +9,8 @@ OUT=ROOT/'level-editor/work/croisement01-refinement/restart2'
 SELECTION=[('branch-source-fit-v3/branch-round-10/assets/croisement01-east-fallen-branch','East Fallen Branch'),
            ('grass75-volume-v9/assets/croisement01-grass-75','East Branch Foreground Grass'),
            ('grass74-volume-v12/assets/croisement01-grass-74','Southwest Field Grass'),
-           ('grass82-volume-v12/assets/croisement01-grass-82','Southeast Field Grass')]
+           ('grass82-volume-v12/assets/croisement01-grass-82','Southeast Field Grass'),
+           ('grass76-volume-v13/assets/croisement01-grass-76','Central Field Grass')]
 
 
 def main():
