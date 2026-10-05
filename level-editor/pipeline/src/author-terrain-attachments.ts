@@ -27,6 +27,8 @@ export interface TerrainAttachmentRule {
   anchor: Vec3;
   below: number;
   above: number;
+  /** Explicitly reviewed old reach required when replacing an existing attachment. */
+  replaceBounds?: { below: number; above: number };
 }
 
 /** Author finite vertical receivers from explicitly selected asset-local features. */
@@ -48,7 +50,12 @@ export function authorTerrainAttachments(
       rule.anchor.length !== 3 ||
       !rule.anchor.every(Number.isFinite) ||
       ![rule.below, rule.above].every((v) => Number.isFinite(v) && v >= 0) ||
-      rule.below + rule.above <= 0
+      rule.below + rule.above <= 0 ||
+      (rule.replaceBounds !== undefined &&
+        (![rule.replaceBounds.below, rule.replaceBounds.above].every(
+          (v) => Number.isFinite(v) && v >= 0,
+        ) ||
+          rule.replaceBounds.below + rule.replaceBounds.above <= 0))
     )
       throw new Error(`Invalid terrain attachment bounds ${key}`);
     const mask =
@@ -91,7 +98,17 @@ export function authorTerrainAttachments(
       receivers[0]?.receiverSegment ??
       controls[0]?.waypointReceiverSegment ??
       (inside ? doors[0]?.insideReceiverSegment : doors[0]?.outsideReceiverSegment);
-    if (previous && JSON.stringify(previous) !== JSON.stringify(segment))
+    const reviewedPrevious = rule.replaceBounds && [
+      [x, y, z - rule.replaceBounds.below],
+      [x, y, z + rule.replaceBounds.above],
+    ];
+    if (reviewedPrevious && !previous)
+      throw new Error(`Terrain attachment no longer has reviewed bounds ${key}`);
+    if (
+      previous &&
+      JSON.stringify(previous) !== JSON.stringify(segment) &&
+      (!reviewedPrevious || JSON.stringify(previous) !== JSON.stringify(reviewedPrevious))
+    )
       throw new Error(`Terrain attachment already has different bounds ${key}`);
     if (mask[0]) mask[0].receiverSegment = segment;
     else if (receivers[0]) receivers[0].receiverSegment = segment;

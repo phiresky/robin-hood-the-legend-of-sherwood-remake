@@ -43,9 +43,16 @@ this attachment change.
 The woodland bank now publishes a bounded terrain attachment. Leicester's compiled
 geometry is unchanged; both Wychford copies bind, with 74 sampled actor crossings
 across 37 affected receiver pairs passing. Twelve new placements bind and four
-out-of-reach cases reject. Following the footbridge publication below, two physical
-receiver omissions remain in Wychford: the edge bank and watermill. The latest
-baked ZIP predates these changes.
+out-of-reach cases reject. Following the footbridge and edge-bank publications
+below, the watermill is the only remaining omitted physical receiver in the
+uncalibrated Wychford descriptor. The latest baked ZIP predates these changes.
+
+The edge bank now publishes bounded receiver and mask attachments based on its
+own height range. Leicester compiles unchanged; Wychford gains one receiver and
+two masks. Thirty sampled native actor crossings pass, as do native construction
+and all fifteen control apply/reset checks across both maps. Twelve new placements
+bind and four beyond the finite reach reject. All ten saved scenes reopen with
+updated pins; one bank mask outside the export frame remains correctly omitted.
 
 The published east-village footbridge now owns its sloping walkable deck and both
 end sockets. It

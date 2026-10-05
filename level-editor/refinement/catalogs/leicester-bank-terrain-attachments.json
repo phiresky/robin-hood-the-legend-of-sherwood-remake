@@ -7,7 +7,45 @@
         "kind": "projection-receiver",
         "id": "building-383-receiver",
         "node": "building-383",
-        "anchor": [-185.401611328125, -231.2271245634045, 0.000106177026864129],
+        "anchor": [
+          -185.401611328125,
+          -231.2271245634045,
+          0.000106177026864129
+        ],
+        "below": 50.001003,
+        "above": 50.001003
+      }
+    ]
+  },
+  {
+    "asset": "leicester-southwest-edge-bank",
+    "review": "Replace the reviewed eight-unit receiver reach with one physical bank relief in either direction; apply the same finite reach to its ground occlusion mask. Anchors, physical geometry, mask coverage and navigation remain unchanged. Out-of-frame mask anchors remain omitted; ambiguous or unreachable terrain remains invalid.",
+    "rules": [
+      {
+        "kind": "projection-receiver",
+        "id": "building-382-receiver",
+        "node": "building-382",
+        "anchor": [
+          27.954818725585938,
+          -127.78026626093803,
+          6.968073607956627e-05
+        ],
+        "below": 50.001003,
+        "above": 50.001003,
+        "replaceBounds": {
+          "below": 8,
+          "above": 8
+        }
+      },
+      {
+        "kind": "mask",
+        "id": "static-occlusion-226",
+        "node": "building-382",
+        "anchor": [
+          174.95481872558594,
+          142.21973373906206,
+          6.968073607956627e-05
+        ],
         "below": 50.001003,
         "above": 50.001003
       }

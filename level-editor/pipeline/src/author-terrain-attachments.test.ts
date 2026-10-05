@@ -72,6 +72,43 @@ test("passage recipes author each endpoint independently and retain all door rul
   assert.throws(() => authorTerrainAttachments(hut, rules), /conflicts/);
 });
 
+test("changing attachment reach requires matching reviewed bounds and remains repeatable", () => {
+  const { hut } = anchoredReceiverCompilerFixture();
+  const receiver = hut.gameplay!.projectionReceivers![0]!;
+  const original: TerrainAttachmentRule = {
+    kind: "projection-receiver",
+    id: receiver.id,
+    node: receiver.node,
+    anchor: receiver.anchor,
+    below: 8,
+    above: 8,
+  };
+  const rule: TerrainAttachmentRule = {
+    ...original,
+    below: 50,
+    above: 50,
+    replaceBounds: { below: 8, above: 8 },
+  };
+  assert.throws(() => authorTerrainAttachments(hut, [rule]), /no longer has reviewed bounds/);
+  hut.gameplay = authorTerrainAttachments(hut, [original]);
+  const before = structuredClone(hut);
+  const updated = authorTerrainAttachments(hut, [rule]);
+  assert.deepEqual(hut, before);
+  assert.deepEqual(updated.projectionReceivers![0]!.receiverSegment, [
+    [50, 50, -50],
+    [50, 50, 50],
+  ]);
+  assert.deepEqual(authorTerrainAttachments({ ...hut, gameplay: updated }, [rule]), updated);
+  assert.throws(
+    () => authorTerrainAttachments(hut, [{ ...rule, replaceBounds: { below: 9, above: 8 } }]),
+    /different bounds/,
+  );
+  assert.throws(
+    () => authorTerrainAttachments(hut, [{ ...rule, replaceBounds: { below: -1, above: 8 } }]),
+    /Invalid/,
+  );
+});
+
 test("physical receiver recipes retain volumes and pin their owning frame", () => {
   const { hut } = anchoredReceiverCompilerFixture();
   const receiver = hut.gameplay!.projectionReceivers![0]!;
