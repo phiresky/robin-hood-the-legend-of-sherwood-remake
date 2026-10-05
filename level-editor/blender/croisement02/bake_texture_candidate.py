@@ -120,7 +120,7 @@ def preflight(experiment):
     return manifest, scene, names, state, report
 
 
-def run(experiment, output=None, review_path=None, texels_per_unit=2.):
+def run(experiment, output=None, review_path=None, texels_per_unit=2., view_selection=None):
     experiment = experiment.resolve(strict=True)
     acquire()
     try:
@@ -159,10 +159,18 @@ def run(experiment, output=None, review_path=None, texels_per_unit=2.):
             require(not raw_content.exists(), 'Reconciliation crop already exists')
             Image.open(raw).crop((box['left'], box['top'], box['left'] + box['width'], box['top'] + box['height'])).save(raw_content)
         evidence = {str(path): sha(path) for path in [review_path, raw, generated, experiment / 'views.json', experiment / 'approved-model.blend']}
+        bake_manifest = experiment / 'views.json'
+        if view_selection is not None:
+            require(view_selection == 'best-facing-single', 'Unsupported diagnostic sampling policy')
+            bake_manifest = experiment / (output.name + '-sampling-views.json')
+            require(not bake_manifest.exists(), 'Diagnostic sampling manifest already exists')
+            sampling = dict(manifest, texture_view_selection=view_selection)
+            bake_manifest.write_text(json.dumps(sampling, indent=2) + '\n')
+            evidence[str(bake_manifest)] = sha(bake_manifest)
         scene.render.engine = 'CYCLES'
         scene.cycles.samples = 8
         scene.cycles.transparent_max_bounces = 64
-        staged = stage(experiment / 'views.json', generated, output,
+        staged = stage(bake_manifest, generated, output,
                        texels_per_unit=texels_per_unit, reconciliation_reference=raw_content)
         require(snapshot(scene, names) == before, 'Bake changed geometry, foreign appearance, physical alpha, known foliage, or foliage UV/ownership')
         model = output / 'worker.blend'
@@ -174,6 +182,7 @@ def run(experiment, output=None, review_path=None, texels_per_unit=2.):
         result = dict(report, mode='baked-candidate', candidate_model_sha256=model_hash,
                       generation_review=str(review_path), generation_review_sha256=sha(review_path),
                       evidence_sha256=evidence, geometry_unchanged=True,
+                      sampling_manifest=str(bake_manifest),
                       foreign_appearance_unchanged=True, physical_alpha_unchanged=True,
                       known_foliage_rgba_unchanged=True, foliage_uv_and_ownership_unchanged=True,
                       reopened_preservation='PASS', actual_material_review='pending',
@@ -193,5 +202,7 @@ if __name__ == '__main__':
     parser.add_argument('--output', type=Path, help='Omit for read-only preflight')
     parser.add_argument('--review', type=Path, help='Manual raw/protected generation review receipt')
     parser.add_argument('--texels-per-unit', type=float, default=2.)
+    parser.add_argument('--view-selection', choices=['best-facing-single'],
+                        help='Private sampling diagnostic; original camera manifest remains unchanged')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
-    run(args.experiment, args.output, args.review, args.texels_per_unit)
+    run(args.experiment, args.output, args.review, args.texels_per_unit, args.view_selection)

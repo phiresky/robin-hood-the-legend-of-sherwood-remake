@@ -36,6 +36,8 @@ def main():
     authority = OUT / 'understory-candidates/mixed75-91-source-v3'
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, default=OUT / 'ground-source75-restoration-v1')
+    parser.add_argument('--additional-authority', type=Path,
+                        help='Explicit reviewed ground-role receipt with mask, hash, pixel count and exclusion masks')
     args = parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
     output = args.output.resolve()
     if output.exists():
@@ -51,13 +53,28 @@ def main():
     if sha(authority / 'domain-487.png') != proof['leaf_domain_sha256']:
         raise ValueError('Leaf75 authority changed')
     returned = np.asarray(Image.open(domain_path).convert('L')) > 0
+    additional = None
+    if args.additional_authority:
+        additional = json.loads(args.additional_authority.read_text())
+        extra_path = Path(additional['mask'])
+        if sha(extra_path) != additional['sha256'] or additional['role'] != 'inferred ground/root-shadow':
+            raise ValueError('Additional ground role authority changed')
+        extra = np.asarray(Image.open(extra_path).convert('L')) > 0
+        if extra.shape != returned.shape or int(extra.sum()) != additional['pixels'] or (extra & returned).any():
+            raise ValueError('Additional ground domain overlaps or changed')
+        for row in additional['excluded_domains']:
+            path = Path(row['path'])
+            if sha(path) != row['sha256'] or (extra & (np.asarray(Image.open(path).convert('L')) > 0)).any():
+                raise ValueError('Additional ground overlaps a protected source owner')
+        returned = returned | extra
     leaf = np.asarray(Image.open(authority / 'domain-487.png').convert('L')) > 0
     reference = baseline / 'reference'
     known = np.asarray(Image.open(reference / 'ground-observed-domain.png').convert('L')) > 0
     plane = np.asarray(Image.open(reference / 'ground-first-hit.png').convert('L')) > 0
     source = np.asarray(Image.open(reference / 'source.png').convert('RGB'))
     old = np.asarray(Image.open(reference / 'observed-neutral.png').convert('RGB'))
-    if int(returned.sum()) != 783 or (returned & leaf).any() or (returned & ~plane).any():
+    expected_count = 783 + (additional['pixels'] if additional else 0)
+    if int(returned.sum()) != expected_count or (returned & leaf).any() or (returned & ~plane).any():
         raise ValueError('Returned ground does not match exact reviewed receiver scope')
     if (returned & known).any():
         raise ValueError('Expected previously reserved ground only')
@@ -75,6 +92,7 @@ def main():
         output.mkdir()
         Image.fromarray(updated).save(output / 'observed-neutral.png')
         Image.fromarray((known | returned).astype('uint8') * 255).save(output / 'ground-observed-domain.png')
+        Image.fromarray(returned.astype('uint8') * 255).save(output / 'restored-domain.png')
         bpy.ops.wm.read_factory_settings(use_empty=True)
         scene = bpy.context.scene
         scene.name = 'Croisement02 Refinement'
@@ -134,12 +152,15 @@ def main():
         write_json(output / 'validation.json', dict(status='PASS', source_model_sha256=model_hash,
             model_sha256=sha(output / 'model.blend'), geometry_uv_signature=before,
             frozen_geometry_signature=expected_geometry,
-            geometry_uv_unchanged=True, restored_source_pixels=783,
+            geometry_uv_unchanged=True, restored_source_pixels=expected_count,
             existing_known_pixels_unchanged=True, all_other_rgb_unchanged=True,
             foliage75_overlap=0, authored_or_animated_foreign_overlap=0,
             authority=str(proof_path), authority_sha256=sha(proof_path),
+            additional_authority=str(args.additional_authority) if additional else None,
+            additional_authority_sha256=sha(args.additional_authority) if additional else None,
+            restored_domain_sha256=sha(output / 'restored-domain.png'),
             known_pixels=int((known | returned).sum()), packed_atlas_exact=True,
-            scope='Ground75 role restoration only. Final whole-scene foreground audit remains required.',
+            scope='Explicit reviewed ground-role restoration only. Final whole-scene foreground audit remains required.',
             user_approval='pending', integration='not performed'))
     finally:
         release()
