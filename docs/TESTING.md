@@ -237,6 +237,11 @@ Its `actor-receiver-crossing-report.json` records eligible pairs and directed
 crossings per map, including zero-coverage maps. This samples initial-state seams
 with at least 16 units of edge length; it does not certify short seams, ground-only
 boundaries, every point along an edge, or changing traversal surfaces.
+For a focused asset change, `ROBIN_RECEIVER_AUDIT_MAP=wychford.level.json` selects
+one descriptor and `ROBIN_RECEIVER_AUDIT_OBSTACLES=404,405` selects seams touching
+those exported sight-obstacle indices. Both filters are recorded in the report;
+unknown indices and a run with no eligible crossings fail. Filtered runs are
+targeted evidence, not an audit of every receiver in the map.
 The companion `exported_ground_boundaries_support_actor_crossings` checks one
 crossing per eligible plane-to-ground pair in both directions and writes
 `actor-ground-crossing-report.json`. A regular synthetic fixture also walks up

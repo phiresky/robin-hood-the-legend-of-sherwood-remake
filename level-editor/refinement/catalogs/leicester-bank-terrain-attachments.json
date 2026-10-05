@@ -1,0 +1,16 @@
+[
+  {
+    "asset": "leicester-southwest-woodland-bank",
+    "review": "The ground-attached receiving volume may bind terrain within one bank relief above or below its base. The finite reach is the 50.001003-unit range of the authored physical shape, not a scene-specific height. Physical points and navigation remain unchanged; missing or competing receiving floors remain invalid. Leicester compiles unchanged; both Wychford copies bind and pass sampled actor crossings.",
+    "rules": [
+      {
+        "kind": "projection-receiver",
+        "id": "building-383-receiver",
+        "node": "building-383",
+        "anchor": [-185.401611328125, -231.2271245634045, 0.000106177026864129],
+        "below": 50.001003,
+        "above": 50.001003
+      }
+    ]
+  }
+]

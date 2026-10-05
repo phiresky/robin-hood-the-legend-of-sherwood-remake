@@ -2539,3 +2539,8 @@ independently and rejects competing receiving layers without connecting the gaps
 
 Spline lighting also preserves disconnected receiving-probe fragments after
 trimming, retaining valid light regions and their ambience filters.
+
+The woodland-bank asset now carries a bounded terrain attachment for its receiving
+volume. Its two Wychford placements bind to their surrounding terrain while the
+existing Leicester compilation remains identical; new rotated placements retain
+the same finite attachment rule.

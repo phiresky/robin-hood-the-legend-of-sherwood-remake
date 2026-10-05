@@ -27,7 +27,8 @@ receivers. The refreshed ten-map descriptor batch passes native construction
 and apply/reset for all 71 compiled controls, but retains omissions. Five Lincoln
 props lack gameplay definitions. The separate calibrated Wychford export also
 passes native construction and all three control apply/reset checks, retaining
-the church-traversal height mismatch and five physical-receiver binding omissions.
+the church-traversal height mismatch and, before the woodland-bank fix below,
+five physical-receiver binding omissions.
 The calibrated descriptor has 146 movement areas, 21,323 sight obstacles and
 17 masks. An earlier calibrated Wychford browser ZIP passes native mod discovery, image decoding and construction
 without a base datadir, including its editable scene and appearance resources.
@@ -38,6 +39,12 @@ compiled geometry is unchanged; Wychford gains its third control and two masks,
 with native construction and apply/reset verified. Its elevated entrance and
 the church traversal remain unresolved. The latest baked Wychford ZIP predates
 this attachment change.
+
+The woodland bank now publishes a bounded terrain attachment. Leicester's compiled
+geometry is unchanged; both Wychford copies bind, with 74 sampled actor crossings
+across 37 affected receiver pairs passing. Twelve new placements bind and four
+out-of-reach cases reject. Three physical-receiver omissions remain: the footbridge,
+edge bank and watermill. The latest baked ZIP predates this change too.
 
 Assets can author a placement ground height for new drops. The church-side
 tower now uses its lower stair approach, verified at three elevations and four

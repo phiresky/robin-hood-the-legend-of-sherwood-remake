@@ -4,6 +4,30 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Published woodland-bank terrain attachment (2026-10-05)
+
+`leicester-bank-terrain-attachments.json` now authors a finite vertical probe for
+`leicester-southwest-woodland-bank`'s ground receiving volume. Its reach is one
+authored bank relief (50.001003 units) above/below the base, derived from the
+physical shape rather than a scene-specific terrain height. The asset definition
+and Leicester/Wychford pins are published; all ten saved scenes reopen.
+
+The staged outputs in `work/map-compile/woodland-bank-attachment-BYht4j` preserve
+Leicester's complete compiled geometry exactly. Wychford gains receiver bindings
+for sight obstacles 404 and 405. Navigation geometry and physical points are
+unchanged; virtual building references are renumbered to account for the two new
+receivers. Both maps pass native construction (6.08 seconds) and all 15 controls
+pass apply/reset (9.27 seconds). A focused Wychford actor audit passes 74 directed
+crossings across 37 eligible receiver pairs touching those two obstacles. The
+report explicitly records its map and receiver filters; it is not a full-map walk
+audit. Twelve new placements at three relative terrain heights and four rotations
+bind, while four placements beyond the finite reach reject the receiver.
+
+The staged Wychford export did not prepare spline mesh calibration. The remaining
+physical-receiver omissions concern the footbridge, edge bank and watermill;
+the church traversal and elevated tower entrance remain separate gaps. The latest
+baked ZIP and prior calibrated descriptor predate this metadata publication.
+
 ## Refreshed published-map batch (2026-10-05)
 
 `work/map-compile/published-probes-20261005-r2` contains fresh best-effort exports

@@ -13,6 +13,19 @@ fn exported_ground_boundaries_support_actor_crossings() {
 }
 
 fn check_exported_receiver_crossings(ground: bool) {
+    let map_filter = std::env::var("ROBIN_RECEIVER_AUDIT_MAP").ok();
+    let receiver_filter = std::env::var("ROBIN_RECEIVER_AUDIT_OBSTACLES")
+        .ok()
+        .map(|value| {
+            value
+                .split(',')
+                .map(|index| {
+                    index
+                        .parse::<usize>()
+                        .expect("receiver index must be an unsigned integer")
+                })
+                .collect::<std::collections::BTreeSet<_>>()
+        });
     let directory = std::path::PathBuf::from(std::env::var("ROBIN_ASSET_MAP_DIAGNOSTICS").unwrap());
     let manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(directory.join("diagnostics.json")).unwrap())
@@ -26,12 +39,16 @@ fn check_exported_receiver_crossings(ground: bool) {
     let mut report = serde_json::json!({
         "scope": if ground { "sampled-initial-state-actor-ground-crossings" }
             else { "sampled-initial-state-actor-receiver-crossings" },
+        "map_filter": map_filter, "receiver_filter": receiver_filter,
         "complete": false, "results": []
     });
     std::fs::write(&report_path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
     let mut total = 0;
     for result in manifest["results"].as_array().unwrap() {
         let file = result["file"].as_str().unwrap();
+        if map_filter.as_ref().is_some_and(|filter| filter != file) {
+            continue;
+        }
         let bytes = std::fs::read(directory.join(file)).unwrap();
         let descriptor: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         let dims = &descriptor["walkable_polygon"][2];
@@ -43,11 +60,27 @@ fn check_exported_receiver_crossings(ground: bool) {
             ),
         );
         let grid = &engine.world.fast_grid;
+        if let Some(indices) = &receiver_filter {
+            assert!(
+                indices
+                    .iter()
+                    .all(|index| *index < assets.environment.static_sight_obstacles.len()),
+                "receiver filter includes an unknown obstacle in {file}"
+            );
+        }
         let half = grid.try_move_box_half_diagonal(0).unwrap();
         let mut candidates = vec![];
         let mut pairs = std::collections::BTreeSet::new();
         for line in grid.level.lines.iter().filter(|line| line.is_elevation) {
             let (left, right) = (line.left_obstacle_index, line.right_obstacle_index);
+            if receiver_filter.as_ref().is_some_and(|indices| {
+                ![left, right]
+                    .into_iter()
+                    .flatten()
+                    .any(|index| indices.contains(&usize::from(index)))
+            }) {
+                continue;
+            }
             if (left.is_none() || right.is_none()) != ground {
                 continue;
             }
