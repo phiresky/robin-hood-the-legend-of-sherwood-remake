@@ -1,8 +1,42 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import clipping, { type MultiPolygon } from "polygon-clipping";
 import type { Point } from "./level.ts";
-import { restoreReceivingBoundary } from "./restore-receiving-boundary.ts";
+import { restoreReceivingBoundary, restoreObstacleBoundary } from "./restore-receiving-boundary.ts";
+import { fixedPolygonBoolean } from "./fixed-polygon-boolean.ts";
+
+const notches: { name: string; boundary: Point[]; blocked: MultiPolygon }[] = JSON.parse(
+  readFileSync(new URL("../test-fixtures/rounded-notch-collision.json", import.meta.url), "utf8"),
+);
+for (const fixture of notches)
+  test(`restore exact obstacle: ${fixture.name}`, () => {
+    const restored = restoreObstacleBoundary(fixture.boundary, fixture.blocked);
+    assert.ok(restored);
+    assert.deepEqual(fixedPolygonBoolean("difference", [[restored]], [fixture.blocked]), []);
+    assert.deepEqual(
+      clipping.xor(
+        [restored.map(([x, y]): Point => [Math.round(x), Math.round(y)])],
+        [fixture.boundary],
+      ),
+      [],
+    );
+    assert.ok(restored.some((p) => p.some((v) => v !== Math.round(v))));
+    // An unrelated source or competing source ownership must not authorize a cut.
+    assert.equal(
+      restoreObstacleBoundary(
+        fixture.boundary,
+        fixture.blocked.map((polygon) =>
+          polygon.map((ring) => ring.map(([x, y]): Point => [x + 100, y])),
+        ),
+      ),
+      undefined,
+    );
+    assert.equal(
+      restoreObstacleBoundary(fixture.boundary, [...fixture.blocked, ...fixture.blocked]),
+      undefined,
+    );
+  });
 
 test("half-grid endpoint candidates use the interior of their rounding cell", () => {
   const source: Point[] = [

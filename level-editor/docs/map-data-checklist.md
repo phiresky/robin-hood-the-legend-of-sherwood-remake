@@ -148,10 +148,12 @@ warnings. Published descriptors equal the tested candidates and all ten scenes
 reopen; the isolated turret/terrace pair contains no switches.
 The next east-moat tower candidate remains unpublished: all sixteen moved stair
 routes stall against landing collision, and full Leicester falls to 14/16 routes.
-Movement-grid normalization closes an open notch into a new obstacle hole whose
-exact contour is unavailable to the current hole-preservation path. Clearance
-experiments did not repair it and were removed. This is a remaining compiler
-precision/topology case, in addition to the asset's incomplete stair mesh.
+Movement-grid normalization closes an open notch into a new obstacle hole.
+The compiler now recovers matching exact contours from the original blocked
+coverage without changing the integer obstacle. The lower entrance now completes
+its door handoff, but all sixteen complete routes still fail toward or at the
+upper landing. Clearance experiments did not repair it and were removed. The
+remaining landing collision and incomplete stair mesh need further review.
 The east hall's upper stair now has published floor/landing seam corrections and
 passes 48 directed routes across four rotations and two elevations. Full Derby
 passes 28/28 stair routes and all five control checks with this correction.
@@ -242,7 +244,7 @@ invented across that gap. New drops use the correct foundation height. Native
 mouse queries also now reject loaded movement-obstacle interiors. These focused
 checks do not establish every platform route or complete asset coverage.
 
-Latest editor validation (2026-10-06): 835 tests passed, two skipped. Fresh
+Latest editor validation (2026-10-06): 837 tests passed, two skipped. Fresh
 descriptors for all ten saved scenes pass native loading and all 71 control
 apply/reset checks; Derby retains 28/28 stair routes. The game
 build and native stair/control checks passed. Wychford loads with its spline wall

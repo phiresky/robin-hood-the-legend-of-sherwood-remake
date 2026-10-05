@@ -4,6 +4,43 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Preserve obstacle contours when rounding closes a notch (2026-10-06)
+
+Stair landing obstacles can now recover exact contours even when grid
+normalization creates a hole from an open notch. Recovery traces the rounded
+obstacle through source-edge rounding cells in the original blocked coverage,
+including its interior boundaries. Short adjacent edges can share cells: up to
+64 candidate edge combinations are evaluated, clipped to that same coverage and
+accepted only if they reproduce the integer obstacle exactly. Their union keeps
+all accepted collision; competing source contours, incompatible geometry or a
+larger search retain the existing integer fallback. Cleanup uses the established
+two-unit clipping-grid tolerance before rounding. Ordinary receiver recovery
+keeps its previous unique-edge behavior.
+
+The compiler computes blocked coverage lazily, only for a landing with an
+unmatched obstacle. Export still uses `precise_polygon` with the native
+same-grid-footprint validation; sector topology and control identities do not
+change. `rounded-notch-collision.json` contains two regression geometries.
+Tests verify blocked coverage at clipping precision, equal integer footprints,
+fractional output and rejection of unrelated or competing source ownership.
+
+The east-moat candidate now emits the recovered lower landing contour. In
+`local-stair-placements-RVcJix`, the lower entrance completes its door handoff;
+the route subsequently fails toward the upper landing. Complete traversal still
+fails **16/16 routes**, so the candidate remains unpublished. The upper landing
+requires further collision/asset review. The broader whole-edge authoring
+experiment `local-stair-seams-JBILvw` also fails all sixteen placement routes
+(`local-stair-placements-XLs7z0`) and is not published.
+
+Validation: **837 editor tests pass, two skipped**; both typechecks, focused lint,
+and the production build pass. The native precise-obstacle validator accepts the
+zero-degree candidate. Fresh batch `saved-map-exports-ptZMSD` compiles all ten
+saved scenes and passes all **71 control apply/reset checks**. Derby retains
+**28/28 stair routes**. Derby and published Leicester descriptors are unchanged
+apart from the allowed comparison of precise obstacle metadata (their precise
+obstacle counts are unchanged too). These are descriptor/runtime checks; new
+baked ZIPs and rendered traversal remain outstanding.
+
 ## East-moat tower: rounded notch becomes a blocking hole (2026-10-06)
 
 Unpublished candidate `local-stair-seams-4HHZoS` corrects `building-185-lift`

@@ -8,7 +8,7 @@ import {
   type NavigationAnchorArea,
 } from "./navigation-anchor.ts";
 import { wallSplineGameplay } from "./wall-spline-gameplay.ts";
-import polygonClipping, { type Polygon } from "polygon-clipping";
+import polygonClipping, { type Polygon, type MultiPolygon } from "polygon-clipping";
 import { assembleSightVolumes } from "./assemble-sight-volumes.ts";
 import { orderSightVolumes } from "./order-sight-volumes.ts";
 import { compileSoundSource } from "./compile-sound-source.ts";
@@ -64,7 +64,7 @@ import {
 import { heightPlane, planeHeight, type HeightPlane } from "./gameplay-plane.ts";
 import { movementVolumeHeightSlice } from "./movement-volume-height-slice.ts";
 import { quantizeGeneratedMotionPolygon, simplifyMotionRing } from "./motion-quantization.ts";
-import { restoreReceivingBoundary } from "./restore-receiving-boundary.ts";
+import { restoreReceivingBoundary, restoreObstacleBoundary } from "./restore-receiving-boundary.ts";
 import { normalizeGeneratedMotion } from "./normalize-generated-motion.ts";
 import { normalizeGameplayStateViews } from "./gameplay-state-views.ts";
 import { compileAppearanceBindings } from "./compile-appearance-bindings.ts";
@@ -1562,6 +1562,7 @@ function compileAssetGameplayAttempt(
           normalizeGeneratedMotion([region], `Movement layer ${layer}`, warnings),
         );
     const preciseHoles = indexPreciseBlockers(merged.flatMap((candidate) => candidate.slice(1)));
+    let blockedCoverage: MultiPolygon | undefined;
     for (const poly of normalized) {
       if (wallCuts.length && narrowMovementRing(poly[0]!)) {
         warnings.push(
@@ -1589,6 +1590,15 @@ function compileAssetGameplayAttempt(
       const blockers = quantized
         .slice(1)
         .map((r) => ring(r, `Merged movement hole on layer ${layer}`));
+      const isLanding =
+        !lift &&
+        doors.some(
+          (door) =>
+            door.lift &&
+            containsNavigationAnchor({ plane, polygon: boundary, blockers }, door.outsideAnchor, {
+              allowBlocked: true,
+            }),
+        );
       const receivingBoundary =
         receivingCandidates.length === 1
           ? ring(receivingCandidates[0]![0]!, "Receiving boundary")
@@ -1612,11 +1622,16 @@ function compileAssetGameplayAttempt(
         navigationRegion,
         polygon: boundary,
         ...(receivingBoundary ? { receivingPolygon: receivingBoundary } : {}),
-        preciseBlockers: blockers.flatMap((points) =>
-          (preciseHoles.get(motionBoundsKey(points)) ?? [])
+        preciseBlockers: blockers.flatMap((points) => {
+          const matching = (preciseHoles.get(motionBoundsKey(points)) ?? [])
             .filter(({ rounded }) => polygonClipping.xor([rounded], [points]).length === 0)
-            .map(({ exact }) => exact),
-        ),
+            .map(({ exact }) => exact);
+          if (matching.length) return matching;
+          if (!isLanding) return [];
+          blockedCoverage ??= fixedPolygonBoolean("difference", [frame], [merged]);
+          const restored = restoreObstacleBoundary(points, blockedCoverage);
+          return restored ? [restored] : [];
+        }),
         blockers,
       });
     }

@@ -46,41 +46,90 @@ export function restoreReceivingBoundary(
   boundary: Point[],
   sources: MultiPolygon,
 ): Point[] | undefined {
+  return restoreBoundary(boundary, sources, false);
+}
+
+/** Recover a rounded obstacle from any boundary of its exact blocked coverage,
+ * including a notch that became an enclosed hole on the movement grid. */
+export function restoreObstacleBoundary(
+  boundary: Point[],
+  sources: MultiPolygon,
+): Point[] | undefined {
+  return restoreBoundary(boundary, sources, true);
+}
+
+function restoreBoundary(
+  boundary: Point[],
+  sources: MultiPolygon,
+  obstacle: boolean,
+): Point[] | undefined {
   const restored: Point[][] = [];
-  for (const source of sources) {
-    const outer = simplifyMotionRing(source[0]!, 2 / 1048576);
+  const contours = sources.flatMap((source) =>
+    (obstacle ? source : [source[0]!]).map((contour) => ({
+      contour,
+      coverage: obstacle ? source : [contour],
+    })),
+  );
+  for (const { contour, coverage } of contours) {
+    const outer = simplifyMotionRing(contour, 2 / 1048576);
     const edges = outer.map((a, i): Edge => ({ a, b: outer[(i + 1) % outer.length]! }));
-    const matches: Edge[] = [];
+    const choices: Edge[][] = [];
     for (const [i, vertex] of boundary.entries()) {
       const next = boundary[(i + 1) % boundary.length]!;
       const matching = edges.filter((edge) => edgePoint(edge, vertex) && edgePoint(edge, next));
-      if (matching.length !== 1) break;
-      matches.push(matching[0]!);
+      if (!matching.length) break;
+      choices.push(matching);
     }
-    if (matches.length !== boundary.length) continue;
-    const candidate: Point[] = [];
-    for (const [i, vertex] of boundary.entries()) {
-      const incoming = matches[(i + boundary.length - 1) % boundary.length]!;
-      const outgoing = matches[i]!;
-      const shared = [incoming.a, incoming.b].find(
-        (point) =>
-          [outgoing.a, outgoing.b].some(
-            (other) => other[0] === point[0] && other[1] === point[1],
-          ) && point.every((value, axis) => Math.round(value) === vertex[axis]),
+    if (choices.length !== boundary.length) continue;
+    // Short neighbouring edges may share rounding cells. For obstacles, retain
+    // the union of valid reconstructions inside the same blocked coverage.
+    // Bound the search; more complex ambiguity keeps integer collision.
+    const combinations = choices.reduce((n, edges) => n * edges.length, 1);
+    if (combinations > (obstacle ? 64 : 1)) continue;
+    let paths: Edge[][] = [[]];
+    for (const edges of choices)
+      paths = paths.flatMap((path) => edges.map((edge) => [...path, edge]));
+    const valid: MultiPolygon = [];
+    for (const matches of paths) {
+      const candidate: Point[] = [];
+      for (const [i, vertex] of boundary.entries()) {
+        const incoming = matches[(i + boundary.length - 1) % boundary.length]!;
+        const outgoing = matches[i]!;
+        const shared = [incoming.a, incoming.b].find(
+          (point) =>
+            [outgoing.a, outgoing.b].some(
+              (other) => other[0] === point[0] && other[1] === point[1],
+            ) && point.every((value, axis) => Math.round(value) === vertex[axis]),
+        );
+        if (shared) candidate.push([...shared]);
+        else candidate.push(edgePoint(incoming, vertex)!, edgePoint(outgoing, vertex)!);
+      }
+      const clipped = clipping.intersection([candidate], obstacle ? coverage : [outer]);
+      if (clipped.length !== 1 || clipped[0]!.length !== 1) continue;
+      const rounded = quantizeGeneratedMotionPolygon(
+        clipped[0]!,
+        Math.round,
+        "Receiving boundary",
+        [],
       );
-      if (shared) candidate.push([...shared]);
-      else candidate.push(edgePoint(incoming, vertex)!, edgePoint(outgoing, vertex)!);
+      if (!rounded || clipping.xor(rounded, [boundary]).length) continue;
+      valid.push(clipped[0]!);
     }
-    const clipped = clipping.intersection([candidate], [outer]);
-    if (clipped.length !== 1 || clipped[0]!.length !== 1) continue;
+    if (!valid.length) continue;
+    if (!obstacle) {
+      restored.push(simplifyMotionRing(valid[0]![0]!));
+      continue;
+    }
+    const combined = clipping.union(valid[0]!, ...valid.slice(1));
+    if (combined.length !== 1 || combined[0]!.length !== 1) continue;
     const rounded = quantizeGeneratedMotionPolygon(
-      clipped[0]!,
+      combined[0]!,
       Math.round,
-      "Receiving boundary",
+      "Restored obstacle",
       [],
     );
     if (!rounded || clipping.xor(rounded, [boundary]).length) continue;
-    restored.push(simplifyMotionRing(clipped[0]![0]!));
+    restored.push(simplifyMotionRing(combined[0]![0]!, obstacle ? 2 / 1048576 : 0));
   }
   return restored.length === 1 ? restored[0] : undefined;
 }
