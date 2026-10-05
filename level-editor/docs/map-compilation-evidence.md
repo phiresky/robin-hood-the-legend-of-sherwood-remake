@@ -34,6 +34,19 @@ rejection checks also still pass. Railings, deck thickness and cross-braces rema
 unauthored, so these tests do not certify complete under-bridge body clearance,
 projectile/sight collision or publication readiness.
 
+A direct body-conversion experiment found open boundary seams in 130 of the
+mesh's 131 connected pieces. Closing 260 boundary loops and pairing projected
+top/bottom faces produced 5,802 cells, with overlapping intervals and tiny
+degenerate pieces. The candidate in `imported-bridge-deck-4X1MMW` fails compiler
+height-plane construction and is not published or used by the checked-in tool.
+Its `body-volume-review.json` records summed-cell versus signed-mesh volumes;
+these are not equivalent occupancy measures when cells overlap. The next body
+authoring step needs reviewed, compact collision shapes preserving the arched
+deck, rail openings and cross-braces, rather than treating that conversion as a
+usable definition. Experimental scripts remain under `work/map-compile` as
+`author-bridge-closed-bodies-experiment.py` and
+`stage-bridge-closed-bodies-experiment.mjs`.
+
 Mesh review identifies eighteen top-facing triangles spanning nine arched deck
 panels, excluding the lower beams and railings. Their pinned face selection is
 recorded in `refinement/catalogs/sketchfab-long-wood-bridge-deck-review.json`.
