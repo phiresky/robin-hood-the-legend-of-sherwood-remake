@@ -8,7 +8,7 @@ sys.path.insert(0, str(ROOT / 'level-editor/refinement/blender'))
 from evidence_io import sha, write_json
 from catalog_schema import source_for_part
 
-ASSETS = {'croisement02-woodcutters-shed', 'croisement02-logging-clearing-log'}
+ASSETS = {'croisement02-woodcutters-shed', 'croisement02-logging-clearing-log', 'croisement02-southwest-stumps'}
 
 
 def validate(worker, group):
@@ -29,6 +29,9 @@ def validate(worker, group):
     for key in ('sheet', 'evidence'):
         if sha(Path(joint[key])) != joint[key + '_sha256']:
             raise ValueError('Prop completion joint evidence changed')
+    if 'physical_source_guards' in root:
+        if sha(Path(root['physical_source_guards'])) != root['physical_source_guards_sha256']:
+            raise ValueError('Prop physical source visibility evidence changed')
     if sha(worker / 'inspection/actual-materials/sheet.png') != visual['actual_materials_sha256']:
         raise ValueError('Prop completion actual views changed')
     return model

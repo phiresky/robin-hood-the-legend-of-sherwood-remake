@@ -16,7 +16,7 @@ from audit_scene_first_hit import full_mask
 from stage_review_scene import signature
 
 
-def main(kind):
+def main(kind, independent=False):
     logging=kind=='logging';asset='croisement02-logging-clearing-log' if logging else 'croisement02-southwest-stumps'
     prefix='4ff3e937' if logging else 'b650c6da';added='Logging root and branch tangle' if logging else 'Southwest stump root and branch tangle'
     directory=OUT/'leaf-clump-joint-review'/('restart2-'+kind+'-root-'+prefix);evidence=directory/'evidence.json';data=json.loads(evidence.read_text())
@@ -35,7 +35,19 @@ def main(kind):
             matrix=obj.matrix_world.copy();obj.parent=None;obj.matrix_world=matrix;obj.hide_render=False
     objects=[o for o in scene.objects if o.type=='MESH'];assert sum(o.name==added for o in objects)==1
     after,owners,_=_tree(objects);before,before_owners,_=_tree([o for o in objects if o.name!=added])
+    if independent:
+        def partition(rows):
+            groups=sorted({o.get('asset_group') for o in rows})
+            return [_tree([o for o in rows if o.get('asset_group')==a])[:2] for a in groups]
+        after=partition(objects);before=partition([o for o in objects if o.name!=added])
     def owner(tree,names,x,y):
+        if independent:
+            hits=[]
+            origin=Vector((float(x)+.5,-(float(y)+.5)/SIN,0))+RAY*5000
+            for local,local_owners in tree:
+                hit,normal,index,distance=local.ray_cast(origin,-RAY)
+                if hit is not None:hits.append((distance,local_owners[index].get('asset_group')))
+            return min(hits)[1] if hits else None
         hit,normal,index,distance=tree.ray_cast(Vector((float(x)+.5,-(float(y)+.5)/SIN,0))+RAY*5000,-RAY)
         return names[index].get('asset_group') if hit is not None else None
     prior=OUT/'restart2-vegetation'/('logging-branches-v5'if logging else'southwest-branches-v1')/'proposal.json';samples=json.loads(prior.read_text())['hits'];target_rows=[]
@@ -60,11 +72,11 @@ def main(kind):
         guards.append(dict(asset=context.name,source_manifest_sha256=sha(context/'source-masks.json'),native_domain_pixels=int(domain.sum()),baseline_visible=visible,new_root_blocks=blocked))
     points=[o.matrix_world@v.co for o in objects if o.get('asset_group')==asset for v in o.data.vertices]
     counts=Counter(r['first_asset']for r in target_rows)
-    write_json(directory/'physical-source-guards-v2.json',dict(status='Measured finite source visibility; exact original prop retained in baseline',joint_evidence_sha256=sha(evidence),inputs=data['inputs'],target_counts=dict(counts),target_rows=target_rows,neighbors=guards,minimum_world_z=min(p.z for p in points),limitations=['Only additive root mesh is absent from baseline; original approved log/stumps remain.', 'Source center rays and declared opacity/one-sided materials are sampled; not an exhaustive collision proof.']))
+    write_json(directory/('physical-source-guards-per-asset-v3.json' if independent else 'physical-source-guards-v2.json'),dict(method='Nearest exact per-asset physical-alpha hit' if independent else 'Combined physical-alpha BVH',status='Measured finite source visibility; exact original prop retained in baseline',joint_evidence_sha256=sha(evidence),inputs=data['inputs'],target_counts=dict(counts),target_rows=target_rows,neighbors=guards,minimum_world_z=min(p.z for p in points),limitations=['Only additive root mesh is absent from baseline; original approved log/stumps remain.', 'Source center rays and declared opacity/one-sided materials are sampled; not an exhaustive collision proof.']))
     print(dict(target_counts=dict(counts),new_neighbor_blocks={r['asset']:len(r['new_root_blocks'])for r in guards}))
 
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('kind',choices=['logging','southwest']);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:]);acquire()
-    try:main(args.kind)
+    parser=argparse.ArgumentParser();parser.add_argument('kind',choices=['logging','southwest']);parser.add_argument('--independent',action='store_true');args=parser.parse_args(sys.argv[sys.argv.index('--')+1:]);acquire()
+    try:main(args.kind,args.independent)
     finally:release()

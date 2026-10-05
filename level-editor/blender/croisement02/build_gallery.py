@@ -168,6 +168,15 @@ def main():
                 item['source_comparison_secondary_label']=baseline_label+' above; NEW cleanup candidate below, identical cameras (views0–3)'
                 item['source_trace']=str(cleanup_comparison/'comparison-4-7.png')
                 item['source_trace_label']=baseline_label+' above; NEW cleanup candidate below, identical cameras (views4–7)'
+        completion=workspace/'inspection/root-completion-review.json'
+        if completion.exists():
+            completed=json.loads(completion.read_text())
+            if completed['model_sha256']!=model_hash or completed['status']!='PASS':
+                raise ValueError('Stale prop completion review')
+            item['disclosure']=str(completion)
+            item['notes']=[n for n in item['notes'] if n!='Current ground/neighbor joint remains required for geometry readiness.']
+            item['notes']+=completed.get('limitations',[])
+            item['notes'].append('New additive geometry and current selected-neighbor joint independently reviewed; pending exact user geometry decision.')
         review=workspace/'inspection/visual-review.json'
         complete_volume=workspace/'inspection/complete-volume'
         if (complete_volume/'evidence.json').exists():
