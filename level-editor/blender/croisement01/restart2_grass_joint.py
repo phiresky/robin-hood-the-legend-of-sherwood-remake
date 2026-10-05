@@ -1,5 +1,6 @@
 """Review saved branch and grass materials together against archival terrain."""
 import json
+import argparse
 import math
 import sys
 from pathlib import Path
@@ -15,10 +16,11 @@ from evidence_io import sha
 
 
 def main():
+    parser=argparse.ArgumentParser();parser.add_argument('--grass-revision',type=int,default=9);parser.add_argument('--joint-revision',type=int,default=5);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
     out=ROOT/'level-editor/work/croisement01-refinement'
-    worker=out/'restart2/grass75-volume-v9/assets/croisement01-grass-75'
+    worker=out/f'restart2/grass75-volume-v{args.grass_revision}/assets/croisement01-grass-75'
     branch=out/'restart2/branch-source-fit-v3/branch-round-10/assets/croisement01-east-fallen-branch'
-    dest=out/'restart2/branch-grass-joint-v5';dest.mkdir(exist_ok=False)
+    dest=out/f'restart2/branch-grass-joint-v{args.joint_revision}';dest.mkdir(exist_ok=False)
     acquire();model_sha=sha(worker/'model.blend');bpy.ops.wm.open_mainfile(filepath=str(worker/'model.blend'))
     scene=bpy.data.scenes.new('Branch and Grass Joint');scene.render.engine='CYCLES';scene.cycles.samples=16;scene.cycles.transparent_max_bounces=256
     scene.world=bpy.data.worlds.new('Joint ambient');scene.world.use_nodes=True;scene.world.node_tree.nodes['Background'].inputs['Color'].default_value=(.3,.3,.3,1)

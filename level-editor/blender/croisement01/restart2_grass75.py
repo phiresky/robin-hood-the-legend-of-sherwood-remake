@@ -23,7 +23,7 @@ from refinement_inventory import inventory
 
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--mask',type=int,choices=[74,75,82],default=75);parser.add_argument('--revision',type=int,default=12);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
+    parser=argparse.ArgumentParser();parser.add_argument('--mask',type=int,choices=[74,75,76,82],default=75);parser.add_argument('--revision',type=int,default=12);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
     mask=args.mask
     acquire()
     dest = OUT/f'restart2/grass{mask}-volume-v{args.revision}'
@@ -163,7 +163,7 @@ def main():
         poly.material_index=slot
         for loop in poly.loop_indices:
             uv.data[loop].uv=uvs[loop];ownership.data[loop].color=(float(known),1,1,1)
-    asset=f'croisement01-grass-{mask}';node=f'foliage-native-grass{mask}';name={74:'Southwest Field Grass',75:'East Branch Foreground Grass',82:'Southeast Field Grass'}[mask]
+    asset=f'croisement01-grass-{mask}';node=f'foliage-native-grass{mask}';name={74:'Southwest Field Grass',75:'East Branch Foreground Grass',76:'Central Field Grass',82:'Southeast Field Grass'}[mask]
     obj=bpy.data.objects.new(name,mesh);working.objects.link(obj)
     for k,v in dict(source_node=node,asset_group=asset,asset_name=name,part_name='Rooted native leaves',projection_component='crown',projection_preserve=True,foliage_physical_opacity=True).items():obj[k]=v
     rgba.save(source/'complete-source.png');rgba.save(source/'observed-source.png')

@@ -8,7 +8,7 @@ import trace_grass_leaves
 
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--mask',type=int,choices=[74,75,82],default=75);args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('--mask',type=int,choices=[74,75,76,82],default=75);args=parser.parse_args()
     original = trace_grass_leaves.OUT
     destination = original/f'restart2/grass{args.mask}-source-v1'
     destination.mkdir(parents=True, exist_ok=False)
