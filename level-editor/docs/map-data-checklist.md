@@ -130,8 +130,10 @@ seconds. These are initial-state actor checks, not complete rendered parity.
 The lower-east curtain stair is also published after 16/16 placement routes,
 eight disconnected-ground rejections, complete mesh sample coverage and another
 28/28 full Derby route check. The east-bailey candidate remains unpublished:
-two rotated exits select the wrong terrain receiver, and full Derby retains its
-ground-contact gap. The upper-west candidate passes routes but its visible stair
+the stair-exit receiver fix now passes all 16 rotated/elevated placement routes,
+but full Derby retains its ground-contact gap. Handoffs query the actual seam,
+with a bounded floating-point boundary probe, instead of the outside waypoint.
+The upper-west candidate passes routes but its visible stair
 mesh and authored floor disagree, so it also remains unpublished.
 Physical transitions
 now wait at a reached world target until animation completion, or preserve

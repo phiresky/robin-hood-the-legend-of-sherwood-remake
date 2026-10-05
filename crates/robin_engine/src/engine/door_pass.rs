@@ -1328,12 +1328,58 @@ impl EngineInner {
         {
             let target_sector =
                 target_sector.expect("validated PassDoor target sector lost its public handle");
-            let new_obstacle = self.find_projection_area_at(
-                tcx.assets,
-                target_layer,
-                target_sector.with_arena_index(target_sector_index),
-                compiled_climb_point.unwrap_or(door_point_out),
-            );
+            // Physical stairs leave the actor at the shared seam. The outside
+            // waypoint can belong to a different terrain receiver, even on a
+            // coplanar landing, so bind the receiver at the actual handoff.
+            let receiving_point =
+                physical_door
+                    .as_ref()
+                    .filter(|_| !direct)
+                    .map(|(_, _, physical)| {
+                        crate::coordinates::WorldPoint3D::new(
+                            physical.middle[0],
+                            physical.middle[1],
+                            physical.middle[2],
+                        )
+                        .to_map()
+                    });
+            let new_obstacle = self
+                .find_projection_area_at(
+                    tcx.assets,
+                    target_layer,
+                    target_sector.with_arena_index(target_sector_index),
+                    receiving_point
+                        .or(compiled_climb_point)
+                        .unwrap_or(door_point_out),
+                )
+                .or_else(|| {
+                    // Independently rounded floor/receiver vertices can put an
+                    // exact seam just outside its landing. Probe at most four f32
+                    // steps toward the landing; never use the distant waypoint to
+                    // bridge an unsupported gap or choose another terrain triangle.
+                    let mut point = receiving_point?;
+                    for _ in 0..4 {
+                        for (value, toward) in [
+                            (&mut point.x, door_point_out.x),
+                            (&mut point.y, door_point_out.y),
+                        ] {
+                            if *value < toward {
+                                *value = value.next_up();
+                            } else if *value > toward {
+                                *value = value.next_down();
+                            }
+                        }
+                        if let Some(receiver) = self.find_projection_area_at(
+                            tcx.assets,
+                            target_layer,
+                            target_sector.with_arena_index(target_sector_index),
+                            point,
+                        ) {
+                            return Some(receiver);
+                        }
+                    }
+                    None
+                });
             self.set_obstacle_and_material(tcx.assets, entity_id, new_obstacle);
         }
 

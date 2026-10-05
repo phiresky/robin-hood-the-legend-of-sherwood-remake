@@ -4,6 +4,26 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Physical stair exit receiver handoff (2026-10-05)
+
+The split-landing actor regression failed before the fix: the exit retained the
+outside waypoint's receiver while placing the actor at a seam in another strip.
+Physical exits now query the actual seam. A missing seam receiver is retried at
+most four f32 steps toward the outside, covering independently rounded boundary
+vertices without reaching the distant waypoint. The east-bailey 90-degree seam
+miss was approximately 0.00000048 units, below its 0.00012207-unit f32 step.
+
+The strengthened regression checks receiver identity during every landing tick
+for both doors and directions. All 223 movement/door tests pass (12 ignored).
+`local-stair-placements-WqkkUh` now passes 16/16 directed actor routes across
+0/37/90/180 degrees and elevations 0/40, including the previously failing
+180-degree exits. The intermediate exact-seam-only change failed two 90-degree
+exits; the bounded boundary probe resolves those too. These checks use the native
+actor loop, not complete rendered sprites. The east-bailey definition remains
+unpublished because its separate full-Derby ground-contact gap remains open.
+The published-geometry Derby fixture `derby-lower-east-full-srfDW5` still passes
+all 28 directed stair routes after the runtime change.
+
 ## Derby curtain stair batch and lower-east publication (2026-10-05)
 
 Three explicitly staged local corrections use the stair's external ground

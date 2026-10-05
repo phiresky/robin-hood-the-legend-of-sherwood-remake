@@ -463,8 +463,30 @@ fn stair_barrier_crushes_only_overlapping_bound_landing_footprints() {
 fn physical_stair_actor_crosses_both_doors_using_bound_landing_support() {
     for endpoint in 0..2 {
         for direct in [true, false] {
+            let mut document = edge_on_physical_stair_fixture();
+            let receivers = document["asset_geometry"]["sight_obstacles"]
+                .as_array()
+                .unwrap()
+                .clone();
+            let mut split = Vec::new();
+            for (receiver, ranges, height) in [
+                (&receivers[0], [(270, 295), (295, 300)], 100),
+                (&receivers[1], [(400, 405), (405, 430)], 200),
+            ] {
+                for (low, high) in ranges {
+                    let mut part = receiver.clone();
+                    part["points"] = serde_json::json!([
+                        {"x":380,"y":low,"z_bottom":height,"z_top":height},
+                        {"x":420,"y":low,"z_bottom":height,"z_top":height},
+                        {"x":420,"y":high,"z_bottom":height,"z_top":height},
+                        {"x":380,"y":high,"z_bottom":height,"z_top":height}
+                    ]);
+                    split.push(part);
+                }
+            }
+            document["asset_geometry"]["sight_obstacles"] = serde_json::json!(split);
             let (mut engine, mut assets) =
-                compiled_walkway(&serde_json::to_vec(&edge_on_physical_stair_fixture()).unwrap());
+                compiled_walkway(&serde_json::to_vec(&document).unwrap());
             let door = engine.script_domains.interactables.doors[endpoint].clone();
             let definition = assets.navigation.physical_stairs[&2].definition.clone();
             let physical = &definition.doors[endpoint];
@@ -532,6 +554,17 @@ fn physical_stair_actor_crosses_both_doors_using_bound_landing_support() {
             };
             for _ in 0..100 {
                 engine.t_tick_actor_owner_envelopes(&assets);
+                let pi = engine.ent(owner).position_iface();
+                if pi.get_sector().unwrap().get() != 2 {
+                    assert_actor_receiver(
+                        &engine,
+                        &assets,
+                        owner,
+                        pi.get_sector().unwrap(),
+                        pi.get_layer().get(),
+                        pi.get_position().to_map(),
+                    );
+                }
                 let point = engine.ent(owner).position_iface().get_position();
                 if [point.x, point.y, point.z] == expected {
                     break;
