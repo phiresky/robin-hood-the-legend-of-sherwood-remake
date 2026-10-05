@@ -132,15 +132,21 @@ export function compilePhysicalStair(input: PhysicalStairInput): {
   });
   const contains = (point: Vec3, ring: Point[]) =>
     pointInGameplayPolygon([point[0], point[1]], ring, true);
-  const doors = input.doors.map((door): PhysicalStairNavigation["doors"][number] => {
+  const doors = input.doors.map((door, index): PhysicalStairNavigation["doors"][number] => {
     for (const point of [door.inside, door.middle, door.outside])
       if (point.some((value) => !Number.isFinite(value)))
         throw new Error("Physical stair door coordinates must be finite");
-    for (const point of [door.inside, door.middle])
-      if (Math.abs(planeHeight(plane, [point[0], point[1]]) - point[2]) > 1e-4)
-        throw new Error("Physical stair inside/middle anchors must lie on the floor");
-      else if (!contains(point, boundary) || holes.some((hole) => contains(point, hole)))
-        throw new Error("Physical stair inside/middle anchors must have floor support");
+    for (const anchor of ["inside", "middle"] as const) {
+      const point = door[anchor];
+      const heightError = point[2] - planeHeight(plane, [point[0], point[1]]);
+      const label = `door ${index} ${anchor} at ${JSON.stringify(point)}`;
+      if (Math.abs(heightError) > 1e-4)
+        throw new Error(
+          `Physical stair anchors must lie on the floor: ${label}, height difference ${heightError}`,
+        );
+      if (!contains(point, boundary) || holes.some((hole) => contains(point, hole)))
+        throw new Error(`Physical stair anchors must have floor support: ${label}`);
+    }
     return { inside: [...door.inside], middle: [...door.middle], outside: [...door.outside] };
   });
   return { navigation: { plane, boundary, obstacles, doors }, holes };

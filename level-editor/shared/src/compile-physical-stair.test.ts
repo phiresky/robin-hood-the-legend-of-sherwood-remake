@@ -225,10 +225,13 @@ test("disconnected floors, inconsistent heights and unsupported door anchors are
   assert.throws(() => compilePhysicalStair(warped), /planar/);
   const hole = fixture();
   hole.doors[0]!.inside = [387, 322, 122];
-  assert.throws(() => compilePhysicalStair(hole), /floor support/);
+  assert.throws(
+    () => compilePhysicalStair(hole),
+    /floor support: door 0 inside at \[387,322,122\]/,
+  );
   const off = fixture();
   off.doors[0]!.middle = [300, 300, 100];
-  assert.throws(() => compilePhysicalStair(off), /floor support/);
+  assert.throws(() => compilePhysicalStair(off), /floor support: door 0 middle at \[300,300,100\]/);
   const invalid = fixture();
   invalid.obstacles[0]!.motionObstacle = -1;
   assert.throws(() => compilePhysicalStair(invalid), /identity/);

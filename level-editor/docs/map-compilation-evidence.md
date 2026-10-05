@@ -4,6 +4,42 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Refreshed keep placement audit and unsupported door seams (2026-10-05)
+
+`work/map-compile/keep-placements-9UUrtV` recompiles the precision-preserving
+candidate from `keep-placements-RegQxL` with the current ordinary export pipeline.
+It retains three stairs, six building groups and one control at each of eight
+placements (rotations 0/37/90/180, elevations 0/40). The native directed actor
+audit still passes 56 and fails 24 of 80 routes: two failures at each 90-degree
+placement and ten at each 180-degree placement. No physical stair is emitted in
+this batch: all three fail authored door support validation and retain projected
+navigation with warnings. This does not validate current control apply/reset or
+rendered behavior for this batch.
+
+Asset-local inspection finds all inside anchors within their floors, but these
+middle anchors outside them (nearest boundary distance in local game units):
+
+| Stair | Door ordinal | Unsupported midpoint distance |
+|---|---|---|
+| building-156 | 0 | 0.519282 |
+| building-156 | 2 | 0.236085 |
+| building-154 | 0 | 0.327452 |
+| building-154 | 1 | 0.125943 |
+| building-134 | 0 | 0.257581 |
+
+Midpoint heights also differ from their outside landing endpoints by up to
+0.835567 units. The physical binding requires a supported, matching-height seam;
+loosening containment alone would not fix this. Correct asset-owned floor/door
+seams before claiming physical traversal for the keep. The compiler now reports
+the failing door ordinal, anchor name and world position, and the height error
+when applicable. Focused compiler tests verify these diagnostics.
+
+Reproduction: from `level-editor`, run
+`node work/map-compile/check-keep-placements.mjs work/map-compile/keep-placements-RegQxL --precise-stairs`.
+Pass the printed output directory as an absolute `ROBIN_ASSET_MAP_DIAGNOSTICS`
+value to native test `exported_stairs_support_complete_actor_routes --ignored`.
+The output directory contains the compiled descriptors and actor-route report.
+
 ## Physical stairs in ordinary exports (2026-10-05)
 
 The main compiler now emits physical navigation for compatible planar stairs.

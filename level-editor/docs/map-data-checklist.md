@@ -81,8 +81,12 @@ control identities. Receiving and material queries retain their projected
 geometry; world-space anchors use the physical floor. Unsupported physical
 assemblies warn and retain projected navigation. Earlier surface fitting and
 region assembly still reject edge-on or disconnected cases before this emission
-stage. **The 24 failed keep routes remain unresolved pending a fresh placement
-audit and the remaining compiler integration.** Physical transitions
+stage. **The refreshed keep audit still fails 24 of 80 routes.** All three keep
+stairs retain projected navigation because authored door midpoints lie outside
+their floor boundaries. Unsupported midpoints are 0.13–0.52 asset-local units
+beyond the floor; midpoint/landing height differences reach 0.84 units. These
+asset seams need correction before physical traversal can be evaluated there.
+Physical transitions
 now wait at a reached world target until animation completion, or preserve
 unfinished distance in the next movement order. An edge-on actor-loop test
 covers both cases. Local point Move requests now resolve an invertible stair
