@@ -9,9 +9,21 @@ import { groupCentroid } from "../shared/src/level3d.ts";
 // Synthetic receiving assets test placement connections, not visual fidelity.
 // Their floors are authored from the reviewed stair seams; none is published.
 const [staged, ...flags] = process.argv.slice(2);
-assert.ok(staged && flags.every((flag) => ["--published", "--preserve-landings"].includes(flag)));
+assert.ok(
+  staged &&
+    flags.every((flag) => ["--published", "--preserve-landings", "--external-only"].includes(flag)),
+);
 const published = flags.includes("--published");
 const preserveLandings = flags.includes("--preserve-landings");
+const externalOnly = flags.includes("--external-only");
+const externalDoors = externalOnly
+  ? new Set(
+      JSON.parse(await fs.readFile(`${staged}/review.json`, "utf8"))
+        .changes.filter((change) => change.landing === "external placement receiver")
+        .map((change) => change.door),
+    )
+  : undefined;
+if (externalOnly) assert.ok(externalDoors.size, "No reviewed external doors");
 const edits = JSON.parse(await fs.readFile(`${staged}/edits.json`, "utf8"));
 assert.equal(edits.length, 1);
 const edit = edits[0];
@@ -31,7 +43,9 @@ const lift = descriptor.gameplay.lifts[0];
 const floor = descriptor.gameplay.surfaces.find((surface) => surface.id === lift.surface);
 const plane = heightPlane(floor.polygon.map(([x, y], i) => [x, y, floor.height[i]]));
 const length = Math.hypot(plane[0], plane[1]);
-const landings = lift.doors.map((door, number) => {
+const landingDoors = lift.doors.filter((door) => !externalOnly || externalDoors.has(door.id));
+if (externalOnly) assert.equal(landingDoors.length, externalDoors.size);
+const landings = landingDoors.map((door, number) => {
   const edge = floor.polygon.filter((_, i) => Math.abs(floor.height[i] - door.outside[2]) < 1e-5);
   assert.equal(edge.length, 2, "Fixture requires one straight seam at each endpoint");
   const width = Math.hypot(edge[1][0] - edge[0][0], edge[1][1] - edge[0][1]);
@@ -114,7 +128,7 @@ for (const height of [0, 40])
       const angle = (rotation * Math.PI) / 180,
         sinT = Math.sin((35 * Math.PI) / 180);
       // Scenery landings rotate about zero; preserve the stair assembly's pivot
-      // while keeping the three placements independently editable.
+      // while keeping the stair and landing placements independently editable.
       const pivotDx = cx * (1 - Math.cos(angle)) + (cy / sinT) * Math.sin(angle);
       const pivotDy = cy * (1 - Math.cos(angle)) - cx * sinT * Math.sin(angle);
       for (const landing of landings) {
@@ -163,7 +177,7 @@ await fs.writeFile(
   JSON.stringify({
     scope: "static-geometry-only-not-gameplay-parity",
     complete: true,
-    snapshot_notes: { syntheticExternalLandings: true, preserveLandings },
+    snapshot_notes: { syntheticExternalLandings: true, preserveLandings, externalOnly },
     results,
   }),
 );

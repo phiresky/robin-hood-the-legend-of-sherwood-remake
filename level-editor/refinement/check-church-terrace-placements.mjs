@@ -8,11 +8,15 @@ import { sceneToGame } from "../shared/src/geometry.ts";
 import { compileMap } from "../app/src/map-compile.ts";
 
 const [staged, mode] = process.argv.slice(2);
-assert.ok(staged, "Provide combined church and terrace edits");
+assert.ok(staged, "Provide combined stair and terrace edits");
 assert.ok(mode === undefined || mode === "--published", "Unknown verification mode");
 const edits = JSON.parse(await fs.readFile(`${staged}/edits.json`, "utf8"));
-const ids = new Set(["leicester-church-side-tower", "leicester-lower-bailey-terrace"]);
+const stairAsset = edits.find((e) => e.asset !== "leicester-lower-bailey-terrace")?.asset;
+assert.ok(["leicester-church-side-tower", "leicester-east-wall-turret"].includes(stairAsset));
+const ids = new Set([stairAsset, "leicester-lower-bailey-terrace"]);
 assert.deepEqual(new Set(edits.map((e) => e.asset)), ids);
+const stairCount = edits.find((e) => e.asset === stairAsset).gameplay.lifts.length;
+const externalNode = stairAsset === "leicester-church-side-tower" ? "building-191" : "building-125";
 const original = await readStoredMap("library/scenes/leicester.rhlos-map.json", "library");
 const sources = original.assetSources.filter((s) => ids.has(s.id));
 const assets = await pinnedDescriptors("library", sources, []);
@@ -30,7 +34,7 @@ for (const elevation of [0, 40])
   for (const rotation of [0, 37, 90, 180]) {
     const document = {
       version: 1,
-      map: "Church terrace placement",
+      map: `${stairAsset} terrace placement`,
       camera: original.camera,
       size: [4000, 4000],
       objects: structuredClone(original.objects.filter((p) => ids.has(p.group))),
@@ -68,7 +72,7 @@ for (const elevation of [0, 40])
     const compiled = compileMap(document, [0, 0, 4000, 4000], assets, { bestEffort: true });
     assert.equal(
       compiled.descriptor.asset_geometry.lifts.filter((l) => l.physical_navigation).length,
-      2,
+      stairCount,
     );
     const file = `church-terrace-${elevation}-${rotation}.level.json`;
     await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
@@ -84,7 +88,7 @@ for (const elevation of [0, 40])
       const rejected = compileMap(broken, [0, 0, 4000, 4000], assets, { bestEffort: true });
       assert.ok(
         rejected.warnings.some(
-          (warning) => warning.includes("building-191") && warning.includes("traversal omitted"),
+          (warning) => warning.includes(externalNode) && warning.includes("traversal omitted"),
         ),
         `${file}: ${change} must reject the external stair connection`,
       );

@@ -94,7 +94,7 @@
       "model": "3d-assets/leicester/leicester-east-wall-turret/model.glb",
       "model_sha256": "175576c5166a5d69b766a259541f1bf2af9bf95280416be50a8f5cad3aee0492",
       "descriptor": "3d-assets/leicester/leicester-east-wall-turret/asset.json",
-      "descriptor_sha256": "4227bcbeafc37971a6c8a58977390a43c46bd7f719266110fa9d03ea95208781",
+      "descriptor_sha256": "5ead2797d0ec5791f212bbee069ab2b5e7ecb68b6bf60462185a285dca6c67d1",
       "id": "leicester-east-wall-turret"
     },
     {
@@ -167,7 +167,7 @@
       "model": "3d-assets/leicester/leicester-lower-bailey-terrace/model.glb",
       "model_sha256": "54bf7dfc7fe331735e3f98c6cfebe51970d036494298efed3d631a5de7eae080",
       "descriptor": "3d-assets/leicester/leicester-lower-bailey-terrace/asset.json",
-      "descriptor_sha256": "ff196f176f53d1432d90cc566ee8882ce8d9596ad2d5ec255d4fcd862441bf0b",
+      "descriptor_sha256": "4f32010f0866c003539d191e4e2207797150ab12e41186e4ed4ed3813415be79",
       "id": "leicester-lower-bailey-terrace"
     },
     {

@@ -8,6 +8,7 @@ import { validateAssetGameplay } from "../shared/src/asset-gameplay.ts";
 // Explicitly selected authoring candidates only. Publication requires mesh and
 // placed actor checks; this never repairs a scene silently during compilation.
 const [asset, ...arguments_] = process.argv.slice(2);
+const localLandingEdges = arguments_.includes("--local-landing-edges");
 const external = new Set(
   arguments_.filter((value) => value.startsWith("--external=")).map((value) => value.slice(11)),
 );
@@ -25,6 +26,7 @@ assert.ok(
 const ids = arguments_.filter(
   (value) =>
     !value.startsWith("--external=") &&
+    value !== "--local-landing-edges" &&
     !value.startsWith("--floor-shift-limit=") &&
     !value.startsWith("--landing-shift-limit="),
 );
@@ -138,9 +140,41 @@ for (const id of ids) {
       }
     });
     assert.ok(vertices.size >= 2, `${door.id}: no matching landing edge`);
-    landing.polygon = landing.polygon.map((point, i) =>
-      vertices.has(i) ? seat(point, door.outside[2]) : point,
-    );
+    if (localLandingEdges) {
+      // Keep the rest of a longer receiving edge unchanged. Only its overlap
+      // with the physical stair needs to meet the exact seam.
+      landing.polygon = oldLanding.polygon.flatMap((point, i) => {
+        const j = (i + 1) % oldLanding.polygon.length;
+        const next = oldLanding.polygon[j];
+        if (!vertices.has(i) || !vertices.has(j)) return [point];
+        const start = sideways(point),
+          end = sideways(next);
+        const delta = end - start;
+        assert.ok(Math.abs(delta) > 1e-8, "Landing edge is perpendicular to seam");
+        const ts = [low, high].map((v) => (v - start) / delta).sort((a, b) => a - b);
+        const from = Math.max(0, ts[0]),
+          to = Math.min(1, ts[1]);
+        if (to <= from) return [point];
+        const at = (t) => point.map((v, axis) => v + t * (next[axis] - v));
+        return [
+          point,
+          at(from),
+          seat(at(from), door.outside[2]),
+          seat(at(to), door.outside[2]),
+          at(to),
+        ]
+          .filter(
+            (p, k, points) =>
+              k === 0 || Math.hypot(p[0] - points[k - 1][0], p[1] - points[k - 1][1]) > 1e-8,
+          )
+          .filter((p, k) => k === 0 || Math.hypot(p[0] - next[0], p[1] - next[1]) > 1e-8);
+      });
+      landing.height = landing.polygon.map(() => door.outside[2]);
+    } else {
+      landing.polygon = landing.polygon.map((point, i) =>
+        vertices.has(i) ? seat(point, door.outside[2]) : point,
+      );
+    }
     landing.preserveMovementPrecision = true;
     changes.push({ surface: landing.id, before: oldLanding, after: structuredClone(landing) });
     adjusted.add(landing.id);
@@ -170,6 +204,7 @@ await fs.writeFile(
       descriptorSha256,
       floorShiftLimit,
       landingShiftLimit,
+      localLandingEdges,
       changes,
     },
     null,

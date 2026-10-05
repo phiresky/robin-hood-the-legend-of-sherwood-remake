@@ -148,21 +148,28 @@ for (const edit of edits) {
     for (const landing of edit.gameplay.surfaces) {
       const previous = descriptor.gameplay.surfaces.find((surface) => surface.id === landing.id);
       const heights = Array.isArray(landing.height) ? landing.height : [landing.height];
-      if (
-        !previous ||
-        previous.polygon.length !== landing.polygon.length ||
-        !heights.every((z) => Math.abs(z - heights[0]) < 1e-6)
-      )
-        continue;
-      const changed = landing.polygon.map(
-        (point, i) =>
-          Math.hypot(point[0] - previous.polygon[i][0], point[1] - previous.polygon[i][1]) > 1e-6,
-      );
+      if (!previous || !heights.every((z) => Math.abs(z - heights[0]) < 1e-6)) continue;
       const mesh = neighbours.find((part) => part.node === landing.node)?.triangles;
       if (!mesh) continue;
+      const levelTriangles = [triangles, ...neighbours.map((part) => part.triangles)]
+        .flat()
+        .filter((triangle) => triangle.every((p) => Math.abs(p[2] - heights[0]) < 0.1));
       for (let i = 0; i < landing.polygon.length; i++) {
         const j = (i + 1) % landing.polygon.length;
-        if (!changed[i] || !changed[j]) continue;
+        const oldEdges = previous.polygon.map((point, index) => [
+          point,
+          previous.polygon[(index + 1) % previous.polygon.length],
+        ]);
+        if (
+          oldEdges.some(([a, b]) =>
+            [landing.polygon[i], landing.polygon[j]].every((p) => edgeDistance(p, a, b) < 1e-6),
+          )
+        )
+          continue;
+        const midpoint = landing.polygon[i].map((v, axis) => (v + landing.polygon[j][axis]) / 2);
+        const previousEdge = oldEdges.reduce((best, edge) =>
+          edgeDistance(midpoint, ...edge) < edgeDistance(midpoint, ...best) ? edge : best,
+        );
         const samples = Array.from({ length: 41 }, (_, step) => {
           const point = landing.polygon[i].map(
             (v, axis) => v + ((landing.polygon[j][axis] - v) * step) / 40,
@@ -176,14 +183,29 @@ for (const edit of edits) {
               .filter((z) => z !== undefined);
             return heights.length ? [{ node: part.node, heights }] : [];
           });
-          return { point, hits, assemblyHits };
+          const supported = assemblyHits.some((part) =>
+            part.heights.some((z) => Math.abs(z - heights[0]) < 0.1),
+          );
+          const uncoveredDistance = supported
+            ? 0
+            : levelTriangles.length
+              ? Math.min(
+                  ...levelTriangles.flatMap((triangle) =>
+                    triangle.map((a, k) => edgeDistance(point, a, triangle[(k + 1) % 3])),
+                  ),
+                )
+              : null;
+          return { point, hits, assemblyHits, uncoveredDistance };
         });
         landingEdgeReviews.push({
           surface: landing.id,
           node: landing.node,
           height: heights[0],
-          before: [previous.polygon[i], previous.polygon[j]],
+          before: previousEdge,
           after: [landing.polygon[i], landing.polygon[j]],
+          maximumUncoveredDistance: samples.some((sample) => sample.uncoveredDistance === null)
+            ? null
+            : Math.max(...samples.map((sample) => sample.uncoveredDistance)),
           supported: samples.filter((sample) =>
             sample.hits.some((z) => Math.abs(z - heights[0]) < 0.1),
           ).length,

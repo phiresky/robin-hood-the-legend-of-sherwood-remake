@@ -112,8 +112,8 @@ complete-sprite and rendered verification remain open.
 All ten scenes reopen after publication, and full Derby passes all five control
 apply/reset checks. All ten Derby stair definitions now pass local floor-anchor
 support checks after the upper-west publication below.
-A library-wide local-anchor audit finds unsupported anchors in 40 of 53 authored stair
-definitions: Derby 0/10, Leicester 6/8, Lincoln 6/6, Nottingham 11/12,
+A library-wide local-anchor audit finds unsupported anchors in 39 of 53 authored stair
+definitions: Derby 0/10, Leicester 5/8, Lincoln 6/6, Nottingham 11/12,
 Sherwood 1/1 and York 16/16. All audited floors are planar. This checks local
 definitions, not placed connectivity or actual route failures; corrections and
 moved/rotated native traversal checks remain necessary across these assets.
@@ -136,6 +136,16 @@ shared stair edges while preserving real thin obstacles. The earlier diagnostic
 that removed the blocker is not a publishable floor definition.
 Landing mesh checks now include other components in the same asset, since the
 visible floor and receiving surface can belong to different parts.
+The east-wall turret stair and its terrace contact are also published. Two
+independent copies with authored external landings pass 32/32 routes and reject
+32 missing/raised landings. The turret with the actual terrace passes another
+16/16 rotated/elevated routes and sixteen disconnected cases. Full Leicester
+retains 16/16 routes and twelve control checks. The upper landing correction is
+limited to the stair width; its seam has complete sampled mesh support, while
+short connecting edges extend at most 0.156 units beyond mesh. The terrace edge
+has a maximum 0.268-unit discrepancy. Both drafts retain rendered-integration
+warnings. Published descriptors equal the tested candidates and all ten scenes
+reopen; the isolated turret/terrace pair contains no switches.
 The east hall's upper stair now has published floor/landing seam corrections and
 passes 48 directed routes across four rotations and two elevations. Full Derby
 passes 28/28 stair routes and all five control checks with this correction.

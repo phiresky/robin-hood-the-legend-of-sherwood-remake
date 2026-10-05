@@ -4,6 +4,55 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Published east-wall turret and terrace contact (2026-10-06)
+
+The east-wall turret now has precise stair endpoints, an aligned local landing
+and a matching owner-scoped clearance. Its external approach still requires a
+separate receiving asset at the correct height. The terrace owns the corrected
+receiving edge; no scene-specific runtime connection or gap tolerance is added.
+Both assets remain drafts with explicit rendered-integration warnings.
+
+The first candidate `local-stair-seams-gwGAJ9` passed 32/32 routes in independent
+placements (`external-stair-landings-SdFHJr`), but full Leicester candidate
+`east-wall-turret-level-bR4nIH` failed two of sixteen routes. Its lower receiving
+edge did not reach the physical seam. `trace.log` records the binding failure.
+That candidate was not published. The corrected terrace is staged by
+`refinement/stage-east-wall-terrace-seam.mjs` from editor placements and pinned
+asset definitions.
+
+`stage-local-stair-seams.mjs --local-landing-edges` now limits a landing correction
+to the width of the stair and retains the rest of the authored edge. The mesh
+reviewer also checks newly inserted edges, including their short connections
+back to the old contour. Final turret candidate `local-stair-seams-NruNS0` has
+620/620 sampled flight mesh hits and 41/41 upper-seam samples supported by the
+assembled mesh. Its connecting edges have 34/41 and 35/41 supported samples;
+remaining distances are at most 0.155172 and 0.079997 game units respectively.
+The terrace review samples 205 points: 36 have exact support and the remaining
+points extend at most 0.267185 units beyond its top mesh. These measured
+subpixel authoring discrepancies remain a visual limitation, not runtime slack.
+
+Final combined stage `east-wall-terrace-seam-6HtWTf` is published with backup
+`east-wall-terrace-publication-20261006`. Native evidence:
+
+- `external-stair-landings-4eFual`: two independent turret copies at four
+  rotations and two elevations pass **32/32 routes**; all **32** missing/raised
+  synthetic receiving assets reject. Only external doors receive synthetic
+  landings (`--external-only`); the internal landing remains asset-owned.
+- `church-terrace-placements-a9QArL`: the actual turret/terrace pair passes
+  **16/16 routes** and **16** disconnected cases. Despite the historical fixture
+  directory name, these files contain the east-wall turret. Fresh published
+  batch `church-terrace-placements-mEknD1` exactly matches all eight descriptors.
+  The pair has no controls; the control-only harness rejects an empty audit.
+- `east-wall-terrace-level-ZSCwrB`: complete Leicester passes **16/16 routes**
+  and all **12 control apply/reset checks**. Fresh published Leicester is exactly
+  equal to this descriptor, including warnings.
+
+All ten scenes reopen with verified descriptor pins. Wychford only updates an
+unused asset reference; neither changed asset is placed there. Local-anchor
+audit `stair-anchor-support-c8ifaH` reports **39/53 unsupported stair definitions**,
+with Leicester 5/8 and Derby 0/10. Focused authoring-tool lint and formatting pass.
+New baked ZIP and complete rendered actor verification remain outstanding.
+
 ## Published church stairs and terrace-owned landing (2026-10-06)
 
 The church-side tower and lower-bailey terrace now publish their reviewed
