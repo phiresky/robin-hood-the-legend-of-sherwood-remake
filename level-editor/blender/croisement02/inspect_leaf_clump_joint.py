@@ -22,7 +22,7 @@ def worker(index):
     return OUT/f'understory-round-{rounds[index]}/assets'/asset
 
 
-def run(label,indices,include_bank=None,context_workers=()):
+def run(label,indices,include_bank=None,context_workers=(),transparent_bounces=None):
     destination=OUT/'leaf-clump-joint-review'/label;destination.mkdir(parents=True,exist_ok=False)
     bpy.ops.wm.read_factory_settings(use_empty=True);scene=bpy.context.scene
     collection=bpy.data.collections.new('Ground plant joint review');scene.collection.children.link(collection)
@@ -63,7 +63,9 @@ def run(label,indices,include_bank=None,context_workers=()):
         bpy.ops.mesh.primitive_plane_add(size=500,location=(center.x,center.y,0))
         floor=bpy.context.object;floor.name='Neutral ground contact guide (not source artwork)'
         mat=bpy.data.materials.new('Neutral contact plane');mat.diffuse_color=(.15,.16,.12,1);floor.data.materials.append(mat)
-    scene.render.engine='CYCLES';scene.cycles.samples=8;scene.cycles.transparent_max_bounces=256 if any(i in (22,93) for i in indices) else 64
+    if transparent_bounces is None:transparent_bounces=256 if any(i in (22,93) for i in indices) else 64
+    if not isinstance(transparent_bounces,int) or not 1<=transparent_bounces<=1024:raise ValueError('Invalid transparent traversal budget')
+    scene.render.engine='CYCLES';scene.cycles.samples=8;scene.cycles.transparent_max_bounces=transparent_bounces
     scene.render.resolution_x=640;scene.render.resolution_y=640;scene.render.resolution_percentage=100
     scene.render.film_transparent=True;scene.render.image_settings.file_format='PNG';scene.render.image_settings.color_mode='RGBA'
     scene.view_settings.view_transform='Standard';scene.view_settings.look='None'

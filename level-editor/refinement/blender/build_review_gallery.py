@@ -313,6 +313,7 @@ def build(index_path, output, *, pending_only=False, map_name=None):
         report_specs = [("validation", "Validation report"),
                            ("ownership", "Source ownership evidence"),
                            ("review", "Worker review and limitations"),
+                           ("disclosure", "Candidate assumptions and limitations"),
                            ("stored_material_audit", "Stored UV/material audit"),
                            ("stored_material_glb", "Actual exported GLB")]
         for state in item.get('stored_material_states', []):

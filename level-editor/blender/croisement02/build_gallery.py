@@ -202,6 +202,15 @@ def main():
                 raise ValueError('Stale composed native joint evidence')
             item['source_trace']=str(native_joint)
             item['source_trace_label']=composed['label']
+        disclosure_path=workspace/'inspection/composed-disclosure.json'
+        if disclosure_path.exists():
+            disclosure=json.loads(disclosure_path.read_text())
+            if (disclosure.get('model_sha256')!=model_hash
+                    or not isinstance(disclosure.get('notes'),list)
+                    or not all(isinstance(note,str) for note in disclosure['notes'])):
+                raise ValueError('Stale or invalid composed candidate disclosure')
+            item['notes']+=disclosure['notes']
+            item['disclosure']=str(disclosure_path)
         if review.exists():
             reviewed=json.loads(review.read_text())
             current_review=reviewed.get('model_sha256')==model_hash
