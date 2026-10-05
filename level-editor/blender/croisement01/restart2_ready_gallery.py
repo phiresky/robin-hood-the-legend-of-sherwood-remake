@@ -23,7 +23,7 @@ def main(destination='ready-trees18-20-v2', cases=CASES, map_title='Crossings01 
             evidence[relative]=sha(w/relative)
         bound=receipt.get('files',receipt.get('hashes',{}))
         for relative,digest in bound.items():assert sha(w/relative)==digest
-        for relative in ['inspection/saved-wood-surface-union.json','inspection/root-contact-detail/evidence.json']:
+        for relative in ['inspection/saved-wood-surface-union.json','inspection/root-contact-detail/evidence.json','inspection/tree20-joint/report.json']:
             if (w/relative).exists():
                 evidence[relative]=sha(w/relative)
                 supplemental=dest/'receipts'/asset/relative;supplemental.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(w/relative,supplemental)
@@ -36,6 +36,9 @@ def main(destination='ready-trees18-20-v2', cases=CASES, map_title='Crossings01 
         if (w/'inspection/root-contact-detail/sheet.png').exists():
             items[-1]['source_trace']=str(labeled_sheet(w,'inspection/root-contact-detail/sheet.png'))
             items[-1]['source_trace_label']='Root contact detail; original camera first, provisional terrain'
+        if (w/'inspection/tree20-joint/native-comparison.png').exists():
+            items[-1]['projection_errors']=str(w/'inspection/tree20-joint/native-comparison.png')
+            items[-1]['projection_errors_label']='Original-camera branch overlap with the exact published neighboring tree'
         archive.append(dict(asset_id=asset,model=str(frozen.relative_to(dest)),model_sha256=expected,worker=str(w),evidence=evidence))
     manifest=dest/'review-candidates.json';manifest.write_text(json.dumps(dict(map=map_title,items=items,status_counts={'ready for geometry review':len(items),'user approved':0}),indent=2)+'\n')
     build(manifest,dest/'gallery',pending_only=True)

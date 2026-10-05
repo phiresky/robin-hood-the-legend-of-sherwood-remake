@@ -5,7 +5,7 @@ import bpy,bmesh,numpy as np
 from mathutils import Vector
 from PIL import Image,ImageDraw,ImageChops
 sys.path.insert(0,str(Path(__file__).parent))
-from restart2_tree18 import OUT,SIN,COS,union,assign_mesh
+from restart2_tree18 import OUT,SIN,COS,union,assign_mesh,fit_native_width
 from refinement_workspace import prepare,modified,validate
 from refinement_inventory import inventory
 from evidence_io import sha
@@ -15,7 +15,7 @@ from restart2_tree71 import tube
 
 def main():
  if shutil.disk_usage(OUT).free<25*1024**3:raise ValueError('Disk floor25GiB')
- dest=OUT/'restart2/tree19-v2';dest.mkdir(exist_ok=False)
+ dest=OUT/'restart2/tree19-v5';dest.mkdir(exist_ok=False)
  acquire();bpy.ops.wm.open_mainfile(filepath=str(OUT/'croisement01-grouped.blend'));bpy.context.preferences.filepaths.save_version=0
  working=bpy.data.collections['Croisement01 Working'];asset='croisement01-tree-19';name='Northern Forked Oak'
  objects={int(o['source_node'].split('-')[-1]):o for o in working.all_objects if o.type=='MESH' and o.get('source_node') in ['building-050','building-051']};assert len(objects)==2
@@ -35,17 +35,34 @@ def main():
  native['masks'].append(dict(row,index=219,png=str(dest/'wood-domain.png')))
  base_y=-265/SIN
  def point(x,y):return Vector((x,base_y,(265-y)/COS))
- trace=[(1158,265,18),(1160,246,20),(1164,221,19),(1168,190,17),(1172,153,16),(1175,116,14),(1179,77,13),(1182,40,12),(1184,-10,11)]
+ trace=[(1158,265,18),(1160,246,20),(1164,221,19),(1168,190,18),(1172,153,18),(1175,116,16),(1179,77,13),(1182,40,12),(1184,-10,11)]
  centers=[point(x,y) for x,y,r in trace]+[Vector((1190,base_y-5,400)),Vector((1185,base_y-8,475)),Vector((1190,base_y-10,540))]
  body=tube('Continuous forked forest stem',centers,[r for x,y,r in trace]+[9,6,1]);body['defer_union']=True
  union(body,tube('Left source fork',[point(1168,175),point(1155,131),point(1147,90),point(1141,48),point(1136,-10),Vector((1130,base_y,400)),Vector((1140,base_y-5,480)),Vector((1145,base_y-8,535))],[9,8,7.5,7,6.5,5,3,1]))
- union(body,tube('Diagonal foreground branch crossing tree20',[point(1178,101),point(1195,87),point(1215,64),point(1226,44),point(1237,14),point(1245,-6),Vector((1250,base_y+8,410)),Vector((1230,base_y+6,480)),Vector((1230,base_y+5,535))],[12,10,9,8,7,6,5,3,1]))
+ crossing=tube('Diagonal foreground branch crossing tree20',[point(1178,101),point(1195,87),point(1215,64),point(1226,44),point(1237,14),point(1245,-6),Vector((1250,base_y+8,410)),Vector((1230,base_y+6,480)),Vector((1230,base_y+5,535))],[12,10,9,8,7,6,5,3,1])
+ branch_domain=np.asarray(wood)>0;branch_domain[:,:77]=False;branch_domain[82:]=False
+ expanded=branch_domain.copy();expanded[:,1:]|=branch_domain[:,:-1];expanded[:,:-1]|=branch_domain[:,1:]
+ report=fit_native_width(crossing,expanded,'single',x0=1123,y0=0)
+ (dest/'crossing-branch-fit.json').write_text(json.dumps(report,indent=2)+'\n');union(body,crossing)
  # The long ground twig belongs to native mask70's fallen branch, not this tree.
  rng=random.Random(191901)
  for i in range(8):
   a=math.tau*i/8;start=Vector((1190,base_y-10,470+i*6));tip=Vector((1195+math.cos(a)*80,base_y-10+math.sin(a)*100,550+rng.uniform(-15,40)))
   union(body,tube('Inferred crown bough'+str(i),[start,start.lerp(tip,.55)+Vector((0,0,12)),tip],[5,3,.7]))
  bpy.context.view_layer.objects.active=body;mod=body.modifiers.new('Continuous wood junctions','REMESH');mod.mode='VOXEL';mod.voxel_size=1.15;mod.use_remove_disconnected=False;bpy.ops.object.modifier_apply(modifier=mod.name)
+ # Restore the subpixel contour margin after voxel smoothing, only on the
+ # crossing branch. This scales its complete rounded section, not front cards.
+ branch_rows=[];branch_centers=[];branch_widths=[]
+ for y,line in enumerate(branch_domain):
+  xs=np.flatnonzero(line)
+  if len(xs):branch_rows.append(y+.5);branch_centers.append(1123+(xs[0]+xs[-1]+1)/2);branch_widths.append(xs[-1]-xs[0]+1)
+ expanded_vertices=0
+ for vertex in body.data.vertices:
+  point_on_branch=vertex.co;screen_y=-point_on_branch.y*SIN-point_on_branch.z*COS
+  if point_on_branch.x<1200 or not branch_rows[0]<=screen_y<=branch_rows[-1]:continue
+  center=float(np.interp(screen_y,branch_rows,branch_centers));width=float(np.interp(screen_y,branch_rows,branch_widths))
+  factor=min(1,max(0,(point_on_branch.x-1200)/5));point_on_branch.x+=1.5*max(-1,min(1,(point_on_branch.x-center)/max(width/2,1)))*factor;expanded_vertices+=1
+ body.data.update();(dest/'post-voxel-branch-margin.json').write_text(json.dumps(dict(margin_per_side=1.5,vertices=expanded_vertices,scope='Whole rounded crossing branch only; restore source pixel-center coverage after voxel smoothing.'),indent=2)+'\n')
  bm=bmesh.new();bm.from_mesh(body.data);remaining=set(bm.verts);components=[]
  while remaining:
   pending=[remaining.pop()];component=[]
