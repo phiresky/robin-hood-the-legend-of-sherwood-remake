@@ -39,11 +39,14 @@ def main():
         if set(scope['part_ids'])!={source_for_part(p) for p in group['parts']}:
             missing.append(dict(id=group['id'],name=group['name'],status='ownership revision pending',reason='Previous worker owns a different source-part set. A fresh workspace is required; the old geometry packet is withheld.'));continue
         report=json.loads(report_path.read_text())
-        if tree and report['crown'].get('geometry_version') not in ('native-leaf-clusters-v5','native-leaf-clusters-v6','microfragment-curved-envelope-irregular-volume-v2','microfragment-volume-paired-front-v3','branch-clump-fragments-v1'):
+        if tree and report['crown'].get('geometry_version') not in ('native-leaf-clusters-v5','native-leaf-clusters-v6','microfragment-curved-envelope-irregular-volume-v2','microfragment-volume-paired-front-v3','branch-clump-fragments-v1','native-fragment-envelope-v1','inferred-boundary-density-v5'):
             missing.append(dict(id=group['id'],name=group['name'],status='in progress',reason='Replacing the rejected large-shell prototype with small, full-depth leaf clusters.'));continue
         shrub_version=report.get('crown',{}).get('geometry_version')
         reviewed_shrub_version=(shrub_version=='native-shrub-leaf-volume-v2' or
                                 group.get('native_foliage_mask')==73 and shrub_version=='native-conifer-leaf-volume-v1')
+        if shrub and group.get('native_foliage_mask')==76:
+            from wattle_flower_candidates import selected_workspace as reviewed_pair_workspace
+            reviewed_shrub_version=reviewed_shrub_version or reviewed_pair_workspace(OUT,group['id'],reviewed_catalog())==workspace
         if shrub and not reviewed_shrub_version:
             missing.append(dict(id=group['id'],name=group['name'],status='in progress',reason='Current round-volume shrub geometry is not prepared.'));continue
         model=workspace/'model.blend';model_hash=sha(model)
@@ -241,6 +244,12 @@ def main():
                 item['user_approval']='approved geometry: '+decision['exact_user_text']
             elif decision['model_sha256']==model_hash:
                 item['status']='refinement-in-progress';item['technical_eligible']=False
+        holds_path=OUT/'restart2-vegetation/gallery-holds.json'
+        if holds_path.exists():
+            for hold in json.loads(holds_path.read_text())['holds']:
+                if hold['asset_id']==group['id'] and hold['model_sha256']==model_hash:
+                    item['status']='refinement-in-progress';item['technical_eligible']=False
+                    item['notes'].append(hold['reason'])
         item['notes']=list(dict.fromkeys(item['notes']))
         items.append(item)
     missing.extend([

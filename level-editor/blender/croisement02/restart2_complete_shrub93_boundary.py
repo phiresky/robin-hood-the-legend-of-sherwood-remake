@@ -22,7 +22,7 @@ def main():
     asset = 'croisement02-shrub-93'
     original = scenery_workspace(asset)
     digest = sha(original/'model.blend')
-    destination = OUT/'restart2-vegetation/shrub93-boundary-v2'
+    destination = OUT/'restart2-vegetation/shrub93-boundary-v3'
     destination.mkdir(exist_ok=False, parents=True)
     boundary_path = OUT/'mixed-wood-audit/boundary-roles76-93-v1/93-foliage93.png'
     boundary = np.asarray(Image.open(boundary_path).convert('L')) > 0
@@ -50,21 +50,30 @@ def main():
     points = np.asarray(points)
     screen = np.column_stack((points[:, 0], -points[:, 1]*SIN-points[:, 2]*COS))
     vertices, faces, uvs, records = [], [], [], []
+    ray_proof = json.loads((OUT/'restart2-vegetation/shrub93-first-hit-rays-v4/pixel-center-rays.json').read_text())
+    blocked = next(r for r in ray_proof['records'] if r['pixel'] == [1379, 819])
+    assert blocked['asset'] == 'croisement02-tree-35'
     right = np.array([1., 0., 0.]); down = np.array([0., -SIN, -COS]); ray = np.asarray(RAY)
     for sy, sx in zip(*np.nonzero(boundary)):
         target = np.array([sx+.5, sy+.5])
         nearest = int(np.argmin(np.sum((screen-target)**2, axis=1)))
         center = points[nearest]+right*(target[0]-screen[nearest, 0])+down*(target[1]-screen[nearest, 1])
+        advance = 0.
+        if [int(sx), int(sy)] == blocked['pixel']:
+            advance = max(0., .6-float(np.dot(center-np.asarray(blocked['hit']), ray)))
+            center += ray*advance
         corners = [center+right*dx+down*dy for dx, dy in [(-.5, -.5), (.5, -.5), (.5, .5), (-.5, .5)]]
         if np.dot(np.cross(corners[1]-corners[0], corners[2]-corners[0]), ray) < 0:
             corners.reverse()
         for back in (False, True):
             points_on_face = [p-ray*.02 for p in reversed(corners)] if back else corners
+            points_on_face.append(np.mean(points_on_face, axis=0)+right*.17+down*.11)
             start = len(vertices)
             vertices.extend(tuple(p) for p in points_on_face)
-            faces.append(tuple(range(start, start+4)))
+            faces.extend((start+i,start+(i+1)%4,start+4) for i in range(4))
             uvs.extend((p[0]/1792, 1-(-p[1]*SIN-p[2]*COS)/1152) for p in points_on_face)
         records.append(dict(source_pixel=[int(sx), int(sy)], center=center.tolist(),
+                            source_ray_advance=advance,
                             nearest_observed_leaf_distance_pixels=float(np.linalg.norm(screen[nearest]-target)),
                             source_role='Contextually inferred boundary foliage; not observed domain503'))
     mesh = bpy.data.meshes.new('Shrub93 inferred boundary fragments')
@@ -81,8 +90,9 @@ def main():
     uv = mesh.uv_layers.new(name='Foliage UV')
     ownership = mesh.color_attributes.new(name='Source ownership', type='FLOAT_COLOR', domain='CORNER')
     mesh.color_attributes.active_color = ownership
-    for i, coords in enumerate(uvs):
-        uv.data[i].uv = coords; ownership.data[i].color = (0., 1., 1., 1.)
+    for loop in mesh.loops:
+        uv.data[loop.index].uv = uvs[loop.vertex_index]
+        ownership.data[loop.index].color = (0., 1., 1., 1.)
     assert before == {o.name: _geometry(o, protect_appearance=True) for o in old}
     bpy.ops.wm.save_as_mainfile(filepath=str(destination/'model.blend'), compress=True)
     output_hash = sha(destination/'model.blend')
