@@ -137,7 +137,7 @@ def wood_mesh():
 
 
 def main():
-    root = OUT / 'restart2/tree25-full-v6'
+    root = OUT / 'restart2/tree25-full-v7'
     root.mkdir(exist_ok=False)
     worker = root/'assets'/ASSET
     source = Image.open(OUT/'baseline/covered.png').convert('RGBA')
@@ -179,7 +179,7 @@ def main():
         obj.data.uv_layers.new(name='UVMap')
         material=bpy.data.materials.new('Tree25 unknown wood');material.diffuse_color=(.42,.42,.42,1);obj.data.materials.append(material)
         crown=bpy.data.objects.new('Tree25 native static crown',bpy.data.meshes.new('Tree25 crown placeholder'))
-        collection.objects.link(crown);crown['asset_group']=ASSET;crown['source_node']='building-046'
+        collection.objects.link(crown);crown['asset_group']=ASSET;crown['source_node']='building-046';crown['projection_component']='native-static-crown-116'
         foliage_trees.CONFIG[46]=dict(ground=800.)
         foliage_trees.DEPTHS=[0.,0.,0.,0.,0.,0.,0.,0.,-30.]
         foliage_trees.refine_crown(crown,46,evidence)
