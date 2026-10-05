@@ -12,6 +12,7 @@ import {
   slopedAssetCompilerFixture,
   liftAssetCompilerFixture,
   changingLiftCompilerFixture,
+  changingClimbCompilerFixture,
   copiedChangingLiftCompilerFixture,
   liftLightCompilerFixture,
   interiorAssetCompilerFixture,
@@ -74,14 +75,20 @@ test("copied stairs retain independent state controls and traversal bindings", (
   );
 });
 
-test("unsupported changing climb barriers remain explicit best-effort omissions", () => {
-  const { document, assets, hut } = changingLiftCompilerFixture();
-  hut.gameplay!.lifts![0]!.type = 2;
-  assert.throws(() => compileAssetGameplay(document, assets, bounds), /climbing state support/);
-  const compiled = compileAssetGameplay(document, assets, bounds, { bestEffort: true });
-  assert.equal(compiled.lifts!.length, 1);
-  assert.equal(compiled.movement_transitions?.length ?? 0, 0);
-  assert.ok(compiled.warnings?.some((warning) => warning.includes("climbing state support")));
+test("changing ladder and wall barriers retain their traversal state bindings", () => {
+  for (const type of [2, 3] as const) {
+    for (const rotation of [0, 90, 180, 270]) {
+      const { document, assets } = changingClimbCompilerFixture(type);
+      document.groups[0]!.transform = { dx: 900, dy: 900, dz: 20, rot_deg: rotation };
+      const compiled = compileAssetGameplay(document, assets, bounds);
+      assert.equal(compiled.lifts!.length, 1);
+      assert.equal(compiled.movement_transitions!.length, 1);
+      assert.equal(
+        compiled.movement_transitions![0]!.motion_changes[0]!.sector,
+        compiled.lifts![0]!.motion_area_index,
+      );
+    }
+  }
 });
 
 test("best-effort terrain retries preserve input and subsequent terrain edits", () => {

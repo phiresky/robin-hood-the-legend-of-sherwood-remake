@@ -1320,6 +1320,37 @@ export function copiedChangingLiftCompilerFixture() {
   return fixture;
 }
 
+export function changingClimbCompilerFixture(type: 2 | 3, highDoor: 4 | 6 = 4) {
+  const fixture = changingLiftCompilerFixture();
+  const gameplay = fixture.hut.gameplay!;
+  // Leave room for actor-sized approaches and the wall's fixed animation offset.
+  for (const surface of gameplay.surfaces) {
+    surface.polygon = surface.polygon.map(([x, y]) => [x * 3, y * 3]);
+    surface.height = Array.isArray(surface.height)
+      ? surface.height.map((height) => height * 3)
+      : surface.height * 3;
+  }
+  const lift = gameplay.lifts![0]!;
+  lift.type = type;
+  lift.doors[1]!.type = highDoor;
+  for (const door of lift.doors) {
+    for (const point of [door.inside, door.outside, door.middle]) {
+      point[0] *= 3;
+      point[1] *= 3;
+      point[2] *= 3;
+    }
+  }
+  const barrier = gameplay.movementTransitions![0]!.applied[0]!;
+  barrier.polygon = [
+    [294, 0],
+    [306, 0],
+    [306, 300],
+    [294, 300],
+  ];
+  barrier.height = [120, 180, 180, 120];
+  return fixture;
+}
+
 export function disconnectedLiftCompilerFixture() {
   const fixture = liftAssetCompilerFixture();
   const gameplay = fixture.hut.gameplay!;

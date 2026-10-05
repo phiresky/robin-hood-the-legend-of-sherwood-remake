@@ -4,22 +4,34 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
-## Changing climb barrier runtime failure (2026-10-05)
+## Changing climb barriers and corrected fixture diagnosis (2026-10-05)
 
-The new ignored native regression
-`changing_climbs_stop_actor_traversal_and_reset` uses complete character animation
-and the changing-stair fixtures with ladder/wall traversal types. It attempts
-both directions before applying a barrier, while closed, and after reset, over
-four placements. Unrotated ladder/wall checks pass, but the expanded run fails:
-wall type 3 at rotation index 1 (90 degrees), entrance 0, completes the closed
-route (`Ok(true)`). This is an actor traversal failure, not merely an export
-validation limitation.
+Export now retains changing ladder/wall barriers. Twelve compiler-generated
+fixtures cover ladders and both wall-top door types at four rotations. Native
+collision queries and pathfinding reject the applied barrier in both directions;
+complete character animation stalls while closed and traverses before apply and
+after reset. The placed fixtures pass 72 directed actor/state checks. The route
+test runs without external resources; the animation test requires `ROBIN_CLIMB_RHS`.
+Editor tests compare the native fixtures with fresh compiler output.
 
-The compiler rejection of changing ladder/wall barriers remains intact. A trial
-removal passed editor compilation and fixture equality but was reverted after
-the native failure. The regression remains explicitly ignored as a known failure
-requiring `ROBIN_CLIMB_RHS`; it is not passing acceptance evidence. Correcting
-animation-driven collision/state handling is required before enabling export.
+The earlier reported rotated-wall runtime failure was an invalid fixture
+expectation: changing a stair's type to wall also adapts the high approach by
+60 units, leaving both endpoints on one side of that fixture's barrier. It did
+not prove that motion crossed a blocking line. Adding collision and pathfinder
+assertions exposed that mistake. The new asset fixture provides enough space
+for actor clearance and the fixed 60/65-unit wall approach.
+
+An additional narrow barrier at local X=93..95 tests complete entrance/exit
+animations in the small fixture. Although clearance adjustment moves the inner
+endpoint beyond this barrier, the complete actor route still stalls while closed.
+Both ladder and wall pass in both directions before apply, while closed and after
+reset (12 further checks, 84 total). An inner-endpoint reachability query alone
+would incorrectly diagnose this case as a bypass. All three native tests pass;
+171 focused editor tests, app typechecking and targeted lint also pass.
+
+Closing a barrier during an ongoing climb, independent copied climb controls,
+broader placement coverage and rendered state transitions remain unverified.
+These results are not full climbing parity.
 
 ## Published church insertion ground elevation (2026-10-05)
 

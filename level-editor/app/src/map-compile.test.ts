@@ -23,6 +23,7 @@ import {
   slopedAssetCompilerFixture,
   liftAssetCompilerFixture,
   changingLiftCompilerFixture,
+  changingClimbCompilerFixture,
   copiedChangingLiftCompilerFixture,
   disconnectedLiftCompilerFixture,
   liftLightCompilerFixture,
@@ -1151,6 +1152,33 @@ test("lift asset export matches the native traversal fixture", async () => {
     ),
   );
   assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+});
+
+test("changing climb exports match native placed traversal fixtures", async () => {
+  const fixtures = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/asset-changing-climbs.levels.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  let index = 0;
+  for (const [type, high] of [
+    [2, 4],
+    [3, 4],
+    [3, 6],
+  ] as const) {
+    for (const rotation of [0, 90, 180, 270]) {
+      const { document, assets } = changingClimbCompilerFixture(type, high);
+      document.groups[0]!.transform = { dx: 900, dy: 900, dz: 20, rot_deg: rotation };
+      assert.deepEqual(
+        compileMap(document, [0, 0, 2000, 2000], assets).descriptor,
+        fixtures[index++],
+      );
+    }
+  }
 });
 
 test("copied changing stairs export matches the native isolation fixture", async () => {

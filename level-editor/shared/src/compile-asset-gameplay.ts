@@ -1534,12 +1534,6 @@ function compileAssetGameplayAttempt(
       pieces.length > 1 ? pieces : undefined,
       pieces[0]!.preserveMovementBoundary === true,
     );
-    if (lift && changing.pairs.size && lifts.find((candidate) => candidate.id === lift)!.type !== 1)
-      throw new UnavailableStateControl(
-        changing.pairs.keys().next().value!,
-        `Lift ${lift}: changing ladder/wall barriers require climbing state support`,
-        false,
-      );
     for (const [id, pair] of changing.pairs)
       transitions
         .find((t) => t.id === id)!

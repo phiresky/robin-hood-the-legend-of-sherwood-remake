@@ -471,10 +471,20 @@ fn complete_climb_sprite() -> crate::sprite::Sprite {
 }
 
 #[test]
-#[ignore = "known rotated-wall barrier failure; requires ROBIN_CLIMB_RHS"]
+fn changing_climbs_update_collision_and_routes_after_reset() {
+    audit_changing_climbs(None);
+}
+
+#[test]
+#[ignore = "requires ROBIN_CLIMB_RHS"]
 fn changing_climbs_stop_actor_traversal_and_reset() {
-    // TODO: A quarter-turned wall can cross the applied barrier during animation.
-    // Keep the compiler rejection until every orientation passes this regression.
+    let sprite = complete_climb_sprite();
+    audit_changing_climbs(Some(&sprite));
+}
+
+#[test]
+#[ignore = "requires ROBIN_CLIMB_RHS"]
+fn changing_climb_barrier_near_entrance_blocks_actor_approach() {
     let sprite = complete_climb_sprite();
     let fixtures: Vec<serde_json::Value> = serde_json::from_slice(include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -482,42 +492,120 @@ fn changing_climbs_stop_actor_traversal_and_reset() {
     )))
     .unwrap();
     for lift_type in [2, 3] {
-        for (rotation, source) in fixtures.iter().enumerate() {
-            let mut fixture = source.clone();
-            fixture["asset_geometry"]["lifts"][0]["lift_type"] = lift_type.into();
-            let (mut engine, assets) = compiled_walkway(&serde_json::to_vec(&fixture).unwrap());
-            let sim = crate::sim_rng::test_context();
-            let patch = crate::patch::PatchIndex::new(0).unwrap();
-            for (step, applied) in [false, true, false].into_iter().enumerate() {
-                if step > 0 {
-                    if applied {
-                        engine.apply_patch(TickCtx::new(&sim, &assets), patch);
-                    } else {
-                        engine.reset_patch(TickCtx::new(&sim, &assets), patch);
-                    }
+        let mut fixture = fixtures[0].clone();
+        fixture["asset_geometry"]["lifts"][0]["lift_type"] = lift_type.into();
+        fixture["asset_geometry"]["motion_data"]["layers"][2][0]["obstacles"][0]["polygon"]["points"] =
+            serde_json::json!([[1293, 1165], [1295, 1155], [1295, 1255], [1293, 1265]]);
+        let (mut engine, assets) = compiled_walkway(&serde_json::to_vec(&fixture).unwrap());
+        let sim = crate::sim_rng::test_context();
+        let patch = crate::patch::PatchIndex::new(0).unwrap();
+        for (step, applied) in [false, true, false].into_iter().enumerate() {
+            if step > 0 {
+                if applied {
+                    engine.apply_patch(TickCtx::new(&sim, &assets), patch);
+                } else {
+                    engine.reset_patch(TickCtx::new(&sim, &assets), patch);
                 }
-                for (entrance, exit) in [(0, 1), (1, 0)] {
-                    let result = walk_exported_lift(
-                        engine.clone(),
-                        assets.clone(),
-                        entrance,
-                        exit,
-                        Some(&sprite),
+            }
+            for (entrance, exit) in [(0, 1), (1, 0)] {
+                // Inner endpoints can lie on the same side after clearance
+                // adjustment. Test the complete approach and exit animations.
+                let result = walk_exported_lift(
+                    engine.clone(),
+                    assets.clone(),
+                    entrance,
+                    exit,
+                    Some(&sprite),
+                );
+                if applied {
+                    assert!(
+                        result
+                            .as_ref()
+                            .is_err_and(|error| error.starts_with("lift route stalled")),
+                        "closed entrance type={lift_type}, entrance={entrance}: {result:?}"
                     );
-                    if applied {
-                        assert!(
-                            result
-                                .as_ref()
-                                .is_err_and(|error| error.starts_with("lift route stalled")),
-                            "closed climb type={lift_type}, rotation={rotation}, entrance={entrance}: {result:?}"
-                        );
-                    } else {
-                        assert_eq!(
-                            result,
-                            Ok(true),
-                            "open climb type={lift_type}, entrance={entrance}"
-                        );
-                    }
+                } else {
+                    assert_eq!(
+                        result,
+                        Ok(true),
+                        "open entrance type={lift_type}, entrance={entrance}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn audit_changing_climbs(sprite: Option<&crate::sprite::Sprite>) {
+    let fixtures: Vec<serde_json::Value> = serde_json::from_slice(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/asset-changing-climbs.levels.json"
+    )))
+    .unwrap();
+    for (rotation, fixture) in fixtures.iter().enumerate() {
+        let lift_type = &fixture["asset_geometry"]["lifts"][0]["lift_type"];
+        let (mut engine, assets) = compiled_walkway(&serde_json::to_vec(fixture).unwrap());
+        let sim = crate::sim_rng::test_context();
+        let patch = crate::patch::PatchIndex::new(0).unwrap();
+        for (step, applied) in [false, true, false].into_iter().enumerate() {
+            if step > 0 {
+                if applied {
+                    engine.apply_patch(TickCtx::new(&sim, &assets), patch);
+                } else {
+                    engine.reset_patch(TickCtx::new(&sim, &assets), patch);
+                }
+            }
+            for (entrance, exit) in [(0, 1), (1, 0)] {
+                let enter = &engine.script_domains.interactables.doors[entrance];
+                let leave = &engine.script_domains.interactables.doors[exit];
+                let layer = enter.layer_in;
+                let sector = enter.sector_in;
+                assert_eq!(
+                    engine
+                        .world
+                        .fast_grid
+                        .is_reachable_thin(enter.point_in, leave.point_in, layer),
+                    !applied,
+                    "climb collision type={lift_type}, fixture={rotation}, applied={applied}, enter={:?}, leave={:?}",
+                    enter.point_in,
+                    leave.point_in
+                );
+                let route = engine.world.pathfinder.find_path(
+                    &assets.navigation.pathfinder_graph,
+                    &engine.world.fast_grid,
+                    layer,
+                    sector.into(),
+                    0,
+                    enter.point_in,
+                    leave.point_in,
+                    false,
+                );
+                assert_eq!(
+                    route.is_some(),
+                    !applied,
+                    "climb planning type={lift_type}, rotation={rotation}, applied={applied}"
+                );
+                let Some(sprite) = sprite else { continue };
+                let result = walk_exported_lift(
+                    engine.clone(),
+                    assets.clone(),
+                    entrance,
+                    exit,
+                    Some(sprite),
+                );
+                if applied {
+                    assert!(
+                        result
+                            .as_ref()
+                            .is_err_and(|error| error.starts_with("lift route stalled")),
+                        "closed climb type={lift_type}, rotation={rotation}, entrance={entrance}: {result:?}"
+                    );
+                } else {
+                    assert_eq!(
+                        result,
+                        Ok(true),
+                        "open climb type={lift_type}, entrance={entrance}"
+                    );
                 }
             }
         }

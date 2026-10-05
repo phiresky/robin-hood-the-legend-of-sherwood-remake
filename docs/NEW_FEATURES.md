@@ -2527,3 +2527,8 @@ through explicit contacts and separates when an asset moves away.
 Best-effort export now reuses generated terrain across retries that omit
 unavailable controls or traversal assemblies. Each new export regenerates terrain,
 so subsequent editor changes remain authoritative.
+
+Map compilation now retains asset-local changing barriers on ladders and climbable
+walls. Placed fixtures verify collision, pathfinding and complete actor traversal
+before applying the barrier, while closed and after reset, including a barrier
+near an entrance whose inner endpoint moves during actor-clearance adjustment.

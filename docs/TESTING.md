@@ -341,8 +341,13 @@ the authored cross-stair barrier is active. The separate
 `asset-changing-lifts-copied.level.json` export comes from
 `copiedChangingLiftCompilerFixture`: its actor test closes both copies and resets
 them independently, checking both directions on each copy after every switch.
-Compiler checks also cover explicit best-effort omissions for changing
-ladder/wall barriers.
+Changing ladder/wall controls use `asset-changing-climbs.levels.json`, generated
+by `changingClimbCompilerFixture` for four rotations and ladder, ordinary wall
+and crenellated wall types. Export tests require exact descriptor equality.
+`changing_climbs_update_collision_and_routes_after_reset` tests collision and
+pathfinding without external resources. With `ROBIN_CLIMB_RHS` set, run
+`cargo test -p robin_engine --lib changing_climb -j1 -- --include-ignored`
+to additionally check complete actor routes and a barrier near the entrance.
 `cargo test -p robin_level_data compiled_approaches` checks that mutually
 exclusive barriers do not prevent deriving actor-sized shared approach points.
 Permanent collision still constrains those points; live stair traversal tests
