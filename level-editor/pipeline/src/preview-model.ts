@@ -126,6 +126,21 @@ export async function generatePreview(
       return sum + size[0] * size[1];
     }, 0);
   const edge = texels > 0 ? previewTextureSize(texels) : null;
+  if (edge !== null) {
+    for (const texture of document.getRoot().listTextures()) {
+      const size = texture.getSize()!;
+      const scale = Math.min(1, edge / size[0], edge / size[1]);
+      const fitted = size.map((value) => Math.round(value * scale));
+      if (fitted.every((value) => value > 0)) continue;
+      // The compressor rounds very thin strips to a zero-sized image. Preserve a
+      // one-pixel short axis before normal compression; ordinary textures are untouched.
+      const image = await sharp(texture.getImage()!)
+        .resize(Math.max(1, fitted[0]!), Math.max(1, fitted[1]!), { fit: "fill" })
+        .png()
+        .toBuffer();
+      texture.setImage(image).setMimeType("image/png");
+    }
+  }
   const transforms = [
     // Shared-payload models read their external buffers; the preview embeds one buffer.
     unpartition(),

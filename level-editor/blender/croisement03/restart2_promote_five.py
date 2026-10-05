@@ -3,11 +3,13 @@ import argparse
 import json
 import shutil
 import sys
+import math
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / 'level-editor/refinement'))
 from promote_staged_publication import sha, library_lock, _apply, asset_file_pairs
+import promote_staged_publication as promotion
 from asset_index import write_asset_index
 
 WORK = ROOT / 'level-editor/work/croisement03-refinement/restart2'
@@ -77,7 +79,36 @@ def main():
             assert not (STAGE / 'promotion.json').exists()
             prepare()
         else:
-            _apply(STAGE / 'promotion.json')
+            old_path = LIVE / '3d-assets/croisement03/croisement03-group-049/asset.json'
+            replacement = STAGE / 'map-assets/3d-assets/croisement03/croisement03-southwest-firewood-stack/asset.json'
+            original_check = promotion.check_gameplay_preserved
+
+            def retirement_check(source, target):
+                if source is not None or target.resolve() != old_path:
+                    return original_check(source, target)
+                # One explicitly mapped retirement: replacement retains all gameplay
+                # and every world-space obstacle coordinate, with the full old payload backed up.
+                old, new = json.loads(old_path.read_text()), json.loads(replacement.read_text())
+                assert old['gameplay'] == new['gameplay']
+                assert [p['node'] for p in old['parts']] == [p['node'] for p in new['parts']] == ['building-049']
+                previous = json.loads((LIVE / 'scenes/croisement03.rhlos-map.json').read_text())
+                pose = next(p['transform'] for p in previous['placements'] if p['assets'] == [old['id']])
+                origin = new['source_origin_scene']
+                next_pose = dict(dx=origin[0],dy=-origin[1]*math.sin(math.radians(35)),dz=origin[2]*math.cos(math.radians(35)))
+                a,b = old['parts'][0]['obstacle_local_game'],new['parts'][0]['obstacle_local_game']
+                assert {k:v for k,v in a.items() if k!='points'} == {k:v for k,v in b.items() if k!='points'}
+                for pa,pb in zip(a['points'],b['points'],strict=True):
+                    for key,offset in [('x','dx'),('y','dy'),('z_bottom','dz'),('z_top','dz')]:
+                        assert abs(pa[key]+pose[offset]-pb[key]-next_pose[offset]) < 1e-9
+                for path in old_path.parent.rglob('*'):
+                    if path.is_file():
+                        assert sha(path) == sha(STAGE/'retired-group049-complete-backup'/path.relative_to(old_path.parent))
+
+            promotion.check_gameplay_preserved = retirement_check
+            try:
+                _apply(STAGE / 'promotion.json')
+            finally:
+                promotion.check_gameplay_preserved = original_check
             prior = json.loads((STAGE / 'palette-before.json').read_text())
             after = json.loads((LIVE / '3d-assets/index.json').read_text())
             selected = set(json.loads((STAGE / 'scope.json').read_text())['asset_ids'])

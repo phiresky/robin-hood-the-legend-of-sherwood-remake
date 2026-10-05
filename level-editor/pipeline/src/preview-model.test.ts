@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { meshoptReadable } from "./meshopt-glb.ts";
 import { Document, NodeIO } from "@gltf-transform/core";
 import { generatePreview, previewFingerprint, previewTextureSize } from "./preview-model.ts";
+import sharp from "sharp";
 
 test("preview texture edge follows source texels: /8, multiple of 16, clamped 32-512", () => {
   assert.equal(previewTextureSize(112 * 112), 32);
@@ -16,6 +17,44 @@ test("preview texture edge follows source texels: /8, multiple of 16, clamped 32
   assert.equal(previewTextureSize(2944 * 2176), 320);
   assert.equal(previewTextureSize(8192 * 8192), 512);
   assert.throws(() => previewTextureSize(0), /no texture/);
+});
+
+test("preview compression keeps both axes positive for thin texture strips", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "preview-strips-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  for (const [width, height, expected] of [
+    [2090, 1, [32, 1]],
+    [1, 1265, [1, 32]],
+    [64, 64, [32, 32]],
+  ] as const) {
+    const doc = new Document();
+    const buffer = doc.createBuffer();
+    const image = await sharp({ create: { width, height, channels: 4, background: "#63884a" } })
+      .png().toBuffer();
+    const texture = doc.createTexture().setImage(image).setMimeType("image/png");
+    const material = doc.createMaterial().setBaseColorTexture(texture);
+    const positions = doc.createAccessor().setType("VEC3")
+      .setArray(new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0])).setBuffer(buffer);
+    const uv = doc.createAccessor().setType("VEC2")
+      .setArray(new Float32Array([0, 0, 1, 0, 0, 1])).setBuffer(buffer);
+    const primitive = doc.createPrimitive().setAttribute("POSITION", positions)
+      .setAttribute("TEXCOORD_0", uv).setMaterial(material);
+    doc.createScene().addChild(doc.createNode().setMesh(doc.createMesh().addPrimitive(primitive)));
+    const input = path.join(root, `${width}x${height}.glb`);
+    await new NodeIO().write(input, doc);
+    const original = await fs.readFile(input);
+    const { bytes, edge } = await generatePreview(input);
+    const output = await new NodeIO()
+      .registerExtensions((await import("@gltf-transform/extensions")).ALL_EXTENSIONS)
+      .registerDependencies({ "meshopt.decoder": (await import("meshoptimizer")).MeshoptDecoder })
+      .readBinary(meshoptReadable(bytes));
+    assert.equal(edge, 32);
+    const actual = output.getRoot().listTextures();
+    assert.equal(actual.length, 1);
+    assert.deepEqual(actual[0]!.getSize(), expected);
+    assert.equal(actual[0]!.getMimeType(), "image/avif");
+    assert.deepEqual(await fs.readFile(input), original);
+  }
 });
 
 test("internal generator returns deterministic meshopt preview bytes; standalone CLI is rejected", async (t) => {
