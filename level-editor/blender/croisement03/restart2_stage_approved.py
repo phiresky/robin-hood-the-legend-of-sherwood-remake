@@ -23,7 +23,7 @@ def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 
-def signature(obj):
+def signature(obj, detail=False):
     appearance = appearance_state(obj)
     for material in appearance['materials']:
         if material is None:
@@ -32,10 +32,11 @@ def signature(obj):
         for node in material.get('nodes', []):
             if 'image' in node:
                 node['image'].pop('name')
-    return digest(dict(world_vertices=[list(obj.matrix_world @ vertex.co) for vertex in obj.data.vertices],
+    value = dict(world_vertices=[list(obj.matrix_world @ vertex.co) for vertex in obj.data.vertices],
                        faces=[list(face.vertices) for face in obj.data.polygons],
                        source_node=obj.get('source_node'), asset_group=obj.get('asset_group'),
-                       visibility=[obj.hide_render, obj.hide_viewport], appearance=appearance))
+                       visibility=[obj.hide_render, obj.hide_viewport], appearance=appearance)
+    return value if detail else digest(value)
 
 
 def main():
@@ -48,12 +49,13 @@ def main():
     assert not output.exists()
     acquire()
     try:
-        checks, expected = [], {}
+        checks, expected, expected_detail, import_drift = [], {}, {}, {}
         for item in handoffs:
             checks.append(verify_baked_geometry(item))
             meshes = [obj for obj in bpy.data.collections[item['collection_name']].all_objects
                       if obj.type == 'MESH' and obj.get('asset_group') == item['asset_id']]
             expected[item['asset_id']] = sorted(signature(obj) for obj in meshes)
+            expected_detail[item['asset_id']] = [signature(obj, detail=True) for obj in meshes]
         bpy.ops.wm.open_mainfile(filepath=plan['baseline'])
         bpy.context.preferences.filepaths.save_version = 0
         bpy.context.window.scene = bpy.data.scenes['Croisement03 Refinement']
@@ -75,7 +77,24 @@ def main():
         assert before == after, 'Unselected scene geometry/materials changed'
         for item in handoffs:
             meshes = [obj for obj in collection.all_objects if obj.type == 'MESH' and obj.get('asset_group') == item['asset_id']]
-            assert sorted(signature(obj) for obj in meshes) == expected[item['asset_id']], item['asset_id']
+            actual = [signature(obj, detail=True) for obj in meshes]
+            approved = expected_detail[item['asset_id']]
+            valid = len(actual) == len(approved)
+            drift = 0.0
+            for original, imported in zip(approved, actual):
+                a, b = dict(original), dict(imported)
+                source_points, points = a.pop('world_vertices'), b.pop('world_vertices')
+                valid &= a == b and len(source_points) == len(points)
+                drift = max(drift, max((abs(x - y) for p, q in zip(source_points, points)
+                                       for x, y in zip(p, q)), default=0.0))
+            # Reparenting decomposes matrices to Blender float transforms. Keep
+            # faces, ownership, UVs and shader/image bytes exact; permit at most
+            # one thousandth of a source-pixel world unit in transformed points.
+            import_drift[item['asset_id']] = drift
+            if not valid or drift > 0.001:
+                diagnostic = dict(asset=item['asset_id'], expected=approved, actual=actual)
+                (root / ('import-difference-' + item['asset_id'] + '.json')).write_text(json.dumps(diagnostic) + '\n')
+                raise ValueError('Imported mesh differs: ' + item['asset_id'])
         output.mkdir()
         bpy.ops.wm.save_as_mainfile(filepath=str(output / 'worker.blend'))
         catalog = json.loads(Path(plan['catalog']).read_text())
@@ -87,7 +106,8 @@ def main():
                       publication_approved=False, plan_sha256=sha(root / 'plan.json'),
                       model_sha256=sha(output / 'worker.blend'), imports=imports, geometry_checks=checks,
                       grouping=grouping, unselected_meshes_preserved=len(before),
-                      imported_geometry_uv_materials_identical=True, exports=exports,
+                      imported_faces_uv_materials_identical=True, maximum_world_coordinate_error=import_drift,
+                      world_coordinate_error_limit=0.001, exports=exports,
                       limitations=['Full map remains largely unrefined.',
                                    'Bridge and fallen-log terrain/riverbed remain separate hypotheses, not complete scene ground.',
                                    'Fern receiving trunks and foreground plant integration remain unfinished.',
