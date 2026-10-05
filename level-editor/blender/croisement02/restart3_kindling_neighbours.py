@@ -29,6 +29,7 @@ def main():
     parser.add_argument('--exclude-secondary-crowns', action='store_true')
     parser.add_argument('--neighbour', nargs=2, action='append', default=[], metavar=('WORKER','SHA256'))
     parser.add_argument('--opacity-support', action='store_true')
+    parser.add_argument('--contacts-only',action='store_true',help='Use current standalone actual8; render only exact joint source and four contact views')
     parser.add_argument('--hide-crowns-in-orbit', action='store_true', help='Keep native source view intact; hide crown meshes only for scoped wood/contact diagnostics')
     parser.add_argument('--focus', nargs=4, type=float, metavar=('X','Y','Z','SCALE'), help='Optional close-view world target and scale; source camera is unchanged')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
@@ -158,15 +159,16 @@ def main():
                     obj.hide_render=True;hidden_crowns.append(obj.name)
         scale = max((hi - lo).length * 1.10, 100)
         if args.focus:center=Vector(args.focus[:3]);scale=args.focus[3]
-        for i in range(8):
-            angle = 2 * math.pi * i / 8
-            direction = Vector((math.sin(angle) * math.cos(math.radians(35)), -math.cos(angle) * math.cos(math.radians(35)), math.sin(math.radians(35))))
-            render(f'view-{i}.png', center, direction, scale, 512, 384)
-        board = Image.new('RGB', (2048, 768), '#454545')
-        for i in range(8):
-            image = Image.open(destination / f'view-{i}.png').convert('RGBA')
-            board.paste(image, ((i % 4) * 512, (i // 4) * 384), image)
-        board.save(destination / 'sheet.png')
+        if not args.contacts_only:
+            for i in range(8):
+                angle = 2 * math.pi * i / 8
+                direction = Vector((math.sin(angle) * math.cos(math.radians(35)), -math.cos(angle) * math.cos(math.radians(35)), math.sin(math.radians(35))))
+                render(f'view-{i}.png', center, direction, scale, 512, 384)
+            board = Image.new('RGB', (2048, 768), '#454545')
+            for i in range(8):
+                image = Image.open(destination / f'view-{i}.png').convert('RGBA')
+                board.paste(image, ((i % 4) * 512, (i // 4) * 384), image)
+            board.save(destination / 'sheet.png')
         # A diagnostic plane locates world Z=0; it is not a terrain candidate.
         ground_mesh = bpy.data.meshes.new('Diagnostic ground datum')
         pad = 100
@@ -197,7 +199,7 @@ def main():
             meshes=[dict(name=o.name, asset_group=o.get('asset_group'),
                          minimum_world_z=min((o.matrix_world @ v.co).z for v in o.data.vertices),
                          maximum_world_z=max((o.matrix_world @ v.co).z for v in o.data.vertices)) for o in meshes], cameras=cameras,
-            source_crop=list(crop), close_focus=args.focus, orbit_hidden_crowns=hidden_crowns, sheet_sha256=sha(destination / 'sheet.png'), source_comparison_sha256=sha(destination / 'source-comparison.png'),
+            source_crop=list(crop), close_focus=args.focus, orbit_hidden_crowns=hidden_crowns, sheet_sha256=sha(destination / 'sheet.png') if not args.contacts_only else None, source_comparison_sha256=sha(destination / 'source-comparison.png'),
             status='Rendered listed candidate neighbourhood; requires visual review. Contact views add diagnostic Z0; unlisted neighbours are absent.'))
         print(destination)
     finally:
