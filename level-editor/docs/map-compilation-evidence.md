@@ -4,6 +4,22 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Physical movement source authorization (2026-10-05)
+
+Move/seek instruction entry and synchronous control retranslation now validate
+physical stair sources against their world floor and current collision footprint.
+They do not send these positions through projected-grid extraction, which cannot
+distinguish different heights on an edge-on stair. Unsupported sources warn and
+reject without relocation; recovery to nearby supported physical space remains
+unfinished.
+
+Native regressions preserve two distinct edge-on world positions, reject a source
+beyond the floor without moving it, and check that opening a live stair barrier
+changes source authorization. The movement suite passes 203 tests (12 ignored);
+patch-effect tests pass 26 (four ignored). The game build and focused formatting
+checks pass. General point/seek order generation
+and normal physical-stair export integration remain open.
+
 ## Physical movement transition handoffs (2026-10-05)
 
 Physical stair orders no longer reject transition animations. Their position

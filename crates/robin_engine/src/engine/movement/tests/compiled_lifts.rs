@@ -662,6 +662,41 @@ fn physical_stair_door_handoffs_preserve_distinct_world_endpoints() {
 }
 
 #[test]
+fn physical_stair_source_authorization_preserves_world_position() {
+    for (source, supported) in [
+        ([400., 320.], true),
+        ([400., 380.], true),
+        ([400., 450.], false),
+    ] {
+        let (mut engine, mut assets) =
+            compiled_walkway(&serde_json::to_vec(&edge_on_physical_stair_fixture()).unwrap());
+        let owner = physical_walker(&mut engine, &mut assets, 2, source, [400., 380.]);
+        let before = engine.ent(owner).position_iface().get_position();
+        assert_eq!(
+            engine.extract_move_instruction_owner(&assets, owner),
+            supported
+        );
+        assert_eq!(engine.ent(owner).position_iface().get_position(), before);
+    }
+}
+
+#[test]
+fn physical_stair_source_authorization_reads_live_barriers() {
+    let (mut engine, mut assets) =
+        compiled_walkway(&serde_json::to_vec(&physical_stair_fixture()).unwrap());
+    let owner = physical_walker(&mut engine, &mut assets, 3, [400., 350.], [400., 380.]);
+    let before = engine.ent(owner).position_iface().get_position();
+    assert!(!engine.extract_move_instruction_owner(&assets, owner));
+    let sim = crate::sim_rng::test_context();
+    engine.apply_patch(
+        TickCtx::new(&sim, &assets),
+        crate::patch::PatchIndex::new(0).unwrap(),
+    );
+    assert!(engine.extract_move_instruction_owner(&assets, owner));
+    assert_eq!(engine.ent(owner).position_iface().get_position(), before);
+}
+
+#[test]
 fn physical_stair_transitions_wait_at_the_goal_and_preserve_unfinished_world_distance() {
     for transition_y in [320.1, 350.] {
         let (mut engine, mut assets) =

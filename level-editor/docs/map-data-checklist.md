@@ -83,6 +83,9 @@ now wait at a reached world target until animation completion, or preserve
 unfinished distance in the next movement order. An edge-on actor-loop test
 covers both cases. General point/seek order creation, broader transition/seek
 choreography and multi-door coverage remain unfinished.
+Movement-source authorization now checks physical floor height and live footprint
+support before projected extraction can relocate the actor. Unsupported physical
+sources warn and reject; recovery to a nearby supported world position remains open.
 
 Physical stair movers now include hard collision from actors on explicitly bound
 landings. Checks require matching sector, layer, receiver footprint and height;

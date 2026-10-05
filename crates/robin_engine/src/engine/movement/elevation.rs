@@ -223,7 +223,51 @@ impl EngineInner {
     /// cross-sector route.  Keeping it at the later path-dispatch boundary
     /// skips the correction whenever Seek is consumed while building its
     /// replacement sequence.
-    pub(in crate::engine) fn extract_move_instruction_owner(&mut self, owner: EntityId) -> bool {
+    pub(in crate::engine) fn extract_move_instruction_owner(
+        &mut self,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) -> bool {
+        let entity = self
+            .world
+            .entities
+            .expect_entity(owner, format_args!("movement source"));
+        if let Some(stair) = entity
+            .element_data()
+            .sector()
+            .and_then(|sector| assets.navigation.physical_stairs.get(&sector.get()))
+        {
+            let pi = entity.position_iface();
+            let position = pi.get_position();
+            let source = [position.x, position.y];
+            let plane = robin_level_data::stair_navigation::StairNavigationPlane::new(
+                stair.definition.plane,
+            )
+            .expect("loaded physical stair has invalid plane");
+            let on_floor = plane
+                .world_position(source.map(f64::from))
+                .is_ok_and(|world| (world[2] - f64::from(position.z)).abs() <= 0.001);
+            let supported = on_floor
+                && stair
+                    .route(
+                        &self.world.pathfinder,
+                        source,
+                        source,
+                        pi.get_half_diagonal(),
+                    )
+                    .expect("invalid physical stair source geometry")
+                    .is_some();
+            if !supported {
+                // TODO: Recover unsupported sources in physical coordinates.
+                // Projected extraction can move an actor onto a different height.
+                tracing::warn!(
+                    ?owner,
+                    ?position,
+                    "unsupported physical stair movement source"
+                );
+            }
+            return supported;
+        }
         let (entity_layer, pf_idx, move_box_map) = {
             let entity = self
                 .world

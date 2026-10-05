@@ -10,6 +10,9 @@
   physical endpoints, and entry/exit callbacks transfer floor ownership without
   inverting the stair projection. The editor does not emit this metadata yet;
   general point/seek requests and full movement effects remain unfinished.
+  Movement-source authorization preserves supported world positions on physical
+  stairs and rejects unsupported sources without projected relocation; physical
+  source recovery remains unfinished.
   Normal gate routes retain physical door identities and traverse between
   landings, including closure/reopening of an in-flight barrier. Loading binds
   landing support from the actual motion/receiver

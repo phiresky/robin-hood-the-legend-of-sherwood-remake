@@ -486,7 +486,7 @@ impl EngineInner {
                 // unexpanded-box recovery adjust the request source.  That
                 // differs observably: the actor is not moved, the corrected
                 // source is different, and first-point selection becomes enabled.
-                if !self.extract_move_instruction_owner(id) {
+                if !self.extract_move_instruction_owner(tcx.assets, id) {
                     self.element_impossible(
                         tcx,
                         &mut Vec::new(),
