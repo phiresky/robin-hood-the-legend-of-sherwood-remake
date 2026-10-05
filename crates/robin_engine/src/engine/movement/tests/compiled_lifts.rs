@@ -1,5 +1,124 @@
 use super::*;
 
+fn physical_stair_fixture() -> serde_json::Value {
+    let mut document: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/asset-lift.level.json"
+    )))
+    .unwrap();
+    document["asset_geometry"]["motion_data"]["layers"][2][0]["obstacles"] = serde_json::json!([
+        {"state_id": 1, "polygon": {"points": [[390,349],[410,249],[410,251],[390,351]]}}
+    ]);
+    document["asset_geometry"]["movement_transitions"] = serde_json::json!([{
+        "id": "physical-stair-barrier", "waypoint": [350,320], "sector": 0, "layer": 0,
+        "active": true, "definitive": false,
+        "apply_polygon": {"points": []}, "no_apply_polygon": {"points": []},
+        "motion_changes": [{"sector": 3, "layer": 2, "changing_obstacle": 0}]
+    }]);
+    document["asset_geometry"]["lifts"][0]["physical_navigation"] = serde_json::json!({
+        "plane": [5.0, 0.0, -1950.0],
+        "boundary": [[390,300],[410,300],[410,400],[390,400]],
+        "obstacles": [{"motion_obstacle": 0, "polygon": [[390,349],[410,349],[410,351],[390,351]]}],
+        "doors": [
+            {"inside": [392,350,10], "middle": [390,350,0], "outside": [380,350,0]},
+            {"inside": [408,350,90], "middle": [410,350,100], "outside": [420,350,100]}
+        ]
+    });
+    document
+}
+
+#[test]
+fn physical_stair_loading_routes_against_live_and_restored_obstacle_state() {
+    let bytes = serde_json::to_vec(&physical_stair_fixture()).unwrap();
+    let (mut engine, assets) = compiled_walkway(&bytes);
+    let stairs = &assets.navigation.physical_stairs;
+    assert_eq!(stairs.len(), 1);
+    let stair = &stairs[&3];
+    let route = |pathfinder: &crate::pathfinder::PathFinder| {
+        stair
+            .route(
+                pathfinder,
+                [400.0, 320.0],
+                [400.0, 380.0],
+                crate::coordinates::MoveBoxHalfDiagonal::new(6.0, 3.0),
+            )
+            .unwrap()
+    };
+    assert!(route(&engine.world.pathfinder).is_none());
+    let saved = bitcode::encode(&engine.world.pathfinder);
+    let sim = crate::sim_rng::test_context();
+    let patch = crate::patch::PatchIndex::new(0).unwrap();
+    engine.apply_patch(TickCtx::new(&sim, &assets), patch);
+    let path = route(&engine.world.pathfinder).expect("opening the live barrier frees the stair");
+    assert_eq!(path.first(), Some(&[400.0, 320.0]));
+    assert_eq!(path.last(), Some(&[400.0, 380.0]));
+    let restored: crate::pathfinder::PathFinder = bitcode::decode(&saved).unwrap();
+    assert!(route(&restored).is_none());
+    engine.reset_patch(TickCtx::new(&sim, &assets), patch);
+    assert!(route(&engine.world.pathfinder).is_none());
+    let serialized = serde_json::to_vec(&assets.navigation.physical_stairs).unwrap();
+    let decoded: std::collections::BTreeMap<u16, crate::stair_navigation::BoundPhysicalStair> =
+        serde_json::from_slice(&serialized).unwrap();
+    assert!(
+        decoded[&3]
+            .route(
+                &restored,
+                [400.0, 320.0],
+                [400.0, 380.0],
+                crate::coordinates::MoveBoxHalfDiagonal::new(6.0, 3.0)
+            )
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn physical_stair_descriptor_rejects_missing_collision_and_mismatched_doors() {
+    for (field, value) in [
+        ("obstacles", serde_json::json!([])),
+        (
+            "obstacles",
+            serde_json::json!([{"motion_obstacle": 1, "polygon": [[399,300],[401,300],[401,400],[399,400]]}]),
+        ),
+        ("doors", serde_json::json!([])),
+        ("plane", serde_json::json!([5.0, 0.0, -1940.0])),
+        (
+            "boundary",
+            serde_json::json!([[390, 300], [400, 300], [410, 300]]),
+        ),
+        (
+            "boundary",
+            serde_json::json!([[390, 300], [410, 400], [410, 300], [390, 400], [400, 420]]),
+        ),
+        (
+            "boundary",
+            serde_json::json!([[490, 300], [510, 300], [510, 400], [490, 400]]),
+        ),
+    ] {
+        let mut document = physical_stair_fixture();
+        document["asset_geometry"]["lifts"][0]["physical_navigation"][field] = value;
+        let error = crate::level_data::LoadedLevel::hackable_from_json(
+            &serde_json::to_vec(&document).unwrap(),
+        )
+        .expect_err(
+            "invalid physical navigation must not silently drop collision or door ownership",
+        );
+        assert!(
+            error.to_string().contains("physical stair"),
+            "{field}: {error}"
+        );
+    }
+    for endpoints in [serde_json::Value::Null, serde_json::json!([1, 0])] {
+        let mut document = physical_stair_fixture();
+        document["asset_geometry"]["lifts"][0]["endpoint_doors"] = endpoints;
+        let error = crate::level_data::LoadedLevel::hackable_from_json(
+            &serde_json::to_vec(&document).unwrap(),
+        )
+        .expect_err("physical endpoints must retain their height identities");
+        assert!(error.to_string().contains("physical stair"), "{error}");
+    }
+}
+
 fn placed_point(point: MapPoint, turn: u8) -> MapPoint {
     if turn == 0 {
         return point;

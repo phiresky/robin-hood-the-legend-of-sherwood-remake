@@ -4,6 +4,42 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Physical stair descriptor and live collision binding (2026-10-05)
+
+An optional lift `physical_navigation` definition retains a world-height plane,
+ground-coordinate boundary, physical collision polygons and ordered world-space
+door anchors. Collision pieces reference the existing motion area's obstacle
+indices. Validation rejects omitted/missing obstacle identities, malformed
+polygons, mismatched door counts, nonfinite coordinates, inconsistent projected
+anchors and inside/middle anchors outside the stair plane.
+Low/high identities must agree with physical endpoint heights, and inside/middle
+anchors must lie within the physical boundary. Screen-space approach adjustment
+leaves these physical definitions unchanged; otherwise it would rewrite their
+door points after validation against the placed floor.
+
+Runtime loading binds these definitions to their motion layer and area. Physical
+route queries consult the normal pathfinder's current state word, so they do not
+require a duplicate switch-state table and can use restored state. The regression
+fixture loads through normal engine construction and exercises a full-width
+barrier's initial/open/closed states and restored pathfinder state. Validation is
+also exercised through descriptor loading.
+
+Compiler emission and actual actor traversal remain unfinished. In particular,
+the new metadata does not yet authorize collapsed projected motion polygons,
+provide landing-footprint support, or change door orders/receiver handoffs. The
+24 failed keep routes remain unresolved.
+
+Verification: all three focused physical-stair tests pass. The movement suite
+passes 187 tests (twelve external-fixture checks skipped), level loading passes
+40 (three skipped), physical collision routing passes five, and the complete
+level-data suite passes 80 (seven skipped). Formatting and whitespace checks pass.
+The first game build was terminated with exit 143 (SIGTERM), without a compiler
+diagnostic. The single-job incremental retry passed:
+`RUSTC_WRAPPER= cargo build -p robin_rs --bin robin -j1`.
+
+Reproduce the focused integration checks with
+`RUST_MIN_STACK=33554432 RUSTC_WRAPPER= cargo test -p robin_engine -j1 --lib physical_stair -- --test-threads=1`.
+
 ## Physical stair sprite execution and receiver entry (2026-10-05)
 
 The sprite motion API now accepts an explicit physical destination while sharing

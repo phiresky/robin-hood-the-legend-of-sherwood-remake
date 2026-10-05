@@ -62,6 +62,10 @@ failed routes remain unresolved.
 The sprite motion API and ground-coordinate receiver entry now also support
 edge-on planes, with animation-distance and position-state round-trip coverage.
 Compiler metadata and actor order dispatch still need integration.
+An optional physical-stair descriptor and runtime binding now retain ground-space
+collision with references to the normal movement obstacles. Physical route queries
+read their current state rather than maintaining separate switch state. Compiler
+emission, door handoffs and actor dispatch are still unfinished.
 Best-effort export now warns instead of aborting on collapsed mask boundaries or
 collision-split stair regions, retaining independent usable features. These
 fallbacks do not repair the missing traversal.

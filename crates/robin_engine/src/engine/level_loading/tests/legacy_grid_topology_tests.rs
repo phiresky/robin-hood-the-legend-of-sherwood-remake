@@ -84,6 +84,7 @@ fn retains_mixed_door_jump_order_and_sparse_special_sector_slots() {
         doors: vec![door(false), door(true)],
         direction: 0,
         endpoint_doors: None,
+        physical_navigation: None,
     });
     loaded.proto.buildings = vec![
         RawBuildingEntry::Building {

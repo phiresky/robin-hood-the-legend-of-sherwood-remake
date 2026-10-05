@@ -1,5 +1,13 @@
 # Post-port Features
 
+- **Physical stair navigation infrastructure (integration in progress).** Lift
+  descriptors can retain placed ground-coordinate floors, collision pieces and
+  world-coordinate door anchors. Collision pieces reference the owning motion
+  area's obstacle identities, so physical route queries read normal live control
+  state, including restored state. The loader validates ownership and forward
+  projection. The editor does not emit this metadata yet; actor dispatch and
+  physical door handoffs still require integration before it changes gameplay.
+
 - **Asset-authored movement headroom.** A permanent gameplay volume can set
   `movementHeadroom` in game-height units. Export excludes walking space that
   would put an upright body inside that solid, including beneath raised beams.

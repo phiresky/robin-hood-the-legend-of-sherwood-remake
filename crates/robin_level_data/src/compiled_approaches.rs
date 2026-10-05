@@ -230,6 +230,11 @@ pub(crate) fn derive(geometry: &mut CompiledAssetGeometry) {
         }
     }
     for (lift_index, lift) in geometry.lifts.iter_mut().enumerate() {
+        // Physical anchors belong to the placed floor. A projected footprint
+        // search can move them off that floor or erase edge-on progress.
+        if lift.physical_navigation.is_some() {
+            continue;
+        }
         if !matches!(lift.lift_type, 0..=3) {
             continue;
         }

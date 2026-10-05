@@ -1735,6 +1735,9 @@ pub struct RawLift {
     /// levels leave this unset and retain spatial endpoint selection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub endpoint_doors: Option<[u16; 2]>,
+    /// Optional placed physical geometry for projection-independent traversal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub physical_navigation: Option<crate::physical_stair::PhysicalStairNavigation>,
 }
 
 /// Building entry from the BUIL/FARM chunk.
@@ -2903,11 +2906,12 @@ impl LoadedLevel {
             }
             let mut area_refs = std::collections::BTreeSet::new();
             let mut motion_states = std::collections::BTreeMap::new();
+            let mut motion_area_indices = std::collections::BTreeMap::new();
             let mut lift_refs = std::collections::BTreeSet::new();
             let lift_layer = geometry.motion_data.layers.len() - 1;
             let mut sector = 0u16;
             for (layer, areas) in geometry.motion_data.layers.iter().enumerate() {
-                for area in areas {
+                for (area_index, area) in areas.iter().enumerate() {
                     if (layer == lift_layer && !area.is_lift)
                         || area.polygon.points.len() < 3
                         || area
@@ -2918,6 +2922,7 @@ impl LoadedLevel {
                         return Err("invalid compiled asset motion area".into());
                     }
                     area_refs.insert((sector, layer as u16));
+                    motion_area_indices.insert(sector, (layer, area_index));
                     motion_states.insert(
                         (sector, layer as u16),
                         area.obstacles
@@ -3175,6 +3180,12 @@ impl LoadedLevel {
                     })
                 {
                     return Err("invalid asset lift or unresolved lift connection".into());
+                }
+                if let Some(physical) = &lift.physical_navigation {
+                    let &(layer, area) = motion_area_indices
+                        .get(&lift.motion_area_index)
+                        .ok_or("physical stair has no motion area")?;
+                    physical.validate(lift, &geometry.motion_data.layers[layer][area])?;
                 }
             }
             if lift_refs != defined_lifts {
@@ -5465,6 +5476,7 @@ fn read_lifts(reader: &mut ChunkReader, format: LevelFormat) -> Result<Vec<RawLi
             doors,
             direction,
             endpoint_doors: None,
+            physical_navigation: None,
         });
     }
 

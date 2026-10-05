@@ -167,6 +167,7 @@ fn no_script_mode_still_constructs_doors_lifts_and_sector_links() {
         doors: vec![lift_door],
         direction: 0,
         endpoint_doors: None,
+        physical_navigation: None,
     }];
     let builder = MissionLevelBuilder::new("no-script", false, &loaded);
     let assets = door_assets(22, 1);

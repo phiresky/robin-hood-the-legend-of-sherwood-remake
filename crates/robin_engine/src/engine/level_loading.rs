@@ -2378,7 +2378,48 @@ impl EngineInner {
         self.initialize_motion_sector_conversion(assets);
         self.initialize_motion_obstacle_states(assets);
         self.register_motion_sectors(assets, staging, motion_data, lifts);
+        self.bind_physical_stairs(assets, motion_data, lifts);
         self.initialize_motion_jump_zones(staging);
+    }
+
+    fn bind_physical_stairs(
+        &self,
+        assets: &mut LevelAssets,
+        motion_data: &crate::level_data::RawMotionData,
+        lifts: &[crate::level_data::RawLift],
+    ) {
+        let mut sector = 0u16;
+        let mut areas = std::collections::BTreeMap::new();
+        for (layer, motion_areas) in motion_data.layers.iter().enumerate() {
+            for (area, definition) in motion_areas.iter().enumerate() {
+                areas.insert(sector, (layer, area, definition));
+                sector = sector
+                    .checked_add(
+                        u16::try_from(1 + definition.obstacles.len())
+                            .expect("too many motion obstacles"),
+                    )
+                    .expect("too many motion sectors");
+            }
+        }
+        let mut physical = std::collections::BTreeMap::new();
+        for lift in lifts
+            .iter()
+            .filter(|lift| lift.physical_navigation.is_some())
+        {
+            let &(layer, area, definition) = areas
+                .get(&lift.motion_area_index)
+                .expect("physical stair has no registered motion area");
+            let bound =
+                crate::stair_navigation::BoundPhysicalStair::bind(lift, definition, layer, area)
+                    .unwrap_or_else(|error| {
+                        panic!("invalid physical stair {}: {error}", lift.motion_area_index)
+                    });
+            assert!(
+                physical.insert(lift.motion_area_index, bound).is_none(),
+                "duplicate physical stair sector"
+            );
+        }
+        assets.navigation.physical_stairs = std::sync::Arc::new(physical);
     }
 
     fn register_motion_sight_obstacles(&mut self, assets: &mut LevelAssets) {

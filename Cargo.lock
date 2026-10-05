@@ -6094,6 +6094,7 @@ name = "robin_level_data"
 version = "0.0.0"
 dependencies = [
  "bitcode 0.6.9 (git+https://github.com/phiresky/bitcode.git?rev=59051e886ff8cd24bfc63ef0cef6321372829604)",
+ "geo",
  "json-patch",
  "num_enum",
  "robin_data_io",

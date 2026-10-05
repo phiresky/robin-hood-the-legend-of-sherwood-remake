@@ -5,6 +5,7 @@ mod compiled_elevation;
 mod compiled_masks;
 pub mod content_patch;
 pub mod level_data;
+pub mod physical_stair;
 pub mod profiles;
 pub mod stair_navigation;
 

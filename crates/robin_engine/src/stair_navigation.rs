@@ -19,6 +19,73 @@ pub struct StairRouteGeometry {
     pub obstacles: Vec<Vec<[f32; 2]>>,
 }
 
+/// Immutable physical geometry bound to the normal pathfinder's live state.
+/// Keeping obstacle identities avoids a second, independently toggled state table.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BoundPhysicalStair {
+    pub definition: robin_level_data::physical_stair::PhysicalStairNavigation,
+    layer: usize,
+    area: usize,
+    obstacle_states: Vec<u32>,
+}
+
+impl BoundPhysicalStair {
+    pub fn bind(
+        lift: &crate::level_data::RawLift,
+        motion_area: &crate::level_data::RawMotionArea,
+        layer: usize,
+        area: usize,
+    ) -> Result<Self, String> {
+        let definition = lift
+            .physical_navigation
+            .as_ref()
+            .ok_or("lift has no physical stair navigation")?;
+        definition.validate(lift, motion_area)?;
+        polygon(&definition.boundary)?;
+        for obstacle in &definition.obstacles {
+            polygon(&obstacle.polygon)?;
+        }
+        Ok(Self {
+            definition: definition.clone(),
+            layer,
+            area,
+            obstacle_states: motion_area
+                .obstacles
+                .iter()
+                .map(|obstacle| obstacle.state_id)
+                .collect(),
+        })
+    }
+
+    /// Rebuild collision from the current state, including after rollback or an
+    /// already-issued route's barrier changes. No cached route implies clearance.
+    pub fn route(
+        &self,
+        pathfinder: &PathFinder,
+        source: [f32; 2],
+        goal: [f32; 2],
+        half_diagonal: MoveBoxHalfDiagonal,
+    ) -> Result<Option<Vec<[f32; 2]>>, String> {
+        let geometry = StairRouteGeometry {
+            boundary: self.definition.boundary.clone(),
+            obstacles: self
+                .definition
+                .obstacles
+                .iter()
+                .filter(|obstacle| {
+                    pathfinder.is_motion_obstacle_active(
+                        self.layer,
+                        self.area,
+                        self.obstacle_states[usize::from(obstacle.motion_obstacle)],
+                    )
+                })
+                .map(|obstacle| obstacle.polygon.clone())
+                .collect(),
+        };
+        geometry.route(source, goal, half_diagonal)
+    }
+}
+
 fn polygon(points: &[[f32; 2]]) -> Result<Polygon<f32>, String> {
     if points.len() < 3 || points.iter().flatten().any(|x| !x.is_finite()) {
         return Err("physical stair polygon requires at least three finite points".into());
