@@ -71,6 +71,12 @@ def main():
  foot=min((objects[29].matrix_world@v.co for v in objects[29].data.vertices),key=lambda p:p.z)
  anchor=point(55,322) if args.revision>=2 else foot
  support_hit=terrain_bvh.ray_cast(anchor+ray*5000,-ray,10000);hit=support_hit[0]
+ if args.revision>=3:
+  skipped=[]
+  while hit is not None and abs(support_hit[1].z)<.35:
+   skipped.append(dict(point=list(hit),normal=list(support_hit[1]),node=context_owners[support_hit[2]]))
+   support_hit=terrain_bvh.ray_cast(hit-ray*.01,-ray,10000);hit=support_hit[0]
+  (dest/'excluded-vertical-boundaries.json').write_text(json.dumps(dict(reason='Vertical archival occlusion boundary walls are not upward ground support.',intersections=skipped),indent=2)+'\n')
  if hit is None:raise ValueError('Missing archived root support')
  shift=ray*((hit-anchor).dot(ray)+.2)
  for target in [*objects.values(),crown]:
