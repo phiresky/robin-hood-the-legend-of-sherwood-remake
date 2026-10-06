@@ -204,6 +204,17 @@ for (const height of [0, 40])
     }
     const compile = (doc) => compileMap(doc, [0, 0, 4000, 4000], assets, { bestEffort: true });
     const compiled = compile(document);
+    if (compiled.descriptor.asset_geometry.lifts?.length !== 2 * lifts.length) {
+      await fs.writeFile(
+        `${output}/failed-${height}-${rotation}.scene.json`,
+        JSON.stringify(document),
+      );
+      await fs.writeFile(
+        `${output}/failed-${height}-${rotation}.level.json`,
+        JSON.stringify(compiled.descriptor),
+      );
+      console.error(`Failed landing assembly diagnostics: ${output}`);
+    }
     assert.equal(
       compiled.descriptor.asset_geometry.lifts?.length,
       2 * lifts.length,

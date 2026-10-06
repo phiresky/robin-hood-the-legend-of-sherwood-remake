@@ -8480,3 +8480,23 @@ contact discrepancy stays below 0.135 units, and terrain support is 205/205.
 These are draft mesh limitations, not runtime connection tolerances or rendered
 verification. Audit `lift-anchor-support-zwj2QO` finds 15/53 unsupported stairs
 (York 14/16, Sherwood 1/1), 1/8 ladders and 9/9 walls.
+
+### Southern riverside stair: unpublished binding failure
+
+`local-stair-seams-SbKFtN` corrects the southern riverside stair's local seams.
+Mesh review has 719/723 flight hits with an edge discrepancy of 0.119457 units;
+reviewed upper landing strips have complete sampled support. The first isolated
+export omits both copies because its lower approach is blocked. Diagnostic
+`external-stair-landings-8g6yrC` retains the failed scene and compiled descriptor.
+
+Candidate `raised-stair-approach-IahH7Z` reprojects existing ground openings onto
+the 50.001003-unit approach, restricted to the contact strip and owning wall
+parts. Projected mesh-triangle intersections above the landing find zero overlap
+for both 519.787-square-unit strips. All eight placements then compile and 32
+missing/raised landing cases reject, but all 32 native routes fail.
+Adding matching flight clearances (`raised-stair-approach-6OxQKK`) and updating
+receiver footprints (`raised-stair-approach-3l1bgp`) does not fix traversal.
+The latter's `external-stair-landings-EXkStY` reports that neither landing receiver
+reaches its physical door. Preserved-boundary fixture
+`external-stair-landings-AQmZsu` also fails all 32 routes. These are diagnostic
+candidates only; none is published and the library audit count is unchanged.
