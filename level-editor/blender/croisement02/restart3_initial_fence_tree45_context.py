@@ -1,5 +1,5 @@
 """Inspect the remaining foliage reservation against the approved tree45 receiver."""
-import sys,json
+import sys,json,argparse
 from pathlib import Path
 from collections import Counter
 import bpy,numpy as np
@@ -20,8 +20,12 @@ FENCE=OUT/'restart3-initial-fence/geometry-v6/model.blend'
 TREE=OUT/'restart2-textures/approved7-combined-fill-v1/croisement02-tree-45/native-front-preparation/experiment/bake-v1/worker.blend'
 
 def main():
- out=OUT/'restart3-initial-fence/tree45-reservation-context-v1';out.mkdir(exist_ok=False)
- expected={GROUND:'4e2c98fbc63743af3c6539c40c60b96eb759d3a9075c13edd6e1bf16fd19eb18',FENCE:'46579f5398d1495b13e8d8433fa1a0687be447e025cd9ba745f5d7251076c5a0',TREE:'859ab8649ecba8b1059819438b1c30b935ca78c99abf4730eef381ef54a3844c'}
+ global GROUND
+ parser=argparse.ArgumentParser();parser.add_argument('--ground',type=Path);parser.add_argument('--ground-sha');parser.add_argument('--output',type=Path);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:]if '--'in sys.argv else [])
+ if args.ground:
+  assert args.ground_sha and args.output;GROUND=args.ground
+ out=args.output or OUT/'restart3-initial-fence/tree45-reservation-context-v1';out.mkdir(exist_ok=False)
+ expected={GROUND:args.ground_sha or '4e2c98fbc63743af3c6539c40c60b96eb759d3a9075c13edd6e1bf16fd19eb18',FENCE:'46579f5398d1495b13e8d8433fa1a0687be447e025cd9ba745f5d7251076c5a0',TREE:'859ab8649ecba8b1059819438b1c30b935ca78c99abf4730eef381ef54a3844c'}
  for p,h in expected.items():assert sha(p)==h
  bpy.ops.wm.open_mainfile(filepath=str(GROUND));scene=bpy.data.scenes.new('Read-only fence and approved tree45');bpy.context.window.scene=scene
  ground=bpy.data.objects['Croisement02 Terrain'];link(scene,ground);ground.hide_render=False;objects=[ground];records=[]
@@ -41,7 +45,7 @@ def main():
  for label,direction in [('native',RAY),('oblique',Vector((-.55,.7,.45)).normalized())]:
   target=Vector((1094,-887/SIN,0))if label=='native' else Vector((1094,-1555,25));camera(scene,target,direction,704,512,220 if label=='native' else 255);scene.cycles.transparent_max_bounces=1024;scene.render.filepath=str(out/(label+'.png'));bpy.ops.render.render(write_still=True,scene=scene.name)
  source=Image.open(OUT/'animation-references/composite-frame-0.png').convert('RGB').crop((984,807,1204,967)).resize((704,512),Image.Resampling.NEAREST);before=Image.open(OUT/'restart3-initial-fence/floor-fill-v1/bake-v1/candidate-native.png').convert('RGB');after=Image.open(out/'native.png').convert('RGB');sheet=Image.new('RGB',(2112,544),'#303030');draw=ImageDraw.Draw(sheet)
- for i,(label,image)in enumerate([('Original source',source),('Floor / fence; tree omitted',before),('Floor / fence / approved tree45',after)]):sheet.paste(image,(i*704,32));draw.text((i*704+5,8),label,fill='white')
+ for i,(label,image)in enumerate([('Original source',source),('Previous floor / fence; tree omitted',before),('Floor / fence / approved tree45',after)]):sheet.paste(image,(i*704,32));draw.text((i*704+5,8),label,fill='white')
  sheet.save(out/'source-context.png')
  assert all(sha(p)==h for p,h in expected.items());print(out,flush=True)
 if __name__=='__main__':
