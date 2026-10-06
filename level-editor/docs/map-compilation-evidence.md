@@ -9359,3 +9359,34 @@ apart from warnings. Anchor audit `lift-anchor-support-if3ARh` now reports
 full map parity. The saved-map checker accepts repeatable `--map=NAME` options
 for focused scene regressions, rejects unknown names, and records the selection
 in its diagnostics; omitting them continues to check every saved scene.
+
+### Unpublished keep-annex climb clearance investigation
+
+New-map placement remains the acceptance criterion. The saved Lincoln scene is
+only a regression example, and a passing round trip cannot override failed
+rotated placements.
+
+The neighbour checker now supports `lincoln-keep-annex` with the independent
+`lincoln-courtyard-shed` sloped receiving roof. Candidate
+`local-stair-seams-92Ritd` seats the lower seam against that asset-local roof
+plane. Its two-copy test `lincoln-keep-annex-neighbour-placements-113Sla`
+rejects all 32 missing/raised receiver cases, but all 32 actor routes stall:
+the recovered flight contour has insufficient internal clearance. A later
+single-map trace overwrote that directory's actor report; the complete initial
+failure log is `/tmp/lincoln-annex-113Sla-climbs.txt`.
+
+Candidate `local-stair-seams-AKCtuG` reconstructs the floor using the asset's
+existing receiving footprint and declared plane. The authoring command now
+allows at most 0.001 unit of footprint-to-plane correction and records the
+maximum; this candidate needs 0.000924. This does not change runtime or compiler
+tolerances. Full Lincoln `saved-map-exports-DZ3UyU` passes 16 stair routes,
+eight climbs and eleven control checks. However, the two-copy new-map test
+`lincoln-keep-annex-neighbour-placements-jlgO6X` passes only 24/32 actor routes:
+all eight routes at 90 degrees fail across both elevations and both copies.
+All 32 missing/raised receiver checks reject. This candidate is not published.
+
+Visible coverage is also unresolved: 513/776 flight samples hit the mesh,
+maximum uncovered distance is 11.387280 units, and sampled height residuals
+range from -71.778567 to 87.749589 units. Next work must resolve the rotated
+actor clearance and review the visible climbing surface, rather than accept
+the unchanged-layout success or widen the contour merely to pass the test.

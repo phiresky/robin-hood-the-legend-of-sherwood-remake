@@ -542,6 +542,9 @@ The expanded local-anchor audit finds 1/8 ladder definitions and 7/9 wall
 definitions with unsupported floor anchors. Those counts do not check landing
 height compatibility or certify placed routes. Physical wall compilation and
 runtime traversal are supported, but these wall asset contacts remain unfinished.
+The keep-annex candidate remains unpublished: its saved-map routes pass, but
+eight of 32 copied/rotated climb routes fail at 90 degrees. Reliable new-map
+placement, rather than matching an existing layout, is the acceptance criterion.
 The York scaffold ladder correction is published. Its upper platform notch now
 meets the physical seam, and both approaches follow the flight centerline while
 retaining their outside anchors and inside heights. All sixteen rotated/elevated

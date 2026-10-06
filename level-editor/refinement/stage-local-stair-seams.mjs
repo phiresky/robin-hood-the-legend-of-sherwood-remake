@@ -118,12 +118,20 @@ for (const id of ids) {
   if (arguments_.includes("--floor-from-receiving-footprint")) {
     const footprint = floor.projectionMaterials?.footprint;
     assert.ok(footprint?.length >= 3, `${id}: no asset-local receiving footprint`);
-    heightPlane(footprint);
+    const receivingPlane = heightPlane(floor.projectionMaterials.planePoints ?? footprint);
+    const maximumHeightCorrection = Math.max(
+      ...footprint.map((point) => Math.abs(planeHeight(receivingPlane, point) - point[2])),
+    );
+    assert.ok(
+      maximumHeightCorrection <= 0.001,
+      `${id}: receiving footprint disagrees with its authored plane; review separately`,
+    );
     floor.polygon = footprint.map(([x, y]) => [x, y]);
-    floor.height = footprint.map((point) => point[2]);
+    floor.height = footprint.map((point) => planeHeight(receivingPlane, point));
     changes.push({
       surface: floor.id,
       reason: "Rebuild coarse floor from asset-local receiving footprint",
+      maximumHeightCorrection,
       before,
       after: structuredClone(floor),
     });
