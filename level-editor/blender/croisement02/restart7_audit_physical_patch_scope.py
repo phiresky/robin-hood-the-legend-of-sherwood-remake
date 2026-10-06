@@ -3,7 +3,7 @@ from pathlib import Path
 import collections,hashlib,json
 import numpy as np
 from PIL import Image
-B=Path('level-editor/work/croisement02-refinement'); P=B/'restart7-source-patch-delivery/contracts-v1'; O=B/'restart7-source-patch-delivery/physical-scope-v2';O.mkdir(exist_ok=True)
+B=Path('level-editor/work/croisement02-refinement'); P=B/'restart7-source-patch-delivery/contracts-v1'; O=B/'restart7-source-patch-delivery/physical-scope-v3';O.mkdir(exist_ok=True)
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 manifest=json.loads((P/'manifest.json').read_text());resources={r['path']:Path(r['source']) for r in manifest['resources']}; grouped=collections.defaultdict(list)
 static=B/'restart2-textures/post-batch15-static-candidate-v2/croisement02.rhlos-map.json';scene=json.loads(static.read_text())
@@ -20,7 +20,7 @@ for name,rows in grouped.items():
   finding='Initial leaf camouflage becomes an open dark recess/rim. No dedicated physical cover/recess asset is present in the static asset inventory.'
   gap='Construct reusable initial leaf-cover and applied rim/recess endpoints; bind each instance to its actual ground/bank receiver. Hidden depth is inferred; preserve source-visible leaves and opening. No continuous collapse motion required.'
  elif name.endswith('hiding Pc'):
-  finding='Source endpoints change vegetation/soil appearance. Instances include elevated foreground and ground-level bindings, so one flat ground decal cannot be assumed correct for all32.'
+  finding='Source endpoints change vegetation/soil appearance. All32 instances declare sprite elevation20 for native ordering; that metadata alone does not establish physical height or receiver identity, so one flat ground decal cannot be assumed correct.'
   gap='Partition instances by actual ground/bank/foliage receiver; apply terminal source appearance to appropriate physical surfaces, and alter foreground foliage only where endpoint visibility requires it. Retain underlying static base and phase precedence.'
  else:
   finding='Initial4x1 image is entirely transparent; persistent final104x69 image has891 opaque pixels of scattered ochre leaves, visually inspected separately. This is ground scatter, not an occupied/empty bag or missing initial rigging.'
