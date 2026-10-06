@@ -15,7 +15,7 @@ from restart2_tree71 import tube
 
 def main():
  if shutil.disk_usage(OUT).free<25*1024**3:raise ValueError('Disk floor25GiB')
- dest=OUT/'restart2/tree00-v3';dest.mkdir(exist_ok=False)
+ dest=OUT/'restart2/tree00-v4';dest.mkdir(exist_ok=False)
  acquire();bpy.ops.wm.open_mainfile(filepath=str(OUT/'croisement01-grouped.blend'));bpy.context.preferences.filepaths.save_version=0
  working=bpy.data.collections['Croisement01 Working'];asset='croisement01-tree-00';name='Western Foreground Forest Tree'
  objects={int(o['source_node'].split('-')[-1]):o for o in working.all_objects if o.type=='MESH' and o.get('source_node') in ['building-030']};assert len(objects)==1
@@ -31,7 +31,7 @@ def main():
  native['masks'].append(dict(row,index=200,png=str(dest/'wood-domain.png')))
  base_y=-558/SIN
  def point(x,y):return Vector((x,base_y,(558-y)/COS))
- trace=[(46,558,19),(40,520,22),(31,480,19),(24,440,21),(18,400,22),(12,340,24),(8,280,24),(3,220,24),(-1,160,23),(-5,100,22),(-8,40,22),(-9,-10,22)]
+ trace=[(48,544,17),(43,530,16),(39,515,17),(31,480,19),(24,440,21),(18,400,22),(12,340,24),(8,280,24),(3,220,24),(-1,160,23),(-5,100,22),(-8,40,22),(-9,-10,22)]
  centers=[point(x,y) for x,y,r in trace]+[Vector((-12,base_y-5,760)),Vector((-20,base_y-10,835)),Vector((-20,base_y-15,920))]
  body=tube('Continuous west-border trunk',centers,[r for x,y,r in trace]+[17,12,2]);body['defer_union']=True
  rng=random.Random(1)
@@ -59,22 +59,22 @@ def main():
  # Seat the complete tree along the original camera ray on archived ground.
  from mathutils.bvhtree import BVHTree
  terrain_nodes={'ground'}|{f'building-{i:03}' for i in [*range(10),*range(76,81)]}
- context_vertices=[];context_faces=[]
+ context_vertices=[];context_faces=[];context_owners=[]
  bpy.context.view_layer.update()
  for support in working.all_objects:
   if support.type!='MESH' or support.get('source_node') not in terrain_nodes:continue
   offset=len(context_vertices);context_vertices.extend(support.matrix_world@v.co for v in support.data.vertices)
-  context_faces.extend(tuple(offset+i for i in f.vertices) for f in support.data.polygons)
+  context_faces.extend(tuple(offset+i for i in f.vertices) for f in support.data.polygons);context_owners.extend([support.get('source_node')]*len(support.data.polygons))
  terrain_bvh=BVHTree.FromPolygons(context_vertices,context_faces);ray=Vector((0,-COS,SIN))
  foot=min((objects[30].matrix_world@v.co for v in objects[30].data.vertices),key=lambda p:p.z)
- hit=terrain_bvh.ray_cast(foot+ray*5000,-ray,10000)[0]
+ support_hit=terrain_bvh.ray_cast(foot+ray*5000,-ray,10000);hit=support_hit[0]
  if hit is None:raise ValueError('Missing archived root support')
  shift=ray*((hit-foot).dot(ray)+.2)
  for target in [*objects.values(),crown]:
   inverse=target.matrix_world.inverted()
   for vertex in target.data.vertices:vertex.co=inverse@(target.matrix_world@vertex.co+shift)
   target.data.update()
- (dest/'support-placement.json').write_text(json.dumps(dict(foot=list(foot),hit=list(hit),shift=list(shift),scope='Source-ray placement; final bank joint still requires visual review'),indent=2)+'\n')
+ (dest/'support-placement.json').write_text(json.dumps(dict(foot=list(foot),hit=list(hit),support_node=context_owners[support_hit[2]],shift=list(shift),scope='Source-ray placement; final bank joint still requires visual review'),indent=2)+'\n')
  terrain={'ground'}|{f'building-{i:03}' for i in [*range(10),*range(76,81)]}
  keep={o for o in working.all_objects if o.type=='MESH' and (o in objects.values() or o==crown or o.get('source_node') in terrain)}
  for o in list(bpy.data.objects):
