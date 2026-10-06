@@ -10,7 +10,41 @@ const [source] = process.argv.slice(2);
 assert.ok(source, "Provide the reviewed stair seam stage");
 const edits = JSON.parse(await fs.readFile(`${source}/edits.json`, "utf8"));
 assert.equal(edits.length, 1);
-assert.equal(edits[0].asset, "nottingham-southeast-road-props");
+const contacts = {
+  "nottingham-southeast-road-props": {
+    node: "building-057",
+    clearance: "building-057-clearance-0-1",
+    ground: "ground-section-0-0",
+    hole: [
+      [1670, 1698],
+      [1660, 1690],
+      [1636, 1696],
+      [1623, 1681],
+      [1643, 1665],
+      [1702, 1647],
+      [1730, 1681],
+    ],
+    issue:
+      "Corrected stair and foundation contact retain incomplete mesh coverage: 753/829 floor samples hit the mesh, with a 2.504-unit maximum edge discrepancy. Complete rendered actor integration remains unverified.",
+  },
+  "nottingham-southwest-prison-road-props": {
+    node: "building-483",
+    clearance: "building-483-clearance-3-1",
+    ground: "ground-section-3-0",
+    hole: [
+      [728, 2322],
+      [665, 2337],
+      [630, 2338],
+      [619, 2324],
+      [646, 2300],
+      [693, 2281],
+    ],
+    issue:
+      "Corrected prison-road stair has complete sampled flight and landing mesh support; upright clearance collision follows the low deck. Complete rendered actor integration remains unverified.",
+  },
+};
+const contact = contacts[edits[0].asset];
+assert.ok(contact, "No reviewed foundation contact for this asset");
 const index = JSON.parse(await fs.readFile("library/3d-assets/index.json", "utf8")).assets;
 const entry = index.find((e) => e.id === edits[0].asset);
 assert.ok(entry);
@@ -19,9 +53,9 @@ assert.equal(createHash("sha256").update(bytes).digest("hex"), edits[0].descript
 const descriptor = JSON.parse(bytes);
 const gameplay = edits[0].gameplay;
 const review = JSON.parse(await fs.readFile(`${source}/review.json`, "utf8"));
-const floor = gameplay.surfaces.find((s) => s.id === "building-057-walk-0");
-const lift = gameplay.lifts.find((l) => l.id === "building-057-lift");
-const clearance = gameplay.movementClearances.find((c) => c.id === "building-057-clearance-0-1");
+const floor = gameplay.surfaces.find((s) => s.id === `${contact.node}-walk-0`);
+const lift = gameplay.lifts.find((l) => l.id === `${contact.node}-lift`);
+const clearance = gameplay.movementClearances.find((c) => c.id === contact.clearance);
 assert.ok(floor && lift && clearance);
 const plane = heightPlane(floor.polygon.map(([x, y], i) => [x, y, floor.height[i]]));
 const height = lift.doors[0].outside[2];
@@ -53,9 +87,7 @@ gameplay.volumes = descriptor.parts.map((part) => {
   return { id: `${part.node}-upright-clearance`, node: part.node, movementHeadroom: 80, shape };
 });
 gameplay.movementSolids = gameplay.volumes.map((v) => v.id);
-gameplay.draft.issues.push(
-  "Corrected stair and foundation contact retain incomplete mesh coverage: 753/829 floor samples hit the mesh, with a 2.504-unit maximum edge discrepancy. Complete rendered actor integration remains unverified.",
-);
+gameplay.draft.issues.push(contact.issue);
 validateAssetGameplay(gameplay, descriptor);
 const output = await fs.mkdtemp("work/map-compile/nottingham-road-clearance-");
 await fs.mkdir(`${output}/placement`);
@@ -70,17 +102,9 @@ assert.equal(
 );
 const terrain = JSON.parse(terrainBytes);
 const terrainGameplay = structuredClone(terrain.gameplay);
-const ground = terrainGameplay.surfaces.find((s) => s.id === "ground-section-0-0");
+const ground = terrainGameplay.surfaces.find((s) => s.id === contact.ground);
 assert.ok(ground);
-const hole = [
-  [1670, 1698],
-  [1660, 1690],
-  [1636, 1696],
-  [1623, 1681],
-  [1643, 1665],
-  [1702, 1647],
-  [1730, 1681],
-];
+const hole = contact.hole;
 const matches = ground.holes.filter((h) => JSON.stringify(h) === JSON.stringify(hole));
 assert.equal(matches.length, 1, "Expected the reviewed road-platform terrain exclusion");
 const holeIndex = ground.holes.indexOf(matches[0]);

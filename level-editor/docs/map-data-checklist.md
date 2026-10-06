@@ -169,8 +169,8 @@ complete-sprite and rendered verification remain open.
 All ten scenes reopen after publication, and full Derby passes all five control
 apply/reset checks. All ten Derby stair definitions now pass local floor-anchor
 support checks after the upper-west publication below.
-A library-wide local-anchor audit finds unsupported anchors in 23 of 53 authored stair
-definitions: Derby 0/10, Leicester 0/8, Lincoln 0/6, Nottingham 6/12,
+A library-wide local-anchor audit finds unsupported anchors in 22 of 53 authored stair
+definitions: Derby 0/10, Leicester 0/8, Lincoln 0/6, Nottingham 5/12,
 Sherwood 1/1 and York 16/16. All audited floors are planar. This checks local
 definitions, not placed connectivity or actual route failures; corrections and
 moved/rotated native traversal checks remain necessary across these assets.
@@ -192,6 +192,15 @@ Full Nottingham retains all 92 stair routes and ten control checks. All 829
 flight samples and 205 terrain-contact samples have mesh support. Upper landing
 edges retain an explicit warning for gaps below 0.029 units. Published geometry
 exactly matches the native-tested candidate, and all ten scenes reopen.
+
+The prison-road platform is published with corrected stair seams and asset-owned
+low-deck collision. Its obsolete fixed terrain exclusion is removed. Copied
+placements pass 32 routes and 32 missing/raised landing rejections; terrain drops
+pass sixteen routes and eight raised-entrance rejections. Eight under-deck points
+remain blocked, and removing the asset restores both tested routes through its
+old footprint. Flight sampling has 875/875 mesh hits and all reviewed upper landing
+edges have mesh support. Full Nottingham passes 92 stair routes and ten controls;
+published geometry matches the tested candidate and all ten scenes reopen.
 
 Nottingham's castle hall/watchtower stair is published after sixteen moved routes,
 eight control checks and all 92 full-map stair routes pass. Published exports

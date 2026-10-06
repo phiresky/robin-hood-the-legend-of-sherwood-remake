@@ -4,6 +4,34 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Nottingham prison-road platform ownership (2026-10-06)
+
+`local-stair-seams-AvY4ss` corrects `building-483-lift` using a reviewed
+2.76-unit upper landing edge selection bound. Mesh review finds 875/875 flight
+sample hits and zero uncovered distance on the changed upper landing edges.
+Initial independent-copy exports `external-stair-landings-rR57Kh` pass 32 routes,
+but full Nottingham `nottingham-prison-road-level-vUuSIl` fails both lower
+entrance routes. A fixed terrain exclusion still blocks the corrected seam.
+
+`stage-nottingham-road-clearance.mjs` now supports this asset explicitly. It
+seats the two foundation-clearance vertices by 0.683951/1.651489 units, adds
+asset-owned upright-headroom collision to the low deck, and removes the reviewed
+six-point exclusion and contour label from `ground-section-3-0`. Stage
+`nottingham-road-clearance-FailWK` exports full-map candidate
+`nottingham-prison-road-owned-0dSQoa`, which passes all 92 stair routes and ten
+control apply/reset checks. Its asset-only `placement` stage generates
+`external-stair-landings-nFz16k` (32 routes, 32 missing/raised landing rejections)
+and `local-stair-placements-Fff3Nc` (sixteen routes, eight raised rejections).
+
+The generalized ownership check generates `nottingham-road-ownership-ElyoOg`.
+Native checks confirm eight blocked ground points beneath the deck and two
+restored actor routes through the old footprint after removing the asset.
+Sixteen additional fixture-ground crossings pass. Publication backup is
+`nottingham-prison-road-publication-20261006`; fresh published Nottingham is
+exactly equal to the native-tested descriptor and all ten scenes reopen.
+Audit `lift-anchor-support-gsXXZw` finds 22/53 unsupported stairs, with Nottingham
+5/12. Ladders remain 1/8 and walls 9/9. Full rendered integration remains open.
+
 ## Nottingham southwest prison stair (2026-10-06)
 
 `local-stair-seams-s63sJS` corrects `building-468-lift` and its local upper

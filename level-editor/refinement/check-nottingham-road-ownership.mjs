@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import assert from "node:assert/strict";
 import { readStoredMap, pinnedDescriptors } from "../pipeline/src/stored-map.ts";
 import { compileMap } from "../app/src/map-compile.ts";
+import { pointInGameplayPolygon } from "../shared/src/navigation-anchor.ts";
 
 const [stage, placements] = process.argv.slice(2);
 assert.ok(stage && placements, "Provide ownership edits and compiled placement directory");
@@ -38,26 +39,41 @@ const assets = await pinnedDescriptors(
   document.sceneAssets,
 );
 const edits = JSON.parse(await fs.readFile(`${stage}/edits.json`, "utf8"));
+const asset = edits.find((edit) => edit.asset !== "nottingham-terrain")?.asset;
+const restoredRoutes = {
+  "nottingham-southeast-road-props": [
+    [1666, 1675],
+    [1700, 1670],
+  ],
+  "nottingham-southwest-prison-road-props": [
+    [640, 2320],
+    [680, 2305],
+  ],
+};
+const restoredRoute = restoredRoutes[asset];
+assert.ok(restoredRoute, "Unknown road platform ownership fixture");
 for (const edit of edits) assets.get(edit.asset).gameplay = edit.gameplay;
-document.objects = document.objects.filter((o) => o.group !== "nottingham-southeast-road-props");
-document.groups = document.groups.filter((g) => g.id !== "nottingham-southeast-road-props");
+assert.ok(document.groups.some((g) => g.id === asset));
+document.objects = document.objects.filter((o) => o.group !== asset);
+document.groups = document.groups.filter((g) => g.id !== asset);
 const compiled = compileMap(document, document.exportBounds ?? [0, 0, ...document.size], assets, {
   bestEffort: true,
 });
 const file = "nottingham-without-road-platform.level.json";
 await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
 const layers = compiled.descriptor.asset_geometry.motion_data.layers;
+const areas = layers[16]
+  .map((area, index) => ({ area, index }))
+  .filter(({ area }) =>
+    restoredRoute.every((point) => pointInGameplayPolygon(point, area.polygon.points, true)),
+  );
+assert.equal(areas.length, 1, "Restored route needs one receiving motion region");
 results.push({
   file,
   layer: 16,
-  sector: layers.slice(0, 16).reduce((n, l) => n + l.length, 0),
+  sector: layers.slice(0, 16).reduce((n, l) => n + l.length, 0) + areas[0].index,
   same_receiver_routes: true,
-  routes: [
-    [
-      [1666, 1675],
-      [1700, 1670],
-    ],
-  ],
+  routes: [restoredRoute],
 });
 await fs.writeFile(
   `${output}/diagnostics.json`,

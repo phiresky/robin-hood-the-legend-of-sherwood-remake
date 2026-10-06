@@ -19,7 +19,7 @@
       "model": "3d-assets/nottingham/nottingham-terrain/model.glb",
       "model_sha256": "807037fefeee1e9cc3b22defab6215efba1c4d410a695cbe2c75cad3d4215c41",
       "descriptor": "3d-assets/nottingham/nottingham-terrain/asset.json",
-      "descriptor_sha256": "1a3aed9a525076194ff3ef110203079020c78bf73975bd864e7ae4826c9d86db"
+      "descriptor_sha256": "71bc3b2be13794090522a6ff2ca1b9f98da0c0a78afc5d43d0a46309453522a7"
     }
   ],
   "assetSources": [
@@ -580,7 +580,7 @@
       "model": "3d-assets/nottingham/nottingham-southwest-prison-road-props/model.glb",
       "model_sha256": "cb0c5c0c77984d397a0814f9af7482f52d861df3b0e196a1d83096db71133e24",
       "descriptor": "3d-assets/nottingham/nottingham-southwest-prison-road-props/asset.json",
-      "descriptor_sha256": "218db77542fe9cfdb900929c4b081a9339d1c0c2f17e796dc64dab96bdb4fe43",
+      "descriptor_sha256": "5a28d7dc9717da6cfe2c3a14c04af6422bd9757ffe866947ee7157f9a80658e0",
       "id": "nottingham-southwest-prison-road-props"
     },
     {
