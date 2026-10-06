@@ -165,7 +165,8 @@ pub struct ReplayHeader {
 /// Version 59 records cooperative campaign rules and shared Robin inventory.
 /// Version 60 retains physical stair identities on movement orders.
 /// Version 61 retains precise physical landing boundaries in loaded motion data.
-pub const REPLAY_SCHEMA_VERSION: u32 = 62;
+/// Version 63 retains compiled world-space passage endpoints.
+pub const REPLAY_SCHEMA_VERSION: u32 = 63;
 
 /// Identity of the next lockstep/history transaction to be admitted.
 ///

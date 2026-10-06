@@ -5268,6 +5268,19 @@ impl EngineInner {
                             .filter(|(sector, _, _)| *sector == entity_sector)
                             .map(|(sector, _, door)| (sector, door.inside))
                             .or_else(|| {
+                                let door =
+                                    &self.script_domains.interactables.doors[usize::from(gate)];
+                                let points = door.world_endpoints.as_ref()?;
+                                Some((
+                                    entity_sector,
+                                    if u16::from(door.sector_in) == entity_sector {
+                                        points.inside
+                                    } else {
+                                        points.outside
+                                    },
+                                ))
+                            })
+                            .or_else(|| {
                                 tcx.assets.navigation.physical_stairs[&entity_sector]
                                     .world_point_from_screen(dest)
                                     .map(|point| (entity_sector, point))

@@ -4,6 +4,35 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Preserved ordinary passage world endpoints (2026-10-06)
+
+Standalone passages now export optional `world_endpoints` with their placed
+inside, middle and outside coordinates. Integer waypoints remain the compiled
+spatial identities. Loading checks finite coordinates and agreement with those
+identities, retains the endpoints, and derives precise runtime projections.
+Physical stair gate approaches select the endpoint for their current side
+directly. Older exports without the field remain supported. Replay schema 63
+records the added runtime door state.
+
+Fresh independent great-hall fixture `external-stair-landings-rgszot` passes
+74/96 routes and retains all 64 missing/raised landing rejections. This is a
+net improvement over 70/96, but it also exposes two position-consistency failures
+per elevation at zero degrees, where floor support and height are correct.
+The 90-degree cases improve from four passing routes per export to eight;
+receiver failures remain. The candidate is unpublished. Ordinary passage
+animation/handoff must retain consistent physical positions throughout, not
+only during gate approach; remaining receiving contacts still require review.
+
+The focused movement regression uses a fractional world goal while supplying a
+rounded map destination and passes in both directions. Loader round-trip and
+projected-identity rejection checks pass. Validation also passes 126 compiler
+tests, application typecheck, focused lint/formatting, 192 movement tests,
+40 level-loading tests, 29 replay tests and 85 level-data tests. The existing
+saved-map descriptors retain all 284 stair and 84 climbing routes; game and
+editor production builds pass. Ignored tests remain outside those counts.
+These results do not certify full-map rendering
+or baked ZIP parity.
+
 ## Ordinary gate approaches from physical stairs (2026-10-06)
 
 Approaches to ordinary gates now retain gate identity in both directions when

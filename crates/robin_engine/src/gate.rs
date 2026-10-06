@@ -244,6 +244,8 @@ pub struct GateLink {
     bitcode::Decode,
 )]
 pub struct Door {
+    #[serde(default)]
+    pub world_endpoints: Option<robin_level_data::physical_stair::PhysicalStairDoor>,
     // -- Gate base fields (serialized by patches) --
     pub gate_type: GateType,
     pub active: bool,
@@ -403,6 +405,7 @@ impl Default for Door {
             authorised_pc_indirect: 0,
             point_out: MapPoint::ZERO,
             point_in: MapPoint::ZERO,
+            world_endpoints: None,
             point_mid: MapPoint::ZERO,
             layer_out: 0,
             layer_in: 0,

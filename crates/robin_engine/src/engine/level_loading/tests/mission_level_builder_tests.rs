@@ -15,6 +15,7 @@ use crate::level_data::{
 
 fn door(door_type: u8) -> RawDoor {
     RawDoor {
+        world_endpoints: None,
         door_type,
         active: true,
         locked_pc: false,

@@ -482,12 +482,19 @@ test("ordinary passages bind both receiving endpoints and preserve lock transiti
   const door = result.doors[0]!;
   assert.deepEqual(door.point_out, [380, 348]);
   assert.deepEqual(door.point_in, [420, 344]);
+  assert.ok(door.world_endpoints);
+  assert.equal(door.world_endpoints.inside[0], 420);
+  assert.ok(Math.abs(door.world_endpoints.inside[1] - door.world_endpoints.inside[2] - 344) < 0.5);
   assert.equal(door.locked_pc, true);
   assert.equal(door.locked_pc_after_patch, false);
   assert.notEqual(door.sector_in, door.sector_out);
   document.groups[0]!.transform = { dx: 600, dy: 200, dz: 30, rot_deg: 90 };
   const moved = compileAssetGameplay(document, assets, bounds).doors[0]!;
   assert.notDeepEqual(moved.point_out, door.point_out);
+  assert.notDeepEqual(moved.world_endpoints, door.world_endpoints);
+  assert.ok(
+    Math.abs(moved.world_endpoints!.inside[2] - door.world_endpoints.inside[2] - 30) < 1e-9,
+  );
   assert.notEqual(moved.sector_in, moved.sector_out);
   document.groups = before.groups;
   hut.gameplay!.surfaces[1]!.height = 30;

@@ -187,8 +187,12 @@ external landing edges. Ordinary doors on edge-on stairs still need explicit
 world endpoints. At 90 degrees, integer rounding of the great-hall ordinary-door
 waypoints displaces recovered ground positions by 41.754 and 106.710 units;
 their authored world endpoints agree with the stair plane. Those coordinates
-must survive compilation and runtime passage instead of being reconstructed
-from rounded map pixels.
+now survive compilation and loading as optional world endpoints, and physical
+gate approaches use them directly. Fresh copied exports pass 74/96 routes,
+with eight of twelve passing per 90-degree export. Receiver failures remain,
+and fractional projections expose position-consistency failures at zero degrees.
+The complete ordinary-passage animation/handoff still needs physical-coordinate
+integration; retaining approach points alone does not establish parity.
 This candidate remains unpublished; those doors and both receiving assets need
 correction rather than omission.
 The Nottingham road stair is also published after sixteen moved/elevated routes,

@@ -4268,9 +4268,28 @@ impl EngineInner {
                         special_authorisation_pc: false,
                         authorised_pc_direct: 0,
                         authorised_pc_indirect: 0,
-                        point_out: MapPoint::new(raw.point_out.0 as f32, raw.point_out.1 as f32),
-                        point_in: MapPoint::new(raw.point_in.0 as f32, raw.point_in.1 as f32),
-                        point_mid: MapPoint::new(raw.point_mid.0 as f32, raw.point_mid.1 as f32),
+                        world_endpoints: raw.world_endpoints.clone(),
+                        point_out: raw.world_endpoints.as_ref().map_or(
+                            MapPoint::new(raw.point_out.0 as f32, raw.point_out.1 as f32),
+                            |points| {
+                                MapPoint::new(
+                                    points.outside[0],
+                                    points.outside[1] - points.outside[2],
+                                )
+                            },
+                        ),
+                        point_in: raw.world_endpoints.as_ref().map_or(
+                            MapPoint::new(raw.point_in.0 as f32, raw.point_in.1 as f32),
+                            |points| {
+                                MapPoint::new(points.inside[0], points.inside[1] - points.inside[2])
+                            },
+                        ),
+                        point_mid: raw.world_endpoints.as_ref().map_or(
+                            MapPoint::new(raw.point_mid.0 as f32, raw.point_mid.1 as f32),
+                            |points| {
+                                MapPoint::new(points.middle[0], points.middle[1] - points.middle[2])
+                            },
+                        ),
                         layer_out: raw.layer_out,
                         layer_in: raw.layer_in,
                         sector_out,
@@ -4354,9 +4373,27 @@ impl EngineInner {
                         locked_npc_villain_after_patch: raw.locked_npc_villain_after_patch,
                         locked_npc_civilian_after_patch: raw.locked_npc_civilian_after_patch,
                         unlockable_after_patch: raw.unlockable_after_patch,
-                        point_out: MapPoint::new(raw.point_out.0 as f32, raw.point_out.1 as f32),
-                        point_in: MapPoint::new(raw.point_in.0 as f32, raw.point_in.1 as f32),
-                        point_mid: MapPoint::new(raw.point_mid.0 as f32, raw.point_mid.1 as f32),
+                        point_out: raw.world_endpoints.as_ref().map_or(
+                            MapPoint::new(raw.point_out.0 as f32, raw.point_out.1 as f32),
+                            |points| {
+                                MapPoint::new(
+                                    points.outside[0],
+                                    points.outside[1] - points.outside[2],
+                                )
+                            },
+                        ),
+                        point_in: raw.world_endpoints.as_ref().map_or(
+                            MapPoint::new(raw.point_in.0 as f32, raw.point_in.1 as f32),
+                            |points| {
+                                MapPoint::new(points.inside[0], points.inside[1] - points.inside[2])
+                            },
+                        ),
+                        point_mid: raw.world_endpoints.as_ref().map_or(
+                            MapPoint::new(raw.point_mid.0 as f32, raw.point_mid.1 as f32),
+                            |points| {
+                                MapPoint::new(points.middle[0], points.middle[1] - points.middle[2])
+                            },
+                        ),
                         layer_out: raw.layer_out,
                         layer_in: raw.layer_in,
                         sector_out,
@@ -4372,6 +4409,7 @@ impl EngineInner {
                         owning_lift_sector: Some(crate::sector::SectorNumber::new(
                             lift.motion_area_index as i16,
                         )),
+                        world_endpoints: raw.world_endpoints.clone(),
                         click_polygon: raw
                             .door_sector
                             .points

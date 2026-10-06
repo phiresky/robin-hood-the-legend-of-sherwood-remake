@@ -751,11 +751,14 @@ fn physical_stair_point_and_ordinary_gate_dispatch_use_world_orders_and_reach_th
             TickCtx::new(&sim, &assets),
             crate::patch::PatchIndex::new(0).unwrap(),
         );
-        let (source, goal) = if reverse {
+        let (source, mut goal) = if reverse {
             ([404., 380.], [396., 320.])
         } else {
             ([396., 320.], [404., 380.])
         };
+        if gate_approach {
+            goal[0] += 0.25;
+        }
         let owner = physical_walker(&mut engine, &mut assets, 3, source, goal);
         let goal_z = 5. * goal[0] - 1950.;
         let destination = MapPoint::new(goal[0], goal[1] - goal_z);
@@ -764,6 +767,11 @@ fn physical_stair_point_and_ordinary_gate_dispatch_use_world_orders_and_reach_th
             door.owning_lift_sector = None;
             door.door_type = crate::gate::DoorType::Default;
             door.point_in = destination;
+            door.world_endpoints = Some(robin_level_data::physical_stair::PhysicalStairDoor {
+                inside: [goal[0], goal[1], goal_z],
+                middle: [goal[0], goal[1], goal_z],
+                outside: [goal[0], goal[1], goal_z],
+            });
         }
         let (sequence, index) = engine.current_sequence_element_for_actor(owner).unwrap();
         engine.install_actor_order(owner, None);
@@ -782,7 +790,11 @@ fn physical_stair_point_and_ordinary_gate_dispatch_use_world_orders_and_reach_th
             ..
         } = &mut element.data
         {
-            *stored = destination;
+            *stored = if gate_approach {
+                MapPoint::new(destination.x.round(), destination.y.round())
+            } else {
+                destination
+            };
             *layer = if gate_approach { 0 } else { 2 };
             *sector = if gate_approach {
                 None

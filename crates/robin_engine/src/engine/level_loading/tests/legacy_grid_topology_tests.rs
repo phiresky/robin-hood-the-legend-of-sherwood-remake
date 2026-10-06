@@ -6,6 +6,7 @@ use crate::level_data::{
 
 fn door(has_click_sector: bool) -> RawDoor {
     RawDoor {
+        world_endpoints: None,
         door_type: 0,
         active: true,
         locked_pc: false,

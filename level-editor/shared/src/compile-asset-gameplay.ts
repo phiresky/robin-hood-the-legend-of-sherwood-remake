@@ -2409,6 +2409,15 @@ function compileAssetGameplayAttempt(
     }
     const d = door.definition;
     return {
+      ...(!door.lift && !door.interior
+        ? {
+            world_endpoints: {
+              inside: door.inside,
+              middle: door.worldMiddle,
+              outside: door.outside,
+            },
+          }
+        : {}),
       door_type: d.type,
       active: d.active ?? true,
       locked_pc: d.locked,

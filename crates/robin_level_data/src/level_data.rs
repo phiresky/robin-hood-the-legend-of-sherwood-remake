@@ -1758,6 +1758,10 @@ pub struct RawJumpLinePair {
     bitcode::Decode,
 )]
 pub struct RawDoor {
+    /// Precise placed endpoints for compiled passages. Integer waypoints remain
+    /// the spatial-index identity, not a source for recovering world positions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub world_endpoints: Option<crate::physical_stair::PhysicalStairDoor>,
     pub door_type: u8,
     pub active: bool,
     pub locked_pc: bool,
@@ -2978,6 +2982,33 @@ impl LoadedLevel {
         level.mission.timed_mission = descriptor.timed_mission;
         level.mission.ambience_schedule = descriptor.ambience_schedule;
         if let Some(mut geometry) = descriptor.asset_geometry {
+            for door in geometry
+                .doors
+                .iter()
+                .chain(geometry.lifts.iter().flat_map(|lift| &lift.doors))
+                .chain(geometry.buildings.iter().flat_map(|entry| match entry {
+                    RawBuildingEntry::Building { doors }
+                    | RawBuildingEntry::StandaloneDoors { doors } => doors,
+                }))
+            {
+                if let Some(points) = &door.world_endpoints {
+                    for (world, screen) in [
+                        (points.inside, door.point_in),
+                        (points.middle, door.point_mid),
+                        (points.outside, door.point_out),
+                    ] {
+                        let [x, y, z] = world.map(f64::from);
+                        if world.iter().any(|v| !v.is_finite())
+                            || (x - f64::from(screen.0)).abs() > 1.0
+                            || (y - z - f64::from(screen.1)).abs() > 1.0
+                        {
+                            return Err(
+                                "door world endpoints differ from their projected identity".into(),
+                            );
+                        }
+                    }
+                }
+            }
             if geometry.motion_data.layers.len() < 2 || !geometry.motion_data.graph_bytes.is_empty()
             {
                 return Err("asset geometry requires ordinary motion layers, a reserved lift layer and a freshly constructed graph".into());
@@ -5500,6 +5531,7 @@ fn read_one_door(reader: &mut ChunkReader, format: LevelFormat) -> Result<RawDoo
     let layer_in = reader.read_u16()?;
 
     Ok(RawDoor {
+        world_endpoints: None,
         door_type,
         active,
         locked_pc,
@@ -6154,6 +6186,46 @@ mod tests {
             LoadedLevel::hackable_from_json(&serde_json::to_vec(&descriptor).unwrap()).unwrap();
         assert!(empty.proto.animations.is_empty());
         assert!(empty.proto.element_chunk_order.is_empty());
+    }
+
+    #[test]
+    fn compiled_passage_world_endpoints_preserve_and_validate_projected_identity() {
+        let mut descriptor: serde_json::Value = serde_json::from_slice(include_bytes!(
+            "../../robin_engine/tests/fixtures/asset-terrain-passage.level.json"
+        ))
+        .unwrap();
+        let door = &mut descriptor["asset_geometry"]["doors"][0];
+        let point = |key: &str| {
+            let screen = &door[key];
+            [
+                screen[0].as_f64().unwrap() + 0.25,
+                screen[1].as_f64().unwrap() + 100.125,
+                100.0,
+            ]
+        };
+        let endpoints = serde_json::json!({"inside": point("point_in"), "middle": point("point_mid"), "outside": point("point_out")});
+        door["world_endpoints"] = endpoints.clone();
+        let loaded =
+            LoadedLevel::hackable_from_json(&serde_json::to_vec(&descriptor).unwrap()).unwrap();
+        let doors = loaded
+            .proto
+            .buildings
+            .iter()
+            .find_map(|entry| match entry {
+                RawBuildingEntry::StandaloneDoors { doors } => Some(doors),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(doors[0].world_endpoints.as_ref().unwrap()).unwrap(),
+            endpoints
+        );
+        descriptor["asset_geometry"]["doors"][0]["world_endpoints"]["inside"][0] = (-1000).into();
+        assert!(
+            LoadedLevel::hackable_from_json(&serde_json::to_vec(&descriptor).unwrap())
+                .unwrap_err()
+                .contains("projected identity")
+        );
     }
 
     #[test]

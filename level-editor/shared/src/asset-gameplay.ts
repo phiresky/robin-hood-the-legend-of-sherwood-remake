@@ -418,6 +418,7 @@ export interface CompiledAssetGeometry {
     door_links?: { mode: "trigger-transition" | "swap-rights"; indices: number[] };
   }[];
   doors: {
+    world_endpoints?: { inside: Vec3; middle: Vec3; outside: Vec3 };
     door_type: number;
     active: boolean;
     locked_pc: boolean;
