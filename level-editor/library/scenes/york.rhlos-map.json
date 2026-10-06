@@ -106,9 +106,9 @@
     },
     {
       "model": "3d-assets/york/york-castle-great-hall/model.glb",
-      "model_sha256": "cc65b3c35c3f2254411137ed78f3a067efcd12b780245ec37ab92493d7abb0c8",
+      "model_sha256": "1d628848e1c9b3708aa3e2855a6b342a86396bbe0bf4081e5c5920a0e03bd5fc",
       "descriptor": "3d-assets/york/york-castle-great-hall/asset.json",
-      "descriptor_sha256": "6c4e02db87bd2225f68b11550b01fcf7d86272d0f0528ca8263ea06dd865f6b9",
+      "descriptor_sha256": "01a71c6f2836a2c47d9e661950d4dc0ddb6d08f218664bf55a3893bb3e11f494",
       "id": "york-castle-great-hall"
     },
     {
@@ -2085,7 +2085,13 @@
       },
       "assets": [
         "york-castle-great-hall"
-      ]
+      ],
+      "patches": {
+        "york-castle-great-hall": {
+          "appearance-1": "patch-001",
+          "appearance-2": "patch-002"
+        }
+      }
     },
     {
       "id": "york-castle-main-keep",
