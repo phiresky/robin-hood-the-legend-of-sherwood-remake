@@ -202,7 +202,7 @@
       "model": "3d-assets/nottingham/nottingham-castle-west-stair-tower/model.glb",
       "model_sha256": "ab0afa6a98b6d2bf8ce3215b821c7e99492ce827129abd1e942a5ba9660c3e32",
       "descriptor": "3d-assets/nottingham/nottingham-castle-west-stair-tower/asset.json",
-      "descriptor_sha256": "5a4920fecf3b26a0adf0a111c08ff583ae1fa414c76caab2d14dd28fc4b73931",
+      "descriptor_sha256": "0aee054cae599f4af0602edcaf97ef7f126a17530e5f8431d8c4ae2fda698f6f",
       "id": "nottingham-castle-west-stair-tower"
     },
     {
@@ -1146,7 +1146,7 @@
     {
       "id": "nottingham-castle-hall-and-watchtower",
       "descriptor": "3d-assets/nottingham-castle-hall-and-watchtower/asset.json",
-      "descriptor_sha256": "90a57f2f9a96bf2d38ba409169fd116d63ac2ca77a1362943d70ec57ac8f85ea",
+      "descriptor_sha256": "f0f8b7693bc74144aea80d5e04c9b98a986c311d24f6b89c571b2da6438f6642",
       "model": "3d-assets/nottingham-castle-hall-and-watchtower/model.glb",
       "model_sha256": "15b942694982aefd5dc24eed77dc97d2996b532470545dccd49060f357c28a70"
     },

@@ -54,10 +54,23 @@ const landings = landingDoors.map((door, number) => {
   const difference = plane.map((v, i) => v - landingPlane[i]);
   const length = Math.hypot(difference[0], difference[1]);
   assert.ok(length > 1e-6);
-  const edge = floor.polygon.filter(
+  const onSeam = floor.polygon.map(
     (p, i) => Math.abs(floor.height[i] - planeHeight(landingPlane, p)) < 1e-5,
   );
-  assert.equal(edge.length, 2, "Fixture requires one straight seam at each endpoint");
+  let edge = floor.polygon.filter((_, i) => onSeam[i]);
+  assert.ok(edge.length >= 2, "Fixture requires a receiving seam");
+  assert.equal(
+    onSeam.filter((on, i) => on && !onSeam[(i + onSeam.length - 1) % onSeam.length]).length,
+    1,
+    "Fixture requires one connected straight seam at each endpoint",
+  );
+  // Boundary clipping can retain intermediate collinear vertices. Preserve
+  // the complete contact width without treating each vertex as a new landing.
+  if (edge.length > 2) {
+    const along = ([x, y]) => -difference[1] * x + difference[0] * y;
+    edge.sort((a, b) => along(a) - along(b));
+    edge = [edge[0], edge.at(-1)];
+  }
   const width = Math.hypot(edge[1][0] - edge[0][0], edge[1][1] - edge[0][1]);
   const tangent = edge[1].map((value, axis) => (value - edge[0][axis]) / width);
   const ends = edge.map((point, i) =>
@@ -163,7 +176,10 @@ for (const height of [0, 40])
       2,
       JSON.stringify(compiled.warnings),
     );
-    assert.ok(compiled.descriptor.asset_geometry.lifts.every((lift) => lift.physical_navigation));
+    assert.ok(
+      compiled.descriptor.asset_geometry.lifts.every((lift) => lift.physical_navigation),
+      JSON.stringify(compiled.warnings),
+    );
     const file = `${edit.asset}-${height}-${rotation}.level.json`;
     await fs.writeFile(`${output}/${file}.scene.json`, JSON.stringify(document));
     await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));

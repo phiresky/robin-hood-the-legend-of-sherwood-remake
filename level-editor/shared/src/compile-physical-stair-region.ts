@@ -1,4 +1,5 @@
 import clipping from "polygon-clipping";
+import { fixedPolygonBoolean } from "./fixed-polygon-boolean.ts";
 import {
   compilePhysicalStair,
   compilePhysicalStairArea,
@@ -88,7 +89,19 @@ export function compilePhysicalStairRegion(input: PhysicalStairRegionInput) {
         !plane.every((value, i) => Math.abs(value - clearance.plane[i]!) < 1e-7)
       )
         continue;
-      regions = clipping.difference(regions, [clearance.polygon, ...clearance.holes]);
+      const contour = [clearance.polygon, ...clearance.holes];
+      try {
+        regions = clipping.difference(regions, contour);
+      } catch (error) {
+        if (
+          !(error instanceof Error) ||
+          !error.message.startsWith("Unable to complete output ring")
+        )
+          throw error;
+        // Nearly coincident contacts can defeat floating-point ring stitching.
+        // Retry that failure at fixed precision without discarding collision.
+        regions = fixedPolygonBoolean("difference", regions, [contour]);
+      }
     }
     for (const region of regions)
       blockers.push({

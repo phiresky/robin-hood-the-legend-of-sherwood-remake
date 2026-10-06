@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { pointInGameplayPolygon } from "./navigation-anchor.ts";
 import {
   compilePhysicalStairRegion,
   type PhysicalStairRegionInput,
@@ -7,6 +9,58 @@ import {
 import { heightPlane, type HeightPlane } from "./gameplay-plane.ts";
 import type { Point } from "./level.ts";
 import type { Vec3 } from "./scene.ts";
+
+test("rotated clearance contact preserves solids and still cuts actual openings", () => {
+  const fixture: { polygon: Point[]; clearance: Point[] } = JSON.parse(
+    readFileSync(
+      new URL("../test-fixtures/rotated-stair-clearance-contact.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  const input: PhysicalStairRegionInput = {
+    surfaces: [
+      {
+        polygon: [
+          [870, 1460, 0],
+          [1040, 1460, 0],
+          [1040, 1580, 0],
+          [870, 1580, 0],
+        ],
+        holes: [],
+      },
+    ],
+    solids: [
+      { owner: "tower", polygon: fixture.polygon, holes: [], bottom: [0, 0, -1], top: [0, 0, 1] },
+    ],
+    clearances: [{ owner: "tower", polygon: fixture.clearance, holes: [], plane: [0, 0, 0] }],
+    doors: [],
+    blockers: [],
+  };
+  const contact = compilePhysicalStairRegion(input);
+  const blocked = (region: typeof contact, point: Point) =>
+    region.navigation.obstacles.some((o) => pointInGameplayPolygon(point, o.polygon));
+  assert.ok(blocked(contact, [898, 1530]));
+  assert.ok(blocked(contact, [898, 1540]));
+  const opening: PhysicalStairRegionInput["clearances"][number] = {
+    owner: "tower",
+    polygon: [
+      [890, 1525],
+      [905, 1525],
+      [905, 1535],
+      [890, 1535],
+    ],
+    holes: [],
+    plane: [0, 0, 0],
+  };
+  const cut = compilePhysicalStairRegion({ ...input, clearances: [...input.clearances, opening] });
+  assert.equal(blocked(cut, [898, 1530]), false);
+  assert.ok(blocked(cut, [898, 1540]));
+  const wrongOwner = compilePhysicalStairRegion({
+    ...input,
+    clearances: [...input.clearances, { ...opening, owner: "other" }],
+  });
+  assert.ok(blocked(wrongOwner, [898, 1530]));
+});
 
 test("export cropping preserves edge-on floor area, holes and local control bindings", () => {
   const rectangle = (x0: number, y0: number, x1: number, y1: number): Vec3[] => [

@@ -4,6 +4,79 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Nottingham castle hall, west stair contact and collision precision (2026-10-06)
+
+Castle hall/watchtower stage `local-stair-seams-PIeiOT` corrects the
+`building-500-lift` floor and both local contacts. Moved assembly
+`local-stair-placements-i90nU8` passes sixteen directed routes and eight controls
+at four rotations and two elevations. Full Nottingham
+`nottingham-castle-hall-level-F7ULDb` passes 92 stair routes and ten controls.
+Mesh review finds 704/789 flight hits, uncovered distances up to 5.885 units
+and landing discrepancies up to 6.917 units. Sampled initial-state gaps are
+occluded; alternate-state and rendered actor coverage remain unverified.
+
+Warning-bearing stage `local-stair-seams-5hZtWL` is published with backup
+`nottingham-castle-hall-publication-20261006`. Published placement exports
+`local-stair-placements-rlzpmE` and full Nottingham equal the tested candidates
+after excluding only the added draft warning. All ten saved scenes reopen.
+Audit `lift-anchor-support-l1sB4l` records 27/53 unsupported stair definitions,
+including Nottingham 10/12; ladders remain 1/8 and walls 9/9.
+
+The unpublished west stair tower stage `local-stair-seams-QWsc3L` exposed a
+floating-point clearance subtraction failure at 37 degrees. A captured
+regression verifies that a narrowly scoped fixed-precision retry retains the
+solid, cuts real openings and respects clearance ownership. The external
+landing fixture now accepts intermediate collinear vertices on a single seam.
+`external-stair-landings-TSxiQO` passes 32 native actor routes with 32
+missing/raised-contact rejections.
+
+Full Nottingham candidate `nottingham-west-tower-level-Js5R73` initially fails
+native validation because a six-vertex collision strip self-intersects after
+conversion to 32-bit coordinates. Collision partitioning retains its exact
+pre-conversion coverage in four triangles and preserves each piece's state.
+Fresh ten-scene exports `saved-map-exports-CCq9NH`, including the staged tower,
+all pass native geometry construction and 84 climbing routes. Stair checks pass
+282/284 routes: both failures are the tower's upper hall contact, whose receiving
+boundary and access clearance still follow the previous stair contour.
+
+`stage-nottingham-west-stair-contact.mjs` stages only the hall-owned receiving
+edge and an asset-local access clearance on the corrected floor plane. Contact
+stage `nottingham-west-stair-contact-XUFnSM` shifts the two receiving vertices by
+1.196/1.375 units. Full Nottingham `nottingham-west-stair-connected-BI7vmJ`
+passes all 92 stair routes and ten controls. The two independent real-asset
+copies in `nottingham-west-stair-neighbour-placements-SDXNYW` pass 64 routes
+and sixteen controls at four rotations and two elevations. All 32 missing or
+raised hall cases reject. Unlike the earlier synthetic landing fixture, these
+checks retain the actual hall's collision and its separate stair.
+
+Mesh review records 180/205 supported receiver samples and a maximum 0.443-unit
+gap. The tower flight has 618/623 supported samples, a maximum 0.307-unit gap,
+and two sampled foot gaps visible at 180 degrees. Final stage
+`nottingham-west-stair-contact-UsDjsZ` differs from the tested candidate only
+in explicit draft review notes. Both definitions are published with backup
+`nottingham-west-stair-publication-20261006`. Published placements
+`nottingham-west-stair-neighbour-placements-cBcUTb` and full Nottingham equal
+the native-tested geometry after excluding only those changed warnings. All
+ten scenes reopen. Audit `lift-anchor-support-2W4NVY` records 26/53 unsupported
+stairs, including Nottingham 9/12; ladders and walls remain 1/8 and 9/9.
+Rendered integration and fresh browser ZIP verification remain outstanding.
+
+Fresh published ten-scene exports `saved-map-exports-3xbSA4` pass all 284 stair
+routes and 71 control apply/reset checks. The other nine descriptors exactly
+match `saved-map-exports-CCq9NH`; Nottingham has no climbing definitions, so the
+84 passing climbing routes remain unchanged by this publication.
+
+The collinear-seam fixture change also preserves all eight earlier north-hall
+exports exactly (`external-stair-landings-uujhMe` versus
+`external-stair-landings-BNeL8E`).
+
+Eighteen native JSON fixtures now include the compiler's precise ordinary-door
+endpoints; their other fields are unchanged. The flattened-endpoint validation
+test also updates its physical endpoint consistently with its projected point.
+The native map-compilation suite passes 66 tests with five diagnostic tests
+ignored. The editor suite passes 860 tests with two skipped; app typechecking,
+focused lint and the production build pass.
+
 ## Published great hall with independent ramp and annex contacts (2026-10-06)
 
 The full-scene passage candidate `lincoln-great-hall-passages-TqcwjI` initially

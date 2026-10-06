@@ -169,11 +169,30 @@ complete-sprite and rendered verification remain open.
 All ten scenes reopen after publication, and full Derby passes all five control
 apply/reset checks. All ten Derby stair definitions now pass local floor-anchor
 support checks after the upper-west publication below.
-A library-wide local-anchor audit finds unsupported anchors in 28 of 53 authored stair
-definitions: Derby 0/10, Leicester 0/8, Lincoln 0/6, Nottingham 11/12,
+A library-wide local-anchor audit finds unsupported anchors in 26 of 53 authored stair
+definitions: Derby 0/10, Leicester 0/8, Lincoln 0/6, Nottingham 9/12,
 Sherwood 1/1 and York 16/16. All audited floors are planar. This checks local
 definitions, not placed connectivity or actual route failures; corrections and
 moved/rotated native traversal checks remain necessary across these assets.
+
+Nottingham's castle hall/watchtower stair is published after sixteen moved routes,
+eight control checks and all 92 full-map stair routes pass. Published exports
+match the tested geometry and all ten scenes reopen. Its draft explicitly records
+704/789 supported flight samples, flight gaps up to 5.885 units and landing gaps
+up to 6.917 units; alternate states and rendered actor integration remain unverified.
+The neighbouring west stair tower and its hall-owned access contact are also
+published. Two independently placed copies pass 64 actor routes and sixteen
+control checks, while 32 missing/raised-neighbour cases reject. Full Nottingham
+passes all 92 stair routes and ten controls. Correcting the hall's receiving edge
+and its own access clearance removes the two failures exposed by the first
+full-map candidate. Receiver edge shifts are at most 1.375 units, with 180/205
+mesh samples supported and gaps up to 0.443 units; the flight has 618/623 hits
+and gaps up to 0.307 units. These remain explicit draft limitations. Published
+geometry matches tested candidates and all ten scenes reopen.
+The compiler also partitions collision strips that self-intersect at runtime
+precision without losing their authored footprint or changing their control
+state. Nearly coincident clearance subtraction has a narrowly scoped precision
+fallback that retains collision and clearance ownership.
 
 The Lincoln great hall and its independently owned ramp/annex contacts are now
 published. The three-asset assembly passes all 96 directed routes through two

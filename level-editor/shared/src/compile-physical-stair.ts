@@ -4,6 +4,7 @@ import { heightPlane, planeHeight } from "./gameplay-plane.ts";
 import type { Point } from "./level.ts";
 import type { Vec3 } from "./scene.ts";
 import { pointInGameplayPolygon } from "./navigation-anchor.ts";
+import { physicalCollisionPieces } from "./physical-collision-pieces.ts";
 
 export interface PhysicalStairInput {
   surfaces: { polygon: Vec3[]; holes: Vec3[][] }[];
@@ -41,7 +42,9 @@ export function compilePhysicalStairArea(input: PhysicalStairAreaInput): {
       stateId: input.obstacles[index]!.stateId,
       polygon: obstacle.polygon,
     })),
-  ];
+  ].flatMap((obstacle) =>
+    physicalCollisionPieces(obstacle.polygon).map((polygon) => ({ ...obstacle, polygon })),
+  );
   if (collision.length > 65536)
     throw new Error("Physical stair exceeds motion obstacle identity capacity");
   navigation.obstacles = collision.map((obstacle, motion_obstacle) => ({
