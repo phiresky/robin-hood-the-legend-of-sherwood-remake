@@ -11,7 +11,8 @@ def merge_scope(prior, generated, selected, retired):
     fresh = {a['id']: a for a in generated['assets']}
     retired = set(retired)
     scope = set(selected) | retired
-    assert set(fresh) == (set(before) - retired) | set(selected)
+    expected = (set(before) - retired) | set(selected)
+    assert set(fresh) == expected, {'unexpected': sorted(set(fresh)-expected), 'missing': sorted(expected-set(fresh))}
     for identity in set(before) - scope:
         # Discovery may compact the cached editor view; all file references,
         # descriptor hashes and actual identity metadata must remain exact.
