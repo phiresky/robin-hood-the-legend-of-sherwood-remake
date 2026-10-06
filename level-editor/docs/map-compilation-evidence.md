@@ -8571,3 +8571,33 @@ Validation: 186 affected compiler tests, 86 level-data tests (eight ignored),
 app typecheck, focused lint and Rust formatting pass. Pipeline typecheck remains
 blocked by existing errors in `compile-asset-gameplay.test.ts` (optional assertion
 message) and `state-delivery.test.ts` (endpoint union indexing and assertion import).
+
+### Raised riverside walkway and actual terrace placements
+
+The wooden stair's lower receiver belongs to `york-east-riverside-wooden-walkway`.
+Its height-15 landing lies outside the height-50 terrace in world space, but
+ground-plane navigation places terrace collision across its projected approach.
+Candidate tool `stage-york-riverside-walkway-floor.mjs` gives the walkway an
+asset-local physical floor and movement solid, retaining its receiver volume
+and material associations. It combines the physical terrace candidate with
+the corrected southern stair; it does not change the published library.
+
+`york-riverside-walkway-floor-r9Co7e` restores all 130 full-York directed stair
+routes and all six control apply/reset checks. The wooden stair still uses
+projected navigation. This is a passing original-placement candidate, not
+arbitrary-placement or mesh certification.
+
+`check-courtyard-west-stair-neighbours.mjs --physical-terrace` tests the actual
+terrace with independent stair/terrace copies and no background terrain.
+`york-east-riverside-southern-wall-stair-neighbour-placements-i59PB6` compiles
+eight placements and rejects 32 missing/raised terrace cases. Native traversal
+finishes with 24/32 passing routes: all eight 37-degree routes stall at the
+lower doorway. This remaining contact defect prevents publication.
+
+Separate wooden-stair seam candidate `local-stair-seams-MSP8Tb` needs a
+2.625315-unit floor-vertex adjustment. Its combined full-map candidate
+`york-riverside-walkway-floor-teBjYS` emits physical navigation but fails the two
+wooden-stair routes (128/130 pass). Mesh review finds only 450/862 floor samples
+supported and an uncovered-edge distance of 13.657964 units. That floor requires
+geometry review, not a larger runtime tolerance. All these candidates remain
+unpublished.

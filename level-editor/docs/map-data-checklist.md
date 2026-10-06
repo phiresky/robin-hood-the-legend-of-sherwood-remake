@@ -14,8 +14,12 @@ not evidence that an omitted feature works.
 Rounded landing contours now repair crossed subpixel corners consistently in
 the compiler and native validator while retaining their exact contours. The
 southern York stair candidate passes 32 directed actor routes across eight
-rotated/elevated placements. Its full-map terrace/wooden-stair conflict remains
-unresolved, so these asset corrections are still unpublished.
+rotated/elevated placements on authored terrain. Giving the separate terrace and
+wooden walkway their own height-aware floors restores all 130 full-York stair
+routes and six controls. With the actual terrace moved alongside the southern
+stair, only 24/32 routes pass: the 37-degree lower contacts still stall. The
+wooden stair's own physical seam correction also fails, so these asset
+corrections remain unpublished.
 
 Latest runtime checks retain exact landing contours through binding and foot
 support instead of reducing them to single precision. The southwest turret is

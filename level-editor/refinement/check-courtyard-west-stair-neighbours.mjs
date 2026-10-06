@@ -6,14 +6,17 @@ import { compileMap } from "../app/src/map-compile.ts";
 import { createTerrainGrid } from "../shared/src/authored-terrain.ts";
 
 const [stage, mode] = process.argv.slice(2);
-assert.ok(stage && (mode === undefined || mode === "--published"));
+assert.ok(stage && (mode === undefined || mode === "--published" || mode === "--physical-terrace"));
+const physicalTerrace = mode === "--physical-terrace";
 const edits = JSON.parse(await fs.readFile(`${stage}/edits.json`, "utf8"));
 const stair = edits[0].asset;
 const map = stair.startsWith("york-") ? "york" : "nottingham";
 const source = await readStoredMap(`library/scenes/${map}.rhlos-map.json`, "library");
 const assets = await pinnedDescriptors("library", source.assetSources, source.sceneAssets);
 const neighbours = {
-  "york-east-riverside-southern-wall-stair": [],
+  "york-east-riverside-southern-wall-stair": physicalTerrace
+    ? ["york-southeast-riverside-raised-terrace"]
+    : [],
   "york-east-riverside-curtain-wall": ["york-east-water-gate-south-bastion"],
   "york-castle-courtyard-lodge-stairs": [
     "york-castle-courtyard-raised-terrain",
@@ -43,6 +46,7 @@ for (const id of ids) {
 const liftCount = assets.get(stair).gameplay.lifts.length;
 const northWall = stair === "nottingham-north-wall-stair";
 const southernRiverside = stair === "york-east-riverside-southern-wall-stair";
+assert.ok(!physicalTerrace || southernRiverside);
 const riverside = stair === "york-east-riverside-curtain-wall" || southernRiverside;
 const terrainHeight = southernRiverside ? 50.001003 : riverside ? 90.00101 : 0;
 const size = northWall || riverside ? [7000, 6500] : [5000, 4500];
@@ -71,7 +75,7 @@ for (const height of [0, 40])
       sceneAssets: source.sceneAssets.filter((asset) => ids.includes(asset.id)),
       assetSources: source.assetSources.filter((asset) => ids.includes(asset.id)),
       ...(["nottingham-southwest-wall-stair", "nottingham-north-wall-stair"].includes(stair) ||
-      riverside
+      (riverside && !physicalTerrace)
         ? { terrain: createTerrainGrid([0, 0, ...size], 1000, height + terrainHeight) }
         : {}),
     };
@@ -117,7 +121,7 @@ for (const height of [0, 40])
     await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
     await fs.writeFile(`${output}/${file}.scene.json`, JSON.stringify(document));
     results.push({ file, map: file, warnings: compiled.warnings });
-    if (riverside)
+    if (riverside && !physicalTerrace)
       for (const kind of ["missing", "raised"]) {
         const changed = structuredClone(document);
         if (kind === "missing") delete changed.terrain;
