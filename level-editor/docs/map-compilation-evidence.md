@@ -8868,3 +8868,20 @@ accepts this reviewed stair assembly, staging terrain points `[2725,1911]` and
 `[2761.152464,1917.208955]`. Stage `york-east-upper-ground-contact-uVCfKF` retains
 all 205 projected artwork coverage samples. This ground model is a backdrop;
 coverage does not certify a physical terrain mesh or rendered contact.
+
+The terrain-corrected candidate passes all 130 full-York stair routes and all
+six control apply/reset checks. Reviewed stage `york-east-upper-reviewed-HqMQKz`
+publishes the stair, curtain wall and terrain with backup
+`york-east-upper-stair-publication-20261006`. Only York scene pins change.
+Publication preserves explicit sampled-mesh and rendered-contact limitations.
+All eight fresh placement exports in
+`york-outer-east-upper-wall-stair-neighbour-placements-3hJRu4` match the tested
+`...-4V0heI` serialized geometry, excluding warning text; the 48 negative cases
+still reject. All ten saved scenes reopen in the fresh publication check.
+Local-anchor audit `lift-anchor-support-oCy317` now finds 9/53 unsupported stair
+definitions (York 8/16, Sherwood 1/1), 1/8 ladders and 9/9 walls. Authoring-tool
+lint and formatting checks pass; no compiler or runtime code changes are needed
+for these asset corrections.
+
+Fresh full-York export `york-east-upper-published-qiTScV` matches the
+native-tested terrain-corrected descriptor exactly after excluding warning text.
