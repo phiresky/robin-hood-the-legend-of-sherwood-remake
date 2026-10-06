@@ -217,8 +217,9 @@ exactly matches tested candidates and all ten scenes reopen; rendered actor
 integration remains unverified.
 
 Landing validation now excludes permanently blocked portions of shared stair
-edges while retaining their collision. Switchable blockers and uncovered edge
-portions still require matching heights. Focused regressions pass, but the
+edges on either the flight or landing while retaining their collision.
+Switchable blockers and uncovered edge portions still require matching heights.
+Focused regressions pass, but the
 three-entrance Sherwood candidate still exposes an incompatible unblocked edge;
 its traversal remains unresolved. Generated collinear clipping holes no longer
 disable physical navigation at 37 degrees. The latest unpublished candidate

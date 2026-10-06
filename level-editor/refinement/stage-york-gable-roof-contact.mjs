@@ -4,7 +4,7 @@ import { readStoredMap, pinnedDescriptors } from "../pipeline/src/stored-map.ts"
 import { heightPlane, planeHeight } from "../shared/src/gameplay-plane.ts";
 import { validateAssetGameplay } from "../shared/src/asset-gameplay.ts";
 
-// Explicit asset authoring. Both openings remain local to their owning asset.
+// Explicit asset authoring. Contact geometry remains local to its owning asset.
 const [stage] = process.argv.slice(2);
 assert.ok(stage, "Provide reviewed gable-house climb seam edits");
 const edits = JSON.parse(await fs.readFile(`${stage}/edits.json`, "utf8"));
@@ -67,6 +67,18 @@ roof.height = footprint.map((point) => planeHeight(roofPlane, point));
 roof.preserveMovementPrecision = true;
 roof.preserveMovementBoundary = true;
 roof.navigationRegion = roof.id;
+// The climb occupies a separate floor through the roof edge. Keep its footprint
+// out of ordinary roof walking; the explicit entrance supplies the handoff.
+const cutoutId = "building-148-climb-cutout";
+assert.ok(!gameplay.movementBlockers?.some((blocker) => blocker.id === cutoutId));
+gameplay.movementBlockers ??= [];
+gameplay.movementBlockers.push({
+  id: cutoutId,
+  node: roof.node,
+  polygon: localFlight.map(([x, y]) => [x, y]),
+  height: localFlight.map((point) => planeHeight(roofPlane, point)),
+  preserveMovementPrecision: true,
+});
 // Keep the roof slab's movement volume aligned with its authored contact.
 // The visual/query part retains its independent geometry.
 const volumeId = "building-148-contact-slab";

@@ -9577,3 +9577,28 @@ asset compiler test was corrected without changing its assertion.
 With this compiler fix, `...gable-house-neighbour-placements-8Mxjjt` compiles all
 eight placements and passes 48 disconnect controls, but still fails all 32
 actor routes. No house/roof asset definition has been published from this work.
+
+Landing validation also missed permanently blocked contacts on the flight side:
+it previously excluded only the landing's own permanent collision. A regression
+with an L-shaped flight fails before the runtime fix and passes afterward.
+Validation now excludes inaccessible shared-edge portions blocked on either
+side while retaining the collision itself. Removable barriers, partial coverage
+and a real 0.02-unit uncovered gap still reject incompatible heights.
+
+The initial runtime change passes all 22 stair-navigation tests, 47 regular
+compiled-navigation tests, and published York's 130 stair routes and 40 climbs.
+The house candidate remains rejected at an exposed shared-edge point with a
+1.595225-unit height mismatch. A subsequent attempt to exclude coordinate-
+rounding fragments did not fix that candidate and regressed two published York
+stair routes. That extension was removed; no geometric or height tolerance is
+loosened. Final rebuild, formatting, all 22 stair-navigation tests, 47 regular
+compiled-navigation tests and published York's 130 stair routes and 40 climbs
+pass after removing that extension. The final native logs use the
+`york-L4Ocfa-final-flight` prefix.
+
+The next unpublished asset candidate `york-gable-roof-contact-EyKTvB` explicitly
+excludes the separate climb footprint from ordinary roof walking. This keeps
+the explicit entrance as the connection between the two floors. Its paired
+exports `...gable-house-neighbour-placements-ROF3Uy` pass all eight compilation
+placements and 48 disconnect controls, but all 32 actor routes still fail.
+The candidate remains unpublished pending diagnosis of the blocked connection.

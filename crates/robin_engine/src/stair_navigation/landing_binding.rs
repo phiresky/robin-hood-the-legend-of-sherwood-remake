@@ -282,6 +282,37 @@ mod tests {
                 .bind_landing(0, &motion, 0, 0, 0, [0., 0., 100.], None)
                 .is_err()
         );
+
+        // The same inaccessible contact can be blocked on the flight instead
+        // of the landing. Removable or partial collision must not hide a gap.
+        motion.obstacles.clear();
+        for (state, right, allowed) in [
+            (0, 60., true),
+            (2, 60., false),
+            (0, 59.98, false),
+            (0, 50., false),
+        ] {
+            let mut bound = stair.clone();
+            bound.obstacle_states = vec![state];
+            bound.definition.obstacles =
+                vec![robin_level_data::physical_stair::PhysicalStairObstacle {
+                    motion_obstacle: 0,
+                    polygon: vec![[30., -10.], [right, -10.], [right, 100.], [30., 100.]],
+                }];
+            let collision = bound.definition.obstacles.clone();
+            let result = bound.bind_landing(0, &motion, 0, 0, 0, [0., 0., 100.], None);
+            assert_eq!(
+                result.is_ok(),
+                allowed,
+                "state={state}, right={right}: {result:?}"
+            );
+            assert_eq!(bound.definition.obstacles.len(), collision.len());
+            assert_eq!(
+                bound.definition.obstacles[0].polygon, collision[0].polygon,
+                "flight collision must remain intact"
+            );
+            assert_eq!(bound.definition.obstacles[0].motion_obstacle, 0);
+        }
     }
 
     #[test]
@@ -1003,12 +1034,20 @@ impl BoundPhysicalStair {
                 }
             })
             .collect::<Result<Vec<_>, String>>()?;
-        let permanent_collision = collisions
+        let mut permanent_collision = collisions
             .iter()
             .zip(&motion.obstacles)
             .filter(|(_, obstacle)| obstacle.state_id == 0)
             .map(|(collision, _)| collision.clone())
             .collect::<Vec<_>>();
+        // A shared edge is inaccessible when either side permanently blocks it.
+        // Retain flight collision and keep checking every uncovered contact;
+        // switchable obstacles cannot establish a safe height connection.
+        for obstacle in &self.definition.obstacles {
+            if self.obstacle_states[usize::from(obstacle.motion_obstacle)] == 0 {
+                permanent_collision.push(polygon(&obstacle.polygon)?.map_coords(promote));
+            }
+        }
         let mut door_seam = false;
         for stair_edge in stair.exterior().lines() {
             for landing_edge in support.exterior().lines() {
