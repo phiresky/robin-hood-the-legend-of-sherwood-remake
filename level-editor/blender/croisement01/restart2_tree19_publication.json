@@ -1,0 +1,33 @@
+{
+  "status": "PASS: installed and normal-HTTP browser verified",
+  "scene_sha256": "34ea12f2d04b859760d2ae202693b08946b0ac92c9972ae8b8da39e13627279b",
+  "index_sha256": "d7ff55559240b0f31fd7f6911a10f8e0247096981549b9487ecb20a12f86c005",
+  "published_files": {
+    "3d-assets/croisement01/croisement01-tree-19/model.glb": "fd92f077c9148312a643cecea6143fe5ef7b9d3bb798cfcdad423cfdc3b792bc",
+    "3d-assets/croisement01/croisement01-tree-19/asset.json": "e808661531bbbbbbd1cd91bf2f546d95c2a115cf8c5fc0777d854efef9e96ad5"
+  },
+  "private_full_editor": {
+    "path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/croisement01-refinement/restart2/tree19-integration-batch-v1/full-editor-private-v3/result.json",
+    "sha256": "48428ca9b3d90571d928da565bc5aa061c5ff7cd29480d1db173dd731f535346",
+    "config_sha256": "259bbe244e7686c68b16455d3a83c4490b0b1e0599ddc5749cd07750318efb28",
+    "checker_provenance_sha256": "531e18e660c79d4d772b5e87f0a91ec7e0db1ffab2df9ed6ba2ea325ccb05ff7"
+  },
+  "backup": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/croisement01-refinement/restart2/tree19-integration-batch-v1/publication-backup-v1",
+  "unchanged_other_placements": 58,
+  "unrelated_palette_entries_preserved": 1302,
+  "protected_existing_asset_files": 366,
+  "scope": {
+    "tree19": "Approved texture and geometry;1927 foreground foliage excluded; native50/51 sight order, movement contour, world obstacle volumes and draft issues preserved; approved branch joint edge miss disclosed"
+  },
+  "bounded_live_proof_sha256": "c901373df163429187f5212d75e25be55729247681ef48a429e707210f6a4d40",
+  "postcopy_published_files_verified": 2,
+  "postcopy_existing_asset_files_verified": 366,
+  "root_full_editor_review_sha256": "58c19bd354fceb88c22f81652bbf2ae2fd751ef3db35de81afb40cf4db3aa36d",
+  "live_visual_review": "Personally viewed installed Tree19 screenshot and final screenshot; bark/crown match exact approved export. Full native framing and map insertion/reload separately reviewed in pinned full-editor evidence.",
+  "live_screenshots": {
+    "croisement01-tree-19-live-browser.png": "37cfc2a31129c07b9ffc638e843caf7d2c4cca6bb5f82edeb5dbde39ef05b591",
+    "live-browser.png": "37cfc2a31129c07b9ffc638e843caf7d2c4cca6bb5f82edeb5dbde39ef05b591"
+  },
+  "publication_path": "level-editor/work/croisement01-refinement/restart2/tree19-integration-batch-v1/publication.json",
+  "publication_sha256": "b810af8ae63025d644ccb3598125dd862dde43eebdfcff736318051a183cccb9"
+}

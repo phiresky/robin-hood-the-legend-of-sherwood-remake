@@ -227,20 +227,6 @@
       "id": "croisement01-group-049"
     },
     {
-      "model": "3d-assets/croisement01/croisement01-group-050/model.glb",
-      "model_sha256": "62af82ac5d3556219da17b0f3653ad5df81236c7c66e64d850741243dc0e9ae0",
-      "descriptor": "3d-assets/croisement01/croisement01-group-050/asset.json",
-      "descriptor_sha256": "187e7bffe5d8c4f52e20e297acbd07b8ba945f9409f172edae11d3eb670e9b08",
-      "id": "croisement01-group-050"
-    },
-    {
-      "model": "3d-assets/croisement01/croisement01-group-051/model.glb",
-      "model_sha256": "e22d7d03d2ecbc9b1fd95dfb6c51f5ecd669dd31aea2eb3982431c090236f468",
-      "descriptor": "3d-assets/croisement01/croisement01-group-051/asset.json",
-      "descriptor_sha256": "94ae38501e999cf82747b85986eccb3264cf0b701ce4ae9806c9a2c62cc9e85b",
-      "id": "croisement01-group-051"
-    },
-    {
       "model": "3d-assets/croisement01/croisement01-group-068/model.glb",
       "model_sha256": "3a0093311fefc4539163c1cb74e878c2bf1ce0c0ea33c7771e57aaf1c97e47f5",
       "descriptor": "3d-assets/croisement01/croisement01-group-068/asset.json",
@@ -442,6 +428,13 @@
       "model_sha256": "2ef9c888c55c65203e07d5866c5b60f369e95df0132c412827f7b701cf51f8bf",
       "descriptor": "3d-assets/croisement01/croisement01-tree-71/asset.json",
       "descriptor_sha256": "70a807058c710f49599048cad1ff7985ebc012256bb69ebf5444a37382e07e68"
+    },
+    {
+      "id": "croisement01-tree-19",
+      "model": "3d-assets/croisement01/croisement01-tree-19/model.glb",
+      "model_sha256": "fd92f077c9148312a643cecea6143fe5ef7b9d3bb798cfcdad423cfdc3b792bc",
+      "descriptor": "3d-assets/croisement01/croisement01-tree-19/asset.json",
+      "descriptor_sha256": "e808661531bbbbbbd1cd91bf2f546d95c2a115cf8c5fc0777d854efef9e96ad5"
     }
   ],
   "sceneMetadata": {},
@@ -793,30 +786,6 @@
       },
       "assets": [
         "croisement01-group-049"
-      ]
-    },
-    {
-      "id": "group-050",
-      "transform": {
-        "dx": 1166,
-        "dy": 251.22647912175816,
-        "dz": 0,
-        "rot_deg": 0
-      },
-      "assets": [
-        "croisement01-group-050"
-      ]
-    },
-    {
-      "id": "group-051",
-      "transform": {
-        "dx": 1151,
-        "dy": 245.49071475824772,
-        "dz": 0,
-        "rot_deg": 0
-      },
-      "assets": [
-        "croisement01-group-051"
       ]
     },
     {
@@ -1205,6 +1174,18 @@
         "dx": 1490.97216796875,
         "dy": 573.8319971411682,
         "dz": 40.02780039794276,
+        "rot_deg": 0
+      }
+    },
+    {
+      "id": "tree19-approved",
+      "assets": [
+        "croisement01-tree-19"
+      ],
+      "transform": {
+        "dx": 1196.0166015625,
+        "dy": 269.8528347640162,
+        "dz": 0.0940347475986561,
         "rot_deg": 0
       }
     }
