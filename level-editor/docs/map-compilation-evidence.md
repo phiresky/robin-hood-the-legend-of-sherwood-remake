@@ -9408,3 +9408,61 @@ surface does not reach the corrected seam. The test rejects projected fallback
 and now includes the compiler warnings in that assertion. No publication or
 actor success is claimed for this candidate. The receiving asset's contact
 needs explicit authoring before the moved/copied pair can be accepted.
+
+### Steep receiving-plane validation and precinct contact candidates
+
+The copied precinct pair exposed a general loader error: receiving-plane
+anchors and polygon vertices round independently to f32. One exported vertex
+had 0.002659 height residual against a 0.002385 fixed coordinate tolerance;
+another translated copy had 0.005638 residual against 0.004310. These are
+valid authored planes. The loader now bounds the scalar triple-product error
+using half-ULP uncertainty in all anchor and vertex coordinates, including the
+uncertainty in the plane normal. The existing coordinate bound remains as a
+minimum. No movement query, clearance, or door matching tolerance changes.
+The new loader regression accepts the exported steep plane and rejects
+deliberate positive and negative 0.1-unit height mismatches. All 93 regular
+level-data tests pass (eight opt-in checks skipped), as do 47 regular compiled
+navigation tests (14 opt-in checks skipped), game build and Rust formatting.
+
+`stage-york-precinct-wall-contact.mjs` authors an unpublished paired candidate.
+It moves two walkable boundary vertices by 0.991859 and 2.634988 units and two
+receiving-footprint vertices by 0.075348 and 0.315463 units. The candidate also
+authors a climb-owned upper-height clearance from its existing solid footprint;
+it does not clear solids owned by other placed assets.
+
+The earlier navigation-only contact `york-precinct-wall-contact-o4sn0i` compiles
+eight two-copy placements with 48 negative disconnect checks, but its upper
+receiver does not bind in the runtime. Full York `saved-map-exports-No971Z`
+passes 130 stair routes, 40 climbs and six control checks with the loader fix;
+that does not establish independent asset usability. The precise receiver
+candidate `york-precinct-wall-contact-qOsMIo` resolves binding but still fails
+actor routes; its copied test is `...neighbour-placements-rDqzbA`. A clearance
+restricted to the flight (`york-precinct-wall-contact-stsFP0`) also fails all
+32 routes in `...neighbour-placements-1LeDqc`. These definitions are not published.
+
+The climb mesh review has 808/811 hits, maximum uncovered margin 0.011341 units
+and height residuals from -0.267647 to 0.161528. Receiving-floor review has
+4732/4944 supported samples, maximum gap 0.281792 and height residual 0.061466.
+Draft warnings retain these limitations; neither headless routes nor sampled
+mesh coverage substitute for rendered gameplay verification.
+
+The remaining obstruction was the climb asset's separate crest `building-877`,
+not the flight solid `building-109`. Final authoring stage
+`york-precinct-wall-contact-Sh3UW5` retains only the crest's upper-height opening.
+It passes all 48 missing/raised ground and platform checks. Its eight two-copy
+exports `york-precinct-southwest-wall-ramp-neighbour-placements-AKReGD` exactly
+match native-tested `...neighbour-placements-tACaik`, which passes all 32 routes.
+Full final York `saved-map-exports-VQbzev` exactly matches tested
+`saved-map-exports-cWDaHS`: 130 complete-profile stair routes, 40 climbs and six
+control apply/reset checks pass. No source-scene neighbour is needed beyond the
+explicitly placed receiving platform and authored ground.
+
+Published both definitions with backup `york-precinct-wall-publication-20261006`.
+Post-publication anchor audit `lift-anchor-support-PpP9Ao` reports 0/53 stairs,
+1/8 ladders and 6/9 walls with unsupported anchors. The loader fix is committed
+as `a53ea3ceb`. The unresolved annex clearance and other remaining parity work
+are not certified by these results.
+Fresh published full York `saved-map-exports-YAAF3w` and eight copied placements
+`...neighbour-placements-hO7bfM` exactly match their tested descriptors. All ten
+saved scenes reopen with valid descriptor pins. Authoring-script formatting and
+patch whitespace checks pass.

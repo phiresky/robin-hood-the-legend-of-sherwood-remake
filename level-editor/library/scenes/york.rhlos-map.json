@@ -220,7 +220,7 @@
       "model": "3d-assets/york/york-cathedral-precinct-raised-terrain/model.glb",
       "model_sha256": "b566e3352d9e7d5cdc63e54af74334528c1ae35cbfb9c42e78642a98c02a3afb",
       "descriptor": "3d-assets/york/york-cathedral-precinct-raised-terrain/asset.json",
-      "descriptor_sha256": "e86cd896a9612d864eb0e16e5a78104e7274659d70137a7705c5c0e0ec7c167e",
+      "descriptor_sha256": "a62d9360be38f5a02dab74858d476daaff377466c21bb98e7bae59269120ca8c",
       "id": "york-cathedral-precinct-raised-terrain"
     },
     {
@@ -990,7 +990,7 @@
       "model": "3d-assets/york/york-precinct-southwest-wall-ramp/model.glb",
       "model_sha256": "b9f7876329608f354189e2609c35577fec7ad1e9726f4379821576ea9ea9abd8",
       "descriptor": "3d-assets/york/york-precinct-southwest-wall-ramp/asset.json",
-      "descriptor_sha256": "4008ec200943d544678e9df17cffcffbc0193b2278edf6116fbbd8231fa6366e",
+      "descriptor_sha256": "79980aa543366e3e91858f89dbb0cf5dad9146dd6e2184917755329d8d9f0ff4",
       "id": "york-precinct-southwest-wall-ramp"
     },
     {

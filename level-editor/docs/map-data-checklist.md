@@ -538,13 +538,22 @@ posture and membership effects. Compiler checks require a landing to support
 both the outside point and seam before enabling physical traversal. Unsupported
 definitions retain projected navigation with a warning when their landing
 heights or coverage still disagree.
-The expanded local-anchor audit finds 1/8 ladder definitions and 7/9 wall
+The expanded local-anchor audit finds 1/8 ladder definitions and 6/9 wall
 definitions with unsupported floor anchors. Those counts do not check landing
 height compatibility or certify placed routes. Physical wall compilation and
 runtime traversal are supported, but these wall asset contacts remain unfinished.
 The keep-annex candidate remains unpublished: its saved-map routes pass, but
 eight of 32 copied/rotated climb routes fail at 90 degrees. Reliable new-map
 placement, rather than matching an existing layout, is the acceptance criterion.
+The receiving-plane loader now propagates f32 rounding through both the plane
+anchors and each receiver vertex. Steep valid planes no longer fail loading
+merely because assets are translated; the regression still rejects explicit
+height mismatches. York's southwest precinct climb and receiving platform are
+now published as drafts: 32 copied/rotated actor routes and 48 disconnected
+receiver checks pass. The climb owns the clearance through its separate crest;
+it does not depend on surrounding buildings to clear its upper exit. Full York
+passes 130 stair routes, 40 climbs and six control checks. Receiving-floor mesh
+gaps remain below 0.282 units in this review; rendered integration is unverified.
 The York scaffold ladder correction is published. Its upper platform notch now
 meets the physical seam, and both approaches follow the flight centerline while
 retaining their outside anchors and inside heights. All sixteen rotated/elevated
