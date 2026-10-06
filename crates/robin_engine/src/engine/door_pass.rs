@@ -852,9 +852,14 @@ impl EngineInner {
             dist(OrderType::TransitionWaitingCrouchedClimbingWallDownCrenel).abs();
         let tol_wall_low_direct = dist(OrderType::TransitionWaitingUprightClimbingWallUp);
 
+        let physical_door = self.physical_stair_door(assets, door_index);
         let ctx = DoorPassContext {
             door_type,
-            point_mid: pt_mid,
+            // Transition animations also target the exact seam. Returning to
+            // its integer waypoint after the handoff can leave the receiver.
+            point_mid: physical_door.as_ref().map_or(pt_mid, |(_, _, door)| {
+                MapPoint::new(door.middle[0], door.middle[1] - door.middle[2])
+            }),
             point_in: pt_in,
             point_out: pt_out,
             direct,
@@ -889,7 +894,6 @@ impl EngineInner {
                 | DoorType::LiftLow
         );
 
-        let physical_door = self.physical_stair_door(assets, door_index);
         let element = self
             .orders
             .sequence_manager

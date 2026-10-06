@@ -16,6 +16,23 @@ fn physical_stair_fractional_seams_preserve_actor_world_position() {
 }
 
 #[test]
+#[ignore = "requires ROBIN_CLIMB_RHS"]
+fn physical_ladder_exit_animation_preserves_fractional_receiver() {
+    let sprite = complete_climb_sprite();
+    let (engine, assets) = compiled_walkway(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/physical-ladder-fractional-seam.level.json"
+    )));
+    for (entrance, exit) in [(0, 1), (1, 0)] {
+        assert_eq!(
+            walk_exported_lift(engine.clone(), assets.clone(), entrance, exit, Some(&sprite)),
+            Ok(true),
+            "fractional ladder transition {entrance}->{exit}"
+        );
+    }
+}
+
+#[test]
 fn compiled_stair_barriers_stop_actor_traversal_and_reset() {
     let fixtures: Vec<serde_json::Value> = serde_json::from_slice(include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),

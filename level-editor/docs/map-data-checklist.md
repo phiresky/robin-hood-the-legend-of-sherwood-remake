@@ -189,8 +189,10 @@ The first three-entrance candidate retains all doors and passes 36/48 moved
 routes, with twelve 90-degree failures. A separate compiler correction accepts
 ladder seams on platform-hole edges while still rejecting hole interiors.
 The focused native fixture passes both directions; a broader rotation check
-exposes a receiver mismatch also present without a hole. Neither complex
-Sherwood candidate is published, and physical traversal remains unresolved.
+exposed a receiver mismatch also present without a hole. That mismatch is now
+fixed: ladder exit animations retain the physical seam instead of snapping back
+to its integer waypoint, and all eight rotated fixture routes pass. Neither
+complex Sherwood candidate is published, and its traversal remains unresolved.
 All 84 climb routes in the ten saved-scene exports now pass, as do all 71 control
 apply/reset checks and Derby's 28/28 stair routes. The published tower matches
 its native-tested candidate; Leicester retains 22/22 climb and 16/16 stair

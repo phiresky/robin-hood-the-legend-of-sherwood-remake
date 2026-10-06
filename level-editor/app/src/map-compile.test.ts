@@ -1221,6 +1221,36 @@ test("preserved ground boundaries retain physical stair receiving precision", ()
   assert.ok(receivers[0]!.points.every((point) => point.z_top === 0));
 });
 
+test("fractional ladder exit fixture preserves the physical seam and platform opening", async () => {
+  const { document, assets, hut } = changingClimbCompilerFixture(2);
+  document.groups[0]!.transform = { dx: 900, dy: 900, dz: 20, rot_deg: 37 };
+  const landing = hut.gameplay!.surfaces[1]!;
+  landing.polygon = [
+    [250, 0],
+    [600, 0],
+    [600, 300],
+    [250, 300],
+  ];
+  landing.holes = [
+    [
+      [260, 100],
+      [330, 100],
+      [330, 200],
+      [260, 200],
+    ],
+  ];
+  const fixture = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/physical-ladder-fractional-seam.level.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(compileMap(document, [0, 0, 3000, 3000], assets).descriptor, fixture);
+});
+
 test("changing climb exports match native placed traversal fixtures", async () => {
   const fixtures = JSON.parse(
     await readFile(

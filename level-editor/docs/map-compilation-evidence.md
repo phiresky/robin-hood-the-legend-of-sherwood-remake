@@ -4,6 +4,27 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Fractional ladder exit animation receiver fix (2026-10-06)
+
+The 37-degree receiver mismatch occurred after the physical door callback seated
+the actor at its exact seam. The exit animation still targeted the integer door
+midpoint, moving the actor outside the receiver before the next walk. Physical
+door translation now supplies the exact projected middle to transition animations
+as well as climbing orders, retaining normal transition membership effects.
+
+All 8/8 routes in `hole-edge-ladder-placements-hejrdt` now pass. The committed
+`physical-ladder-fractional-seam.level.json` reproduces the failing 37-degree
+case; its complete-animation native regression passes both directions, and the
+editor test proves it equals a fresh compilation. All four changing-climb tests
+pass, including 72 reopening checks; all 46 door-pass tests pass. The existing
+ten-map descriptor batch `saved-map-exports-pURUNj` retains 84/84 passing climbs
+with the updated runtime. This batch predates the west-treehouse publication;
+it is runtime regression evidence, not a fresh full-library bake.
+The game build and Cargo formatting check pass. The new editor fixture equality
+test, focused lint and formatting pass. Rechecking the complex three-door
+candidate still yields 36 failed physical routes, so this fix does not establish
+its landing support or mesh alignment.
+
 ## Platform-hole ladder seams and three-door candidate (2026-10-06)
 
 Physical ladder eligibility now permits its middle waypoint on a platform-hole
