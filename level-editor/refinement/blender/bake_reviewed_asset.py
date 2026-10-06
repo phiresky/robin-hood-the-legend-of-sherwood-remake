@@ -46,6 +46,8 @@ def stage(manifest_path, image_path, output_dir, *, texels_per_unit=2, reconcili
     evidence = [manifest_path, image_path, manifest_path.parent/'input.png',manifest_path.parent/'mask.png']
     if reconciliation_reference:
         evidence.append(Path(reconciliation_reference))
+    if manifest.get('texture_generated_support_mask') is not None:
+        evidence.append(Path(manifest['texture_generated_support_mask']['path']))
     hashes = {str(path):hashlib.sha256(path.read_bytes()).hexdigest() for path in evidence}
     report = apply(manifest_path,image_path,output,texels_per_unit=texels_per_unit, reconciliation_reference=reconciliation_reference)
     if geometry != {obj.name:_geometry(obj) for obj in scene.objects}:

@@ -20,3 +20,15 @@ def filtered_color(colors, weights, supported):
     weights = np.asarray(weights) * np.asarray(supported)
     total = weights.sum()
     return None if total <= 1e-8 else (np.asarray(colors) * weights[:, None]).sum(axis=0) / total
+
+
+def edit_support(edit_mask, ownership_mask):
+    """Accept only a binary subset of the reviewed unknown ownership mask."""
+    if edit_mask.shape != ownership_mask.shape or edit_mask.ndim != 3 or edit_mask.shape[2] != 4:
+        raise ValueError('Generated support dimensions differ from reviewed ownership')
+    if not np.isin(edit_mask[:, :, 3], [0., 1.]).all():
+        raise ValueError('Generated support alpha must be binary')
+    supported = edit_mask[:, :, 3] == 0
+    if not supported.any() or np.any(supported & (ownership_mask[:, :, 3] >= .5)):
+        raise ValueError('Generated support must be a nonempty subset of reviewed unknown pixels')
+    return supported

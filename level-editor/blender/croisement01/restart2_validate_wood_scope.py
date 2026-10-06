@@ -50,12 +50,17 @@ def bake_packet(experiment, manifest_path):
     for source in e.iterdir():
         if source==packet or source.name in ('mask.png',manifest_path.name):continue
         (packet/source.name).symlink_to(source,target_is_directory=source.is_dir())
-    (packet/manifest_path.name).write_bytes(manifest_path.read_bytes())
+    manifest['texture_generated_support_mask'] = {
+        'path':str(e/'mask.png'),
+        'sha256':hashlib.sha256((e/'mask.png').read_bytes()).hexdigest(),
+    }
+    (packet/manifest_path.name).write_text(json.dumps(manifest,indent=2)+'\n')
     (packet/'mask.png').symlink_to(e/'wood-scope-original/mask.png')
     record={'scope':'WOOD ONLY','api_scope_sha256':hashlib.sha256((e/'wood-scope.json').read_bytes()).hexdigest(),
             'api_mask_sha256':hashlib.sha256((e/'mask.png').read_bytes()).hexdigest(),
             'projection_ownership_mask_sha256':hashlib.sha256((packet/'mask.png').read_bytes()).hexdigest(),
             'receivers':report['receivers'],'protected_foreign_objects':report['foreign_objects'],
+            'projection_manifest_sha256':hashlib.sha256((packet/manifest_path.name).read_bytes()).hexdigest(),
             'reason':'Restore full reviewed ownership only for projection validation; wood receiver selection and exact foreign-appearance guards remain mandatory.'}
     (packet/'adapter.json').write_text(json.dumps(record,indent=2)+'\n')
     return packet/manifest_path.name

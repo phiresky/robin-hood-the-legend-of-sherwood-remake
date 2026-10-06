@@ -87,6 +87,15 @@ def apply(manifest_path, image_path, output_dir, *, texels_per_unit=2, map_name=
     if generated.shape != mask.shape or [width,height] != [manifest['layout']['width'],manifest['layout']['height']]:
         raise ValueError('Generated image, mask and approved camera dimensions differ')
     generated_support = np.ones(generated.shape[:2], dtype=bool)
+    support_contract = manifest.get('texture_generated_support_mask')
+    if support_contract is not None:
+        if set(support_contract) != {'path', 'sha256'}:
+            raise ValueError('Invalid generated support mask contract')
+        support_path = Path(support_contract['path'])
+        if hashlib.sha256(support_path.read_bytes()).hexdigest() != support_contract['sha256']:
+            raise ValueError('Generated support mask changed')
+        from generated_surface_support import edit_support
+        generated_support &= edit_support(_read(support_path), mask)
     background_limit = manifest.get('texture_generated_background_max_rgb')
     for view in manifest['views']:
         known_path = reviewed/'views'/f"view-{view['index']}-known.png"
@@ -104,7 +113,7 @@ def apply(manifest_path, image_path, output_dir, *, texels_per_unit=2, map_name=
             raise ValueError('Generated fill mask differs from reviewed source ownership')
         if background_limit is not None:
             from generated_surface_support import support
-            generated_support[rows,cols] = support(generated[rows,cols], solid, background_limit)
+            generated_support[rows,cols] &= support(generated[rows,cols], solid, background_limit)
     generated = _reconcile(generated, manifest, _read(reconciliation_reference) if reconciliation_reference else None)
     output = Path(output_dir).resolve()
     output.mkdir(parents=True, exist_ok=False)
@@ -209,7 +218,7 @@ def apply(manifest_path, image_path, output_dir, *, texels_per_unit=2, map_name=
                 y1 = min(height-crop['top']-1,y0+1)
                 color = ((generated[y0,x0,:3]*(1-ax)+generated[y0,x1,:3]*ax)*(1-ay)+
                          (generated[y1,x0,:3]*(1-ax)+generated[y1,x1,:3]*ax)*ay)
-                if background_limit is not None and (filtered_faces is None or (obj.name,face_index) in filtered_faces):
+                if support_contract is not None or (background_limit is not None and (filtered_faces is None or (obj.name,face_index) in filtered_faces)):
                     from generated_surface_support import filtered_color
                     color = filtered_color(
                         [generated[y0,x0,:3], generated[y0,x1,:3], generated[y1,x0,:3], generated[y1,x1,:3]],
@@ -314,6 +323,7 @@ def apply(manifest_path, image_path, output_dir, *, texels_per_unit=2, map_name=
               'geometry_changed':False,'source_preservation':'Every protected source atlas texel checked byte-identical before and after hidden sampling',
               'texture_view_selection':selection,
               'generated_background_max_rgb':background_limit,
+              'generated_support_mask':support_contract,
               'generated_background_rejected_pixels':int((~generated_support).sum()) if background_limit is not None else 0,
               'texture_preferred_face_views':manifest.get('texture_preferred_face_views',{}),
               'selection':('Highest facing visible single view per unknown texel; ties use projected pixel density then stable view index' if selection == SINGLE else 'Highest facing visible views; near ties blend across a 0.12 cosine band with explicit approved unknown mask'),
