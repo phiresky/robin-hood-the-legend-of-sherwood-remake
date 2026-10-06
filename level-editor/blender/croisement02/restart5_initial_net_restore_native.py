@@ -17,12 +17,12 @@ from tree_geometry import RAY,SIN
 ROOT=OUT/'restart5-initial-nets'
 def images(mat):
  return {n.name:dict(name=n.image.name,rgba=array_hash(pixels(n.image)),packed=hashlib.sha256(bytes(n.image.packed_file.data)).hexdigest()if n.image.packed_file else None)for n in mat.node_tree.nodes if n.type=='TEX_IMAGE'and n.image}
-def main(key):
+def main(key, bake_name='bake-v1', output_name='native-retained-v1'):
  assert shutil.disk_usage(OUT).free>25*1024**3
- exp=ROOT/f'texture-fill-v1/profile-{key}/experiment';out=exp/'native-retained-v1';assert not out.exists();meta=json.loads((exp/'views.json').read_text());names=set(meta['object_names']);native_uv='Initial native source projection';bpy.ops.wm.open_mainfile(filepath=str(exp/'approved-model.blend'));scene=bpy.data.scenes[meta['scene_name']];baseline=snapshot(scene,names);records={}
+ exp=ROOT/f'texture-fill-v1/profile-{key}/experiment';out=exp/output_name;assert not out.exists();meta=json.loads((exp/'views.json').read_text());names=set(meta['object_names']);native_uv='Initial native source projection';bpy.ops.wm.open_mainfile(filepath=str(exp/'approved-model.blend'));scene=bpy.data.scenes[meta['scene_name']];baseline=snapshot(scene,names);records={}
  for name in names:
   obj=scene.objects[name];records[name]=dict(slots=[p.material_index for p in obj.data.polygons],uv=np.array([d.uv[:]for d in obj.data.uv_layers[native_uv].data]),images=images(obj.data.materials[0]))
- bpy.ops.wm.open_mainfile(filepath=str(exp/'bake-v1/worker.blend'));scene=bpy.data.scenes[meta['scene_name']];bpy.context.window.scene=scene;assert snapshot(scene,names)==baseline;counts={}
+ bpy.ops.wm.open_mainfile(filepath=str(exp/bake_name/'worker.blend'));scene=bpy.data.scenes[meta['scene_name']];bpy.context.window.scene=scene;assert snapshot(scene,names)==baseline;counts={}
  for name,r in records.items():
   obj=scene.objects[name];assert np.array_equal(r['uv'],np.array([d.uv[:]for d in obj.data.uv_layers[native_uv].data]));assert images(obj.data.materials[0])==r['images'];generated_slots={p.material_index for p in obj.data.polygons if obj.data.materials[p.material_index].get('source_ownership_bake')};assert len(generated_slots)==1;gs=next(iter(generated_slots));gm=obj.data.materials[gs];gn=next(n for n in gm.node_tree.nodes if n.type=='TEX_IMAGE');guv=gn.inputs['Vector'].links[0].from_node.uv_map;restored=obj.data.materials[0].copy();restored.name=name+' / exact native with unknown fill';mix=next(n for n in restored.node_tree.nodes if n.type=='MIX_RGB');assert not mix.inputs[1].is_linked;node=restored.node_tree.nodes.new('ShaderNodeTexImage');node.image=gn.image;node.interpolation='Linear';node.extension='EXTEND';uv=restored.node_tree.nodes.new('ShaderNodeUVMap');uv.uv_map=guv;restored.node_tree.links.new(uv.outputs['UV'],node.inputs['Vector']);restored.node_tree.links.new(node.outputs['Color'],mix.inputs[1]);obj.data.materials.append(restored);slot=len(obj.data.materials)-1;count=0
   for face,old in zip(obj.data.polygons,r['slots']):
@@ -41,5 +41,5 @@ def main(key):
  source_report.update(model_sha256=digest,parent_approved_geometry_sha256=sha(base/'model.blend'),texture_preservation_sha256=sha(out/'preservation.json'));write_json(out/'report.json',source_report)
 if __name__=='__main__':
  acquire()
- try:main(sys.argv[sys.argv.index('--')+1])
+ try:main(*sys.argv[sys.argv.index('--')+1:])
  finally:release()

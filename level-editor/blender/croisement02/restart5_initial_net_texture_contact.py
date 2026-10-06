@@ -15,9 +15,9 @@ from render_slots import acquire,release
 from restart4_stump_final_contact import frame,sheet
 ROOT=OUT/'restart5-initial-nets'
 
-def main(key):
+def main(key, output_name='native-retained-v1'):
  assert shutil.disk_usage(OUT).free>25*1024**3
- worker=ROOT/f'texture-fill-v1/profile-{key}/experiment/native-retained-v1';proof=json.loads((worker/'report.json').read_text());model=worker/'worker.blend';assert sha(model)==proof['model_sha256'];out=worker/'contact-v1';assert not out.exists();out.mkdir();neighbors=json.loads((ROOT/'source/context-selection-final.json').read_text());wanted=[43,45,46]if key=='00'else[37,38,39,40];records=[dict(asset_id='croisement02-initial-net-'+('01'if key=='00'else'03'),model=str(model),model_sha256=proof['model_sha256'],role='candidate')]+[dict(r,role='context')for r in neighbors if int(r['asset_id'][-2:])in wanted];inputs=[]
+ worker=ROOT/f'texture-fill-v1/profile-{key}/experiment'/output_name;proof=json.loads((worker/'report.json').read_text());model=worker/'worker.blend';assert sha(model)==proof['model_sha256'];out=worker/'contact-v1';assert not out.exists();out.mkdir();neighbors=json.loads((ROOT/'source/context-selection-final.json').read_text());wanted=[43,45,46]if key=='00'else[37,38,39,40];records=[dict(asset_id='croisement02-initial-net-'+('01'if key=='00'else'03'),model=str(model),model_sha256=proof['model_sha256'],role='candidate')]+[dict(r,role='context')for r in neighbors if int(r['asset_id'][-2:])in wanted];inputs=[]
  for r in records:
   assert sha(Path(r['model']))==r['model_sha256'];bpy.ops.wm.open_mainfile(filepath=r['model']);bpy.context.view_layer.update();obs=[o for o in bpy.context.scene.objects if o.type=='MESH'and o.get('asset_group')==r['asset_id']];assert obs,r['asset_id'];inputs.append(dict(r,objects=[dict(name=o.name,matrix=[list(v)for v in o.matrix_world],signature=signature(o))for o in obs]))
  bpy.ops.wm.read_factory_settings(use_empty=True);scene=bpy.context.scene;scene.render.engine='CYCLES';scene.cycles.samples=8;scene.cycles.transparent_max_bounces=512;scene.render.film_transparent=True;scene.render.image_settings.file_format='PNG';scene.render.image_settings.color_mode='RGBA';scene.view_settings.view_transform='Standard';scene.view_settings.look='None';world=bpy.data.worlds.new('Neutral review world');world.use_nodes=True;world.node_tree.nodes['Background'].inputs['Strength'].default_value=.8;scene.world=world;own=[];context=[]
@@ -62,5 +62,5 @@ def main(key):
  assert sha(model)==proof['model_sha256']
 if __name__=='__main__':
  acquire()
- try:main(sys.argv[sys.argv.index('--')+1])
+ try:main(*sys.argv[sys.argv.index('--')+1:])
  finally:release()
