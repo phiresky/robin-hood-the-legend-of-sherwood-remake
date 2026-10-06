@@ -3386,12 +3386,14 @@ impl LoadedLevel {
                                 / normal[2];
                             // Input coordinates have already been rounded to f32.
                             // Bound their accumulated quantization error, not gameplay queries.
-                            let tolerance = 8.
+                            let coordinate_tolerance = 8.
                                 * f64::from(f32::EPSILON)
                                 * position
                                     .iter()
                                     .chain(a.iter())
                                     .fold(1_f64, |m, v| m.max(v.abs()));
+                            let tolerance = coordinate_tolerance
+                                .max(receiving_plane_roundoff(points, position) / normal[2].abs());
                             point.z_top != point.z_bottom || residual.abs() > tolerance
                         })
                     {
@@ -6106,10 +6108,89 @@ fn read_archery_sectors(
 //  Tests
 // ═══════════════════════════════════════════════════════════════════
 
+/// Bound the scalar triple product error from independently rounded plane
+/// anchors and receiver vertices. Steep planes amplify XY quantization into
+/// height error; the bound must include uncertainty in the plane itself.
+fn receiving_plane_roundoff(points: [[f32; 3]; 3], position: [f64; 3]) -> f64 {
+    let half_ulp = |value: f64| {
+        let value = value as f32;
+        let up = f64::from(value.next_up()) - f64::from(value);
+        let down = f64::from(value) - f64::from(value.next_down());
+        match (up.is_finite(), down.is_finite()) {
+            (true, true) => up.max(down) * 0.5,
+            (true, false) => up * 0.5,
+            (false, true) => down * 0.5,
+            (false, false) => 0.0, // Nonfinite coordinates are rejected separately.
+        }
+    };
+    let [a, b, c] = points.map(|point| point.map(f64::from));
+    let difference = |point: [f64; 3]| std::array::from_fn::<_, 3, _>(|i| point[i] - a[i]);
+    let uncertainty =
+        |point: [f64; 3]| std::array::from_fn::<_, 3, _>(|i| half_ulp(point[i]) + half_ulp(a[i]));
+    let (u, v, w) = (difference(b), difference(c), difference(position));
+    let (eu, ev, ew) = (uncertainty(b), uncertainty(c), uncertainty(position));
+    (0..3)
+        .map(|i| {
+            let (j, k) = ((i + 1) % 3, (i + 2) % 3);
+            let normal = u[j] * v[k] - u[k] * v[j];
+            let error = u[j].abs() * ev[k]
+                + v[k].abs() * eu[j]
+                + eu[j] * ev[k]
+                + u[k].abs() * ev[j]
+                + v[j].abs() * eu[k]
+                + eu[k] * ev[j];
+            normal.abs() * ew[i] + error * w[i].abs() + error * ew[i]
+        })
+        .sum()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn steep_receiving_plane_accepts_roundoff_but_rejects_height_mismatch() {
+        let mut descriptor: serde_json::Value = serde_json::from_slice(include_bytes!(
+            "../../robin_engine/tests/fixtures/asset-multi-plane-region.level.json"
+        ))
+        .unwrap();
+        let plane = [
+            [2179.8606, 2501.1649911439167, 0.31300002],
+            [2188.0015, 2495.2638511439172, 160.001],
+            [2219.445, 2508.491591143917, 0.31300002],
+        ];
+        let mut receiver = serde_json::json!({
+            "projection_plane": plane,
+            "points": [
+                {"x":2197.836996078491,"y":2497.0842840945074,
+                 "z_bottom":160.00099971645568,"z_top":160.00099971645568},
+                {"x":2218.9999980926514,"y":2501.001303177849,
+                 "z_bottom":160.00099990941612,"z_top":160.00099990941612},
+                {"x":2218.0005311965942,"y":2508.2242371893008,
+                 "z_bottom":0.3130004263000501,"z_top":0.3130004263000501}
+            ],
+            "projection_area": [0,0], "opaque":false, "solid":false,
+            "mouse":true, "show_shadow_polygon":false,
+            "default_material":4, "material_indices":[]
+        });
+        let obstacles = descriptor["asset_geometry"]["sight_obstacles"]
+            .as_array_mut()
+            .unwrap();
+        let index = obstacles.len();
+        obstacles.push(receiver.clone());
+        LoadedLevel::hackable_from_json(&serde_json::to_vec(&descriptor).unwrap()).unwrap();
+        for offset in [-0.1, 0.1] {
+            receiver["points"][0]["z_top"] = (160.00099971645568 + offset).into();
+            receiver["points"][0]["z_bottom"] = (160.00099971645568 + offset).into();
+            descriptor["asset_geometry"]["sight_obstacles"][index] = receiver.clone();
+            assert_eq!(
+                LoadedLevel::hackable_from_json(&serde_json::to_vec(&descriptor).unwrap())
+                    .unwrap_err(),
+                "invalid asset receiving plane"
+            );
+        }
+    }
 
     #[test]
     #[ignore = "requires ROBIN_COMPILED_GEOMETRY pointing to an exported descriptor"]
