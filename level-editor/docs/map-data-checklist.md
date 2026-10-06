@@ -161,6 +161,13 @@ and crenellated wall barriers pass traversal,
 copy isolation, closure and reopening checks. These are headless movement tests,
 not rendered animation certification.
 
+The Lincoln east curtain wall's climb seams are also published as a draft.
+Eight independent placements at four rotations and two elevations pass 16 stair
+and 16 climb routes, and all eight raised-ground disconnections reject. Full
+Lincoln still passes its 16 stair routes, eight climbs and eleven controls.
+Visible wall coverage remains incomplete: only 141/542 sampled flight points
+hit the mesh, with gaps up to 9.341 units. The draft warning records that limit.
+
 Latest runtime checks retain exact landing contours through binding and foot
 support instead of reducing them to single precision. The southwest turret is
 now published after all sixteen rotated/elevated routes pass. Obstacle recovery
@@ -531,7 +538,7 @@ posture and membership effects. Compiler checks require a landing to support
 both the outside point and seam before enabling physical traversal. Unsupported
 definitions retain projected navigation with a warning when their landing
 heights or coverage still disagree.
-The expanded local-anchor audit finds 1/8 ladder definitions and 8/9 wall
+The expanded local-anchor audit finds 1/8 ladder definitions and 7/9 wall
 definitions with unsupported floor anchors. Those counts do not check landing
 height compatibility or certify placed routes. Physical wall compilation and
 runtime traversal are supported, but these wall asset contacts remain unfinished.

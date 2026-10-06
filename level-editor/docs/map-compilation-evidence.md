@@ -9331,3 +9331,31 @@ Audit `lift-anchor-support-ugbdci` reports 0/53 unsupported stair definitions,
 `lincoln-gatehouse-published-9tYt5l` exactly match the native-tested geometry.
 All ten scenes reopen. The game build, Rust formatting and patch whitespace
 checks pass.
+
+### Lincoln east curtain wall climb publication
+
+Candidate `local-stair-seams-XCE5iB` corrects `building-157-lift` seams in
+`lincoln-east-curtain-wall-middle`. Maximum flight boundary displacement is
+0.443668 units. The lower landing remains an external placement receiver; the
+upper landing belongs to this asset. No compiler tolerance was changed.
+
+`local-stair-placements-asEKSB` passes 16 complete-profile stair routes and
+16 climb routes across four rotations and two elevations. All eight raised
+entrance checks reject disconnected geometry. Full Lincoln candidate
+`saved-map-exports-lCuUas` passes 16 stair routes, eight climbs and eleven
+control apply/reset checks. These are independent placements, not simultaneous
+copy-isolation or rendered animation tests.
+
+Mesh review finds only 141/542 wall flight samples hit visible geometry, with
+maximum uncovered distance 9.340554 units and sampled mesh-height residuals
+from -22.443323 to 8.678490 units. The existing stair mesh warning remains.
+`local-stair-seams-GpARjD` adds the wall warning with identical geometry.
+Published with backup `lincoln-curtain-wall-publication-20261006`.
+
+Fresh published full Lincoln `saved-map-exports-MpYOO0` and eight placements
+`local-stair-placements-qav9un` exactly match the native-tested descriptors
+apart from warnings. Anchor audit `lift-anchor-support-if3ARh` now reports
+0/53 unsupported stairs, 1/8 ladders and 7/9 walls. Those counts do not certify
+full map parity. The saved-map checker accepts repeatable `--map=NAME` options
+for focused scene regressions, rejects unknown names, and records the selection
+in its diagnostics; omitting them continues to check every saved scene.
