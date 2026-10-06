@@ -4,6 +4,28 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Permanent landing holes and height validation (2026-10-06)
+
+Shared-edge validation previously treated permanently blocked platform holes as
+usable landing contacts. It now subtracts permanent collision from the candidate
+contact segments, preserving all collision identities and live-state handling.
+State-dependent blockers cannot conceal incompatible floor heights. A synthetic
+stepped flight verifies successful binding with a permanent hole and rejection
+with partial coverage or a removable blocker. All eighteen stair-navigation tests
+and all four changing-climb tests pass, including 72 reopening checks.
+The existing ten-map descriptor batch `saved-map-exports-pURUNj` retains all
+84 passing climb routes. Matching-height seams retain their existing rounding
+handling; clipping those contacts as well initially regressed two Leicester
+routes, and narrowing clipping to height-mismatched contacts restores both.
+The game build and Cargo formatting check pass.
+
+The diagnostic three-door candidate in `local-stair-placements-jeBV3z` still
+fails 36 of 48 routes. The first blocked contact is correctly excluded, but
+another exposed ground-height edge remains adjacent to the upper receiver.
+The zero-degree trace locates it at (1668.6228, 1821.5415), with a height
+difference of about -278.001. No candidate asset was published; the authoring
+geometry and remaining multi-entrance support still need correction.
+
 ## Fractional ladder exit animation receiver fix (2026-10-06)
 
 The 37-degree receiver mismatch occurred after the physical door callback seated

@@ -11,6 +11,12 @@ not certification of every library asset or gameplay case. Best-effort exports
 warn about omissions and preserve initial states where possible; warnings are
 not evidence that an omitted feature works.
 
+Landing validation now excludes permanently blocked portions of shared stair
+edges while retaining their collision. Switchable blockers and uncovered edge
+portions still require matching heights. Focused regressions pass, but the
+three-entrance Sherwood candidate still exposes an incompatible unblocked edge;
+its 36 failed physical routes remain unresolved.
+
 The library-wide audit still finds 34 of 1,289 indexed assets without gameplay
 definitions, including the composite Derby keep, several Nottingham buildings,
 and York market props. None is placed in the ten saved

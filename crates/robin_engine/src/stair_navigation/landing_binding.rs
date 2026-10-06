@@ -26,6 +26,70 @@ mod tests {
     use super::*;
 
     #[test]
+    fn permanent_landing_holes_exclude_false_height_contacts() {
+        let stair = BoundPhysicalStair {
+            definition: robin_level_data::physical_stair::PhysicalStairNavigation {
+                plane: [0., 1., 0.],
+                boundary: vec![
+                    [40., 0.],
+                    [60., 0.],
+                    [60., 100.],
+                    [80., 100.],
+                    [80., 120.],
+                    [40., 120.],
+                ],
+                obstacles: vec![],
+                doors: vec![robin_level_data::physical_stair::PhysicalStairDoor {
+                    inside: [70., 110., 110.],
+                    middle: [70., 100., 100.],
+                    outside: [70., 90., 100.],
+                }],
+            },
+            layer: 2,
+            area: 0,
+            obstacle_states: vec![],
+            landings: vec![],
+        };
+        let mut motion: crate::level_data::RawMotionArea =
+            serde_json::from_value(serde_json::json!({
+                "is_lift":false, "state_id":0, "flags":0, "skeleton_segments":[],
+                "polygon":{"points":[[0,-120],[100,-120],[100,40],[0,40]]},
+                "obstacles":[{
+                    "state_id":0,
+                    "polygon":{"points":[[30,-110],[60,-110],[60,0],[30,0]]}
+                }]
+            }))
+            .unwrap();
+        let mut bound = stair.clone();
+        bound
+            .bind_landing(0, &motion, 0, 0, 0, [0., 0., 100.], None)
+            .unwrap();
+        assert!(
+            !bound.landings[0].obstacles.is_empty(),
+            "the hole retains collision"
+        );
+        assert_eq!(bound.landings[0].obstacles[0].state, 0);
+        // A removable blocker cannot hide incompatible floor heights.
+        motion.obstacles[0].state_id = 2;
+        assert!(
+            stair
+                .clone()
+                .bind_landing(0, &motion, 0, 0, 0, [0., 0., 100.], None)
+                .is_err()
+        );
+        // Partial coverage must still validate the uncovered edge.
+        motion.obstacles[0].state_id = 0;
+        motion.obstacles[0].polygon.points[1].0 = 50;
+        motion.obstacles[0].polygon.points[2].0 = 50;
+        assert!(
+            stair
+                .clone()
+                .bind_landing(0, &motion, 0, 0, 0, [0., 0., 100.], None)
+                .is_err()
+        );
+    }
+
+    #[test]
     fn clipped_landing_collision_retains_valid_subpixel_edges() {
         let (collision, support): (Vec<[f32; 2]>, Vec<[f32; 2]>) =
             serde_json::from_slice(include_bytes!(concat!(
@@ -649,6 +713,35 @@ impl BoundPhysicalStair {
         }) else {
             return Err("landing receiver does not reach its physical door".into());
         };
+        let collisions = motion
+            .obstacles
+            .iter()
+            .map(|obstacle| {
+                obstacle.validate_precise_polygon()?;
+                if obstacle.precise_polygon.is_empty() {
+                    unproject(&obstacle.polygon.points)
+                } else {
+                    polygon(
+                        &obstacle
+                            .precise_polygon
+                            .iter()
+                            .map(|&[x, y]| [x as f32, ((y + a * x + c) / (1.0 - b)) as f32])
+                            .collect::<Vec<_>>(),
+                    )
+                }
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let permanent_collision = collisions
+            .iter()
+            .zip(&motion.obstacles)
+            .filter(|(_, obstacle)| obstacle.state_id == 0)
+            .map(|(collision, _)| {
+                collision.map_coords(|p| geo::Coord {
+                    x: f64::from(p.x),
+                    y: f64::from(p.y),
+                })
+            })
+            .collect::<Vec<_>>();
         let mut door_seam = false;
         for stair_edge in stair.exterior().lines() {
             for landing_edge in support.exterior().lines() {
@@ -657,18 +750,38 @@ impl BoundPhysicalStair {
                     if intersection.start == intersection.end {
                         continue;
                     }
-                    for p in [intersection.start, intersection.end] {
-                        let difference = (sa - a) * p.x + (sb - b) * p.y + sc - c;
-                        if difference.abs() > 0.001 {
-                            return Err(
-                                "landing and stair heights disagree along their shared edge".into(),
-                            );
+                    // Permanent holes cannot expose a height mismatch. Keep
+                    // their collision, but check only exposed edge portions.
+                    // Already matching seams retain their geometry: rounded
+                    // collision slivers are handled separately below.
+                    // Switchable blockers must retain valid underlying support.
+                    let mut contacts = geo::MultiLineString(vec![LineString::from(vec![
+                        intersection.start,
+                        intersection.end,
+                    ])]);
+                    if [intersection.start, intersection.end]
+                        .iter()
+                        .any(|p| difference(p.x, p.y).abs() > 0.001)
+                    {
+                        for collision in &permanent_collision {
+                            contacts = collision.clip(&contacts, true);
                         }
                     }
-                    door_seam |= point_edge_distance(
-                        [f64::from(physical.middle[0]), f64::from(physical.middle[1])],
-                        intersection,
-                    ) <= tolerance;
+                    for intersection in contacts.iter().flat_map(|line| line.lines()) {
+                        for p in [intersection.start, intersection.end] {
+                            let difference = (sa - a) * p.x + (sb - b) * p.y + sc - c;
+                            if difference.abs() > 0.001 {
+                                return Err(format!(
+                                    "landing and stair heights disagree along their shared edge at ({}, {}): difference {}",
+                                    p.x, p.y, difference,
+                                ));
+                            }
+                        }
+                        door_seam |= point_edge_distance(
+                            [f64::from(physical.middle[0]), f64::from(physical.middle[1])],
+                            intersection,
+                        ) <= tolerance;
+                    }
                 }
             }
         }
@@ -678,26 +791,14 @@ impl BoundPhysicalStair {
         let ring =
             |line: &LineString<f32>| line.points().map(|p| [p.x(), p.y()]).collect::<Vec<_>>();
         let mut obstacles = Vec::new();
-        for (index, obstacle) in motion.obstacles.iter().enumerate() {
-            obstacle.validate_precise_polygon()?;
-            let collision = if obstacle.precise_polygon.is_empty() {
-                unproject(&obstacle.polygon.points)?
-            } else {
-                polygon(
-                    &obstacle
-                        .precise_polygon
-                        .iter()
-                        .map(|&[x, y]| [x as f32, ((y + a * x + c) / (1.0 - b)) as f32])
-                        .collect::<Vec<_>>(),
-                )?
-            };
-            for clipped in landing_collision_intersection(&collision, support) {
+        for (index, (obstacle, collision)) in motion.obstacles.iter().zip(&collisions).enumerate() {
+            for clipped in landing_collision_intersection(collision, support) {
                 let rounded = clipped.map_coords(|point| geo::Coord {
                     x: point.x as f32,
                     y: point.y as f32,
                 });
                 if !obstacle.precise_polygon.is_empty()
-                    && rounded_seam_sliver(&rounded, &collision, &stair, tolerance)
+                    && rounded_seam_sliver(&rounded, collision, &stair, tolerance)
                 {
                     continue;
                 }
