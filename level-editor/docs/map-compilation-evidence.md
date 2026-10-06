@@ -8412,3 +8412,23 @@ are still required.
 The stricter upper-castle fixture
 `nottingham-castle-upper-stair-neighbour-placements-UBfIdR`, excluding background
 terrain, also passes 352 routes and 96 missing/raised-neighbour cases.
+
+### Nottingham north-wall stair publication
+
+`upper-castle-stair-contacts-LhyR80` corrects the north stair and independently
+owned north curtain landing. `nottingham-north-wall-connected-LPAX0h` passes all
+92 stair routes and ten control apply/reset checks.
+`nottingham-north-wall-stair-neighbour-placements-yHklUd` passes 672 routes across
+two copies, four rotations and two elevations, with 32 missing/raised wall cases
+rejected. The north fixture uses larger bounds so a rotated copy remains inside
+the export frame; no production placement or connection tolerance is changed.
+
+Flight support is 1,055/1,055 mesh samples. The wall contact has 184/205 hits
+and a maximum discrepancy of 0.108970 game units, recorded as a draft warning.
+Publication backup: `nottingham-north-wall-publication-20261006`. Fresh exports
+match all sixteen north/southwest placement descriptors and the combined map
+candidate `nottingham-both-wall-stairs-YKN43y`; all ten scenes reopen.
+The combined candidate passes all 92 actor stair routes and ten controls.
+Audit `lift-anchor-support-TFhGth` reports 17/53 unsupported stairs, 1/8 ladders
+and 9/9 walls. Nottingham now has zero unsupported stair definitions locally;
+this is not a claim of complete placement or rendered parity.

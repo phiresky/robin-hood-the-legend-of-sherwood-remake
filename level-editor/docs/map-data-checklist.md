@@ -169,8 +169,8 @@ complete-sprite and rendered verification remain open.
 All ten scenes reopen after publication, and full Derby passes all five control
 apply/reset checks. All ten Derby stair definitions now pass local floor-anchor
 support checks after the upper-west publication below.
-A library-wide local-anchor audit finds unsupported anchors in 18 of 53 authored stair
-definitions: Derby 0/10, Leicester 0/8, Lincoln 0/6, Nottingham 1/12,
+A library-wide local-anchor audit finds unsupported anchors in 17 of 53 authored stair
+definitions: Derby 0/10, Leicester 0/8, Lincoln 0/6, Nottingham 0/12,
 Sherwood 1/1 and York 16/16. All audited floors are planar. This checks local
 definitions, not placed connectivity or actual route failures; corrections and
 moved/rotated native traversal checks remain necessary across these assets.
@@ -185,6 +185,15 @@ terrain contact samples have mesh support. The upper wall contact has only
 an explicit visible-mesh limitation, not visual parity. The upper-castle assembly
 also passes a stricter isolated recheck without background source terrain:
 352 routes and 96 missing/raised neighbour rejections.
+
+Nottingham's north-wall stair and upper wall contact are also published. The
+candidate passes 92 full-map stair routes and ten controls. Independent copies
+pass 672 routes at four rotations and two elevations; 32 missing/raised wall
+cases reject. All 1,055 flight samples have mesh support; the wall contact has
+184/205 hits with discrepancies below 0.109 game units. Fresh published exports
+match both wall stairs' sixteen tested placement files and the combined map
+candidate; all ten scenes reopen. The combined map also passes all 92 stair routes
+and ten control apply/reset checks.
 
 Nottingham's south stair house and its terrain-owned lower contact are published.
 Independent copies pass 32 routes at four rotations and two elevations, with

@@ -363,7 +363,7 @@
       "model": "3d-assets/nottingham/nottingham-north-curtain-wall/model.glb",
       "model_sha256": "8b57af7cf8235e6c4a008ca4635f07fee3bc53df1423e7f9dbfbcbba0ad687da",
       "descriptor": "3d-assets/nottingham/nottingham-north-curtain-wall/asset.json",
-      "descriptor_sha256": "e41b9c11847ac4762f94f6186d99b74b001ace49fbd93bf9400ca306f67ebda5",
+      "descriptor_sha256": "a3861728e4c9f20a9fe48676317c24f6b1bf226de1a276121fd8eea68efd867e",
       "id": "nottingham-north-curtain-wall"
     },
     {
@@ -426,7 +426,7 @@
       "model": "3d-assets/nottingham/nottingham-north-wall-stair/model.glb",
       "model_sha256": "d8fa182db82ead5424ee1bf16cb7085106bd0f3462f221bd3ec5319bc87ae1b6",
       "descriptor": "3d-assets/nottingham/nottingham-north-wall-stair/asset.json",
-      "descriptor_sha256": "696329d665e4aca31b37a93316d62afce759bd8dd9daa9a33a653e66b44403ce",
+      "descriptor_sha256": "71e533656d90e410bc286da800c8dba07a7e40758df534c94b8c95029e5c459e",
       "id": "nottingham-north-wall-stair"
     },
     {
