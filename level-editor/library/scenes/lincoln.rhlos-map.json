@@ -16,7 +16,7 @@
       "model": "3d-assets/lincoln/lincoln-terrain/model.glb",
       "model_sha256": "cd26d3bc86d76ebe3ee80433aecc85d54a19c1cb4b176e1d5adcabc616559e15",
       "descriptor": "3d-assets/lincoln/lincoln-terrain/asset.json",
-      "descriptor_sha256": "bc92a4c2ba7be465fda5eda3b80067e7df9aeffa8ca09c8ec95469e91b284af3",
+      "descriptor_sha256": "51eb37ad19990545a40260cddc932c69278f277ece1a5948bfb3b44550c02f0a",
       "resources": []
     }
   ],
@@ -81,7 +81,7 @@
       "model": "3d-assets/lincoln/lincoln-castle-hill-inner-bailey-plateau/model.glb",
       "model_sha256": "a682cc4227506a78df3b7ff3bf9ac7a2429bb326ab522d1a78c5d7cb4c6e4d31",
       "descriptor": "3d-assets/lincoln/lincoln-castle-hill-inner-bailey-plateau/asset.json",
-      "descriptor_sha256": "fabfde5e0a89ec181e604f75c74c30a499901cff2e833f1a9cbe051338224cde",
+      "descriptor_sha256": "930ed0626e0f12568715c58caf01c646b020d1f7ecb2c3e4c12a702ef8d44446",
       "id": "lincoln-castle-hill-inner-bailey-plateau"
     },
     {
@@ -791,7 +791,7 @@
       "model": "3d-assets/lincoln/lincoln-south-wall-stair/model.glb",
       "model_sha256": "02fcdc1e76f43816b4717cb7fc3b38fcc6958364448bc4e8842a8b929ac06abf",
       "descriptor": "3d-assets/lincoln/lincoln-south-wall-stair/asset.json",
-      "descriptor_sha256": "0fc3e1302ea2cbd2f4ef097bf4ff585432023b1cc6c0d050d67fa5e5d6bc5858",
+      "descriptor_sha256": "c0e382619aa663eb84dfca125cc43addee8bd1174b2bb6053bca28331aae5897",
       "id": "lincoln-south-wall-stair"
     },
     {

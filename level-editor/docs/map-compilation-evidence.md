@@ -4,6 +4,40 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Lincoln south-wall stair and plateau contact (2026-10-06)
+
+The lower approach intersects the landing plane 3.319 units from its authored
+midpoint. The upper landing's nearest edge needs a 3.428-unit search bound.
+Review stage `local-stair-seams-1ucLQc` uses limits 3.32 and 3.43, local sloped
+landing edges and an external lower entrance, with new-drop ground height
+220.001. All sixteen directed routes pass at four rotations and elevations
+0/40 in `local-stair-placements-X9p0x6`; eight raised approaches reject.
+Mesh review finds 588/591 flight samples supported, maximum uncovered margin
+0.072 units. Upper landing-edge discrepancies reach 1.786 units. Final stair
+stage `local-stair-seams-DBLgSH` adds the explicit draft warning without changing
+that tested geometry.
+
+Full Lincoln initially fails both directions through the lower entrance
+(`lincoln-south-stair-level-pHuqLv`): the terrain receiver does not reach the
+physical door. `stage-lincoln-south-stair-contact.mjs` corrects the corresponding
+boundary in `lincoln-terrain/ground-section-1-0` and its independent blocker in
+the inner-bailey plateau asset. Endpoint shifts are 0.688 and 2.361 units. The
+pinned plateau mesh supports 201/205 exact samples; four end-strip samples lie
+at most 0.373 units outside it. An explicit 0.375-unit draft authoring bound and
+warning record this discrepancy, without relaxing runtime connection checks.
+Combined stage is `lincoln-south-stair-contact-A9LQka`.
+
+Full Lincoln `lincoln-south-stair-level-AXhdI8` passes native construction, all
+sixteen stair routes and eleven control apply/reset checks. Publication backup
+is `lincoln-south-stair-publication-20261006`, updating all three asset definitions
+and the Lincoln scene pins. Published placements `local-stair-placements-ColpKP`
+match tested geometry except for the added warning; full Lincoln exactly equals
+the tested combined descriptor. All ten scenes reopen. Anchor audit
+`lift-anchor-support-mrRESk` now finds 31/53 unsupported stair definitions,
+including 3/6 in Lincoln; ladders and walls remain 1/8 and 9/9. This is still
+initial-state traversal evidence, not complete rendered or arbitrary-placement
+parity. No compiler or runtime code changed.
+
 ## Lincoln west slate tower stair seams (2026-10-06)
 
 Both tower flights now have corrected local floor/landing seams, with the lower
