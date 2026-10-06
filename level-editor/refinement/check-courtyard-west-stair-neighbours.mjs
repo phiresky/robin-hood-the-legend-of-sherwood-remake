@@ -20,6 +20,7 @@ const map = stair.startsWith("york-") ? "york" : "nottingham";
 const source = await readStoredMap(`library/scenes/${map}.rhlos-map.json`, "library");
 const assets = await pinnedDescriptors("library", source.assetSources, source.sceneAssets);
 const neighbours = {
+  "york-outer-southeast-wall-stair": [],
   "york-market-southwest-connecting-stairs": ["york-west-town-raised-terrain"],
   "york-riverbank-stone-landing-steps": ["york-southeast-riverside-raised-terrace"],
   "york-riverbank-wooden-landing-steps": [
@@ -58,15 +59,16 @@ for (const id of ids) {
 const liftCount = assets.get(stair).gameplay.lifts.length;
 const northWall = stair === "nottingham-north-wall-stair";
 const market = stair === "york-market-southwest-connecting-stairs";
+const outerSoutheast = stair === "york-outer-southeast-wall-stair";
 const southernRiverside = stair === "york-east-riverside-southern-wall-stair";
 const stoneRiverside = stair === "york-riverbank-stone-landing-steps";
 assert.ok(!physicalTerrace || southernRiverside);
 const riverside =
   stair === "york-east-riverside-curtain-wall" || southernRiverside || stoneRiverside;
 const terrainHeight = southernRiverside ? 50.001003 : stoneRiverside ? 0 : riverside ? 90.00101 : 0;
-const size = northWall || riverside || market ? [7000, 6500] : [5000, 4500];
+const size = northWall || riverside || market || outerSoutheast ? [7000, 6500] : [5000, 4500];
 const centers =
-  northWall || riverside || market
+  northWall || riverside || market || outerSoutheast
     ? [
         [2200, 2500],
         [4500, 3500],
@@ -91,7 +93,8 @@ for (const height of [0, 40])
       assetSources: source.assetSources.filter((asset) => ids.includes(asset.id)),
       ...(["nottingham-southwest-wall-stair", "nottingham-north-wall-stair"].includes(stair) ||
       (riverside && !physicalTerrace) ||
-      market
+      market ||
+      outerSoutheast
         ? { terrain: createTerrainGrid([0, 0, ...size], 1000, height + terrainHeight) }
         : {}),
     };
@@ -137,7 +140,7 @@ for (const height of [0, 40])
     await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
     await fs.writeFile(`${output}/${file}.scene.json`, JSON.stringify(document));
     results.push({ file, map: file, warnings: compiled.warnings });
-    if ((riverside && !physicalTerrace) || market)
+    if ((riverside && !physicalTerrace) || market || outerSoutheast)
       for (const kind of ["missing", "raised"]) {
         const changed = structuredClone(document);
         if (kind === "missing") delete changed.terrain;

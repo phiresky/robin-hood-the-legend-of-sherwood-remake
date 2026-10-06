@@ -16,7 +16,7 @@
       "model": "3d-assets/york/york-terrain/model.glb",
       "model_sha256": "a54d425c2a44a2836e9e1c615a6a5daf92e631c57b53452e0de56e4e877d3965",
       "descriptor": "3d-assets/york/york-terrain/asset.json",
-      "descriptor_sha256": "0a421492914461b43d76634e0a4b9664ce1ec02142db5bbf3e8b55ad70d53c61"
+      "descriptor_sha256": "1d768ea983c95cb4d707ede5282d8d65d77184175cd0259fd4fd11a7853ef0c6"
     }
   ],
   "assetSources": [
@@ -857,7 +857,7 @@
       "model": "3d-assets/york/york-outer-southeast-wall-stair/model.glb",
       "model_sha256": "7dca6897205bfc197e4972df19f3c6bbb6744439c9845d3c7a0ec7a97ffa5317",
       "descriptor": "3d-assets/york/york-outer-southeast-wall-stair/asset.json",
-      "descriptor_sha256": "01b7624d86147fcf1604a2dec32b003fab8f83ac01b41bbcde201bbeb88f3bb7",
+      "descriptor_sha256": "715540a68b22b2679782ac130202165ab8e2f69a5e07704037b8bac939b93234",
       "id": "york-outer-southeast-wall-stair"
     },
     {

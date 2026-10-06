@@ -8787,3 +8787,42 @@ uncovered edge distance of 0.027388 units and sampled height residuals between
 -0.200 and -0.157 units. Synthetic landing fixture `external-stair-landings-tMnNQm`
 passes 32 native actor routes and rejects 32 invalid lower landings. Actual
 neighbour/full-map checks and publication remain outstanding.
+
+### Southeast wall stair: physical connectivity and terrain contact
+
+The actual placed-asset fixture initially fails at 90 degrees: grid rounding
+pinches the projected flight into two regions touching at one point. Its physical
+floor is connected. The compiler now retries disconnected stair assembly using
+validated physical navigation, only when subtracting permanent physical collision
+still leaves one connected floor. The emitted physical area retains its own
+collision identities. Genuine collision-split stairs keep their previous rejection
+and best-effort behavior. Captured fixture `near-edge-on-placed-stair.json` fails
+with recovery disabled and passes with it enabled.
+
+`...outer-southeast-wall-stair-neighbour-placements-my4Mc1` passes 32 native
+routes at four rotations and two elevations, and rejects 16 missing/raised terrain
+cases. Full York initially retains two lower-entrance failures in
+`york-southeast-stair-5S4CFk`: the terrain-owned boundary stops short of the
+corrected stair foot. `stage-york-southeast-ground-contact.mjs` aligns that edge
+from `[2466,2284]–[2525,2297]` to approximately
+`[2466.109002,2283.416435]–[2525.466293,2294.503614]`, bounded by three units.
+The terrain model is a camera-facing backdrop, not a physical terrain mesh.
+Its 205 sampled coverage checks only confirm artwork coverage; the publication
+warning explicitly retains the unverified rendered/physical contact limitation.
+Candidate `york-southeast-ground-contact-WdCTsM` passes 130 full-York stair routes
+and all six control apply/reset checks.
+
+All 422 shared tests pass with one unrelated skip, as do focused lint, app and
+pipeline typechecks, formatting and the editor production build. Reviewed stage
+`york-southeast-reviewed-Ep8hIQ` publishes the stair and terrain definitions with
+backup `york-southeast-stair-publication-20261006`; only York scene pins change.
+All eight published placement exports in `...-qFbXZU` match the native-tested
+`...-my4Mc1` geometry, excluding warning text. Audit `lift-anchor-support-CoaOXb`
+finds 10/53 unsupported stair definitions (York 9/16, Sherwood 1/1), 1/8 ladders
+and 9/9 walls. This remains short of arbitrary-placement or rendered parity.
+
+Fresh publication batch `york-southeast-published-5c5ZG8` reopens all ten scenes.
+York's serialized geometry matches `york-southeast-ground-contact-WdCTsM`, and
+the other nine maps match the previously native-tested
+`contour-retry-scene-batch-sbV9Zi`, excluding warning text. Comparison uses actual
+JSON exports, including their normalization of negative zero.

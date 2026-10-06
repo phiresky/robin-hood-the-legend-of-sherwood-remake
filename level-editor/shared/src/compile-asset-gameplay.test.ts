@@ -44,6 +44,25 @@ import {
 } from "../test-fixtures/asset-gameplay.ts";
 
 import { heightPlane, planeHeight } from "./gameplay-plane.ts";
+import { parseLevel3D, parseProjectionAssetDescriptor } from "./validation.ts";
+import nearEdgeOnStair from "../test-fixtures/near-edge-on-placed-stair.json" with { type: "json" };
+
+test("a connected physical stair survives a pinched screen projection in copied placements", () => {
+  const document = parseLevel3D(nearEdgeOnStair.document);
+  assert.ok(document.size);
+  const asset = parseProjectionAssetDescriptor(nearEdgeOnStair.asset);
+  const compiled = compileAssetGameplay(document, new Map([[asset.id, asset]]), [
+    0,
+    0,
+    ...document.size,
+  ]);
+  assert.equal(compiled.lifts?.length, 2);
+  for (const lift of compiled.lifts!) {
+    assert.ok(lift.physical_navigation);
+    assert.equal(lift.physical_navigation.doors.length, 2);
+    assert.equal(lift.physical_navigation.obstacles.length, 0);
+  }
+});
 
 test("best-effort collapsed mask boundaries retain independent rules and control bindings", () => {
   for (const obstacles of [true, false]) {

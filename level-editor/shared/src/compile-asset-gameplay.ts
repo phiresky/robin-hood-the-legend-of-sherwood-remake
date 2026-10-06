@@ -1619,16 +1619,103 @@ function compileAssetGameplayAttempt(
       });
     }
   }
+  const physicalStairs = new Map<string, ReturnType<typeof compilePhysicalStairRegion>>();
+  const compilePhysicalLift = (lift: (typeof lifts)[number]) => {
+    const floor = surfaces.filter((surface) => surface.lift === lift.id);
+    const worldRing = (points: Point[], plane: HeightPlane): Vec3[] =>
+      points.map(([x, y]) => [x, y, planeHeight(plane, [x, y])]);
+    return compilePhysicalStairRegion({
+      frame: [0, 0, bounds[2], bounds[3]],
+      surfaces: floor.map((surface) => ({
+        polygon: worldRing(surface.worldPolygon, surface.worldPlane),
+        holes: surface.worldHoles.map((hole) => worldRing(hole, surface.worldPlane)),
+      })),
+      doors: doors
+        .filter((door) => door.lift === lift.id)
+        .map((door) => ({
+          inside: door.inside,
+          middle: door.worldMiddle,
+          outside: door.outside,
+        })),
+      solids: solidGeometry.map((solid) => ({
+        owner: solid.owner,
+        polygon: solid.footprint,
+        holes: [],
+        top: solid.top,
+        bottom: solid.bottom,
+      })),
+      clearances: movementClearances.map((surface) => ({
+        owner: surface.owner,
+        polygon: surface.worldPolygon,
+        holes: surface.worldHoles,
+        plane: surface.worldPlane,
+      })),
+      blockers: [
+        ...transitionBlockers.map((blocker) => ({
+          ...blocker,
+          plane: blocker.worldPlane,
+          polygon: blocker.worldPolygon,
+          holes: blocker.worldHoles,
+        })),
+        ...movementBlockers.map((blocker) => ({
+          transition: blocker.owner,
+          fixed: true,
+          applied: false,
+          plane: blocker.worldPlane,
+          polygon: blocker.worldPolygon,
+          holes: blocker.worldHoles,
+        })),
+      ],
+    });
+  };
   let navigationRegions: ReturnType<typeof assembleNavigationRegions>;
-  try {
-    navigationRegions = assembleNavigationRegions(navigationPieces, warnings);
-  } catch (error) {
-    if (!(error instanceof DisconnectedLiftRegion) || !options.bestEffort) throw error;
-    const segments = [...assembledLifts.identities]
-      .filter(([, lift]) => lift === error.lift)
-      .map(([id]) => id);
-    if (!segments.length) throw error;
-    throw new UnavailableLiftPlacement(error.lift, error.message, false, segments);
+  for (;;) {
+    try {
+      navigationRegions = assembleNavigationRegions(navigationPieces, warnings);
+      break;
+    } catch (error) {
+      if (!(error instanceof DisconnectedLiftRegion)) throw error;
+      const lift = lifts.find((lift) => lift.id === error.lift && lift.type === 1);
+      let physical: ReturnType<typeof compilePhysicalStairRegion> | undefined;
+      if (lift) {
+        try {
+          const candidate = compilePhysicalLift(lift);
+          const permanent = candidate.navigation.obstacles.filter(
+            (obstacle) => candidate.area.obstacles[obstacle.motion_obstacle]!.state_id === 0,
+          );
+          const free = polygonClipping.difference(
+            [candidate.navigation.boundary],
+            permanent.map((obstacle) => [obstacle.polygon]),
+          );
+          // A real collision cut must still disconnect a stair. Only a valid,
+          // connected physical floor can replace a pinched screen projection.
+          if (free.length === 1) physical = candidate;
+        } catch (physicalError) {
+          warnings.push(
+            `Lift ${error.lift}: physical connectivity unavailable: ${String(physicalError)}`,
+          );
+          physical = undefined;
+        }
+      }
+      if (physical) {
+        physicalStairs.set(error.lift, physical);
+        const members = navigationPieces.filter((piece) => piece.lift === error.lift);
+        for (let i = navigationPieces.length - 1; i >= 0; i--)
+          if (navigationPieces[i]!.lift === error.lift) navigationPieces.splice(i, 1);
+        navigationPieces.push({
+          ...members[0]!,
+          polygon: physical.area.polygon.points,
+          blockers: [],
+        });
+        continue;
+      }
+      if (!options.bestEffort) throw error;
+      const segments = [...assembledLifts.identities]
+        .filter(([, lift]) => lift === error.lift)
+        .map(([id]) => id);
+      if (!segments.length) throw error;
+      throw new UnavailableLiftPlacement(error.lift, error.message, false, segments);
+    }
   }
   for (const region of navigationRegions)
     if (region.pieces.every((p) => p.navigationRegion?.startsWith("wall-spline-"))) {
@@ -1664,11 +1751,8 @@ function compileAssetGameplayAttempt(
       },
     ];
   });
-  const physicalStairs = new Map<string, ReturnType<typeof compilePhysicalStairRegion>>();
   for (const lift of lifts.filter((lift) => lift.type === 1 || lift.type === 2)) {
-    const floor = surfaces.filter((surface) => surface.lift === lift.id);
-    const worldRing = (points: Point[], plane: HeightPlane): Vec3[] =>
-      points.map(([x, y]) => [x, y, planeHeight(plane, [x, y])]);
+    if (physicalStairs.has(lift.id)) continue;
     try {
       if (lift.type === 2)
         for (const door of doors.filter((door) => door.lift === lift.id)) {
@@ -1717,52 +1801,7 @@ function compileAssetGameplayAttempt(
           if (!supported && !receiverSupported)
             throw new Error(`Landing does not reach physical ladder door ${door.name}`);
         }
-      physicalStairs.set(
-        lift.id,
-        compilePhysicalStairRegion({
-          frame: [0, 0, bounds[2], bounds[3]],
-          surfaces: floor.map((surface) => ({
-            polygon: worldRing(surface.worldPolygon, surface.worldPlane),
-            holes: surface.worldHoles.map((hole) => worldRing(hole, surface.worldPlane)),
-          })),
-          doors: doors
-            .filter((door) => door.lift === lift.id)
-            .map((door) => ({
-              inside: door.inside,
-              middle: door.worldMiddle,
-              outside: door.outside,
-            })),
-          solids: solidGeometry.map((solid) => ({
-            owner: solid.owner,
-            polygon: solid.footprint,
-            holes: [],
-            top: solid.top,
-            bottom: solid.bottom,
-          })),
-          clearances: movementClearances.map((surface) => ({
-            owner: surface.owner,
-            polygon: surface.worldPolygon,
-            holes: surface.worldHoles,
-            plane: surface.worldPlane,
-          })),
-          blockers: [
-            ...transitionBlockers.map((blocker) => ({
-              ...blocker,
-              plane: blocker.worldPlane,
-              polygon: blocker.worldPolygon,
-              holes: blocker.worldHoles,
-            })),
-            ...movementBlockers.map((blocker) => ({
-              transition: blocker.owner,
-              fixed: true,
-              applied: false,
-              plane: blocker.worldPlane,
-              polygon: blocker.worldPolygon,
-              holes: blocker.worldHoles,
-            })),
-          ],
-        }),
-      );
+      physicalStairs.set(lift.id, compilePhysicalLift(lift));
     } catch (error) {
       warnings.push(
         `Lift ${lift.id}: physical navigation unavailable; retaining projected navigation: ${error instanceof Error ? error.message : String(error)}`,

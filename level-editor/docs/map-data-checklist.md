@@ -48,6 +48,19 @@ contour failures retry in local coordinates without quantization; waiting for
 the clipping library's sweep limit still makes some exports slow. Rendered
 integration and broader asset coverage remain open.
 
+York's outer southeast stair and terrain-owned lower contact are also published.
+A connected physical stair can now survive a pinched integer screen projection;
+permanent collision that actually divides its floor still rejects. The stair
+passes 32 moved actor routes and rejects 16 missing/raised authored-terrain cases;
+all eight published placement exports match the tested geometry. Full York passes
+130 stair routes and six control checks after correcting its separate terrain
+contact. The flight has a 0.028-unit sampled edge discrepancy and up to 0.200 units
+of mesh height residual. The terrain asset is a backdrop: its sampled image
+coverage is not proof of a physical terrain mesh, and rendered contact remains
+explicitly unverified.
+All ten scenes reopen: fresh York geometry matches the tested candidate, and the
+other nine maps retain their previously tested serialized geometry.
+
 Latest runtime checks retain exact landing contours through binding and foot
 support instead of reducing them to single precision. The southwest turret is
 now published after all sixteen rotated/elevated routes pass. Obstacle recovery
@@ -206,9 +219,9 @@ complete-sprite and rendered verification remain open.
 All ten scenes reopen after publication, and full Derby passes all five control
 apply/reset checks. All ten Derby stair definitions now pass local floor-anchor
 support checks after the upper-west publication below.
-A library-wide local-anchor audit finds unsupported anchors in 11 of 53 authored stair
+A library-wide local-anchor audit finds unsupported anchors in 10 of 53 authored stair
 definitions: Derby 0/10, Leicester 0/8, Lincoln 0/6, Nottingham 0/12,
-Sherwood 1/1 and York 10/16. All audited floors are planar. This checks local
+Sherwood 1/1 and York 9/16. All audited floors are planar. This checks local
 definitions, not placed connectivity or actual route failures; corrections and
 moved/rotated native traversal checks remain necessary across these assets.
 
