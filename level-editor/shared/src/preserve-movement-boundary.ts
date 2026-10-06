@@ -3,7 +3,10 @@ import type { Point } from "./level.ts";
 import { fixedPolygonBoolean } from "./fixed-polygon-boolean.ts";
 import { normalizeGeneratedMotion } from "./normalize-generated-motion.ts";
 import { simplifyMotionRing, quantizeGeneratedMotionPolygon } from "./motion-quantization.ts";
-import { partitionMovementObstacles } from "./partition-movement-obstacles.ts";
+import {
+  partitionMovementObstacles,
+  partitionPreciseMovementObstacles,
+} from "./partition-movement-obstacles.ts";
 import { assembleMovementContour } from "./assemble-movement-contour.ts";
 
 /** Motion obstacles may cross the outer boundary. Keep both contours so their
@@ -67,15 +70,29 @@ export function preserveMovementBoundary(
     });
     // Keep each complete source contour alongside its grid obstacle. Emission
     // verifies identical rounding before binding precise physical landings.
-    // Holed contours need a matching partition and retain grid collision here.
+    // Holed contours need their precise edges restored after partitioning.
     preciseBlockers.push(
       ...overlapping.filter((region) => region.length === 1).map((region) => region[0]!),
     );
-    for (const region of overlapping.flatMap((contour) =>
-      normalizeGeneratedMotion([contour], "Preserved movement obstacle", warnings),
-    )) {
-      if (!fixedPolygonBoolean("intersection", [outer], [region]).length) continue;
-      blockers.push(...partitionMovementObstacles(region));
+    for (const contour of overlapping) {
+      const normalized = normalizeGeneratedMotion(
+        [contour],
+        "Preserved movement obstacle",
+        warnings,
+      );
+      const precise =
+        contour.length > 1 && contour.flat().some((p) => p.some((v) => !Number.isInteger(v)))
+          ? partitionPreciseMovementObstacles(contour, normalized)
+          : undefined;
+      if (precise) {
+        blockers.push(...precise.grid);
+        preciseBlockers.push(...precise.exact);
+        continue;
+      }
+      for (const region of normalized) {
+        if (!fixedPolygonBoolean("intersection", [outer], [region]).length) continue;
+        blockers.push(...partitionMovementObstacles(region));
+      }
     }
   }
   return { polygon: outer, blockers, preciseBlockers };

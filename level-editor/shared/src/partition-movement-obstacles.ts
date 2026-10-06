@@ -1,7 +1,7 @@
 import earcut, { flatten } from "earcut";
 import polygonClipping, { type Polygon } from "polygon-clipping";
 import type { Point } from "./level.ts";
-import { simplifyMotionRing } from "./motion-quantization.ts";
+import { simplifyMotionRing, quantizeGeneratedMotionPolygon } from "./motion-quantization.ts";
 import { fixedPolygonBoolean } from "./fixed-polygon-boolean.ts";
 
 function coverageError(region: Polygon, pieces: Point[][]): number {
@@ -20,6 +20,37 @@ function coverageError(region: Polygon, pieces: Point[][]): number {
       }, 0),
     0,
   );
+}
+
+/** Partition before snapping so each obstacle retains its exact outer and hole
+ * edges. Merge triangles that collapse on the movement grid into a neighbour;
+ * their authored collision must not disappear merely because it is subpixel. */
+export function partitionPreciseMovementObstacles(region: Polygon, rounded: Polygon[]) {
+  region = region.map((ring) => simplifyMotionRing(ring, 2 / 1048576));
+  const exact = partitionMovementObstacles(region, true);
+  const quantize = (ring: Point[]) =>
+    quantizeGeneratedMotionPolygon([ring], Math.round, "Precise obstacle partition", []);
+  for (;;) {
+    const collapsed = exact.findIndex((ring) => !quantize(ring));
+    if (collapsed === -1) break;
+    let merged = false;
+    for (let i = 0; i < exact.length; i++) {
+      if (i === collapsed) continue;
+      const union = polygonClipping.union([exact[collapsed]!], [exact[i]!]);
+      if (union.length !== 1 || union[0]!.length !== 1) continue;
+      exact[i] = simplifyMotionRing(union[0]![0]!);
+      exact.splice(collapsed, 1);
+      merged = true;
+      break;
+    }
+    if (!merged) return undefined;
+  }
+  const grid = exact.map((ring) => simplifyMotionRing(quantize(ring)![0]!));
+  // Changing the partition must not change any integer-grid collision.
+  if (polygonClipping.xor(polygonClipping.union(grid.map((ring) => [ring])), rounded).length)
+    return undefined;
+  if (coverageError(region, exact) > 0.001) return undefined;
+  return { exact, grid };
 }
 
 /** Native obstacles have one ring. Recovery may add temporary cuts before final union and snapping. */

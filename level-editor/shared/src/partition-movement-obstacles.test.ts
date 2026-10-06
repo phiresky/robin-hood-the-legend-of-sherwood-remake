@@ -1,9 +1,51 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import type { Polygon } from "polygon-clipping";
-import { partitionMovementObstacles } from "./partition-movement-obstacles.ts";
+import {
+  partitionMovementObstacles,
+  partitionPreciseMovementObstacles,
+} from "./partition-movement-obstacles.ts";
+import { normalizeGeneratedMotion } from "./normalize-generated-motion.ts";
+import { quantizeGeneratedMotionPolygon } from "./motion-quantization.ts";
 import { fixedPolygonBoolean } from "./fixed-polygon-boolean.ts";
 import polygonClipping from "polygon-clipping";
+
+test("terrace collision retains exact partitions around its stair landing", () => {
+  const region: Polygon = JSON.parse(
+    readFileSync(
+      new URL("../test-fixtures/partitioned-terrace-collision.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  const rounded = normalizeGeneratedMotion([region], "terrace", []);
+  const result = partitionPreciseMovementObstacles(region, rounded);
+  assert.ok(result);
+  assert.equal(result.exact.length, 14);
+  assert.deepEqual(
+    polygonClipping.xor(polygonClipping.union(result.grid.map((p) => [p])), rounded),
+    [],
+  );
+  for (const [i, exact] of result.exact.entries()) {
+    const grid = quantizeGeneratedMotionPolygon([exact], Math.round, "partition", []);
+    assert.ok(grid);
+    assert.deepEqual(polygonClipping.xor(grid, [result.grid[i]!]), []);
+  }
+  // A point inside the authored landing must remain clear of every triangle.
+  const landing: Polygon = [
+    [
+      [3425, 2843.5],
+      [3425.01, 2843.5],
+      [3425.01, 2843.51],
+      [3425, 2843.51],
+    ],
+  ];
+  assert.deepEqual(polygonClipping.intersection(region, landing), []);
+  assert.deepEqual(
+    polygonClipping.intersection(polygonClipping.union(result.exact.map((p) => [p])), landing),
+    [],
+  );
+});
 
 test("integer obstacle islands retain exact coverage across shared triangulation edges", () => {
   const region: Polygon = [

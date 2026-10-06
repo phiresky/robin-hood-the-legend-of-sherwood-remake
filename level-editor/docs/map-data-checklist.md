@@ -16,10 +16,12 @@ the compiler and native validator while retaining their exact contours. The
 southern York stair candidate passes 32 directed actor routes across eight
 rotated/elevated placements on authored terrain. Giving the separate terrace and
 wooden walkway their own height-aware floors restores all 130 full-York stair
-routes and six controls. With the actual terrace moved alongside the southern
-stair, only 24/32 routes pass: the 37-degree lower contacts still stall. The
-wooden stair's own physical seam correction also fails, so these asset
-corrections remain unpublished.
+routes and six controls. Partitioning holed collision before rounding now
+preserves the exact stair-contact edges: all 32 routes pass with the actual
+terrace moved alongside the southern stair, and 32 missing/raised terrace cases
+reject. The wooden stair's own physical seam correction still fails, and the
+new terrace/walkway floors need broader mesh and placement review, so these
+asset corrections remain unpublished.
 
 Latest runtime checks retain exact landing contours through binding and foot
 support instead of reducing them to single precision. The southwest turret is

@@ -8601,3 +8601,31 @@ wooden-stair routes (128/130 pass). Mesh review finds only 450/862 floor samples
 supported and an uncovered-edge distance of 13.657964 units. That floor requires
 geometry review, not a larger runtime tolerance. All these candidates remain
 unpublished.
+
+### Exact collision partitions at rotated terrace contacts
+
+The actual terrace's 37-degree failures came from holed collision being
+triangulated after rounding. Its fourteen grid triangles had no matching exact
+contours, so a rounded edge blocked the stair's lower entrance. Reconstructing
+individual triangle edges afterward was insufficient: unrelated corners could
+prevent a complete match, and partial recovery left this entrance blocked.
+
+The compiler now partitions precise holed collision before rounding. Triangles
+that collapse on the grid merge into a neighbouring exact polygon rather than
+losing their authored solid. The resulting grid union must equal the existing
+normalized collision; otherwise the compiler retains its previous partition.
+The existing coverage check also verifies the precise partition. A captured
+terrace fixture checks matching grid footprints and the clear landing, and a
+synthetic holed obstacle checks exact solid/island coverage.
+
+`york-east-riverside-southern-wall-stair-neighbour-placements-vZKHZ7` passes all
+32 native directed actor routes and 32 missing/raised terrace rejections.
+Full-map `york-riverside-walkway-floor-b3uJu1` retains all 130 passing stair
+routes and six control apply/reset checks. These reports finished; no stair
+routes were omitted. The wooden stair still uses projected navigation in this
+candidate. The separately failed wooden-stair physical correction and broader
+floor mesh/placement review remain open; no library asset is published here.
+
+Validation: 188 affected compiler tests, app typecheck, focused lint and the
+production build pass. Pipeline typecheck reports the same five pre-existing
+test typing errors recorded above, with no new errors in the changed files.

@@ -223,6 +223,40 @@ test("preserved movement boundaries retain enclosed walkable islands", () => {
   assert(result.blockers.flat().every((p) => p.every(Number.isInteger)));
 });
 
+test("partitioned fractional obstacles retain exact solid and walkable island coverage", () => {
+  const solid: Point[] = [
+    [10.25, 10.25],
+    [90.25, 10.25],
+    [90.25, 90.25],
+    [10.25, 90.25],
+  ];
+  const island: Point[] = [
+    [30.25, 30.25],
+    [70.25, 30.25],
+    [70.25, 70.25],
+    [30.25, 70.25],
+  ];
+  const result = preserveMovementBoundary(boundary, [[solid, island]], []);
+  assert.equal(result.blockers.length, 8);
+  assert.equal(result.preciseBlockers.length, result.blockers.length);
+  assert.deepEqual(
+    fixedPolygonBoolean(
+      "xor",
+      [solid, island],
+      result.preciseBlockers.map((p) => [p]),
+    ),
+    [],
+  );
+  for (const [i, exact] of result.preciseBlockers.entries())
+    assert.deepEqual(
+      clipping.xor(
+        [exact.map(([x, y]): Point => [Math.round(x), Math.round(y)])],
+        [result.blockers[i]!],
+      ),
+      [],
+    );
+});
+
 test("preserved movement boundaries reject collapsed envelopes", () => {
   assert.throws(
     () =>
