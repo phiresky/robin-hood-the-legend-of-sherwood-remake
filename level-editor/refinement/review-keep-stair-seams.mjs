@@ -180,7 +180,10 @@ for (const edit of edits) {
       const previous = descriptor.gameplay.surfaces.find((surface) => surface.id === landing.id);
       const heights = Array.isArray(landing.height) ? landing.height : [landing.height];
       if (!previous || !heights.every((z) => Math.abs(z - heights[0]) < 1e-6)) continue;
-      const mesh = neighbours.find((part) => part.node === landing.node)?.triangles;
+      const mesh =
+        landing.node === lift.node
+          ? triangles
+          : neighbours.find((part) => part.node === landing.node)?.triangles;
       if (!mesh) continue;
       const levelTriangles = [triangles, ...neighbours.map((part) => part.triangles)]
         .flat()

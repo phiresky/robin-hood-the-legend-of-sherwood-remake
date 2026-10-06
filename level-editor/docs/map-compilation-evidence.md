@@ -4,6 +4,31 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Published central oak ladder seams (2026-10-06)
+
+The narrower candidate `oak-receiver-UyTCZN` clears only the lower-platform
+extension: the geometric difference between the corrected and existing floor.
+It retains the existing inside waypoints and passes 16/16 moved climbs
+(`local-stair-placements-aTP7ak`). Removing the dedicated receiving surface
+fails all sixteen routes again (`local-stair-placements-iSbfYD`). Original part
+collision remains; the new receiver is non-solid and non-opaque and inherits
+the platform material.
+
+`stage-sherwood-oak-landing.mjs` reproduces that candidate from the reviewed seam
+stage. Candidate `sherwood-oak-landing-QEUiPo` passes 16/16 climbs at four rotations
+and two elevations. Full Sherwood (`sherwood-oak-level-gyWY82`) passes 10/10 climbs
+and 2/2 stair routes. Landing review now includes a landing sharing the flight's
+own mesh node. The three lower-platform edge checks have 24/41, 14/41 and 38/41
+mesh hits, with maximum uncovered distance 1.643 units; the upper-platform edges
+each have 41/41 hits. The ladder's incomplete visible mesh remains a limitation.
+
+Final stage `sherwood-oak-landing-MdKXif` adds that explicit visual warning.
+Publication backup `sherwood-oak-publication-20261006` updates the asset and
+Sherwood scene pin. Fresh published placements (`local-stair-placements-9nrX10`)
+pass 16/16 climbs. The local-anchor audit (`lift-anchor-support-bqd3G8`) now flags
+3/8 ladders, 38/53 stairs and 9/9 walls. This is gameplay progress, not rendered
+parity certification. Focused authoring-tool lint and formatting pass.
+
 ## Exact ordinary landing boundaries (2026-10-06)
 
 Ordinary surface landings now retain their pre-grid boundary when connected to
