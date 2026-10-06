@@ -1959,7 +1959,7 @@ function compileAssetGameplayAttempt(
         : piece.polygon;
       const preciseLanding =
         physicalLanding &&
-        polygonClipping.xor(polygon(receivingPolygon), polygon(piece.polygon)).length > 0;
+        fixedPolygonBoolean("xor", polygon(receivingPolygon), [polygon(piece.polygon)]).length > 0;
       for (const material of partitionProjectionMaterials(receivingPolygon, supports, warnings)) {
         if (material.obstacleIndex !== undefined) continue;
         if (

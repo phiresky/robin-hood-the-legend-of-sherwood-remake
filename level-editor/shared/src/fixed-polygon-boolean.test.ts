@@ -1,7 +1,26 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { fixedPolygonBoolean } from "./fixed-polygon-boolean.ts";
 import type { Polygon } from "polygon-clipping";
+
+test("landing comparison preserves real seam changes among nearly coincident edges", () => {
+  const [precise, rounded]: Polygon[] = JSON.parse(
+    readFileSync(
+      new URL("../test-fixtures/near-coincident-landing-footprints.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  const difference = fixedPolygonBoolean("xor", precise!, [rounded!]);
+  assert.ok(difference.length > 0, "The exact receiving seams differ from the movement grid");
+  assert.deepEqual(fixedPolygonBoolean("xor", precise!, [precise!]), []);
+  const noisy: Polygon = rounded!.map((ring) => ring.map(([x, y]) => [x, y - 1e-13]));
+  assert.deepEqual(
+    fixedPolygonBoolean("xor", rounded!, [noisy]),
+    [],
+    "Roundoff alone must not create a distinct receiver",
+  );
+});
 
 test("sub-grid polygons that collapse during snapping retain empty-set semantics", () => {
   const tiny: Polygon = [

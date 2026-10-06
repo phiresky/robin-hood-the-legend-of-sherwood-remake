@@ -4,6 +4,41 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Published northwest tower stair and receiving contact (2026-10-06)
+
+Staging `leicester-northwest-tower/building-330-lift` with an external lower
+landing and `placementGroundHeight=140.00091880252668` seats new drops at their
+actual approach. Candidate `local-stair-seams-3Oq8sz` passes sixteen directed
+stair routes and eight control apply/reset checks in `local-stair-placements-QoWyNE`;
+all eight raised-ground cases reject. The upper landing edges have 41/41 sampled
+mesh support. The flight has only 111/674 mesh hits, with uncovered distances
+up to 7.865 units; final stage `local-stair-seams-7YHjQR` retains this draft warning.
+
+The full scene exposed a polygon-clipping sweep-tree failure when comparing
+near-coincident receiving contours. That comparison now uses the compiler's
+existing fixed-point boolean operation. A captured contour-pair regression
+preserves real seam differences while treating coordinate roundoff as identical.
+All 852 editor tests pass, two skipped; app typechecking, focused lint and the
+production build also pass.
+
+Full-scene candidate `northwest-tower-level-WMGd6Q` still failed both tower
+routes because the keep-owned platform did not meet the lower seam.
+`refinement/stage-northwest-tower-contact.mjs` stages that edge in the keep's
+own local frame. Its maximum movement is 0.879 units. Of 205 sampled points,
+188 have mesh coverage within 0.1 height units; the rest lie at most 0.195 units
+from the visible platform. An explicit 0.25-unit authoring review bound accepts
+this discrepancy without changing runtime connection tolerances.
+
+Final contact stage `northwest-tower-contact-n9j7Tf` adds the visual warning to
+the tested geometry. Full Leicester `northwest-tower-level-hjYBcH` passes all
+sixteen stairs, 22 climbs and twelve controls. Publication backup is
+`northwest-tower-publication-20261006`; Leicester and Wychford pins are refreshed.
+The published full Leicester and eight independent tower placements
+(`local-stair-placements-WJmb0I`) reproduce the tested descriptors apart from
+the added warnings. All ten scenes reopen. Local-anchor audit
+`lift-anchor-support-Sf06eA` now finds 37/53 unsupported stairs, 1/8 ladders
+and 9/9 walls. Complete rendered traversal remains open.
+
 ## Published York scaffold ladder (2026-10-06)
 
 The upper platform notch required a reviewed landing shift limit of 7.1 units;

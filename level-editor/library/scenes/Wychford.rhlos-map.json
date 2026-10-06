@@ -20,7 +20,7 @@
       "model": "3d-assets/leicester/leicester-great-keep/model.glb",
       "model_sha256": "35111663282fafd6bddcdf2afa47c1b0370bf890c6d90c03b094602989e3fbbf",
       "descriptor": "3d-assets/leicester/leicester-great-keep/asset.json",
-      "descriptor_sha256": "4df4b71c975cc7fd3f29f730956c01cb058b48cfecf4655944bb524066f63fd7",
+      "descriptor_sha256": "47dd6e02eadb2d8fe8bf169b98d03718bc6a36bcdd012e0581aa52807eb21762",
       "id": "leicester-great-keep"
     },
     {
@@ -595,7 +595,7 @@
       "model": "3d-assets/leicester/leicester-northwest-tower/model.glb",
       "model_sha256": "a526c85f97e9b2a4bd1ced01f604de917d0604fd4124a1d4292fbc949325ec59",
       "descriptor": "3d-assets/leicester/leicester-northwest-tower/asset.json",
-      "descriptor_sha256": "10e3fba270e8ef793bd54f26018d40d74f3ef4a3b93123685cf775a470854e7e",
+      "descriptor_sha256": "107fbe5b6fdf0107566942e7ed5f3d160cebf7b4229d33feb23e72acfd348d10",
       "id": "leicester-northwest-tower"
     },
     {
