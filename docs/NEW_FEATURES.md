@@ -21,8 +21,9 @@
 
 - **Mission state previews.** Crossroads 2's 05 · Ambush mission offers log and
   rock trap artwork playback, seeking, and independently reviewed 3D endpoint
-  views. These controlled previews do not run mission scripts or synthesize
-  physical motion between endpoints. See
+  views. Its 06 · Pillaging mission also offers looping signposts and ambient
+  artwork with playback and seeking. These controlled previews do not run
+  mission scripts or synthesize physical motion between endpoints. See
   [the editor controls and scope](../level-editor/docs/state-previews.md).
 
 - **Physical stair navigation infrastructure (integration in progress).** Lift

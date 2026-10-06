@@ -3,6 +3,10 @@
 Open **Crossroads 2**, select **Mission**, then choose **05 · Ambush**. The
 **State preview** section offers the log trap and rock trap.
 
+Choose **06 · Pillaging** for **Signposts and ambient animation**. This preview
+plays the five signposts with the surrounding animated artwork. Its 64-tick
+slider follows the sign loop while nearby animations keep their own timing.
+
 - **Original artwork** shows the selected transition from the game camera.
   Use **Play**, **Pause**, **Reset**, or the frame slider to inspect it.
 - **3D initial** and **3D final** show the reviewed endpoint models at their
