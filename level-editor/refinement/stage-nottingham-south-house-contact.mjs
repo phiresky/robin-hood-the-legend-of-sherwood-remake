@@ -13,6 +13,18 @@ assert.ok(stage && compiledFile, "Provide stair edits and their Nottingham expor
 const edits = JSON.parse(await fs.readFile(`${stage}/edits.json`, "utf8"));
 assert.equal(edits.length, 1);
 const contacts = {
+  "nottingham-south-curtain-wall-2": {
+    outside: [1721, 2227, 0],
+    surface: "ground-section-0-0",
+    edge: [
+      [1709, 2246],
+      [1710, 2209],
+    ],
+    partial: false,
+    landingMargin: 0.000001,
+    issue:
+      "South curtain stair and corrected local landing have complete sampled mesh support. Complete rendered actor integration remains unverified.",
+  },
   "nottingham-south-stair-house": {
     outside: [1688, 2004, 0],
     surface: "ground-section-0-0",

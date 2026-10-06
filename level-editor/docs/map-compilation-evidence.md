@@ -4,6 +4,28 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Nottingham south curtain stair (2026-10-06)
+
+`local-stair-seams-Nr8ORf` corrects `building-203-lift` in
+`nottingham-south-curtain-wall-2`. Flight mesh sampling passes 1,448/1,448 points;
+changed local upper landing edges have zero sampled uncovered distance.
+`external-stair-landings-rKZwmd` passes 32 native actor routes and 32 missing or
+raised landing rejections. `local-stair-placements-AFCR4n` passes sixteen routes
+on editor terrain, plus eight raised-entrance rejections.
+
+Full candidate `nottingham-south-curtain-level-zFZ3pm` initially fails both
+lower-entrance directions. `stage-nottingham-south-house-contact.mjs` now
+supports the independently owned terrain edge in `ground-section-0-0`:
+`[1709,2246]` and `[1710,2209]` move to x=1709.306313459375 while preserving y.
+All 205 strip samples have mesh support. Stage
+`nottingham-south-curtain-wall-2-contact-uzEil8` produces full export
+`nottingham-south-curtain-connected-hEJhYA`, passing all 92 stair routes and ten
+control apply/reset checks. Publication backup is
+`nottingham-south-curtain-publication-20261006`. Fresh published Nottingham
+exactly equals the native-tested descriptor; all ten scenes reopen. Anchor audit
+`lift-anchor-support-HZlP4H` now reports 21/53 unsupported stairs, Nottingham
+4/12; ladders and walls remain 1/8 and 9/9. Rendered integration remains open.
+
 ## Nottingham prison-road platform ownership (2026-10-06)
 
 `local-stair-seams-AvY4ss` corrects `building-483-lift` using a reviewed

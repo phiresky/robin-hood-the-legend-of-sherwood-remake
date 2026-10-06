@@ -19,7 +19,7 @@
       "model": "3d-assets/nottingham/nottingham-terrain/model.glb",
       "model_sha256": "807037fefeee1e9cc3b22defab6215efba1c4d410a695cbe2c75cad3d4215c41",
       "descriptor": "3d-assets/nottingham/nottingham-terrain/asset.json",
-      "descriptor_sha256": "71bc3b2be13794090522a6ff2ca1b9f98da0c0a78afc5d43d0a46309453522a7"
+      "descriptor_sha256": "cadcc251d71699d3e1f71af6e168a722753a8028d7dbd33673f9c4f61168f68e"
     }
   ],
   "assetSources": [
@@ -517,7 +517,7 @@
       "model": "3d-assets/nottingham/nottingham-south-curtain-wall-2/model.glb",
       "model_sha256": "32273e75daf17ae76f7da46e6d990a7a591310cfe3845d620333655c62d15759",
       "descriptor": "3d-assets/nottingham/nottingham-south-curtain-wall-2/asset.json",
-      "descriptor_sha256": "bcda426e207342304a46e1b5a6124fa7c1827afd5f3cef3d75eea04a286d54f3",
+      "descriptor_sha256": "2071d6ac558c779fb4e8efd69124e5e3164f9d543aa8a9ba7d4ba8df70b4e13a",
       "id": "nottingham-south-curtain-wall-2"
     },
     {
