@@ -6,6 +6,25 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Nottingham south curtain stair (2026-10-06)
 
+Next candidate `local-stair-seams-jcgY1i` corrects both upper castle stairs,
+`building-361-lift` and `building-363-lift`, with all seven entrances external.
+Flight sampling finds 787/788 and 827/828 mesh hits, with maximum uncovered
+distances 0.027475 and 0.033253 units. The external-landing fixture now accepts
+multiple lifts and groups coplanar synthetic floors into shared receiving assets.
+This prevents another fixture floor from masking removal of a shared landing.
+`external-stair-landings-VP9eUm` passes 352 native actor routes and 96 missing or
+raised landing cases across two copies, four rotations and two elevations.
+The existing published single-stair fixture `external-stair-landings-vwFHdc`
+remains descriptor-identical to `external-stair-landings-nFz16k`.
+
+Full upper-stair candidate `nottingham-upper-stairs-level-0nCrrQ` still fails
+22/92 routes (twenty in sector 153, two in sector 155). It remains unpublished.
+The physical contact owners are `nottingham-castle-courtyard-ground`
+(`building-366-walk-0`, edge 18), `nottingham-castle-upper-wall`
+(`building-362-walk-0`, edges 7 and 8), and
+`nottingham-castle-east-courtyard-wall` (`building-325-walk-0`, edge 39).
+Their movement and physical receiving contours still need independent review.
+
 `local-stair-seams-Nr8ORf` corrects `building-203-lift` in
 `nottingham-south-curtain-wall-2`. Flight mesh sampling passes 1,448/1,448 points;
 changed local upper landing edges have zero sampled uncovered distance.

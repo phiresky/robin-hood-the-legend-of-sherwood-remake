@@ -5,6 +5,7 @@ import { insertProjectionAsset } from "../app/src/asset-commands.ts";
 import { compileMap } from "../app/src/map-compile.ts";
 import { heightPlane, planeHeight } from "../shared/src/gameplay-plane.ts";
 import { groupCentroid } from "../shared/src/level3d.ts";
+import { fixedPolygonBoolean } from "../shared/src/fixed-polygon-boolean.ts";
 
 // Synthetic receiving assets test placement connections, not visual fidelity.
 // Their floors are authored from the reviewed stair seams; none is published.
@@ -39,13 +40,17 @@ else {
   assert.equal(entry.descriptor_sha256, edit.descriptorSha256);
   descriptor.gameplay = edit.gameplay;
 }
-assert.equal(descriptor.gameplay.lifts.length, 1);
-const lift = descriptor.gameplay.lifts[0];
-const floor = descriptor.gameplay.surfaces.find((surface) => surface.id === lift.surface);
-const plane = heightPlane(floor.polygon.map(([x, y], i) => [x, y, floor.height[i]]));
-const landingDoors = lift.doors.filter((door) => !externalOnly || externalDoors.has(door.id));
+const lifts = descriptor.gameplay.lifts;
+assert.ok(lifts.length > 0);
+const landingDoors = lifts.flatMap((lift) => {
+  const floor = descriptor.gameplay.surfaces.find((surface) => surface.id === lift.surface);
+  const plane = heightPlane(floor.polygon.map(([x, y], i) => [x, y, floor.height[i]]));
+  return lift.doors
+    .filter((door) => !externalOnly || externalDoors.has(door.id))
+    .map((door) => ({ door, floor, plane }));
+});
 if (externalOnly) assert.equal(landingDoors.length, externalDoors.size);
-const landings = landingDoors.map((door, number) => {
+const landingCandidates = landingDoors.map(({ door, floor, plane }, number) => {
   const landingPlane = review.changes.find((c) => c.door === door.id)?.landingPlane ?? [
     0,
     0,
@@ -112,6 +117,34 @@ const landings = landingDoors.map((door, number) => {
     },
   };
 });
+// Entrances on different stairs can share a landing. Group coplanar receiving
+// floors so removing one fixture asset removes all of its shared support.
+const landingGroupsByPlane = new Map();
+for (const candidate of landingCandidates) {
+  const surface = candidate.gameplay.surfaces[0];
+  const plane = heightPlane(surface.polygon.map((p, i) => [...p, surface.height[i]]));
+  const key = plane.map((v) => Math.round(v * 1e6)).join(",");
+  const group = landingGroupsByPlane.get(key) ?? { plane, candidates: [] };
+  group.candidates.push(candidate);
+  landingGroupsByPlane.set(key, group);
+}
+const landings = [...landingGroupsByPlane.values()].map(({ plane, candidates }) => {
+  if (candidates.length === 1) return candidates[0];
+  const landing = structuredClone(candidates[0]);
+  const surface = landing.gameplay.surfaces[0];
+  const union = fixedPolygonBoolean(
+    "union",
+    candidates.map((c) => [c.gameplay.surfaces[0].polygon]),
+  );
+  landing.gameplay.surfaces = union.map(([polygon, ...holes], i) => ({
+    ...surface,
+    id: `floor-${i}`,
+    polygon,
+    holes,
+    height: polygon.map((p) => planeHeight(plane, p)),
+  }));
+  return landing;
+});
 const reference = {
   id: entry.id,
   descriptor: `3d-assets/${entry.descriptor}`,
@@ -173,7 +206,7 @@ for (const height of [0, 40])
     const compiled = compile(document);
     assert.equal(
       compiled.descriptor.asset_geometry.lifts?.length,
-      2,
+      2 * lifts.length,
       JSON.stringify(compiled.warnings),
     );
     assert.ok(
@@ -192,7 +225,11 @@ for (const height of [0, 40])
           changed.groups = changed.groups.filter((group) => group.id !== id);
         } else changed.groups.find((group) => group.id === id).transform.dz += 20;
         const invalid = compile(changed);
-        assert.equal(invalid.descriptor.asset_geometry.lifts?.length, 1, `${file}: ${id} ${kind}`);
+        const remaining = invalid.descriptor.asset_geometry.lifts?.length ?? 0;
+        assert.ok(
+          remaining >= lifts.length && remaining < 2 * lifts.length,
+          `${file}: ${id} ${kind} retained ${remaining} lifts`,
+        );
         assert.ok(invalid.warnings.some((warning) => warning.includes("traversal omitted")));
         rejected.push({ file, landing: id, kind });
       }

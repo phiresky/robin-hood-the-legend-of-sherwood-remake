@@ -209,6 +209,14 @@ and 205 terrain-contact samples have mesh support. Full Nottingham retains 92
 passing stair routes and ten control checks; fresh published geometry matches
 the tested descriptor and all ten scenes reopen. Rendered integration remains open.
 
+An unpublished upper-castle stair candidate now passes 352 directed routes across
+two copied two-stair assemblies, four rotations and two elevations. Shared
+coplanar synthetic landings are represented as independent assets; all 96 missing
+or raised landing cases reject. The saved-map candidate still fails 22 routes at
+its existing receiving contacts, so it is not published. Those contacts belong to
+the courtyard ground, upper wall and east courtyard wall and need correction in
+their respective assets. Passing synthetic routes does not repair those gaps.
+
 Nottingham's castle hall/watchtower stair is published after sixteen moved routes,
 eight control checks and all 92 full-map stair routes pass. Published exports
 match the tested geometry and all ten scenes reopen. Its draft explicitly records
