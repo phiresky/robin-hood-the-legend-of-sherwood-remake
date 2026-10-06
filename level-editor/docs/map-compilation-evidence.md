@@ -4,6 +4,43 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Published southwest turret and partial obstacle edge recovery (2026-10-06)
+
+The southwest turret's lower ground obstacle could not recover its entire exact
+contour: one rounded edge spans several short source edges, and the blocked
+coverage contains tiny holes. Recovery now has a fallback that follows uniquely
+identified edge interiors between their endpoint rounding cells, retaining grid
+corners and ambiguous edges. Union with the authored solid already covered by
+grid collision prevents removal of genuine blockers. A single-contour result
+must still round to exactly the emitted movement obstacle. Unrelated blocked
+regions are excluded from ownership selection; overlapping candidates reject.
+The captured raised-ground fixture checks both elevations, the cleared contact,
+retained solid coverage and rejection of ambiguous ownership.
+
+`local-stair-placements-WtogDs` passes all sixteen directed actor routes at
+0/37/90/180 degrees and elevations 0/40; its eight raised-ground cases reject.
+Full Leicester (`southwest-turret-level-wIIbVx`) passes sixteen stairs, 22 climbs
+and twelve control apply/reset checks. Mesh review (`local-stair-seams-w1SSea`)
+finds 694/695 floor samples supported, with a 0.032486-unit uncovered margin.
+Complete rendered actor integration remains unverified and is explicitly warned.
+
+Final stage `local-stair-seams-kmOb5W` differs from the tested stage only in draft
+warnings. Publication backup is `southwest-turret-publication-20261006`; Leicester
+and Wychford pins are refreshed. All eight published exports
+(`local-stair-placements-HKqvOs`) and the full Leicester export equal their tested
+geometry after excluding warning text. All ten scenes reopen. Anchor audit
+`lift-anchor-support-iMwsaD` now finds 35/53 unsupported stair definitions,
+including one of Leicester's eight; ladder/wall counts remain 1/8 and 9/9.
+
+Validation: 854 editor tests pass, two skipped; app typechecking, focused lint,
+formatting and production build pass. The native game build from the preceding
+runtime change is current. This publication does not resolve the separate
+Nottingham height mismatches or certify other arbitrary placements.
+Fresh all-map batch `saved-map-exports-vD9Ih4` passes native construction for
+all ten maps, all 71 control apply/reset checks and 84 climbing routes. Its stair
+audit retains 282/284 passing routes, with only Nottingham sector 156 failing
+in both directions. No additional stair failures appear with the compiler change.
+
 ## Precise landing contours and remaining route failures (2026-10-06)
 
 Landing boundaries and holes now retain double precision through binding and

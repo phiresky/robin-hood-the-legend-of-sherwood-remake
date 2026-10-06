@@ -12,9 +12,10 @@ warn about omissions and preserve initial states where possible; warnings are
 not evidence that an omitted feature works.
 
 Latest runtime checks retain exact landing contours through binding and foot
-support instead of reducing them to single precision. The southwest turret
-candidate improves to 12/16 moved routes; four zero-degree routes still fail
-where a rounded ground obstacle blocks the lower seam. It remains unpublished.
+support instead of reducing them to single precision. The southwest turret is
+now published after all sixteen rotated/elevated routes pass. Obstacle recovery
+restores verified edge interiors without requiring unrelated short edges to
+have a complete reconstruction; uncertain corners and true collision remain.
 The saved-scene stair batch passes 282/284 routes: both failures are Nottingham
 sector 156, whose door heights disagree with its landings before contour binding.
 Full Leicester separately passes 16/16 routes. The saved-scene climb batch passes
@@ -130,8 +131,8 @@ complete-sprite and rendered verification remain open.
 All ten scenes reopen after publication, and full Derby passes all five control
 apply/reset checks. All ten Derby stair definitions now pass local floor-anchor
 support checks after the upper-west publication below.
-A library-wide local-anchor audit finds unsupported anchors in 36 of 53 authored stair
-definitions: Derby 0/10, Leicester 2/8, Lincoln 6/6, Nottingham 11/12,
+A library-wide local-anchor audit finds unsupported anchors in 35 of 53 authored stair
+definitions: Derby 0/10, Leicester 1/8, Lincoln 6/6, Nottingham 11/12,
 Sherwood 1/1 and York 16/16. All audited floors are planar. This checks local
 definitions, not placed connectivity or actual route failures; corrections and
 moved/rotated native traversal checks remain necessary across these assets.
@@ -152,9 +153,12 @@ twelve passing control checks. The floor has 676/677 sampled mesh hits, with
 the remaining sample 0.032 units from the mesh. Published exports match the
 tested candidates and all ten scenes reopen. Fractional receiving contours now
 use a physical-area threshold instead of the integer-grid minimum, fixing a
-separate southwest turret export error. That turret remains unpublished: four
-of sixteen candidate routes still fail after preserving precise upper landing
-geometry, with rounded lower-landing collision still blocking zero-degree routes.
+separate southwest turret export error. That turret is now published after
+sixteen moved routes, eight raised-ground rejections and a full Leicester check
+of sixteen stairs, 22 climbs and twelve controls. Its floor has 694/695 mesh
+sample hits, with the remaining point 0.033 units from the edge. Published
+exports match the tested geometry, all ten scenes reopen, and the draft retains
+an explicit rendered-integration warning.
 The first church-side tower candidate emits both physical flights at eight
 placements. It initially passed only 24/32 routes because rounded landing-hole
 boundaries blocked the upper flight at 0/90 degrees. The compiler now retains
@@ -366,7 +370,7 @@ invented across that gap. New drops use the correct foundation height. Native
 mouse queries also now reject loaded movement-obstacle interiors. These focused
 checks do not establish every platform route or complete asset coverage.
 
-Latest editor validation (2026-10-06): 853 tests passed, two skipped. Fresh
+Latest editor validation (2026-10-06): 854 tests passed, two skipped. Fresh
 descriptors for all ten saved scenes pass native loading and all 71 control
 apply/reset checks; Derby retains 28/28 stair routes. The game
 build and native stair/control checks passed. Wychford loads with its spline wall

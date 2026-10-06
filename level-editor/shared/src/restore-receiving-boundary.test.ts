@@ -5,6 +5,60 @@ import clipping, { type MultiPolygon } from "polygon-clipping";
 import type { Point } from "./level.ts";
 import { restoreReceivingBoundary, restoreObstacleBoundary } from "./restore-receiving-boundary.ts";
 import { fixedPolygonBoolean } from "./fixed-polygon-boolean.ts";
+import { quantizeGeneratedMotionPolygon } from "./motion-quantization.ts";
+
+test("obstacle edge interiors survive unrelated rounded chains and cropped frame strips", () => {
+  const fixture: { points: Point[]; blockedCoverage: MultiPolygon } = JSON.parse(
+    readFileSync(
+      new URL("../test-fixtures/partial-obstacle-edge-recovery.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  for (const elevation of [0, 40]) {
+    const boundary = fixture.points.map(([x, y]): Point => [x, y + elevation]);
+    const sources = fixture.blockedCoverage.map((p) =>
+      p.map((r) => r.map(([x, y]): Point => [x, y + elevation])),
+    );
+    const restored = restoreObstacleBoundary(boundary, sources);
+    assert.ok(restored);
+    const rounded = quantizeGeneratedMotionPolygon(
+      [restored],
+      Math.round,
+      "Recovered obstacle",
+      [],
+    );
+    assert.ok(rounded);
+    assert.deepEqual(clipping.xor(rounded, [boundary]), []);
+    // The middle of the stair contact moves onto its authored edge. Rounded
+    // endpoint caps and unrelated collision remain represented.
+    const falseStrip: Point[] = [
+      [1831.9, 1728.6 + elevation],
+      [1832, 1728.6 + elevation],
+      [1832, 1728.7 + elevation],
+      [1831.9, 1728.7 + elevation],
+    ];
+    assert.ok(clipping.intersection([boundary], [falseStrip]).length);
+    assert.deepEqual(clipping.intersection([restored], [falseStrip]), []);
+    const existing = fixedPolygonBoolean("intersection", sources, [[boundary]]);
+    const lost = fixedPolygonBoolean("difference", existing, [[restored]]);
+    const area = lost
+      .flatMap((p) => p)
+      .reduce(
+        (total, ring) =>
+          total +
+          Math.abs(
+            ring.reduce((sum, [x, y], i) => {
+              const next = ring[(i + 1) % ring.length]!;
+              return sum + x * next[1] - next[0] * y;
+            }, 0),
+          ) /
+            2,
+        0,
+      );
+    assert.ok(area < 1e-7, `only clipping-grid noise may differ: ${area}`);
+    assert.equal(restoreObstacleBoundary(boundary, [...sources, ...sources]), undefined);
+  }
+});
 
 const notches: { name: string; boundary: Point[]; blocked: MultiPolygon }[] = JSON.parse(
   readFileSync(new URL("../test-fixtures/rounded-notch-collision.json", import.meta.url), "utf8"),

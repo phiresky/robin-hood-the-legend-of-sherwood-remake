@@ -1,6 +1,7 @@
 import clipping, { type MultiPolygon } from "polygon-clipping";
 import type { Point } from "./level.ts";
 import { quantizeGeneratedMotionPolygon, simplifyMotionRing } from "./motion-quantization.ts";
+import { fixedPolygonBoolean } from "./fixed-polygon-boolean.ts";
 
 type Edge = { a: Point; b: Point };
 
@@ -55,7 +56,47 @@ export function restoreObstacleBoundary(
   boundary: Point[],
   sources: MultiPolygon,
 ): Point[] | undefined {
-  return restoreBoundary(boundary, sources, true);
+  return restoreBoundary(boundary, sources, true) ?? restoreObstacleEdges(boundary, sources);
+}
+
+/** Recover unambiguous edge interiors while keeping grid corners and ambiguous
+ * edges. Union with the existing authored solid prevents opening real collision.
+ * A stair contact need not depend on reconstructing unrelated short edges and
+ * sub-grid holes elsewhere in the same obstacle.
+ */
+function restoreObstacleEdges(boundary: Point[], sources: MultiPolygon): Point[] | undefined {
+  sources = sources.filter(
+    (source) => fixedPolygonBoolean("intersection", source, [[boundary]]).length,
+  );
+  if (sources.length !== 1) return undefined;
+  const edges = sources[0]!.flatMap((contour) => {
+    const ring = simplifyMotionRing(contour, 2 / 1048576);
+    return ring.map((a, i): Edge => ({ a, b: ring[(i + 1) % ring.length]! }));
+  });
+  const matches = boundary.map((vertex, i) => {
+    const next = boundary[(i + 1) % boundary.length]!;
+    const choices = edges.filter((edge) => edgePoint(edge, vertex) && edgePoint(edge, next));
+    return choices.length === 1 ? choices[0] : undefined;
+  });
+  const candidate = boundary.flatMap((vertex, i): Point[] => {
+    const edge = matches[i];
+    if (!edge) return [[...vertex]];
+    return [
+      [...vertex],
+      edgePoint(edge, vertex)!,
+      edgePoint(edge, boundary[(i + 1) % boundary.length]!)!,
+    ];
+  });
+  if (candidate.length === boundary.length) return undefined;
+  // Preserve the parts of the solid that grid collision already represented.
+  // Short connectors inside endpoint rounding cells retain uncertain corners.
+  const existingSolid = fixedPolygonBoolean("intersection", sources, [[boundary]]);
+  const normalized = fixedPolygonBoolean("union", [[candidate]], [existingSolid]);
+  if (normalized.length !== 1 || normalized[0]!.length !== 1) return undefined;
+  const rounded = quantizeGeneratedMotionPolygon(normalized[0]!, Math.round, "Obstacle edges", []);
+  if (!rounded || clipping.xor(rounded, [boundary]).length) return undefined;
+  const result = simplifyMotionRing(normalized[0]![0]!, 2 / 1048576);
+  return result.some((p) => p.some((value) => value !== Math.round(value))) ? result : undefined;
 }
 
 function restoreBoundary(
