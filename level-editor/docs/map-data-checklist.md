@@ -16,10 +16,10 @@ support instead of reducing them to single precision. The southwest turret is
 now published after all sixteen rotated/elevated routes pass. Obstacle recovery
 restores verified edge interiors without requiring unrelated short edges to
 have a complete reconstruction; uncertain corners and true collision remain.
-The saved-scene stair batch passes 282/284 routes: both failures are Nottingham
-sector 156, whose door heights disagree with its landings before contour binding.
-Full Leicester separately passes 16/16 routes. The saved-scene climb batch passes
-84/84 routes. These results do not establish arbitrary-placement parity.
+The latest saved-scene batch passes 284/284 stair routes, 84/84 climbing routes
+and all 71 control apply/reset checks. Nottingham's road stair now has corrected
+landing heights and asset-owned low-deck collision; its obsolete terrain hole
+is removed. These results do not establish arbitrary-placement parity.
 
 Landing validation now excludes permanently blocked portions of shared stair
 edges while retaining their collision. Switchable blockers and uncovered edge
@@ -136,6 +136,15 @@ definitions: Derby 0/10, Leicester 1/8, Lincoln 6/6, Nottingham 11/12,
 Sherwood 1/1 and York 16/16. All audited floors are planar. This checks local
 definitions, not placed connectivity or actual route failures; corrections and
 moved/rotated native traversal checks remain necessary across these assets.
+The Nottingham road stair is also published after sixteen moved/elevated routes,
+eight raised-ground rejections and all 92 full-map stair routes pass. Its low-deck
+collision now follows the asset, with 80 units of authored upright headroom.
+Eight placed under-deck points block correctly, and actors cross the former
+platform footprint after removal. Foundation clearance moves by at most 0.625
+units; preserved terrain now retains matching fractional obstacle contours.
+Mesh review finds 753/829 floor samples supported, with discrepancies up to
+2.504 units. The draft retains an explicit rendered-integration warning.
+Published exports match the tested candidates and all ten scenes reopen.
 The northwest tower stair and its keep-owned receiving edge are now published.
 Sixteen moved stair routes and eight control checks pass; raising the tower away
 from its ground rejects all eight connections. New drops use the lower entrance
@@ -370,7 +379,7 @@ invented across that gap. New drops use the correct foundation height. Native
 mouse queries also now reject loaded movement-obstacle interiors. These focused
 checks do not establish every platform route or complete asset coverage.
 
-Latest editor validation (2026-10-06): 854 tests passed, two skipped. Fresh
+Latest editor validation (2026-10-06): 855 tests passed, two skipped. Fresh
 descriptors for all ten saved scenes pass native loading and all 71 control
 apply/reset checks; Derby retains 28/28 stair routes. The game
 build and native stair/control checks passed. Wychford loads with its spline wall

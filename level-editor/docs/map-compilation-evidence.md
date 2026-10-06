@@ -4,6 +4,51 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Nottingham road stair ownership and precise terrain obstacles (2026-10-06)
+
+The road stair's midpoints were 0.136/0.168 units off their receiving heights.
+Stage `local-stair-seams-VXsoEy` corrects both seams and their upper platform
+contact, sets the new-drop foundation height to 0.7617074580551671, and passes
+sixteen routes at four rotations and two elevations. Full Nottingham still
+failed because its terrain retained a permanent exclusion for the platform.
+
+`stage-nottingham-road-clearance.mjs` authors a 0.625/0.583-unit correction to
+the asset's foundation clearance and moves low-deck movement collision into
+asset-local volumes with 80 units of upright headroom. The volume shapes reuse
+the local timber bounds without adding opaque or pickable copies. The reviewed
+terrain hole and its contour label are removed together. Final stage is
+`nottingham-road-clearance-rLkKPJ`; its `placement` subdirectory tests the asset
+independently of the corrected terrain.
+
+Preserved movement boundaries previously discarded the fractional contours of
+added obstacles. They now retain complete source contours; normal emission still
+requires a unique exact contour with identical grid rounding. Holed or ambiguous
+partitions retain their existing fallback. The focused regression and all 855
+editor tests pass, with two skipped; app typechecking, lint, formatting and the
+production build pass.
+
+Current placements `local-stair-placements-wzAusU` retain sixteen successful
+stair routes and reject eight raised approaches. Full Nottingham
+`nottingham-road-level-wlmiZo` passes all 92 routes. Ownership audit
+`nottingham-road-ownership-utNYVI` passes eight blocked under-deck points and
+eighteen directed ground routes, including both directions through the former
+platform footprint with the asset removed. The native route harness now supports
+explicitly declared same-receiver routes while retaining receiver, height,
+arrival and multi-tick movement assertions.
+
+Mesh review finds 753/829 floor samples supported, a maximum uncovered margin
+of 2.504 units, and at most 0.493 units of floor adjustment. Upper-contact edge
+discrepancies are below 0.048 units. The draft warns about incomplete visible
+coverage and unverified rendered actor integration.
+
+Fresh staged batch `nottingham-road-all-maps-U3N6zl` passes native construction
+for all ten maps, all 284 stair routes, 84 climbing routes and 71 control
+apply/reset checks. Another 191 movement tests pass (thirteen ignored), and the
+game build passes. Publication backup is `nottingham-road-publication-20261006`;
+the road asset, terrain definition and Nottingham scene pins are updated.
+All eight published placement exports (`local-stair-placements-db7spY`) and the
+full Nottingham export exactly equal the tested candidates. All ten scenes reopen.
+
 ## Published southwest turret and partial obstacle edge recovery (2026-10-06)
 
 The southwest turret's lower ground obstacle could not recover its entire exact

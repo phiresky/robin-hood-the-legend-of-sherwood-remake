@@ -168,7 +168,15 @@ fn exported_endpoint_routes_support_actor_crossings() {
             };
             for (source, goal) in [(point(0), point(1)), (point(1), point(0))] {
                 eprintln!("{file}: endpoint crossing {source:?} -> {goal:?}");
-                tick_walkway_crossing(engine.clone(), assets.clone(), layer, sector, source, goal);
+                tick_walkway_movement(
+                    engine.clone(),
+                    assets.clone(),
+                    layer,
+                    sector,
+                    source,
+                    goal,
+                    !result["same_receiver_routes"].as_bool().unwrap_or(false),
+                );
                 checked += 1;
             }
         }

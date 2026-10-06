@@ -19,7 +19,7 @@
       "model": "3d-assets/nottingham/nottingham-terrain/model.glb",
       "model_sha256": "807037fefeee1e9cc3b22defab6215efba1c4d410a695cbe2c75cad3d4215c41",
       "descriptor": "3d-assets/nottingham/nottingham-terrain/asset.json",
-      "descriptor_sha256": "4ecac153c0b67bf37e616d75f9f141fb30a214d50879f4d65cad0394cf5016e7"
+      "descriptor_sha256": "47066853ce3e4b696d7db2922a942a8b8382052d985bd4bf4f61464258b61f38"
     }
   ],
   "assetSources": [
@@ -454,7 +454,7 @@
       "model": "3d-assets/nottingham/nottingham-southeast-road-props/model.glb",
       "model_sha256": "a540801e2f71e3bfc6fc541e13c2f505177bc60571d15d04e74d9504828ed719",
       "descriptor": "3d-assets/nottingham/nottingham-southeast-road-props/asset.json",
-      "descriptor_sha256": "63388713682c7bebc74b26c33bdf2dbe051718afe91cb143758200debe35d68a",
+      "descriptor_sha256": "d2ceb6027ab39468bcb89bbffc14b1f1520f03b2ff91188d51adce0aea66ec4b",
       "id": "nottingham-southeast-road-props"
     },
     {

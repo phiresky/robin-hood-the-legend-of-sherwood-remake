@@ -379,12 +379,24 @@ fn walking_pc(
 }
 
 fn tick_walkway_crossing(
+    engine: EngineInner,
+    assets: LevelAssets,
+    layer: u16,
+    sector_index: usize,
+    source: MapPoint,
+    goal: MapPoint,
+) -> (Option<u32>, f32) {
+    tick_walkway_movement(engine, assets, layer, sector_index, source, goal, true)
+}
+
+fn tick_walkway_movement(
     mut engine: EngineInner,
     mut assets: LevelAssets,
     layer: u16,
     sector_index: usize,
     source: MapPoint,
     goal: MapPoint,
+    change_receiver: bool,
 ) -> (Option<u32>, f32) {
     let sector = &engine.world.fast_grid.level.sectors[sector_index];
     let handle = crate::position_interface::SectorHandle::new(u16::from(sector.sector_number))
@@ -392,7 +404,7 @@ fn tick_walkway_crossing(
         .with_arena_index(crate::fast_find_grid::SectorIndex::new(sector_index as u32).unwrap());
     let start_receiver = engine.get_projection_area_index(&assets, handle, layer, source);
     let end_receiver = engine.get_projection_area_index(&assets, handle, layer, goal);
-    assert_ne!(start_receiver, end_receiver);
+    assert_eq!(start_receiver != end_receiver, change_receiver);
     let action = OrderType::WalkingUpright;
     let owner = walking_pc(&mut engine, &mut assets, source, layer, handle);
     engine.set_obstacle_and_material(&assets, owner, start_receiver);

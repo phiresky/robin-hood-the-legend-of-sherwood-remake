@@ -5,6 +5,36 @@ import type { Point } from "./level.ts";
 import { fixedPolygonBoolean } from "./fixed-polygon-boolean.ts";
 import clipping, { type MultiPolygon } from "polygon-clipping";
 
+test("preserved terrain retains fractional obstacle contours for physical landings", () => {
+  const outer: Point[] = [
+    [0, 0],
+    [100, 0],
+    [100, 100],
+    [0, 100],
+  ];
+  const solid: Point[] = [
+    [20.25, 20.25],
+    [60.25, 20.25],
+    [60.25, 60.25],
+    [20.25, 60.25],
+  ];
+  const result = preserveMovementBoundary(outer, [[solid]], []);
+  assert.deepEqual(result.preciseBlockers, [solid]);
+  assert.deepEqual(
+    clipping.xor(
+      result.blockers.map((p) => [p]),
+      [[solid.map(([x, y]) => [Math.round(x), Math.round(y)])]],
+    ),
+    [],
+  );
+  assert.ok(
+    clipping.difference(
+      [[solid]],
+      result.blockers.map((p) => [p]),
+    ).length,
+  );
+});
+
 test("outside contacts do not round into movement obstacles across a sloped boundary", () => {
   const outer: Point[] = [
     [0, 0],

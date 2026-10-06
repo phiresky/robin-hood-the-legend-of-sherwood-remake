@@ -32,6 +32,7 @@ export function preserveMovementBoundary(
     groups.set(key, group);
   }
   const blockers: Point[][] = [];
+  const preciseBlockers: Point[][] = [];
   for (const [label, group] of groups) {
     // Independent exclusions need no union: containment against any contour is
     // already their union, without creating fractional intersection vertices.
@@ -64,6 +65,12 @@ export function preserveMovementBoundary(
         .intersection([boundary], region)
         .some((overlap) => simplifyMotionRing(overlap[0]!, tolerance).length >= 3);
     });
+    // Keep each complete source contour alongside its grid obstacle. Emission
+    // verifies identical rounding before binding precise physical landings.
+    // Holed contours need a matching partition and retain grid collision here.
+    preciseBlockers.push(
+      ...overlapping.filter((region) => region.length === 1).map((region) => region[0]!),
+    );
     for (const region of overlapping.flatMap((contour) =>
       normalizeGeneratedMotion([contour], "Preserved movement obstacle", warnings),
     )) {
@@ -71,5 +78,5 @@ export function preserveMovementBoundary(
       blockers.push(...partitionMovementObstacles(region));
     }
   }
-  return { polygon: outer, blockers };
+  return { polygon: outer, blockers, preciseBlockers };
 }
