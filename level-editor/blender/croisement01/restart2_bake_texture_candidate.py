@@ -17,6 +17,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / 'level-editor/refinement'))
 sys.path.insert(0, str(ROOT / 'level-editor/refinement/blender'))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from render_slots import acquire, release
 from review_evidence import sha
 from prepare_texture_packet import prepare
@@ -99,6 +100,9 @@ def preflight(experiment):
     approval = read(experiment / 'approval.json')
     manifest = read(experiment / 'views.json')
     preparation = read(experiment / 'preparation.json')
+    if manifest['asset_id'] == 'croisement01-tree-00':
+        from restart2_validate_wood_scope import validate
+        validate(experiment)
     source = Path(preparation['source_review_manifest'])
     require(sha(source) == preparation['review_manifest_sha256'], 'Preparation manifest changed')
     prepare(source, manifest['asset_id'], experiment / 'preflight-check-only', source.parent / 'decisions.json', check_only=True)
