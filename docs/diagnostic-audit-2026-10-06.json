@@ -978,7 +978,7 @@
   "unreadable_reports": [
     {
       "id": "9835e51304c6",
-      "reason": "Not a gzipped file (b'\\x1f\\x08')"
+      "reason": "Malformed gzip: header starts 1f08 instead of 1f8b08. Raw DEFLATE recovery at offsets 9 through 12 fails. All 185 stored bytes match the SHA-256 report ID; corruption after server receipt is not indicated. The payload is valid UTF-8, consistent with binary bytes having been lost before ingestion, but the responsible operation is unknown. Current browser upload sends a compressed Blob directly and server storage preserves bytes."
     }
   ],
   "validation": {
