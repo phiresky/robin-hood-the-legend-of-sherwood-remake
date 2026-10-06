@@ -13,7 +13,7 @@ from render_slots import acquire,release
 from evidence_io import sha
 
 def main():
- p=argparse.ArgumentParser();p.add_argument('workspace',type=Path);p.add_argument('--mask',type=int,required=True);a=p.parse_args(sys.argv[sys.argv.index('--')+1:])
+ p=argparse.ArgumentParser();p.add_argument('workspace',type=Path);p.add_argument('--mask',type=int,required=True);p.add_argument('--terrain-context-node',action='append',default=[]);a=p.parse_args(sys.argv[sys.argv.index('--')+1:])
  w=a.workspace.resolve();out=w/'inspection/native-geometry-coverage'
  if out.exists():raise FileExistsError(out)
  cfg=json.loads((w/'workspace.json').read_text());acquire();bpy.ops.wm.open_mainfile(filepath=str(w/'model.blend'))
@@ -35,12 +35,12 @@ def main():
  colors=np.zeros((height,width,3),dtype=np.uint8);colors[match]=(180,180,180);colors[missing]=(255,50,50);colors[extra]=(0,220,255)
  out.mkdir();Image.fromarray(colors).resize((width*4,height*4),Image.Resampling.NEAREST).save(out/'comparison.png')
  report=dict(status='measurement only; occupancy is not semantic object ownership',model_sha256=sha(w/'model.blend'),mask_sha256=sha(base/row['png']),native_mask=a.mask,expected_pixels=int(expected.sum()),covered_expected_pixels=int(match.sum()),missing_pixels=int(missing.sum()),extra_pixels=int(extra.sum()),coverage=float(match.sum()/expected.sum()),scope='Native mask bounding box. Pixel-center rays through saved geometry, independent of materials and alpha.',legend='Gray: native covered; red: native missed; cyan: geometry beyond native occupancy.')
- terrain_nodes={'ground'}|{f'building-{i:03d}' for i in list(range(10))+list(range(76,81))}
+ terrain_nodes={'ground'}|{f'building-{i:03d}' for i in list(range(10))+list(range(76,81))}|set(a.terrain_context_node)
  terrain=[o for o in bpy.data.collections[cfg['collection_name']].all_objects if o.type=='MESH' and o.get('source_node') in terrain_nodes]
  terrain_vertices=[];terrain_faces=[];terrain_owners=[]
  for o in terrain:
   offset=len(terrain_vertices);terrain_vertices.extend(o.matrix_world@v.co for v in o.data.vertices);terrain_faces.extend(tuple(offset+i for i in f.vertices) for f in o.data.polygons);terrain_owners.extend([o.get('source_node')]*len(o.data.polygons))
- contact={'status':'diagnostic only; archived terrain remains unrefined','terrain_nodes':[o.get('source_node') for o in terrain]}
+ contact={'status':'diagnostic only; terrain context remains unapproved','additional_context_nodes':a.terrain_context_node,'terrain_nodes':[o.get('source_node') for o in terrain]}
  if terrain_faces:
   support=BVHTree.FromPolygons(terrain_vertices,terrain_faces);gaps=[];penetrations={}
   for point in vertices:
