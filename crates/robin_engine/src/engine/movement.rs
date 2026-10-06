@@ -5263,9 +5263,16 @@ impl EngineInner {
                         crate::sequence::SequenceElementData::Movement { gate_id, .. } => *gate_id,
                         _ => None,
                     })
-                    .and_then(|gate| self.physical_stair_door(tcx.assets, gate))
-                    .filter(|(sector, _, _)| *sector == entity_sector)
-                    .map(|(sector, _, door)| (sector, door.inside))
+                    .and_then(|gate| {
+                        self.physical_stair_door(tcx.assets, gate)
+                            .filter(|(sector, _, _)| *sector == entity_sector)
+                            .map(|(sector, _, door)| (sector, door.inside))
+                            .or_else(|| {
+                                tcx.assets.navigation.physical_stairs[&entity_sector]
+                                    .world_point_from_screen(dest)
+                                    .map(|point| (entity_sector, point))
+                            })
+                    })
             })
             .flatten();
 

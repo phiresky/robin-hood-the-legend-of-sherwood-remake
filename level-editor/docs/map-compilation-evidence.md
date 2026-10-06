@@ -4,6 +4,26 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Ordinary gate approaches from physical stairs (2026-10-06)
+
+Approaches to ordinary gates now retain gate identity in both directions when
+leaving a physical stair. Their movement dispatch resolves the projected gate
+destination onto the current physical plane instead of using projected floor
+extraction. The focused regression covers ordinary gates and point destinations
+in both directions, including gate requests without an explicit layer or sector.
+
+The unpublished great-hall assembly `external-stair-landings-VQ7JOS` improves
+from 63/96 to 70/96 passing routes. All 0- and 37-degree copies pass at both
+elevations; 90- and 180-degree failures remain. Diagnostics now distinguish
+height mismatch from unsupported footprint and include the current order queue.
+The candidate remains unpublished.
+
+Validation: 192 movement tests pass (thirteen ignored), the existing
+`saved-map-exports-rdmm0t` descriptors retain 284 stair and 84 climbing routes,
+and `lincoln-north-hall-level-KSbGJF` retains sixteen stair routes. Formatting
+checks and the game build pass. These checks do not constitute fresh ZIP or
+rendered verification.
+
 ## Ordinary passage handoff to physical stairs (2026-10-06)
 
 Ordinary passage doors can enter a physical stair sector without belonging to

@@ -510,19 +510,26 @@ fn actor_receiver_result(
         let plane =
             robin_level_data::stair_navigation::StairNavigationPlane::new(stair.definition.plane)?;
         let expected = plane.world_position(ground.map(f64::from))?;
+        let supported = stair
+            .route(
+                &engine.world.pathfinder,
+                ground,
+                ground,
+                pi.get_half_diagonal(),
+            )?
+            .is_some();
         if (expected[2] - f64::from(world.z)).abs() >= 0.001
             || world.to_map() != position
-            || stair
-                .route(
-                    &engine.world.pathfinder,
-                    ground,
-                    ground,
-                    pi.get_half_diagonal(),
-                )?
-                .is_none()
+            || !supported
         {
+            let orders = engine
+                .entities()
+                .current_element_for_actor(owner)
+                .and_then(|(id, index)| engine.seq().get_element(id, index))
+                .map(|element| &element.orders);
             return Err(format!(
-                "actor physical stair support mismatch at {world:?}, sector {sector:?}"
+                "actor physical stair support mismatch at {world:?}, sector {sector:?}, expected_height={}, supported={supported}, order={:?}",
+                expected[2], orders
             ));
         }
         return Ok(());

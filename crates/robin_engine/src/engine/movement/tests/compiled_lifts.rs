@@ -742,8 +742,8 @@ fn ordinary_door_handoff_installs_and_releases_the_physical_stair_floor() {
 }
 
 #[test]
-fn physical_stair_point_dispatch_uses_world_orders_and_reaches_the_goal() {
-    for reverse in [false, true] {
+fn physical_stair_point_and_ordinary_gate_dispatch_use_world_orders_and_reach_the_goal() {
+    for (reverse, gate_approach) in [(false, false), (true, false), (false, true), (true, true)] {
         let (mut engine, mut assets) =
             compiled_walkway(&serde_json::to_vec(&physical_stair_fixture()).unwrap());
         let sim = crate::sim_rng::test_context();
@@ -759,6 +759,12 @@ fn physical_stair_point_dispatch_uses_world_orders_and_reaches_the_goal() {
         let owner = physical_walker(&mut engine, &mut assets, 3, source, goal);
         let goal_z = 5. * goal[0] - 1950.;
         let destination = MapPoint::new(goal[0], goal[1] - goal_z);
+        if gate_approach {
+            let door = &mut engine.script_domains.interactables.doors[0];
+            door.owning_lift_sector = None;
+            door.door_type = crate::gate::DoorType::Default;
+            door.point_in = destination;
+        }
         let (sequence, index) = engine.current_sequence_element_for_actor(owner).unwrap();
         engine.install_actor_order(owner, None);
         let element = engine
@@ -772,12 +778,18 @@ fn physical_stair_point_dispatch_uses_world_orders_and_reaches_the_goal() {
             destination: stored,
             layer,
             sector,
+            gate_id,
             ..
         } = &mut element.data
         {
             *stored = destination;
-            *layer = 2;
-            *sector = crate::position_interface::SectorHandle::new(3);
+            *layer = if gate_approach { 0 } else { 2 };
+            *sector = if gate_approach {
+                None
+            } else {
+                crate::position_interface::SectorHandle::new(3)
+            };
+            *gate_id = gate_approach.then(|| crate::gate::DoorIndex::new(0).unwrap());
         }
         assert!(engine.extract_move_instruction_owner(&assets, owner));
         assert!(matches!(

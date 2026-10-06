@@ -459,11 +459,9 @@ impl EngineInner {
                     destination: shot.entry,
                     layer: 0,
                     sector: None,
-                    // Physical stairs need endpoint identity: opposite doors
-                    // can have the same projected entry point. Other approach
-                    // moves retain their ordinary point-only representation.
+                    // Keep gate identity for every approach from a physical
+                    // stair, including ordinary passages in either direction.
                     gate_id: (!shot.is_jump
-                        && !shot.direct
                         && tcx
                             .assets
                             .navigation

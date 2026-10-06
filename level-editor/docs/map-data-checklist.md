@@ -178,7 +178,10 @@ moved/rotated native traversal checks remain necessary across these assets.
 The remaining Lincoln great-hall candidate now uses its external ramp's actual
 sloped plane during seam review and independent-placement testing. All 566
 flight mesh samples pass. Ordinary hall passage callbacks now install and release
-the physical floor, improving copied-assembly routes from 32/96 to 63/96.
+the physical floor. Gate approaches from that floor now retain door identity
+in both directions and use physical world destinations, improving copied-assembly
+routes from 32/96 to 70/96. All tested 0- and 37-degree copies pass; failures
+remain at 90 and 180 degrees.
 Rotated movement/support failures remain, and the full scene also has mismatched
 external landing edges. Ordinary doors on edge-on stairs still need explicit
 world endpoints.
