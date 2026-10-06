@@ -25,7 +25,7 @@ def rings(bm):
 
 def main(number):
  assert shutil.disk_usage(OUT).free>25*2**30
- prior=json.load(open(ROOT/f'baseline-audit-{number}-v3/report.json'));source=Path(prior['source']);assert sha(source)==prior['source_sha256'];out=ROOT/f'tree{number}-toe-union-v8';out.mkdir(exist_ok=False);bpy.ops.wm.open_mainfile(filepath=str(source));bpy.context.view_layer.update();scene=bpy.context.scene;asset=f'croisement02-tree-{number}';own=[o for o in scene.objects if o.type=='MESH'and o.get('asset_group')==asset];wood=[o for o in own if o.get('projection_component')!='crown'];crowns={o.name:_geometry(o,protect_appearance=True)for o in own if o not in wood};metadata={o['source_node']:dict(name=o.name,properties={k:o[k]for k in o.keys()})for o in wood};vertices=[];faces=[];rows=[];materials=[];uvnames=sorted({u.name for o in wood for u in o.data.uv_layers});active=wood[0].data.uv_layers.active.name
+ prior=json.load(open(ROOT/f'baseline-audit-{number}-v3/report.json'));source=Path(prior['source']);assert sha(source)==prior['source_sha256'];out=ROOT/f'tree{number}-toe-union-v10';out.mkdir(exist_ok=False);bpy.ops.wm.open_mainfile(filepath=str(source));bpy.context.view_layer.update();scene=bpy.context.scene;asset=f'croisement02-tree-{number}';own=[o for o in scene.objects if o.type=='MESH'and o.get('asset_group')==asset];wood=[o for o in own if o.get('projection_component')!='crown'];crowns={o.name:_geometry(o,protect_appearance=True)for o in own if o not in wood};metadata={o['source_node']:dict(name=o.name,properties={k:o[k]for k in o.keys()})for o in wood};vertices=[];faces=[];rows=[];materials=[];uvnames=sorted({u.name for o in wood for u in o.data.uv_layers});active=wood[0].data.uv_layers.active.name
  for o in wood:
   o.data.calc_loop_triangles();offset=len(vertices);vertices.extend(o.matrix_world@v.co for v in o.data.vertices)
   for t in o.data.loop_triangles:
@@ -40,7 +40,7 @@ def main(number):
   face.material_index=slot;owner.data[face.index].value=node
   for li,j in zip(face.loop_indices,range(3)):
    for name in uvnames:original.uv_layers[name].data[li].uv=uvs[name][j][:2]
- limit=42 if number==19 else 70;data=np.load(ROOT/f'tree{number}-toe-volume-v1/lower.npz');inferred=bpy.data.meshes.new('True lower source volume');inferred.from_pydata(data['vertices'].tolist(),[],data['faces'].tolist());inferred.update();temp=bpy.data.objects.new('Private true lower union',inferred);scene.collection.objects.link(temp)
+ limit=42 if number==19 else 70;data=np.load(ROOT/f'tree{number}-toe-volume-v2/lower.npz');inferred=bpy.data.meshes.new('True lower source volume');inferred.from_pydata(data['vertices'].tolist(),[],data['faces'].tolist());inferred.update();temp=bpy.data.objects.new('Private true lower union',inferred);scene.collection.objects.link(temp)
  # Ground clip produces a flat physical contact, not a downward floating tip.
  cut(temp.data,.15,False);bm=bmesh.new();bm.from_mesh(temp.data);bmesh.ops.holes_fill(bm,edges=[e for e in bm.edges if e.is_boundary],sides=0);bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces));bm.to_mesh(temp.data);bm.free();cut(temp.data,limit-1,True);low=temp.data.copy();low.materials.clear()
  for m in materials:low.materials.append(m)
