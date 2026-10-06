@@ -1303,6 +1303,36 @@ fn validate_precise_motion_polygon(
             let c = grid_points[(i + 1) % grid_points.len()];
             (b.0 - a.0) * (c.1 - b.1) == (b.1 - a.1) * (c.0 - b.0)
         });
+        let redundant = redundant.or_else(|| {
+            if grid_points.len() < 4 {
+                return None;
+            }
+            let cross = |a: (f64, f64), b: (f64, f64), c: (f64, f64)| {
+                (b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0)
+            };
+            let removable = |p: (f64, f64), a: (f64, f64), b: (f64, f64)| {
+                let length = (b.0 - a.0).powi(2) + (b.1 - a.1).powi(2);
+                length > 0. && cross(a, b, p).powi(2) <= length / 2.
+            };
+            // Match the compiler's repair of a crossed corner narrower than
+            // grid-rounding error. The validated precise contour stays intact.
+            for i in 0..grid_points.len() {
+                let a = grid_points[i];
+                let b = grid_points[(i + 1) % grid_points.len()];
+                let c = grid_points[(i + 2) % grid_points.len()];
+                let d = grid_points[(i + 3) % grid_points.len()];
+                if cross(a, b, c) * cross(a, b, d) >= 0. || cross(c, d, a) * cross(c, d, b) >= 0. {
+                    continue;
+                }
+                if removable(b, a, c) {
+                    return Some((i + 1) % grid_points.len());
+                }
+                if removable(c, b, d) {
+                    return Some((i + 2) % grid_points.len());
+                }
+            }
+            None
+        });
         let Some(index) = redundant else {
             break;
         };
@@ -6118,6 +6148,17 @@ mod tests {
         assert!(obstacle.validate_precise_polygon().is_err());
         obstacle.precise_polygon.clear();
         obstacle.validate_precise_polygon().unwrap();
+    }
+
+    #[test]
+    fn precise_landing_corner_survives_a_rounding_crossing() {
+        let mut area: RawMotionArea = serde_json::from_str(include_str!(
+            "../../../level-editor/shared/test-fixtures/rounded-stair-landing-corner.json"
+        ))
+        .unwrap();
+        validate_precise_motion_polygon(&area.polygon, &area.precise_polygon).unwrap();
+        area.polygon.points[0].0 += 2;
+        assert!(validate_precise_motion_polygon(&area.polygon, &area.precise_polygon).is_err());
     }
 
     #[test]

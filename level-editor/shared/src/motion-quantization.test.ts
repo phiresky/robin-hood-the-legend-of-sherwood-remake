@@ -1,7 +1,41 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { quantizeGeneratedMotionPolygon, simplifyMotionRing } from "./motion-quantization.ts";
+import {
+  normalizeRoundedMotionRing,
+  quantizeGeneratedMotionPolygon,
+  simplifyMotionRing,
+} from "./motion-quantization.ts";
 import type { Point } from "./level.ts";
+
+test("grid rounding repairs a crossed subpixel corner without accepting larger crossings", () => {
+  const rounded: Point[] = [
+    [3513, 2683],
+    [3534, 2676],
+    [3532, 2677],
+    [3514, 2660],
+    [3500, 2660],
+  ];
+  assert.deepEqual(normalizeRoundedMotionRing(rounded), [
+    rounded[0],
+    rounded[2],
+    rounded[3],
+    rounded[4],
+  ]);
+  const reversed = [...rounded].reverse();
+  assert.deepEqual(normalizeRoundedMotionRing(reversed), [
+    rounded[4],
+    rounded[3],
+    rounded[2],
+    rounded[0],
+  ]);
+  const large: Point[] = [
+    [0, 0],
+    [10, 10],
+    [0, 10],
+    [10, 0],
+  ];
+  assert.deepEqual(normalizeRoundedMotionRing(large), large);
+});
 
 test("generated near-zero-width backtracking does not round into a boundary kink", () => {
   const ring: Point[] = [

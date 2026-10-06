@@ -8550,3 +8550,24 @@ passes the first four routes, then native loading rejects the 37-degree export:
 `invalid rounded precise motion obstacle: SelfIntersection(Exterior)`.
 All candidates remain unpublished. The rounded-obstacle defect and the separate
 wooden-stair contact are the next validation targets.
+
+### Rounded landing corner repair
+
+The rejected contour is an outer landing boundary, despite the shared validator's
+obstacle wording. Rounding a valid precise boundary creates a crossed narrow
+corner. The compiler and native validator now remove that corner only within
+the grid-rounding width bound, retaining the exact contour. Larger crossings
+remain invalid; changing the integer footprint independently still rejects.
+A shared captured fixture covers both implementations.
+
+Regenerated candidate `york-east-riverside-southern-wall-stair-neighbour-placements-ZHyCXL`
+passes all 32 directed native actor routes at rotations 0/37/90/180 and elevations
+0/40. Its report is finished with no skipped permissions or failures. This is
+initial-state traversal, not complete-sprite or rendered verification. The
+fixture also rejects sixteen missing/raised terrain cases. The separate full-map
+terrace/wooden-stair conflict remains unresolved; no asset publication is implied.
+
+Validation: 186 affected compiler tests, 86 level-data tests (eight ignored),
+app typecheck, focused lint and Rust formatting pass. Pipeline typecheck remains
+blocked by existing errors in `compile-asset-gameplay.test.ts` (optional assertion
+message) and `state-delivery.test.ts` (endpoint union indexing and assertion import).

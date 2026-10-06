@@ -1,7 +1,7 @@
 import clipping, { type MultiPolygon, type Polygon } from "polygon-clipping";
 import type { Point } from "./level.ts";
 import type { NavigationPiece } from "./assemble-navigation-regions.ts";
-import { simplifyMotionRing } from "./motion-quantization.ts";
+import { normalizeRoundedMotionRing, simplifyMotionRing } from "./motion-quantization.ts";
 import { fixedPolygonBoolean } from "./fixed-polygon-boolean.ts";
 import { restoreReceivingBoundary } from "./restore-receiving-boundary.ts";
 
@@ -23,7 +23,7 @@ export function indexPreciseBlockers(contours: Point[][]) {
   for (const contour of contours) {
     const exact = simplifyMotionRing(contour, 2 / 1048576);
     if (!exact.some((point) => point.some((v) => v !== Math.round(v)))) continue;
-    const rounded = simplifyMotionRing(
+    const rounded = normalizeRoundedMotionRing(
       exact.map(([x, y]): Point => [Math.round(x), Math.round(y)]),
     );
     if (rounded.length < 3) continue;

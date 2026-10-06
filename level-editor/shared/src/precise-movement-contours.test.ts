@@ -25,6 +25,28 @@ const frame: Polygon = [
   ],
 ];
 
+test("a rounded stair corner keeps its precise landing identity", () => {
+  const captured: { polygon: { points: Point[] }; precise_polygon: Point[] } = JSON.parse(
+    readFileSync(
+      new URL("../test-fixtures/rounded-stair-landing-corner.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  const result = quantizeGeneratedMotionPolygon(
+    [captured.precise_polygon],
+    Math.round,
+    "landing",
+    [],
+  );
+  assert.deepEqual(result, [captured.polygon.points]);
+  const indexed = indexPreciseBlockers([captured.precise_polygon]).get(
+    motionBoundsKey(captured.polygon.points),
+  );
+  assert.equal(indexed?.length, 1);
+  assert.deepEqual(indexed![0]!.rounded, captured.polygon.points);
+  assert.deepEqual(indexed![0]!.exact, captured.precise_polygon);
+});
+
 test("multi-plane landing regions retain their joined fractional stair contact", () => {
   const fixture: { boundary: Point[]; pieces: NavigationPiece[] } = JSON.parse(
     readFileSync(new URL("../test-fixtures/joined-landing-boundary.json", import.meta.url), "utf8"),
