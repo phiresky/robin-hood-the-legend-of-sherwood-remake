@@ -4,7 +4,7 @@ import type { GameplayAssetDescriptor } from "../../shared/src/asset-gameplay.ts
 // Reviewed map refinement workflows are recorded in blender/README.md and
 // blender/{leicester,lincoln,nottingham,sherwood}/. Extend this list when another
 // source level goes through refinement; reconstruction alone does not qualify.
-export const REFINED_LEVELS = ["Derby", "Leicester", "Lincoln", "Nottingham", "Sherwood"] as const;
+export const REFINED_LEVELS = ["Croisement02", "Derby", "Leicester", "Lincoln", "Nottingham", "Sherwood"] as const;
 export const REFINED_LEVELS_FILTER = "refined-levels";
 // Imported and independently authored assets also belong in the default selection.
 const refinedLevels = new Set<string>(

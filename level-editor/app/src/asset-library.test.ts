@@ -73,7 +73,7 @@ test("refined-level filter includes reviewed sources regardless of case and comb
   }));
   const catalog = [
     ...refined,
-    ...["York", "Croisement01", "Croisement02", "Croisement03", "Wychford", "Future level"].map(
+    ...["York", "Croisement01", "Croisement03", "Wychford", "Future level"].map(
       (source_map) => ({ ...entries[0]!, id: source_map, source_map }),
     ),
   ];
@@ -90,4 +90,9 @@ test("refined-level filter includes reviewed sources regardless of case and comb
     filterAssets(catalog, "", "", "York").map((entry) => entry.id),
     ["York"],
   );
+});
+
+test("reviewed Croisement02 assets appear in the default palette", () => {
+  const entry = { ...entries[0]!, id: "croisement02-shed", source_map: "Croisement02" };
+  assert.deepEqual(filterAssets([entry], "", "", REFINED_LEVELS_FILTER), [entry]);
 });
