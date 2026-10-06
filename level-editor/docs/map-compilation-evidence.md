@@ -8666,3 +8666,39 @@ only the updated warnings. All ten saved scenes reopen; only York's scene pins
 change. Audit `lift-anchor-support-Ix1scr` finds 13/53 unsupported stairs (York
 12/16 and Sherwood 1/1), 1/8 ladders and 9/9 walls. Broader traversal, visual
 integration and library coverage remain open.
+
+### Riverbank stone stair publication and physical clipping spikes
+
+Local seam candidate `local-stair-seams-tEKLzq` passes 32 synthetic landing
+routes and 64 missing/raised landing rejections (`external-stair-landings-iAEK5t`).
+Its flight has 899/919 sampled mesh hits, a maximum uncovered edge distance of
+0.576822 units and mesh height residuals between -0.083 and -0.065 units.
+Full-map `york-stone-stair-wgUTMw` fails the two stone-stair routes at the upper
+terrace contact. `stage-york-stone-stair-contact.mjs` corrects the independently
+owned terrace corners by 0.284295 and 0.184350 units. Candidate
+`york-stone-stair-contact-j4hxxN` restores all 130 full-York routes and six
+controls, but its actual-neighbour fixture `...stone-landing-steps-neighbour-placements-a4tefk`
+fails four of 32 routes in the first copy at zero rotation.
+
+Those translated failures expose a zero-width backtracking spike left by
+physical collision clipping. Runtime coordinate conversion turns it into an
+entrance barrier. Physical obstacle rings now use the existing straight-edge
+and spike cleanup, with a captured coordinate regression preserving the actual
+solid triangle. No connection tolerance changes. All 153 affected compiler
+tests, app typecheck, focused lint and production build pass.
+
+With cleanup, full-map `york-stone-stair-contact-IEVm2R` passes 130 routes and
+six controls. Actual-neighbour fixture `...stone-landing-steps-neighbour-placements-hud5S8`
+passes 32 routes and 48 missing/raised terrain/terrace rejections. The same
+terrace passes 32 wooden-stair routes with 64 rejections (`...-onin3X`) and 32
+southern-stair routes with 32 rejections (`...-8xMcwe`). All native audits finish.
+Receiving-floor mesh review retains the terrace's maximum edge discrepancy of
+0.149704 units and sampled height error below 0.033 units.
+
+Reviewed stage `york-stone-reviewed-nCPbRQ` publishes the stone stair and terrace
+with explicit mesh/rendering draft warnings. Backup:
+`york-stone-stair-publication-20261006`. Fresh geometry matches full York and
+all 24 placement exports, excluding only updated warnings; all ten scenes
+reopen and only York's pins change. Audit `lift-anchor-support-zPHA6r` now finds
+12/53 unsupported stairs (York 11/16 and Sherwood 1/1), 1/8 ladders and 9/9 walls.
+These checks do not establish complete rendered or arbitrary-placement parity.

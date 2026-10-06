@@ -4,8 +4,33 @@ import clipping from "polygon-clipping";
 import type { NavigationPiece } from "./assemble-navigation-regions.ts";
 import {
   compileTransitionObstacles,
+  compilePhysicalTransitionObstacles,
   type PlacedTransitionBlocker,
 } from "./compile-movement-transitions.ts";
+
+test("physical collision removes a clipped seam spike without changing the solid", () => {
+  const polygon: [number, number][] = [
+    [3088.704474456256, 2396.3919016174286],
+    [3100.52152865474, 2380.0148359356363],
+    [3109.4988233938807, 2382.120735877474],
+    [3100.1241559570058, 2380.5655483773025],
+  ];
+  const result = compilePhysicalTransitionObstacles(
+    [
+      [3000, 2300],
+      [3200, 2300],
+      [3200, 2500],
+      [3000, 2500],
+    ],
+    [],
+    [0, 0, 0],
+    [{ transition: "terrace", fixed: true, applied: false, plane: [0, 0, 0], polygon, holes: [] }],
+  );
+  assert.equal(result.obstacles.length, 1);
+  assert.equal(result.obstacles[0]!.polygon.points.length, 3);
+  assert.ok(result.obstacles[0]!.polygon.points.every(([x]) => x > 3100));
+  assert.deepEqual(clipping.xor([polygon.slice(1)], [result.obstacles[0]!.polygon.points]), []);
+});
 
 const boundary: [number, number][] = [
   [0, 0],

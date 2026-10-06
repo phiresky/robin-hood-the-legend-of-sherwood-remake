@@ -6,15 +6,18 @@ import { compileMap } from "../app/src/map-compile.ts";
 import { createTerrainGrid } from "../shared/src/authored-terrain.ts";
 
 const [stage, mode, selectedStair] = process.argv.slice(2);
-assert.ok(stage && (mode === undefined || mode === "--published" || mode === "--physical-terrace"));
+assert.ok(
+  stage &&
+    (mode === undefined || mode === "--candidate" || mode === "--published" || mode === "--physical-terrace"),
+);
 const physicalTerrace = mode === "--physical-terrace";
 const edits = JSON.parse(await fs.readFile(`${stage}/edits.json`, "utf8"));
 const stair = selectedStair ?? edits[0].asset;
-assert.ok(edits.some((edit) => edit.asset === stair));
 const map = stair.startsWith("york-") ? "york" : "nottingham";
 const source = await readStoredMap(`library/scenes/${map}.rhlos-map.json`, "library");
 const assets = await pinnedDescriptors("library", source.assetSources, source.sceneAssets);
 const neighbours = {
+  "york-riverbank-stone-landing-steps": ["york-southeast-riverside-raised-terrace"],
   "york-riverbank-wooden-landing-steps": [
     "york-southeast-riverside-raised-terrace",
     "york-east-riverside-wooden-walkway",
@@ -51,9 +54,11 @@ for (const id of ids) {
 const liftCount = assets.get(stair).gameplay.lifts.length;
 const northWall = stair === "nottingham-north-wall-stair";
 const southernRiverside = stair === "york-east-riverside-southern-wall-stair";
+const stoneRiverside = stair === "york-riverbank-stone-landing-steps";
 assert.ok(!physicalTerrace || southernRiverside);
-const riverside = stair === "york-east-riverside-curtain-wall" || southernRiverside;
-const terrainHeight = southernRiverside ? 50.001003 : riverside ? 90.00101 : 0;
+const riverside =
+  stair === "york-east-riverside-curtain-wall" || southernRiverside || stoneRiverside;
+const terrainHeight = southernRiverside ? 50.001003 : stoneRiverside ? 0 : riverside ? 90.00101 : 0;
 const size = northWall || riverside ? [7000, 6500] : [5000, 4500];
 const centers =
   northWall || riverside

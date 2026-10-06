@@ -1053,7 +1053,7 @@
       "model": "3d-assets/york/york-riverbank-stone-landing-steps/model.glb",
       "model_sha256": "ef3dffa9b900fcad677fd3caa7a34fc252e85dd612cdca7b3f269bce492ef96f",
       "descriptor": "3d-assets/york/york-riverbank-stone-landing-steps/asset.json",
-      "descriptor_sha256": "1c03b3a66e7272411be0ce4e0d382e20db03e78d1a603902d25c0f2c6bfdef59",
+      "descriptor_sha256": "bb323e06df725acedcca59762e52384f6c43d9eae5ad0b0748c306a0ac60d6eb",
       "id": "york-riverbank-stone-landing-steps"
     },
     {
@@ -1347,7 +1347,7 @@
       "model": "3d-assets/york/york-southeast-riverside-raised-terrace/model.glb",
       "model_sha256": "96e6513041fc9d75578e2d390b51a91d96671d69fe68943d8e708231cdc3de14",
       "descriptor": "3d-assets/york/york-southeast-riverside-raised-terrace/asset.json",
-      "descriptor_sha256": "200e89f72c75bb0706bfbe19912cfb584b1439879894e34d74a173818b1f88ae",
+      "descriptor_sha256": "9a141e54b652469253711e11089c5913ce64495cf1f6dbdeae658d0110bb3e09",
       "id": "york-southeast-riverside-raised-terrace"
     },
     {

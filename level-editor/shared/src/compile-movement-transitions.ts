@@ -218,14 +218,10 @@ function compileTransitionObstaclesInFrame(
         ? region
         : quantizeGeneratedMotionPolygon(region, Math.round, blocker.transition, warnings);
       if (!rounded) continue;
-      const rings = rounded.map((ring) => {
-        if (!physical) return simplifyMotionRing(ring);
-        const points = ring.map(([x, y]): Point => [x, y]);
-        const first = points[0],
-          last = points.at(-1);
-        if (first && last && first[0] === last[0] && first[1] === last[1]) points.pop();
-        return points;
-      });
+      // Clipping can leave a zero-width backtracking spike on a shared seam.
+      // Clean physical obstacle rings too: rounding their coordinates in the
+      // runtime can otherwise turn that spike into a blocking edge.
+      const rings = rounded.map((ring) => simplifyMotionRing(ring));
       let pieces: Point[][];
       if (rings.length === 1) pieces = [rings[0]!];
       else {

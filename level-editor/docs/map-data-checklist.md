@@ -27,6 +27,14 @@ and full York, and all ten scenes reopen. Receiving-floor mesh edge discrepancie
 stay below 0.150 units, and the wooden flight below 0.087 units; rendered actor
 integration remains unverified.
 
+York's riverbank stone stair and its independently owned terrace contact are
+also published. All 130 full-York stair routes and six controls pass; the stone,
+wooden and southern stair copies pass 96 moved routes and reject 144 invalid
+neighbour placements. Physical obstacle cleanup removes zero-width clipping
+spikes before runtime conversion. Fresh published geometry matches all 24
+placement exports and full York; all ten scenes reopen. The stone flight keeps
+an explicit 0.577-unit sampled mesh edge-discrepancy warning.
+
 Latest runtime checks retain exact landing contours through binding and foot
 support instead of reducing them to single precision. The southwest turret is
 now published after all sixteen rotated/elevated routes pass. Obstacle recovery
@@ -185,9 +193,9 @@ complete-sprite and rendered verification remain open.
 All ten scenes reopen after publication, and full Derby passes all five control
 apply/reset checks. All ten Derby stair definitions now pass local floor-anchor
 support checks after the upper-west publication below.
-A library-wide local-anchor audit finds unsupported anchors in 13 of 53 authored stair
+A library-wide local-anchor audit finds unsupported anchors in 12 of 53 authored stair
 definitions: Derby 0/10, Leicester 0/8, Lincoln 0/6, Nottingham 0/12,
-Sherwood 1/1 and York 12/16. All audited floors are planar. This checks local
+Sherwood 1/1 and York 11/16. All audited floors are planar. This checks local
 definitions, not placed connectivity or actual route failures; corrections and
 moved/rotated native traversal checks remain necessary across these assets.
 
