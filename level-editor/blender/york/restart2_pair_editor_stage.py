@@ -1,7 +1,7 @@
 """Prepare pinned full-map and bounded-pair editor checks without live writes."""
 import copy,hashlib,json
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];LIB=ROOT/'level-editor/library';BASE=ROOT/'level-editor/work/york-refinement/restart2/pair-textures-v1/assembled-v3-bounded/export-v1';OUT=BASE/'editor-stage-v3'
+ROOT=Path(__file__).resolve().parents[3];LIB=ROOT/'level-editor/library';BASE=ROOT/'level-editor/work/york-refinement/restart2/pair-textures-v1/assembled-v3-bounded/export-v2';OUT=BASE/'editor-stage-v4'
 if OUT.exists():raise FileExistsError(OUT)
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 original=json.loads((LIB/'scenes/york.rhlos-map.json').read_text());index=json.loads((BASE/'3d-assets/index.json').read_text());ids={r['id'] for r in index['assets']};document=copy.deepcopy(original);pins={str(LIB/'scenes/york.rhlos-map.json'):sha(LIB/'scenes/york.rhlos-map.json')};mapping={}
