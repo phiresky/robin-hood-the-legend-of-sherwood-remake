@@ -4,6 +4,44 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## West-moat tower and obstacles formed by joined floors (2026-10-06)
+
+The tower's stair needs corrected floor/landing seams and collision clearance
+for the newly extended portions of its own landings. Base review
+`local-stair-seams-bk6KfR` uses local sloped landing edges with a 2.05-unit
+landing shift limit. `stage-landing-extension-clearances.mjs` derives two
+clearances from the reviewed after-minus-before landing coverage, preserving
+holes and requiring unchanged landing planes. It does not clear whole floors
+or collision belonging to other assets. Final stage is
+`landing-extension-clearances-7y3c3n`.
+
+At 180 degrees, joining two floor pieces creates an enclosed movement obstacle
+that neither piece had individually. The compiler now recovers its precise
+boundary from the union of the placed floor coverage and their holes. Recovery
+still requires the same rounded footprint; ambiguous existing contours retain
+their fallback. Regression tests cover the fractional landing contact, precise
+holes and ambiguous-hole collision.
+
+Final placements `local-stair-placements-B2QkGa` pass sixteen directed native
+actor routes and eight control apply/reset checks at four rotations and two
+elevations. All eight emit physical navigation. Mesh review in
+`local-stair-seams-LHaGP8` finds 607/746 floor samples supported, with a maximum
+uncovered margin of 3.886 units and landing-edge discrepancies up to 0.334 units.
+The draft explicitly retains these limitations and unverified rendered actor
+integration. Editor validation passes 857 tests, with two skipped, app
+typechecking, focused lint, formatting and the production build.
+
+Fresh staged batch `saved-map-exports-rdmm0t` passes native construction for all
+ten maps, 284 stair routes, 84 climbing routes and 71 control apply/reset checks.
+Publication backup is `west-moat-publication-20261006`; Leicester and Wychford
+pins are refreshed. All eight published placement exports
+(`local-stair-placements-BQ3vU8`) and the full Leicester descriptor exactly match
+their native-tested candidates. All ten saved scenes reopen. Refreshed local
+anchor audit `lift-anchor-support-nVNL7S` finds 34/53 unsupported stair
+definitions, 1/8 ladders and 9/9 climbable walls. All eight Leicester stairs now
+pass that local support audit; this does not establish arbitrary-placement or
+rendered parity.
+
 ## Nottingham road stair ownership and precise terrain obstacles (2026-10-06)
 
 The road stair's midpoints were 0.136/0.168 units off their receiving heights.

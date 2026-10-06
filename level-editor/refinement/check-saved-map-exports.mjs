@@ -5,6 +5,8 @@ import { compileMap } from "../app/src/map-compile.ts";
 // Compile the actual saved scenes, including authored terrain and spline walls.
 // Descriptors exercise native geometry; this does not replace a browser ZIP bake.
 const output = await fs.mkdtemp("work/map-compile/saved-map-exports-");
+const [stage] = process.argv.slice(2);
+const edits = stage ? JSON.parse(await fs.readFile(`${stage}/edits.json`, "utf8")) : [];
 console.log(output);
 const results = [];
 const report = (complete) =>
@@ -12,6 +14,7 @@ const report = (complete) =>
     `${output}/diagnostics.json`,
     JSON.stringify({
       scope: "static-geometry-only-not-gameplay-parity",
+      ...(stage ? { gameplayStage: stage } : {}),
       complete,
       results,
     }),
@@ -29,6 +32,10 @@ for (const file of (await fs.readdir("library/scenes"))
       document.assetSources ?? [],
       document.sceneAssets,
     );
+    for (const edit of edits) {
+      const asset = assets.get(edit.asset);
+      if (asset) asset.gameplay = edit.gameplay;
+    }
     console.log(`${map}: loaded`);
     const compiled = compileMap(
       document,

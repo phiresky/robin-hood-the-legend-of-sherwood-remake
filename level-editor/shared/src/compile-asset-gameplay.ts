@@ -66,6 +66,11 @@ import { heightPlane, planeHeight, type HeightPlane } from "./gameplay-plane.ts"
 import { movementVolumeHeightSlice } from "./movement-volume-height-slice.ts";
 import { quantizeGeneratedMotionPolygon, simplifyMotionRing } from "./motion-quantization.ts";
 import { restoreReceivingBoundary, restoreObstacleBoundary } from "./restore-receiving-boundary.ts";
+import {
+  motionBoundsKey,
+  indexPreciseBlockers,
+  joinedBlockedCoverage as recoverJoinedCoverage,
+} from "./precise-movement-contours.ts";
 import { normalizeGeneratedMotion } from "./normalize-generated-motion.ts";
 import { normalizeGameplayStateViews } from "./gameplay-state-views.ts";
 import { compileAppearanceBindings } from "./compile-appearance-bindings.ts";
@@ -113,35 +118,6 @@ function ring(points: Point[], label = "Gameplay polygon", minimumArea = 0.5): P
   return result;
 }
 const polygon = (points: Point[]): Polygon => [[...points, points[0]!]];
-function motionBoundsKey(points: Point[]): string {
-  let minX = Infinity,
-    minY = Infinity,
-    maxX = -Infinity,
-    maxY = -Infinity;
-  for (const [x, y] of points) {
-    minX = Math.min(minX, x);
-    minY = Math.min(minY, y);
-    maxX = Math.max(maxX, x);
-    maxY = Math.max(maxY, y);
-  }
-  return `${minX},${minY},${maxX},${maxY}`;
-}
-function indexPreciseBlockers(contours: Point[][]) {
-  const index = new Map<string, { exact: Point[]; rounded: Point[] }[]>();
-  for (const contour of contours) {
-    const exact = simplifyMotionRing(contour, 2 / 1048576);
-    if (!exact.some((point) => point.some((v) => v !== Math.round(v)))) continue;
-    const rounded = simplifyMotionRing(
-      exact.map(([x, y]): Point => [Math.round(x), Math.round(y)]),
-    );
-    if (rounded.length < 3) continue;
-    const key = motionBoundsKey(rounded);
-    const bucket = index.get(key) ?? [];
-    bucket.push({ exact, rounded });
-    index.set(key, bucket);
-  }
-  return index;
-}
 function instances(
   document: Level3D,
   descriptors: ReadonlyMap<string, ProjectionAssetDescriptor>,
@@ -1847,6 +1823,14 @@ function compileAssetGameplayAttempt(
             physicalStairs.has(door.lift) &&
             pieces.some((piece) => containsNavigationAnchor(piece, door.outsideAnchor)),
         ));
+    let joinedBlockedCoverage: MultiPolygon | undefined;
+    const recoverJoinedBlocker = (points: Point[]): Point[] | undefined => {
+      if (!physicalLanding || pieces.length < 2) return undefined;
+      if (!joinedBlockedCoverage) {
+        joinedBlockedCoverage = recoverJoinedCoverage(pieces, frame);
+      }
+      return restoreObstacleBoundary(points, joinedBlockedCoverage);
+    };
     const preciseBoundaries = physicalLanding
       ? (
           indexPreciseBlockers(
@@ -1872,10 +1856,16 @@ function compileAssetGameplayAttempt(
             const candidates = (preciseBlockers.get(motionBoundsKey(points)) ?? []).filter(
               ({ rounded }) => polygonClipping.xor([rounded], [points]).length === 0,
             );
+            const exact =
+              candidates.length === 1
+                ? candidates[0]!.exact
+                : candidates.length === 0
+                  ? recoverJoinedBlocker(points)
+                  : undefined;
             return {
               state_id: 0,
               polygon: { points },
-              ...(candidates.length === 1 ? { precise_polygon: candidates[0]!.exact } : {}),
+              ...(exact ? { precise_polygon: exact } : {}),
             };
           }),
           ...changing.obstacles,
