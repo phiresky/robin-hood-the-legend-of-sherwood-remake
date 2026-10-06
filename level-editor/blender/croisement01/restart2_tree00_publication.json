@@ -1,0 +1,51 @@
+{
+  "status": "PASS: installed and normal-HTTP browser verified",
+  "scene_sha256": "a641c9a546b12f14a9cf5f2ffa99f0f4655960e88f5ce073d4b5c7fd08d1cbd6",
+  "index_sha256": "70b9d027c6b9512621cd7da547fd9b79603c75d43786ed223890dc341a92a892",
+  "published_files": {
+    "3d-assets/croisement01/croisement01-tree-00/model.glb": "d1f44c0342e5292541cc260d056416f08b72f2106a34a58b9a0042d408a75ea1",
+    "3d-assets/croisement01/croisement01-tree-00/asset.json": "0b379da8a6c512a45c097cd20719e7a69a7b8f4d11940feb43143bd435c0103f",
+    "3d-assets/croisement01/croisement01-group-005/model.glb": "28c439608fa21166d35fb2ce89322b81d9818895fa7caa6274c77367073ad8a0",
+    "3d-assets/croisement01/croisement01-group-005/asset.json": "73d5be035145bb61e3e5b79ab1db930f63bbbdf37e7c2cf6873372d782e5a2e1"
+  },
+  "retired_derivatives": {
+    "3d-assets/croisement01/croisement01-group-005/preview.glb": {
+      "archive": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/croisement01-refinement/restart2/tree00-integration-batch-v1/publication-backup-v1/retired-derived-files/preview.glb",
+      "sha256": "d0212374205ce4e2f876d2b3980badc3d9b52a24cab3a49068300f3c4b5c785f"
+    },
+    "3d-assets/croisement01/croisement01-group-005/preview.glb.receipt.json": {
+      "archive": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/croisement01-refinement/restart2/tree00-integration-batch-v1/publication-backup-v1/retired-derived-files/preview.glb.receipt.json",
+      "sha256": "6fe9f0c721485855d7622b75dd5a1e9e1a56b676dcd995fa8bfd4256e6cf6638"
+    },
+    "3d-assets/croisement01/croisement01-group-005/lossy.glb": {
+      "archive": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/croisement01-refinement/restart2/tree00-integration-batch-v1/publication-backup-v1/retired-derived-files/lossy.glb",
+      "sha256": "25cc953fc70f856b0b1e2ae081c9f32efffe4d4b7bc4a6e901adaee9129150dc"
+    },
+    "3d-assets/croisement01/croisement01-group-005/lossy.glb.receipt.json": {
+      "archive": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/croisement01-refinement/restart2/tree00-integration-batch-v1/publication-backup-v1/retired-derived-files/lossy.glb.receipt.json",
+      "sha256": "c5bb30445f462780780844086aad5349023aab5ecaf53706e07d9c39b9caef82"
+    }
+  },
+  "private_full_editor": {
+    "path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/croisement01-refinement/restart2/tree00-integration-batch-v1/full-editor-private-v2/result.json",
+    "sha256": "89728530d34c04beb320fea71f2a7b6f2ea454360924e37d9b1c39a977c17fd2",
+    "config_sha256": "d322cf3c22af5e87d2e86742c57b7e238b2bde043349cd179c8c757bc50cccf6",
+    "runtime_source_sha256": "b0eece9e5af166bb2ce6262234adeea5b106ba42ad3ecba33b8f47794593b270"
+  },
+  "backup": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/croisement01-refinement/restart2/tree00-integration-batch-v1/publication-backup-v1",
+  "unchanged_other_placements": 59,
+  "unrelated_palette_entries_preserved": 1295,
+  "scope": "Only approved building030 WOOD. Retained crown context remains unapproved and unpublished;029 and seven other native parts unchanged.",
+  "installation_receipt_sha256": "8feea59067005e70e23f8bd4eedcb76fca3adab3df19ffd202f9e688694a6219",
+  "bounded_live_proof_sha256": "40aae7cea99299371a49c2739a7d0e20230c808dfb01b5ce31485bb41583e484",
+  "root_full_editor_review_sha256": "c0ba4ea0595a77fd1b8f902b8e72efc0ce0263f1f91764a7e003c466bdd1226d",
+  "postcopy_published_files_verified": 4,
+  "postcopy_existing_asset_files_verified": 352,
+  "live_visual_review": "Personally viewed installed screenshot: bark and retained gray distal tips match exact approved WOOD derivative; image is a close crop, full geometry/native continuity established separately in saved derivative and pinned full-editor evidence.",
+  "live_screenshots": {
+    "croisement01-tree-00-live-browser.png": "d6255000ac2729680334b1ef08db72b4d9fe9795784d31d416b28db5e7c2e08e",
+    "live-browser.png": "d6255000ac2729680334b1ef08db72b4d9fe9795784d31d416b28db5e7c2e08e"
+  },
+  "publication_path": "level-editor/work/croisement01-refinement/restart2/tree00-integration-batch-v1/publication.json",
+  "publication_sha256": "7959016857ee690042542cbc00f9fc345c9f19e757af9021310a45dc709fedd6"
+}
