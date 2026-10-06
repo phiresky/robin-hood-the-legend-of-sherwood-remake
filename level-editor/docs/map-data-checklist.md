@@ -225,13 +225,14 @@ disable physical navigation at 37 degrees. The latest unpublished candidate
 emits physical navigation at all eight placements but fails all 48 actor routes,
 including the twelve routes previously using projected navigation.
 
-The library-wide audit still finds 34 of 1,289 indexed assets without gameplay
+The latest library-wide audit finds 38 of 1,297 indexed assets without gameplay
 definitions, including the composite Derby keep, several Nottingham buildings,
-and York market props. None is placed in the ten saved
-scenes, but placing one in a new map still omits its gameplay with a warning.
+and York market props. Four are placed in the current Croisement03 scene:
+ferns 35/76, the stream fallen log and the timber bridge. Exporting these or
+placing another missing definition in a new map omits its gameplay with a warning.
 These need individual ownership/geometry review; empty scenery definitions would
 be incorrect for buildings and bridges.
-An index-based component audit finds that 32 of these assets have every part
+An index-based component audit finds that 36 of these assets have every part
 represented in newer gameplay-bearing assets, often larger state assemblies.
 Their standalone definitions still need restoring with local control dependencies
 and coordinate frames; matching parts alone does not make them interchangeable.
@@ -538,7 +539,7 @@ posture and membership effects. Compiler checks require a landing to support
 both the outside point and seam before enabling physical traversal. Unsupported
 definitions retain projected navigation with a warning when their landing
 heights or coverage still disagree.
-The expanded local-anchor audit finds 1/8 ladder definitions and 6/9 wall
+The expanded local-anchor audit finds 1/8 ladder definitions and 5/9 wall
 definitions with unsupported floor anchors. Those counts do not check landing
 height compatibility or certify placed routes. Physical wall compilation and
 runtime traversal are supported, but these wall asset contacts remain unfinished.
@@ -554,6 +555,13 @@ receiver checks pass. The climb owns the clearance through its separate crest;
 it does not depend on surrounding buildings to clear its upper exit. Full York
 passes 130 stair routes, 40 climbs and six control checks. Receiving-floor mesh
 gaps remain below 0.282 units in this review; rendered integration is unverified.
+York's northern climb, receiving curtain wall and adjacent boundary wall are
+also published as drafts. Their asset-local openings now follow the corrected
+flight and upper contact, including the climb's own crest. All 64 actor routes
+pass across copied, rotated and elevated placements with integer and fractional
+origins; 64 missing/raised receiver checks pass. Full York retains all 130 stair
+routes, 40 climbs and six control checks. Mesh gaps remain up to 0.413 units,
+and rendered integration remains unverified.
 The York scaffold ladder correction is published. Its upper platform notch now
 meets the physical seam, and both approaches follow the flight centerline while
 retaining their outside anchors and inside heights. All sixteen rotated/elevated

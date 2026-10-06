@@ -234,9 +234,10 @@ for (const id of ids) {
       0,
     ];
     door.middle[2] = planeHeight(landingPlane, door.middle);
+    const midpointShift = Math.hypot(...door.middle.map((v, i) => v - oldMiddle[i]));
     assert.ok(
-      Math.hypot(...door.middle.map((v, i) => v - oldMiddle[i])) < midpointShiftLimit,
-      `${door.id}: excessive midpoint correction`,
+      midpointShift < midpointShiftLimit,
+      `${door.id}: midpoint correction ${midpointShift} exceeds limit ${midpointShiftLimit}; ${JSON.stringify(oldMiddle)} -> ${JSON.stringify(door.middle)}`,
     );
     assert.ok(
       pointInGameplayPolygon(door.middle, floor.polygon, true),

@@ -157,7 +157,7 @@
       "model": "3d-assets/york/york-castle-south-curtain-wall/model.glb",
       "model_sha256": "eb8bbd5b8f9c4b59bdbf625eac97a0ebac841164d1a69db11c853597e04c459e",
       "descriptor": "3d-assets/york/york-castle-south-curtain-wall/asset.json",
-      "descriptor_sha256": "627296ef85c485475a342c99b24d5b7138a8ad62e92e2e63478561e3b5e1c94e",
+      "descriptor_sha256": "f3d605d80d920bb935e792b27ee15a7d091bade81baac74ad79dd0663b9d7372",
       "id": "york-castle-south-curtain-wall"
     },
     {
@@ -430,14 +430,14 @@
       "model": "3d-assets/york/york-east-riverside-northern-boundary-wall/model.glb",
       "model_sha256": "9bfad78186b7e54ced45d515dc29853157478fa7298b9d560f3f63b1b93e06ed",
       "descriptor": "3d-assets/york/york-east-riverside-northern-boundary-wall/asset.json",
-      "descriptor_sha256": "eaa841f84a0b7e38300f3aa07048366aad69749fa29e7f2de644df135e3984c0",
+      "descriptor_sha256": "29bd605e7b91c360ebdd15fb51c5a45109dc84202803da95d79c34b015572e23",
       "id": "york-east-riverside-northern-boundary-wall"
     },
     {
       "model": "3d-assets/york/york-east-riverside-northern-wall-stair/model.glb",
       "model_sha256": "cc9992d6b20eeb65c402b1e7f42d333aa9ec29f0cca83460b44bc69339d919ea",
       "descriptor": "3d-assets/york/york-east-riverside-northern-wall-stair/asset.json",
-      "descriptor_sha256": "34a4b63725416c234f81594797b1c8f07e9fee89d6c30a08b29834a5e9e4b644",
+      "descriptor_sha256": "01967eb59218c61c66cdc9f2ae154831bff8fd6ef1eda67890bf833daa1adb23",
       "id": "york-east-riverside-northern-wall-stair"
     },
     {

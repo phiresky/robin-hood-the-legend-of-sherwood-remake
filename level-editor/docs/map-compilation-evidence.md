@@ -9466,3 +9466,63 @@ Fresh published full York `saved-map-exports-YAAF3w` and eight copied placements
 `...neighbour-placements-hO7bfM` exactly match their tested descriptors. All ten
 saved scenes reopen with valid descriptor pins. Authoring-script formatting and
 patch whitespace checks pass.
+
+### Northern York climb and independent boundary-wall opening
+
+Candidate `york-northern-climb-contact-9u7SLw` corrects the northern climb,
+its independently owned curtain-wall receiving contact, and the neighbouring
+boundary wall's existing climb clearance. The authoring helper records all
+changes in asset-local coordinates; compilation does not read the saved York
+scene to repair connections.
+
+The earlier two-asset candidate `york-northern-climb-contact-6RJXyE` passed
+32 copied actor routes but lost its climb in full York. Collision subsets
+`lift-neighbour-collision-kpdm9v` isolate the boundary wall as the cause: adding
+that asset alone changes one lift to zero. Its clearance still followed the
+previous sloped flight. Updating the boundary-owned clearance to the corrected
+flight polygon and plane preserves collision outside that opening and does not
+change compiler plane-matching tolerances.
+
+The three-asset placements `...northern-wall-stair-neighbour-placements-3NTNAb`
+pass all 32 complete-profile actor routes: two copies, four rotations
+(0/37/90/180 degrees), and two elevations (0/40). All 32 missing/raised
+receiving-wall controls reject unsupported connections. Removing either
+optional boundary-wall copy preserves both climbs at all eight placements.
+Full York `saved-map-exports-3IZwmY` passes 130 stair routes and six controls,
+but fails both northern climb directions (38/40 climbs pass). This candidate
+is not published. The runtime trace reports a 0.047529-unit upper support gap.
+Both the boundary wall's flat upper clearance and the climb solid's own crest
+clearance still describe the previous receiving contour. Their collision can
+survive rounding at the saved placement even though the copied placements pass.
+
+Final candidate `york-northern-climb-contact-yKyoBU` updates these existing
+upper openings in each asset's own frame. No runtime tolerance changes. The
+placement check now also tests the saved origin's fractional Y offset at all
+four rotations and both elevations. `...neighbour-placements-750CQz` passes
+64 complete-profile actor routes and 64 missing/raised receiver controls;
+removing either optional boundary-wall copy preserves support. Diagnostic
+subsets `lift-neighbour-collision-XM39Za` pass fourteen actor routes. Two cropped
+terrace subsets cannot compile and remain explicitly excluded from this actor
+manifest; they do not count as passing full-map coverage.
+
+Final full York `saved-map-exports-G9UysD` passes all 130 stair routes,
+40 climb routes and six control apply/reset checks. All three definitions are
+published with backup `york-northern-climb-publication-20261006`. All ten scenes
+reopen with valid descriptor pins. Sixteen fresh published placements
+`...neighbour-placements-t9S2Ud` exactly match the native-tested candidate.
+Post-publication anchor audit `lift-anchor-support-EbcKcW` reports unsupported
+anchors in 0/53 stairs, 1/8 ladders and 5/9 walls. Fresh published full York
+`saved-map-exports-L4Ocfa` exactly matches the native-tested candidate.
+Fresh mesh sampling retains lower-landing gaps up to 0.241 units, flight gaps
+up to 0.163 units and receiving-wall gaps up to 0.413 units; height residuals
+are at most 0.029, 0.023 and 0.062 respectively. Rendered integration remains
+unverified and the asset definitions retain draft warnings.
+
+A fresh index and saved-scene audit finds 38 missing gameplay definitions among
+1,297 assets. Four are placed in current Croisement03: ferns 35/76, the stream
+fallen log and timber bridge. Placement auditing must use the stored document's
+`placements[].assets`; reconstructed editor groups do not have an `assets`
+field. Of the 38 missing definitions, 36 have all
+component IDs represented in gameplay-bearing assets; the two unmatched assets
+are the Leicester background and Nottingham terrain ground. Component coverage
+alone does not establish transferable local gameplay ownership.
