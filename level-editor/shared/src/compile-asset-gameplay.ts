@@ -1624,7 +1624,7 @@ function compileAssetGameplayAttempt(
     const floor = surfaces.filter((surface) => surface.lift === lift.id);
     const worldRing = (points: Point[], plane: HeightPlane): Vec3[] =>
       points.map(([x, y]) => [x, y, planeHeight(plane, [x, y])]);
-    return compilePhysicalStairRegion({
+    const compiled = compilePhysicalStairRegion({
       frame: [0, 0, bounds[2], bounds[3]],
       surfaces: floor.map((surface) => ({
         polygon: worldRing(surface.worldPolygon, surface.worldPlane),
@@ -1667,6 +1667,9 @@ function compileAssetGameplayAttempt(
         })),
       ],
     });
+    if (lift.type === 2 && compiled.navigation.floor_patches)
+      throw new Error("Physical ladders require one planar flight");
+    return compiled;
   };
   let navigationRegions: ReturnType<typeof assembleNavigationRegions>;
   for (;;) {
@@ -1936,6 +1939,7 @@ function compileAssetGameplayAttempt(
               physical: {
                 coordinateSpace: "world" as const,
                 plane: physical.navigation.plane,
+                floorPatches: physical.navigation.floor_patches,
                 polygon: physical.navigation.boundary,
                 blockers: physical.initialBlockers,
               },

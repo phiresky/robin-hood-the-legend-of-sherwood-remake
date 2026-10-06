@@ -8,12 +8,18 @@ import {
 } from "./compile-physical-stair.ts";
 import {
   compilePhysicalTransitionObstacles,
+  MovementTransitionLimit,
   type PlacedTransitionBlocker,
 } from "./compile-movement-transitions.ts";
 import { clipHeight, planeHeight, type HeightPlane } from "./gameplay-plane.ts";
 import { movementVolumeHeightSlice } from "./movement-volume-height-slice.ts";
 import type { Point } from "./level.ts";
 import type { Vec3 } from "./scene.ts";
+
+type PhysicalStairRegion = ReturnType<typeof compilePhysicalStairArea> & {
+  pairs: Map<string, number>;
+  initialBlockers: Point[][];
+};
 
 export interface PhysicalStairRegionInput extends Omit<PhysicalStairInput, "obstacles"> {
   /** Visible export rectangle in projected coordinates: left, top, right, bottom. */
@@ -32,9 +38,63 @@ export interface PhysicalStairRegionInput extends Omit<PhysicalStairInput, "obst
 }
 
 /** Assemble collision and control identities without deriving geometry from screen coordinates. */
-export function compilePhysicalStairRegion(input: PhysicalStairRegionInput) {
+export function compilePhysicalStairRegion(input: PhysicalStairRegionInput): PhysicalStairRegion {
   let surfaces = input.surfaces;
   let floor = compilePhysicalStair({ ...input, obstacles: [] });
+  if (floor.navigation.floor_patches) {
+    const parts = surfaces.flatMap((surface) => {
+      try {
+        return [compilePhysicalStairRegion({ ...input, surfaces: [surface], doors: [] })];
+      } catch (error) {
+        if (
+          input.frame &&
+          error instanceof Error &&
+          error.message === "Physical stair has no floor inside the export frame"
+        )
+          return [];
+        throw error;
+      }
+    });
+    const pairs = new Map<string, number>();
+    for (const part of parts)
+      for (const name of part.pairs.keys()) {
+        if (pairs.has(name)) continue;
+        if (pairs.size >= 16) throw new MovementTransitionLimit(name);
+        pairs.set(name, pairs.size);
+      }
+    const world = (points: Point[], plane: HeightPlane): Vec3[] =>
+      points.map(([x, y]) => [x, y, planeHeight(plane, [x, y])]);
+    const compiled = compilePhysicalStairArea({
+      surfaces: parts.map((part) => ({
+        polygon: world(part.navigation.boundary, part.navigation.plane),
+        holes: [],
+      })),
+      doors: input.doors,
+      obstacles: parts.flatMap((part) =>
+        part.navigation.obstacles.map((obstacle) => {
+          const oldState = part.area.obstacles[obstacle.motion_obstacle]!.state_id;
+          let stateId = 0;
+          for (const [name, index] of part.pairs) {
+            stateId |= ((oldState >>> (2 * index)) & 3) << (2 * pairs.get(name)!);
+          }
+          return {
+            stateId: stateId >>> 0,
+            polygon: world(obstacle.polygon, part.navigation.plane),
+          };
+        }),
+      ),
+    });
+    return {
+      ...compiled,
+      pairs,
+      initialBlockers: compiled.navigation.obstacles
+        .filter((obstacle) => {
+          const state = compiled.area.obstacles[obstacle.motion_obstacle]!.state_id;
+          return state === 0 || (state & 0x55555555) !== 0;
+        })
+        .map((obstacle) => obstacle.polygon),
+    };
+  }
   if (input.frame) {
     const [left, top, right, bottom] = input.frame;
     if (input.frame.some((value) => !Number.isFinite(value)) || left >= right || top >= bottom)

@@ -8,6 +8,7 @@ export interface NavigationAnchorArea {
   blockers: Point[][];
   /** Ordinary movement contours use projected coordinates. Physical floors use world XY. */
   coordinateSpace?: "projected" | "world";
+  floorPatches?: { plane: HeightPlane; boundary: Point[] }[];
 }
 
 /** Receiving contours pass through the fixed clipping grid before binding. */
@@ -53,6 +54,15 @@ export function pointInGameplayPolygon(point: Point, polygon: Point[], includeBo
 }
 
 export function navigationAnchorHeight(area: NavigationAnchorArea, point: Vec3) {
+  if (area.coordinateSpace === "world" && area.floorPatches) {
+    const xy: Point = [point[0], point[1]];
+    const patch = area.floorPatches.find(
+      (patch) =>
+        pointInGameplayPolygon(xy, patch.boundary, true) ||
+        onClippedReceivingBoundary(xy, patch.boundary),
+    );
+    return patch ? planeHeight(patch.plane, xy) : Number.NaN;
+  }
   return planeHeight(area.plane, [
     point[0],
     area.coordinateSpace === "world" ? point[1] : point[1] - point[2],

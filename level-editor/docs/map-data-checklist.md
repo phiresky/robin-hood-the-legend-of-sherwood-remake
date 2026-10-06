@@ -73,16 +73,18 @@ reopen. The ground asset provides backdrop coverage, not physical mesh evidence;
 rendered contact remains unverified.
 
 The north-garden stair exposes a further joined-flight limitation: its two
-slightly different floor planes merge into one lift, but physical stair
-navigation currently requires one plane. The staged local seam corrections
+slightly different floor planes merge into one lift. The staged local seam corrections
 have 1,329/1,330 sampled flight mesh hits, with a maximum edge gap of 0.033 units;
 moved assemblies still fall back to projected navigation. A new piecewise-floor
 primitive passes bidirectional step/distance checks across rotated and elevated
 joined slopes, rejects gaps and conflicting overlaps, and avoids concave-floor
 shortcuts. Descriptor loading and actor movement now support these floors:
 native fixtures cross both flights in both directions and retain live barrier
-state. Compiler emission and the garden asset's internal shared-edge correction
-remain open; this candidate is unpublished.
+state. Compiler emission now preserves each flight's plane and projected slope
+changes, independently clips collision, and remaps controls after cropping.
+Joined and copied/rotated compiler checks pass, along with independent controls
+and single-flight cropping. Compiler-to-native integration and the garden asset's
+internal shared-edge correction remain open; this candidate is unpublished.
 
 Latest runtime checks retain exact landing contours through binding and foot
 support instead of reducing them to single precision. The southwest turret is

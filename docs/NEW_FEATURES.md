@@ -42,8 +42,11 @@
   inconsistent overlaps and missing floor coverage. Native actor and door
   movement follow the current flight, including live barriers and landing
   handoffs; ambiguous screen inverses reject. Replay schema 64 retains the new
-  floor metadata. Compiler emission remains pending: normal editor exports
-  still require planar lifts for physical navigation.
+  floor metadata. Editor exports now emit each joined stair flight's plane,
+  split projected boundaries at slope changes, and assemble collision and
+  control bindings per flight. Cropping retains each surviving floor's height.
+  Ladders still require a planar flight. Compiler-to-native joined-floor
+  integration and published multi-plane asset verification remain open.
   Local point Move requests resolve supported goals on invertible floors to
   physical orders. Ambiguous edge-on point requests reject; seek/line requests
   and full movement effects remain unfinished.

@@ -1,10 +1,10 @@
 import polygonClipping from "polygon-clipping";
 import type { CompiledAssetGeometry, PhysicalStairNavigation } from "./asset-gameplay.ts";
-import { heightPlane, planeHeight } from "./gameplay-plane.ts";
 import type { Point } from "./level.ts";
 import type { Vec3 } from "./scene.ts";
 import { pointInGameplayPolygon } from "./navigation-anchor.ts";
 import { physicalCollisionPieces } from "./physical-collision-pieces.ts";
+import { physicalStairFloor } from "./physical-stair-floor.ts";
 
 export interface PhysicalStairInput {
   surfaces: { polygon: Vec3[]; holes: Vec3[][] }[];
@@ -51,11 +51,9 @@ export function compilePhysicalStairArea(input: PhysicalStairAreaInput): {
     motion_obstacle,
     polygon: obstacle.polygon,
   }));
+  const floor = physicalStairFloor(input.surfaces);
   const project = (point: Point): Point => {
-    const result: Point = [
-      Math.round(point[0]),
-      Math.round(point[1] - planeHeight(navigation.plane, point)),
-    ];
+    const result: Point = [Math.round(point[0]), Math.round(point[1] - floor.heightAt(point))];
     if (result.some((value) => !Number.isFinite(value) || value < -32768 || value > 32767))
       throw new Error("Physical stair projection exceeds the game coordinate range");
     return result;
@@ -69,10 +67,10 @@ export function compilePhysicalStairArea(input: PhysicalStairAreaInput): {
       skeleton_segments: [],
       // A valid physical floor can project to a line. Preserve its ordered
       // vertices; simplifying that line would lose the physical surface identity.
-      polygon: { points: navigation.boundary.map(project) },
+      polygon: { points: floor.splitRing(navigation.boundary).map(project) },
       obstacles: collision.map((obstacle) => ({
         state_id: obstacle.stateId,
-        polygon: { points: obstacle.polygon.map(project) },
+        polygon: { points: floor.splitRing(obstacle.polygon).map(project) },
       })),
     },
   };
@@ -88,14 +86,15 @@ export function compilePhysicalStair(input: PhysicalStairInput): {
   if (vertices.some((point) => point.some((value) => !Number.isFinite(value))))
     throw new Error("Physical stair vertices must be finite");
   if (vertices.length < 3) throw new Error("Physical stair needs a floor");
-  const plane = heightPlane(vertices);
+  const floor = physicalStairFloor(input.surfaces);
+  const { plane } = floor;
   const groundRing = (points: Vec3[], label: string): Point[] => {
     if (
       points.length < 3 ||
       points.some(
         (point) =>
           point.some((value) => !Number.isFinite(value)) ||
-          Math.abs(planeHeight(plane, [point[0], point[1]]) - point[2]) > 1e-4,
+          Math.abs(floor.heightAt([point[0], point[1]]) - point[2]) > 1e-4,
       )
     )
       throw new Error(`${label} must be a finite polygon on the stair floor`);
@@ -144,7 +143,7 @@ export function compilePhysicalStair(input: PhysicalStairInput): {
         throw new Error("Physical stair door coordinates must be finite");
     for (const anchor of ["inside", "middle"] as const) {
       const point = door[anchor];
-      const heightError = point[2] - planeHeight(plane, [point[0], point[1]]);
+      const heightError = point[2] - floor.heightAt([point[0], point[1]]);
       const label = `door ${index} ${anchor} at ${JSON.stringify(point)}`;
       if (Math.abs(heightError) > 1e-4)
         throw new Error(
@@ -155,7 +154,16 @@ export function compilePhysicalStair(input: PhysicalStairInput): {
     }
     return { inside: [...door.inside], middle: [...door.middle], outside: [...door.outside] };
   });
-  return { navigation: { plane, boundary, obstacles, doors }, holes };
+  return {
+    navigation: {
+      plane,
+      boundary,
+      obstacles,
+      doors,
+      ...(floor.patches ? { floor_patches: floor.patches } : {}),
+    },
+    holes,
+  };
 }
 
 /** Only for clipping results: authored contours must pass normal validation. */

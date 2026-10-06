@@ -1899,6 +1899,7 @@ test("joined lift assets retain multiple height planes in one traversal sector",
   const compiled = compileAssetGameplay(document, assets, bounds);
   assert.equal(compiled.lifts!.length, 1);
   const lift = compiled.lifts![0]!;
+  assert.equal(lift.physical_navigation?.floor_patches?.length, 2);
   assert.equal(lift.doors.length, 2);
   assert.equal(compiled.motion_data.layers.at(-1)!.length, 1);
   const projections = compiled.sight_obstacles.filter(
@@ -1938,6 +1939,8 @@ test("compound lifts rotate and duplicate with independent geometric joins", () 
   const compiled = compileAssetGameplay(document, assets, bounds);
   assert.equal(compiled.lifts!.length, 2);
   assert.notEqual(compiled.lifts![0]!.motion_area_index, compiled.lifts![1]!.motion_area_index);
+  for (const lift of compiled.lifts!)
+    assert.equal(lift.physical_navigation?.floor_patches?.length, 2);
   assert.equal(compiled.lifts![1]!.doors.length, 2);
   assert.notEqual(compiled.lifts![0]!.direction, compiled.lifts![1]!.direction);
 });

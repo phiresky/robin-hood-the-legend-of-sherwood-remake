@@ -10,6 +10,60 @@ import { heightPlane, type HeightPlane } from "./gameplay-plane.ts";
 import type { Point } from "./level.ts";
 import type { Vec3 } from "./scene.ts";
 
+test("joined flights retain independent controls and crop each floor at its own height", () => {
+  const rect = (x0: number, x1: number): Point[] => [
+    [x0, 0],
+    [x1, 0],
+    [x1, 20],
+    [x0, 20],
+  ];
+  const lower: HeightPlane = [1, 0, 0];
+  const upper: HeightPlane = [2, 0, -10];
+  const input: PhysicalStairRegionInput = {
+    surfaces: [
+      { polygon: rect(0, 10).map(([x, y]): Vec3 => [x, y, x]), holes: [] },
+      { polygon: rect(10, 20).map(([x, y]): Vec3 => [x, y, 2 * x - 10]), holes: [] },
+    ],
+    solids: [],
+    clearances: [],
+    doors: [],
+    blockers: [
+      { transition: "lower", applied: false, plane: lower, polygon: rect(4, 5), holes: [] },
+      { transition: "upper", applied: true, plane: upper, polygon: rect(14, 15), holes: [] },
+    ],
+  };
+  const result = compilePhysicalStairRegion(input);
+  assert.equal(result.navigation.floor_patches?.length, 2);
+  assert.deepEqual(
+    [...result.pairs],
+    [
+      ["lower", 0],
+      ["upper", 1],
+    ],
+  );
+  assert.deepEqual(
+    result.area.obstacles.map((o) => o.state_id),
+    [1, 8],
+  );
+  assert.equal(result.initialBlockers.length, 1);
+  assert.ok(result.area.polygon.points.some(([x, y]) => x === 10 && y === -10));
+  const cropped = compilePhysicalStairRegion({ ...input, frame: [2, -40, 18, 40] });
+  assert.equal(cropped.navigation.floor_patches?.length, 2);
+  assert.ok(
+    cropped.navigation.floor_patches!.every((patch) =>
+      patch.boundary.every(([x]) => x >= 2 && x <= 18),
+    ),
+  );
+  const upperOnly = compilePhysicalStairRegion({ ...input, frame: [12, -40, 18, 40] });
+  assert.equal(upperOnly.navigation.floor_patches, undefined);
+  assert.deepEqual(upperOnly.navigation.plane, upper);
+  assert.deepEqual([...upperOnly.pairs], [["upper", 0]]);
+  assert.deepEqual(
+    upperOnly.area.obstacles.map((o) => o.state_id),
+    [2],
+  );
+});
+
 test("rotated clearance contact preserves solids and still cuts actual openings", () => {
   const fixture: { polygon: Point[]; clearance: Point[] } = JSON.parse(
     readFileSync(
