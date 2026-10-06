@@ -115,6 +115,15 @@ sampling has 731/733 mesh hits, a maximum 0.240-unit edge gap and height residua
 below 0.077 units. All ten scenes reopen; eight fresh published terrain-drop
 exports and full York match tested geometry. Rendered traversal remains unverified.
 
+The west-city-wall stair and its terrain-owned lower contact are also published.
+Corrected local seams pass 32 copied routes and sixteen new-drop routes, with
+forty invalid landing rejections. Full York initially failed the two lower
+handoffs; aligning the ground boundary in the elevated receiver's projected
+coordinates restores all 130 routes and six controls. All 839 sampled flight
+points hit its mesh, with height residual below 0.106 units. Sixteen fresh
+published placement exports and full York match tested geometry; all ten scenes reopen.
+Ground artwork coverage is verified; rendered physical contact remains open.
+
 Latest runtime checks retain exact landing contours through binding and foot
 support instead of reducing them to single precision. The southwest turret is
 now published after all sixteen rotated/elevated routes pass. Obstacle recovery
@@ -273,9 +282,9 @@ complete-sprite and rendered verification remain open.
 All ten scenes reopen after publication, and full Derby passes all five control
 apply/reset checks. All ten Derby stair definitions now pass local floor-anchor
 support checks after the upper-west publication below.
-A library-wide local-anchor audit finds unsupported anchors in 5 of 53 authored stair
+A library-wide local-anchor audit finds unsupported anchors in 4 of 53 authored stair
 definitions: Derby 0/10, Leicester 0/8, Lincoln 0/6, Nottingham 0/12,
-Sherwood 1/1 and York 4/16. Individual audited flight floors are planar; joined
+Sherwood 1/1 and York 3/16. Individual audited flight floors are planar; joined
 stairs may contain several planes. This checks local
 definitions, not placed connectivity or actual route failures; corrections and
 moved/rotated native traversal checks remain necessary across these assets.

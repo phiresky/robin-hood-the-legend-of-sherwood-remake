@@ -16,7 +16,7 @@
       "model": "3d-assets/york/york-terrain/model.glb",
       "model_sha256": "a54d425c2a44a2836e9e1c615a6a5daf92e631c57b53452e0de56e4e877d3965",
       "descriptor": "3d-assets/york/york-terrain/asset.json",
-      "descriptor_sha256": "2da043d212d6cf53d7888299db73734789df3fa7db37e1b0d76f1457933b9877"
+      "descriptor_sha256": "0c97d8162c9407e99dcb620007b5dd4c1d75fff2893ab9c333ec8ed1dbee4b02"
     }
   ],
   "assetSources": [
@@ -1564,7 +1564,7 @@
       "model": "3d-assets/york/york-west-city-wall-and-access-stair/model.glb",
       "model_sha256": "b0991662f9b8c4b362fac6f94fabab4fbec349e7cb2ca9b16a5b6d4a77b90af9",
       "descriptor": "3d-assets/york/york-west-city-wall-and-access-stair/asset.json",
-      "descriptor_sha256": "e88bd246cbf34b7ab008896e9f70ee517106bbc5f7efcad4a728c05889e9b5d8",
+      "descriptor_sha256": "11cf261b7e366ca5128f2dc701f069991688330cc2cdbc3299953e4b5f214dad",
       "id": "york-west-city-wall-and-access-stair"
     },
     {

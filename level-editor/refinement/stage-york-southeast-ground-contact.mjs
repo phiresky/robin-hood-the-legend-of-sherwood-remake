@@ -14,6 +14,17 @@ const [stage] = process.argv.slice(2);
 assert.ok(stage);
 const edits = JSON.parse(await fs.readFile(`${stage}/edits.json`, "utf8"));
 const contacts = {
+  "york-west-city-wall-and-access-stair": {
+    lift: "building-075-lift",
+    surface: "ground-section-0-0",
+    receiverHeight: 90.00101,
+    label: "West city wall",
+    prefix: "york-westwall-ground-contact",
+    before: [
+      [300, 532],
+      [317, 551],
+    ],
+  },
   "york-north-garden-wall-and-stair": {
     lift: "building-049-lift",
     surface: "ground-section-4-0",
@@ -53,14 +64,17 @@ assert.equal(group.transform.rot_deg, 0);
 const stair = edits[0].gameplay;
 const lift = stair.lifts.find((lift) => lift.id === contact.lift);
 const floor = stair.surfaces.find((surface) => surface.id === lift.surface);
+// Some physical receivers sit above the navigation layer. Author their contact
+// in the ground owner's projected coordinates, retaining the physical altitude.
+const receiverHeight = contact.receiverHeight ?? 0;
 const plane = heightPlane(
   floor.polygon.map(([x, y], i) => [
     x + group.transform.dx,
-    y + group.transform.dy,
-    floor.height[i] + group.transform.dz,
+    y + group.transform.dy - receiverHeight,
+    floor.height[i] + group.transform.dz - receiverHeight,
   ]),
 );
-assert.equal(lift.doors[0].outside[2] + group.transform.dz, 0);
+assert.ok(Math.abs(lift.doors[0].outside[2] + group.transform.dz - receiverHeight) < 1e-6);
 const descriptor = assets.get("york-terrain");
 const gameplay = structuredClone(descriptor.gameplay);
 const surface = gameplay.surfaces.find(

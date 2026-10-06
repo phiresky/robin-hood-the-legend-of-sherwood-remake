@@ -9071,3 +9071,37 @@ local anchors (York 4/16 and Sherwood 1/1); ladder/wall counts remain 1/8 and 9/
 
 Fresh full-York export `york-southgate-published-dtaqwU` matches the native-tested
 candidate geometry exactly; the added placement height affects new drops only.
+
+### West-city-wall stair and elevated receiver contact (2026-10-06)
+
+`local-stair-seams-GyRGQN` corrects both local contacts. Mesh review finds
+839/839 flight hits with maximum absolute height residual 0.105429 units.
+`local-stair-seams-uYbT9q` adds placement ground height `90.00101` and a draft
+mesh-review warning; its placed geometry is unchanged. Copied fixtures
+`external-stair-landings-RHJr8H` pass all 32 routes and reject 32 missing/raised
+receivers. New terrain drops `local-stair-placements-r8YNRE` pass sixteen routes
+and reject eight raised placements.
+
+Full York initially passes 128/130 routes and all six controls. Both failures
+occur at the lower handoff, where ordinary ground navigation is projected under
+the elevated physical receiver. The ground-contact authoring tool now supports
+an explicit receiver altitude; its default zero-altitude behavior is retained.
+`york-westwall-ground-contact-d4jF0z` moves the terrain-owned edge from
+`[300,532]`–`[317,551]` to `[301.611948,530.501163]`–`[318.969545,549.168658]`.
+All 205 sampled backdrop points are covered. Full York then passes all 130 routes
+and six control apply/reset checks.
+
+Published the stair and terrain with backup
+`york-westwall-stair-publication-20261006`. All ten scenes reopen. Eight fresh
+terrain-drop exports in `local-stair-placements-cvjKtI` and eight copied exports
+in `external-stair-landings-ltoKyT` exactly match native-tested geometry. Audit
+`lift-anchor-support-iAh7Gd` leaves 4/53 stair definitions with unsupported local
+anchors: three in York and one in Sherwood. Ladder/wall counts remain 1/8 and 9/9.
+
+Separate Sherwood investigation stages `local-stair-seams-b0YsHF`; it is not
+published. Its shared-node mesh review shows large discrepancies, including
+zero stair-flight sample hits. Correct surface ownership/mesh evidence needs
+review before treating its successful descriptor construction as traversal parity.
+
+Fresh full export `york-westwall-published-7E1mLP` matches the native-tested
+candidate exactly. The contact-authoring tool passes syntax and whitespace checks.
