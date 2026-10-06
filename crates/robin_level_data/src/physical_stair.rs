@@ -1,10 +1,11 @@
 //! Placed stair geometry in ground coordinates, retaining live collision ownership.
 
-use geo::{Closest, ClosestPoint, Intersects, Validation};
+use geo::{Area, BooleanOps, Buffer, Closest, ClosestPoint, Intersects, Validation};
 use serde::{Deserialize, Serialize};
 
 use crate::level_data::{RawLift, RawMotionArea};
 use crate::stair_navigation::StairNavigationPlane;
+use crate::stair_navigation_floor::{StairFloorPatch, StairNavigationFloor};
 
 #[derive(
     Debug,
@@ -19,6 +20,10 @@ use crate::stair_navigation::StairNavigationPlane;
 pub struct PhysicalStairNavigation {
     /// World floor coefficients: z = a*x + b*y + c.
     pub plane: [f64; 3],
+    /// Authoritative piecewise floor when present; `plane` is retained for older
+    /// planar descriptors and must not be extrapolated across these patches.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub floor_patches: Vec<StairFloorPatch>,
     pub boundary: Vec<[f32; 2]>,
     pub obstacles: Vec<PhysicalStairObstacle>,
     /// Same local order as the owning lift's doors. Never infer these heights
@@ -66,6 +71,14 @@ impl PhysicalStairNavigation {
             return Err("physical navigation requires a stair or ladder motion area".into());
         }
         let plane = StairNavigationPlane::new(self.plane)?;
+        let floor = if self.floor_patches.is_empty() {
+            None
+        } else {
+            if lift.lift_type != 1 {
+                return Err("piecewise physical floors require a stair".into());
+            }
+            Some(StairNavigationFloor::new(self.floor_patches.clone())?)
+        };
         let check_polygon = |points: &[[f32; 2]]| -> Result<(), String> {
             if points.len() < 3 {
                 return Err("physical stair polygon needs at least three vertices".into());
@@ -134,6 +147,46 @@ impl PhysicalStairNavigation {
             ),
             Vec::new(),
         );
+        if let Some(floor) = &floor {
+            let coverage = floor.footprint();
+            let scale = self
+                .boundary
+                .iter()
+                .flatten()
+                .map(|n| f64::from(*n).abs())
+                .fold(1.0_f64, f64::max);
+            let tolerance = scale * f64::from(f32::EPSILON) * 2.0;
+            let mut required = geo::MultiPolygon::from(vec![boundary.clone()]);
+            for obstacle in &self.obstacles {
+                if area.obstacles[usize::from(obstacle.motion_obstacle)].state_id != 0 {
+                    continue;
+                }
+                let blocked = geo::Polygon::new(
+                    geo::LineString::from(
+                        obstacle
+                            .polygon
+                            .iter()
+                            .map(|p| (f64::from(p[0]), f64::from(p[1])))
+                            .collect::<Vec<_>>(),
+                    ),
+                    Vec::new(),
+                );
+                required = required.difference(&blocked);
+            }
+            // Allow coordinate rounding only beside actual edges. A total-area
+            // allowance could hide a genuine narrow missing-floor notch.
+            if required
+                .difference(&coverage.buffer(tolerance))
+                .unsigned_area()
+                > 1e-8
+                || coverage
+                    .difference(&boundary.buffer(tolerance))
+                    .unsigned_area()
+                    > 1e-8
+            {
+                return Err("physical stair patches do not cover its walking boundary".into());
+            }
+        }
         for (physical, door) in self.doors.iter().zip(&lift.doors) {
             for (world, screen, on_floor) in [
                 (physical.inside, door.point_in, true),
@@ -149,7 +202,16 @@ impl PhysicalStairNavigation {
                 {
                     return Err("physical stair door differs from its projected identity".into());
                 }
-                if on_floor && !plane.contains_runtime_position(world) {
+                let on_plane = if let Some(floor) = &floor {
+                    floor
+                        .runtime_plane_at([world[0], world[1]])
+                        .ok()
+                        .and_then(|coefficients| StairNavigationPlane::new(coefficients).ok())
+                        .is_some_and(|plane| plane.contains_runtime_position(world))
+                } else {
+                    plane.contains_runtime_position(world)
+                };
+                if on_floor && !on_plane {
                     return Err("physical stair door is not on its floor".into());
                 }
                 if on_floor && !contains_rounded_anchor(&boundary, [world[0], world[1]]) {

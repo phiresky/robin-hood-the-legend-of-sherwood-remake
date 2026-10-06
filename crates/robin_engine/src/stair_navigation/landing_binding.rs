@@ -78,6 +78,7 @@ mod tests {
         )))
         .unwrap();
         let mut bound = BoundPhysicalStair {
+            floor: None,
             definition: fixture.definition,
             layer: 66,
             area: 0,
@@ -146,6 +147,7 @@ mod tests {
             "fixture must expose the lossy conversion"
         );
         let mut bound = BoundPhysicalStair {
+            floor: None,
             definition: fixture.definition,
             layer: 2,
             area: 0,
@@ -179,7 +181,9 @@ mod tests {
     #[test]
     fn permanent_landing_holes_exclude_false_height_contacts() {
         let stair = BoundPhysicalStair {
+            floor: None,
             definition: robin_level_data::physical_stair::PhysicalStairNavigation {
+                floor_patches: Vec::new(),
                 plane: [0., 1., 0.],
                 boundary: vec![
                     [40., 0.],
@@ -430,7 +434,9 @@ mod tests {
     #[test]
     fn landing_binding_preserves_matching_pre_grid_receiver() {
         let mut stair = BoundPhysicalStair {
+            floor: None,
             definition: robin_level_data::physical_stair::PhysicalStairNavigation {
+                floor_patches: Vec::new(),
                 plane: [0., 1., -200.25],
                 boundary: vec![
                     [380., 300.25],
@@ -638,7 +644,9 @@ mod tests {
     #[test]
     fn landing_binding_rejects_wrong_heights_and_incomplete_receivers() {
         let mut stair = BoundPhysicalStair {
+            floor: None,
             definition: robin_level_data::physical_stair::PhysicalStairNavigation {
+                floor_patches: Vec::new(),
                 plane: [0., 1., -200.],
                 boundary: vec![[380., 300.], [420., 300.], [420., 400.], [380., 400.]],
                 obstacles: vec![],
@@ -851,7 +859,7 @@ impl BoundPhysicalStair {
         } else {
             geo::MultiPolygon::from(vec![floor])
         };
-        let [sa, sb, sc] = self.definition.plane;
+        let [sa, sb, sc] = self.plane_at([physical.middle[0], physical.middle[1]])?;
         let difference = |x: f64, y: f64| (sa - a) * x + (sb - b) * y + sc - c;
         let outside_side = difference(
             f64::from(physical.outside[0]),

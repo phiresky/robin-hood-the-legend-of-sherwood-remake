@@ -8920,3 +8920,30 @@ Validation: all 91 non-ignored `robin_level_data` library tests pass (eight
 data-dependent checks remain ignored), workspace Rust formatting passes, and
 the game binary builds successfully. No descriptor schema or runtime actor
 behavior changes in this infrastructure step.
+
+Piecewise floor metadata now loads through optional `physical_navigation.floor_patches`.
+Admission validates continuous patch heights and coverage against the walking
+boundary, allowing missing geometry only behind permanent collision. Rounding
+tolerance is applied along real edges, rather than as a total-area allowance
+that could hide an unsupported notch. Stair binding caches the validated floor;
+actor steps spend their distance across flight planes, refresh their receiving
+plane and preserve world-distance animation forecasts. Door handoffs and source
+authorization select the local floor. Screen inversion rejects multiple valid
+world positions, including a coincident edge-on flight. Replay schema 64 records
+the additional raw lift metadata.
+
+The native joined-flight fixture uses slopes four and six across a shared seam.
+It passes four complete gate routes across both slopes, with four corresponding
+closed-barrier rejections through repeated state toggles. Admission tests reject
+height discontinuities, shortened floor coverage and a narrow missing-floor
+notch, and retain patch definitions through a raw-lift bitcode round trip.
+The physical-stair, stair-navigation and compiled-stair-control suites pass all
+48 tests; 29 replay tests and 92 level-data tests pass (eight data-dependent
+level-data checks remain ignored). Both editor typechecks and focused shared
+schema lint pass. Compiler emission and the garden asset's shared-edge correction
+remain pending, so its staged export still falls back to projected navigation.
+
+Workspace Rust formatting, the shared schema's editor formatting check and the
+game binary build also pass. Existing planar descriptors retain their current
+navigation representation; normal export will opt into patches only after
+compiler assembly and its placed-asset regression checks are complete.

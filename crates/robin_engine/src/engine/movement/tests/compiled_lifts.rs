@@ -76,6 +76,142 @@ fn edge_on_physical_stair_fixture() -> serde_json::Value {
     document
 }
 
+fn joined_physical_stair_fixture() -> serde_json::Value {
+    let mut document = physical_stair_fixture();
+    let geometry = &mut document["asset_geometry"];
+    geometry["motion_data"]["layers"][2][0]["polygon"]["points"] = serde_json::json!([
+        [390, 300],
+        [400, 260],
+        [410, 200],
+        [410, 300],
+        [400, 360],
+        [390, 400]
+    ]);
+    geometry["motion_data"]["layers"][2][0]["obstacles"] = serde_json::json!([
+        {"state_id":1,"polygon":{"points":[[398,268],[402,248],[402,348],[398,368]]}}
+    ]);
+    let lift = &mut geometry["lifts"][0];
+    lift["physical_navigation"]["plane"] = serde_json::json!([4.0, 0.0, -1560.0]);
+    lift["physical_navigation"]["floor_patches"] = serde_json::json!([
+        {"plane":[4.0,0.0,-1560.0],"boundary":[[390,300],[400,300],[400,400],[390,400]]},
+        {"plane":[6.0,0.0,-2360.0],"boundary":[[400,300],[410,300],[410,400],[400,400]]}
+    ]);
+    lift["physical_navigation"]["obstacles"] = serde_json::json!([
+        {"motion_obstacle":0,"polygon":[[398,300],[402,300],[402,400],[398,400]]}
+    ]);
+    lift["physical_navigation"]["doors"][0]["inside"][2] = serde_json::json!(8);
+    lift["physical_navigation"]["doors"][1]["inside"][2] = serde_json::json!(88);
+    lift["doors"][0]["point_in"] = serde_json::json!([392, 342]);
+    lift["doors"][1]["point_in"] = serde_json::json!([408, 262]);
+    let receiver = geometry["sight_obstacles"][2].clone();
+    geometry["sight_obstacles"].as_array_mut().unwrap().pop();
+    for (x0, x1, z0, z1) in [(390, 400, 0, 40), (400, 410, 40, 100)] {
+        let mut part = receiver.clone();
+        part["points"] = serde_json::json!([
+            {"x":x0,"y":300,"z_bottom":z0,"z_top":z0},
+            {"x":x1,"y":300,"z_bottom":z1,"z_top":z1},
+            {"x":x1,"y":400,"z_bottom":z1,"z_top":z1},
+            {"x":x0,"y":400,"z_bottom":z0,"z_top":z0}
+        ]);
+        geometry["sight_obstacles"]
+            .as_array_mut()
+            .unwrap()
+            .push(part);
+    }
+    document
+}
+
+#[test]
+fn joined_physical_stair_gates_follow_both_floors_and_live_barriers() {
+    let document = joined_physical_stair_fixture();
+    let (mut engine, assets) = compiled_walkway(&serde_json::to_vec(&document).unwrap());
+    let sim = crate::sim_rng::test_context();
+    for (step, open) in [false, true, false, true].into_iter().enumerate() {
+        if step > 0 {
+            engine.apply_patch(
+                TickCtx::new(&sim, &assets),
+                crate::patch::PatchIndex::new(0).unwrap(),
+            );
+        }
+        for (from, to) in [(0, 1), (1, 0)] {
+            let result = super::exported_stairs::walk_exported_stairs(
+                engine.clone(),
+                assets.clone(),
+                from,
+                to,
+            );
+            if open {
+                assert_eq!(result, Ok(true), "joined flight {from}->{to}");
+            } else {
+                assert!(
+                    result
+                        .as_ref()
+                        .is_err_and(|error| error.starts_with("lift route stalled")),
+                    "closed joined flight: {result:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn joined_physical_stair_admission_rejects_wrong_coverage_and_seam_heights() {
+    let document = joined_physical_stair_fixture();
+    let lift: crate::level_data::RawLift =
+        serde_json::from_value(document["asset_geometry"]["lifts"][0].clone()).unwrap();
+    let area: crate::level_data::RawMotionArea =
+        serde_json::from_value(document["asset_geometry"]["motion_data"]["layers"][2][0].clone())
+            .unwrap();
+    let physical = lift.physical_navigation.as_ref().unwrap();
+    physical.validate(&lift, &area).unwrap();
+    let mut changed = physical.clone();
+    changed.floor_patches[1].plane[2] += 1.0;
+    assert!(
+        changed
+            .validate(&lift, &area)
+            .unwrap_err()
+            .contains("shared boundary")
+    );
+    let mut changed = physical.clone();
+    for patch in &mut changed.floor_patches {
+        for point in &mut patch.boundary {
+            if point[1] == 400.0 {
+                point[1] = 390.0;
+            }
+        }
+    }
+    assert!(
+        changed
+            .validate(&lift, &area)
+            .unwrap_err()
+            .contains("walking boundary")
+    );
+    let mut changed = physical.clone();
+    changed.floor_patches[0].boundary = vec![
+        [390., 300.],
+        [395., 300.],
+        [395., 301.],
+        [395.01, 301.],
+        [395.01, 300.],
+        [400., 300.],
+        [400., 400.],
+        [390., 400.],
+    ];
+    assert!(
+        changed
+            .validate(&lift, &area)
+            .unwrap_err()
+            .contains("walking boundary")
+    );
+    let restored: crate::level_data::RawLift = bitcode::decode(&bitcode::encode(&lift)).unwrap();
+    restored
+        .physical_navigation
+        .as_ref()
+        .unwrap()
+        .validate(&restored, &area)
+        .unwrap();
+}
+
 fn physical_walker(
     engine: &mut EngineInner,
     assets: &mut LevelAssets,
@@ -83,16 +219,10 @@ fn physical_walker(
     source: [f32; 2],
     destination: [f32; 2],
 ) -> crate::element::EntityId {
-    let definition = assets.navigation.physical_stairs[&sector]
-        .definition
-        .clone();
-    let plane =
-        robin_level_data::stair_navigation::StairNavigationPlane::new(definition.plane).unwrap();
-    let source_world = plane.world_position(source.map(f64::from)).unwrap();
-    let destination = plane
-        .world_position(destination.map(f64::from))
-        .unwrap()
-        .map(|v| v as f32);
+    let stair = &assets.navigation.physical_stairs[&sector];
+    let source_world = stair.world_position(source).unwrap();
+    let coefficients = stair.plane_at(source).unwrap();
+    let destination = stair.world_position(destination).unwrap().map(|v| v as f32);
     let index = engine.world.fast_grid.level.sector_number_map
         [&crate::sector::SectorNumber::new(sector as i16)];
     let handle = crate::position_interface::SectorHandle::new(sector)
@@ -108,7 +238,7 @@ fn physical_walker(
         2,
         handle,
     );
-    let [a, b, c] = definition.plane.map(|v| v as f32);
+    let [a, b, c] = coefficients.map(|v| v as f32);
     engine
         .ent_mut(owner)
         .position_iface_mut()

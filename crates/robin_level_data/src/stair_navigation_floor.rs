@@ -1,11 +1,22 @@
 //! Continuous physical movement across connected planar stair flights.
 
-use geo::{Area, BooleanOps, Intersects, Line, LineString, Polygon, Validation};
+use geo::{
+    Area, BooleanOps, Closest, ClosestPoint, Intersects, Line, LineString, Polygon, Validation,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::stair_navigation::{StairNavigationPlane, StairRouteStep};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(deny_unknown_fields)]
 pub struct StairFloorPatch {
     pub plane: [f64; 3],
@@ -122,13 +133,98 @@ impl StairNavigationFloor {
     }
 
     fn patch_at(&self, point: [f64; 2]) -> Result<&StairFloorPatch, &'static str> {
+        self.patch_at_with_rounding(point, false)
+    }
+
+    fn patch_at_with_rounding(
+        &self,
+        point: [f64; 2],
+        runtime: bool,
+    ) -> Result<&StairFloorPatch, &'static str> {
         if point.iter().any(|value| !value.is_finite()) {
             return Err("stair floor query must be finite");
         }
-        self.patches
+        let query = geo::Point::from(point);
+        if let Some(patch) = self
+            .patches
             .iter()
-            .find(|patch| polygon(&patch.boundary).intersects(&geo::Point::from(point)))
-            .ok_or("stair route point has no floor support")
+            .find(|patch| polygon(&patch.boundary).intersects(&query))
+        {
+            return Ok(patch);
+        }
+        if runtime {
+            let tolerance =
+                point[0].abs().max(point[1].abs()).max(1.0) * f64::from(f32::EPSILON) * 2.0;
+            if let Some(patch) = self.patches.iter().find(|patch| {
+                let Closest::SinglePoint(nearest) = polygon(&patch.boundary).closest_point(&query)
+                else {
+                    return false;
+                };
+                (nearest.x() - point[0]).hypot(nearest.y() - point[1]) <= tolerance
+            }) {
+                return Ok(patch);
+            }
+        }
+        Err("stair route point has no floor support")
+    }
+
+    pub fn runtime_plane_at(&self, point: [f32; 2]) -> Result<[f64; 3], &'static str> {
+        Ok(self
+            .patch_at_with_rounding(point.map(f64::from), true)?
+            .plane)
+    }
+
+    pub fn footprint(&self) -> geo::MultiPolygon<f64> {
+        let mut joined = geo::MultiPolygon::from(vec![polygon(&self.patches[0].boundary)]);
+        for patch in &self.patches[1..] {
+            joined = joined.union(&polygon(&patch.boundary));
+        }
+        joined
+    }
+
+    /// Candidate inverses remain ambiguous when different flights overlap in
+    /// screen space, even if each plane individually has an inverse.
+    pub fn world_point_from_screen(&self, screen: [f32; 2]) -> Option<[f32; 3]> {
+        let mut result: Option<[f32; 3]> = None;
+        for patch in &self.patches {
+            let [a, b, c] = patch.plane;
+            let x = f64::from(screen[0]);
+            if (1.0 - b).abs() < 1e-8 {
+                let min_x = patch
+                    .boundary
+                    .iter()
+                    .map(|p| p[0])
+                    .fold(f64::INFINITY, f64::min);
+                let max_x = patch
+                    .boundary
+                    .iter()
+                    .map(|p| p[0])
+                    .fold(f64::NEG_INFINITY, f64::max);
+                if x >= min_x && x <= max_x && (f64::from(screen[1]) + a * x + c).abs() <= 0.001 {
+                    return None;
+                }
+                continue;
+            }
+            let y = (f64::from(screen[1]) + a * x + c) / (1.0 - b);
+            if !polygon(&patch.boundary).intersects(&geo::Point::new(x, y)) {
+                continue;
+            }
+            let world = plane(patch).world_position([x, y]).ok()?.map(|n| n as f32);
+            if world.iter().any(|n| !n.is_finite()) {
+                return None;
+            }
+            if let Some(previous) = result {
+                if previous
+                    .iter()
+                    .zip(world)
+                    .any(|(a, b)| (*a - b).abs() > 0.001)
+                {
+                    return None;
+                }
+            }
+            result = Some(world);
+        }
+        result
     }
 
     pub fn world_position(&self, point: [f64; 2]) -> Result<[f64; 3], &'static str> {
@@ -141,9 +237,10 @@ impl StairNavigationFloor {
         &self,
         from: [f64; 2],
         to: [f64; 2],
+        runtime: bool,
     ) -> Result<Vec<(StairNavigationPlane, [f64; 2], [f64; 2])>, &'static str> {
-        self.patch_at(from)?;
-        self.patch_at(to)?;
+        self.patch_at_with_rounding(from, runtime)?;
+        self.patch_at_with_rounding(to, runtime)?;
         if from == to {
             return Ok(Vec::new());
         }
@@ -174,14 +271,31 @@ impl StairNavigationFloor {
         };
         cuts.windows(2)
             .map(|pair| {
-                let patch = self.patch_at(at((pair[0] + pair[1]) * 0.5))?;
+                let patch = self.patch_at_with_rounding(at((pair[0] + pair[1]) * 0.5), runtime)?;
                 Ok((plane(patch), at(pair[0]), at(pair[1])))
             })
             .collect()
     }
 
     pub fn route_distance(&self, from: [f64; 2], to: [f64; 2]) -> Result<f64, &'static str> {
-        self.segments(from, to)?
+        self.route_distance_with_rounding(from, to, false)
+    }
+
+    pub fn route_distance_runtime(
+        &self,
+        from: [f32; 2],
+        to: [f32; 2],
+    ) -> Result<f64, &'static str> {
+        self.route_distance_with_rounding(from.map(f64::from), to.map(f64::from), true)
+    }
+
+    fn route_distance_with_rounding(
+        &self,
+        from: [f64; 2],
+        to: [f64; 2],
+        runtime: bool,
+    ) -> Result<f64, &'static str> {
+        self.segments(from, to, runtime)?
             .into_iter()
             .try_fold(0.0, |sum, (plane, from, to)| {
                 let distance = sum + plane.route_distance(from, to)?;
@@ -200,11 +314,30 @@ impl StairNavigationFloor {
         to: [f64; 2],
         distance: f64,
     ) -> Result<StairRouteStep, &'static str> {
+        self.advance_with_rounding(from, to, distance, false)
+    }
+
+    pub fn advance_runtime(
+        &self,
+        from: [f32; 2],
+        to: [f32; 2],
+        distance: f64,
+    ) -> Result<StairRouteStep, &'static str> {
+        self.advance_with_rounding(from.map(f64::from), to.map(f64::from), distance, true)
+    }
+
+    fn advance_with_rounding(
+        &self,
+        from: [f64; 2],
+        to: [f64; 2],
+        distance: f64,
+        runtime: bool,
+    ) -> Result<StairRouteStep, &'static str> {
         if !distance.is_finite() || distance < 0.0 {
             return Err("stair step distance must be finite and nonnegative");
         }
         let mut remaining = distance;
-        for (plane, start, end) in self.segments(from, to)? {
+        for (plane, start, end) in self.segments(from, to, runtime)? {
             let length = plane.route_distance(start, end)?;
             if remaining < length {
                 let mut step = plane.advance(start, end, remaining)?;
@@ -213,7 +346,7 @@ impl StairNavigationFloor {
             }
             remaining -= length;
         }
-        let world = self.world_position(to)?;
+        let world = plane(self.patch_at_with_rounding(to, runtime)?).world_position(to)?;
         let screen = [world[0], world[1] - world[2]];
         if screen.iter().any(|value| !value.is_finite()) {
             return Err("stair route point must produce a finite screen position");
@@ -354,6 +487,27 @@ mod tests {
                 .advance([10.0, 2.0], [10.0, 18.0], f64::INFINITY)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn inverse_rejects_overlapping_and_edge_on_flights() {
+        let floor = StairNavigationFloor::new(vec![
+            patch(0.0, 10.0, 0.5, 0.0),
+            patch(10.0, 20.0, 1.5, -10.0),
+        ])
+        .unwrap();
+        assert!(floor.world_point_from_screen([10.0, 2.0]).is_none());
+        let floor = StairNavigationFloor::new(vec![
+            patch(0.0, 10.0, 1.0, 0.0),
+            patch(10.0, 20.0, 0.5, 5.0),
+        ])
+        .unwrap();
+        assert!(floor.world_point_from_screen([10.0, 0.0]).is_none());
+        assert_eq!(
+            floor.world_point_from_screen([10.0, 2.0]),
+            Some([10.0, 14.0, 12.0])
+        );
+        assert!(floor.runtime_plane_at([25.0, 15.0]).is_err());
     }
 
     #[test]

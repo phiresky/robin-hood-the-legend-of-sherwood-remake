@@ -240,11 +240,7 @@ impl EngineInner {
             let pi = entity.position_iface();
             let position = pi.get_position();
             let source = [position.x, position.y];
-            let plane = robin_level_data::stair_navigation::StairNavigationPlane::new(
-                stair.definition.plane,
-            )
-            .expect("loaded physical stair has invalid plane");
-            let on_floor = plane.contains_runtime_position([position.x, position.y, position.z]);
+            let on_floor = stair.contains_runtime_position([position.x, position.y, position.z]);
             let supported = on_floor
                 && stair
                     .route(

@@ -263,7 +263,7 @@ fn ordinary_passage_walk_retains_the_physical_world_destination() {
     );
 }
 
-fn walk_exported_stairs(
+pub(super) fn walk_exported_stairs(
     engine: EngineInner,
     assets: LevelAssets,
     entrance: usize,

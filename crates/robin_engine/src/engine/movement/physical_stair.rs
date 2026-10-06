@@ -23,9 +23,6 @@ impl EngineInner {
             .physical_stairs
             .get(&sector)
             .expect("physical order references an unloaded stair");
-        let plane =
-            robin_level_data::stair_navigation::StairNavigationPlane::new(stair.definition.plane)
-                .expect("loaded physical stair has invalid plane");
         let entity = self
             .world
             .entities
@@ -40,7 +37,7 @@ impl EngineInner {
         let goal = selected.physical_goal;
         for point in [position, goal] {
             assert!(
-                plane.contains_runtime_position([point.x, point.y, point.z]),
+                stair.contains_runtime_position([point.x, point.y, point.z]),
                 "physical stair motion must start and end on its floor"
             );
         }
@@ -160,12 +157,8 @@ impl EngineInner {
             .copied()
             .find(|point| *point != [position.x, position.y])
             .expect("nonzero physical route lost its next waypoint");
-        let step = plane
-            .advance(
-                [f64::from(position.x), f64::from(position.y)],
-                target.map(f64::from),
-                f64::from(speed),
-            )
+        let step = stair
+            .advance([position.x, position.y], target, f64::from(speed))
             .expect("invalid physical stair step");
         let next = if step.reached && target == [goal.x, goal.y] {
             goal
@@ -178,6 +171,21 @@ impl EngineInner {
         };
         let entity = self.world.entities.get_mut(owner).unwrap();
         let pi = entity.position_iface_mut();
+        if !stair.definition.floor_patches.is_empty() {
+            let [a, b, c] = stair
+                .plane_at([next.x, next.y])
+                .expect("physical step lost its floor");
+            pi.set_obstacle_at_ground_position(
+                None,
+                Some(crate::position_interface::PlaneZCoeffs {
+                    az: a as f32,
+                    bz: b as f32,
+                    dz: c as f32,
+                }),
+                crate::coordinates::GroundPoint::new(next.x, next.y),
+            )
+            .expect("invalid joined stair receiver");
+        }
         pi.set_position(next);
         pi.reset_box_blocked();
         pi.set_physical_step_increment(
@@ -188,9 +196,15 @@ impl EngineInner {
             },
             selected.order_compute_direction,
         );
-        let travelled = (next.x - position.x)
-            .hypot(next.y - position.y)
-            .hypot(next.z - position.z);
+        let travelled = if stair.definition.floor_patches.is_empty() {
+            (next.x - position.x)
+                .hypot(next.y - position.y)
+                .hypot(next.z - position.z)
+        } else {
+            stair
+                .route_distance([position.x, position.y], [next.x, next.y])
+                .expect("physical step lost its supported route") as f32
+        };
         refresh_motion_forecast(entity.sprite_mut(), travelled);
         Self::emit_movement_water(entity, speed, &mut self.feedback.titbit_manager);
         // TODO: share soft repulsion with ordinary movement.

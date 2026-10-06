@@ -166,7 +166,8 @@ pub struct ReplayHeader {
 /// Version 60 retains physical stair identities on movement orders.
 /// Version 61 retains precise physical landing boundaries in loaded motion data.
 /// Version 63 retains compiled world-space passage endpoints.
-pub const REPLAY_SCHEMA_VERSION: u32 = 63;
+/// Version 64 retains connected physical stair floor patches.
+pub const REPLAY_SCHEMA_VERSION: u32 = 64;
 
 /// Identity of the next lockstep/history transaction to be admitted.
 ///

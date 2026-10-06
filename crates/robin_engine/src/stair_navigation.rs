@@ -32,12 +32,17 @@ pub struct BoundPhysicalStair {
     obstacle_states: Vec<u32>,
     #[serde(default)]
     landings: Vec<landing_binding::BoundLanding>,
+    #[serde(default)]
+    floor: Option<robin_level_data::stair_navigation_floor::StairNavigationFloor>,
 }
 
 impl BoundPhysicalStair {
     /// Resolve a screen point only when this floor has a unique inverse.
     /// Edge-on floors require an explicit world endpoint instead.
     pub fn world_point_from_screen(&self, point: MapPoint) -> Option<[f32; 3]> {
+        if let Some(floor) = &self.floor {
+            return floor.world_point_from_screen([point.x, point.y]);
+        }
         let [a, b, c] = self.definition.plane;
         let determinant = 1.0 - b;
         if determinant.abs() < 1e-8 {
@@ -47,6 +52,49 @@ impl BoundPhysicalStair {
         let y = (f64::from(point.y) + a * x + c) / determinant;
         let world = [x as f32, y as f32, (a * x + b * y + c) as f32];
         world.iter().all(|value| value.is_finite()).then_some(world)
+    }
+
+    pub fn plane_at(&self, point: [f32; 2]) -> Result<[f64; 3], &'static str> {
+        self.floor
+            .as_ref()
+            .map_or(Ok(self.definition.plane), |floor| {
+                floor.runtime_plane_at(point)
+            })
+    }
+
+    pub fn contains_runtime_position(&self, point: [f32; 3]) -> bool {
+        self.plane_at([point[0], point[1]])
+            .ok()
+            .and_then(|coefficients| {
+                robin_level_data::stair_navigation::StairNavigationPlane::new(coefficients).ok()
+            })
+            .is_some_and(|plane| plane.contains_runtime_position(point))
+    }
+
+    pub fn world_position(&self, point: [f32; 2]) -> Result<[f64; 3], &'static str> {
+        robin_level_data::stair_navigation::StairNavigationPlane::new(self.plane_at(point)?)?
+            .world_position(point.map(f64::from))
+    }
+
+    pub fn advance(
+        &self,
+        from: [f32; 2],
+        to: [f32; 2],
+        distance: f64,
+    ) -> Result<robin_level_data::stair_navigation::StairRouteStep, &'static str> {
+        if let Some(floor) = &self.floor {
+            return floor.advance_runtime(from, to, distance);
+        }
+        robin_level_data::stair_navigation::StairNavigationPlane::new(self.definition.plane)?
+            .advance(from.map(f64::from), to.map(f64::from), distance)
+    }
+
+    pub fn route_distance(&self, from: [f32; 2], to: [f32; 2]) -> Result<f64, &'static str> {
+        if let Some(floor) = &self.floor {
+            return floor.route_distance_runtime(from, to);
+        }
+        robin_level_data::stair_navigation::StairNavigationPlane::new(self.definition.plane)?
+            .route_distance(from.map(f64::from), to.map(f64::from))
     }
 
     /// Test crushing against the actual floor footprint, not its potentially
@@ -94,6 +142,15 @@ impl BoundPhysicalStair {
                 .map(|obstacle| obstacle.state_id)
                 .collect(),
             landings: Vec::new(),
+            floor: if definition.floor_patches.is_empty() {
+                None
+            } else {
+                Some(
+                    robin_level_data::stair_navigation_floor::StairNavigationFloor::new(
+                        definition.floor_patches.clone(),
+                    )?,
+                )
+            },
         })
     }
 

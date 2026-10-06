@@ -452,6 +452,8 @@ export interface CompiledAssetGeometry {
 /** Placed physical floors retain navigation independently of screen projection. */
 export interface PhysicalStairNavigation {
   plane: [number, number, number];
+  /** When present, retain each connected flight's own physical height plane. */
+  floor_patches?: { plane: [number, number, number]; boundary: Point[] }[];
   boundary: Point[];
   obstacles: { motion_obstacle: number; polygon: Point[] }[];
   doors: { inside: Vec3; middle: Vec3; outside: Vec3 }[];

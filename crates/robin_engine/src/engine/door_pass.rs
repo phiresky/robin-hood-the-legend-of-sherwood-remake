@@ -858,9 +858,7 @@ impl EngineInner {
             let stair = assets.navigation.physical_stairs.get(&sector)?;
             let endpoints = self.script_domains.interactables.doors[usize::from(door_index)]
                 .world_endpoints.as_ref()?;
-            let plane = robin_level_data::stair_navigation::StairNavigationPlane::new(stair.definition.plane)
-                .expect("loaded physical stair has invalid plane");
-            if !plane.contains_runtime_position(endpoints.middle) {
+            if !stair.contains_runtime_position(endpoints.middle) {
                 tracing::warn!(%door_index, "ordinary passage world midpoint is not on its physical floor; authoring correction required");
                 return None;
             }
@@ -879,12 +877,8 @@ impl EngineInner {
                 } else {
                     endpoints.outside
                 };
-                let plane = robin_level_data::stair_navigation::StairNavigationPlane::new(
-                    stair.definition.plane,
-                )
-                .expect("loaded physical stair has invalid plane");
                 assert!(
-                    plane.contains_runtime_position(destination),
+                    stair.contains_runtime_position(destination),
                     "ordinary passage destination is not on its physical floor"
                 );
                 Some((sector, destination))
@@ -1561,15 +1555,10 @@ impl EngineInner {
                 .physical_stairs
                 .get(&u16::from(target_sector_num))
         {
-            let [a, b, c] = stair.definition.plane;
-            let plane = robin_level_data::stair_navigation::StairNavigationPlane::new(
-                stair.definition.plane,
-            )
-            .expect("loaded physical stair has invalid plane");
             let world_middle = self.script_domains.interactables.doors[usize::from(door_index)]
                 .world_endpoints.as_ref().map(|points| points.middle)
                 .filter(|point| {
-                    let valid = plane.contains_runtime_position(*point);
+                    let valid = stair.contains_runtime_position(*point);
                     if !valid {
                         tracing::warn!(%door_index, "ordinary passage world midpoint is not on its physical floor; authoring correction required");
                     }
@@ -1580,16 +1569,10 @@ impl EngineInner {
                 .expect("door owner disappeared")
                 .position_iface_mut();
             let point = pi.get_position().to_map();
-            let [x, y, z] = world_middle
-                .map(|point| point.map(f64::from))
-                .unwrap_or_else(|| {
-                    let x = f64::from(point.x);
-                    let y = (f64::from(point.y) + a * x + c) / (1.0 - b);
-                    [x, y, a * x + b * y + c]
-                });
-            if (world_middle.is_some() || (1.0 - b).abs() > 1e-6)
-                && [x, y, z].iter().all(|v| v.is_finite())
-            {
+            if let Some([x, y, z]) = world_middle.or_else(|| stair.world_point_from_screen(point)) {
+                let [a, b, c] = stair
+                    .plane_at([x, y])
+                    .expect("ordinary door lost its physical floor");
                 pi.set_obstacle_at_ground_position(
                     None,
                     Some(crate::position_interface::PlaneZCoeffs {
@@ -1597,12 +1580,10 @@ impl EngineInner {
                         bz: b as f32,
                         dz: c as f32,
                     }),
-                    crate::coordinates::GroundPoint::new(x as f32, y as f32),
+                    crate::coordinates::GroundPoint::new(x, y),
                 )
                 .expect("invalid ordinary passage stair receiver");
-                pi.set_position(crate::coordinates::WorldPoint3D::new(
-                    x as f32, y as f32, z as f32,
-                ));
+                pi.set_position(crate::coordinates::WorldPoint3D::new(x, y, z));
                 pi.reset_increment_computed();
             } else {
                 // TODO: ordinary doors on edge-on stairs need authored world
@@ -1777,7 +1758,10 @@ impl EngineInner {
             .get(local)
             .expect("physical stair door binding is incomplete")
             .clone();
-        Some((sector, stair.definition.plane, door))
+        let plane = stair
+            .plane_at([door.middle[0], door.middle[1]])
+            .expect("physical stair door lost its floor");
+        Some((sector, plane, door))
     }
 
     /// Apply a projection-area obstacle + its footstep material to an

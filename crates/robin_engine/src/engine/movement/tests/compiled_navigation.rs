@@ -507,9 +507,7 @@ fn actor_receiver_result(
         let pi = engine.ent(owner).position_iface();
         let world = pi.get_position();
         let ground = [world.x, world.y];
-        let plane =
-            robin_level_data::stair_navigation::StairNavigationPlane::new(stair.definition.plane)?;
-        let expected = plane.world_position(ground.map(f64::from))?;
+        let expected = stair.world_position(ground)?;
         let supported = stair
             .route(
                 &engine.world.pathfinder,

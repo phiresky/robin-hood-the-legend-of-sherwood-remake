@@ -37,10 +37,13 @@
   inverting the stair projection. Normal editor exports now emit this metadata
   for compatible planar stairs; unsupported assemblies warn and retain projected
   navigation. Edge-on surface assembly remains unfinished.
-  A tested piecewise-floor primitive retains distinct connected flight planes
-  and spends each movement step's distance across their seams. It rejects gaps
-  and inconsistent overlaps. Descriptor/compiler and actor-loop integration of
-  this primitive remains pending; current exports still require planar lifts.
+  Optional piecewise floors retain distinct connected flight planes and spend
+  each movement step's distance across their seams. Loading rejects gaps,
+  inconsistent overlaps and missing floor coverage. Native actor and door
+  movement follow the current flight, including live barriers and landing
+  handoffs; ambiguous screen inverses reject. Replay schema 64 retains the new
+  floor metadata. Compiler emission remains pending: normal editor exports
+  still require planar lifts for physical navigation.
   Local point Move requests resolve supported goals on invertible floors to
   physical orders. Ambiguous edge-on point requests reject; seek/line requests
   and full movement effects remain unfinished.
