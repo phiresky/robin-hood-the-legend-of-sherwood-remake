@@ -9012,3 +9012,36 @@ contact and broader placement/state coverage remain open.
 Fresh full-York export `york-garden-published-ewoJkC` also matches the native-tested
 candidate geometry exactly. Authoring scripts pass syntax checks and the owned
 changes pass whitespace validation.
+
+### Precinct stair and independent raised receiver (2026-10-06)
+
+`stage-local-stair-seams.mjs` now offers explicit
+`--floor-from-receiving-footprint` authoring. It replaces a coarse floor with
+that asset's own planar receiving footprint before seating endpoints; it is
+not an export fallback. The precinct candidate `local-stair-seams-CbYhGf` uses
+this option and a reviewed four-unit midpoint bound. Its synthetic-landings
+fixture `external-stair-landings-MNihY4` passes 32 routes and rejects 32 invalid
+neighbours. The actual receiver fixture `...neighbour-placements-DeO8xG` fails
+all 32 routes, and full York passes only 128/130; all six controls pass.
+
+`stage-precinct-stair-receiver.mjs` authors the matching edge in
+`york-cathedral-precinct-raised-terrain`, independently of stair placement.
+Precision-only candidate `precinct-stair-receiver-L4Ba0c` still fails moved
+traversal. Corrected candidate `precinct-stair-receiver-aJONga` seats receiver
+corners by 0.410924 and 2.235306 units. Actual paired copies in
+`york-precinct-east-wall-stair-neighbour-placements-BGnR5W` pass all 32 routes,
+with 32 missing/raised receiver rejections. Full York passes all 130 routes and
+six control apply/reset checks.
+
+Full-surface mesh sampling finds maximum gaps of 0.274033 on the flight,
+0.451621 on its upper landing and 0.281792 on the receiver; corresponding height
+errors reach 0.114944, 0.055993 and 0.061466 units. These remain draft limits;
+rendered verification is open. The two assets are published with backup
+`york-precinct-stair-publication-20261006`. All ten scenes reopen. Eight fresh
+published exports in `york-precinct-east-wall-stair-neighbour-placements-vGatk4`
+match native-tested geometry. Audit `lift-anchor-support-B37lQ0` leaves 6/53
+stair definitions with unsupported local anchors (York 5/16, Sherwood 1/1),
+plus the unchanged 1/8 ladder and 9/9 wall definitions.
+
+Fresh full export `york-precinct-published-S7G7nd` matches the native-tested York
+candidate geometry exactly. Authoring scripts pass syntax and whitespace checks.

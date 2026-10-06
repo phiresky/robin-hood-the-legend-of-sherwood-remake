@@ -220,7 +220,7 @@
       "model": "3d-assets/york/york-cathedral-precinct-raised-terrain/model.glb",
       "model_sha256": "b566e3352d9e7d5cdc63e54af74334528c1ae35cbfb9c42e78642a98c02a3afb",
       "descriptor": "3d-assets/york/york-cathedral-precinct-raised-terrain/asset.json",
-      "descriptor_sha256": "dd1a77f519fb55db76a3bca9f0676b134f5951b9aef77e523a50cfa4fd2ee2d2",
+      "descriptor_sha256": "e86cd896a9612d864eb0e16e5a78104e7274659d70137a7705c5c0e0ec7c167e",
       "id": "york-cathedral-precinct-raised-terrain"
     },
     {
@@ -920,7 +920,7 @@
       "model": "3d-assets/york/york-precinct-east-wall-stair/model.glb",
       "model_sha256": "7067d46f61bf48aa415da78a88fff2e1f604b12187cc5de5f3780dd26e4b803f",
       "descriptor": "3d-assets/york/york-precinct-east-wall-stair/asset.json",
-      "descriptor_sha256": "8e51ad05edcb944b74949c2e87b0ccb27abf6357699fe9a4c63590b338a48b0a",
+      "descriptor_sha256": "41f62db66fdd86e2c7a39c8d8666115aa7145bbee323240db10003ed6b45f73c",
       "id": "york-precinct-east-wall-stair"
     },
     {

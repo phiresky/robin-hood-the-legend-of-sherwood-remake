@@ -72,10 +72,9 @@ published placement exports match the tested geometry, and all ten saved scenes
 reopen. The ground asset provides backdrop coverage, not physical mesh evidence;
 rendered contact remains unverified.
 
-The north-garden stair exposes a further joined-flight limitation: its two
-slightly different floor planes merge into one lift. The staged local seam corrections
-have 1,329/1,330 sampled flight mesh hits, with a maximum edge gap of 0.033 units;
-moved assemblies still fall back to projected navigation. A new piecewise-floor
+The north-garden stair's two slightly different floor planes merge into one lift.
+Its initial candidate exposed a joined-flight limitation and fell back to
+projected navigation. A new piecewise-floor
 primitive passes bidirectional step/distance checks across rotated and elevated
 joined slopes, rejects gaps and conflicting overlaps, and avoids concave-floor
 shortcuts. Descriptor loading and actor movement now support these floors:
@@ -95,6 +94,17 @@ landings and authored-terrain placements pass 64 native actor routes and reject
 all 130 full-York stair routes and six controls. All ten scenes reopen, and eight
 fresh published placement exports and full York match the tested geometry. The terrain provides
 backdrop coverage; rendered contact remains unverified.
+
+The precinct east stair and cathedral precinct's raised-terrain contact are
+published as drafts. The stair's coarse walking contour is rebuilt from its own
+receiving footprint; its separate neighbour owns the corrected contact edge.
+Preserving precision alone did not fix the offset: the receiver corners needed
+0.411- and 2.236-unit adjustments. Actual paired assets pass 32 moved actor routes
+and reject 32 missing/raised receivers; synthetic landings pass another 32 routes.
+Full York retains 130/130 stair routes and six control checks. Sampled mesh gaps
+reach 0.274 units on the flight, 0.452 on its upper landing and 0.282 on the raised
+receiver. All ten scenes reopen; eight fresh published placement exports and
+full York match tested geometry. Rendered contact remains unverified.
 
 Latest runtime checks retain exact landing contours through binding and foot
 support instead of reducing them to single precision. The southwest turret is
@@ -254,9 +264,9 @@ complete-sprite and rendered verification remain open.
 All ten scenes reopen after publication, and full Derby passes all five control
 apply/reset checks. All ten Derby stair definitions now pass local floor-anchor
 support checks after the upper-west publication below.
-A library-wide local-anchor audit finds unsupported anchors in 7 of 53 authored stair
+A library-wide local-anchor audit finds unsupported anchors in 6 of 53 authored stair
 definitions: Derby 0/10, Leicester 0/8, Lincoln 0/6, Nottingham 0/12,
-Sherwood 1/1 and York 6/16. Individual audited flight floors are planar; joined
+Sherwood 1/1 and York 5/16. Individual audited flight floors are planar; joined
 stairs may contain several planes. This checks local
 definitions, not placed connectivity or actual route failures; corrections and
 moved/rotated native traversal checks remain necessary across these assets.

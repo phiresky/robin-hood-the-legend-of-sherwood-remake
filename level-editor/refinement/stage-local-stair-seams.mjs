@@ -80,6 +80,7 @@ const ids = arguments_.filter(
     value !== "--local-landing-edges" &&
     value !== "--climb-seams" &&
     value !== "--sloped-landings" &&
+    value !== "--floor-from-receiving-footprint" &&
     !value.startsWith("--outside-extension=") &&
     !value.startsWith("--midpoint-shift-limit=") &&
     !value.startsWith("--placement-ground-height=") &&
@@ -114,6 +115,19 @@ for (const id of ids) {
   const floor = gameplay.surfaces.find((surface) => surface.id === lift.surface);
   assert.ok(floor && !floor.holes?.length, `${id}: requires separate hole review`);
   const before = structuredClone(floor);
+  if (arguments_.includes("--floor-from-receiving-footprint")) {
+    const footprint = floor.projectionMaterials?.footprint;
+    assert.ok(footprint?.length >= 3, `${id}: no asset-local receiving footprint`);
+    heightPlane(footprint);
+    floor.polygon = footprint.map(([x, y]) => [x, y]);
+    floor.height = footprint.map((point) => point[2]);
+    changes.push({
+      surface: floor.id,
+      reason: "Rebuild coarse floor from asset-local receiving footprint",
+      before,
+      after: structuredClone(floor),
+    });
+  }
   const heights = floor.polygon.map((_, i) =>
     Array.isArray(floor.height) ? floor.height[i] : floor.height,
   );

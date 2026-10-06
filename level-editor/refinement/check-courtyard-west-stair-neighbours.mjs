@@ -21,6 +21,7 @@ const map = stair.startsWith("york-") ? "york" : "nottingham";
 const source = await readStoredMap(`library/scenes/${map}.rhlos-map.json`, "library");
 const assets = await pinnedDescriptors("library", source.assetSources, source.sceneAssets);
 const neighbours = {
+  "york-precinct-east-wall-stair": ["york-cathedral-precinct-raised-terrain"],
   "york-north-garden-wall-and-stair": [],
   "york-outer-east-upper-wall-stair": ["york-outer-east-upper-curtain-wall"],
   "york-outer-southeast-wall-stair": [],
@@ -53,10 +54,11 @@ const neighbours = {
 assert.ok(neighbours[stair], "Unknown reviewed stair assembly");
 const ids = [stair, ...neighbours[stair]];
 const originGroup = source.groups.find((group) => group.id === stair);
-const sourceOrigin =
-  stair === "york-north-garden-wall-and-stair"
-    ? [originGroup.transform.dx, originGroup.transform.dy]
-    : [1500, 1500];
+const sourceOrigin = ["york-north-garden-wall-and-stair", "york-precinct-east-wall-stair"].includes(
+  stair,
+)
+  ? [originGroup.transform.dx, originGroup.transform.dy]
+  : [1500, 1500];
 for (const id of ids) {
   const edit = edits.find((e) => e.asset === id);
   assert.ok(assets.has(id));
@@ -85,9 +87,11 @@ assert.ok(!physicalTerrace || southernRiverside);
 const riverside =
   stair === "york-east-riverside-curtain-wall" || southernRiverside || stoneRiverside;
 const terrainHeight = southernRiverside ? 50.001003 : stoneRiverside ? 0 : riverside ? 90.00101 : 0;
-const size = northWall || riverside || market || outerWall ? [7000, 6500] : [5000, 4500];
+const precinct = stair === "york-precinct-east-wall-stair";
+const size =
+  northWall || riverside || market || outerWall || precinct ? [7000, 6500] : [5000, 4500];
 const centers =
-  northWall || riverside || market || outerWall
+  northWall || riverside || market || outerWall || precinct
     ? [
         [2200, 2500],
         [4500, 3500],
