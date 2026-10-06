@@ -194,6 +194,13 @@ precision without losing their authored footprint or changing their control
 state. Nearly coincident clearance subtraction has a narrowly scoped precision
 fallback that retains collision and clearance ownership.
 
+The separate castle courtyard western stair remains unpublished. Its first
+physical candidate passes 32 isolated routes and 64 missing/raised-landing
+rejections, but fails both directions in full Nottingham. Its mesh supports
+only 423/929 sampled floor points, with visible gaps up to 26.130 units; visible
+treads span roughly heights 78–150 while navigation extends down to ground.
+Both receiving contacts and the substantial mesh/floor mismatch need review.
+
 The Lincoln great hall and its independently owned ramp/annex contacts are now
 published. The three-asset assembly passes all 96 directed routes through two
 copies at four rotations and two elevations, retaining all 64 missing/raised

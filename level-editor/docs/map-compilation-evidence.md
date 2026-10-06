@@ -6,6 +6,18 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Nottingham castle hall, west stair contact and collision precision (2026-10-06)
 
+Next candidate: the separate courtyard western stair (`building-351-lift`) in
+`local-stair-seams-BE5jMg` has two external landings. Synthetic independent
+receivers in `external-stair-landings-tjMuG5` pass 32 directed routes and all
+64 missing/raised-contact rejections. Full Nottingham
+`nottingham-west-stair-351-level-HPsqj7` fails both directions through sector
+155 at its receiving boundaries; the other 90 stair routes pass. Mesh review
+finds 423/929 floor hits and a maximum uncovered distance of 26.130 units.
+All 506 uncovered foot samples are visible at the initial rotation, and sampled
+mesh treads span heights 78–150 while navigation reaches ground. The candidate
+is unpublished: fixing only endpoints would leave a substantial mesh/floor
+discrepancy. These diagnostics do not change the passing published baseline below.
+
 Castle hall/watchtower stage `local-stair-seams-PIeiOT` corrects the
 `building-500-lift` floor and both local contacts. Moved assembly
 `local-stair-placements-i90nU8` passes sixteen directed routes and eight controls
