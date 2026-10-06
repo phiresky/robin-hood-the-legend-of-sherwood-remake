@@ -46,6 +46,10 @@ def main():
  for n in range(12 if args.revision>=5 else 9):
   angle=math.tau*n/(12 if args.revision>=5 else 9);start=Vector(([110,122,139][n%3],base_y,(540 if args.revision>=5 else 600)+(n%3)*6));tip=Vector((124+math.cos(angle)*(95 if args.revision>=5 else 50),base_y+math.sin(angle)*(112 if args.revision>=5 else 64),(650 if args.revision>=5 else 682)+rng.uniform(-15,20)));union(body,tube('Inferred crown bough',[start,start.lerp(tip,.55)+Vector((0,0,8)),tip],[2,1,.3]))
  bpy.context.view_layer.objects.active=body;modifier=body.modifiers.new('Continuous three-stem wood','REMESH');modifier.mode='VOXEL';modifier.voxel_size=.65;modifier.use_remove_disconnected=False;bpy.ops.object.modifier_apply(modifier=modifier.name)
+ if args.revision>=7:
+  repaired_root=np.asarray(wood)>0;repaired_root[:300]=False
+  root_fit=fit_native_width(body,repaired_root,'west-cut',x0=101,y0=0)
+  (dest/'post-remesh-root-fit.json').write_text(json.dumps(root_fit,indent=2)+'\n')
  trace=root_trace
 
  if args.revision>=5:
