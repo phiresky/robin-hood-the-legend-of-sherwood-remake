@@ -864,6 +864,88 @@ fn occupied_manual_recording_stays_live_until_first_capture_and_cancel_preserves
 }
 
 #[test]
+fn shared_hero_client_swing_dispatch_matches_host_sequence() {
+    for (strike, with_seek) in [
+        (Command::SwordstrikeThrustD, false),
+        (Command::SwordstrikeThrustD, true),
+        (Command::SwordstrikeThrustE, false),
+        (Command::SwordstrikeThrustE, true),
+    ] {
+        let (mut base, assets, actor) = setup_pc_engine(&[]);
+        let target = spawn_pc_at(&mut base, 90.0, 10.0);
+        base.control.sim_config.coop.control = crate::coop::CharacterControl::Shared;
+        let sim = crate::sim_rng::test_context();
+        let mut display = HostDisplayState::default();
+        let mut input = InputState::default();
+        base.apply_commands(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &[PlayerInput::host(PlayerCommand::ConnectSeat {
+                player_id: PlayerId(1),
+                nickname: "Client".into(),
+            })],
+        );
+        let mut sequences = Vec::new();
+        for seat in [PlayerId(0), PlayerId(1)] {
+            let mut engine = base.clone();
+            let command = PlayerInput::new(
+                seat,
+                PlayerCommand::SwordStrikeCmd {
+                    actor,
+                    target,
+                    command: strike,
+                    composite: None,
+                    gesture_quality: GestureQuality::PERFECT,
+                    with_seek,
+                    seek_distance: with_seek.then_some(54.0),
+                },
+            );
+            let received: PlayerInput = bitcode::decode(&bitcode::encode(&command)).unwrap();
+            engine.apply_frame_commands_with_mode(
+                TickCtx::new(&sim, &assets),
+                &[received],
+                SelectionCommandBatchMode::InferNestedSelection,
+            );
+            let element = engine
+                .orders
+                .sequence_manager
+                .sequences_iter()
+                .next()
+                .and_then(|sequence| sequence.get(0))
+                .expect("queued attack");
+            let (actual_command, actual_target) = if with_seek {
+                assert_eq!(element.command, Command::Seek);
+                let SequenceElementData::Movement {
+                    tolerance,
+                    post_seek_sequence: Some(post),
+                    ..
+                } = &element.data
+                else {
+                    panic!("expected seek with retained attack");
+                };
+                assert_eq!(*tolerance, 54.0);
+                let attack = post.elements.first().expect("attack after seek");
+                let SequenceElementData::Interaction { antagonist } = attack.data else {
+                    panic!("expected attack interaction");
+                };
+                (attack.command, antagonist)
+            } else {
+                let SequenceElementData::Interaction { antagonist } = element.data else {
+                    panic!("expected direct attack interaction");
+                };
+                (element.command, antagonist)
+            };
+            assert_eq!(actual_command, strike, "seat {seat:?}");
+            assert_eq!(actual_target, Some(target));
+            sequences.push(bitcode::encode(&engine.orders.sequence_manager));
+        }
+        assert_eq!(sequences[0], sequences[1], "{strike:?} differs by seat");
+    }
+}
+
+#[test]
 fn manual_sword_strike_executes_without_recording_a_quick_action() {
     let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Hit, 1)]);
     let target = spawn_pc_at(&mut engine, 90.0, 10.0);

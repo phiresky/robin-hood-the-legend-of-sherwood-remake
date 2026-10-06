@@ -942,7 +942,7 @@
     {
       "issue": "Client combat gestures / lag (two bullets)",
       "status": "partially_fixed_remaining_symptom_unreproduced",
-      "finding": "Confirmed and fixed global fight-end drag cancellation: cancellation now targets only seats whose selected fight ended. The reports contain client left/right strikes, but contain no complete gesture/facing/execution trace to establish every reported lag/recognition symptom. Host/client left/right gesture recognition and wire-codec regression passed; remote latency reproduction remains unavailable.",
+      "finding": "Confirmed and fixed global fight-end drag cancellation: cancellation now targets only seats whose selected fight ended. The reports contain client left/right strikes, but contain no complete gesture/facing/execution trace to establish every reported lag/recognition symptom. Host/client left/right gesture recognition and wire-codec regression passed. Simulation dispatch also preserves identical host/client attack sequences, including same-sector approach distance and the retained left/right strike after approach. These checks do not cover network timing or live animation completion; remote latency reproduction remains unavailable.",
       "commits": [
         "c8797a0ff"
       ]
