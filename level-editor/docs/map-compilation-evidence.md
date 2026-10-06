@@ -4,6 +4,31 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Three-entrance ladder oak mesh audit (2026-10-06)
+
+The remaining Sherwood ladder oak has a ground entrance and two platform
+entrances, all authored as low-type doors. The general seam tool rejects its
+first upper contact because no outer landing edge matches. Both upper middle
+points lie inside the authored platform hole. This is not evidence that a
+larger arbitrary landing extension is appropriate.
+
+Audit `ladder-oak-mesh-audit-Bl0Til` reads only the pinned asset model and
+gameplay. Samples along the existing middle-to-outside approaches find platform
+mesh within 0.2 height units at 39/41 and 35/41 points. Its 528 near-horizontal
+platform triangles form 61 disconnected plank patches. A diagnostic closing
+radius of 0.2 game units joins these into one footprint with no hole (0.1 leaves
+twelve patches). This is an unpublished authoring candidate, not a changed
+compiler connection tolerance. The reconstructed footprint needs review against
+the separate tree/collision ownership before replacing the authored hole.
+
+Rung bounding-box centers also disagree with the current climbing plane:
+the main rope-ladder centers differ by up to about 81 height units and the
+above-platform centers by up to about 186. These are diagnostic center samples,
+not measured actor-foot contacts. The current single-plane traversal and the
+three approach connections need mesh-based review together. No asset changes
+were published from this audit. Its model triangles, footprint candidates,
+approach samples and reproduction scripts are retained in the audit directory.
+
 ## Published west-treehouse ladder landing (2026-10-06)
 
 Tracing `local-stair-placements-cpAsE5` identifies the unsupported upper receiver.

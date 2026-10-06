@@ -180,6 +180,11 @@ matches the corrected platform, the clearance is limited to the added strip,
 and the platform hole remains intact. The upper seam's 3.381-unit mesh discrepancy
 is an explicit draft warning. Published exports match the tested candidates and
 all ten scenes reopen; rendered integration remains unverified.
+The remaining three-entrance Sherwood ladder oak needs a mesh-based platform
+and climbing-surface review: its authored platform hole excludes mostly
+mesh-supported upper approaches, while its rung centers diverge from the current
+climbing plane. The reconstructed plank footprint is still an unpublished
+candidate; all three connections must survive the correction.
 All 84 climb routes in the ten saved-scene exports now pass, as do all 71 control
 apply/reset checks and Derby's 28/28 stair routes. The published tower matches
 its native-tested candidate; Leicester retains 22/22 climb and 16/16 stair
