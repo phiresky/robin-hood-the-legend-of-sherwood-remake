@@ -1,7 +1,7 @@
 """Prepare pinned full-map and bounded-pair editor checks without live writes."""
-import copy,hashlib,json
+import copy,hashlib,json,subprocess
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];LIB=ROOT/'level-editor/library';BASE=ROOT/'level-editor/work/york-refinement/restart2/pair-textures-v1/assembled-v3-bounded/export-v2';OUT=BASE/'editor-stage-v6'
+ROOT=Path(__file__).resolve().parents[3];LIB=ROOT/'level-editor/library';BASE=ROOT/'level-editor/work/york-refinement/restart2/pair-textures-v1/assembled-v3-bounded/export-v2';OUT=BASE/'editor-stage-v7'
 if OUT.exists():raise FileExistsError(OUT)
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 original=json.loads((LIB/'scenes/york.rhlos-map.json').read_text());index=json.loads((BASE/'3d-assets/index.json').read_text());ids={r['id'] for r in index['assets']};document=copy.deepcopy(original);pins={str(LIB/'scenes/york.rhlos-map.json'):sha(LIB/'scenes/york.rhlos-map.json')};mapping={}
@@ -45,5 +45,6 @@ for scope,visual in [('full-map',True),('pair-functional',False)]:
   if file.is_file():files[file.relative_to(LIB).as_posix()]=file
  config={'map':'york','mode':'staged','visual_only':visual,'shared_module_url':'/@fs/'+str(ROOT/'level-editor/shared/src/index.ts'),'files':[{'path':path,'url':'/@fs/'+str(file),'sha256':sha(file)} for path,file in sorted(files.items())],'protected_live_files':pins,'browser_profile_root':'/home/phire/.cache/york-pair-editor-browser','cdp_timeout_ms':120000,'audit_timeout_ms':360000,'reload_timeout_ms':120000,'expected':{'groups':len(doc['placements']),'parts':sum(len(json.loads(files[r['descriptor']].read_text())['parts']) for r in doc['assetSources']),'width':doc['size'][0],'assets':palette['assets'],'required_patches':[]}}
  (folder/'config.json').write_text(json.dumps(config,indent=2)+'\n')
+ subprocess.run(['node',str(ROOT/'level-editor/blender/york/restart2_pair_editor_counts.mjs'),str(folder/'config.json')],check=True)
 (OUT/'stage-guards.json').write_text(json.dumps({'status':'Private pinned editor inputs','live_map_sha256':pins[str(LIB/'scenes/york.rhlos-map.json')],'placements_unchanged':True,'selected_ids':sorted(ids),'modified_references_only':sorted(ids),'model_choice':'Exact full approved GLB; lossy derivative offered only for preview/catalog metadata','protected_live_files':pins},indent=2)+'\n')
 print(OUT)
