@@ -4,6 +4,27 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Ordinary passage handoff to physical stairs (2026-10-06)
+
+Ordinary passage doors can enter a physical stair sector without belonging to
+the lift's endpoint list. Their callbacks previously retained the previous
+floor plane: a focused regression entered the fixture stair at height zero
+instead of its physical height. The callback now installs the target stair
+plane when its screen projection is invertible and restores the receiving
+plane when an ordinary door leaves a physical stair. The regression covers both
+entry and exit and fails before the fix. Edge-on ordinary doors still need
+authored world endpoints; the unresolved handoff warns explicitly.
+
+The unpublished great-hall copied assembly `external-stair-landings-VQ7JOS`
+improves from 32/96 to 63/96 passing routes. Remaining rotated movement/support
+and landing-contact failures still prevent publication. The complete movement
+suite passes 192 tests, with thirteen ignored. Existing saved-map batch
+`saved-map-exports-rdmm0t` retains all 284 stair and 84 climbing routes; the newer
+published Lincoln descriptor `lincoln-north-hall-level-KSbGJF` also retains all
+sixteen stair routes. The final focused handoff test, formatting and game build
+pass. These are runtime regression checks against existing
+descriptors, not fresh baked ZIP or rendered verification.
+
 ## Great-hall sloped external landing review (2026-10-06, unpublished)
 
 The remaining Lincoln great-hall stair receives its lower entrance from

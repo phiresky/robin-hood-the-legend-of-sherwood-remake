@@ -177,9 +177,11 @@ moved/rotated native traversal checks remain necessary across these assets.
 
 The remaining Lincoln great-hall candidate now uses its external ramp's actual
 sloped plane during seam review and independent-placement testing. All 566
-flight mesh samples pass, but only 32/96 copied-assembly routes pass: ordinary
-hall passage doors attached to the stair sector expose physical support and
-receiver failures. The full scene also has mismatched external landing edges.
+flight mesh samples pass. Ordinary hall passage callbacks now install and release
+the physical floor, improving copied-assembly routes from 32/96 to 63/96.
+Rotated movement/support failures remain, and the full scene also has mismatched
+external landing edges. Ordinary doors on edge-on stairs still need explicit
+world endpoints.
 This candidate remains unpublished; those doors and both receiving assets need
 correction rather than omission.
 The Nottingham road stair is also published after sixteen moved/elevated routes,

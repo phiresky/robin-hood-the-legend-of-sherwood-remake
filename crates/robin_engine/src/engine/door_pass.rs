@@ -1363,27 +1363,41 @@ impl EngineInner {
         // membership change. Close entrances can skip approach waypoints, and
         // climb animations teleport, so polygon crossings alone cannot ensure
         // this transfer for arbitrary placed geometry.
+        let ordinary_stair_exit = physical_door.is_none()
+            && tcx
+                .assets
+                .navigation
+                .physical_stairs
+                .contains_key(&current_sector.get());
         if (left_building && !direct)
             || compiled_climb_point.is_some()
             || (physical_door.is_some() && !direct)
+            || ordinary_stair_exit
         {
             let target_sector =
                 target_sector.expect("validated PassDoor target sector lost its public handle");
             // Physical stairs leave the actor at the shared seam. The outside
             // waypoint can belong to a different terrain receiver, even on a
             // coplanar landing, so bind the receiver at the actual handoff.
-            let receiving_point =
-                physical_door
-                    .as_ref()
-                    .filter(|_| !direct)
-                    .map(|(_, _, physical)| {
-                        crate::coordinates::WorldPoint3D::new(
-                            physical.middle[0],
-                            physical.middle[1],
-                            physical.middle[2],
-                        )
-                        .to_map()
-                    });
+            let receiving_point = physical_door
+                .as_ref()
+                .filter(|_| !direct)
+                .map(|(_, _, physical)| {
+                    crate::coordinates::WorldPoint3D::new(
+                        physical.middle[0],
+                        physical.middle[1],
+                        physical.middle[2],
+                    )
+                    .to_map()
+                })
+                .or_else(|| {
+                    ordinary_stair_exit.then(|| {
+                        self.get_entity(entity_id)
+                            .expect("door owner disappeared")
+                            .element_data()
+                            .position_map()
+                    })
+                });
             let new_obstacle = self
                 .find_projection_area_at(
                     tcx.assets,
@@ -1455,6 +1469,47 @@ impl EngineInner {
                     physical.middle[2],
                 ));
                 pi.reset_increment_computed();
+            }
+        }
+
+        // Ordinary passages can also enter a physical stair. They have no
+        // lift-local endpoint identity, but an invertible floor projection
+        // still determines their world position from the current map point.
+        if self.physical_stair_door(tcx.assets, door_index).is_none()
+            && let Some(stair) = tcx
+                .assets
+                .navigation
+                .physical_stairs
+                .get(&u16::from(target_sector_num))
+        {
+            let [a, b, c] = stair.definition.plane;
+            let pi = self
+                .get_entity_mut(entity_id)
+                .expect("door owner disappeared")
+                .position_iface_mut();
+            let point = pi.get_position().to_map();
+            let x = f64::from(point.x);
+            let y = (f64::from(point.y) + a * x + c) / (1.0 - b);
+            let z = a * x + b * y + c;
+            if (1.0 - b).abs() > 1e-6 && [x, y, z].iter().all(|v| v.is_finite()) {
+                pi.set_obstacle_at_ground_position(
+                    None,
+                    Some(crate::position_interface::PlaneZCoeffs {
+                        az: a as f32,
+                        bz: b as f32,
+                        dz: c as f32,
+                    }),
+                    crate::coordinates::GroundPoint::new(x as f32, y as f32),
+                )
+                .expect("invalid ordinary passage stair receiver");
+                pi.set_position(crate::coordinates::WorldPoint3D::new(
+                    x as f32, y as f32, z as f32,
+                ));
+                pi.reset_increment_computed();
+            } else {
+                // TODO: ordinary doors on edge-on stairs need authored world
+                // endpoints, just like lift-owned doors.
+                tracing::warn!(%door_index, "ordinary door cannot resolve an edge-on physical stair handoff");
             }
         }
 

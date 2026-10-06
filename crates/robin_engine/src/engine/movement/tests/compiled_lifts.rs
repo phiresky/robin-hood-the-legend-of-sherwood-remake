@@ -695,6 +695,53 @@ fn physical_stair_door_handoffs_preserve_distinct_world_endpoints() {
 }
 
 #[test]
+fn ordinary_door_handoff_installs_and_releases_the_physical_stair_floor() {
+    let (mut engine, mut assets) =
+        compiled_walkway(&serde_json::to_vec(&physical_stair_fixture()).unwrap());
+    let door = engine.script_domains.interactables.doors[0].clone();
+    engine.script_domains.interactables.doors[0].owning_lift_sector = None;
+    engine.script_domains.interactables.doors[0].door_type = crate::gate::DoorType::Default;
+    let source = crate::position_interface::SectorHandle::from_number(door.sector_out)
+        .with_arena_index(door.sector_out_index.unwrap());
+    let owner = walking_pc(
+        &mut engine,
+        &mut assets,
+        door.point_in,
+        door.layer_out,
+        source,
+    );
+    let rng = crate::sim_rng::test_context();
+    engine.execute_pass_door(
+        TickCtx::new(&rng, &assets),
+        owner,
+        crate::gate::DoorIndex::new(0).unwrap(),
+        true,
+    );
+    let physical = &assets.navigation.physical_stairs[&3].definition;
+    let world = engine.ent(owner).position_iface().get_position();
+    let plane =
+        robin_level_data::stair_navigation::StairNavigationPlane::new(physical.plane).unwrap();
+    assert!(
+        plane.contains_runtime_position([world.x, world.y, world.z]),
+        "{world:?}"
+    );
+    assert_eq!(world.to_map(), door.point_in);
+    engine
+        .ent_mut(owner)
+        .element_data_mut()
+        .set_position_map(door.point_out);
+    engine.execute_pass_door(
+        TickCtx::new(&rng, &assets),
+        owner,
+        crate::gate::DoorIndex::new(0).unwrap(),
+        false,
+    );
+    let world = engine.ent(owner).position_iface().get_position();
+    assert_eq!(world.z, 0.0);
+    assert_eq!(world.to_map(), door.point_out);
+}
+
+#[test]
 fn physical_stair_point_dispatch_uses_world_orders_and_reaches_the_goal() {
     for reverse in [false, true] {
         let (mut engine, mut assets) =
