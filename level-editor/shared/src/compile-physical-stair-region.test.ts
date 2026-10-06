@@ -9,6 +9,17 @@ import {
 import { heightPlane, type HeightPlane } from "./gameplay-plane.ts";
 import type { Point } from "./level.ts";
 import type { Vec3 } from "./scene.ts";
+import { joinedPhysicalStairFixture } from "../test-fixtures/joined-physical-stair.ts";
+
+test("native joined stair traversal uses the compiler's floors and live collision", () => {
+  const expected: unknown = JSON.parse(
+    readFileSync(
+      new URL("../test-fixtures/joined-physical-stair-area.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(joinedPhysicalStairFixture())), expected);
+});
 
 test("joined flights retain independent controls and crop each floor at its own height", () => {
   const rect = (x0: number, x1: number): Point[] => [

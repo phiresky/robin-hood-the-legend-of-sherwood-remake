@@ -79,28 +79,14 @@ fn edge_on_physical_stair_fixture() -> serde_json::Value {
 fn joined_physical_stair_fixture() -> serde_json::Value {
     let mut document = physical_stair_fixture();
     let geometry = &mut document["asset_geometry"];
-    geometry["motion_data"]["layers"][2][0]["polygon"]["points"] = serde_json::json!([
-        [390, 300],
-        [400, 260],
-        [410, 200],
-        [410, 300],
-        [400, 360],
-        [390, 400]
-    ]);
-    geometry["motion_data"]["layers"][2][0]["obstacles"] = serde_json::json!([
-        {"state_id":1,"polygon":{"points":[[398,268],[402,248],[402,348],[398,368]]}}
-    ]);
+    let compiled: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../level-editor/shared/test-fixtures/joined-physical-stair-area.json"
+    )))
+    .unwrap();
+    geometry["motion_data"]["layers"][2][0] = compiled["area"].clone();
     let lift = &mut geometry["lifts"][0];
-    lift["physical_navigation"]["plane"] = serde_json::json!([4.0, 0.0, -1560.0]);
-    lift["physical_navigation"]["floor_patches"] = serde_json::json!([
-        {"plane":[4.0,0.0,-1560.0],"boundary":[[390,300],[400,300],[400,400],[390,400]]},
-        {"plane":[6.0,0.0,-2360.0],"boundary":[[400,300],[410,300],[410,400],[400,400]]}
-    ]);
-    lift["physical_navigation"]["obstacles"] = serde_json::json!([
-        {"motion_obstacle":0,"polygon":[[398,300],[402,300],[402,400],[398,400]]}
-    ]);
-    lift["physical_navigation"]["doors"][0]["inside"][2] = serde_json::json!(8);
-    lift["physical_navigation"]["doors"][1]["inside"][2] = serde_json::json!(88);
+    lift["physical_navigation"] = compiled["navigation"].clone();
     lift["doors"][0]["point_in"] = serde_json::json!([392, 342]);
     lift["doors"][1]["point_in"] = serde_json::json!([408, 262]);
     let receiver = geometry["sight_obstacles"][2].clone();

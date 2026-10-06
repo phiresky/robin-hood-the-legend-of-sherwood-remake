@@ -45,8 +45,9 @@
   floor metadata. Editor exports now emit each joined stair flight's plane,
   split projected boundaries at slope changes, and assemble collision and
   control bindings per flight. Cropping retains each surviving floor's height.
-  Ladders still require a planar flight. Compiler-to-native joined-floor
-  integration and published multi-plane asset verification remain open.
+  Ladders still require a planar flight. A shared compiler-generated fixture
+  passes native bidirectional actor traversal and live barrier apply/reset;
+  published multi-plane asset verification remains open.
   Local point Move requests resolve supported goals on invertible floors to
   physical orders. Ambiguous edge-on point requests reject; seek/line requests
   and full movement effects remain unfinished.

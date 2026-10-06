@@ -6,6 +6,7 @@ import { compileMap } from "../app/src/map-compile.ts";
 import { heightPlane, planeHeight } from "../shared/src/gameplay-plane.ts";
 import { groupCentroid } from "../shared/src/level3d.ts";
 import { fixedPolygonBoolean } from "../shared/src/fixed-polygon-boolean.ts";
+import { assembleLiftSegments } from "../shared/src/assemble-lift-segments.ts";
 
 // Synthetic receiving assets test placement connections, not visual fidelity.
 // Their floors are authored from the reviewed stair seams; none is published.
@@ -42,6 +43,14 @@ else {
 }
 const lifts = descriptor.gameplay.lifts;
 assert.ok(lifts.length > 0);
+const assemblyCount = assembleLiftSegments(
+  lifts.map((lift) => ({
+    id: lift.id,
+    type: lift.type,
+    direction: Math.atan2(lift.direction[1], lift.direction[0]),
+    joins: lift.joins ?? [],
+  })),
+).lifts.length;
 const landingDoors = lifts.flatMap((lift) => {
   const floor = descriptor.gameplay.surfaces.find((surface) => surface.id === lift.surface);
   const plane = heightPlane(floor.polygon.map(([x, y], i) => [x, y, floor.height[i]]));
@@ -204,7 +213,7 @@ for (const height of [0, 40])
     }
     const compile = (doc) => compileMap(doc, [0, 0, 4000, 4000], assets, { bestEffort: true });
     const compiled = compile(document);
-    if (compiled.descriptor.asset_geometry.lifts?.length !== 2 * lifts.length) {
+    if (compiled.descriptor.asset_geometry.lifts?.length !== 2 * assemblyCount) {
       await fs.writeFile(
         `${output}/failed-${height}-${rotation}.scene.json`,
         JSON.stringify(document),
@@ -217,7 +226,7 @@ for (const height of [0, 40])
     }
     assert.equal(
       compiled.descriptor.asset_geometry.lifts?.length,
-      2 * lifts.length,
+      2 * assemblyCount,
       JSON.stringify(compiled.warnings),
     );
     assert.ok(
@@ -238,7 +247,7 @@ for (const height of [0, 40])
         const invalid = compile(changed);
         const remaining = invalid.descriptor.asset_geometry.lifts?.length ?? 0;
         assert.ok(
-          remaining >= lifts.length && remaining < 2 * lifts.length,
+          remaining >= assemblyCount && remaining < 2 * assemblyCount,
           `${file}: ${id} ${kind} retained ${remaining} lifts`,
         );
         assert.ok(invalid.warnings.some((warning) => warning.includes("traversal omitted")));

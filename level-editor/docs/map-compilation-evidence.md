@@ -8947,3 +8947,32 @@ Workspace Rust formatting, the shared schema's editor formatting check and the
 game binary build also pass. Existing planar descriptors retain their current
 navigation representation; normal export will opt into patches only after
 compiler assembly and its placed-asset regression checks are complete.
+
+### Joined-flight compiler and native integration (2026-10-06)
+
+Editor export now emits piecewise physical stair floors, splits projection edges
+at slope changes, and assembles collision independently on each plane. Control
+names are remapped across flights after cropping; a crop retaining only one
+flight produces the ordinary planar representation. The focused compiler suite
+passes 148 tests, including copied/rotated compound lifts, incompatible shared
+edges, separate controls and cropping. Both editor typechecks and focused lint
+pass.
+
+`shared/test-fixtures/joined-physical-stair.ts` produces the JSON used by the
+native joined-stair movement tests. The editor test checks exact serialized
+fixture equality. Native admission and complete actor traversal pass: four
+open-barrier routes and four closed-barrier rejections across repeated apply/reset
+cycles. Rust formatting and the game binary build pass.
+
+The unpublished garden contact candidate is staged by
+`refinement/stage-york-garden-joined-seam.mjs` from
+`local-stair-seams-OCZPtq` into `york-garden-joined-seam-ONmvxk`. It preserves both
+flight slopes and moves their shared edge onto the equal-height line. The
+external-landing checker now counts assembled lifts rather than authored flight
+segments. `external-stair-landings-HjrSFt` exports sixteen copies at four rotations
+and two elevations, rejects 32 missing/raised synthetic landings, and passes all
+32 native actor routes. This does not establish full-scene or rendered parity.
+
+Mesh review finds 538/540 sampled hits on the lower flight (maximum edge gap
+0.094 units) and 714/811 on the upper flight (maximum gap 2.562 units). The upper
+extension needs further mesh-based correction; the candidate remains unpublished.

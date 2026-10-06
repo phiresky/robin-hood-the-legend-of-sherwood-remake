@@ -83,8 +83,13 @@ native fixtures cross both flights in both directions and retain live barrier
 state. Compiler emission now preserves each flight's plane and projected slope
 changes, independently clips collision, and remaps controls after cropping.
 Joined and copied/rotated compiler checks pass, along with independent controls
-and single-flight cropping. Compiler-to-native integration and the garden asset's
-internal shared-edge correction remain open; this candidate is unpublished.
+and single-flight cropping. Native tests consume compiler-generated joined-floor
+data and pass four complete routes plus four closed-barrier rejections across
+apply/reset cycles. A staged garden shared-edge correction exports sixteen
+rotated/elevated copies, passes all 32 native actor routes and rejects 32
+missing/raised landing cases. Its upper
+flight extends up to 2.562 units beyond the sampled mesh, so mesh refinement and
+full-scene verification remain open; this candidate is unpublished.
 
 Latest runtime checks retain exact landing contours through binding and foot
 support instead of reducing them to single precision. The southwest turret is
