@@ -24,6 +24,16 @@ and `lincoln-north-hall-level-KSbGJF` retains sixteen stair routes. Formatting
 checks and the game build pass. These checks do not constitute fresh ZIP or
 rendered verification.
 
+Follow-up diagnosis compares the placed authored ordinary-door endpoints against
+the compiled stair plane at 0/37/90/180 degrees. Both stair-side endpoints lie
+on the plane (height error below 5e-13). At 90 degrees, inverting their rounded
+map waypoints displaces them by 41.754 and 106.710 ground units; inverting the
+unrounded projection has error below 5e-11. Thus the authored approach heights
+are consistent here, but integer door waypoints cannot recover their physical
+positions. Ordinary passages need preserved world endpoints through compilation
+and runtime handoff/movement, including edge-on projections. Increasing support
+tolerances or extending the stair footprint would hide the error.
+
 ## Ordinary passage handoff to physical stairs (2026-10-06)
 
 Ordinary passage doors can enter a physical stair sector without belonging to

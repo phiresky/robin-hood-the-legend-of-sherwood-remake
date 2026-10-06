@@ -184,7 +184,11 @@ routes from 32/96 to 70/96. All tested 0- and 37-degree copies pass; failures
 remain at 90 and 180 degrees.
 Rotated movement/support failures remain, and the full scene also has mismatched
 external landing edges. Ordinary doors on edge-on stairs still need explicit
-world endpoints.
+world endpoints. At 90 degrees, integer rounding of the great-hall ordinary-door
+waypoints displaces recovered ground positions by 41.754 and 106.710 units;
+their authored world endpoints agree with the stair plane. Those coordinates
+must survive compilation and runtime passage instead of being reconstructed
+from rounded map pixels.
 This candidate remains unpublished; those doors and both receiving assets need
 correction rather than omission.
 The Nottingham road stair is also published after sixteen moved/elevated routes,
