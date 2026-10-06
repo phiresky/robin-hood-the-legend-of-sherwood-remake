@@ -16,7 +16,7 @@
       "model": "3d-assets/lincoln/lincoln-terrain/model.glb",
       "model_sha256": "cd26d3bc86d76ebe3ee80433aecc85d54a19c1cb4b176e1d5adcabc616559e15",
       "descriptor": "3d-assets/lincoln/lincoln-terrain/asset.json",
-      "descriptor_sha256": "a28066bfc47a5eb2dc0c629add1dd9c8968e8da1b940f5b665cb98ea4b1d701c",
+      "descriptor_sha256": "fba60942431b9f0664fdf5dc1ea5be46594cb54ffc0804f224e5b1202504558d",
       "resources": []
     }
   ],
@@ -95,7 +95,7 @@
       "model": "3d-assets/lincoln/lincoln-castle-hill-north-bailey-plateau/model.glb",
       "model_sha256": "4daeefca819d631f382a924dbb121aaf17ed8e734a445e9b37cdc5c906147f22",
       "descriptor": "3d-assets/lincoln/lincoln-castle-hill-north-bailey-plateau/asset.json",
-      "descriptor_sha256": "4bab676241ee9e0f441f8b5cc90495ce312fb11ebb5b4663f7f475d41a8f38b3",
+      "descriptor_sha256": "b8b9f002466534ff8372f624ecef790a58dfdaf1d3afe0fa7912c83f79e4b877",
       "id": "lincoln-castle-hill-north-bailey-plateau"
     },
     {
@@ -483,7 +483,7 @@
       "model": "3d-assets/lincoln/lincoln-north-hall-stair/model.glb",
       "model_sha256": "9775e6656887be74429379ae00298da372ab97e5a1feed52e80d39346532eb83",
       "descriptor": "3d-assets/lincoln/lincoln-north-hall-stair/asset.json",
-      "descriptor_sha256": "61f8b6457f07c38dd4d9a0eb73fefb987016f3b3468a74eaea875d480dc82293",
+      "descriptor_sha256": "8e48f038c139acce67a400838e3334d82ad27a9f1896d47b5b80e772d7ba7138",
       "id": "lincoln-north-hall-stair"
     },
     {
@@ -637,7 +637,7 @@
       "model": "3d-assets/lincoln/lincoln-north-curtain-wall-west/model.glb",
       "model_sha256": "4219ab34e0529b6c9db23cae81c0538555a32372b4ed46e93506fbcb0d184df7",
       "descriptor": "3d-assets/lincoln/lincoln-north-curtain-wall-west/asset.json",
-      "descriptor_sha256": "8d9036742c3cdf98ce97c56cbc39e01f6a1c4d58c4f77b4b0197c65f51d3e0cc",
+      "descriptor_sha256": "0169fada78e61170d7eb104bb252ced5cb11a00bb1329fedfd66898360b5e207",
       "id": "lincoln-north-curtain-wall-west"
     },
     {

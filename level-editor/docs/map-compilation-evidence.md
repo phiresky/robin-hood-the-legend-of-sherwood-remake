@@ -4,6 +4,36 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Lincoln north-hall stair with independent landing owners (2026-10-06)
+
+Stage `local-stair-seams-58q3n8` corrects the stair floor and both external
+endpoint seams. The single-flat-ground fixture correctly omits the stair because
+its upper landing is missing. Independent receiving assets in
+`external-stair-landings-QVIYHf` instead exercise two stair copies at four
+rotations and elevations 0/40: all 32 directed native routes pass and 64 missing
+or raised landing cases reject. All 598 flight samples have mesh coverage.
+
+The full scene initially fails both directions because neither receiving
+boundary reaches its corrected physical entrance
+(`lincoln-north-hall-level-A8uv95`). Ground-contact stage
+`lincoln-stair-ground-contact-CAjnA6` updates the terrain and north-bailey
+plateau's matching blocker, shifting endpoints 0.126/0.949 units. All 205
+sampled contact points have mesh support. `stage-lincoln-north-hall-platform.mjs`
+then adjusts only the stair-width portion of the independent west curtain's
+upper receiving edge. The remaining long edge is retained. Upper shifts are
+0.854/0.915 units; all 205 mesh samples pass. Combined stage is
+`lincoln-north-hall-platform-Dc3cut`.
+
+Full Lincoln `lincoln-north-hall-level-KSbGJF` passes native construction,
+sixteen stair routes, eight climbing routes and eleven control apply/reset
+checks. Publication backup is `lincoln-north-hall-publication-20261006`; all four
+asset definitions and Lincoln scene pins are updated. Published independent
+placements `external-stair-landings-BNeL8E` and full Lincoln exactly match the
+tested descriptors. All ten scenes reopen. Refreshed local support audit
+`lift-anchor-support-aSmJpO` finds 29/53 unsupported stair definitions, including
+1/6 in Lincoln; ladders and walls remain 1/8 and 9/9. These actor-loop and mesh
+checks do not establish complete rendered parity.
+
 ## Lincoln east curtain stair and north-bailey contact (2026-10-06)
 
 Stair seam review `local-stair-seams-tmUCYD` corrects `building-150-lift` in

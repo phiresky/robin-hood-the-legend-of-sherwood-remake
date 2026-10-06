@@ -16,6 +16,19 @@ assert.ok(stage && compiledFile, "Provide reviewed stair edits and their Lincoln
 const edits = JSON.parse(await fs.readFile(`${stage}/edits.json`, "utf8"));
 assert.equal(edits.length, 1);
 const contacts = {
+  "lincoln-north-hall-stair": {
+    outside: [2120, 929.001, 220.001],
+    edge: [
+      [2094, 706],
+      [2131, 694],
+    ],
+    surface: "ground-section-2-0",
+    plateau: "lincoln-castle-hill-north-bailey-plateau",
+    node: "building-067",
+    blocker: "building-067-ground-blocker-5-6",
+    shiftLimit: 2.5,
+    meshMargin: 0,
+  },
   "lincoln-south-wall-stair": {
     outside: [1756, 1971.001, 220.001],
     edge: [
