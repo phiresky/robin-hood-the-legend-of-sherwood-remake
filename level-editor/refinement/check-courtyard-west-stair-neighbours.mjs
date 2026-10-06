@@ -86,6 +86,11 @@ const assembled = assembleLiftSegments(
   })),
 );
 const liftCount = assembled.lifts.length;
+const bridgeNeedsTerrain =
+  riverBridge &&
+  assets
+    .get(stair)
+    .gameplay.projectionReceivers?.some((receiver) => receiver.node === "building-095");
 const entranceCounts = assembled.lifts.map((assembledLift) =>
   assets
     .get(stair)
@@ -142,7 +147,7 @@ for (const height of [0, 40])
       (riverside && !physicalTerrace) ||
       market ||
       outerWall ||
-      riverBridge ||
+      bridgeNeedsTerrain ||
       (westLane && !physicalTerrace)
         ? { terrain: createTerrainGrid([0, 0, ...size], 1000, height + terrainHeight) }
         : {}),
@@ -203,7 +208,7 @@ for (const height of [0, 40])
       (riverside && !physicalTerrace) ||
       market ||
       outerWall ||
-      riverBridge ||
+      bridgeNeedsTerrain ||
       (westLane && !physicalTerrace)
     )
       for (const kind of ["missing", "raised"]) {

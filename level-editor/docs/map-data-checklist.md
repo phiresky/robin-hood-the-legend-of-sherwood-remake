@@ -131,8 +131,11 @@ full-scene testing exposed 54 failing handoffs. Correcting the lower ground edge
 and separate upper terrace reduces this to 36: three lower entrances still miss
 the slightly angled physical terrace edge. A further staged correction aligns
 that receiving asset's floor and volume together, restoring all 130 full-York
-routes and six controls. Moved actual-neighbour checks and the combined bridge
-candidate still need verification before publication. These candidates do not
+routes and six controls. The combined bridge candidate fails 42 full-York routes;
+its first moved actual-neighbour placement fails 84/100 routes. Further staged
+corrections align its upper terrace contact and give the lower deck its own
+physical floor. These corrections and the remaining moved west-lane routes
+still need verification before publication. These candidates do not
 reduce the published unsupported-anchor counts below.
 The corrected west-lane full-York export also passes all 130 stair routes with
 a complete Robin animation profile. This verifies animation-driven movement,

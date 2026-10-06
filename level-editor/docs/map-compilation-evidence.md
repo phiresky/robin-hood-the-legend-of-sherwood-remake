@@ -9145,7 +9145,10 @@ its native traversal audit is pending.
 Actual-neighbour fixture
 `york-west-lane-access-steps-neighbour-placements-NVq5B7` exports sixteen copies
 and rejects 48 missing/raised receivers or terrain; its first 448 native routes
-pass. All 896 routes must complete before publication.
+pass. That synthetic-frame process exits with status 143 before the elevated
+cases complete; its report remains unfinished. A separate complete-profile
+audit is running over all eight exports. All 896 routes must complete before
+publication.
 
 Bridge candidate `local-stair-seams-4oe3PY` retains both flights and all eleven
 entrances. The external-landing fixture now gives disconnected coplanar receiving
@@ -9156,11 +9159,32 @@ maximum gaps are 0.068722 and 0.282337 units. Combined full-York candidate
 `york-multi-entrance-contacts-O4gMqo` contains both stair candidates and the two
 receiving corrections; it predates the lower physical-terrace correction.
 Replacement `york-multi-entrance-contacts-dvaYCq` combines all five edited assets;
-compilation and six control checks pass, with native stair routes still pending.
+compilation and six control checks pass, but 42/130 native stair routes fail.
+Twenty-four failures involve the first flight's three upper entrances; eighteen
+involve the second flight's three lower entrances. The west-lane routes pass.
 The bridge's actual-neighbour fixture
 `york-stone-river-bridge-and-approach-stairs-neighbour-placements-k2Zlar` compiles
 sixteen copies with both terraces and authored terrain and rejects 80 invalid
 neighbour/terrain cases. Removing terrain preserves the other flight in each
-copy, whose approaches belong to the physical terraces. Its native routes remain
-pending. Nothing in this
+copy, whose approaches belong to the physical terraces. The first placement
+fails 84/100 native routes, so this candidate cannot be published.
+
+`stage-york-bridge-stair-contacts.mjs` produces `york-bridge-stair-contacts-P0lynX`:
+the separate upper terrace owns contact corrections of 1.106673 and 0.388693
+units. The bridge owns a new explicit lower-deck floor and matching receiving
+volume, with corners adjusted by 0.216471 and 0.392052 units. Other part solids
+are copied unchanged into explicit asset volumes, preserving sight order; no
+level data is used. The lower deck no longer needs terrain beneath it to supply
+walking support. Mesh review `york-bridge-receiver-mesh-6rurWV` finds 1,103/1,127
+lower-deck hits, maximum gap 0.216415 and height residual 0.032243 units; the
+upper terrace retains a maximum gap of 0.539013 units.
+Actual-neighbour fixture
+`york-stone-river-bridge-and-approach-stairs-neighbour-placements-uUptc0` compiles
+sixteen copies without underlying terrain and rejects 64 missing/raised
+terraces. All copies retain both flights and all eleven entrances. Its first
+200 complete-character-profile routes pass. Full-York compilation and all six
+control checks pass; full-York complete-profile traversal remains pending.
+Other bridge obstacle shapes/flags and existing movement contours, clearances,
+doors, lifts, jumps and interiors are verified unchanged by the deck migration.
+Nothing in this
 section is published or claimed as full-scene parity.
