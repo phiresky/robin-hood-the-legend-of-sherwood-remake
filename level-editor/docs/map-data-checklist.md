@@ -44,6 +44,13 @@ contact has 201/205 exact mesh sample hits with four edge discrepancies below
 about. Fresh published geometry matches the native-tested candidates and all
 ten scenes reopen.
 
+Lincoln's east curtain stair and its terrain/north-bailey contact are published
+after sixteen moved routes, eight raised-approach rejections and full Lincoln
+checks of sixteen stairs, eight climbs and eleven controls. Published geometry
+matches the tested candidates and all scenes reopen. The flight has substantial
+mesh gaps and the upper landing has no sampled mesh support at its authored
+height; these remain explicit draft limitations, not verified visual parity.
+
 Landing validation now excludes permanently blocked portions of shared stair
 edges while retaining their collision. Switchable blockers and uncovered edge
 portions still require matching heights. Focused regressions pass, but the
@@ -154,8 +161,8 @@ complete-sprite and rendered verification remain open.
 All ten scenes reopen after publication, and full Derby passes all five control
 apply/reset checks. All ten Derby stair definitions now pass local floor-anchor
 support checks after the upper-west publication below.
-A library-wide local-anchor audit finds unsupported anchors in 31 of 53 authored stair
-definitions: Derby 0/10, Leicester 0/8, Lincoln 3/6, Nottingham 11/12,
+A library-wide local-anchor audit finds unsupported anchors in 30 of 53 authored stair
+definitions: Derby 0/10, Leicester 0/8, Lincoln 2/6, Nottingham 11/12,
 Sherwood 1/1 and York 16/16. All audited floors are planar. This checks local
 definitions, not placed connectivity or actual route failures; corrections and
 moved/rotated native traversal checks remain necessary across these assets.

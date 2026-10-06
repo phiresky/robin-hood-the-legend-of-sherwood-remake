@@ -16,7 +16,7 @@
       "model": "3d-assets/lincoln/lincoln-terrain/model.glb",
       "model_sha256": "cd26d3bc86d76ebe3ee80433aecc85d54a19c1cb4b176e1d5adcabc616559e15",
       "descriptor": "3d-assets/lincoln/lincoln-terrain/asset.json",
-      "descriptor_sha256": "51eb37ad19990545a40260cddc932c69278f277ece1a5948bfb3b44550c02f0a",
+      "descriptor_sha256": "a28066bfc47a5eb2dc0c629add1dd9c8968e8da1b940f5b665cb98ea4b1d701c",
       "resources": []
     }
   ],
@@ -95,7 +95,7 @@
       "model": "3d-assets/lincoln/lincoln-castle-hill-north-bailey-plateau/model.glb",
       "model_sha256": "4daeefca819d631f382a924dbb121aaf17ed8e734a445e9b37cdc5c906147f22",
       "descriptor": "3d-assets/lincoln/lincoln-castle-hill-north-bailey-plateau/asset.json",
-      "descriptor_sha256": "a6bcb60857851f98563e4d54a10ff1aef21240df789364d70d4622e698ab511b",
+      "descriptor_sha256": "4bab676241ee9e0f441f8b5cc90495ce312fb11ebb5b4663f7f475d41a8f38b3",
       "id": "lincoln-castle-hill-north-bailey-plateau"
     },
     {
@@ -131,7 +131,7 @@
       "model": "3d-assets/lincoln/lincoln-east-curtain-wall-middle/model.glb",
       "model_sha256": "2afa5ab94806770bc24e4b63d46d43cfdc26a5bb788e37c453d2b25037ebacbe",
       "descriptor": "3d-assets/lincoln/lincoln-east-curtain-wall-middle/asset.json",
-      "descriptor_sha256": "fe69d33fcf16a9e8ab48bf3ec5a7c6855eb753d9ccc84bfb8c15a76d964f7c48",
+      "descriptor_sha256": "f8eed12d3ca4b652ca5585aee92221948390e73adc99bdbec9107ee2eaa01829",
       "id": "lincoln-east-curtain-wall-middle"
     },
     {

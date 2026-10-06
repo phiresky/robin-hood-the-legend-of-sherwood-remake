@@ -15,7 +15,40 @@ const [stage, compiledFile] = process.argv.slice(2);
 assert.ok(stage && compiledFile, "Provide reviewed stair edits and their Lincoln export");
 const edits = JSON.parse(await fs.readFile(`${stage}/edits.json`, "utf8"));
 assert.equal(edits.length, 1);
-assert.equal(edits[0].asset, "lincoln-south-wall-stair");
+const contacts = {
+  "lincoln-south-wall-stair": {
+    outside: [1756, 1971.001, 220.001],
+    edge: [
+      [1758, 1740],
+      [1791, 1756],
+    ],
+    surface: "ground-section-1-0",
+    plateau: "lincoln-castle-hill-inner-bailey-plateau",
+    node: "building-062",
+    blocker: "building-062-ground-blocker-3-0",
+    shiftLimit: 2.37,
+    meshMargin: 0.375,
+    issue:
+      "South stair terrain contact has 201/205 exact mesh sample hits; four edge samples extend at most 0.373 units beyond the visible plateau. Complete rendered actor integration remains unverified.",
+  },
+  "lincoln-east-curtain-wall-middle": {
+    outside: [2689, 1213.001, 220.001],
+    edge: [
+      [2691, 981],
+      [2717, 999],
+    ],
+    surface: "ground-section-2-0",
+    plateau: "lincoln-castle-hill-north-bailey-plateau",
+    node: "building-067",
+    blocker: "building-067-ground-blocker-5-12",
+    shiftLimit: 0.79,
+    meshMargin: 0.416,
+    issue:
+      "East curtain stair terrain contact has 200/205 exact mesh sample hits. The end-strip discrepancy decreases from 0.416 units at the existing edge to 0.040 at the corrected edge. Complete rendered actor integration remains unverified.",
+  },
+};
+const contact = contacts[edits[0].asset];
+assert.ok(contact, "No reviewed contact for this stair asset");
 const document = await readStoredMap("library/scenes/lincoln.rhlos-map.json", "library");
 const assets = await pinnedDescriptors("library", document.assetSources, document.sceneAssets);
 const index = JSON.parse(await fs.readFile("library/3d-assets/index.json", "utf8")).assets;
@@ -27,19 +60,16 @@ assert.equal(
 const compiled = JSON.parse(await fs.readFile(compiledFile, "utf8")).asset_geometry;
 const lifts = compiled.lifts.filter((lift) =>
   lift.physical_navigation?.doors.some(
-    (door) => Math.hypot(...door.outside.map((v, i) => v - [1756, 1971.001, 220.001][i])) < 1e-5,
+    (door) => Math.hypot(...door.outside.map((v, i) => v - contact.outside[i])) < 1e-5,
   ),
 );
 assert.equal(lifts.length, 1);
 const [a, b, c] = lifts[0].physical_navigation.plane;
-const z = 220.001;
-const before = [
-  [1758, 1740],
-  [1791, 1756],
-];
+const z = contact.outside[2];
+const before = contact.edge;
 const after = before.map(([x, y]) => {
   const t = (a * x + b * (y + z) + c - z) / (a * a + b * b);
-  assert.ok(Math.abs(t) * Math.hypot(a, b) < 2.37, "Contact exceeds reviewed shift");
+  assert.ok(Math.abs(t) * Math.hypot(a, b) < contact.shiftLimit, "Contact exceeds reviewed shift");
   return [x - t * a, y - t * b];
 });
 const transform = (id, node, point) => {
@@ -58,7 +88,7 @@ const transform = (id, node, point) => {
     ),
   );
 };
-const plateau = assets.get("lincoln-castle-hill-inner-bailey-plateau");
+const plateau = assets.get(contact.plateau);
 const entry = index.find((entry) => entry.id === plateau.id);
 const modelBytes = await fs.readFile(`library/3d-assets/${entry.model}`);
 const model = await loadSceneModel("library", {
@@ -71,8 +101,8 @@ const model = await loadSceneModel("library", {
   resources: plateau.resources ?? [],
   ...(entry.model_scene ? { model_scene: entry.model_scene } : {}),
 });
-const triangles = maskRecoveryMesh(model, "building-062", (p) =>
-  transform(plateau.id, "building-062", sceneToGame(document.camera, gltfToScene(p))),
+const triangles = maskRecoveryMesh(model, contact.node, (p) =>
+  transform(plateau.id, contact.node, sceneToGame(document.camera, gltfToScene(p))),
 );
 function meshHeight(point, [a, b, c]) {
   const det = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1]);
@@ -109,11 +139,10 @@ for (let along = 0; along <= 40; along++)
         );
     samples.push({ world, hits, uncoveredDistance });
   }
-// Four end-strip samples extend at most 0.373 units beyond the visible mesh.
-// This explicit draft authoring bound does not relax runtime floor matching.
+// Explicit per-contact authoring bounds do not relax runtime floor matching.
 const maximumUncoveredDistance = Math.max(...samples.map((s) => s.uncoveredDistance));
-const supported = maximumUncoveredDistance <= 0.375;
-const output = await fs.mkdtemp("work/map-compile/lincoln-south-stair-contact-");
+const supported = maximumUncoveredDistance <= contact.meshMargin;
+const output = await fs.mkdtemp("work/map-compile/lincoln-stair-ground-contact-");
 await fs.writeFile(
   `${output}/review.json`,
   JSON.stringify(
@@ -133,7 +162,7 @@ await fs.writeFile(
 assert.ok(supported, `Plateau mesh does not support contact: ${output}`);
 const terrain = assets.get("lincoln-terrain");
 const terrainGameplay = structuredClone(terrain.gameplay);
-const surface = terrainGameplay.surfaces.find((s) => s.id === "ground-section-1-0");
+const surface = terrainGameplay.surfaces.find((s) => s.id === contact.surface);
 assert.ok(surface.height.every((h) => h === 0));
 const positions = before.map((p) =>
   surface.polygon.findIndex((q) => p.every((v, i) => v === q[i])),
@@ -143,13 +172,12 @@ assert.equal((positions[0] + 1) % surface.polygon.length, positions[1]);
 positions.forEach((i, j) => (surface.polygon[i] = after[j]));
 surface.preserveMovementPrecision = true;
 const plateauGameplay = structuredClone(plateau.gameplay);
-assert.ok(plateauGameplay.draft?.issues, "Expected reviewed draft plateau");
-plateauGameplay.draft.issues.push(
-  "South stair terrain contact has 201/205 exact mesh sample hits; four edge samples extend at most 0.373 units beyond the visible plateau. Complete rendered actor integration remains unverified.",
-);
-const blocker = plateauGameplay.movementBlockers.find(
-  (b) => b.id === "building-062-ground-blocker-3-0",
-);
+if (contact.issue) {
+  assert.ok(plateauGameplay.draft?.issues, "Expected reviewed draft plateau");
+  if (!plateauGameplay.draft.issues.includes(contact.issue))
+    plateauGameplay.draft.issues.push(contact.issue);
+}
+const blocker = plateauGameplay.movementBlockers.find((b) => b.id === contact.blocker);
 const origin = transform(plateau.id, blocker.node, [0, 0, 0]);
 for (const axis of [0, 1]) {
   const point = [0, 0, 0];

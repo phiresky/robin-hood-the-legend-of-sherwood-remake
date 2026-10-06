@@ -4,6 +4,41 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Lincoln east curtain stair and north-bailey contact (2026-10-06)
+
+Stair seam review `local-stair-seams-tmUCYD` corrects `building-150-lift` in
+`lincoln-east-curtain-wall-middle`, using local sloped landing edges and an
+external lower entrance with new-drop ground height 220.001. Placements
+`local-stair-placements-3FRu21` pass sixteen directed routes at four rotations
+and elevations 0/40; eight raised approaches reject. The asset's separate
+climbable wall is not corrected by this stage.
+
+Full Lincoln initially fails the two lower-entrance directions because its
+terrain receiver does not reach the stair (`lincoln-east-curtain-level-k6rJdN`).
+The generalized `stage-lincoln-stair-ground-contact.mjs` now reviews both south
+and east contacts. East terrain edge `[2691,981]`–`[2717,999]` and the matching
+north-bailey plateau blocker move less than 0.79 units to the stair plane.
+The pinned mesh supports 200/205 exact contact samples; the existing end-strip
+discrepancy decreases from 0.416 to 0.040 units. This remains an explicit draft
+authoring bound, not a runtime connection tolerance.
+
+Combined stage `lincoln-stair-ground-contact-PGckIX` produces full Lincoln
+`lincoln-east-curtain-level-RnmGP7`, passing native construction, sixteen stair
+routes, eight climbing routes and eleven control apply/reset checks. Mesh
+review finds only 537/566 stair-flight samples supported, with a 10.006-unit
+maximum uncovered margin; none of the reviewed upper landing-edge samples
+has mesh support at the authored height. Final stair stage
+`local-stair-seams-0Aero6` and combined stage `lincoln-stair-ground-contact-rrBuIo`
+retain tested geometry and add the explicit visual limitation warning.
+
+Publication backup is `lincoln-east-curtain-publication-20261006`; the stair,
+terrain, plateau and Lincoln pins are updated. Published placements
+`local-stair-placements-JcNCW5` and full Lincoln match tested geometry except for
+the added draft warning. All ten scenes reopen. Audit
+`lift-anchor-support-Vqbiuj` finds 30/53 unsupported stair definitions, including
+2/6 in Lincoln; ladders and walls remain 1/8 and 9/9. Rendered actor integration
+and the documented geometry discrepancies remain unresolved.
+
 ## Lincoln south-wall stair and plateau contact (2026-10-06)
 
 The lower approach intersects the landing plane 3.319 units from its authored
@@ -19,7 +54,7 @@ that tested geometry.
 
 Full Lincoln initially fails both directions through the lower entrance
 (`lincoln-south-stair-level-pHuqLv`): the terrain receiver does not reach the
-physical door. `stage-lincoln-south-stair-contact.mjs` corrects the corresponding
+physical door. `stage-lincoln-stair-ground-contact.mjs` corrects the corresponding
 boundary in `lincoln-terrain/ground-section-1-0` and its independent blocker in
 the inner-bailey plateau asset. Endpoint shifts are 0.688 and 2.361 units. The
 pinned plateau mesh supports 201/205 exact samples; four end-strip samples lie
