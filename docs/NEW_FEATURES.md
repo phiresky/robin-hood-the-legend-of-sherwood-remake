@@ -36,8 +36,12 @@
   physical endpoints, and entry/exit callbacks transfer floor ownership without
   inverting the stair projection. Normal editor exports now emit this metadata
   for compatible planar stairs; unsupported assemblies warn and retain projected
-  navigation. Edge-on surface assembly remains unfinished;
-  local point Move requests resolve supported goals on invertible floors to
+  navigation. Edge-on surface assembly remains unfinished.
+  A tested piecewise-floor primitive retains distinct connected flight planes
+  and spends each movement step's distance across their seams. It rejects gaps
+  and inconsistent overlaps. Descriptor/compiler and actor-loop integration of
+  this primitive remains pending; current exports still require planar lifts.
+  Local point Move requests resolve supported goals on invertible floors to
   physical orders. Ambiguous edge-on point requests reject; seek/line requests
   and full movement effects remain unfinished.
   Movement-source authorization preserves supported world positions on physical

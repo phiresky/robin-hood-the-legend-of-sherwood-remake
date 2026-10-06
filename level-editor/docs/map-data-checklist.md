@@ -76,8 +76,11 @@ The north-garden stair exposes a further joined-flight limitation: its two
 slightly different floor planes merge into one lift, but physical stair
 navigation currently requires one plane. The staged local seam corrections
 have 1,329/1,330 sampled flight mesh hits, with a maximum edge gap of 0.033 units;
-moved assemblies still fall back to projected navigation. Continuous physical traversal across joined planes
-remains open, and this candidate is unpublished.
+moved assemblies still fall back to projected navigation. A new piecewise-floor
+primitive passes bidirectional step/distance checks across rotated and elevated
+joined slopes, rejects gaps and conflicting overlaps, and avoids concave-floor
+shortcuts. Descriptor/compiler and actor-loop integration remain open; this
+candidate is unpublished.
 
 Latest runtime checks retain exact landing contours through binding and foot
 support instead of reducing them to single precision. The southwest turret is

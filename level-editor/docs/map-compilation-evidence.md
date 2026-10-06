@@ -8903,3 +8903,20 @@ single plane for the assembled region. This is a physical traversal limitation,
 not evidence that the joined stair works. No definition is published; the next
 check must address continuous traversal across the flight planes rather than
 counting projected fallback as parity.
+
+The new `robin_level_data::stair_navigation_floor` primitive keeps validated
+patch planes and splits route segments at every crossed patch edge. Movement
+distance is measured along each 3D flight; unused step distance continues across
+the seam. It rejects disconnected patches, unequal shared heights, conflicting
+overlaps, unsupported points and concave-floor shortcuts. Five focused tests
+cover both travel directions, crossing within one tick, exact seam landings,
+collinear seam travel, compatible overlap, four rotations, two translated/raised
+copies, zero/invalid budgets and validated JSON round trips. This is height and
+distance infrastructure only: live collision authorization remains separate.
+The descriptor, compiler, door/landing binding and actor movement loop still
+need integration before the north-garden candidate can use it.
+
+Validation: all 91 non-ignored `robin_level_data` library tests pass (eight
+data-dependent checks remain ignored), workspace Rust formatting passes, and
+the game binary builds successfully. No descriptor schema or runtime actor
+behavior changes in this infrastructure step.
