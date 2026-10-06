@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "scope": "Approved trees21/22 and WOOD-only stumps65/66; residual group061 retains native061/077 unchanged",
+  "status": "PASS",
+  "scene": "level-editor/library/scenes/croisement01.rhlos-map.json",
+  "scene_sha256": "358807f655963869cf11311080ae3941e671ab05eb961b6d7aec545e3617f70a",
+  "installed_files": {
+    "3d-assets/croisement01/croisement01-tree-21/model.glb": "b6c2733c2d67913a8b5caf80a65fe4b7568a703f8d8bc6e425352cce6181f3ca",
+    "3d-assets/croisement01/croisement01-tree-21/asset.json": "52c0d0403f72ee25f37f64377b1ca29430df3321feaacf885de600d152c15169",
+    "3d-assets/croisement01/croisement01-tree-22/model.glb": "f9b0dc8e1e773d37a46ad5c7893e312f771432730e2c3b02bfa4415adcd66846",
+    "3d-assets/croisement01/croisement01-tree-22/asset.json": "0ec55ffbc28355dca8b7bed56e7ac1034bf749b696643bb4c9193d6780c0e687",
+    "3d-assets/croisement01/croisement01-southwest-cut-stump/model.glb": "b89508b1ee7993177f6328358758049561ed29a0b107ebcd78af2b9cdc2cf159",
+    "3d-assets/croisement01/croisement01-southwest-cut-stump/asset.json": "c5ff3281e9983f899da40ffb6c9037600ad2c6d669ea3d0711d4e3b015359a80",
+    "3d-assets/croisement01/croisement01-south-cut-stump/model.glb": "6ce5fc545e76ffd6d87de3fd82140287b442812aab955594b2e709cd26ccfe2e",
+    "3d-assets/croisement01/croisement01-south-cut-stump/asset.json": "05c5f3b859e04e20682e6b6f0d3ba0681e3fab7e1c630664cae47bf2536785e4",
+    "3d-assets/croisement01/croisement01-group-061/model.glb": "edf4f6ae60969c0dcf5bf1d4ca453bebb1b13a4ef0d25b89e564ab07a86395de",
+    "3d-assets/croisement01/croisement01-group-061/asset.json": "32cd404d081ab1117b6f63ad85f35167a3fdd3b2b7f74e67814e40e380b42eaf"
+  },
+  "full_editor": {
+    "path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/croisement01-refinement/restart2/combined-integration-batch-v1/full-editor-private-v2/result.json",
+    "sha256": "66f06f806c5a18193c4383cbac29a1f4c87ef679f2608e19a351309120235554",
+    "config_sha256": "ac6484b7fc4e6a7e1e9609456d757af75ea220ddc1879a67d83e6bceab034fa5",
+    "checker_provenance_sha256": "531e18e660c79d4d772b5e87f0a91ec7e0db1ffab2df9ed6ba2ea325ccb05ff7"
+  },
+  "bounded_live": {
+    "path": "level-editor/work/croisement01-refinement/restart2/combined-integration-batch-v1/live-browser-proof.json",
+    "sha256": "7a1c701ffadb2fd475194137d97fc67b702798dce80e55bb01505d53255e5dc0",
+    "normal_http": true,
+    "exact_models_and_descriptors": true,
+    "map_counts": {
+      "originalParts": 92,
+      "stagedParts": 94,
+      "originalGroups": 58,
+      "stagedGroups": 59
+    },
+    "palette_insert_save_reload": true,
+    "screenshots": {
+      "croisement01-tree-21": "f9ad617496a1430ffa3ca1ff1c3971031202a45d4a9fe212dbebc88be7fa985a",
+      "croisement01-tree-22": "b9be808ffcdacf3965f01a505a8dc016214853105f2ad3a7ec5d06ce42e5da10",
+      "croisement01-southwest-cut-stump": "0395f774a845cc4653f005209561376729f12c9fb6ea68ac97b91f5416dde6a6",
+      "croisement01-south-cut-stump": "ddee84f878fc3daae73b4ac939e4f02237bb17c5626ea05562d03aa8d5cbe0b2"
+    },
+    "visual_review": "Four browser screenshots personally viewed; they confirm installed appearance. Existing full saved-model eight-view reviews remain authoritative for complete geometry/contact scope."
+  },
+  "publication_receipt": {
+    "path": "level-editor/work/croisement01-refinement/restart2/combined-integration-batch-v1/publication.json",
+    "sha256": "50747da116c6f820f8506bf80d961d38905b6205d0954d8084c86ffc03c79bf4"
+  },
+  "unchanged_other_placements": 56,
+  "unrelated_palette_entries_preserved": 1295,
+  "protected_existing_asset_files": 344,
+  "limitations": {
+    "stump65": "WOOD ONLY;651 excluded foliage pixels remain separate",
+    "stump66": "WOOD ONLY;871 excluded foliage pixels remain separate; native56/67 both retained",
+    "tree22": "2341 foreground foliage pixels remain separate",
+    "tree21": "Approved tree geometry and texture; final scene joints and mission-state checks remain separate"
+  },
+  "whole_map_complete": false
+}
