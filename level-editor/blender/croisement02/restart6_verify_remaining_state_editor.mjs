@@ -6,10 +6,21 @@ const base=resolve('level-editor/work/croisement02-refinement/restart2-state');
 const stage=join(base,'remaining-seven-package-v2');
 const json=async p=>JSON.parse(await readFile(p,'utf8'));
 const sha=b=>createHash('sha256').update(b).digest('hex');
+export function stateProofCommand(ws,nextId,method,params,timeoutMs=60000){return new Promise((resolve,reject)=>{
+  const id=nextId();let timer;
+  const cleanup=()=>{clearTimeout(timer);ws.removeEventListener('message',listener);ws.removeEventListener('close',closed);ws.removeEventListener('error',closed)};
+  const fail=message=>{cleanup();reject(Error(message))};
+  const closed=()=>fail('CDP connection closed during '+method);
+  const listener=e=>{const d=JSON.parse(e.data);if(d.method==='Runtime.executionContextsCleared'||d.method==='Inspector.detached')return fail('Page context replaced during '+method);if(d.id===id){cleanup();d.error?reject(Error(JSON.stringify(d.error))):resolve(d.result)}};
+  timer=setTimeout(()=>fail('CDP command timed out after '+timeoutMs+'ms: '+method),timeoutMs);
+  ws.addEventListener('message',listener);ws.addEventListener('close',closed);ws.addEventListener('error',closed);
+  if(ws.readyState!==1)return closed();ws.send(JSON.stringify({id,method,params}));
+ });
+}
 export async function run({ws,nextId,evaluate,out}){
  await mkdir(out,{recursive:true});
  const manifest=await json(join(stage,'manifest.json')),checks=[],screenshots=[];
- const command=(method,params)=>new Promise((resolve,reject)=>{const id=nextId();const listener=e=>{const d=JSON.parse(e.data);if(d.id===id){ws.removeEventListener('message',listener);d.error?reject(Error(JSON.stringify(d.error))):resolve(d.result)}};ws.addEventListener('message',listener);ws.send(JSON.stringify({id,method,params}));});
+ const command=(method,params)=>stateProofCommand(ws,nextId,method,params);
  // Use this module's CDP evaluator so the callback's return conventions cannot alter assertions.
  const exec=async expression=>{const r=await command('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});if(r.exceptionDetails)throw Error(JSON.stringify(r.exceptionDetails));return r.result?.value};
  const until=async expression=>{for(let i=0;i<600;i++){if(await exec(expression))return;await new Promise(r=>setTimeout(r,200));}throw Error('Timeout '+expression+' '+await exec('document.body.innerText.slice(-1600)'))};
