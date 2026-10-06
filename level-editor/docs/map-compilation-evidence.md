@@ -8387,3 +8387,28 @@ the same 28,749 boundaries with either strategy. Indexed construction takes
 instead of the earlier 176.82 seconds. These are debug diagnostic timings.
 All 61 ordinary native map-compilation tests pass, including rotated walkways,
 terrain ramps, roof jumps, door links and lift registration.
+
+### Nottingham southwest wall stair publication
+
+Candidate `nottingham-southwest-wall-stair-contact-zlABhr` corrects independently
+owned stair, wall and terrain contacts. Receiver-footprint corrections alone
+left twelve full-map routes failing; a clearance owned by the wall and matching
+its corrected walkway restores support. `nottingham-southwest-wall-clearance-F2RhJc`
+passes 92 actor stair routes and ten control apply/reset checks.
+
+`nottingham-southwest-wall-stair-neighbour-placements-E8wjXz` passes 192 routes
+across two copies, four rotations and two elevations; 32 missing/raised wall
+cases reject. Fixtures contain only selected assemblies and authored terrain.
+Publication backup: `nottingham-southwest-wall-publication-20261006`. Fresh
+published exports match the full-map candidate and all eight placement exports;
+all ten scenes reopen. Audit `lift-anchor-support-YdJEnk` finds 18/53 unsupported
+stairs, 1/8 ladders and 9/9 walls.
+
+Flight mesh support is 833/833 samples and terrain contact support is 205/205.
+Upper wall contact support is only 15/205, with discrepancies up to 32.484008
+game units. The draft warning remains; mesh repair and rendered verification
+are still required.
+
+The stricter upper-castle fixture
+`nottingham-castle-upper-stair-neighbour-placements-UBfIdR`, excluding background
+terrain, also passes 352 routes and 96 missing/raised-neighbour cases.

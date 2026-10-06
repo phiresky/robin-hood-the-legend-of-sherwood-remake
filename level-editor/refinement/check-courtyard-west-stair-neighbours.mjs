@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readStoredMap, pinnedDescriptors } from "../pipeline/src/stored-map.ts";
 import { groupCentroid } from "../shared/src/level3d.ts";
 import { compileMap } from "../app/src/map-compile.ts";
+import { createTerrainGrid } from "../shared/src/authored-terrain.ts";
 
 const [stage, mode] = process.argv.slice(2);
 assert.ok(stage && (mode === undefined || mode === "--published"));
@@ -11,6 +12,8 @@ const source = await readStoredMap("library/scenes/nottingham.rhlos-map.json", "
 const assets = await pinnedDescriptors("library", source.assetSources, source.sceneAssets);
 const stair = edits[0].asset;
 const neighbours = {
+  "nottingham-north-wall-stair": ["nottingham-north-curtain-wall"],
+  "nottingham-southwest-wall-stair": ["nottingham-southwest-curtain-wall-north"],
   "nottingham-castle-west-stair": [
     "nottingham-castle-courtyard-ground",
     "nottingham-castle-west-courtyard-wall",
@@ -30,6 +33,17 @@ for (const id of ids) {
   else assets.get(id).gameplay = edit.gameplay;
 }
 const liftCount = assets.get(stair).gameplay.lifts.length;
+const northWall = stair === "nottingham-north-wall-stair";
+const size = northWall ? [7000, 6500] : [5000, 4500];
+const centers = northWall
+  ? [
+      [2200, 2500],
+      [4500, 3500],
+    ]
+  : [
+      [1500, 1700],
+      [3200, 2600],
+    ];
 const output = await fs.mkdtemp(`work/map-compile/${stair}-neighbour-placements-`);
 const results = [],
   rejected = [];
@@ -39,11 +53,14 @@ for (const height of [0, 40])
       version: 1,
       map: "courtyard-west-stair-neighbours",
       camera: source.camera,
-      size: [5000, 4500],
+      size,
       objects: [],
       groups: [],
-      sceneAssets: source.sceneAssets,
-      assetSources: source.assetSources,
+      sceneAssets: source.sceneAssets.filter((asset) => ids.includes(asset.id)),
+      assetSources: source.assetSources.filter((asset) => ids.includes(asset.id)),
+      ...(["nottingham-southwest-wall-stair", "nottingham-north-wall-stair"].includes(stair)
+        ? { terrain: createTerrainGrid([0, 0, ...size], 1000, height) }
+        : {}),
     };
     const radians = (rotation * Math.PI) / 180,
       sinT = Math.sin((source.camera.elevation_deg * Math.PI) / 180);
@@ -51,10 +68,7 @@ for (const height of [0, 40])
       x * Math.cos(radians) - (y * Math.sin(radians)) / sinT,
       x * Math.sin(radians) * sinT + y * Math.cos(radians),
     ];
-    for (const [copy, center] of [
-      [0, [1500, 1700]],
-      [1, [3200, 2600]],
-    ])
+    for (const [copy, center] of centers.entries())
       for (const id of ids) {
         const group = structuredClone(source.groups.find((g) => g.id === id));
         assert.ok(group && group.transform.rot_deg === 0);

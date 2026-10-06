@@ -19,7 +19,7 @@
       "model": "3d-assets/nottingham/nottingham-terrain/model.glb",
       "model_sha256": "807037fefeee1e9cc3b22defab6215efba1c4d410a695cbe2c75cad3d4215c41",
       "descriptor": "3d-assets/nottingham/nottingham-terrain/asset.json",
-      "descriptor_sha256": "cadcc251d71699d3e1f71af6e168a722753a8028d7dbd33673f9c4f61168f68e"
+      "descriptor_sha256": "3a7a47bceb14eb992dc2c3cba9dde6f9f6a6f542e1c766f04adecf69bdb8ba0c"
     }
   ],
   "assetSources": [
@@ -552,7 +552,7 @@
       "model": "3d-assets/nottingham/nottingham-southwest-curtain-wall-north/model.glb",
       "model_sha256": "f4d10e9823592a104f46794762c8fb9e18aaa032ad3cf318a57d28c0e42742be",
       "descriptor": "3d-assets/nottingham/nottingham-southwest-curtain-wall-north/asset.json",
-      "descriptor_sha256": "4010fb53322e2d9e080113527edd0ae9c22a95db370642aba77335135f0dfa48",
+      "descriptor_sha256": "a0263d3ed597b3b4f6377b599299cfd2c7eeef3952ce7ce78507d19029124131",
       "id": "nottingham-southwest-curtain-wall-north"
     },
     {
@@ -566,7 +566,7 @@
       "model": "3d-assets/nottingham/nottingham-southwest-wall-stair/model.glb",
       "model_sha256": "22168d9212165dee3d70f18588c447ede2a95c739927f07ddd8648ad197dea69",
       "descriptor": "3d-assets/nottingham/nottingham-southwest-wall-stair/asset.json",
-      "descriptor_sha256": "bb3430609affd1b65f30909bfeb6343600da206e1c12f1a256a882b34bc581f2",
+      "descriptor_sha256": "5bdaab7f517f951c403511b42de8cbb6a53f062eca30ea0e75c4c1d08f48f5fc",
       "id": "nottingham-southwest-wall-stair"
     },
     {

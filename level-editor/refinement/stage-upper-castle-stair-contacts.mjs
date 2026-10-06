@@ -17,7 +17,9 @@ const margin = Number(marginArgument ?? 0);
 assert.ok(Number.isFinite(margin) && margin >= 0);
 const edits = JSON.parse(await fs.readFile(`${stage}/edits.json`, "utf8"));
 assert.equal(edits.length, 1);
-assert.equal(edits[0].asset, "nottingham-castle-upper-stair");
+const upperCastle = edits[0].asset === "nottingham-castle-upper-stair";
+const northWall = edits[0].asset === "nottingham-north-wall-stair";
+assert.ok(upperCastle || northWall || edits[0].asset === "nottingham-southwest-wall-stair");
 const document = await readStoredMap("library/scenes/nottingham.rhlos-map.json", "library");
 const assets = await pinnedDescriptors("library", document.assetSources, document.sceneAssets);
 const index = JSON.parse(await fs.readFile("library/3d-assets/index.json", "utf8")).assets;
@@ -27,7 +29,7 @@ assert.equal(
 );
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const flightReviews = JSON.parse(await fs.readFile(`${stage}/mesh-review.json`, "utf8"));
-assert.equal(flightReviews.length, 2);
+assert.equal(flightReviews.length, upperCastle ? 2 : 1);
 const stairEntry = index.find((e) => e.id === edits[0].asset);
 const modelHash = hash(await fs.readFile(`library/3d-assets/${stairEntry.model}`));
 for (const review of flightReviews) {
@@ -36,15 +38,20 @@ for (const review of flightReviews) {
   assert.ok(review.maximumUncoveredMeshEdgeDistance < 0.034);
   edits[0].gameplay.draft ??= { issues: [] };
   edits[0].gameplay.draft.issues.push(
-    `Upper castle stair ${review.node} has ${review.sampledMeshHits}/${review.sampledFloorPoints} mesh sample hits, with gaps up to ${review.maximumUncoveredMeshEdgeDistance.toFixed(3)} game units; rendered actor integration remains unverified.`,
+    `Stair ${review.node} has ${review.sampledMeshHits}/${review.sampledFloorPoints} mesh sample hits, with gaps up to ${review.maximumUncoveredMeshEdgeDistance.toFixed(3)} game units; rendered actor integration remains unverified.`,
   );
 }
 const compiledBytes = await fs.readFile(compiledFile);
 const compiled = JSON.parse(compiledBytes).asset_geometry;
-const floors = [
-  [787, 1165.001, 175.001],
-  [812, 1230.00101, 100.00101],
-].map((point) => {
+const approaches = upperCastle
+  ? [
+      [787, 1165.001, 175.001],
+      [812, 1230.00101, 100.00101],
+    ]
+  : northWall
+    ? [[1822, 439.00101, 120.00101]]
+    : [[768, 1796, 0]];
+const floors = approaches.map((point) => {
   const matches = compiled.lifts.filter((l) =>
     l.physical_navigation?.doors.some(
       (d) => Math.hypot(...d.outside.map((v, i) => v - point[i])) < 1e-5,
@@ -53,22 +60,36 @@ const floors = [
   assert.equal(matches.length, 1);
   return matches[0].physical_navigation;
 });
-const contacts = [
-  {
-    asset: "nottingham-castle-upper-wall",
-    surface: "building-362-walk-0",
-    edges: [
-      [7, 0],
-      [8, 1],
-    ],
-  },
-  {
-    asset: "nottingham-castle-east-courtyard-wall",
-    surface: "building-325-walk-0",
-    edges: [[39, 0]],
-  },
-  { asset: "nottingham-castle-courtyard-ground", surface: "building-366-walk-0", edges: [[18, 1]] },
-];
+const contacts = upperCastle
+  ? [
+      {
+        asset: "nottingham-castle-upper-wall",
+        surface: "building-362-walk-0",
+        edges: [
+          [7, 0],
+          [8, 1],
+        ],
+      },
+      {
+        asset: "nottingham-castle-east-courtyard-wall",
+        surface: "building-325-walk-0",
+        edges: [[39, 0]],
+      },
+      {
+        asset: "nottingham-castle-courtyard-ground",
+        surface: "building-366-walk-0",
+        edges: [[18, 1]],
+      },
+    ]
+  : northWall
+    ? [{ asset: "nottingham-north-curtain-wall", surface: "building-169-walk-0", edges: [[11, 0]] }]
+    : [
+        {
+          asset: "nottingham-southwest-curtain-wall-north",
+          surface: "building-220--component-wall-220-north-walk-0",
+          edges: [[3, 0]],
+        },
+      ];
 const output = await fs.mkdtemp("work/map-compile/upper-castle-stair-contacts-");
 const changes = [];
 function meshHeight(p, [a, b, c]) {
@@ -223,7 +244,7 @@ for (const contact of contacts) {
     if (gap > 0) {
       gameplay.draft ??= { issues: [] };
       gameplay.draft.issues.push(
-        `Upper castle stair contact edge ${edge} has ${supported}/205 mesh sample hits, with gaps up to ${gap.toFixed(3)} game units; rendered actor integration remains unverified.`,
+        `${edits[0].asset} contact edge ${edge} has ${supported}/205 mesh sample hits, with gaps up to ${gap.toFixed(3)} game units; rendered actor integration remains unverified.`,
       );
     }
   }
@@ -232,6 +253,33 @@ for (const contact of contacts) {
     surface.height[vertex] = corrected[vertex][2] - origin[2];
   }
   surface.preserveMovementPrecision = true;
+  if (!upperCastle) {
+    // The walkway footprint includes the landing beyond the narrow wall body.
+    // Its height receiver must describe that authored floor independently.
+    assert.equal(surface.holes?.length ?? 0, 0);
+    const projection = surface.projectionMaterials;
+    assert.ok(projection && surface.projectionVolume === undefined);
+    const before = structuredClone(projection);
+    projection.footprint = surface.polygon.map((p, i) => [...p, surface.height[i]]);
+    projection.planePoints = projection.footprint.slice(0, 3);
+    heightPlane(projection.planePoints);
+    projection.priorityHeight = Math.max(...surface.height);
+    changes.push({
+      asset: contact.asset,
+      receiverMaterials: { before, after: structuredClone(projection) },
+    });
+    const clearance = {
+      id: `${surface.id}-reviewed-landing-clearance`,
+      node: surface.node,
+      polygon: structuredClone(surface.polygon),
+      height: [...surface.height],
+      holes: [],
+      preserveMovementPrecision: true,
+    };
+    assert.ok(!gameplay.movementClearances.some((c) => c.id === clearance.id));
+    gameplay.movementClearances.push(clearance);
+    changes.push({ asset: contact.asset, clearance });
+  }
   if (contact.asset === "nottingham-castle-courtyard-ground") {
     const volume = gameplay.volumes.find((v) => v.id === surface.projectionVolume);
     assert.ok(volume && volume.node === surface.node);
@@ -293,4 +341,5 @@ for (const contact of contacts) {
   edits.push({ asset: entry.id, descriptorSha256: entry.descriptor_sha256, gameplay });
 }
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));
+await fs.writeFile(`${output}/mesh-review.json`, JSON.stringify(flightReviews));
 console.log(JSON.stringify({ output, changes: changes.map(({ samples, ...c }) => c) }));

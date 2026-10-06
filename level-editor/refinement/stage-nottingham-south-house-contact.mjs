@@ -11,8 +11,20 @@ import { validateAssetGameplay } from "../shared/src/asset-gameplay.ts";
 const [stage, compiledFile] = process.argv.slice(2);
 assert.ok(stage && compiledFile, "Provide stair edits and their Nottingham export");
 const edits = JSON.parse(await fs.readFile(`${stage}/edits.json`, "utf8"));
-assert.equal(edits.length, 1);
+assert.ok(edits.length >= 1 && !edits.some((edit) => edit.asset === "nottingham-terrain"));
 const contacts = {
+  "nottingham-southwest-wall-stair": {
+    outside: [768, 1796, 0],
+    surface: "ground-section-0-0",
+    edge: [
+      [732, 1789],
+      [775, 1783],
+    ],
+    partial: false,
+    landingMargin: 0.000001,
+    issue:
+      "Southwest wall stair has complete sampled flight mesh support. Complete rendered actor integration remains unverified.",
+  },
   "nottingham-south-curtain-wall-2": {
     outside: [1721, 2227, 0],
     surface: "ground-section-0-0",
