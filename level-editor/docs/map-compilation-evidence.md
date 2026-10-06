@@ -9181,10 +9181,43 @@ upper terrace retains a maximum gap of 0.539013 units.
 Actual-neighbour fixture
 `york-stone-river-bridge-and-approach-stairs-neighbour-placements-uUptc0` compiles
 sixteen copies without underlying terrain and rejects 64 missing/raised
-terraces. All copies retain both flights and all eleven entrances. Its first
-200 complete-character-profile routes pass. Full-York compilation and all six
-control checks pass; full-York complete-profile traversal remains pending.
+terraces. All copies retain both flights and all eleven entrances. All 800
+complete-character-profile routes pass. Full York passes all 130 complete-profile
+stair routes, 40 climbing routes and six control checks.
 Other bridge obstacle shapes/flags and existing movement contours, clearances,
 doors, lifts, jumps and interiors are verified unchanged by the deck migration.
+Combined moved fixture
+`york-stone-river-bridge-and-approach-stairs-neighbour-placements-lND6cV` includes
+the west-lane asset alongside both bridge flights and their shared terraces.
+Eight exports retain all entrances (1,696 directed routes expected), reject
+64 missing/raised terrace cases, and pass the first 212 complete-profile routes.
+The remaining combined routes are pending.
 Nothing in this
 section is published or claimed as full-scene parity.
+
+### Sherwood shared-node flight review and draft publication (2026-10-06)
+
+The mesh reviewer now gives flights sharing a node separate sample/image names,
+so one flight cannot overwrite another's evidence. It additionally records the
+nearest initially visible mesh in the assembled asset, without treating an
+overhead surface as proof of walking support. On `local-stair-seams-b0YsHF`, only
+194/802 stair samples and 154/839 ladder samples have assembled mesh within two
+height units; some residuals exceed 45 and 35 units respectively. The stair is
+therefore not visually verified simply by including neighbouring component meshes.
+The staged stair does pass all sixteen complete-profile actor routes in
+`local-stair-placements-zCmumg`, covering four rotations and two elevations.
+The neighbouring ladder also passes all sixteen complete-profile routes.
+Full Sherwood in `sherwood-oak-stair-full-9faYPC` passes two stair routes and ten
+climbing routes. Its control audit reports zero transitions and fails its
+nonempty-coverage assertion; Sherwood has no controls, so this is not recorded
+as a passing control check.
+
+`local-stair-seams-ErXHU8` reproduces the tested geometry exactly and adds an
+explicit draft warning about the substantial visual gaps. Published this stair
+correction with backup `sherwood-oak-stair-publication-20261006`; the existing
+ladder definitions remain unchanged. All ten scenes reopen. Eight fresh
+published placements in `local-stair-placements-sZTxB8` and full Sherwood in
+`sherwood-oak-published-WphOAd` exactly match the native-tested geometry.
+Anchor audit `lift-anchor-support-hSBiol` now finds 3/53 unsupported stair
+definitions, all in York; ladder/wall counts remain 1/8 and 9/9. None of these
+navigation results certifies the central oak's visible geometry.

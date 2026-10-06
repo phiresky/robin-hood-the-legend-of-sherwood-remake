@@ -134,12 +134,24 @@ that receiving asset's floor and volume together, restoring all 130 full-York
 routes and six controls. The combined bridge candidate fails 42 full-York routes;
 its first moved actual-neighbour placement fails 84/100 routes. Further staged
 corrections align its upper terrace contact and give the lower deck its own
-physical floor. These corrections and the remaining moved west-lane routes
-still need verification before publication. These candidates do not
+physical floor. The revised bridge passes all 800 moved complete-profile routes;
+full York passes 130 stairs, 40 climbs and six controls. The combined moved
+bridge/west-lane assembly and remaining separate west-lane routes still need
+verification before publication. These candidates do not
 reduce the published unsupported-anchor counts below.
 The corrected west-lane full-York export also passes all 130 stair routes with
 a complete Robin animation profile. This verifies animation-driven movement,
 sector/layer arrival and receiving support, but does not render the character.
+
+Sherwood's central-oak stair contact correction is published as a draft. The
+stair and its neighbouring ladder each pass sixteen complete-profile routes
+across four rotations and two elevations. Full Sherwood passes two stairs and
+ten climbs; it has no controls to test. Fresh published geometry matches all
+eight tested placements and full Sherwood, and all ten saved scenes reopen.
+The asset explicitly warns that its visible stair is incomplete: only 194/802
+sampled points have assembled mesh within two height units, and nearest visible
+height discrepancies reach 45.807 units. This is verified navigation with a
+substantial unresolved visual limitation, not full asset parity.
 
 Latest runtime checks retain exact landing contours through binding and foot
 support instead of reducing them to single precision. The southwest turret is
@@ -299,9 +311,9 @@ complete-sprite and rendered verification remain open.
 All ten scenes reopen after publication, and full Derby passes all five control
 apply/reset checks. All ten Derby stair definitions now pass local floor-anchor
 support checks after the upper-west publication below.
-A library-wide local-anchor audit finds unsupported anchors in 4 of 53 authored stair
+A library-wide local-anchor audit finds unsupported anchors in 3 of 53 authored stair
 definitions: Derby 0/10, Leicester 0/8, Lincoln 0/6, Nottingham 0/12,
-Sherwood 1/1 and York 3/16. Individual audited flight floors are planar; joined
+Sherwood 0/1 and York 3/16. Individual audited flight floors are planar; joined
 stairs may contain several planes. This checks local
 definitions, not placed connectivity or actual route failures; corrections and
 moved/rotated native traversal checks remain necessary across these assets.

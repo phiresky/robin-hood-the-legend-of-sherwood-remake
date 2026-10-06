@@ -6,7 +6,7 @@ import { compileMap } from "../app/src/map-compile.ts";
 import { createTerrainGrid } from "../shared/src/authored-terrain.ts";
 import { assembleLiftSegments } from "../shared/src/assemble-lift-segments.ts";
 
-const [stage, mode, selectedStair] = process.argv.slice(2);
+const [stage, mode, selectedStair, companionStair] = process.argv.slice(2);
 assert.ok(
   stage &&
     (mode === undefined ||
@@ -60,7 +60,10 @@ const neighbours = {
   ],
 };
 assert.ok(neighbours[stair], "Unknown reviewed stair assembly");
-const ids = [stair, ...neighbours[stair]];
+const stairs = companionStair ? [stair, companionStair] : [stair];
+assert.equal(new Set(stairs).size, stairs.length);
+for (const id of stairs) assert.ok(neighbours[id], "Unknown companion stair assembly");
+const ids = [...new Set(stairs.flatMap((id) => [id, ...neighbours[id]]))];
 const originGroup = source.groups.find((group) => group.id === stair);
 const westLane = stair === "york-west-lane-access-steps";
 const riverBridge = stair === "york-stone-river-bridge-and-approach-stairs";
@@ -77,28 +80,33 @@ for (const id of ids) {
   if (mode === "--published") assert.deepEqual(assets.get(id).gameplay, edit.gameplay);
   else assets.get(id).gameplay = edit.gameplay;
 }
-const assembled = assembleLiftSegments(
-  assets.get(stair).gameplay.lifts.map((lift) => ({
-    id: lift.id,
-    type: lift.type,
-    direction: Math.atan2(lift.direction[1], lift.direction[0]),
-    joins: lift.joins ?? [],
-  })),
-);
-const liftCount = assembled.lifts.length;
+const assemblies = stairs.map((id) => ({
+  id,
+  ...assembleLiftSegments(
+    assets.get(id).gameplay.lifts.map((lift) => ({
+      id: lift.id,
+      type: lift.type,
+      direction: Math.atan2(lift.direction[1], lift.direction[0]),
+      joins: lift.joins ?? [],
+    })),
+  ),
+}));
+const liftCount = assemblies.reduce((count, assembly) => count + assembly.lifts.length, 0);
 const bridgeNeedsTerrain =
   riverBridge &&
   assets
     .get(stair)
     .gameplay.projectionReceivers?.some((receiver) => receiver.node === "building-095");
-const entranceCounts = assembled.lifts.map((assembledLift) =>
-  assets
-    .get(stair)
-    .gameplay.lifts.reduce(
-      (count, lift) =>
-        count + (assembled.identities.get(lift.id) === assembledLift.id ? lift.doors.length : 0),
-      0,
-    ),
+const entranceCounts = assemblies.flatMap(({ id, identities, lifts }) =>
+  lifts.map((assembledLift) =>
+    assets
+      .get(id)
+      .gameplay.lifts.reduce(
+        (count, lift) =>
+          count + (identities.get(lift.id) === assembledLift.id ? lift.doors.length : 0),
+        0,
+      ),
+  ),
 );
 const northWall = stair === "nottingham-north-wall-stair";
 const market = stair === "york-market-southwest-connecting-stairs";
@@ -220,12 +228,14 @@ for (const height of [0, 40])
         assert.equal(
           invalid.descriptor.asset_geometry.lifts?.length ?? 0,
           // Each bridge copy retains its other flight between physical terraces.
-          riverBridge ? 2 : 0,
+          riverBridge ? centers.length * (liftCount - 1) : 0,
           `${file}: ${kind} terrain retained an unsupported stair`,
         );
         rejected.push({ file, group: "$terrain", kind, warnings: invalid.warnings });
       }
-    for (const group of document.groups.filter((g) => !g.id.endsWith(`/${stair}`)))
+    for (const group of document.groups.filter(
+      (g) => !stairs.some((id) => g.id.endsWith(`/${id}`)),
+    ))
       for (const kind of ["missing", "raised"]) {
         const changed = structuredClone(document);
         if (kind === "missing") {

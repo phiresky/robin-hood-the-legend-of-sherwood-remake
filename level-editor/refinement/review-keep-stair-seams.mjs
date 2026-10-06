@@ -268,9 +268,23 @@ for (const edit of edits) {
           .map((triangle) => meshHeight(point, triangle))
           .filter((z) => z !== undefined);
         const floor = planeHeight(plane, point);
+        const assemblyHits = visibleAssembly.flatMap(({ node, triangles }) =>
+          triangles.flatMap((triangle) => {
+            const height = meshHeight(point, triangle);
+            return height === undefined ? [] : [{ node, height }];
+          }),
+        );
+        const nearestAssembly = assemblyHits.reduce(
+          (nearest, hit) =>
+            !nearest || Math.abs(hit.height - floor) < Math.abs(nearest.height - floor)
+              ? hit
+              : nearest,
+          null,
+        );
         samples.push({
           point,
           floor,
+          nearestAssembly,
           mesh: hits.length ? Math.max(...hits) : null,
           ...(hits.length
             ? {}
@@ -363,16 +377,36 @@ for (const edit of edits) {
       ${lift.doors.map((door) => `<circle cx="${40 + (door.middle[0] - x0) * scale}" cy="${65 + (door.middle[1] - y0) * scale}" r="4" fill="#f36a94"/>`).join("")}
       <text x="25" y="535" fill="white" font-family="sans-serif" font-size="15">Gray: full mesh (bright: near floor). Orange: published floor. Cyan: candidate.</text>
       <text x="25" y="557" fill="white" font-family="sans-serif" font-size="15">Pink: corrected door midpoints. Top view in asset-local game coordinates.</text></svg>`;
-    const file = `${directory}/${lift.node}-seam-review`;
+    const sharedNode = edit.gameplay.lifts.filter((other) => other.node === lift.node).length > 1;
+    const file = `${directory}/${lift.node}${sharedNode ? `-${lift.id}` : ""}-seam-review`;
     await fs.writeFile(`${file}.svg`, svg);
     await sharp(Buffer.from(svg)).png().toFile(`${file}.png`);
     report.push({
       asset: edit.asset,
+      lift: lift.id,
       node: lift.node,
       modelSha256,
       meshTriangles: triangles.length,
       sampledFloorPoints: samples.length,
       sampledMeshHits: residuals.length,
+      assembledMesh: {
+        scope:
+          "Nearest visible asset mesh height at sampled floor points; not proof of walkable support",
+        hits: samples.filter((sample) => sample.nearestAssembly).length,
+        nearestParts: [
+          ...new Set(
+            samples.flatMap((sample) =>
+              sample.nearestAssembly ? [sample.nearestAssembly.node] : [],
+            ),
+          ),
+        ],
+        maximumHeightResidual: Math.max(
+          0,
+          ...samples.flatMap((sample) =>
+            sample.nearestAssembly ? [Math.abs(sample.nearestAssembly.height - sample.floor)] : [],
+          ),
+        ),
+      },
       maximumUncoveredMeshEdgeDistance: Math.max(0, ...uncoveredDistances),
       initialUncoveredFloorVisibility: {
         scope:
