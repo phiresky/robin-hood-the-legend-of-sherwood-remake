@@ -92,6 +92,36 @@ test("standalone insertion creates a complete independent group and preserves de
   assert.equal(deleteSelection(duplicate.document, duplicate.selection).objects.length, 2);
 });
 
+test("inserted appearance controls are independent and survive stored-map round trips", () => {
+  const { descriptor, reference, document } = assetFixture();
+  const ids = { house: ["appearance-1", "appearance-2"] };
+  const first = insertProjectionAsset(document, descriptor, reference, [0, 0, 0], [], ids);
+  const second = insertProjectionAsset(first.document, descriptor, reference, [50, 0, 0], [], ids);
+  const [a, b] = second.document.groups;
+  assert.equal(a!.patches!.house!["appearance-1"], `${a!.id}/appearance/house/appearance-1`);
+  assert.notEqual(a!.patches!.house!["appearance-1"], b!.patches!.house!["appearance-1"]);
+  assert.notEqual(a!.patches!.house!["appearance-1"], a!.patches!.house!["appearance-2"]);
+  const descriptors = new Map([[descriptor.id, descriptor]]);
+  const saved = serializeStoredMap(second.document, descriptors);
+  const reopened = parseStoredMap(saved, descriptors);
+  assert.deepEqual(
+    reopened.groups.map((g) => g.patches),
+    second.document.groups.map((g) => g.patches),
+  );
+  assert.deepEqual(ids, { house: ["appearance-1", "appearance-2"] });
+  assert.throws(
+    () =>
+      insertProjectionAsset(document, descriptor, reference, [0, 0, 0], [], {
+        unknown: ["appearance-1"],
+      }),
+    /unplaced asset/,
+  );
+  assert.throws(
+    () => insertProjectionAsset(document, descriptor, reference, [0, 0, 0], [], { house: [""] }),
+    /Invalid placement appearance/,
+  );
+});
+
 test("saved asset instances inherit unchanged subparts and retain edited overrides", () => {
   const { descriptor, reference, document } = assetFixture();
   const inserted = insertProjectionAsset(document, descriptor, reference, [50, 40, 0]).document;

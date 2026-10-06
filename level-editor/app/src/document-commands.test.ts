@@ -4,6 +4,37 @@ import { parseLevel3D } from "@rle/shared";
 import { deleteSelection, duplicateSelection, patchGroup, patchPart } from "./document-commands.ts";
 import { connectedInteriorCompilerFixture } from "../../shared/test-fixtures/asset-gameplay.ts";
 
+test("duplicate remaps generated appearance controls and preserves shared mission bindings", () => {
+  const document = fixture();
+  document.assetSources = [
+    {
+      id: "house",
+      descriptor: "3d-assets/house/asset.json",
+      model: "3d-assets/house/model.glb",
+      descriptor_sha256: "a".repeat(64),
+      model_sha256: "b".repeat(64),
+    },
+  ];
+  document.groups[0]!.patches = {
+    house: {
+      one: "house/appearance/house/appearance-1",
+      two: "house/appearance/house/appearance-2",
+      state: "house/state",
+      shared: "patch-001",
+      unrelated: "house/other",
+    },
+  };
+  const copied = duplicateSelection(document, { kind: "group", id: "house" });
+  const mapping = copied.document.groups.at(-1)!.patches!.house!;
+  assert.equal(mapping.one, "house-copy1/appearance/house/appearance-1");
+  assert.equal(mapping.two, "house-copy1/appearance/house/appearance-2");
+  assert.equal(mapping.state, "house-copy1/state");
+  assert.equal(mapping.shared, "patch-001");
+  assert.equal(mapping.unrelated, "house/other");
+  assert.equal(document.groups[0]!.patches!.house!.one, "house/appearance/house/appearance-1");
+  parseLevel3D(copied.document);
+});
+
 test("copying an asset leaves its cross-asset links behind; deleting removes only orphaned links", () => {
   const { document } = connectedInteriorCompilerFixture();
   const copied = duplicateSelection(document, { kind: "group", id: "hut-a" }).document;

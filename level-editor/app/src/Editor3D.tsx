@@ -405,6 +405,7 @@ export default function Editor3D(props: EditorProps) {
         prepared.reference,
         [0, 0, 0],
         prepared.additionalAssets,
+        prepared.appearanceIds,
       );
       drag.elevationOffset = drag.result.document.groups.find(
         (group) => group.id === drag.result!.selection.id,
@@ -451,6 +452,7 @@ export default function Editor3D(props: EditorProps) {
         prepared.reference,
         position,
         prepared.additionalAssets,
+        prepared.appearanceIds,
       );
       parseLevel3D(result.document, { level: level() ?? undefined });
       const adopted = viewport.adoptAsset(

@@ -27,6 +27,9 @@ export interface PlacementAsset {
   reference: ExternalAssetSource;
 }
 
+/** IDs read from the verified model hierarchy, never inferred from asset names. */
+export type PlacementAppearanceIds = Readonly<Record<string, readonly string[]>>;
+
 /** A new instance shares immutable model resources but owns its document parts. */
 export function insertProjectionAsset(
   document: Level3D,
@@ -34,6 +37,7 @@ export function insertProjectionAsset(
   reference: ExternalAssetSource,
   placement: [number, number, number],
   additionalAssets: readonly PlacementAsset[] = [],
+  appearanceIds: PlacementAppearanceIds = {},
 ) {
   parseProjectionAssetDescriptor(descriptor);
   if (descriptor.editor_usage === "map-background")
@@ -92,6 +96,21 @@ export function insertProjectionAsset(
   do {
     id = `${descriptor.id}-instance${number++}`;
   } while (occupied.has(id) || members.some(({ part }) => occupied.has(`${id}:${part.node}`)));
+  const patches: Record<string, Record<string, string>> = {};
+  for (const [asset, localIds] of Object.entries(appearanceIds)) {
+    if (!family.some((member) => member.reference.id === asset))
+      throw new Error(`Appearance IDs belong to an unplaced asset: ${asset}`);
+    if (!Array.isArray(localIds) || localIds.some((local) => typeof local !== "string" || !local))
+      throw new Error(`Invalid placement appearance IDs: ${asset}`);
+    if (localIds.length)
+      patches[asset] = Object.fromEntries(
+        localIds.map((local) => [
+          local,
+          `${id}/appearance/${encodeURIComponent(asset)}/${encodeURIComponent(local)}`,
+        ]),
+      );
+  }
+  if (endpoints) patches[descriptor.id] = { ...patches[descriptor.id], state: `${id}/state` };
   const parts: Level3DObject[] = members.map(({ descriptor: owner, part }) => ({
     id: `${id}:${part.node}`,
     node: assetNodeKey(owner.id, part.node),
@@ -131,7 +150,7 @@ export function insertProjectionAsset(
       {
         id,
         name: descriptor.name,
-        ...(endpoints ? { patches: { [descriptor.id]: { state: `${id}/state` } } } : {}),
+        ...(Object.keys(patches).length ? { patches } : {}),
         ...(descriptor.states && !endpoints
           ? {
               states: {

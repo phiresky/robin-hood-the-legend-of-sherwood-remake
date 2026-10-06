@@ -62,6 +62,24 @@ export function duplicateSelection(
           ...document.groups,
           {
             ...group,
+            ...(group.patches
+              ? {
+                  patches: Object.fromEntries(
+                    Object.entries(group.patches).map(([asset, mapping]) => [
+                      asset,
+                      Object.fromEntries(
+                        Object.entries(mapping).map(([local, patch]) => [
+                          local,
+                          patch === `${group.id}/state` ||
+                          patch.startsWith(`${group.id}/appearance/`)
+                            ? id + patch.slice(group.id.length)
+                            : patch,
+                        ]),
+                      ),
+                    ]),
+                  ),
+                }
+              : {}),
             ...(group.states
               ? {
                   states: {

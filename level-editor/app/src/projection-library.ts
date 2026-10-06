@@ -19,7 +19,11 @@ import { isNotFound, readJson, subdir } from "./fs.ts";
 import { SceneAssetLoader, retainSceneAnimations } from "./scene-assets.ts";
 import { readLossyModel, lossyApplies } from "./lossy-models.ts";
 import { disposeObjectResources } from "./resources.ts";
-import { hasGameplayEndpoints, type PlacementAsset } from "./asset-commands.ts";
+import {
+  hasGameplayEndpoints,
+  type PlacementAsset,
+  type PlacementAppearanceIds,
+} from "./asset-commands.ts";
 
 export async function libraryFile(root: FileSystemDirectoryHandle, path: string): Promise<File> {
   if (!safeLibraryPath(path)) throw new Error(`Unsafe library path: ${path}`);
@@ -159,6 +163,7 @@ export interface PreparedProjectionAsset {
   reference: ExternalAssetSource;
   asset: THREE.Object3D;
   sources: Map<string, THREE.Object3D>;
+  appearanceIds: PlacementAppearanceIds;
 }
 
 /** Owns resources until the caller adopts the result. Failed loads clean up. */
@@ -346,7 +351,36 @@ export async function prepareProjectionAsset(
       sources.set(key, node);
     }
     if (sources.size !== parts.size) throw new Error(`Missing standalone asset parts: ${entry.id}`);
-    return { descriptor, reference, asset, sources };
+    const appearanceIds = new Set<string>();
+    for (const node of sources.values())
+      node.traverse((child) => {
+        const extras = child.userData;
+        for (const field of ["reveal_hide_when_applied", "reveal_show_when_applied"] as const) {
+          const ids = extras[field];
+          if (ids === undefined) continue;
+          if (
+            !Array.isArray(ids) ||
+            ids.some((id) => typeof id !== "string" || !id) ||
+            (field === "reveal_show_when_applied" && !ids.length)
+          )
+            throw new Error(`Invalid appearance IDs on ${child.name}`);
+          for (const id of ids) appearanceIds.add(id);
+        }
+        const patch = extras.reveal_material_patch,
+          state = extras.reveal_material_state;
+        if (patch !== undefined || state !== undefined) {
+          if (typeof patch !== "string" || !patch || (state !== "covered" && state !== "revealed"))
+            throw new Error(`Invalid appearance material on ${child.name}`);
+          appearanceIds.add(patch);
+        }
+      });
+    return {
+      descriptor,
+      reference,
+      asset,
+      sources,
+      appearanceIds: appearanceIds.size ? { [reference.id]: [...appearanceIds].sort() } : {},
+    };
   } catch (error) {
     if (asset) disposeObjectResources([asset]);
     throw error;
@@ -395,6 +429,7 @@ export async function prepareProjectionPlacement(
       map,
     );
     primary.asset.add(applied.asset);
+    primary.appearanceIds = { ...primary.appearanceIds, ...applied.appearanceIds };
     for (const [key, node] of applied.sources) {
       if (primary.sources.has(key)) throw new Error(`Duplicate endpoint model node ${key}`);
       primary.sources.set(key, node);

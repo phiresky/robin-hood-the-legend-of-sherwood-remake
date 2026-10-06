@@ -14,6 +14,7 @@ import { captureLoadedStateAppearance } from "./scene-assets.ts";
 import { StateAppearancePlayer } from "./state-appearance-player.ts";
 import { disposeObjectResources } from "./resources.ts";
 import { insertProjectionAsset } from "./asset-commands.ts";
+import { PatchDisplay, applyPlacementPatches } from "./patch-display.ts";
 import { prepareMapCandidate } from "./map-candidate.ts";
 import { expandStoredMap, parseStoredMap, serializeStoredMap, type Level3D } from "@rle/shared";
 import { authorLightRegionAsset } from "../../pipeline/src/author-light-region-asset.ts";
@@ -158,6 +159,84 @@ test("standalone index filters the current map and actual model parts receive na
   assert.match(prepared.reference.model_sha256, /^[a-f0-9]{64}$/);
   assert.equal(f.disposed(), 0);
   disposeObjectResources([prepared.asset]);
+  assert.equal(f.disposed(), 1);
+});
+
+test("verified nested appearance metadata reaches placement without descriptor mutation", async (t) => {
+  const f = fixture();
+  const nested = new THREE.Group();
+  nested.name = "interior";
+  nested.userData = {
+    reveal_material_patch: "appearance-1",
+    reveal_material_state: "revealed",
+    reveal_hide_when_applied: ["appearance-2"],
+  };
+  f.mesh.add(nested);
+  t.mock.method(GLTFLoader.prototype, "parseAsync", async () => ({ scene: f.asset }));
+  const before = structuredClone(f.descriptor);
+  const prepared = await prepareProjectionPlacement(f.directory, f.entry, "Leicester");
+  assert.deepEqual(prepared.appearanceIds, { house: ["appearance-1", "appearance-2"] });
+  assert.deepEqual(prepared.descriptor, before);
+  const blank: Level3D = {
+    version: 1,
+    map: "Leicester",
+    size: [100, 100],
+    camera: { kind: "oblique-orthographic", elevation_deg: 35 },
+    sceneAssets: [],
+    groups: [],
+    objects: [],
+  };
+  const first = insertProjectionAsset(
+    blank,
+    prepared.descriptor,
+    prepared.reference,
+    [0, 0, 0],
+    prepared.additionalAssets,
+    prepared.appearanceIds,
+  );
+  const second = insertProjectionAsset(
+    first.document,
+    prepared.descriptor,
+    prepared.reference,
+    [50, 0, 0],
+    prepared.additionalAssets,
+    prepared.appearanceIds,
+  );
+  const descriptors = new Map([[prepared.descriptor.id, prepared.descriptor]]);
+  const reopened = parseStoredMap(serializeStoredMap(second.document, descriptors), descriptors);
+  const clones = reopened.objects.map((part) => {
+    const clone = prepared.sources.get(part.node)!.clone(true);
+    applyPlacementPatches(clone, reopened, part, new Set(prepared.sources.keys()));
+    return clone;
+  });
+  const display = new PatchDisplay();
+  const a = reopened.groups[0]!.patches!.house!,
+    b = reopened.groups[1]!.patches!.house!;
+  for (const firstRevealed of [false, true])
+    for (const secondRevealed of [false, true]) {
+      display.set(a["appearance-1"]!, firstRevealed);
+      display.set(b["appearance-1"]!, secondRevealed);
+      clones.forEach((clone) => display.apply(clone));
+      assert.equal(clones[0]!.getObjectByName("interior")!.visible, firstRevealed);
+      assert.equal(clones[1]!.getObjectByName("interior")!.visible, secondRevealed);
+    }
+  display.set(a["appearance-1"]!, true);
+  display.set(b["appearance-1"]!, true);
+  display.set(a["appearance-2"]!, true);
+  clones.forEach((clone) => display.apply(clone));
+  assert.equal(clones[0]!.getObjectByName("interior")!.visible, false);
+  assert.equal(clones[1]!.getObjectByName("interior")!.visible, true);
+  disposeObjectResources([prepared.asset]);
+});
+
+test("invalid nested appearance metadata rejects and disposes the prepared model", async (t) => {
+  const f = fixture();
+  f.mesh.userData.reveal_material_state = "revealed";
+  t.mock.method(GLTFLoader.prototype, "parseAsync", async () => ({ scene: f.asset }));
+  await assert.rejects(
+    prepareProjectionAsset(f.directory, f.entry, "Leicester"),
+    /Invalid appearance material/,
+  );
   assert.equal(f.disposed(), 1);
 });
 
