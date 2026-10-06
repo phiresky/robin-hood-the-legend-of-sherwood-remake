@@ -401,6 +401,7 @@ function compileAssetGameplayAttempt(
     receiverPolyline?: Vec3[];
     receiverPolylines?: Vec3[][];
     triangles: MaskTriangle[];
+    cullBackfaces?: boolean;
     rules: Omit<import("./level.ts").Mask, "layer" | "box_top_left" | "box_size" | "mask_data">;
   }[] = [];
   const jumpZones: { id: string; polygon: Point[]; anchor: Vec3; helper: boolean }[] = [];
@@ -778,6 +779,7 @@ function compileAssetGameplayAttempt(
               ] as [Vec3, Vec3],
             }
           : {}),
+        cullBackfaces: mask.cullBackfaces,
         triangles: mask.triangles.map(([a, b, c]) => [
           transform(mask.node, a),
           transform(mask.node, b),
@@ -2261,7 +2263,11 @@ function compileAssetGameplayAttempt(
       );
     }
     const layer = [...receivingLayers][0]!;
-    const tiles = rasterizeMaskGeometry(mask.triangles, { ...mask.rules, layer });
+    const tiles = rasterizeMaskGeometry(
+      mask.triangles,
+      { ...mask.rules, layer },
+      mask.cullBackfaces,
+    );
     maskIndices.set(
       mask.id,
       tiles.map((_, index) => masks.length + index),

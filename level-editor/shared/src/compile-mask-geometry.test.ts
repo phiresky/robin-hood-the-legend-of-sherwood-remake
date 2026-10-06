@@ -26,6 +26,26 @@ const rectangle = (x: number, y: number, width: number, height: number): MaskTri
     [x, y + height, 0],
   ],
 ];
+test("one-sided masks retain front faces and reject back faces after placement", () => {
+  const back = rectangle(0, 0, 4, 4);
+  const front = back.map(([a, b, c]): MaskTriangle => [c, b, a]);
+  const covered = (triangles: MaskTriangle[], cull = true) =>
+    rasterizeMaskGeometry(triangles, rules, cull)
+      .flatMap(decode)
+      .reduce((sum, n) => sum + n, 0);
+  assert.equal(covered(back), 0);
+  assert.equal(covered(front), 16);
+  assert.equal(covered(back, false), 16);
+  // Rotate a vertical leaf through 180 degrees about its local vertical axis.
+  const leaf: MaskTriangle = [
+    [0, 0, 0],
+    [4, 0, 0],
+    [0, 0, 4],
+  ];
+  assert.equal(covered([leaf]), 10);
+  assert.equal(covered([leaf.map(([x, y, z]) => [-x, -y, z]) as MaskTriangle]), 0);
+});
+
 function decode(mask: Mask): number[] {
   const [width, height] = mask.box_size;
   const pixels = Array<number>(width * height).fill(0);

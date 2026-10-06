@@ -199,6 +199,8 @@ export interface AssetOcclusionMask {
   node: string;
   /** Explicit local 3D coverage, including cutouts between triangles. */
   triangles: import("./compile-mask-geometry.ts").MaskTriangle[];
+  /** Match one-sided mesh faces after placement; omitted masks remain two-sided. */
+  cullBackfaces?: boolean;
   /** Local point on the receiving navigation surface; may lie inside a blocker. */
   anchor: [number, number, number];
   /** Optional finite local segment selecting the receiving layer instead of the exact anchor height. */
@@ -653,6 +655,7 @@ export function validateAssetGameplay(
     if (
       !point(mask.anchor, 3) ||
       typeof mask.view !== "boolean" ||
+      (mask.cullBackfaces !== undefined && typeof mask.cullBackfaces !== "boolean") ||
       !Array.isArray(mask.triangles) ||
       !mask.triangles.length ||
       !mask.triangles.every(

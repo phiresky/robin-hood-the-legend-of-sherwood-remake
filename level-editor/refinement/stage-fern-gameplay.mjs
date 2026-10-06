@@ -54,6 +54,12 @@ for (const id of ["croisement03-fern-35", "croisement03-fern-76"]) {
     resources: descriptor.resources ?? [],
   };
   const model = await loadSceneModel("library", reference);
+  assert.ok(
+    model
+      .getRoot()
+      .listMaterials()
+      .every((material) => !material.getDoubleSided()),
+  );
   const textures = await maskRecoveryTextures(model);
   const triangles = maskRecoveryMesh(
     model,
@@ -81,6 +87,7 @@ for (const id of ["croisement03-fern-35", "croisement03-fern-76"]) {
         id: "fern-cover",
         node,
         triangles,
+        cullBackfaces: true,
         anchor: [0, 0, ground],
         view: true,
         characterBoundary: boundary,
@@ -157,6 +164,7 @@ for (const id of ["croisement03-fern-35", "croisement03-fern-76"]) {
       );
       const file = `${id}-${elevation}-${rotation}.level.json`;
       await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
+      await fs.writeFile(`${output}/${file}.scene.json`, JSON.stringify(document));
       results.push({
         file,
         map: file,

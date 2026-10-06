@@ -9665,3 +9665,26 @@ with characters/projectiles still needs review. The candidates remain
 unpublished and the missing-definition inventory is unchanged. The two staged
 definitions total approximately 6.1 MiB before compression; the coverage is
 derived from the assets, with no level-data dependency in authoring or export.
+
+Browser diagnostic `app/tests/fern-mask-review.html` composites the pinned full
+GLBs with Robin's actual idle sprite and exported point-mask rules. It copies
+the baked background at every applied mask pixel, including transparent leaf
+gaps; this is diagnostic compositing, not the engine's bounding-box mask query
+or complete native renderer. Staging now saves each editable scene alongside
+the descriptor to reproduce the exact placement.
+
+The comparison exposed missing one-sided coverage semantics. With nearest
+sampling, the two-sided candidates masked 331 transparent pixels for fern 35
+and 437 for fern 76 at zero rotation; rotated cases masked 36–146. Explicit
+`cullBackfaces` asset metadata now filters placed triangle winding during mask
+rasterization. Existing definitions remain two-sided unless authored otherwise.
+The fern author checks all materials are one-sided before setting it.
+
+Candidate `fern-gameplay-At1ME3` retains all twenty construction and wrong-height
+checks, and all twenty native descriptor/bitmap/layer checks pass. The 32 browser
+composites show zero transparent-pixel mismatches for either canonical fern;
+quarter-turn views still have 6–17 mismatches, requiring rasterization review.
+The artifact is `fern-gameplay-At1ME3/compositing/after.png`. Both ferns remain
+unpublished. All 144 affected mask/compiler tests, both typechecks, focused lint
+and formatting pass. This does not establish projectile or complete rendered
+in-game parity.

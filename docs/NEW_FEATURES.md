@@ -2652,3 +2652,8 @@ The woodland-bank asset now carries a bounded terrain attachment for its receivi
 volume. Its two Wychford placements bind to their surrounding terrain while the
 existing Leicester compilation remains identical; new rotated placements retain
 the same finite attachment rule.
+
+Asset-local occlusion masks can opt into `cullBackfaces` to match one-sided mesh
+coverage after placement. Existing masks retain two-sided coverage by default.
+This prevents invisible rear faces from masking characters through leaf gaps;
+fern candidates still need rotated rasterization and native renderer review.

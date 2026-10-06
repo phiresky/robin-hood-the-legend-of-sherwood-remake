@@ -246,6 +246,12 @@ wrong-height receiver rejections pass; native loading retains their bitmaps and
 layer registration. Their closed canopy masking boundaries still need rendered
 character/projectile review, so they remain unpublished and are still counted
 as missing definitions.
+Rendered GLB/sprite compositing exposed masks covering invisible backfaces.
+Explicit one-sided mask coverage now removes those faces after placement. Both
+canonical fern views have zero masked transparent pixels in the browser
+diagnostic; quarter-turn views retain 6–17 mismatches. Native construction still
+passes all twenty exports. Remaining rasterization and in-game review keep these
+candidates unpublished.
 An unpublished mesh-derived bridge deck candidate passes ten complete native
 crossings and 754 sampled receiving-seam crossings at five rotations. Adding
 twelve inclined support hulls preserves those ten complete crossings, passes

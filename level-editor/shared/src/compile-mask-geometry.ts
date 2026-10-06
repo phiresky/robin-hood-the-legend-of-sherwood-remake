@@ -60,13 +60,14 @@ export function maskBoundaryPolyline(boundary: Point[], closed = true): Point[] 
 }
 
 /** Rasterize placed 3D coverage in bounded tiles. Bitmap holes remain empty
- * unless covered by another triangle; triangle winding does not affect coverage. */
+ * unless covered by another triangle. Winding matters only for authored one-sided coverage. */
 export function rasterizeMaskGeometry(
   triangles: MaskTriangle[],
   rules: Pick<
     Mask,
     "layer" | "mask_type" | "character_polyline" | "projectile_polyline" | "obstacle_indices"
   >,
+  cullBackfaces = false,
 ): Mask[] {
   if (!triangles.length) throw new Error("Mask coverage requires triangles");
   // Scene/game matrix roundoff must not add a whole empty border row or column.
@@ -106,7 +107,8 @@ export function rasterizeMaskGeometry(
           c = triangle[2]!;
         const area = cross(a, b, c[0], c[1]),
           sign = Math.sign(area);
-        if (Math.abs(area) < 1e-10) continue;
+        // Projected map Y points downward: front-facing mesh winding is negative.
+        if (Math.abs(area) < 1e-10 || (cullBackfaces && area > 0)) continue;
         const x1 = Math.max(left, Math.floor(Math.min(a[0], b[0], c[0]))),
           x2 = Math.min(left + width, Math.ceil(Math.max(a[0], b[0], c[0]))),
           y1 = Math.max(top, Math.floor(Math.min(a[1], b[1], c[1]))),
