@@ -1,0 +1,1002 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-06",
+  "scope": "All 213 diagnostic rows, latest received 2026-10-06 07:31:09 UTC, plus bugs.txt; read-only database audit",
+  "report_count": 213,
+  "decoded_reports": 212,
+  "interpretation": "Fixed means verified in source; deployment and the reporters' installations have not been verified. Content mismatches and incomplete reports are not claimed fixed.",
+  "issues": [
+    {
+      "group_index": 0,
+      "issue": "ResizeObserver reports",
+      "status": "fixed_in_head",
+      "finding": "75 reports. Resize notification filtering, deferred resize layout and duplicate panic/trap suppression are present. Current browser tests pass. Engine commit does not identify the frontend shell build, so continuing uploads do not prove the fix regressed or was deployed. Three reports also contain WebGL creation failures; one contains an old RLE-JXL alpha failure and one an obsolete autosave error. These underlying failures are separate from resize noise.",
+      "relevant_commits": [
+        "0860b8160"
+      ],
+      "report_ids": [
+        "618b7f647a3a",
+        "9839defa8c26",
+        "cb291cf9368a",
+        "52e3c0c1d7a3",
+        "547e0e4d1f78",
+        "86d2c11559ae",
+        "e6735b0d2774",
+        "b7c53ee594e7",
+        "5c6f38749aec",
+        "9486a7540706",
+        "48f927772b46",
+        "2eb8de5ff5eb",
+        "5f023b33f2d1",
+        "dc2b61546282",
+        "ef38dcba6fc2",
+        "2e55e6dfcdce",
+        "07ef6650ccb0",
+        "609fda2b21a6",
+        "21700853a046",
+        "cba653928fc8",
+        "159d8d05eb6f",
+        "178523a76a51",
+        "e931d68c82ed",
+        "9fedf5956f99",
+        "53f5a1b21344",
+        "d8148ad23b3f",
+        "2cbb7908d280",
+        "0d03c2520616",
+        "9a4c0faf0c40",
+        "491c5d4582b2",
+        "933542621723",
+        "34a2b9e4d28d",
+        "0767df56152d",
+        "f6cdcee3883a",
+        "1552ef7dc1ee",
+        "062953426616",
+        "ff946be00731",
+        "f72845f27da2",
+        "6bdfef8c0142",
+        "eece73cbdb0b",
+        "795c0383f4f7",
+        "97f82638a734",
+        "a99f82537b99",
+        "86be7d655e9a",
+        "6ee67d1f0312",
+        "bfa1f3b80a41",
+        "b604c84e7239",
+        "f369c1bf6cf7",
+        "f77121033957",
+        "a1edace823eb",
+        "e20e2074c8e5",
+        "dc8897ba8854",
+        "78f3963fec18",
+        "5bec031f8506",
+        "b1fb20ff56b0",
+        "9e4ed9c71a9a",
+        "df8f78e79b0e",
+        "5bb16c437f60",
+        "8c215eaade39",
+        "6cd261f62e2d",
+        "17e7334ad102",
+        "0a4fd4a02da2",
+        "e12187377c95",
+        "c1c49ec3d380",
+        "ea86529cc422",
+        "3c05bfd57dc4",
+        "35ec7f9f5a3b",
+        "e79c4175baf4",
+        "bf55e1cdecb3",
+        "651ffd92d8c9",
+        "aa1c55cadd92",
+        "85264758a6a4",
+        "ecac8ef5400e",
+        "2a05331796c2",
+        "72b69f7f8850"
+      ]
+    },
+    {
+      "group_index": 1,
+      "issue": "Missing waypoint class prova",
+      "status": "blocked_missing_content",
+      "finding": "Seven older panics and three newer early validation errors refer to path 73 waypoint 84. Validation prevents the late panic but cannot repair mismatched level/script content. Recent hosts mount custom mission overlays; no affected custom archive is attached. The reporter assets are unavailable; the user confirmed that the diagnostic bundle is the only available evidence. Identity and script-validation checks remain enforced. Reports load 70 soldiers/74 paths (prova) or 629 soldiers/64 paths (ShootingArcher1). Local GOG mission construction succeeds; the report cannot identify which physical source supplied incompatible bytes.",
+      "relevant_commits": [
+        "21743e6c4"
+      ],
+      "report_ids": [
+        "10f19ab7aec7",
+        "45f9e9791c09",
+        "c1f31ff1699f"
+      ],
+      "files": [
+        "Data/Levels/H01_Lin_VL.rhm",
+        "Data/Levels/H01_Lin_VL.scb"
+      ]
+    },
+    {
+      "group_index": 2,
+      "issue": "Disconnect clears the pending paused frame",
+      "status": "fixed_in_source",
+      "finding": "Reopen paused-frame capture after a second network drain replaces timeline state on disconnect. Regression and mission-session tests passed.",
+      "relevant_commits": [
+        "1919c94d5"
+      ],
+      "report_ids": [
+        "0c0388c628a7"
+      ]
+    },
+    {
+      "group_index": 3,
+      "issue": "Next mission rejected as reconnect",
+      "status": "fixed_in_source",
+      "finding": "Standalone co-op exits after mission completion; terminal summaries wait for all seats; committed transitions park the old client transport instead of reconnecting to a changed mission.",
+      "relevant_commits": [
+        "1919c94d5"
+      ],
+      "report_ids": [
+        "6f5f5166a3b4"
+      ]
+    },
+    {
+      "group_index": 4,
+      "issue": "Missing actor class ShootingArcher1",
+      "status": "blocked_missing_content",
+      "finding": "Soldier 203 in H01_Lin_VL references a class absent from loaded 47-class SCB. Client lists only bundled overlays. Modified/base-data mismatch or over-strict compatibility validation remains to be established from affected assets; cannot blame a custom mod definitively. The reporter assets are unavailable; the user confirmed that the diagnostic bundle is the only available evidence. Identity and script-validation checks remain enforced. Reports load 70 soldiers/74 paths (prova) or 629 soldiers/64 paths (ShootingArcher1). Local GOG mission construction succeeds; the report cannot identify which physical source supplied incompatible bytes.",
+      "relevant_commits": [
+        "21743e6c4"
+      ],
+      "report_ids": [
+        "e26ddcff0dc1"
+      ],
+      "files": [
+        "Data/Levels/H01_Lin_VL.rhm",
+        "Data/Levels/H01_Lin_VL.scb"
+      ]
+    },
+    {
+      "group_index": 5,
+      "issue": "Core overlay schema coupled to shipping binary schema",
+      "status": "fixed_in_head",
+      "finding": "13 errors across schema 16/18, 18/19 and 21/22. Current JSON overlay validation is decoupled from binary datadir version.",
+      "relevant_commits": [
+        "1d34fa5a6"
+      ],
+      "report_ids": [
+        "532e19442858",
+        "9e376298d81d",
+        "7b918e589adf",
+        "b1a827099f18",
+        "fe5bdb6c3886",
+        "eb55150344e7",
+        "92ae6ae9a070",
+        "735d57292130",
+        "8860a429bdc9"
+      ]
+    },
+    {
+      "group_index": 6,
+      "issue": "Multiplayer startup input before restored timeline admission",
+      "status": "fixed_in_source",
+      "finding": "Three errors cover host rollback horizon and HostWaitingForBegin/HostResynchronizing. Staged fixes restore startup cursor, defer ConnectSeat, and suppress gameplay until host/peer snapshot readiness. Last report predates final gate fix. Current full multiplayer client unit suite passed, including snapshot admission and startup ordering coverage.",
+      "relevant_commits": [
+        "879862bea",
+        "750b3b7f5",
+        "9f7e40657"
+      ],
+      "report_ids": [
+        "046a239e5413"
+      ]
+    },
+    {
+      "group_index": 7,
+      "issue": "Joining seat input index out of bounds",
+      "status": "fixed_in_head",
+      "finding": "Input queries now use safe hero_selection before seat admission; regression covers absent joining seat.",
+      "relevant_commits": [
+        "750b3b7f5"
+      ],
+      "report_ids": [
+        "4ec81d878ec3"
+      ]
+    },
+    {
+      "group_index": 8,
+      "issue": "Multiplayer startup input before restored timeline admission",
+      "status": "fixed_in_source",
+      "finding": "Three errors cover host rollback horizon and HostWaitingForBegin/HostResynchronizing. Staged fixes restore startup cursor, defer ConnectSeat, and suppress gameplay until host/peer snapshot readiness. Last report predates final gate fix. Current full multiplayer client unit suite passed, including snapshot admission and startup ordering coverage.",
+      "relevant_commits": [
+        "879862bea",
+        "750b3b7f5",
+        "9f7e40657"
+      ],
+      "report_ids": [
+        "767391090f56",
+        "cf7532bf8b89"
+      ]
+    },
+    {
+      "group_index": 9,
+      "issue": "Joining seat selection index out of bounds",
+      "status": "fixed_in_head",
+      "finding": "Restored startup admission change also makes hero selection for unadmitted seat empty and tests it.",
+      "relevant_commits": [
+        "879862bea"
+      ],
+      "report_ids": [
+        "0b856bee379b"
+      ]
+    },
+    {
+      "group_index": 10,
+      "issue": "Host snapshot assets differ from client",
+      "status": "blocked_missing_content",
+      "finding": "Guard sprite cache miss and fast-grid 216 versus 189 identify incompatible local construction. Guards remain appropriate. Need exact host/client asset provenance to determine packaging, overlays or edition difference; no fix proven. The reporter assets are unavailable; the user confirmed that the diagnostic bundle is the only available evidence. Identity and script-validation checks remain enforced.",
+      "relevant_commits": [],
+      "report_ids": [
+        "7a08fae7c82a"
+      ]
+    },
+    {
+      "group_index": 11,
+      "issue": "Legendary patch applied to unexpected level",
+      "status": "blocked_missing_content",
+      "finding": "Three H01_Lin_VL errors have 58 authored soldiers versus expected 38. Reviewed patch intentionally rejects unmatched level; exact affected assets are not attached. No matching repair verified. The reporter assets are unavailable; the user confirmed that the diagnostic bundle is the only available evidence. Identity and script-validation checks remain enforced.",
+      "relevant_commits": [],
+      "report_ids": [
+        "933c7f4db90e",
+        "5b711fe39c54",
+        "dc9b5bb09257"
+      ]
+    },
+    {
+      "group_index": 12,
+      "issue": "Version 97 save rejected by version 99 runtime",
+      "status": "fixed_in_head",
+      "finding": "Version 97 compatibility was explicitly restored; later change adds version 96 too.",
+      "relevant_commits": [
+        "32de44af0"
+      ],
+      "report_ids": [
+        "5a34d5abf4f7"
+      ]
+    },
+    {
+      "group_index": 13,
+      "issue": "Selected multiplayer team speech missing",
+      "status": "fixed_in_head",
+      "finding": "Nine reports with several voice identifiers. Audio catalog loading now includes selected team profiles before party replacement in native and verifier paths.",
+      "relevant_commits": [
+        "024581cc4"
+      ],
+      "report_ids": [
+        "609cc9df2b47"
+      ]
+    },
+    {
+      "group_index": 14,
+      "issue": "Selected multiplayer team speech missing",
+      "status": "fixed_in_head",
+      "finding": "Nine reports with several voice identifiers. Audio catalog loading now includes selected team profiles before party replacement in native and verifier paths.",
+      "relevant_commits": [
+        "024581cc4"
+      ],
+      "report_ids": [
+        "e70390c42f29"
+      ]
+    },
+    {
+      "group_index": 15,
+      "issue": "Selected multiplayer team speech missing",
+      "status": "fixed_in_head",
+      "finding": "Nine reports with several voice identifiers. Audio catalog loading now includes selected team profiles before party replacement in native and verifier paths.",
+      "relevant_commits": [
+        "024581cc4"
+      ],
+      "report_ids": [
+        "546f7e4500bf",
+        "b76d67317964"
+      ]
+    },
+    {
+      "group_index": 16,
+      "issue": "Opaque browser WASM traps",
+      "status": "duplicate_or_unknown",
+      "finding": "Ten of eleven opaque traps have paired useful panic evidence: four group-move, three layerless, three speech. One September 19 trap lacks a useful panic and remains unclassified. Duplicate suppression exists; underlying issues classified separately.",
+      "relevant_commits": [
+        "0860b8160"
+      ],
+      "report_ids": [
+        "fea967bd00e6",
+        "97bd535f4817",
+        "238cdeea0181",
+        "153f3e216188",
+        "ec8daf3887d0",
+        "6e061d1a916c",
+        "662ba72e8268",
+        "f1ac2912ffbc"
+      ]
+    },
+    {
+      "group_index": 17,
+      "issue": "Group-move exact sector identity mismatch",
+      "status": "fixed_in_source",
+      "finding": "Reproduced an overlay click publishing sector -1 alongside the authored motion-sector number. Resolve the owning patch destination before publishing cursor identity. Regression fails before the fix and passes afterward.",
+      "relevant_commits": [
+        "82134d211"
+      ],
+      "report_ids": [
+        "4e797e2833de"
+      ]
+    },
+    {
+      "group_index": 18,
+      "issue": "Selected multiplayer team speech missing",
+      "status": "fixed_in_head",
+      "finding": "Nine reports with several voice identifiers. Audio catalog loading now includes selected team profiles before party replacement in native and verifier paths.",
+      "relevant_commits": [
+        "024581cc4"
+      ],
+      "report_ids": [
+        "80d68d8439b4"
+      ]
+    },
+    {
+      "group_index": 19,
+      "issue": "Selected multiplayer team speech missing",
+      "status": "fixed_in_head",
+      "finding": "Nine reports with several voice identifiers. Audio catalog loading now includes selected team profiles before party replacement in native and verifier paths.",
+      "relevant_commits": [
+        "024581cc4"
+      ],
+      "report_ids": [
+        "ef0b521fa88f"
+      ]
+    },
+    {
+      "group_index": 20,
+      "issue": "Selected multiplayer team speech missing",
+      "status": "fixed_in_head",
+      "finding": "Nine reports with several voice identifiers. Audio catalog loading now includes selected team profiles before party replacement in native and verifier paths.",
+      "relevant_commits": [
+        "024581cc4"
+      ],
+      "report_ids": [
+        "9a58fb3de05f"
+      ]
+    },
+    {
+      "group_index": 21,
+      "issue": "Selected multiplayer team speech missing",
+      "status": "fixed_in_head",
+      "finding": "Nine reports with several voice identifiers. Audio catalog loading now includes selected team profiles before party replacement in native and verifier paths.",
+      "relevant_commits": [
+        "024581cc4"
+      ],
+      "report_ids": [
+        "cd4827861a58"
+      ]
+    },
+    {
+      "group_index": 22,
+      "issue": "Impossible_mission placeholder offered for launch",
+      "status": "fixed_in_head",
+      "finding": "16 reports. Multiplayer catalog and launch filtering exclude unavailable campaign placeholders.",
+      "relevant_commits": [
+        "37f2c2f78"
+      ],
+      "report_ids": [
+        "dc87e4ae8499",
+        "0739d9b26ca6",
+        "c7571bdb3fd7",
+        "0d8d3c8048f0",
+        "6ce9f639fbcc",
+        "8d2e4548facc",
+        "f4b66a4aca97",
+        "d8ea2f8ae196",
+        "6e871eb99a72",
+        "1f99fb8a24e2",
+        "5f1ceb2b6442",
+        "637d8cff97cd",
+        "debae89e7427",
+        "968db8ccaf08",
+        "4bf962cf69b3",
+        "f77d5de2b454"
+      ]
+    },
+    {
+      "group_index": 23,
+      "issue": "Selected multiplayer team speech missing",
+      "status": "fixed_in_head",
+      "finding": "Nine reports with several voice identifiers. Audio catalog loading now includes selected team profiles before party replacement in native and verifier paths.",
+      "relevant_commits": [
+        "024581cc4"
+      ],
+      "report_ids": [
+        "9f6d844bb7ab"
+      ]
+    },
+    {
+      "group_index": 24,
+      "issue": "Game thread ended without exit code",
+      "status": "secondary_reports",
+      "finding": "14 wrapper reports, not 14 independently identified bugs. Several correlate with waypoint, sound FIFO, production and AI panics. Newer native diagnostics improve reporting and upload lifetime; classify by underlying panic where available.",
+      "relevant_commits": [
+        "21743e6c4"
+      ],
+      "report_ids": [
+        "9be360d33324",
+        "2eef1d43d01d",
+        "903e29e9aea2",
+        "aae2cd8d6094",
+        "555e4c8a399c",
+        "cf250eff827b",
+        "1ec1807e7b5c",
+        "0e3774cec64b",
+        "fb7de2d5be48",
+        "ea3a223638c7",
+        "93bdfb4a2cb8",
+        "3e6f4a52dd9f",
+        "c1c263df3943",
+        "32c349058077"
+      ]
+    },
+    {
+      "group_index": 25,
+      "issue": "Missing waypoint class prova",
+      "status": "blocked_missing_content",
+      "finding": "Seven older panics and three newer early validation errors refer to path 73 waypoint 84. Validation prevents the late panic but cannot repair mismatched level/script content. Recent hosts mount custom mission overlays; no affected custom archive is attached. The reporter assets are unavailable; the user confirmed that the diagnostic bundle is the only available evidence. Identity and script-validation checks remain enforced. Reports load 70 soldiers/74 paths (prova) or 629 soldiers/64 paths (ShootingArcher1). Local GOG mission construction succeeds; the report cannot identify which physical source supplied incompatible bytes.",
+      "relevant_commits": [
+        "21743e6c4"
+      ],
+      "report_ids": [
+        "101158f4575e",
+        "2f4a26d7c13e",
+        "99e08901c4ab",
+        "ad17ffbff143",
+        "8059f2907d41",
+        "d6a5547d48a4",
+        "031244dd3b49"
+      ],
+      "files": [
+        "Data/Levels/H01_Lin_VL.rhm",
+        "Data/Levels/H01_Lin_VL.scb"
+      ]
+    },
+    {
+      "group_index": 26,
+      "issue": "Speech FIFO diverges after reconstruction",
+      "status": "fixed_in_head",
+      "finding": "Six reports. Canonical pending speech FIFO and immutable timing replace stale mixer order; live boundary refreshed after network correction.",
+      "relevant_commits": [
+        "21743e6c4"
+      ],
+      "report_ids": [
+        "a3afbd12f8d8",
+        "e46916f8e2d1"
+      ]
+    },
+    {
+      "group_index": 27,
+      "issue": "Speech FIFO diverges after reconstruction",
+      "status": "fixed_in_head",
+      "finding": "Six reports. Canonical pending speech FIFO and immutable timing replace stale mixer order; live boundary refreshed after network correction.",
+      "relevant_commits": [
+        "21743e6c4"
+      ],
+      "report_ids": [
+        "97a9abe377d3"
+      ]
+    },
+    {
+      "group_index": 28,
+      "issue": "Speech FIFO diverges after reconstruction",
+      "status": "fixed_in_head",
+      "finding": "Six reports. Canonical pending speech FIFO and immutable timing replace stale mixer order; live boundary refreshed after network correction.",
+      "relevant_commits": [
+        "21743e6c4"
+      ],
+      "report_ids": [
+        "efa96f3e42e4"
+      ]
+    },
+    {
+      "group_index": 29,
+      "issue": "Debug HTTP port occupied",
+      "status": "fixed_in_head",
+      "finding": "Six reports. Default HTTP bind retries occupied ports; explicitly chosen ports can still correctly reject conflicts.",
+      "relevant_commits": [
+        "21743e6c4"
+      ],
+      "report_ids": [
+        "96f7c6f48f6c"
+      ]
+    },
+    {
+      "group_index": 30,
+      "issue": "Duplicate BeginSim rejected",
+      "status": "fixed_in_head",
+      "finding": "Repeated identical start barrier is now idempotent; conflicting barriers still rejected with regression coverage.",
+      "relevant_commits": [
+        "21743e6c4"
+      ],
+      "report_ids": [
+        "228fc7087088"
+      ]
+    },
+    {
+      "group_index": 31,
+      "issue": "Host snapshot assets differ from client",
+      "status": "blocked_missing_content",
+      "finding": "Guard sprite cache miss and fast-grid 216 versus 189 identify incompatible local construction. Guards remain appropriate. Need exact host/client asset provenance to determine packaging, overlays or edition difference; no fix proven. The reporter assets are unavailable; the user confirmed that the diagnostic bundle is the only available evidence. Identity and script-validation checks remain enforced.",
+      "relevant_commits": [],
+      "report_ids": [
+        "262ee60bebd4"
+      ]
+    },
+    {
+      "group_index": 32,
+      "issue": "Speech FIFO diverges after reconstruction",
+      "status": "fixed_in_head",
+      "finding": "Six reports. Canonical pending speech FIFO and immutable timing replace stale mixer order; live boundary refreshed after network correction.",
+      "relevant_commits": [
+        "21743e6c4"
+      ],
+      "report_ids": [
+        "2fc212b89970"
+      ]
+    },
+    {
+      "group_index": 33,
+      "issue": "Sherwood production attached twice",
+      "status": "fixed_in_head",
+      "finding": "Cold engine construction clears previous script-zone and production-point bindings before scripts reattach. Matches production type 5 duplicate attachment panic.",
+      "relevant_commits": [
+        "21743e6c4"
+      ],
+      "report_ids": [
+        "fd4185880316"
+      ]
+    },
+    {
+      "group_index": 34,
+      "issue": "AI hero treated as soldier",
+      "status": "fixed_in_head",
+      "finding": "Approach rider checks no longer unwrap soldier data on AI-controlled hero; regression exists.",
+      "relevant_commits": [
+        "21743e6c4"
+      ],
+      "report_ids": [
+        "c04c1a7d3a9f"
+      ]
+    },
+    {
+      "group_index": 35,
+      "issue": "Layerless projectile presentation",
+      "status": "fixed_in_head",
+      "finding": "Five detailed reports plus three opaque duplicates. Both interpolation snapshot and GPU render layer assumptions were fixed in two commits.",
+      "relevant_commits": [
+        "448327829",
+        "f3826459b"
+      ],
+      "report_ids": [
+        "801422fe284f",
+        "41a4c0ef86f4",
+        "903316b6e211"
+      ]
+    },
+    {
+      "group_index": 36,
+      "issue": "Group-move exact sector identity mismatch",
+      "status": "fixed_in_source",
+      "finding": "Reproduced an overlay click publishing sector -1 alongside the authored motion-sector number. Resolve the owning patch destination before publishing cursor identity. Regression fails before the fix and passes afterward.",
+      "relevant_commits": [
+        "82134d211"
+      ],
+      "report_ids": [
+        "8ee51edf6d4e"
+      ]
+    },
+    {
+      "group_index": 37,
+      "issue": "Debug HTTP port occupied",
+      "status": "fixed_in_head",
+      "finding": "Six reports. Default HTTP bind retries occupied ports; explicitly chosen ports can still correctly reject conflicts.",
+      "relevant_commits": [
+        "21743e6c4"
+      ],
+      "report_ids": [
+        "afef5e45453c"
+      ]
+    },
+    {
+      "group_index": 38,
+      "issue": "macOS NSView used off main thread",
+      "status": "fixed_in_head",
+      "finding": "Two reports; surface creation moved onto owning window thread.",
+      "relevant_commits": [
+        "0860b8160"
+      ],
+      "report_ids": [
+        "226743f37455"
+      ]
+    },
+    {
+      "group_index": 39,
+      "issue": "Group-move exact sector identity mismatch",
+      "status": "fixed_in_source",
+      "finding": "Reproduced an overlay click publishing sector -1 alongside the authored motion-sector number. Resolve the owning patch destination before publishing cursor identity. Regression fails before the fix and passes afterward.",
+      "relevant_commits": [
+        "82134d211"
+      ],
+      "report_ids": [
+        "ff6923d9a6f7",
+        "3aeb9293e1e9"
+      ]
+    },
+    {
+      "group_index": 40,
+      "issue": "Core overlay schema coupled to shipping binary schema",
+      "status": "fixed_in_head",
+      "finding": "13 errors across schema 16/18, 18/19 and 21/22. Current JSON overlay validation is decoupled from binary datadir version.",
+      "relevant_commits": [
+        "1d34fa5a6"
+      ],
+      "report_ids": [
+        "23d91f833ffe",
+        "dd7b2551c20e",
+        "8034ca343c99"
+      ]
+    },
+    {
+      "group_index": 41,
+      "issue": "macOS NSView used off main thread",
+      "status": "fixed_in_head",
+      "finding": "Two reports; surface creation moved onto owning window thread.",
+      "relevant_commits": [
+        "0860b8160"
+      ],
+      "report_ids": [
+        "2b0bbfc57b98"
+      ]
+    },
+    {
+      "group_index": 42,
+      "issue": "No graphical display",
+      "status": "environment",
+      "finding": "Three local Linux reports identify missing compositor/display variables. No evidence of gameplay defect.",
+      "relevant_commits": [],
+      "report_ids": [
+        "d99af801d8a7",
+        "93263d6e2fb1"
+      ]
+    },
+    {
+      "group_index": 43,
+      "issue": "Missing base game data",
+      "status": "environment_or_missing_content",
+      "finding": "Four reports lack valid datadir or profile.cpf. Local development paths appear in these reports. Correct assets needed; no crash fix inferred.",
+      "relevant_commits": [],
+      "report_ids": [
+        "941bc296b542"
+      ]
+    },
+    {
+      "group_index": 44,
+      "issue": "Missing base game data",
+      "status": "environment_or_missing_content",
+      "finding": "Four reports lack valid datadir or profile.cpf. Local development paths appear in these reports. Correct assets needed; no crash fix inferred.",
+      "relevant_commits": [],
+      "report_ids": [
+        "eb4ed354fc4c",
+        "aa75b383c379"
+      ]
+    },
+    {
+      "group_index": 45,
+      "issue": "Debug HTTP port occupied",
+      "status": "fixed_in_head",
+      "finding": "Six reports. Default HTTP bind retries occupied ports; explicitly chosen ports can still correctly reject conflicts.",
+      "relevant_commits": [
+        "21743e6c4"
+      ],
+      "report_ids": [
+        "d41df2e4535f",
+        "7abe491bb27b",
+        "711d291bf255"
+      ]
+    },
+    {
+      "group_index": 46,
+      "issue": "Layerless projectile presentation",
+      "status": "fixed_in_head",
+      "finding": "Five detailed reports plus three opaque duplicates. Both interpolation snapshot and GPU render layer assumptions were fixed in two commits.",
+      "relevant_commits": [
+        "448327829",
+        "f3826459b"
+      ],
+      "report_ids": [
+        "b4a18fb0ef66",
+        "dd86bdc8ef53"
+      ]
+    },
+    {
+      "group_index": 47,
+      "issue": "Derby script VM writes into zero locals",
+      "status": "current_fixture_covered_not_reproduced",
+      "finding": "Headless DerbyExplorer report writes i32 into empty local region. Current packaged script declares four local bytes and current regression executes all startup callbacks. Commit adds coverage, not a demonstrated VM fix; old asset absent so retain uncertainty.",
+      "relevant_commits": [
+        "0860b8160"
+      ],
+      "report_ids": [
+        "ece05a496925"
+      ]
+    },
+    {
+      "group_index": 48,
+      "issue": "DerbyExplorer.scb absent",
+      "status": "missing_content",
+      "finding": "Selected mission requires its script. Current repository includes it; affected launch used missing/incomplete content. No historical engine fix established.",
+      "relevant_commits": [],
+      "report_ids": [
+        "ab6f575e95f6"
+      ]
+    },
+    {
+      "group_index": 49,
+      "issue": "Speech FIFO diverges after reconstruction",
+      "status": "fixed_in_head",
+      "finding": "Six reports. Canonical pending speech FIFO and immutable timing replace stale mixer order; live boundary refreshed after network correction.",
+      "relevant_commits": [
+        "21743e6c4"
+      ],
+      "report_ids": [
+        "f2271408034d"
+      ]
+    },
+    {
+      "group_index": 50,
+      "issue": "Debug HTTP port occupied",
+      "status": "fixed_in_head",
+      "finding": "Six reports. Default HTTP bind retries occupied ports; explicitly chosen ports can still correctly reject conflicts.",
+      "relevant_commits": [
+        "21743e6c4"
+      ],
+      "report_ids": [
+        "f16926e1c5dd"
+      ]
+    },
+    {
+      "group_index": 51,
+      "issue": "No graphical display",
+      "status": "environment",
+      "finding": "Three local Linux reports identify missing compositor/display variables. No evidence of gameplay defect.",
+      "relevant_commits": [],
+      "report_ids": [
+        "858d93c7cfad"
+      ]
+    },
+    {
+      "group_index": 52,
+      "issue": "Old save-store metadata",
+      "status": "legacy_data_rejection",
+      "finding": "Missing player_name and obsolete schema88 index are preserved for recovery. Do not label fixed merely because no new reports arrived.",
+      "relevant_commits": [],
+      "report_ids": [
+        "cad93cc61b1d"
+      ]
+    },
+    {
+      "group_index": 53,
+      "issue": "Missing base game data",
+      "status": "environment_or_missing_content",
+      "finding": "Four reports lack valid datadir or profile.cpf. Local development paths appear in these reports. Correct assets needed; no crash fix inferred.",
+      "relevant_commits": [],
+      "report_ids": [
+        "58b7cdbd98c9"
+      ]
+    },
+    {
+      "group_index": 54,
+      "issue": "Browser operation aborted",
+      "status": "insufficient_evidence",
+      "finding": "Two reports contain only abort text; no stack or useful context. Cannot determine resource, intentional cancellation, or fix.",
+      "relevant_commits": [],
+      "report_ids": [
+        "685ca3c3796a",
+        "f4679879fb73"
+      ]
+    },
+    {
+      "group_index": 55,
+      "issue": "Opaque browser WASM traps",
+      "status": "duplicate_or_unknown",
+      "finding": "Ten of eleven opaque traps have paired useful panic evidence: four group-move, three layerless, three speech. One September 19 trap lacks a useful panic and remains unclassified. Duplicate suppression exists; underlying issues classified separately.",
+      "relevant_commits": [
+        "0860b8160"
+      ],
+      "report_ids": [
+        "12e01ce37b00",
+        "7d5635fa3344",
+        "42bf536a6651"
+      ]
+    },
+    {
+      "group_index": 56,
+      "issue": "Obsolete authored sprite format",
+      "status": "legacy_data_rejection",
+      "finding": "Explicit regeneration error for Archer.sprites.vq.zst. Needs source asset re-encoding, not suppressing decoder validation.",
+      "relevant_commits": [],
+      "report_ids": [
+        "cac843a18205"
+      ]
+    },
+    {
+      "group_index": 57,
+      "issue": "Core overlay schema coupled to shipping binary schema",
+      "status": "fixed_in_head",
+      "finding": "13 errors across schema 16/18, 18/19 and 21/22. Current JSON overlay validation is decoupled from binary datadir version.",
+      "relevant_commits": [
+        "1d34fa5a6"
+      ],
+      "report_ids": [
+        "f1626eb97dde"
+      ]
+    },
+    {
+      "group_index": 58,
+      "issue": "Version91 autosave rejected by92",
+      "status": "legacy_data_rejection",
+      "finding": "Four old autosave reports. Recent version96-99 migration does not prove version91 compatibility; retain old-format classification.",
+      "relevant_commits": [],
+      "report_ids": [
+        "8b3e4a5abdce",
+        "97d0d3aea9cd",
+        "9cd072c3997c",
+        "944f57966f3c"
+      ]
+    },
+    {
+      "group_index": 59,
+      "issue": "Replay schema version mismatch",
+      "status": "legacy_data_rejection",
+      "finding": "Two replay upgrades required (49 to50,50 to51). Use recorded build or explicit upgrade. No current compatibility proof for these files.",
+      "relevant_commits": [],
+      "report_ids": [
+        "f6b0458623d1"
+      ]
+    },
+    {
+      "group_index": 60,
+      "issue": "Replay schema version mismatch",
+      "status": "legacy_data_rejection",
+      "finding": "Two replay upgrades required (49 to50,50 to51). Use recorded build or explicit upgrade. No current compatibility proof for these files.",
+      "relevant_commits": [],
+      "report_ids": [
+        "5e8a4a45f7f8"
+      ]
+    },
+    {
+      "group_index": 61,
+      "issue": "Embedded replay campaign decode EOF",
+      "status": "historical_upgrade_related",
+      "finding": "Occurs in local replay48 upgrade workflow. Embedded campaign migration commit is relevant; exact input was not replayed.",
+      "relevant_commits": [
+        "f3834e741"
+      ],
+      "report_ids": [
+        "b91a6972823b"
+      ]
+    },
+    {
+      "group_index": 62,
+      "issue": "Old save-store metadata",
+      "status": "legacy_data_rejection",
+      "finding": "Missing player_name and obsolete schema88 index are preserved for recovery. Do not label fixed merely because no new reports arrived.",
+      "relevant_commits": [],
+      "report_ids": [
+        "0b1bcf8c9dc1"
+      ]
+    },
+    {
+      "group_index": 63,
+      "issue": "Mixer resolves speech no longer pending",
+      "status": "fixed_in_head",
+      "finding": "Three detailed reports plus opaque trap duplicates. Playback no longer resolves live boundaries; later live canonical FIFO change covers reconstruction.",
+      "relevant_commits": [
+        "ddd4e69e2",
+        "21743e6c4"
+      ],
+      "report_ids": [
+        "ff3efd7c7924"
+      ]
+    },
+    {
+      "group_index": 64,
+      "issue": "Mixer resolves speech no longer pending",
+      "status": "fixed_in_head",
+      "finding": "Three detailed reports plus opaque trap duplicates. Playback no longer resolves live boundaries; later live canonical FIFO change covers reconstruction.",
+      "relevant_commits": [
+        "ddd4e69e2",
+        "21743e6c4"
+      ],
+      "report_ids": [
+        "b8c2350bebb4",
+        "358b49e331f9"
+      ]
+    }
+  ],
+  "bugs_txt": [
+    {
+      "issue": "Client mission summaries / next mission",
+      "status": "fixed_in_source",
+      "finding": "Coordinated terminal modals and explicit standalone exit; committed transport handoff covered by loopback regression.",
+      "commits": [
+        "1919c94d5"
+      ]
+    },
+    {
+      "issue": "Minimap shared between users; suggested ping",
+      "status": "fixed_in_source",
+      "finding": "Minimap commands and focus effects are scoped per player. Optional ping suggestion is a separate feature, not part of this bug fix.",
+      "commits": [
+        "1919c94d5"
+      ]
+    },
+    {
+      "issue": "Client combat gestures / lag (two bullets)",
+      "status": "partially_fixed_remaining_symptom_unreproduced",
+      "finding": "Confirmed and fixed global fight-end drag cancellation: cancellation now targets only seats whose selected fight ended. The reports contain client left/right strikes, but contain no complete gesture/facing/execution trace to establish every reported lag/recognition symptom. Host/client left/right gesture recognition and wire-codec regression passed; remote latency reproduction remains unavailable.",
+      "commits": [
+        "c8797a0ff"
+      ]
+    },
+    {
+      "issue": "Client missing opening story scroll and host waiting forever",
+      "status": "fixed_in_source",
+      "finding": "Host modal announcements, client filtering, paused dismissal and session-owned recovery landed Oct4. Deterministic channel regression exists. bugs.txt has no build/date, so cannot claim current reproduction or deployment. Current full client unit suite passes the story lifecycle and channel-schedule regressions.",
+      "commits": [
+        "0fe895d14",
+        "278924a3e",
+        "e9e3b88a3",
+        "65fd133f1"
+      ]
+    },
+    {
+      "issue": "Show mission requirements before launch",
+      "status": "fixed_in_source",
+      "finding": "Built-in mission requirements are displayed and checked before launch. Campaign, HUD and lobby agree on contextual abilities and directional substitutions. Custom missions lacking profile metadata explicitly report unavailable requirements.",
+      "commits": [
+        "c8797a0ff"
+      ]
+    },
+    {
+      "issue": "No pickup sound (coin bag)",
+      "status": "fixed_in_source",
+      "finding": "Report 6f5f5166a3b4 records the cash and victory jingles failing because the native resolver duplicates Data/Sounds. Qualified paths now resolve once, preserving WAV/Opus fallback.",
+      "commits": [
+        "82134d211"
+      ]
+    }
+  ],
+  "unreadable_reports": [
+    {
+      "id": "9835e51304c6",
+      "reason": "Not a gzipped file (b'\\x1f\\x08')"
+    }
+  ],
+  "validation": {
+    "engine": "Full robin_engine suite passed after the multiplayer and ability-validation changes.",
+    "client": "cargo test -p robin_rs --features audio,multiplayer passed: 2323 unit tests, all integration/example tests, and 21 documentation tests; opt-in environment-specific tests remain ignored.",
+    "content_smoke": "Local GOG H01_Lin_VL passed script validation and ran headlessly until the 45-second test timeout.",
+    "run_protocol": "22 passed, 0 failed.",
+    "lobby_visual": "GPU screenshot test passed at 640x480 and 1024x768; missing requirements disable Start and adding the required ability enables it. Footer visually reviewed.",
+    "build": "cargo build -p robin_rs --bin robin, cargo fmt --check, and git diff --check passed."
+  },
+  "additional_fixes": [
+    {
+      "issue": "Ranked replay schema declaration lagged behind engine output",
+      "finding": "Ranking protocol now declares schema 64, matching the recording and verifier runtime. Older replay input layouts still require explicit migrations. Campaign migration tests exercise their codecs directly instead of relabeling incompatible input.",
+      "commits": [
+        "cb1976606"
+      ]
+    }
+  ],
+  "fix_branch": "fix-reported-multiplayer"
+}
