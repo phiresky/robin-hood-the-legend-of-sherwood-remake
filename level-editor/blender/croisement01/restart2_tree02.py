@@ -48,7 +48,12 @@ def main():
  bpy.context.view_layer.objects.active=body;modifier=body.modifiers.new('Continuous three-stem wood','REMESH');modifier.mode='VOXEL';modifier.voxel_size=.65;modifier.use_remove_disconnected=False;bpy.ops.object.modifier_apply(modifier=modifier.name)
  if args.revision>=7:
   repaired_root=np.asarray(wood)>0;repaired_root[:300]=False
+  before_fit=[v.co.copy() for v in body.data.vertices]
   root_fit=fit_native_width(body,repaired_root,'west-cut',x0=101,y0=0)
+  if args.revision>=8:
+   for vertex,old in zip(body.data.vertices,before_fit):
+    sy=-old.y*SIN-old.z*COS;weight=min(1,max(0,(sy-300)/16));vertex.co=old.lerp(vertex.co,weight)
+   body.data.update()
   (dest/'post-remesh-root-fit.json').write_text(json.dumps(root_fit,indent=2)+'\n')
  trace=root_trace
 

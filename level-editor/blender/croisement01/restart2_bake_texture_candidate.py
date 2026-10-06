@@ -101,8 +101,20 @@ def preflight(experiment):
     manifest = read(experiment / 'views.json')
     preparation = read(experiment / 'preparation.json')
     if manifest['asset_id'] in ('croisement01-tree-00', 'croisement01-tree-01'):
-        from restart2_validate_wood_scope import validate
-        validate(experiment)
+        if (experiment / 'wood-scope.json').exists():
+            from restart2_validate_wood_scope import validate
+            validate(experiment)
+        else:
+            require(manifest['asset_id']=='croisement01-tree-01', 'Missing legacy wood scope')
+            decision=read(experiment.parent / 'user-input-decision.json')
+            batch=Path(decision['batch_approval_path'])
+            require(sha(batch)==decision['batch_approval_sha256'], 'Input approval changed')
+            member=next(m for c in read(batch)['cards'] for m in c['members'] if m['asset_id']==manifest['asset_id'])
+            require(member['scope']=='texture-input' and decision['decision']=='approved' and member['review_revision']==decision['review_revision'], 'Isolated wood input not approved')
+            require(member['model_sha256']==approval['saved_model_sha256'], 'Isolated input model changed')
+            bound=Path(member['source_evidence']);require(sha(bound)==member['source_evidence_sha256'], 'Input evidence changed')
+            for name,expected_hash in read(bound)['items'][0]['evidence'].items():require(sha(Path(name))==expected_hash, 'Bound input file changed: '+name)
+            require(manifest['object_names']==manifest['texture_receiver_object_names']==['Unresolved Source Part 029 / Source part 029'], 'Isolated wood receiver changed')
     source = Path(preparation['source_review_manifest'])
     require(sha(source) == preparation['review_manifest_sha256'], 'Preparation manifest changed')
     prepare(source, manifest['asset_id'], experiment / 'preflight-check-only', source.parent / 'decisions.json', check_only=True)
@@ -172,6 +184,9 @@ def run(experiment, output=None, review_path=None, texels_per_unit=2., view_sele
             bake_manifest = experiment / (output.name + '-sampling-views.json')
             require(not bake_manifest.exists(), 'Diagnostic sampling manifest already exists')
             sampling = dict(manifest)
+            if manifest['asset_id']=='croisement01-tree-01' and not (experiment/'wood-scope.json').exists():
+                sampling['texture_generated_support_mask']={'path':str(experiment/'mask.png'),'sha256':sha(experiment/'mask.png')}
+                sampling['texture_generated_background_max_rgb']=.008
             if reconciliation_gain_mode is not None:
                 sampling['texture_reconciliation_gain_mode'] = reconciliation_gain_mode
             if reconciliation_fade_pixels is not None:
@@ -189,7 +204,7 @@ def run(experiment, output=None, review_path=None, texels_per_unit=2., view_sele
         scene.render.engine = 'CYCLES'
         scene.cycles.samples = 8
         scene.cycles.transparent_max_bounces = 64
-        if manifest['asset_id'] in ('croisement01-tree-00', 'croisement01-tree-01'):
+        if manifest['asset_id'] in ('croisement01-tree-00', 'croisement01-tree-01') and (experiment / 'wood-scope.json').exists():
             from restart2_validate_wood_scope import bake_packet
             bake_manifest = bake_packet(experiment, bake_manifest)
             evidence[str(bake_manifest.parent / 'adapter.json')] = sha(bake_manifest.parent / 'adapter.json')
