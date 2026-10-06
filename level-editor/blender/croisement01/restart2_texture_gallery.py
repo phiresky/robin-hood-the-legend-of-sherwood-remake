@@ -10,6 +10,8 @@ sys.path.insert(0, str(ROOT / 'level-editor/refinement/blender'))
 from build_review_gallery import build
 
 CASES = {
+    '19': ('tree19-v6', 'experiment', 'baked-v2-luminance', 'Northeast Forked Tree'),
+    '00': ('tree00-v4', 'experiment', 'baked-v3-luminance', 'Western Boundary Tree — WOOD ONLY'),
     '71': ('tree71-v5', 'experiment', 'baked-v1-luminance', 'East Border Leaning Tree'),
     'stump64': ('stump64-wood-v4', 'experiment', 'baked-v1-luminance', 'Southwest Broken Stump — WOOD ONLY'),
     'stump69': ('stump69-wood-v1', 'experiment', 'baked-v1-luminance', 'Central Ivy Stump — WOOD ONLY'),
@@ -41,6 +43,8 @@ def main():
         root = OUT / {'22':'approved-tree22-fill-v1', 'stump66':'approved-stump66-wood-fill-v1', 'rock29':'approved-rock29-fill-v2', 'stump68':'approved-stump68-wood-fill-v1', 'stump65':'approved-stump65-wood-fill-v1', '21':'approved-tree21-fill-v1'}.get(number, 'approved-tree-fills-v1') / asset
         if number in ['71','stump64','stump69']:
             root=OUT/('approved-tree71-fill-v1' if number=='71' else 'approved-'+number+'-wood-fill-v1')/asset
+        if number in ['19','00']:
+            root=OUT/('approved-tree19-fill-v1' if number=='19' else 'approved-tree00-wood-fill-v1')/asset
         e, b = root / experiment, root / bake
         w = b / 'actual-review-v1'
         geometry = OUT / original / 'assets' / asset
@@ -86,6 +90,11 @@ def main():
             notes[2:]=['WOOD ONLY: own native wood supplemented the inferred cap, hidden bark and lower extension.',f'{excluded} native ivy/mixed foreground pixels remain separately unfinished. Inferred grain can be finer than the native front; no foliage approval is implied.']
         if number=='71':
             notes[2:]=['Own native wood and only the permitted two Leicester leaf examples supplemented inferred bark and complete off-map crown.','2963 foreground foliage pixels remain separately unfinished. The archival bank remains provisional; geometry and native62/63 surface partition are unchanged.']
+        if number=='19':
+            notes[2:]=['Own native bark and only the two permitted Leicester leaf examples supplemented the inferred materials.','1927 foreground foliage pixels remain separate. Approved 1/517 branch-joint edge miss and 50/9268 native wood-edge misses remain disclosed; no geometry change.']
+        if number=='00':
+            notes[0]='WOOD texture only; approved native trunk and hidden wood geometry remain unchanged. Gray crown is protected context outside this approval.'
+            notes[2:]=['Own native bark and only the two permitted Leicester bark crops supplemented inferred wood; crown pixels and its saved materials remain unchanged.','1169 native foreground/rock/mixed pixels remain separate. The retained gray crown is neither filled nor submitted for approval here.']
         review = dest / 'receipts' / f'{asset}-review.json'
         review.write_text(json.dumps(dict(status='ready-for-user-texture-review', model_sha256=model_hash,
             root_review=receipt, self_review=json.loads((w / 'inspection/self-review.json').read_text()),
@@ -98,7 +107,7 @@ def main():
         assert len(ownership) == 1
         generated = e / 'generation-short-no-mask-with-lighting-openrouter-with-auxiliary/generated-preserved.png'
         items.append(dict(id=asset, name=name, status='ready-for-user', technical_eligible=True, model=str(frozen),
-            solid=str(labeled_sheet(geometry, 'modified/solid.png')), solid_label='Already approved solid geometry',
+            solid=str(labeled_sheet(geometry, 'modified/solid.png')), solid_label=('Approved wood geometry; crown is unapproved context' if number=='00' else 'Already approved solid geometry'),
             textured=str(labeled_sheet(w, 'inspection/actual-materials/sheet.png')),
             textured_label='Actual saved texture fill — all eight views on neutral gray',
             context=str(approved / 'modified/context.png'),
