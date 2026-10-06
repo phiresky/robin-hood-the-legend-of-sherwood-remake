@@ -14,7 +14,7 @@ from review_bank_candidate import camera
 from refinement_review import _tree
 from evidence_io import sha,write_json
 from render_slots import acquire,release
-DEST=OUT/'restart7-underlay-role/fringe51-v1';GROUND=OUT/'restart4-fence14-ground-candidate-v1/model.blend';GROUND_SHA='4f4875bc62b5602417830eb8b458bfbe8dcc9244095699096616fdb4dfb58bf8'
+DEST=OUT/'restart7-underlay-role/fringe51-v2';GROUND=OUT/'restart4-fence14-ground-candidate-v1/model.blend';GROUND_SHA='4f4875bc62b5602417830eb8b458bfbe8dcc9244095699096616fdb4dfb58bf8'
 
 def main():
  assert shutil.disk_usage(OUT).free>25*2**30;assert sha(GROUND)==GROUND_SHA;DEST.mkdir(parents=True,exist_ok=False);authority=ROOT/'source-role132-v1/private-toe-residual-v12.json';residual=json.load(open(authority));coords={r['mask']:[v['pixel']for v in r['rows']if not v['center_covered']and not v['positive_subsamples_of25']]for r in residual['records']};coords[95]=next(r['coordinates']for r in json.load(open(ROOT/'remaining-inventory-v1/report.json'))['rows']if r['mask']==95);source=np.array(Image.open(OUT/'animation-references/composite-frame-0.png').convert('RGBA'));covered=np.array(Image.open(OUT/'source-states/covered.png').convert('RGBA'));known=np.array(Image.open(OUT/'restart4-final-floor-bake-v1/known-native-domain.png').convert('L'))>0;records=[];pins={str(GROUND):GROUND_SHA};transforms=[]
@@ -25,7 +25,7 @@ def main():
   target=coords[number];a=np.array(target);lo=a.min(0)-18;hi=a.max(0)+19;center=(lo+hi)/2;scale=float(max(hi-lo));box=[center[0]-scale/2,center[1]-scale/2,center[0]+scale/2,center[1]+scale/2];folder=DEST/f'mask{number}';folder.mkdir();base=None
   for label,path,digest in variants:
    assert sha(path)==digest;pins[str(path)]=digest;bpy.ops.wm.open_mainfile(filepath=str(path));bpy.context.view_layer.update();objs=[o for o in bpy.context.scene.objects if o.type=='MESH'and o.get('asset_group')==asset];expected={o.name:dict(matrix=np.array(o.matrix_world),signature=geometry(o))for o in objs};names=list(expected);bpy.ops.wm.open_mainfile(filepath=str(GROUND));bpy.context.view_layer.update();scene=bpy.data.scenes.new(f'Readonly fringe {number} {label}');bpy.context.window.scene=scene;ground=bpy.data.objects['Croisement02 Terrain'];link(scene,ground);ground.hide_render=False;bpy.context.view_layer.update();sig=geometry(ground);_,base=atlas(ground)
-   with bpy.data.libraries.load(str(path),link=False)as(src,dst):dst.objects=names
+   with bpy.data.libraries.load(str(path),link=False)as(src,dst):dst.objects=list(names)
    context=[o for o in dst.objects if o]
    for o in context:link(scene,o);o.hide_render=False
    bpy.context.view_layer.update()
