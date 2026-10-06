@@ -252,6 +252,13 @@ canonical fern views have zero masked transparent pixels in the browser
 diagnostic; quarter-turn views retain 6–17 mismatches. Native construction still
 passes all twenty exports. Remaining rasterization and in-game review keep these
 candidates unpublished.
+Two-way coverage checks also find 5–12 rendered pixels missing from the rotated
+masks. Some discrepancies are isolated beyond a one-pixel shared edge; the
+browser diagnostic now reports failure instead of treating these as edge noise.
+Full Croisement03 compilation with these staged definitions passes native
+geometry construction and all nine state apply/reset checks. Best-effort export
+now deduplicates repeated draft warnings without changing source assets or
+relaxing geometry validation; strict validation still rejects repeated warnings.
 An unpublished mesh-derived bridge deck candidate passes ten complete native
 crossings and 754 sampled receiving-seam crossings at five rotations. Adding
 twelve inclined support hulls preserves those ten complete crossings, passes

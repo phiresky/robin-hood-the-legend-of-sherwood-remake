@@ -460,7 +460,14 @@ function compileAssetGameplayAttempt(
     return result;
   };
   for (const placement of placements) {
-    const authored = placement.descriptor.gameplay!;
+    let authored = placement.descriptor.gameplay!;
+    // Merged asset drafts can repeat advisory text. Best-effort export keeps
+    // every distinct warning without treating repetition as broken geometry.
+    if (options.bestEffort && authored.draft && Array.isArray(authored.draft.issues)) {
+      const issues = [...new Set(authored.draft.issues)];
+      if (issues.length !== authored.draft.issues.length)
+        authored = { ...authored, draft: { ...authored.draft, issues } };
+    }
     validateAssetGameplay(authored, placement.descriptor);
     const unavailableSurfaces = new Set(
       (authored.lifts ?? [])

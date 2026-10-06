@@ -9688,3 +9688,22 @@ The artifact is `fern-gameplay-At1ME3/compositing/after.png`. Both ferns remain
 unpublished. All 144 affected mask/compiler tests, both typechecks, focused lint
 and formatting pass. This does not establish projectile or complete rendered
 in-game parity.
+
+The expanded two-way fern diagnostic also counts rendered leaves absent from
+mask coverage. At rotations 90/180/270, fern 35 has excess/missing pixel counts
+17/10, 6/5 and 13/12; fern 76 has 9/9, 8/9 and 11/9. Both canonical views match
+exactly. Every rotated view includes discrepancies without opposite coverage
+within an eight-neighbour one-pixel radius. The complete diagnostic deliberately
+fails and retains all 32 panels for review (`compositing/coverage-complete.log`).
+No rasterization tolerance was relaxed to hide these discrepancies.
+
+Full Croisement03 with the staged fern definitions initially failed because an
+asset repeated three advisory draft issues. Best-effort compilation now keeps
+each distinct warning once without mutating the descriptor. Strict validation
+still rejects duplicate warnings, and empty issues remain invalid in both modes.
+All 16 draft compilation tests pass, including unchanged geometry and source
+metadata checks. Export `saved-map-exports-fGGgEs` then passes native geometry
+construction (11 motion areas, 106 sight obstacles, 15 doors, 10 jump pairs,
+5,016 grid blocks, 65 elevation boundaries and three masks) and all nine
+recovered state apply/reset checks. This does not publish the fern candidates
+or resolve the missing fallen-log and bridge definitions.

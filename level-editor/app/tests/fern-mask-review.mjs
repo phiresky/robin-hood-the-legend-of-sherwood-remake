@@ -114,6 +114,33 @@ try {
       plant.height = height;
       plant.getContext("2d").drawImage(renderer.domElement, 0, 0);
       const masks = descriptor.asset_geometry.masks;
+      const coverage = new Set();
+      for (const mask of masks)
+        for (const [i, pixel] of decodeRecoveryMask(mask).entries()) {
+          if (!pixel) continue;
+          const x = mask.box_top_left[0] + (i % mask.box_size[0]) - 500 + width / 2;
+          const y = mask.box_top_left[1] + Math.floor(i / mask.box_size[0]) - 500 + height / 2;
+          if (x >= 0 && y >= 0 && x < width && y < height) coverage.add(y * width + x);
+        }
+      const rendered = plant.getContext("2d").getImageData(0, 0, width, height);
+      let renderedLeafWithoutMask = 0;
+      let mismatchesTouchCoverage = true;
+      for (let i = 0; i < width * height; i++)
+        if (Boolean(rendered.data[i * 4 + 3]) !== coverage.has(i)) {
+          if (rendered.data[i * 4 + 3]) renderedLeafWithoutMask++;
+          const x = i % width,
+            y = Math.floor(i / width);
+          let adjacent = false;
+          for (const dx of [-1, 0, 1])
+            for (const dy of [-1, 0, 1]) {
+              if (x + dx < 0 || y + dy < 0 || x + dx >= width || y + dy >= height) continue;
+              const other = (y + dy) * width + x + dx;
+              adjacent ||= coverage.has(i)
+                ? Boolean(rendered.data[other * 4 + 3])
+                : coverage.has(other);
+            }
+          mismatchesTouchCoverage &&= adjacent;
+        }
       for (const [column, dy] of [-15, 0, 15, 30].entries()) {
         const feet = [500.25, 500.75 + dy];
         const panel = document.createElement("canvas");
@@ -163,7 +190,15 @@ try {
           throw new Error(
             `${id}: canonical mask covers ${maskWithoutRenderedLeaf} transparent pixels`,
           );
-        cases.push({ id, rotation, dy, applied, maskWithoutRenderedLeaf });
+        cases.push({
+          id,
+          rotation,
+          dy,
+          applied,
+          maskWithoutRenderedLeaf,
+          renderedLeafWithoutMask,
+          mismatchesTouchCoverage,
+        });
       }
       row++;
     }
@@ -174,7 +209,8 @@ try {
   document.body.append(sheet);
   renderer.dispose();
   atlas.close();
-  result.textContent = `PASS 32 point-mask compositing diagnostics; visual review required: ${JSON.stringify(cases)}`;
+  const status = cases.every((entry) => entry.mismatchesTouchCoverage) ? "PASS" : "FAIL";
+  result.textContent = `${status} 32 point-mask compositing diagnostics; discrepancies beyond a one-pixel edge require review: ${JSON.stringify(cases)}`;
 } catch (error) {
   result.textContent = `FAIL ${error.stack ?? error}`;
 }

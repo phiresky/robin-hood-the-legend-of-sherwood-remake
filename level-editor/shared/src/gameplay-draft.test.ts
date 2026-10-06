@@ -37,6 +37,27 @@ test("draft gameplay compiles unchanged geometry and warns once per asset issue"
   assert.deepEqual({ ...draft, warnings: undefined }, { ...complete, warnings: undefined });
 });
 
+test("best-effort exports deduplicate advisory draft text without changing asset data", () => {
+  const { document, assets, hut } = assetCompilerFixture();
+  const complete = compileAssetGameplay(document, assets, bounds);
+  hut.gameplay!.draft = { issues: ["Pending masks", "Pending masks", "Review doors"] };
+  const before = structuredClone(hut);
+  assert.throws(() => compileAssetGameplay(document, assets, bounds), /draft issues/);
+  const compiled = compileAssetGameplay(document, assets, bounds, { bestEffort: true });
+  assert.deepEqual(hut, before);
+  assert.deepEqual(compiled.warnings, [
+    "Draft gameplay asset hut: Pending masks",
+    "Draft gameplay asset hut: Review doors",
+    ...(complete.warnings ?? []),
+  ]);
+  assert.deepEqual({ ...compiled, warnings: undefined }, { ...complete, warnings: undefined });
+  hut.gameplay!.draft.issues = ["", ""];
+  assert.throws(
+    () => compileAssetGameplay(document, assets, bounds, { bestEffort: true }),
+    /draft issues/,
+  );
+});
+
 test("draft status never bypasses missing or invalid gameplay definitions", () => {
   const { document, assets, hut } = assetCompilerFixture();
   hut.gameplay!.draft = { issues: ["Door geometry needs review."] };
