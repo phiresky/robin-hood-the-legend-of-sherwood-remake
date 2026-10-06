@@ -279,3 +279,180 @@ test("per-frame shadow semantics survive loading and phase wrap; invalid shadow 
   assert.equal(player.ready, false);
   player.dispose();
 });
+
+async function transientFixture(layer: "ordered" | "background" = "ordered") {
+  const f = await fixture(),
+    elevation = layer === "ordered" ? 1 : 0;
+  const profile = { name: "net", center_x: 0, center_y: 0 };
+  const profileBytes = new TextEncoder().encode(JSON.stringify(profile));
+  f.files.set("profile.json", profileBytes);
+  const profileHash = await missionStateDataHash(profile);
+  const patch = {
+    integrate_in_background: false,
+    definitive: false,
+    start_animation_valid: false,
+    transition_animation_valid: true,
+    end_animation_valid: true,
+    element_fx: {
+      sprite: { position_x: 0, position_y: 0, elevation, profile_name: "net" },
+      active: true,
+      display_polyline: [],
+    },
+  };
+  f.source.level.patches = [];
+  f.source.data.mission_patches = [patch];
+  f.contract.mission_data_sha256 = await missionStateDataHash(f.source.data);
+  f.contract.level_data_sha256 = await missionStateDataHash(f.source.level);
+  const transparent = await f.image("transparent.png", [0, 0, 0, 0]),
+    blue = await f.image("blue.png", [0, 0, 200, 255]);
+  f.contract.elements[0]!.frames = [f.contract.elements[0]!.frames[0]!];
+  f.contract.patch_states = [
+    {
+      id: "bag",
+      source: { kind: "mission-patch", index: 0, sha256: await missionStateDataHash(patch) },
+      profile: { path: "profile.json", sha256: profileHash, name: "net", center: [0, 0] },
+      integrate_in_background: false,
+      elevation,
+      layer,
+      display_position: [0, 0],
+      sort_position: [0, 0],
+      display_order: elevation,
+      creation_order: 1,
+      polyline: [],
+      definitive: false,
+      initial: [],
+      transition: [
+        { ...(await f.image("moving.png", [0, 200, 0, 255])), offset: [0, 0], delay: 1 },
+      ],
+      final: [
+        { ...transparent, offset: [0, 0], delay: 0 },
+        { ...blue, offset: [0, 0], delay: 1 },
+      ],
+      initial_loop: true,
+      final_loop: true,
+    },
+  ];
+  return f;
+}
+test("transient patches sort foreground separately and final never stamps transition art", async () => {
+  const f = await transientFixture(),
+    p = new NativeStatePresentation();
+  await p.set(f.contract, f.source, f.read);
+  const rgb = () => Array.from(p.pixels().data.slice(0, 3));
+  assert.deepEqual(rgb(), [200, 0, 0]);
+  p.setPatchState("bag", "forward", 0);
+  assert.deepEqual(rgb(), [0, 200, 0]);
+  p.setPatchState("bag", "forward", 2);
+  assert.deepEqual(rgb(), [200, 0, 0]);
+  p.setPatchState("bag", "forward", 3);
+  assert.deepEqual(rgb(), [0, 0, 200]);
+  p.setPatchState("bag", "forward", 5);
+  assert.deepEqual(rgb(), [200, 0, 0]);
+  p.setPatchState("bag", "initial");
+  assert.deepEqual(rgb(), [200, 0, 0]);
+  const ground = await transientFixture("background"),
+    q = new NativeStatePresentation();
+  await q.set(ground.contract, ground.source, ground.read);
+  q.setPatchState("bag", "forward", 0);
+  assert.deepEqual(Array.from(q.pixels().data.slice(0, 3)), [200, 0, 0]);
+});
+test("patch profile, source placement and classification are exact before adoption", async () => {
+  for (const mutation of ["source", "center", "layer"]) {
+    const f = await transientFixture(),
+      p = new NativeStatePresentation();
+    if (mutation === "source") f.contract.patch_states![0]!.source.sha256 = "0".repeat(64);
+    if (mutation === "center") {
+      const bytes = new TextEncoder().encode(
+        JSON.stringify({ name: "net", center_x: 1, center_y: 0 }),
+      );
+      f.files.set("profile.json", bytes);
+      f.contract.patch_states![0]!.profile.sha256 = await missionStateDataHash({
+        name: "net",
+        center_x: 1,
+        center_y: 0,
+      });
+    }
+    if (mutation === "layer") f.contract.patch_states![0]!.layer = "background";
+    await assert.rejects(p.set(f.contract, f.source, f.read));
+    assert.equal(p.ready, false);
+  }
+});
+test("stale failing profile read cannot replace the next mission", async () => {
+  const old = await transientFixture(),
+    next = await fixture(),
+    p = new NativeStatePresentation();
+  let reject!: (e: Error) => void, started!: () => void;
+  const begun = new Promise<void>((r) => (started = r)),
+    blocked = new Promise<Uint8Array>((_, r) => (reject = r));
+  const first = p.set(old.contract, old.source, async (resource) => {
+    if (resource.path === "profile.json") {
+      started();
+      return blocked;
+    }
+    return old.read(resource);
+  });
+  await begun;
+  await p.set(next.contract, next.source, next.read);
+  reject(Error("late profile failure"));
+  assert.equal(await first, false);
+  assert.equal(p.ready, true);
+});
+async function equivalentFixture() {
+  const f = await fixture();
+  const a = f.contract.elements[0]!;
+  a.polyline = [
+    [0, 0],
+    [10, 0],
+  ];
+  a.loop = false;
+  const targetA = {
+    position_x: 0,
+    position_y: 0,
+    action_position_x: 5,
+    action_position_y: 5,
+    polyline: a.polyline,
+  };
+  const targetB = {
+    position_x: 4,
+    position_y: 0,
+    action_position_x: 5,
+    action_position_y: 5,
+    polyline: a.polyline,
+  };
+  f.source.data.targets = [targetA, targetB];
+  f.contract.mission_data_sha256 = await missionStateDataHash(f.source.data);
+  a.source.sha256 = await missionStateDataHash(targetA);
+  f.contract.elements.push({
+    ...structuredClone(a),
+    id: "other",
+    source: { kind: "mission-target", index: 1, sha256: await missionStateDataHash(targetB) },
+    display_position: [4, 0],
+    creation_order: 1,
+  });
+  const elements: [string, string] = ["sign", "other"];
+  f.contract.painted_order_equivalence = {
+    kind: "disjoint-adjacent-source-pair",
+    elements,
+    contract_sha256: await missionStateDataHash({ contract: f.contract, elements }),
+  };
+  return f;
+}
+test("painted tie needs exact contract and decoded disjoint alpha for every phase", async () => {
+  const f = await equivalentFixture(),
+    p = new NativeStatePresentation();
+  await p.set(f.contract, f.source, f.read);
+  assert.equal(p.ready, true);
+  const changed = structuredClone(f.contract);
+  changed.elements[1]!.frames[0]!.delay++;
+  await assert.rejects(p.set(changed, f.source, f.read), /ordering contract changed/);
+  assert.equal(p.ready, false);
+  const overlap = await equivalentFixture();
+  overlap.contract.elements[1]!.frames[0]!.offset = [-4, 0];
+  const { painted_order_equivalence, ...bound } = overlap.contract;
+  painted_order_equivalence!.contract_sha256 = await missionStateDataHash({
+    contract: bound,
+    elements: painted_order_equivalence!.elements,
+  });
+  await assert.rejects(p.set(overlap.contract, overlap.source, overlap.read), /pair overlaps/);
+  assert.equal(p.ready, false);
+});

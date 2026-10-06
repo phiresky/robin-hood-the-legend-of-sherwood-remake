@@ -45,6 +45,23 @@ export interface NativePresentationElement {
   creation_order: number;
   polyline: [number, number][];
 }
+/** Exact nonintegrating state sprites, independently placed in the draw order. */
+export interface NativeTransientPatchState extends Omit<NativeBackgroundState, "restore_bounds"> {
+  profile: { path: string; sha256: string; name: string; center: [number, number] };
+  integrate_in_background: false;
+  elevation: number;
+  layer: "background" | "ordered";
+  sort_position: [number, number];
+  display_order: number;
+  creation_order: number;
+  polyline: [number, number][];
+}
+/** One exact pair may commute only after decoded alpha and complete merge verification. */
+export interface NativePaintedOrderEquivalence {
+  kind: "disjoint-adjacent-source-pair";
+  elements: [string, string];
+  contract_sha256: string;
+}
 /** Controlled source-art preview. Actors, scripts and physical depth are not represented. */
 export interface NativeStatePresentationContract {
   version: 1;
@@ -57,6 +74,8 @@ export interface NativeStatePresentationContract {
   origin: [number, number];
   elements: NativePresentationElement[];
   background_states?: NativeBackgroundState[];
+  patch_states?: NativeTransientPatchState[];
+  painted_order_equivalence?: NativePaintedOrderEquivalence;
 }
 
 export function validateNativeStatePresentation(
@@ -220,6 +239,65 @@ export function validateNativeStatePresentation(
     }
     regions.push(state);
   }
+  if (c.patch_states !== undefined && !Array.isArray(c.patch_states)) fail("invalid patch states");
+  for (const state of c.patch_states ?? []) {
+    if (
+      !state ||
+      !state.id ||
+      ids.has(state.id) ||
+      !state.source ||
+      !["map-patch", "mission-patch"].includes(state.source.kind) ||
+      !uint(state.source.index) ||
+      !hash(state.source.sha256) ||
+      state.integrate_in_background !== false ||
+      !uint(state.elevation) ||
+      state.layer !== (state.elevation === 0 ? "background" : "ordered") ||
+      !pair(state.display_position) ||
+      !pair(state.sort_position) ||
+      !Number.isFinite(state.display_order) ||
+      !uint(state.creation_order) ||
+      orders.has(state.creation_order) ||
+      !state.profile ||
+      !safeLibraryPath(state.profile.path) ||
+      !hash(state.profile.sha256) ||
+      typeof state.profile.name !== "string" ||
+      !state.profile.name ||
+      !pair(state.profile.center) ||
+      typeof state.definitive !== "boolean" ||
+      typeof state.initial_loop !== "boolean" ||
+      typeof state.final_loop !== "boolean" ||
+      !Array.isArray(state.polyline) ||
+      (state.polyline.length > 0 && state.polyline.length < 2) ||
+      !state.polyline.every(pair)
+    )
+      fail("invalid transient patch binding");
+    const key = `${state.source.kind}:${state.source.index}`;
+    if (sources.has(key)) fail("duplicate patch source");
+    ids.add(state.id);
+    sources.add(key);
+    orders.add(state.creation_order);
+    for (let i = 1; i < state.polyline.length; i++)
+      if (state.polyline[i]![0] <= state.polyline[i - 1]![0])
+        fail("display polyline must increase in X");
+    for (const list of [state.initial, state.transition, state.final]) frames(list);
+    if (!state.transition.length) fail("patch transition requires source frames");
+  }
+  const equivalence = c.painted_order_equivalence;
+  if (
+    equivalence !== undefined &&
+    (!equivalence ||
+      equivalence.kind !== "disjoint-adjacent-source-pair" ||
+      !hash(equivalence.contract_sha256) ||
+      !Array.isArray(equivalence.elements) ||
+      equivalence.elements.length !== 2 ||
+      equivalence.elements[0] === equivalence.elements[1] ||
+      equivalence.elements.some(
+        (id) =>
+          !c.elements.some((e) => e.id === id && e.display_position.every(Number.isSafeInteger)),
+      ) ||
+      (c.patch_states?.length ?? 0) > 0)
+  )
+    fail("invalid painted ordering equivalence");
 }
 
 export function nativePresentationFrame(
@@ -263,6 +341,40 @@ export function nativeBackgroundFrames(
   throw new Error("Unknown background phase");
 }
 
+export function nativeTransientPatchFrame(
+  state: NativeTransientPatchState,
+  phase: NativeBackgroundPhase,
+  tick: number,
+): NativePresentationFrame | undefined {
+  if (
+    !Number.isSafeInteger(tick) ||
+    tick < 0 ||
+    !state.transition.length ||
+    (phase === "reverse" && state.definitive)
+  )
+    throw new Error("Invalid patch transition");
+  const duration = state.transition.reduce((sum, frame) => sum + frame.delay + 1, 0);
+  if (phase === "forward" && tick >= duration)
+    return nativeTransientPatchFrame(state, "applied", tick - duration);
+  if (phase === "reverse" && tick >= duration)
+    return nativeTransientPatchFrame(state, "initial", tick - duration);
+  const frames =
+    phase === "initial"
+      ? state.initial
+      : phase === "applied"
+        ? state.final
+        : phase === "forward"
+          ? state.transition
+          : phase === "reverse"
+            ? [...state.transition].reverse()
+            : undefined;
+  if (!frames) throw new Error("Unknown patch phase");
+  const loop =
+    phase === "initial" ? state.initial_loop : phase === "applied" ? state.final_loop : false;
+  const index = nativePresentationFrame({ frames, loop }, tick);
+  return index < 0 ? undefined : frames[index];
+}
+
 export function nativeElementBehind(polyline: [number, number][], point: [number, number]) {
   if (polyline.length < 2) throw new Error("Missing native display polyline");
   const [x, y] = point,
@@ -278,7 +390,10 @@ export function nativeElementBehind(polyline: [number, number][], point: [number
   throw new Error("Invalid native display polyline");
 }
 
-export function nativePresentationOrder(elements: readonly NativePresentationElement[]) {
+export function nativePresentationOrder<T extends Omit<NativePresentationElement, "source">>(
+  elements: readonly T[],
+  verifiedDisjointPair?: readonly [string, string],
+) {
   const nonAnimations = elements
     .filter((e) => e.active && !e.polyline.length)
     .sort((a, b) => a.display_order - b.display_order || a.creation_order - b.creation_order);
@@ -287,9 +402,9 @@ export function nativePresentationOrder(elements: readonly NativePresentationEle
     .sort(
       (a, b) => Math.min(...a.polyline.map((p) => p[1])) - Math.min(...b.polyline.map((p) => p[1])),
     );
-  const merge = (ordered: NativePresentationElement[]) => {
+  const merge = (ordered: T[]) => {
     const remaining = [...nonAnimations],
-      result: NativePresentationElement[] = [];
+      result: T[] = [];
     for (const animation of ordered) {
       for (let i = 0; i < remaining.length;) {
         if (nativeElementBehind(animation.polyline, remaining[i]!.sort_position))
@@ -300,14 +415,14 @@ export function nativePresentationOrder(elements: readonly NativePresentationEle
     }
     return result.concat(remaining);
   };
-  const permutations = (group: NativePresentationElement[]): NativePresentationElement[][] => {
+  const permutations = (group: T[]): T[][] => {
     if (group.length > 4) throw new Error("Unproven native animation ordering tie");
     if (!group.length) return [[]];
     return group.flatMap((entry, index) =>
       permutations(group.filter((_, i) => i !== index)).map((rest) => [entry, ...rest]),
     );
   };
-  let variants: NativePresentationElement[][] = [[]];
+  let variants: T[][] = [[]];
   for (let start = 0; start < animations.length;) {
     const minimum = Math.min(...animations[start]!.polyline.map((p) => p[1]));
     let end = start + 1;
@@ -322,19 +437,22 @@ export function nativePresentationOrder(elements: readonly NativePresentationEle
     if (variants.length > 64) throw new Error("Unproven native animation ordering ties");
     start = end;
   }
-  const result = merge(variants[0]!),
-    visible = result
-      .filter((e) => e.frames.length)
-      .map((e) => e.id)
-      .join("\0");
-  // An unspecified tie is safe only if every possible order yields identical painted ordering.
-  for (const variant of variants.slice(1))
+  const result = merge(variants[0]!);
+  const visible = (list: T[]) => list.filter((e) => e.frames.length).map((e) => e.id);
+  const baseline = visible(result);
+  for (const variant of variants.slice(1)) {
+    const other = visible(merge(variant));
+    if (JSON.stringify(other) === JSON.stringify(baseline)) continue;
+    if (!verifiedDisjointPair) throw new Error("Ambiguous native animation ordering tie");
+    const changed = baseline.flatMap((id, index) => (id !== other[index] ? [index] : []));
     if (
-      merge(variant)
-        .filter((e) => e.frames.length)
-        .map((e) => e.id)
-        .join("\0") !== visible
+      changed.length !== 2 ||
+      changed[1] !== changed[0]! + 1 ||
+      !changed.every((index) => verifiedDisjointPair.includes(baseline[index]!)) ||
+      baseline[changed[0]!] !== other[changed[1]!] ||
+      baseline[changed[1]!] !== other[changed[0]!]
     )
-      throw new Error("Ambiguous native animation ordering tie");
+      throw new Error("Painted ordering equivalence changes another element");
+  }
   return result;
 }

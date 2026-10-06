@@ -3,6 +3,7 @@ import type { Level3D } from "@rle/shared";
 import type { EditorViewport } from "./editor-viewport.ts";
 import {
   nativeLoopPreviewPeriod,
+  stateDeliveryLoopsAfterTransition,
   type NativeLoopPreviewContract,
   type StateDeliveryContract,
 } from "../../shared/src/state-delivery.ts";
@@ -155,7 +156,12 @@ export default function StatePreview(props: {
     if (!s.ready) return;
     setTick(loopContract() ? (s.tick ?? 0) % (lastTick() + 1) : Math.min(lastTick(), s.tick ?? 0));
     setPlaying(s.playing);
-    if (!loopContract() && s.playing && (s.tick ?? 0) >= lastTick()) {
+    if (
+      !loopContract() &&
+      s.playing &&
+      (s.tick ?? 0) >= lastTick() &&
+      !stateDeliveryLoopsAfterTransition(contract()!, family())
+    ) {
       props.viewport.setDeliveredStatePlaying(false);
       setPlaying(false);
     }
@@ -178,7 +184,10 @@ export default function StatePreview(props: {
       return;
     }
     const s = props.viewport.deliveredStateStatus(family());
-    if (s.tick === undefined || s.tick >= lastTick())
+    if (
+      s.tick === undefined ||
+      (s.tick >= lastTick() && !stateDeliveryLoopsAfterTransition(contract()!, family()))
+    )
       props.viewport.activateDeliveredState(family());
     props.viewport.setDeliveredStatePlaying(true);
     setPlaying(true);

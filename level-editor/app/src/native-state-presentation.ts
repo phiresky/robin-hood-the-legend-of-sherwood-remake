@@ -3,6 +3,8 @@ import {
   nativePresentationFrame,
   nativePresentationOrder,
   nativeBackgroundFrames,
+  nativeTransientPatchFrame,
+  type NativePresentationElement,
   validateNativeStatePresentation,
   type NativeImageResource,
   type NativeShadowKey,
@@ -17,7 +19,9 @@ export interface NativePixels {
   height: number;
   data: Uint8Array;
 }
-export type NativeResourceReader = (resource: NativeImageResource) => Promise<Uint8Array>;
+export type NativeResourceReader = (
+  resource: Pick<NativeImageResource, "path" | "sha256">,
+) => Promise<Uint8Array>;
 
 export function nativeLibraryReader(root: FileSystemDirectoryHandle): NativeResourceReader {
   return async (resource) => {
@@ -178,12 +182,65 @@ export async function verifyNativePresentationSource(
     )
       throw new Error(`Native background semantics changed: ${state.id}`);
   }
+  for (const state of contract.patch_states ?? []) {
+    const rows =
+      state.source.kind === "map-patch" ? source.level.patches : source.data.mission_patches;
+    const raw = Array.isArray(rows) ? rows[state.source.index] : undefined;
+    if (!raw || (await missionStateDataHash(raw)) !== state.source.sha256)
+      throw new Error(`Native patch source changed: ${state.id}`);
+    const row = raw as unknown as Record<string, unknown>;
+    const fx = row.element_fx as {
+      sprite: { position_x: number; position_y: number; elevation: number; profile_name: string };
+      active: boolean;
+      display_polyline: [number, number][];
+    };
+    const sprite = fx?.sprite,
+      center = state.profile.center;
+    const creation =
+      state.source.kind === "map-patch"
+        ? state.source.index
+        : source.level.patches.length +
+          source.level.animations.length +
+          targets.length +
+          state.source.index;
+    if (
+      row.integrate_in_background !== false ||
+      row.definitive !== state.definitive ||
+      row.start_animation_valid !== state.initial.length > 0 ||
+      row.transition_animation_valid !== true ||
+      row.end_animation_valid !== state.final.length > 0 ||
+      fx?.active !== true ||
+      sprite?.profile_name !== state.profile.name ||
+      sprite.position_x !== state.display_position[0] ||
+      sprite.position_y !== state.display_position[1] ||
+      sprite.elevation !== state.elevation ||
+      state.creation_order !== creation ||
+      state.sort_position[0] !== sprite.position_x + center[0] ||
+      state.sort_position[1] !== sprite.position_y + center[1] ||
+      state.display_order !== sprite.position_y + center[1] + sprite.elevation ||
+      JSON.stringify(state.polyline) !== JSON.stringify(fx.display_polyline) ||
+      (state.initial.length > 0 && !state.initial_loop) ||
+      (state.final.length > 0 && !state.final_loop)
+    )
+      throw new Error(`Native patch semantics changed: ${state.id}`);
+  }
+  if (contract.painted_order_equivalence) {
+    const { painted_order_equivalence, ...bound } = contract;
+    if (
+      (await missionStateDataHash({
+        contract: bound,
+        elements: painted_order_equivalence.elements,
+      })) !== painted_order_equivalence.contract_sha256
+    )
+      throw new Error("Painted ordering contract changed");
+  }
   nativePresentationOrder(
     contract.elements.map((e) =>
       !e.active && e.initial_frame
         ? { ...e, active: true, frames: [e.initial_frame], loop: false }
         : e,
     ),
+    contract.painted_order_equivalence?.elements,
   );
 }
 
@@ -195,6 +252,8 @@ export class NativeStatePresentation {
   private contract: NativeStatePresentationContract | undefined;
   private offsets = new Map<string, number>();
   private activeElements = new Map<string, boolean>();
+  private verifiedDisjointPair: [string, string] | undefined;
+  private patches = new Map<string, { phase: NativeBackgroundPhase; offset: number }>();
   private backgrounds = new Map<string, { phase: NativeBackgroundPhase; offset: number }>();
   private seconds = 0;
   private currentTick = 0;
@@ -220,6 +279,8 @@ export class NativeStatePresentation {
     this.offsets.clear();
     this.activeElements.clear();
     this.backgrounds.clear();
+    this.patches.clear();
+    this.verifiedDisjointPair = undefined;
     this.currentTick = 0;
     this.seconds = 0;
     this.playing = false;
@@ -249,7 +310,7 @@ export class NativeStatePresentation {
         ...e.frames,
         ...(e.initial_frame ? [e.initial_frame] : []),
       ]),
-      ...(frozen.background_states ?? []).flatMap((s) => [
+      ...[...(frozen.background_states ?? []), ...(frozen.patch_states ?? [])].flatMap((s) => [
         ...s.initial,
         ...s.transition,
         ...s.final,
@@ -265,6 +326,34 @@ export class NativeStatePresentation {
       )
         throw new Error("Conflicting native artwork resource binding");
       resources.set(resource.path, resource);
+    }
+    for (const state of frozen.patch_states ?? []) {
+      if (this.disposed || epoch !== this.epoch) return false;
+      let bytes: Uint8Array;
+      try {
+        bytes = await read(state.profile);
+      } catch (error) {
+        if (this.disposed || epoch !== this.epoch) return false;
+        throw error;
+      }
+      const hash = Array.from(
+        new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array(bytes))),
+        (n) => n.toString(16).padStart(2, "0"),
+      ).join("");
+      if (this.disposed || epoch !== this.epoch) return false;
+      if (hash !== state.profile.sha256)
+        throw new Error(`Native patch profile changed: ${state.id}`);
+      const value = JSON.parse(new TextDecoder().decode(bytes));
+      const profile = Array.isArray(value.profiles)
+        ? value.profiles.find((p: { name: string }) => p.name === state.profile.name)
+        : value;
+      if (
+        !profile ||
+        profile.name !== state.profile.name ||
+        profile.center_x !== state.profile.center[0] ||
+        profile.center_y !== state.profile.center[1]
+      )
+        throw new Error(`Native patch center changed: ${state.id}`);
     }
     const images = new Map<string, NativePixels>();
     // Bound decoding work while allowing mission changes between files.
@@ -289,6 +378,28 @@ export class NativeStatePresentation {
         )
           throw new Error(`Native shadow key must have binary alpha: ${frame.path}`);
     }
+    const pair = frozen.painted_order_equivalence?.elements;
+    if (pair) {
+      const [a, b] = pair.map((id) => frozen.elements.find((e) => e.id === id)!);
+      if (!a || !b) throw new Error("Missing painted ordering element");
+      for (const af of [...a.frames, ...(a.initial_frame ? [a.initial_frame] : [])])
+        for (const bf of [...b.frames, ...(b.initial_frame ? [b.initial_frame] : [])]) {
+          const ax = a.display_position[0] + af.offset[0],
+            ay = a.display_position[1] + af.offset[1],
+            bx = b.display_position[0] + bf.offset[0],
+            by = b.display_position[1] + bf.offset[1];
+          const ap = images.get(af.path)!,
+            bp = images.get(bf.path)!;
+          for (let y = Math.max(ay, by); y < Math.min(ay + af.height, by + bf.height); y++)
+            for (let x = Math.max(ax, bx); x < Math.min(ax + af.width, bx + bf.width); x++)
+              if (
+                ap.data[((y - ay) * af.width + x - ax) * 4 + 3] &&
+                bp.data[((y - by) * bf.width + x - bx) * 4 + 3]
+              )
+                throw new Error("Painted ordering pair overlaps");
+        }
+    }
+    this.verifiedDisjointPair = pair;
     this.contract = frozen;
     this.images = images;
     this.revision++;
@@ -317,6 +428,13 @@ export class NativeStatePresentation {
     )
       throw new Error("Invalid native background state");
     this.backgrounds.set(id, { phase, offset: tick - this.currentTick });
+    this.revision++;
+  }
+  setPatchState(id: string, phase: NativeBackgroundPhase, tick = 0) {
+    const state = this.contract?.patch_states?.find((s) => s.id === id);
+    if (!state) throw new Error(`Unknown native patch state: ${id}`);
+    nativeTransientPatchFrame(state, phase, tick);
+    this.patches.set(id, { phase, offset: tick - this.currentTick });
     this.revision++;
   }
   seek(tick: number, id?: string) {
@@ -372,13 +490,35 @@ export class NativeStatePresentation {
           frame.shadow_key,
         );
     }
-    const elements = this.contract.elements.map((e) => {
-      const active = this.activeElements.get(e.id) ?? e.active;
-      return !active && e.initial_frame
-        ? { ...e, active: true, frames: [e.initial_frame], loop: false }
-        : { ...e, active };
-    });
-    for (const element of nativePresentationOrder(elements)) {
+    const elements: Omit<NativePresentationElement, "source">[] = this.contract.elements.map(
+      (e) => {
+        const active = this.activeElements.get(e.id) ?? e.active;
+        return !active && e.initial_frame
+          ? { ...e, active: true, frames: [e.initial_frame], loop: false }
+          : { ...e, active };
+      },
+    );
+    for (const state of [...(this.contract.patch_states ?? [])].sort(
+      (a, b) => a.creation_order - b.creation_order,
+    )) {
+      const selected = this.patches.get(state.id) ?? { phase: "initial" as const, offset: 0 };
+      const frame = nativeTransientPatchFrame(
+        state,
+        selected.phase,
+        Math.max(0, this.currentTick + selected.offset),
+      );
+      if (!frame) continue;
+      if (state.layer === "background")
+        compositeNativePixels(
+          pixels,
+          this.images.get(frame.path)!,
+          state.display_position[0] + frame.offset[0] - this.contract.origin[0],
+          state.display_position[1] + frame.offset[1] - this.contract.origin[1],
+          frame.shadow_key,
+        );
+      else elements.push({ ...state, active: true, frames: [frame], loop: false });
+    }
+    for (const element of nativePresentationOrder(elements, this.verifiedDisjointPair)) {
       const index = nativePresentationFrame(
         element,
         Math.max(0, this.currentTick + (this.offsets.get(element.id) ?? 0)),

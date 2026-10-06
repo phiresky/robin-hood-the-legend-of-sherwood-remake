@@ -153,7 +153,9 @@ export class StateDelivery {
     const family = this.family(id);
     if (!Number.isSafeInteger(tick) || tick < 0) throw new Error("Invalid state delivery tick");
     this.starts.set(id, this.native.tick - tick);
-    for (const element of family.element_ids) this.native.setElementState(element, true, tick);
+    for (const element of [...family.element_ids, ...(family.hidden_initial_element_ids ?? [])])
+      this.native.setElementState(element, true, tick);
+    for (const patch of family.patch_ids ?? []) this.native.setPatchState(patch, "forward", tick);
     for (const background of family.background_ids)
       this.native.setBackgroundState(background, "forward", tick);
   }
@@ -163,7 +165,9 @@ export class StateDelivery {
   reset(id: string) {
     const family = this.family(id);
     this.starts.delete(id);
-    for (const element of family.element_ids) this.native.setElementState(element, false);
+    for (const element of [...family.element_ids, ...(family.hidden_initial_element_ids ?? [])])
+      this.native.setElementState(element, false);
+    for (const patch of family.patch_ids ?? []) this.native.setPatchState(patch, "initial");
     for (const background of family.background_ids)
       this.native.setBackgroundState(background, "initial");
   }

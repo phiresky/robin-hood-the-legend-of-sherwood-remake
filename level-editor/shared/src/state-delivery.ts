@@ -38,6 +38,8 @@ export interface StateDeliveryContract {
     id: string;
     element_ids: string[];
     background_ids: string[];
+    patch_ids?: string[];
+    hidden_initial_element_ids?: string[];
     /** Terminal entry of the last visible target; receiver completion retains its own clock. */
     body_terminal_tick: number;
     physical: { initial: PhysicalEndpoint; applied: PhysicalEndpoint };
@@ -68,7 +70,10 @@ export function validateStateDelivery(value: unknown): asserts value is StateDel
       !family.id ||
       families.has(family.id) ||
       !Array.isArray(family.element_ids) ||
-      !family.element_ids.length ||
+      (!family.element_ids.length && !family.patch_ids?.length) ||
+      (family.patch_ids !== undefined && !Array.isArray(family.patch_ids)) ||
+      (family.hidden_initial_element_ids !== undefined &&
+        !Array.isArray(family.hidden_initial_element_ids)) ||
       !Array.isArray(family.background_ids) ||
       !Number.isSafeInteger(family.body_terminal_tick) ||
       family.body_terminal_tick < 0
@@ -91,6 +96,29 @@ export function validateStateDelivery(value: unknown): asserts value is StateDel
       terminal = Math.max(
         terminal,
         e!.frames.slice(0, -1).reduce((n, f) => n + f.delay + 1, 0),
+      );
+    }
+    for (const id of family.hidden_initial_element_ids ?? []) {
+      const e = c.native.elements.find((e) => e.id === id);
+      if (
+        !e ||
+        e.source.kind !== "mission-target" ||
+        e.active ||
+        e.loop ||
+        e.frames.length ||
+        !e.initial_frame ||
+        members.has(id)
+      )
+        fail("invalid hidden initial target");
+      members.add(id);
+    }
+    for (const id of family.patch_ids ?? []) {
+      const state = c.native.patch_states?.find((s) => s.id === id);
+      if (!state || members.has(id)) fail("invalid or shared patch state");
+      members.add(id);
+      terminal = Math.max(
+        terminal,
+        state!.transition.reduce((n, f) => n + f.delay + 1, 0),
       );
     }
     if (terminal !== family.body_terminal_tick)
@@ -201,6 +229,21 @@ export function verifyStaticStateReplacements(
             `State replacement differs from the displayed placement: ${row.object_id}`,
           );
       }
+}
+
+/** Final patch animation keeps the existing native clock running after the transition. */
+export function stateDeliveryLoopsAfterTransition(
+  contract: StateDeliveryContract,
+  familyId: string,
+): boolean {
+  const family = contract.families.find((f) => f.id === familyId);
+  if (!family) throw new Error(`Unknown state family: ${familyId}`);
+  return [
+    ...(contract.native.patch_states ?? []).filter((s) => family.patch_ids?.includes(s.id)),
+    ...(contract.native.background_states ?? []).filter((s) =>
+      family.background_ids.includes(s.id),
+    ),
+  ].some((s) => s.final_loop && s.final.length > 0);
 }
 
 /** Source artwork loop preview; independent ambient elements retain their own clocks. */

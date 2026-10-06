@@ -141,7 +141,7 @@ test("failed or stale physical loads never adopt a partial delivery", async () =
   const layer = new StateDelivery(() => ({
     load: async () => {
       started();
-      return await new Promise<THREE.Object3D>((_resolve, fail) => {
+      return await new Promise<THREE.Group>((_resolve, fail) => {
         reject = fail;
       });
     },
@@ -214,7 +214,9 @@ test("mission translation preserves the reusable root transform and independent 
   f.template.position.set(1, 2, 3);
   f.template.rotation.y = 0.4;
   f.template.scale.set(2, 1, 3);
-  f.contract.families[0]!.physical.initial[0]!.position = [10, 20, 30];
+  const sources = f.contract.families[0]!.physical.initial;
+  assert.ok(Array.isArray(sources));
+  sources[0]!.position = [10, 20, 30];
   const player = new StateDelivery(() => ({ load: async () => f.template, dispose() {} }));
   await player.set(f.contract, f.source, f.library, f.read);
   const initial = player.physical.children[0]!.children[0]!,
@@ -259,4 +261,102 @@ test("absent initial state loads no placeholder and switching to the reviewed fi
   assert.equal(player.physical.children[1]!.children.length, 1);
   player.clear();
   assert.equal(player.physical.children.length, 0);
+});
+
+test("nonintegrating branch hides initial rig, advances one clock and restores it on reset", async () => {
+  const f = await fixture(),
+    e = f.contract.native.elements[0]!,
+    initial = e.frames[0]!;
+  e.initial_frame = initial;
+  e.frames = [];
+  const profile = { name: "net", center_x: 0, center_y: 0 },
+    profileBytes = new TextEncoder().encode(JSON.stringify(profile));
+  const make = async (path: string, color: number[]) => {
+    const bytes = encode({ width: 1, height: 1, channels: 4, data: new Uint8Array(color) });
+    const digest = Array.from(
+      new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array(bytes))),
+      (n) => n.toString(16).padStart(2, "0"),
+    ).join("");
+    return {
+      bytes,
+      frame: {
+        path,
+        sha256: digest,
+        width: 1,
+        height: 1,
+        offset: [0, 0] as [number, number],
+        delay: 1,
+      },
+    };
+  };
+  const blue = await make("blue.png", [0, 0, 200, 255]),
+    green = await make("green.png", [0, 200, 0, 255]);
+  f.contract.native.background = blue.frame;
+  const row = {
+    integrate_in_background: false,
+    definitive: false,
+    start_animation_valid: false,
+    transition_animation_valid: true,
+    end_animation_valid: false,
+    element_fx: {
+      sprite: { position_x: 0, position_y: 0, elevation: 1, profile_name: "net" },
+      active: true,
+      display_polyline: [],
+    },
+  };
+  f.source.data.mission_patches = [row];
+  f.contract.native.mission_data_sha256 = await missionStateDataHash(f.source.data);
+  f.contract.native.patch_states = [
+    {
+      id: "bag",
+      source: { kind: "mission-patch", index: 0, sha256: await missionStateDataHash(row) },
+      profile: {
+        path: "profile.json",
+        sha256: await missionStateDataHash(profile),
+        name: "net",
+        center: [0, 0],
+      },
+      integrate_in_background: false,
+      elevation: 1,
+      layer: "ordered",
+      display_position: [0, 0],
+      sort_position: [0, 0],
+      display_order: 1,
+      creation_order: 1,
+      polyline: [],
+      definitive: false,
+      initial: [],
+      transition: [green.frame],
+      final: [],
+      initial_loop: true,
+      final_loop: true,
+    },
+  ];
+  const family = f.contract.families[0]!;
+  family.element_ids = [];
+  family.hidden_initial_element_ids = [e.id];
+  family.patch_ids = ["bag"];
+  family.body_terminal_tick = 2;
+  const p = new StateDelivery(() => ({ load: async () => f.template, dispose() {} }));
+  await p.set(f.contract, f.source, f.library, async (resource) =>
+    resource.path === "profile.json"
+      ? profileBytes
+      : resource.path === "blue.png"
+        ? blue.bytes
+        : resource.path === "green.png"
+          ? green.bytes
+          : f.read(),
+  );
+  const rgb = () => Array.from(p.native.pixels().data.slice(0, 3));
+  assert.deepEqual(rgb(), [200, 30, 20]);
+  p.activate("trap");
+  assert.deepEqual(rgb(), [0, 200, 0]);
+  p.setPlaying(true);
+  p.advance(2 / 25);
+  assert.deepEqual(rgb(), [0, 0, 200]);
+  p.reset("trap");
+  assert.deepEqual(rgb(), [200, 30, 20]);
+  p.clear();
+  assert.equal(p.ready, false);
+  assert.equal(p.native.ready, false);
 });

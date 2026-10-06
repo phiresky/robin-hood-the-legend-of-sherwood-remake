@@ -3,6 +3,11 @@
 Open **Crossroads 2**, select **Mission**, then choose **05 · Ambush**. The
 **State preview** section offers the log trap and rock trap.
 
+The log trap is also available in **07 · Ambush**, **09 · Ambush**, and
+**02**, **06**, **19**, and **21 · Tactical**. The rock trap is also available
+in **09 · Ambush** and those four Tactical missions. Each preview uses its
+selected mission's artwork, placement, and timing.
+
 Choose **06 · Pillaging** for **Signposts and ambient animation**. This preview
 plays the five signposts with the surrounding animated artwork. Its 64-tick
 slider follows the sign loop while nearby animations keep their own timing.
@@ -37,6 +42,12 @@ Entries declared as native loops offer artwork playback without initial/final
 3D choices. Their frame slider follows the selected loop; nearby animations keep
 their independent timing. These entries remain presentation previews, not mission
 script execution.
+
+Contracts can also declare transient foreground or ground artwork with separate
+initial, transition, and final phases. A declared final loop continues until
+paused or reset; a nonlooping transition stops at its final frame. Transient
+artwork does not permanently paint the background. Source profile hashes and
+placement metadata must agree before the preview loads.
 
 Missing optional catalogs leave the editor unchanged. Declared resources that
 are missing or fail validation report an error and retire the preview. Mission

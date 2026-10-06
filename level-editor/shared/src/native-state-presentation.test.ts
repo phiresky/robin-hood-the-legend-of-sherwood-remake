@@ -234,3 +234,30 @@ test("background restoration rejects overlapping regions and escaped frame bound
   assert.throws(() => validateNativeStatePresentation(contract), /outside restoration/);
   assert.throws(() => nativeBackgroundFrames(state, "reverse", 0), /transition/);
 });
+
+test("verified disjoint pair never permits a third painted element to change position", () => {
+  const a = element("a"),
+    b = element("b"),
+    third = element("third");
+  a.polyline = [
+    [0, 0],
+    [10, 10],
+  ];
+  b.polyline = [
+    [0, 0],
+    [10, 0],
+  ];
+  a.creation_order = 0;
+  b.creation_order = 1;
+  third.creation_order = 2;
+  third.sort_position = [5, 2];
+  assert.throws(
+    () => nativePresentationOrder([a, b, third], ["a", "b"]),
+    /changes another element/,
+  );
+  assert.deepEqual(
+    nativePresentationOrder([a, b], ["a", "b"]).map((e) => e.id),
+    ["a", "b"],
+  );
+  assert.throws(() => nativePresentationOrder([a, b]), /Ambiguous/);
+});

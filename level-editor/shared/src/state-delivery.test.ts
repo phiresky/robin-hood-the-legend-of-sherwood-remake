@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   validateStateDelivery,
+  stateDeliveryLoopsAfterTransition,
   physicalEndpointSources,
   validateNativeLoopPreview,
   nativeLoopPreviewPeriod,
@@ -164,4 +165,77 @@ test("loop preview timeline uses the selected loop while other effects keep inde
   assert.equal(nativeLoopPreviewPeriod(c), 6);
   c.native.elements[0]!.loop = false;
   assert.throws(() => validateNativeLoopPreview(c), /visible looping focus/);
+});
+
+test("patch-only branch requires a distinct initial target and owns its phase timing", () => {
+  const c = deliveryFixture(),
+    e = c.native.elements[0]!,
+    frame = e.frames[0]!;
+  e.initial_frame = frame;
+  e.frames = [];
+  c.native.patch_states = [
+    {
+      id: "bag",
+      source: { kind: "mission-patch", index: 0, sha256: "b".repeat(64) },
+      profile: { path: "profile.json", sha256: "c".repeat(64), name: "net", center: [0, 0] },
+      integrate_in_background: false,
+      elevation: 1,
+      layer: "ordered",
+      display_position: [0, 0],
+      sort_position: [0, 0],
+      display_order: 1,
+      creation_order: 1,
+      polyline: [],
+      definitive: false,
+      initial: [],
+      transition: [frame],
+      final: [frame],
+      initial_loop: true,
+      final_loop: true,
+    },
+  ];
+  const f = c.families[0]!;
+  f.element_ids = [];
+  f.hidden_initial_element_ids = [e.id];
+  f.patch_ids = ["bag"];
+  f.body_terminal_tick = 3;
+  validateStateDelivery(c);
+  f.body_terminal_tick = 2;
+  assert.throws(() => validateStateDelivery(c), /timing/);
+  f.body_terminal_tick = 3;
+  f.patch_ids.push("bag");
+  assert.throws(() => validateStateDelivery(c), /shared patch/);
+  f.patch_ids.pop();
+  c.families.push({ ...structuredClone(f), id: "other" });
+  assert.throws(() => validateStateDelivery(c), /hidden initial target/);
+});
+
+test("only a declared nonempty final loop continues after the transition", () => {
+  const c = deliveryFixture(),
+    f = c.families[0]!,
+    frame = c.native.elements[0]!.frames[0]!;
+  assert.equal(stateDeliveryLoopsAfterTransition(c, f.id), false);
+  c.native.background_states = [
+    {
+      id: "receiver",
+      source: { kind: "mission-patch", index: 0, sha256: "b".repeat(64) },
+      display_position: [0, 0],
+      restore_bounds: [0, 0, 1, 1],
+      definitive: false,
+      initial: [],
+      transition: [frame],
+      final: [frame],
+      initial_loop: false,
+      final_loop: true,
+    },
+  ];
+  assert.equal(stateDeliveryLoopsAfterTransition(c, f.id), false);
+  f.background_ids = ["receiver"];
+  assert.equal(stateDeliveryLoopsAfterTransition(c, f.id), true);
+  c.native.background_states[0]!.final_loop = false;
+  assert.equal(stateDeliveryLoopsAfterTransition(c, f.id), false);
+  c.native.background_states[0]!.final_loop = true;
+  c.native.background_states[0]!.final = [];
+  assert.equal(stateDeliveryLoopsAfterTransition(c, f.id), false);
+  assert.throws(() => stateDeliveryLoopsAfterTransition(c, "missing"), /Unknown state family/);
 });
