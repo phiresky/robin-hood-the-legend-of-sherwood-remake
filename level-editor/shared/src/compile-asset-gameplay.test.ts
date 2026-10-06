@@ -189,6 +189,22 @@ test("physical ladders require landing support at both the outside point and sea
   );
 });
 
+test("ordinary physical ladder landings retain fractional support boundaries", () => {
+  for (const rotation of [0, 37, 90, 180]) {
+    const { document, assets, hut } = changingClimbCompilerFixture(2);
+    document.groups[0]!.transform = { dx: 900.25, dy: 900.25, dz: 20, rot_deg: rotation };
+    for (const surface of hut.gameplay!.surfaces) surface.preserveMovementPrecision = true;
+    const compiled = compileAssetGameplay(document, assets, bounds);
+    const lift = compiled.lifts![0]!;
+    assert.ok(lift.physical_navigation, compiled.warnings?.join("\n"));
+    for (const door of lift.doors) {
+      const area = compiled.motion_data.layers[door.layer_out]!.find((area) => !area.is_lift)!;
+      assert.ok(area.precise_polygon, `Missing exact landing at rotation ${rotation}`);
+      assert.ok(area.precise_polygon.some((point) => point.some((value) => value % 1 !== 0)));
+    }
+  }
+});
+
 test("physical ladder landings can use bound raised receiving volumes", () => {
   const { document, assets, hut } = receivingLadderCompilerFixture();
   const compiled = compileAssetGameplay(document, assets, bounds);

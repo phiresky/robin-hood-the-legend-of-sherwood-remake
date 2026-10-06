@@ -4,6 +4,28 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Exact ordinary landing boundaries (2026-10-06)
+
+Ordinary surface landings now retain their pre-grid boundary when connected to
+a physical lift, using the same unique-contour and identical-rounded-footprint
+checks as raised receiving attachments. Previously only the latter qualified;
+the ordinary landing could lose foot support at its rounded seam. Changes below
+the clipping-grid error bound do not add redundant precision fields.
+
+With this compiler correction, diagnostic `oak-receiver-RLvu4H` passes all
+16/16 climbs and 16/16 unchanged stair routes (`local-stair-placements-D6sqZr`).
+Fresh exports after the insignificant-roundoff filter (`local-stair-placements-Ay0leo`)
+retain 16/16 passing climbs. Native precise-contour validation passes. The original
+seam-only candidate still fails 16/16 climbs (`local-stair-placements-wNFqzp`),
+so the compiler correction does not substitute for asset collision/receiver review.
+The diagnostic's whole-platform clearance remains unpublished.
+
+A four-rotation compiler regression covers ordinary fractional landing support.
+The refreshed changing-climb native fixture differs only by four exact landing
+boundaries. All four complete-animation changing-climb tests pass, including
+72 mid-climb reopening checks. Editor validation passes 848 tests with two skipped;
+app typecheck, focused lint/formatting and the production build pass.
+
 ## Sherwood central oak ladder investigation (2026-10-06)
 
 The unpublished seam candidate `local-stair-seams-84DWuZ` corrects the ladder

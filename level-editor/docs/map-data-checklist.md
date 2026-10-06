@@ -166,11 +166,12 @@ heights or coverage still disagree.
 The expanded local-anchor audit finds 4/8 ladder definitions and 9/9 wall
 definitions with unsupported floor anchors. Those counts do not check landing
 height compatibility or certify placed routes. Physical walls remain unfinished.
-The Sherwood central oak ladder seam candidate remains unpublished: eight moved
-placements fail all sixteen climb routes. A diagnostic collision clearance lets
-the lower landing bind in the traced default placement, but actors still stall.
-Matching receiving geometry and centered waypoints do not resolve traversal;
-the local collision cuts and actor footprint support need further review.
+The Sherwood central oak ladder seam candidate remains unpublished. Ordinary
+physical landings now retain matching pre-grid boundaries too, fixing lost seam
+support. With that compiler correction, a diagnostic receiver/clearance candidate
+passes sixteen moved climb routes and sixteen unchanged stair routes. The
+seam-only candidate still fails all sixteen climbs; the diagnostic's broad
+clearance needs local collision ownership and mesh review before publication.
 All 84 climb routes in the ten saved-scene exports now pass, as do all 71 control
 apply/reset checks and Derby's 28/28 stair routes. The published tower matches
 its native-tested candidate; Leicester retains 22/22 climb and 16/16 stair
@@ -298,7 +299,7 @@ invented across that gap. New drops use the correct foundation height. Native
 mouse queries also now reject loaded movement-obstacle interiors. These focused
 checks do not establish every platform route or complete asset coverage.
 
-Latest editor validation (2026-10-06): 847 tests passed, two skipped. Fresh
+Latest editor validation (2026-10-06): 848 tests passed, two skipped. Fresh
 descriptors for all ten saved scenes pass native loading and all 71 control
 apply/reset checks; Derby retains 28/28 stair routes. The game
 build and native stair/control checks passed. Wychford loads with its spline wall

@@ -1824,12 +1824,28 @@ function compileAssetGameplayAttempt(
             containsNavigationAnchor(area, door.outside),
         ),
     );
-    const preciseBoundaries = raisedLanding
+    // Ordinary surface landings need the same pre-grid support as receivers
+    // attached to lower navigation. Rounded edges can otherwise cut their seam.
+    const physicalLanding =
+      raisedLanding ||
+      (!lift &&
+        doors.some(
+          (door) =>
+            door.lift &&
+            physicalStairs.has(door.lift) &&
+            pieces.some((piece) => containsNavigationAnchor(piece, door.outsideAnchor)),
+        ));
+    const preciseBoundaries = physicalLanding
       ? (
           indexPreciseBlockers(
             pieces.flatMap((piece) => (piece.receivingPolygon ? [piece.receivingPolygon] : [])),
           ).get(motionBoundsKey(boundary)) ?? []
-        ).filter(({ rounded }) => polygonClipping.xor([rounded], [boundary]).length === 0)
+        ).filter(
+          ({ exact, rounded }) =>
+            exact.some((point) =>
+              point.some((value) => Math.abs(value - Math.round(value)) > 2 / 1048576),
+            ) && polygonClipping.xor([rounded], [boundary]).length === 0,
+        )
       : [];
     layers[layer]!.push(
       physical?.area ?? {
