@@ -175,26 +175,19 @@ Sherwood 1/1 and York 16/16. All audited floors are planar. This checks local
 definitions, not placed connectivity or actual route failures; corrections and
 moved/rotated native traversal checks remain necessary across these assets.
 
-The remaining Lincoln great-hall candidate now uses its external ramp's actual
-sloped plane during seam review and independent-placement testing. All 566
-flight mesh samples pass. Ordinary hall passage callbacks now install and release
-the physical floor. Gate approaches from that floor now retain door identity
-in both directions and use physical world destinations, improving copied-assembly
-routes from 32/96 to 70/96. All tested 0- and 37-degree copies pass; failures
-remain at 90 and 180 degrees.
-Rotated movement/support failures remain, and the full scene also has mismatched
-external landing edges. Ordinary doors on edge-on stairs still need explicit
-world endpoints. At 90 degrees, integer rounding of the great-hall ordinary-door
-waypoints displaces recovered ground positions by 41.754 and 106.710 units;
-their authored world endpoints agree with the stair plane. Those coordinates
-now survive compilation and loading as optional world endpoints, and physical
-gate approaches use them directly. Fresh copied exports pass 74/96 routes,
-with eight of twelve passing per 90-degree export. Receiver failures remain,
-and fractional projections expose position-consistency failures at zero degrees.
-The complete ordinary-passage animation/handoff still needs physical-coordinate
-integration; retaining approach points alone does not establish parity.
-This candidate remains unpublished; those doors and both receiving assets need
-correction rather than omission.
+The Lincoln great-hall candidate now passes all 96 directed routes through two
+copies at four rotations and two elevations, retaining all 64 missing/raised
+landing rejections. Ordinary passages preserve world endpoints for their gate
+approach, in-stair walks and midpoint handoff, including edge-on floors. Receiver
+roundoff probes follow the actual exit direction instead of moving both axes
+equally. The two passage midpoints are corrected to the stair boundary, with
+6.840/11.933-unit shifts; no door is removed. The existing stair-flight review
+has 566/566 mesh sample hits. The fixture uses independent synthetic landing
+assets with the lower ramp's actual slope. This candidate remains unpublished:
+full Lincoln still needs its two real neighbouring contacts corrected and
+retested, followed by publication and rendered verification. Fresh exports of
+the ten saved scenes retain all 284 stair routes and 84 climbing routes with
+the runtime fixes.
 The Nottingham road stair is also published after sixteen moved/elevated routes,
 eight raised-ground rejections and all 92 full-map stair routes pass. Its low-deck
 collision now follows the asset, with 80 units of authored upright headroom.

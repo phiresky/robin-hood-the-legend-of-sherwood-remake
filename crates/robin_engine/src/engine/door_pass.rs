@@ -853,6 +853,43 @@ impl EngineInner {
         let tol_wall_low_direct = dist(OrderType::TransitionWaitingUprightClimbingWallUp);
 
         let physical_door = self.physical_stair_door(assets, door_index);
+        let ordinary_physical_source = physical_door.is_none().then(|| {
+            let sector = u16::from(if direct { door_sector_out } else { sector_in });
+            let stair = assets.navigation.physical_stairs.get(&sector)?;
+            let endpoints = self.script_domains.interactables.doors[usize::from(door_index)]
+                .world_endpoints.as_ref()?;
+            let plane = robin_level_data::stair_navigation::StairNavigationPlane::new(stair.definition.plane)
+                .expect("loaded physical stair has invalid plane");
+            if !plane.contains_runtime_position(endpoints.middle) {
+                tracing::warn!(%door_index, "ordinary passage world midpoint is not on its physical floor; authoring correction required");
+                return None;
+            }
+            Some((sector, endpoints.middle))
+        }).flatten();
+        let ordinary_physical_destination = physical_door
+            .is_none()
+            .then(|| {
+                let sector = u16::from(if direct { sector_in } else { door_sector_out });
+                let stair = assets.navigation.physical_stairs.get(&sector)?;
+                let endpoints = self.script_domains.interactables.doors[usize::from(door_index)]
+                    .world_endpoints
+                    .as_ref()?;
+                let destination = if direct {
+                    endpoints.inside
+                } else {
+                    endpoints.outside
+                };
+                let plane = robin_level_data::stair_navigation::StairNavigationPlane::new(
+                    stair.definition.plane,
+                )
+                .expect("loaded physical stair has invalid plane");
+                assert!(
+                    plane.contains_runtime_position(destination),
+                    "ordinary passage destination is not on its physical floor"
+                );
+                Some((sector, destination))
+            })
+            .flatten();
         let ctx = DoorPassContext {
             door_type,
             // Transition animations also target the exact seam. Returning to
@@ -970,6 +1007,37 @@ impl EngineInner {
             },
             _ => translate_default(&ctx, &mut orders),
         };
+
+        // The callback installs the destination floor. Preserve its world
+        // endpoint for the following walk and arrival snap as well; projecting
+        // it back through a near-edge-on plane loses both height and position.
+        if ordinary_physical_source.is_some() || ordinary_physical_destination.is_some() {
+            let mut entered = false;
+            for order in orders.element.orders.iter_mut().skip(first_order) {
+                if order.order_type == OrderType::PassingDoor {
+                    entered = true;
+                    continue;
+                }
+                let target = if entered {
+                    if direct { ctx.point_in } else { ctx.point_out }
+                } else {
+                    ctx.point_mid
+                };
+                let physical = if entered {
+                    ordinary_physical_destination
+                } else {
+                    ordinary_physical_source
+                };
+                if let Some((sector, destination)) = physical
+                    && MapPoint::new(order.target_x, order.target_y) == target
+                {
+                    order.physical_stair = Some(sector);
+                    order.destination_3d = destination;
+                    order.target_x = destination[0];
+                    order.target_y = destination[1] - destination[2];
+                }
+            }
+        }
 
         // When the PC exits a ladder/wall pass (non-direct) into a
         // forced-crouch sector, rewrite the PassDoor movement
@@ -1408,22 +1476,33 @@ impl EngineInner {
                         .unwrap_or(door_point_out),
                 )
                 .or_else(|| {
-                    // Independently rounded floor/receiver vertices can put an
-                    // exact seam just outside its landing. Probe at most four f32
-                    // steps toward the landing; never use the distant waypoint to
-                    // bridge an unsupported gap or choose another terrain triangle.
-                    let mut point = receiving_point?;
-                    for _ in 0..4 {
-                        for (value, toward) in [
-                            (&mut point.x, door_point_out.x),
-                            (&mut point.y, door_point_out.y),
-                        ] {
-                            if *value < toward {
-                                *value = value.next_up();
-                            } else if *value > toward {
-                                *value = value.next_down();
-                            }
-                        }
+                    // Roundoff can put a shared seam just outside its receiver.
+                    // Keep probes on the approach direction: advancing each axis
+                    // by one ULP instead can point across the wrong side of a
+                    // sloped edge. Bound displacement by four local f32 steps.
+                    let origin = receiving_point?;
+                    let dx = f64::from(door_point_out.x) - f64::from(origin.x);
+                    let dy = f64::from(door_point_out.y) - f64::from(origin.y);
+                    let length = dx.abs().max(dy.abs());
+                    if length == 0.0 {
+                        return None;
+                    }
+                    let quantum = [origin.x, origin.y]
+                        .into_iter()
+                        .map(|value| {
+                            f64::from(
+                                (value.next_up() - value)
+                                    .abs()
+                                    .max((value - value.next_down()).abs()),
+                            )
+                        })
+                        .fold(0.0_f64, f64::max);
+                    for step in 1..=4 {
+                        let fraction = (quantum * f64::from(step) / length).min(1.0);
+                        let point = MapPoint::new(
+                            (f64::from(origin.x) + dx * fraction) as f32,
+                            (f64::from(origin.y) + dy * fraction) as f32,
+                        );
                         if let Some(receiver) = self.find_projection_area_at(
                             tcx.assets,
                             target_layer,
@@ -1472,9 +1551,9 @@ impl EngineInner {
             }
         }
 
-        // Ordinary passages can also enter a physical stair. They have no
-        // lift-local endpoint identity, but an invertible floor projection
-        // still determines their world position from the current map point.
+        // Ordinary passages can also enter a physical stair. Prefer the
+        // authored world seam, including when its screen projection is edge-on.
+        // Older exports can only recover a position on invertible floors.
         if self.physical_stair_door(tcx.assets, door_index).is_none()
             && let Some(stair) = tcx
                 .assets
@@ -1483,15 +1562,34 @@ impl EngineInner {
                 .get(&u16::from(target_sector_num))
         {
             let [a, b, c] = stair.definition.plane;
+            let plane = robin_level_data::stair_navigation::StairNavigationPlane::new(
+                stair.definition.plane,
+            )
+            .expect("loaded physical stair has invalid plane");
+            let world_middle = self.script_domains.interactables.doors[usize::from(door_index)]
+                .world_endpoints.as_ref().map(|points| points.middle)
+                .filter(|point| {
+                    let valid = plane.contains_runtime_position(*point);
+                    if !valid {
+                        tracing::warn!(%door_index, "ordinary passage world midpoint is not on its physical floor; authoring correction required");
+                    }
+                    valid
+                });
             let pi = self
                 .get_entity_mut(entity_id)
                 .expect("door owner disappeared")
                 .position_iface_mut();
             let point = pi.get_position().to_map();
-            let x = f64::from(point.x);
-            let y = (f64::from(point.y) + a * x + c) / (1.0 - b);
-            let z = a * x + b * y + c;
-            if (1.0 - b).abs() > 1e-6 && [x, y, z].iter().all(|v| v.is_finite()) {
+            let [x, y, z] = world_middle
+                .map(|point| point.map(f64::from))
+                .unwrap_or_else(|| {
+                    let x = f64::from(point.x);
+                    let y = (f64::from(point.y) + a * x + c) / (1.0 - b);
+                    [x, y, a * x + b * y + c]
+                });
+            if (world_middle.is_some() || (1.0 - b).abs() > 1e-6)
+                && [x, y, z].iter().all(|v| v.is_finite())
+            {
                 pi.set_obstacle_at_ground_position(
                     None,
                     Some(crate::position_interface::PlaneZCoeffs {

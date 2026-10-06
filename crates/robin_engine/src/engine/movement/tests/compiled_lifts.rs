@@ -1,6 +1,6 @@
 use super::*;
 
-fn physical_stair_fixture() -> serde_json::Value {
+pub(super) fn physical_stair_fixture() -> serde_json::Value {
     let mut document: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/asset-lift.level.json"
@@ -739,6 +739,92 @@ fn ordinary_door_handoff_installs_and_releases_the_physical_stair_floor() {
     let world = engine.ent(owner).position_iface().get_position();
     assert_eq!(world.z, 0.0);
     assert_eq!(world.to_map(), door.point_out);
+}
+
+#[test]
+fn ordinary_edge_on_passage_handoff_uses_its_world_midpoint() {
+    for index in [0, 1] {
+        let (mut engine, mut assets) =
+            compiled_walkway(&serde_json::to_vec(&edge_on_physical_stair_fixture()).unwrap());
+        let endpoints = assets.navigation.physical_stairs[&2].definition.doors[index].clone();
+        let door = engine.script_domains.interactables.doors[index].clone();
+        let runtime = &mut engine.script_domains.interactables.doors[index];
+        runtime.owning_lift_sector = None;
+        runtime.door_type = crate::gate::DoorType::Default;
+        runtime.world_endpoints = Some(endpoints.clone());
+        let source = crate::position_interface::SectorHandle::from_number(door.sector_out)
+            .with_arena_index(door.sector_out_index.unwrap());
+        let owner = walking_pc(
+            &mut engine,
+            &mut assets,
+            door.point_mid,
+            door.layer_out,
+            source,
+        );
+        let rng = crate::sim_rng::test_context();
+        engine.execute_pass_door(
+            TickCtx::new(&rng, &assets),
+            owner,
+            crate::gate::DoorIndex::new(index as u32).unwrap(),
+            true,
+        );
+        let position = engine.ent(owner).position_iface().get_position();
+        assert_eq!([position.x, position.y, position.z], endpoints.middle);
+        assert_eq!(
+            position.to_map(),
+            engine.ent(owner).element_data().position_map()
+        );
+    }
+}
+
+#[test]
+fn ordinary_stair_exit_probe_follows_the_receiving_edge_direction() {
+    let mut descriptor = physical_stair_fixture();
+    let obstacles = descriptor["asset_geometry"]["sight_obstacles"]
+        .as_array_mut()
+        .unwrap();
+    let receiver = obstacles.len();
+    obstacles.push(serde_json::json!({
+        "points": ([[800.,850.], [1000.,950.], [1000.,800.], [800.,700.]].map(|[x,y]| serde_json::json!({"x":x,"y":y,"z_bottom":0.,"z_top":0.}))),
+        "projection_area": [0,0], "opaque":false, "solid":false, "mouse":true,
+        "show_shadow_polygon":false,"default_material":0,"material_indices":[]
+    }));
+    let (mut engine, mut assets) = compiled_walkway(&serde_json::to_vec(&descriptor).unwrap());
+    let door = engine.script_domains.interactables.doors[0].clone();
+    let runtime = &mut engine.script_domains.interactables.doors[0];
+    runtime.owning_lift_sector = None;
+    runtime.door_type = crate::gate::DoorType::Default;
+    runtime.point_out = MapPoint::new(920., 900.125);
+    let source = crate::position_interface::SectorHandle::from_number(door.sector_in)
+        .with_arena_index(door.sector_in_index.unwrap());
+    let target = crate::position_interface::SectorHandle::from_number(door.sector_out)
+        .with_arena_index(door.sector_out_index.unwrap());
+    let point = MapPoint::new(900., 900.0_f32.next_up());
+    assert_eq!(
+        engine.get_projection_area_index(&assets, target, door.layer_out, point),
+        None
+    );
+    assert_eq!(
+        engine.get_projection_area_index(
+            &assets,
+            target,
+            door.layer_out,
+            MapPoint::new(point.x.next_up(), point.y.next_up())
+        ),
+        None
+    );
+    let owner = walking_pc(&mut engine, &mut assets, point, door.layer_in, source);
+    let sim = crate::sim_rng::test_context();
+    engine.execute_pass_door(
+        TickCtx::new(&sim, &assets),
+        owner,
+        crate::gate::DoorIndex::new(0).unwrap(),
+        false,
+    );
+    assert_eq!(
+        engine.ent(owner).position_iface().get_obstacle(),
+        Some(crate::sight_obstacle::SightObstacleIndex::new(receiver as u32).unwrap())
+    );
 }
 
 #[test]

@@ -4,6 +4,39 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Physical ordinary-passage walks and directed receiver probes (2026-10-06)
+
+Ordinary passage walks on physical stairs now retain world destinations on
+both sides of the midpoint callback. The callback uses an authored midpoint
+when it lies on the stair plane, including edge-on floors; legacy invertible
+projections remain supported and invalid authored midpoints warn. A complete
+actor-route regression reaches a fractional world endpoint exactly, and an
+edge-on handoff regression preserves both endpoint identities.
+
+Physical walking exposed two great-hall passage midpoints outside the corrected
+floor. `stage-local-passage-seams.mjs` stages intersections of their approach
+segments with the stair boundary, requiring one crossing and limiting movement
+to 15 units. It creates candidates only: independent receiver, frame and mesh
+review remains required. Stage `local-passage-seams-NYYqrN`, derived from
+`local-stair-seams-xESqwA`, shifts the lower/upper midpoints 6.839930/11.933299
+units while retaining all doors and inside/outside approaches.
+
+The final four rotated failures came from receiver roundoff probes that advanced
+X and Y by equal ULP steps. That direction can leave a sloped receiver even when
+the exit waypoint is inside it. Probes now follow the actual approach vector,
+bounded by four local f32 steps; they do not jump to the outside waypoint.
+A focused sloped-edge callback regression covers this distinction.
+
+Independent great-hall fixture `external-stair-landings-5btVbp` now passes all
+96/96 actor routes and retains all 64 missing/raised landing rejections. The
+candidate remains unpublished pending the real neighbouring contacts in full
+Lincoln, mesh review and rendered verification. Fresh saved-scene batch
+`saved-map-exports-gibq1F` compiles all ten maps and passes 284/284 stair routes
+and 84/84 climbing routes. These descriptors include the newly exported
+ordinary-passage world endpoints. All 71 control apply/reset checks also pass.
+All 195 movement tests pass, with thirteen ignored; focused ordinary-passage
+tests, formatting checks and the game build pass.
+
 ## Preserved ordinary passage world endpoints (2026-10-06)
 
 Standalone passages now export optional `world_endpoints` with their placed

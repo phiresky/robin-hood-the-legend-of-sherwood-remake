@@ -25,7 +25,13 @@ fn physical_ladder_exit_animation_preserves_fractional_receiver() {
     )));
     for (entrance, exit) in [(0, 1), (1, 0)] {
         assert_eq!(
-            walk_exported_lift(engine.clone(), assets.clone(), entrance, exit, Some(&sprite)),
+            walk_exported_lift(
+                engine.clone(),
+                assets.clone(),
+                entrance,
+                exit,
+                Some(&sprite)
+            ),
             Ok(true),
             "fractional ladder transition {entrance}->{exit}"
         );
@@ -220,6 +226,41 @@ fn stair_passages_bridge_gaps_overlaps_and_ground_edges_after_placement() {
             }
         }
     }
+}
+
+#[test]
+fn ordinary_passage_walk_retains_the_physical_world_destination() {
+    let (mut engine, assets) = compiled_walkway(
+        &serde_json::to_vec(&super::compiled_lifts::physical_stair_fixture()).unwrap(),
+    );
+    let sim = crate::sim_rng::test_context();
+    engine.apply_patch(
+        TickCtx::new(&sim, &assets),
+        crate::patch::PatchIndex::new(0).unwrap(),
+    );
+    let mut endpoints = assets.navigation.physical_stairs[&3].definition.doors[0].clone();
+    endpoints.inside = [392.1234, 350.1234, 10.617065];
+    let mut door = engine.script_domains.interactables.doors[0].clone();
+    door.owning_lift_sector = None;
+    door.door_type = crate::gate::DoorType::Default;
+    door.point_in = MapPoint::new(
+        endpoints.inside[0],
+        endpoints.inside[1] - endpoints.inside[2],
+    );
+    door.world_endpoints = Some(endpoints.clone());
+    let entrance = engine.script_domains.interactables.doors.len();
+    engine.script_domains.interactables.doors.push(door);
+    let mut reached_exact = false;
+    let result =
+        walk_exported_lift_with_tick(engine, assets, entrance, 1, None, |engine, _, owner| {
+            let world = engine.ent(owner).position_iface().get_position();
+            reached_exact |= [world.x, world.y, world.z] == endpoints.inside;
+        });
+    assert_eq!(result, Ok(true));
+    assert!(
+        reached_exact,
+        "passage never reached its authored world endpoint"
+    );
 }
 
 fn walk_exported_stairs(
