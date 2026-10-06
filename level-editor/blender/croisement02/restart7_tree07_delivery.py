@@ -5,7 +5,7 @@ import numpy as np
 ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender')]
 import lossy_assets as la
 from render_slots import acquire,release
-D=ROOT/'level-editor/work/croisement02-refinement/restart7-tree07-approved-export-v1'
+D=ROOT/'level-editor/work/croisement02-refinement'/__import__('os').environ.get('C02_EXPORT_NAMESPACE','restart7-tree07-approved-export-v1')
 def sha(b):return hashlib.sha256(b).hexdigest()
 def pack(d,b):
  b+=b'\0'*(-len(b)%4);d['buffers']=[{'byteLength':len(b)}];j=json.dumps(d,separators=(',',':')).encode();j+=b' '*(-len(j)%4);return struct.pack('<4sII',b'glTF',2,28+len(j)+len(b))+struct.pack('<II',len(j),0x4e4f534a)+j+struct.pack('<II',len(b),0x004e4942)+b
