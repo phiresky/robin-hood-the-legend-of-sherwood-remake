@@ -8432,3 +8432,25 @@ The combined candidate passes all 92 actor stair routes and ten controls.
 Audit `lift-anchor-support-TFhGth` reports 17/53 unsupported stairs, 1/8 ladders
 and 9/9 walls. Nottingham now has zero unsupported stair definitions locally;
 this is not a claim of complete placement or rendered parity.
+
+### York courtyard lodge stair publication
+
+Stair-only candidate `local-stair-seams-ZT42ON` passes 32 synthetic external
+landing routes and 64 missing/raised cases in `external-stair-landings-WbGN5B`.
+Full-map candidate `york-lodge-stair-2LRNp0` fails both routes through sector 187
+at its upper wall contact. Correcting the independently owned rear curtain wall
+in `upper-castle-stair-contacts-HCToJE` restores all 130 York stair routes and six
+control apply/reset checks in `york-lodge-connected-qomrpy`.
+
+`york-castle-courtyard-lodge-stairs-neighbour-placements-rQBxu5` tests the actual
+raised-terrain and wall neighbours in two copies at four rotations and two
+elevations: 32 actor routes pass and 64 missing/raised neighbours reject. Fresh
+published exports match the full-map candidate and all eight placement files;
+all ten scenes reopen. Publication backup: `york-lodge-stair-publication-20261006`.
+Audit `lift-anchor-support-KRS00w` finds 16/53 unsupported stairs (York 15/16,
+Sherwood 1/1), 1/8 ladders and 9/9 walls.
+
+Mesh review finds 685/693 flight hits with a maximum gap of 0.225310 units, and
+164/205 wall contact hits with a maximum gap of 0.579569 units. These limits are
+explicit authoring review bounds, not runtime connection tolerances. Draft
+warnings preserve these discrepancies and the requirement for rendered review.

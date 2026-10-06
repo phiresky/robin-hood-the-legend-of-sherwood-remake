@@ -8,10 +8,15 @@ import { createTerrainGrid } from "../shared/src/authored-terrain.ts";
 const [stage, mode] = process.argv.slice(2);
 assert.ok(stage && (mode === undefined || mode === "--published"));
 const edits = JSON.parse(await fs.readFile(`${stage}/edits.json`, "utf8"));
-const source = await readStoredMap("library/scenes/nottingham.rhlos-map.json", "library");
-const assets = await pinnedDescriptors("library", source.assetSources, source.sceneAssets);
 const stair = edits[0].asset;
+const map = stair.startsWith("york-") ? "york" : "nottingham";
+const source = await readStoredMap(`library/scenes/${map}.rhlos-map.json`, "library");
+const assets = await pinnedDescriptors("library", source.assetSources, source.sceneAssets);
 const neighbours = {
+  "york-castle-courtyard-lodge-stairs": [
+    "york-castle-courtyard-raised-terrain",
+    "york-castle-courtyard-rear-curtain-wall",
+  ],
   "nottingham-north-wall-stair": ["nottingham-north-curtain-wall"],
   "nottingham-southwest-wall-stair": ["nottingham-southwest-curtain-wall-north"],
   "nottingham-castle-west-stair": [
@@ -28,7 +33,8 @@ assert.ok(neighbours[stair], "Unknown reviewed stair assembly");
 const ids = [stair, ...neighbours[stair]];
 for (const id of ids) {
   const edit = edits.find((e) => e.asset === id);
-  assert.ok(edit);
+  assert.ok(assets.has(id));
+  if (!edit) continue;
   if (mode === "--published") assert.deepEqual(assets.get(id).gameplay, edit.gameplay);
   else assets.get(id).gameplay = edit.gameplay;
 }

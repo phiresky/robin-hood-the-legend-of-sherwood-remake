@@ -66,7 +66,7 @@
       "model": "3d-assets/york/york-castle-courtyard-lodge-stairs/model.glb",
       "model_sha256": "21282b50163c72379a18119b78db19a44b3de644f15ab837ed60264adfc5c073",
       "descriptor": "3d-assets/york/york-castle-courtyard-lodge-stairs/asset.json",
-      "descriptor_sha256": "cdc4e8e9df71f99e138d52660aeb2121119b9ef2e685b9f237f20095cd4ad354",
+      "descriptor_sha256": "1474ca9a50922e984efd7ac06ca6c4b9b45075fdf66fc1ac9e8ab0df78ef30b7",
       "id": "york-castle-courtyard-lodge-stairs"
     },
     {
@@ -80,7 +80,7 @@
       "model": "3d-assets/york/york-castle-courtyard-rear-curtain-wall/model.glb",
       "model_sha256": "dc350bb1e51e0642e0453c39c6a2382c4ea22dca1cbfc3951eeed457d343ecd6",
       "descriptor": "3d-assets/york/york-castle-courtyard-rear-curtain-wall/asset.json",
-      "descriptor_sha256": "ad605e27f6d4976f0531d1f4e59b45b7a430eb5e7017b5bea052fa6e3118bb1e",
+      "descriptor_sha256": "83f049bff524538f26a608e9a63d3e2af8c1966fde60c46fe0fc1fe538c9120f",
       "id": "york-castle-courtyard-rear-curtain-wall"
     },
     {

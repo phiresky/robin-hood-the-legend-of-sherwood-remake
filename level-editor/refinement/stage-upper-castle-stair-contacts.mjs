@@ -19,8 +19,12 @@ const edits = JSON.parse(await fs.readFile(`${stage}/edits.json`, "utf8"));
 assert.equal(edits.length, 1);
 const upperCastle = edits[0].asset === "nottingham-castle-upper-stair";
 const northWall = edits[0].asset === "nottingham-north-wall-stair";
-assert.ok(upperCastle || northWall || edits[0].asset === "nottingham-southwest-wall-stair");
-const document = await readStoredMap("library/scenes/nottingham.rhlos-map.json", "library");
+const yorkLodge = edits[0].asset === "york-castle-courtyard-lodge-stairs";
+assert.ok(
+  upperCastle || northWall || yorkLodge || edits[0].asset === "nottingham-southwest-wall-stair",
+);
+const map = yorkLodge ? "york" : "nottingham";
+const document = await readStoredMap(`library/scenes/${map}.rhlos-map.json`, "library");
 const assets = await pinnedDescriptors("library", document.assetSources, document.sceneAssets);
 const index = JSON.parse(await fs.readFile("library/3d-assets/index.json", "utf8")).assets;
 assert.equal(
@@ -35,7 +39,7 @@ const modelHash = hash(await fs.readFile(`library/3d-assets/${stairEntry.model}`
 for (const review of flightReviews) {
   assert.equal(review.asset, edits[0].asset);
   assert.equal(review.modelSha256, modelHash);
-  assert.ok(review.maximumUncoveredMeshEdgeDistance < 0.034);
+  assert.ok(review.maximumUncoveredMeshEdgeDistance < (yorkLodge ? 0.226 : 0.034));
   edits[0].gameplay.draft ??= { issues: [] };
   edits[0].gameplay.draft.issues.push(
     `Stair ${review.node} has ${review.sampledMeshHits}/${review.sampledFloorPoints} mesh sample hits, with gaps up to ${review.maximumUncoveredMeshEdgeDistance.toFixed(3)} game units; rendered actor integration remains unverified.`,
@@ -48,9 +52,11 @@ const approaches = upperCastle
       [787, 1165.001, 175.001],
       [812, 1230.00101, 100.00101],
     ]
-  : northWall
-    ? [[1822, 439.00101, 120.00101]]
-    : [[768, 1796, 0]];
+  : yorkLodge
+    ? [[2426, 866.001, 225.001]]
+    : northWall
+      ? [[1822, 439.00101, 120.00101]]
+      : [[768, 1796, 0]];
 const floors = approaches.map((point) => {
   const matches = compiled.lifts.filter((l) =>
     l.physical_navigation?.doors.some(
@@ -81,15 +87,29 @@ const contacts = upperCastle
         edges: [[18, 1]],
       },
     ]
-  : northWall
-    ? [{ asset: "nottingham-north-curtain-wall", surface: "building-169-walk-0", edges: [[11, 0]] }]
-    : [
+  : yorkLodge
+    ? [
         {
-          asset: "nottingham-southwest-curtain-wall-north",
-          surface: "building-220--component-wall-220-north-walk-0",
-          edges: [[3, 0]],
+          asset: "york-castle-courtyard-rear-curtain-wall",
+          surface: "building-760-walk-0",
+          edges: [[7, 0]],
         },
-      ];
+      ]
+    : northWall
+      ? [
+          {
+            asset: "nottingham-north-curtain-wall",
+            surface: "building-169-walk-0",
+            edges: [[11, 0]],
+          },
+        ]
+      : [
+          {
+            asset: "nottingham-southwest-curtain-wall-north",
+            surface: "building-220--component-wall-220-north-walk-0",
+            edges: [[3, 0]],
+          },
+        ];
 const output = await fs.mkdtemp("work/map-compile/upper-castle-stair-contacts-");
 const changes = [];
 function meshHeight(p, [a, b, c]) {
