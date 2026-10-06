@@ -175,6 +175,23 @@
     ],
     "doors": [
       {
+        "world_endpoints": {
+          "inside": [
+            570,
+            640,
+            0
+          ],
+          "middle": [
+            590,
+            640,
+            0
+          ],
+          "outside": [
+            610,
+            640,
+            0
+          ]
+        },
         "door_type": 0,
         "active": true,
         "locked_pc": false,
