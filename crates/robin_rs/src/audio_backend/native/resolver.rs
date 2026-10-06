@@ -88,3 +88,23 @@ fn music_candidates_keep_requested_format_then_alternate_then_opus() {
         }
     }
 }
+
+#[test]
+fn jingles_resolve_qualified_and_relative_names_without_doubling_sound_directory() {
+    for extension in ["wav", "opus"] {
+        let assets = std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new());
+        let path = format!("Data/Sounds/jingle_04.{extension}");
+        assets.install_preloaded_asset(&path, vec![1]).unwrap();
+        let files = robin_engine::sbfile::SbFileSystem::new(assets);
+        for requested in [
+            "jingle_04.wav",
+            "Data/Sounds/jingle_04.wav",
+            r"Data\Sounds\jingle_04.wav",
+        ] {
+            assert_eq!(
+                resolve_sample(Path::new("Data/Sounds"), requested, &files).unwrap(),
+                PathBuf::from(&path)
+            );
+        }
+    }
+}

@@ -1335,6 +1335,101 @@ fn action_drag_clears_stale_target_when_focus_lost() {
 // ── resolve_swordfight ──
 
 #[test]
+fn host_and_client_shared_hero_gestures_preserve_left_and_right_strikes() {
+    use robin_engine::player_command::PlayerInput;
+    let (mut engine, mut assets, mut host) = fixture();
+    let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+    profiles
+        .characters
+        .push(robin_engine::profiles::CharacterProfile {
+            hth_weapon_id: 1,
+            ..Default::default()
+        });
+    profiles
+        .hth_weapons
+        .push(robin_engine::profiles::HtHWeaponProfile::default());
+    let opponent = add_soldier(&mut engine, 100., 100., 100);
+    let mut element = ElementData::from_initial_posture(Posture::Upright);
+    element.kind = ElementKind::ActorPc;
+    element.active = true;
+    element.set_position_map(MapPoint::new(320., 320.));
+    element.set_direction_instantly(0);
+    let pc = engine.test_add_entity(Entity::Pc(robin_engine::element::ActorPc {
+        element,
+        actor: ActorData::default(),
+        human: HumanData {
+            opponents: vec![opponent].into(),
+            ..Default::default()
+        },
+        pc: robin_engine::element::PcData {
+            life_points: 100,
+            playable: true,
+            ..Default::default()
+        },
+    }));
+    apply(
+        &mut engine,
+        &assets,
+        PlayerCommand::ConnectSeat {
+            player_id: PlayerId(1),
+            nickname: "Client".into(),
+        },
+    );
+    for seat in [PlayerId(0), PlayerId(1)] {
+        engine
+            .advance_frame(
+                &assets,
+                robin_engine::engine::SimulationFrameInput::new(vec![
+                    PlayerInput::new(
+                        seat,
+                        PlayerCommand::SelectPc {
+                            pc_id: pc,
+                            append: false,
+                        },
+                    )
+                    .into(),
+                ])
+                .with_hourglass(false),
+            )
+            .unwrap();
+        host.transport.test_local_seat(seat);
+        let center = host
+            .frontend
+            .viewport
+            .map_to_screen_unclamped(MapPoint::new(320., 320.));
+        for (command, xs) in [
+            (Command::SwordstrikeThrustD, [-60., 0., 60.]),
+            (Command::SwordstrikeThrustE, [60., 0., -60.]),
+        ] {
+            host.frontend.clear_gesture();
+            for x in xs {
+                host.frontend
+                    .add_gesture_point(engine_coordinates::ScreenPoint::new(
+                        center.x + x,
+                        center.y,
+                    ));
+            }
+            let commands = resolve_world_left_click(
+                &mut host,
+                &engine,
+                &assets,
+                MapPoint::new(320., 320.),
+                NO_MODS,
+            );
+            assert!(
+                matches!(commands.as_slice(), [PlayerCommand::SwordStrikeCmd {actor, target, command:actual, ..}]
+                if *actor==pc && *target==opponent && *actual==command),
+                "seat {seat:?}: {commands:?}"
+            );
+            let input = PlayerInput::new(seat, commands[0].clone());
+            let decoded: PlayerInput = bitcode::decode(&bitcode::encode(&input)).unwrap();
+            assert_eq!(decoded.player_id, seat);
+            assert_cmds!(vec![decoded.command], commands);
+        }
+    }
+}
+
+#[test]
 fn swordfight_resolution_requires_engaged_selection() {
     let (mut engine, assets, mut host) = fixture();
     let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);

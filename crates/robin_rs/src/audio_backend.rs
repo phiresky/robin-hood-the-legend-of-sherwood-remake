@@ -215,16 +215,19 @@ enum LocatedSample {
 }
 
 /// Authored sound paths try the sound directory first, then Exclamations.
-/// Absolute paths never receive a speech-directory fallback.
+/// Absolute and Data/Sounds-qualified paths never receive a speech-directory fallback.
 fn sample_base_paths(base_dir: &Path, file_name: &str) -> (PathBuf, Option<PathBuf>) {
     let normalised = file_name.replace('\\', "/");
-    let absolute = Path::new(&normalised).is_absolute();
-    let path = if absolute {
+    let rooted = Path::new(&normalised).is_absolute()
+        || normalised
+            .get(..12)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("Data/Sounds/"));
+    let path = if rooted {
         PathBuf::from(&normalised)
     } else {
         base_dir.join(&normalised)
     };
-    let speech_path = (!absolute).then(|| base_dir.join("Exclamations").join(&normalised));
+    let speech_path = (!rooted).then(|| base_dir.join("Exclamations").join(&normalised));
     (path, speech_path)
 }
 

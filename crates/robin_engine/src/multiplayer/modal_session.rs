@@ -4,6 +4,22 @@
 
 use super::*;
 
+// Terminal pages are driven by the mission outcome, not script-effect delivery.
+// Their occurrence identity must survive different peer presentation clocks.
+fn is_terminal_summary(kind: &ModalKind) -> bool {
+    matches!(
+        kind,
+        ModalKind::FinalDebriefing { .. }
+            | ModalKind::MissionState {
+                kind: crate::player_command::MissionStateModalKind::EndState { .. }
+            }
+    )
+}
+
+fn requires_modal_acknowledgements(kind: &ModalKind) -> bool {
+    is_shared_story_modal(kind) || is_terminal_summary(kind)
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct ModalOccurrenceState {
     kind: ModalKind,
@@ -223,7 +239,9 @@ impl NetChannels {
             self.propose_modal_dismiss(instance, kind.clone(), result)?;
             return Ok(ModalPublication::ClientProposalQueued);
         }
-        if is_shared_story_modal(kind) {
+        if requires_modal_acknowledgements(kind)
+            && !matches!(result, DialogResult::Restart | DialogResult::Load { .. })
+        {
             self.record_modal_vote(instance, kind, PlayerId::HOST, result)?;
             if self.resolve_modal_consensus(instance, kind)?.is_none() {
                 self.publish_modal_progress(instance, kind)?;
@@ -262,7 +280,10 @@ impl NetChannels {
                             "modal acknowledgement does not name an admitted instance".into()
                         );
                     }
-                    if is_shared_story_modal(&proposal.kind) {
+                    // Every client outcome acknowledges that the page was
+                    // read. The host still chooses whether to continue, load,
+                    // or restart, even when peers request different actions.
+                    if requires_modal_acknowledgements(&proposal.kind) {
                         self.record_modal_vote(
                             proposal.instance,
                             &proposal.kind,
@@ -307,7 +328,9 @@ impl NetChannels {
                     {
                         self.apply_modal_progress(&progress)?;
                         // Admission consumes this opening once its boundary is reached.
-                        if !self.modal_instance_is_active(progress.instance, &progress.kind)? {
+                        if is_shared_story_modal(&progress.kind)
+                            && !self.modal_instance_is_active(progress.instance, &progress.kind)?
+                        {
                             let mut sync = self
                                 .modal_sync
                                 .lock()
@@ -337,7 +360,7 @@ impl NetChannels {
                 .filter_map(|state| state.active.map(|id| (id, state.kind.clone())))
                 .collect();
             for (instance, kind) in active {
-                if is_shared_story_modal(&kind) {
+                if requires_modal_acknowledgements(&kind) {
                     if let Err(error) = self.resolve_modal_consensus(instance, &kind) {
                         tracing::error!(%error, "modal decision publication failed; retaining consensus for retry");
                     }
@@ -377,7 +400,8 @@ impl NetChannels {
             .iter()
             .find(|decision| decision.instance == instance && decision.kind == *kind)
             .filter(|decision| {
-                is_shared_story_modal(kind) || decision.decision_frame <= self.current_frame()
+                requires_modal_acknowledgements(kind)
+                    || decision.decision_frame <= self.current_frame()
             })
             .map(|decision| decision.result))
     }
@@ -469,7 +493,11 @@ impl NetChannels {
     /// Bind a presentation to an admitted story occurrence. Only non-story
     /// choice screens allocate here; story identities belong to effect delivery.
     pub fn open_modal_instance(&self, kind: &ModalKind) -> Result<ModalInstanceId, String> {
-        let opened_frame = self.frame_cursor.load(Ordering::Relaxed);
+        let opened_frame = if is_terminal_summary(kind) {
+            0
+        } else {
+            self.frame_cursor.load(Ordering::Relaxed)
+        };
         let mut sync = self
             .modal_sync
             .lock()
@@ -956,6 +984,92 @@ mod tests {
                     other => panic!("unexpected session output {other:?}"),
                 })
                 .unwrap();
+        }
+    }
+
+    #[test]
+    fn terminal_pages_wait_for_both_players_with_different_presentation_frames() {
+        for kind in [
+            ModalKind::MissionState {
+                kind: crate::player_command::MissionStateModalKind::EndState { won: true },
+            },
+            ModalKind::FinalDebriefing {
+                text_id: crate::player_command::DebriefingTextId::Win { index: 0 },
+            },
+        ] {
+            let (host, host_in, host_out) = fixture();
+            let (client, client_in, client_out) = fixture();
+            host.publish_frame(100);
+            client.publish_frame(87);
+            let instance = host.present_modal(&kind, true).unwrap();
+            assert_eq!(
+                host.submit_modal_outcome(instance, &kind, DialogResult::Completed, true)
+                    .unwrap(),
+                ModalPublication::HostVoteQueued
+            );
+            assert_eq!(host.modal_decision(instance, &kind).unwrap(), None);
+            forward(&host_out, &client_in, PlayerId::HOST);
+            client.service_modal_session(false).unwrap();
+            assert!(
+                client
+                    .take_ready_story_announcements(87)
+                    .unwrap()
+                    .is_empty()
+            );
+            assert!(!client.story_barrier_pending());
+            let client_instance = client.present_modal(&kind, false).unwrap();
+            assert_eq!(instance, client_instance);
+            client
+                .submit_modal_outcome(instance, &kind, DialogResult::Completed, false)
+                .unwrap();
+            forward(&client_out, &host_in, PlayerId(1));
+            host.service_modal_session(true).unwrap();
+            forward(&host_out, &client_in, PlayerId::HOST);
+            client.service_modal_session(false).unwrap();
+            assert_eq!(
+                host.modal_decision(instance, &kind).unwrap(),
+                Some(DialogResult::Completed)
+            );
+            assert_eq!(
+                client.modal_decision(instance, &kind).unwrap(),
+                Some(DialogResult::Completed)
+            );
+        }
+    }
+
+    #[test]
+    fn terminal_client_requests_acknowledge_without_overriding_host_choice() {
+        let kind = ModalKind::FinalDebriefing {
+            text_id: crate::player_command::DebriefingTextId::Win { index: 0 },
+        };
+        for requested in [DialogResult::Restart, DialogResult::Load { slot: 7 }] {
+            let (host, host_in, _host_out) = fixture();
+            let (client, _, client_out) = fixture();
+            let instance = host.present_modal(&kind, true).unwrap();
+            client.present_modal(&kind, false).unwrap();
+            host.submit_modal_outcome(instance, &kind, DialogResult::Completed, true)
+                .unwrap();
+            client
+                .submit_modal_outcome(instance, &kind, requested, false)
+                .unwrap();
+            forward(&client_out, &host_in, PlayerId(1));
+            host.service_modal_session(true).unwrap();
+            assert_eq!(
+                host.modal_decision(instance, &kind).unwrap(),
+                Some(DialogResult::Completed)
+            );
+
+            let (host, _host_in, _host_out) = fixture();
+            let instance = host.present_modal(&kind, true).unwrap();
+            assert_eq!(
+                host.submit_modal_outcome(instance, &kind, requested, true)
+                    .unwrap(),
+                ModalPublication::HostDecisionQueued
+            );
+            assert_eq!(
+                host.modal_decision(instance, &kind).unwrap(),
+                Some(requested)
+            );
         }
     }
 

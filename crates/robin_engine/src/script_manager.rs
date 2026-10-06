@@ -365,17 +365,20 @@ impl ScriptInstance {
             .find_function(manager, fn_name)
             .ok_or_else(|| ScriptError::FunctionNotFound(fn_name.to_owned()))?;
         let entry_addr = func.address as u32;
-        self.begin_at(entry_addr);
+        self.begin_at(entry_addr, func.size_of_volatile.max(0) as usize);
         Ok(())
     }
 
-    fn begin_at(&mut self, entry_addr: u32) {
+    fn begin_at(&mut self, entry_addr: u32, local_bytes: usize) {
         // Set up for a top-level call: fresh call stack with any staged
         // outgoing parameters as the bottom frame's incoming params.
         self.vm.frames.clear();
         let params = std::mem::take(&mut self.vm.outgoing_params);
         self.vm.frames.push(Frame {
             parameters: params,
+            // Host callbacks may enter the body without a BeginFunction opcode.
+            // Function metadata declares their initial local storage in bytes.
+            volatile: vec![0; local_bytes],
             // return_address is u32::MAX — acts as a sentinel. If the
             // bottom frame's Return pops to this, the Vm's run loop
             // returns StopReason::Returned (no more frames).
@@ -439,6 +442,53 @@ mod preparation_tests {
                     })
                     .collect(),
             }],
+        }
+    }
+
+    #[test]
+    fn callback_allocates_declared_locals_without_begin_function() {
+        struct NoNatives;
+        impl HostFunctions for NoNatives {
+            fn call(
+                &mut self,
+                index: u32,
+                _: &mut crate::interp::NativeStack,
+            ) -> crate::interp::NativeCallOutcome {
+                panic!("unexpected native {index}");
+            }
+        }
+
+        // A callback can enter directly at its body; its metadata supplies
+        // the local storage normally allocated by BeginFunction.
+        let mut scb = program(&[vm::Opcode::Aff0IConstant as u8, vm::Opcode::ReturnVal as u8]);
+        scb.classes[0].functions.push(Function {
+            name: "Run".into(),
+            address: 0,
+            num_parameters: 0,
+            size_of_return_value: 4,
+            size_of_parameters: 0,
+            size_of_volatile: 4,
+            size_of_temporary: 0,
+        });
+        scb.classes[0].quads[0].operands[..2].copy_from_slice(&0x8000u16.to_le_bytes());
+        scb.classes[0].quads[0].operands[4..8].copy_from_slice(&42i32.to_le_bytes());
+        scb.classes[0].quads[1].operands[..2].copy_from_slice(&0x8000u16.to_le_bytes());
+        let mut manager = ScriptManager::new(scb);
+        let mut instance = manager.create_instance("Probe").unwrap();
+        for _ in 0..2 {
+            let mut activation = instance.begin_activation(&manager, "Run", &[]).unwrap();
+            assert_eq!(activation.frames[0].volatile, vec![0; 4]);
+            assert_eq!(
+                instance.poll_activation_with_host(
+                    &mut manager,
+                    &mut activation,
+                    10,
+                    "Run",
+                    &mut NoNatives,
+                ),
+                StopReason::ReturnedValue(42),
+            );
+            assert_eq!(activation.frames[0].volatile.len(), 4);
         }
     }
 

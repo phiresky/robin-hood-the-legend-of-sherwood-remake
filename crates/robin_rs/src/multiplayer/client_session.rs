@@ -14,6 +14,7 @@
 //! Session rules decided here, once, for both platforms:
 //!
 //! - A clean stream close is a transport drop and reconnects ([`reader_outcome`]).
+//!   A committed snapshot transition instead retires the old mission transport.
 //! - A host `ReconnectRequired` directive or a failed local publication drops
 //!   the session and reconnects; a trust violation (`Reject`, wrong-direction
 //!   message) is fatal.
@@ -156,9 +157,13 @@ pub(super) struct ClientTimings {
 /// Why a client session ended.
 #[derive(Debug)]
 pub(super) enum SessionEnd {
+    /// The next mission owns a new transport. Keep ingress alive until the
+    /// game consumes the commit and drops this transport.
+    TransitionCommitted,
     /// Network error, unexpected drop or clean stream close — caller retries.
     /// A clean close is not an authoritative end of the session: the host ends
-    /// sessions with `Reject` or `ReconnectRequired`, so a bare FIN is treated
+    /// sessions with `Reject`, `ReconnectRequired`, or a snapshot commit,
+    /// so a bare FIN is treated
     /// like any other transport loss (see [`reader_outcome`]).
     Drop(MultiplayerError),
     /// A direction or session invariant failed. Retrying the same
@@ -738,6 +743,10 @@ pub(super) async fn run_client_io<T: ClientTransport>(
                 let _ = incoming.send(NetEvent::Fatal(NetFatal::new(error)));
                 return;
             }
+            SessionEnd::TransitionCommitted => {
+                wait_for_cancel::<T::Timer>(transport.cancellation()).await;
+                return;
+            }
             SessionEnd::OutgoingClosed => return,
         }
 
@@ -855,12 +864,16 @@ async fn run_session<T: ClientTransport>(
                 Ok(message) => message,
                 Err(end) => return end,
             };
+            let committed = matches!(message, NetMsg::CommitSnapshotTransition { .. });
             if let Err(error) = handle_client_wire_msg(incoming, message) {
                 return if matches!(error, MultiplayerError::ReconnectRequired { .. }) {
                     SessionEnd::Drop(error)
                 } else {
                     SessionEnd::Fatal(error)
                 };
+            }
+            if committed {
+                return SessionEnd::TransitionCommitted;
             }
         }
     };

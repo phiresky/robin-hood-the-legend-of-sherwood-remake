@@ -864,6 +864,88 @@ fn occupied_manual_recording_stays_live_until_first_capture_and_cancel_preserves
 }
 
 #[test]
+fn shared_hero_client_swing_dispatch_matches_host_sequence() {
+    for (strike, with_seek) in [
+        (Command::SwordstrikeThrustD, false),
+        (Command::SwordstrikeThrustD, true),
+        (Command::SwordstrikeThrustE, false),
+        (Command::SwordstrikeThrustE, true),
+    ] {
+        let (mut base, assets, actor) = setup_pc_engine(&[]);
+        let target = spawn_pc_at(&mut base, 90.0, 10.0);
+        base.control.sim_config.coop.control = crate::coop::CharacterControl::Shared;
+        let sim = crate::sim_rng::test_context();
+        let mut display = HostDisplayState::default();
+        let mut input = InputState::default();
+        base.apply_commands(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &[PlayerInput::host(PlayerCommand::ConnectSeat {
+                player_id: PlayerId(1),
+                nickname: "Client".into(),
+            })],
+        );
+        let mut sequences = Vec::new();
+        for seat in [PlayerId(0), PlayerId(1)] {
+            let mut engine = base.clone();
+            let command = PlayerInput::new(
+                seat,
+                PlayerCommand::SwordStrikeCmd {
+                    actor,
+                    target,
+                    command: strike,
+                    composite: None,
+                    gesture_quality: GestureQuality::PERFECT,
+                    with_seek,
+                    seek_distance: with_seek.then_some(54.0),
+                },
+            );
+            let received: PlayerInput = bitcode::decode(&bitcode::encode(&command)).unwrap();
+            engine.apply_frame_commands_with_mode(
+                TickCtx::new(&sim, &assets),
+                &[received],
+                SelectionCommandBatchMode::InferNestedSelection,
+            );
+            let element = engine
+                .orders
+                .sequence_manager
+                .sequences_iter()
+                .next()
+                .and_then(|sequence| sequence.get(0))
+                .expect("queued attack");
+            let (actual_command, actual_target) = if with_seek {
+                assert_eq!(element.command, Command::Seek);
+                let SequenceElementData::Movement {
+                    tolerance,
+                    post_seek_sequence: Some(post),
+                    ..
+                } = &element.data
+                else {
+                    panic!("expected seek with retained attack");
+                };
+                assert_eq!(*tolerance, 54.0);
+                let attack = post.elements.first().expect("attack after seek");
+                let SequenceElementData::Interaction { antagonist } = attack.data else {
+                    panic!("expected attack interaction");
+                };
+                (attack.command, antagonist)
+            } else {
+                let SequenceElementData::Interaction { antagonist } = element.data else {
+                    panic!("expected direct attack interaction");
+                };
+                (element.command, antagonist)
+            };
+            assert_eq!(actual_command, strike, "seat {seat:?}");
+            assert_eq!(actual_target, Some(target));
+            sequences.push(bitcode::encode(&engine.orders.sequence_manager));
+        }
+        assert_eq!(sequences[0], sequences[1], "{strike:?} differs by seat");
+    }
+}
+
+#[test]
 fn manual_sword_strike_executes_without_recording_a_quick_action() {
     let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Hit, 1)]);
     let target = spawn_pc_at(&mut engine, 90.0, 10.0);
@@ -6615,4 +6697,60 @@ fn quick_action_bow_rechecks_allocated_target_and_owner_state() {
     engine.human_mut(pc).unconscious = true;
     assert!(!quick_action_slot_is_valid(&engine, &assets, pc));
     assert_invalid_quick_action_fizzles_without_consuming(&mut engine, &assets, pc, titbit);
+}
+
+#[test]
+fn minimap_commands_only_change_the_issuing_players_display() {
+    use crate::player_command::{PlayerId, PlayerInput};
+    let (mut engine, assets, _) = setup_pc_engine(&[]);
+    let mut host_display = HostDisplayState::default();
+    let mut host_input = InputState::default();
+    let mut client_display = HostDisplayState::default();
+    let mut client_input = InputState::default();
+    host_input.controls.has_focus = true;
+    client_input.controls.has_focus = true;
+    engine.apply_commands(
+        &crate::sim_rng::test_context(),
+        &mut host_display,
+        &mut host_input,
+        &assets,
+        &[
+            PlayerInput {
+                player_id: PlayerId(1),
+                command: PlayerCommand::MinimapToggle,
+            },
+            PlayerInput {
+                player_id: PlayerId(1),
+                command: PlayerCommand::MinimapMouseDown {
+                    click_pt: crate::coordinates::ScreenPoint::new(10.0, 10.0),
+                    continuing_drag: true,
+                },
+            },
+        ],
+    );
+    for event in engine
+        .feedback
+        .pending_side_effects
+        .host_events
+        .iter()
+        .cloned()
+    {
+        client_display.apply_host_event_for_player(&mut client_input, event, PlayerId(1));
+    }
+    assert!(
+        !engine
+            .feedback
+            .pending_side_effects
+            .has_signal(crate::engine::HostSignal::ClearUiFocus)
+    );
+    assert!(engine.feedback.pending_side_effects.overlay.is_none());
+    for _ in 0..5 {
+        let tick = crate::engine::HostEvent::Minimap(crate::engine::MinimapHostEvent::Tick);
+        host_display.apply_host_event_for_player(&mut host_input, tick.clone(), PlayerId::HOST);
+        client_display.apply_host_event_for_player(&mut client_input, tick, PlayerId(1));
+    }
+    assert!(!host_display.minimap.is_displayed());
+    assert!(client_display.minimap.is_displayed());
+    assert!(host_input.controls.has_focus);
+    assert!(!client_input.controls.has_focus);
 }

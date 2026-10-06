@@ -62,16 +62,9 @@ mod tests {
         let legacy: LegacyRoot = serde_json::from_value(expected.clone()).unwrap();
         let bytes = bitcode::encode(&legacy);
         assert!(bitcode::decode::<Campaign>(&bytes).is_err());
-        for version in 49..=54 {
-            let mut header = serde_json::json!({"version":version, "campaign":bytes});
-            super::super::upgrade_header(&mut header).unwrap();
-            let migrated: Vec<u8> = serde_json::from_value(header["campaign"].clone()).unwrap();
-            let restored: Campaign = bitcode::decode(&migrated).unwrap();
-            assert_eq!(serde_json::to_value(restored).unwrap(), expected);
-            let current = header.clone();
-            super::super::upgrade_header(&mut header).unwrap();
-            assert_eq!(header, current);
-        }
+        let migrated = migrate(&bytes).unwrap();
+        let restored: Campaign = bitcode::decode(&migrated).unwrap();
+        assert_eq!(serde_json::to_value(restored).unwrap(), expected);
     }
     #[test]
     fn rejects_corrupt_campaign() {

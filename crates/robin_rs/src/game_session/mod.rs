@@ -708,6 +708,12 @@ async fn run_session_body(
             }
         };
 
+        if standalone_multiplayer_finished(&session_args, authoritative_sim_config, game_result) {
+            return SessionOutcome {
+                campaign,
+                result: Ok(SessionResult::QuitToMenu),
+            };
+        }
         match game_result {
             GameCode::Quit => {
                 return SessionOutcome {
@@ -826,6 +832,23 @@ async fn run_session_body(
             .releasing_asset_lease()
             .continuing_host_session();
     }
+}
+
+fn standalone_multiplayer_finished(
+    args: &crate::main_entry::MissionRequest,
+    config: engine_api::SimConfig,
+    result: GameCode,
+) -> bool {
+    let multiplayer = &args.multiplayer;
+    (multiplayer.server
+        || multiplayer.connect.is_some()
+        || multiplayer.join.is_some()
+        || multiplayer.expected_players.is_some())
+        && !config.coop.campaign
+        && matches!(
+            result,
+            GameCode::LevelSucceeded | GameCode::LevelFailed | GameCode::LevelInterrupted
+        )
 }
 
 /// Which mission to construct and the deterministic simulation it starts
@@ -987,6 +1010,36 @@ async fn run_mission_with_seed(
 
 #[cfg(test)]
 mod required_state_tests {
+    #[test]
+    fn standalone_multiplayer_returns_to_menu_after_mission_exit() {
+        use super::*;
+        let mut args = crate::main_entry::MissionRequest::default();
+        let mut config = robin_engine::engine::SimConfig::default();
+        config.coop.campaign = false;
+        assert!(!standalone_multiplayer_finished(
+            &args,
+            config,
+            GameCode::LevelSucceeded
+        ));
+        args.multiplayer.expected_players = Some(2);
+        for result in [
+            GameCode::LevelSucceeded,
+            GameCode::LevelFailed,
+            GameCode::LevelInterrupted,
+        ] {
+            assert!(standalone_multiplayer_finished(&args, config, result));
+        }
+        for result in [GameCode::LevelRestart, GameCode::LevelInProgress] {
+            assert!(!standalone_multiplayer_finished(&args, config, result));
+        }
+        config.coop.campaign = true;
+        assert!(!standalone_multiplayer_finished(
+            &args,
+            config,
+            GameCode::LevelSucceeded
+        ));
+    }
+
     #[test]
     fn relic_bonus_ending_requires_seven_relics_and_runs_once_with_vips() {
         use robin_engine::campaign::{CampaignValue, PcDescription};

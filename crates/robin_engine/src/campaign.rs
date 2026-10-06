@@ -1977,10 +1977,12 @@ impl Campaign {
         // action available.
         for &action in &profile.required_actions {
             let fulfilled = team_profile_ids.iter().any(|&pid| {
-                profiles
-                    .get_character(pid)
-                    .expect("campaign team member references missing profile")
-                    .has_action(action)
+                character_satisfies_mission_action(
+                    profiles
+                        .get_character(pid)
+                        .expect("campaign team member references missing profile"),
+                    action,
+                )
             });
             if !fulfilled {
                 return false;
@@ -2537,16 +2539,14 @@ impl Campaign {
     // ── find_action ──────────────────────────────────────────────────
 
     /// Check if any character in the team has the specified action.
-    /// Handles special equivalences: Hit <-> HitHard, Eat <-> Guzzle,
-    /// LittleJohnCarry <-> FarmerCarry.
+    /// Accepts contextual actions and the directional substitutions used by
+    /// mission requirements.
     pub fn find_action(
         &self,
         action: crate::profiles::Action,
         team: &[usize],
         profiles: &ProfileManager,
     ) -> bool {
-        use crate::profiles::Action;
-
         for &ti in team {
             let desc = match self.characters.get(ti) {
                 Some(d) => d,
@@ -2561,42 +2561,8 @@ impl Campaign {
                 None => continue,
             };
 
-            // Check normal actions
-            for &a in &cp.actions {
-                if a == action {
-                    return true;
-                }
-            }
-
-            // Hit <-> HitHard equivalence
-            if action == Action::Hit {
-                for &a in &cp.actions {
-                    if a == Action::HitHard {
-                        return true;
-                    }
-                }
-            } else if action == Action::Eat {
-                for &a in &cp.actions {
-                    if a == Action::Guzzle {
-                        return true;
-                    }
-                }
-            }
-
-            // Check contextual actions
-            for &a in &cp.contextual_actions {
-                if a == action {
-                    return true;
-                }
-            }
-
-            // LittleJohnCarry <-> FarmerCarry equivalence
-            if action == Action::LittleJohnCarry {
-                for &a in &cp.contextual_actions {
-                    if a == Action::FarmerCarry {
-                        return true;
-                    }
-                }
+            if character_satisfies_mission_action(cp, action) {
+                return true;
             }
         }
 
@@ -3311,6 +3277,24 @@ impl Campaign {
 }
 
 // ─── Tests ───────────────────────────────────────────────────────
+
+/// A team member can satisfy a mission ability through a direct or contextual
+/// action. Substitutions are directional: a stronger hit satisfies Hit, but a
+/// normal hit does not satisfy HitHard.
+pub fn character_satisfies_mission_action(
+    profile: &crate::profiles::CharacterProfile,
+    action: crate::profiles::Action,
+) -> bool {
+    use crate::profiles::Action;
+    profile.has_action(action)
+        || profile.has_contextual_action(action)
+        || match action {
+            Action::Hit => profile.has_action(Action::HitHard),
+            Action::Eat => profile.has_action(Action::Guzzle),
+            Action::LittleJohnCarry => profile.has_contextual_action(Action::FarmerCarry),
+            _ => false,
+        }
+}
 
 #[cfg(test)]
 mod tests {

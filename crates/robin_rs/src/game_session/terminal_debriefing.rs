@@ -334,6 +334,10 @@ fn terminal_debriefing_page(
 }
 
 impl TerminalDebriefingState {
+    pub(super) fn awaiting_snapshot(&self) -> bool {
+        matches!(self.phase, TerminalDebriefingPhase::AwaitingSnapshot)
+    }
+
     fn await_remote_snapshot(
         &mut self,
         outcome: &SettledDebriefingOutcome,
@@ -342,7 +346,10 @@ impl TerminalDebriefingState {
     ) -> bool {
         if playing_back
             || local_seat == engine_player_command::PlayerId::HOST
-            || !matches!(outcome, SettledDebriefingOutcome::Load { .. })
+            || !matches!(
+                outcome,
+                SettledDebriefingOutcome::Load { .. } | SettledDebriefingOutcome::Ok
+            )
         {
             return false;
         }
@@ -687,6 +694,30 @@ impl TerminalDebriefingState {
                 ) else {
                     unreachable!()
                 };
+                if !context.playing_back
+                    && matches!(outcome, SettledDebriefingOutcome::Ok)
+                    && context.host.transport.local_seat() == engine_player_command::PlayerId::HOST
+                    && let Some(net) = context.host.transport.net()
+                {
+                    let id = net
+                        .begin_campaign_exit_transition(
+                            self.exit_code,
+                            context.manager.engine.encode_native_snapshot(),
+                        )
+                        .expect("failed to begin multiplayer mission completion");
+                    context.host.transport.prepare_snapshot_transition(
+                        crate::host::PendingSnapshotTransition::new(
+                            id,
+                            crate::host::PendingSnapshotTransitionPayload::CampaignExit {
+                                exit_code: self.exit_code,
+                                engine: None,
+                            },
+                        ),
+                    );
+                    self.phase = TerminalDebriefingPhase::AwaitingSnapshot;
+                    context.game.operation.set(GameCode::LevelInProgress);
+                    return TerminalDebriefingProgress::Pending;
+                }
                 if self.await_remote_snapshot(
                     &outcome,
                     context.playing_back,
@@ -1314,6 +1345,19 @@ mod tests {
                 .http_result
                 .is_none()
         );
+    }
+
+    #[test]
+    fn client_terminal_completion_waits_for_the_host_snapshot() {
+        use robin_engine::player_command::PlayerId;
+        let mut state = terminal_state();
+        assert!(!state.awaiting_snapshot());
+        assert!(state.await_remote_snapshot(&SettledDebriefingOutcome::Ok, false, PlayerId(1)));
+        assert!(state.awaiting_snapshot());
+        for (replay, seat) in [(true, PlayerId(1)), (false, PlayerId::HOST)] {
+            let mut state = terminal_state();
+            assert!(!state.await_remote_snapshot(&SettledDebriefingOutcome::Ok, replay, seat));
+        }
     }
 
     #[test]

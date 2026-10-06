@@ -999,19 +999,29 @@ pub(crate) fn publish_mouse_spatial_hit_for_seat(
     // downstream door/building logic sees the real geometry.
     let (final_sector_idx, final_layer, selected_patch_idx) =
         if let Some(idx) = sector_hit.sector_idx {
-            let (is_patch, patch_sector_idx, patch_layer) = engine
-                .fast_grid()
-                .level
-                .sectors
-                .get(usize::from(idx))
-                .map(|s| (s.sector_type.is_patch(), s.underlying_sector, s.layer))
-                .unwrap_or((false, None, 0));
+            let is_patch = engine.fast_grid().level.sectors[usize::from(idx)]
+                .sector_type
+                .is_patch();
             if is_patch {
-                let patch_idx = engine.find_patch_for_grid_sector(idx);
-                let (under_idx, under_layer) = patch_sector_idx
-                    .map(|u| (Some(u), patch_layer))
-                    .unwrap_or((sector_hit.sector_idx, sector_hit.layer));
-                (under_idx, under_layer, patch_idx)
+                let patch_idx = engine
+                    .find_patch_for_grid_sector(idx)
+                    .expect("hovered patch sector must have an owner");
+                let patch = &engine.patches()[patch_idx as usize];
+                // Patch overlays have their own arena slot and no motion
+                // number. Resolve the authored destination before publishing
+                // the hit so clicks retain a consistent number/index pair.
+                let destination = engine_sector::SectorNumber::new(patch.sector as i16);
+                let under_idx = *engine
+                    .fast_grid()
+                    .level
+                    .sector_number_map
+                    .get(&destination)
+                    .expect("hovered patch destination sector must exist");
+                let under_idx = robin_engine::fast_find_grid::SectorIndex::new(
+                    u32::try_from(under_idx).expect("sector arena index fits u32"),
+                )
+                .expect("sector arena index is representable");
+                (Some(under_idx), patch.layer, Some(patch_idx))
             } else {
                 (sector_hit.sector_idx, sector_hit.layer, None)
             }
@@ -2201,6 +2211,99 @@ mod tests {
     use robin_engine::resource_ids::*;
 
     use crate::host::test_support::{add_selected_pc, fixture};
+
+    #[test]
+    fn patch_click_records_the_destination_sector_instead_of_the_overlay() {
+        use robin_engine::engine::{EngineArgs, LevelLoadArgs, SimConfig};
+        use robin_engine::player_command::PlayerId;
+        let (_, mut assets, mut host) = fixture();
+        let mut loaded = robin_engine::level_data::LoadedLevel::hackable_from_json(include_bytes!(
+            "../../robin_engine/tests/fixtures/asset-compiled.level.json"
+        ))
+        .unwrap();
+        let patch = serde_json::from_value(serde_json::json!({
+            "element_fx": {
+                "sprite": {"frame_profile_name":"", "profile_name":"", "position_x":320,
+                    "position_y":310, "elevation":0},
+                "blit_type":0, "active":false, "force_display":false, "display_polyline":[]
+            },
+            "active":true, "pathfinder_changing_obstacles":0,
+            "pathfinder_sector":null, "pathfinder_layer":null,
+            "start_animation_valid":false, "transition_animation_valid":false,
+            "end_animation_valid":false, "waypoint":[320,310], "sector":0, "layer":0,
+            "definitive":false, "integrate_in_background":false,
+            "old_masks":[], "new_masks":[], "old_sight_obstacles":[], "new_sight_obstacles":[],
+            "old_mouse_sector":{"points":[[310,305],[330,305],[330,325],[310,325]]},
+            "new_mouse_sector":{"points":[]}, "old_masking_sector":{"points":[]},
+            "new_masking_sector":{"points":[]}, "apply_sector":{"points":[]},
+            "no_apply_sector":{"points":[]}, "door_triggered":false,
+            "triggers_door":false, "door_indices":[], "final_layer":0
+        }))
+        .unwrap();
+        loaded.proto.patches.push(patch);
+        loaded
+            .proto
+            .element_chunk_order
+            .push(robin_engine::level_data::ProtoElementChunk::Patch);
+        loaded
+            .proto
+            .grid_chunk_order
+            .push(robin_engine::level_data::ProtoGridChunk::Patch);
+        let mut campaign = Campaign::default();
+        let mission = campaign
+            .force_next_mission_by_name(
+                std::sync::Arc::make_mut(&mut assets.profile_manager),
+                "patch-click",
+                "patch-click",
+                true,
+            )
+            .unwrap();
+        campaign.current_mission_idx = Some(mission);
+        let mut engine = Engine::new(EngineArgs {
+            campaign,
+            level: LevelLoadArgs {
+                assets: &mut assets,
+                level_directory: "",
+                progress: &mut |_| {},
+                loaded,
+                bg_pixel_dims: (2000., 2000.),
+            },
+            ground_mark_sprite: None,
+            titbit_row_frame_counts: vec![],
+            rng_seed: 0,
+            original_rng_replay: None,
+            sim_config: SimConfig {
+                script_enabled: false,
+                ..Default::default()
+            },
+        })
+        .unwrap();
+        add_selected_pc(&mut engine, &assets);
+        let point = MapPoint::new(320., 310.);
+        let modifiers = ClickModifiers::hover(false);
+        publish_mouse_spatial_hit_for_seat(&engine, &mut host, point, modifiers, PlayerId::HOST);
+        let hit = host.frontend.input.spatial_hit();
+        assert_eq!(hit.selected_patch_idx, Some(0));
+        let sector =
+            &engine.fast_grid().level.sectors[usize::from(hit.selected_sector_idx.unwrap())];
+        assert_eq!(sector.sector_number, engine_sector::SectorNumber::new(0));
+        assert!(!sector.sector_type.is_patch());
+        let commands = crate::game_input::resolve_left_click_with_planning(
+            &mut host, &engine, &assets, point, modifiers,
+        );
+        let PlayerCommand::GroupMove {
+            goal_override: Some((number, _)),
+            goal_sector_index_override: Some(index),
+            ..
+        } = &commands[0]
+        else {
+            panic!("patch must emit a group move: {commands:?}");
+        };
+        assert_eq!(
+            engine.fast_grid().level.sectors[usize::from(*index)].sector_number,
+            *number
+        );
+    }
 
     #[test]
     fn compiled_door_hover_works_without_a_mission_script() {

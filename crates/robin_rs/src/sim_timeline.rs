@@ -104,6 +104,7 @@ fn apply_frame_effects(
             &mut frontend.presentation.engine_display,
             &mut frontend.input,
             dev,
+            local_seat,
             events,
         );
         frontend.apply_side_effects(
@@ -264,10 +265,15 @@ fn prepare_display_effects(
     display: &mut HostDisplayState,
     input: &mut robin_engine::engine::InputState,
     dev: &mut DevState,
+    local_seat: robin_engine::player_command::PlayerId,
     mut side_effects: robin_engine::engine::HostEffects,
 ) -> robin_engine::engine::HostEffects {
     for event in side_effects.host_events.drain(..) {
-        display.apply_host_event(input, event);
+        if matches!(&event, robin_engine::engine::HostEvent::ClearPlayerInputFocus { player_id } if *player_id == local_seat)
+        {
+            side_effects.overlay = Some(robin_engine::engine::OverlayChange::Hide);
+        }
+        display.apply_host_event_for_player(input, event, local_seat);
     }
     if let Some(top_left) = display.take_pending_minimap_position() {
         side_effects.pending_minimap_position = Some(top_left);
@@ -531,12 +537,18 @@ mod tests {
         let mut input = robin_engine::engine::InputState::default();
         input.controls.has_focus = true;
         let mut dev = DevState::default();
-        let prepared = prepare_display_effects(&mut display, &mut input, &mut dev, {
-            let mut requests = robin_engine::engine::HostEffects::default();
-            requests.request_signal(crate::host::HostSignal::ClearUiFocus);
-            requests.request_signal(crate::host::HostSignal::ShowConsole);
-            requests
-        });
+        let prepared = prepare_display_effects(
+            &mut display,
+            &mut input,
+            &mut dev,
+            robin_engine::player_command::PlayerId::HOST,
+            {
+                let mut requests = robin_engine::engine::HostEffects::default();
+                requests.request_signal(crate::host::HostSignal::ClearUiFocus);
+                requests.request_signal(crate::host::HostSignal::ShowConsole);
+                requests
+            },
+        );
         assert!(!input.controls.has_focus);
         assert!(prepared.has_signal(crate::host::HostSignal::ShowConsole));
         assert!(!prepared.has_signal(crate::host::HostSignal::ClearUiFocus));
@@ -560,6 +572,7 @@ mod tests {
             &mut host.frontend.presentation.engine_display,
             &mut host.frontend.input,
             &mut DevState::default(),
+            robin_engine::player_command::PlayerId::HOST,
             requests,
         );
         host.apply_side_effects(prepared);

@@ -881,8 +881,13 @@ impl NetDrain<'_> {
                 engine_bytes,
             } => {
                 require_protocol(
-                    exit_code == robin_engine::game_operation::GameCode::LevelInterrupted,
-                    "campaign transition may only launch the selected mission",
+                    matches!(
+                        exit_code,
+                        robin_engine::game_operation::GameCode::LevelInterrupted
+                            | robin_engine::game_operation::GameCode::LevelSucceeded
+                            | robin_engine::game_operation::GameCode::LevelFailed
+                    ),
+                    "campaign transition requires a mission exit",
                 )?;
                 let decoded = Engine::decode_native_snapshot(&engine_bytes)
                     .map_err(SessionProtocolFailure::CampaignSnapshotDecode)?;
