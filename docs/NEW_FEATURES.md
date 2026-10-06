@@ -23,7 +23,9 @@
   rock trap artwork playback, seeking, and independently reviewed 3D endpoint
   views. Its 06 · Pillaging mission also offers looping signposts and ambient
   artwork with playback and seeking. Mission-specific trap previews also cover
-  07/09 Ambush and 02/06/19/21 Tactical. These controlled previews do not run
+  07/09 Ambush and 02/06/19/21 Tactical. Twenty empty/occupied net previews across
+  six missions add exact artwork phases, looping final poses, and initial/final
+  3D views. These controlled previews do not run
   mission scripts or synthesize physical motion between endpoints. See
   [the editor controls and scope](../level-editor/docs/state-previews.md).
 

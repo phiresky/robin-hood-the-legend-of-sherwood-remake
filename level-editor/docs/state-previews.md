@@ -8,6 +8,12 @@ The log trap is also available in **07 · Ambush**, **09 · Ambush**, and
 in **09 · Ambush** and those four Tactical missions. Each preview uses its
 selected mission's artwork, placement, and timing.
 
+**Net 01** offers empty and occupied outcomes in **05**, **07**, and **09 · Ambush**,
+and **02** and **21 · Tactical**. **Net 03** offers both outcomes in the same Ambush
+missions and **02** and **19 · Tactical**. Each outcome has original artwork playback
+and separate initial/final 3D views. Final net animation keeps looping until paused
+or reset; choosing an outcome does not infer which character triggered the trap.
+
 Choose **06 · Pillaging** for **Signposts and ambient animation**. This preview
 plays the five signposts with the surrounding animated artwork. Its 64-tick
 slider follows the sign loop while nearby animations keep their own timing.
