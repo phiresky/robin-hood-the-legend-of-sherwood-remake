@@ -35,9 +35,36 @@ export function assembleMovementContour(fragments: MultiPolygon): MultiPolygon {
     }
     replacements.set(point, match);
   }
-  return clipping.union(
-    fragments.map((polygon) =>
-      polygon.map((ring) => ring.map((point) => replacements.get(point)!)),
-    ),
+  const joined = fragments.map((polygon) =>
+    polygon.map((ring) => ring.map((point) => replacements.get(point)!)),
   );
+  try {
+    return clipping.union(joined);
+  } catch (error) {
+    if (
+      !(error instanceof Error) ||
+      !(
+        error.message.startsWith("Unable to find segment") ||
+        error.message.startsWith("Unable to complete output ring") ||
+        error.message.startsWith("Infinite loop when")
+      )
+    )
+      throw error;
+    // Cancellation can defeat sweep ordering at map coordinates. Retry the
+    // same geometry near a local origin without quantizing valid contours.
+    // TODO: detect this numerical failure before exhausting the sweep limit.
+    const origin: Point = [
+      Math.floor(points.reduce((min, point) => Math.min(min, point[0]), Infinity)),
+      Math.floor(points.reduce((min, point) => Math.min(min, point[1]), Infinity)),
+    ];
+    return clipping
+      .union(
+        joined.map((polygon) =>
+          polygon.map((ring) => ring.map(([x, y]): Point => [x - origin[0], y - origin[1]])),
+        ),
+      )
+      .map((polygon) =>
+        polygon.map((ring) => ring.map(([x, y]): Point => [x + origin[0], y + origin[1]])),
+      );
+  }
 }

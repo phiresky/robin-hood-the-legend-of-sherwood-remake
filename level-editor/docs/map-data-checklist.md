@@ -35,15 +35,18 @@ spikes before runtime conversion. Fresh published geometry matches all 24
 placement exports and full York; all ten scenes reopen. The stone flight keeps
 an explicit 0.577-unit sampled mesh edge-discrepancy warning.
 
-The York market connecting stair remains unpublished. Its candidate passes all
-130 full-York stair routes and six controls, but only 24/32 routes in moved
-assemblies with the actual raised-terrain neighbour before the latest runtime
-correction. All 48 missing/raised landing cases reject. Receiver-owned collision
-now has a candidate physical height frame for rotation. A captured regression
-exposed a rounding strip attached to a larger landing wall: seam cleanup must
-check the solid immediately beside the shared edge, rather than compare areas
-of the entire wall. With that correction, all 32 moved routes and all 130
-full-York routes pass. Asset publication and broader verification remain open.
+The York market connecting stair and its independently owned raised-terrain
+contact are published. All 130 full-York stair routes, six controls and 32 moved
+routes pass; 48 missing/raised landing cases reject. Receiver-owned collision
+rotates at its physical height while retaining a separate navigation plane.
+Seam cleanup checks collision immediately beside the shared edge so an attached
+wall cannot preserve a rounding strip across the entrance. Fresh published
+geometry matches full York and all eight tested placement exports; all ten scenes
+reopen. Full scene checks retain
+288 stair routes, 84 climbing routes and 71 control apply/reset checks. Numerical
+contour failures retry in local coordinates without quantization; waiting for
+the clipping library's sweep limit still makes some exports slow. Rendered
+integration and broader asset coverage remain open.
 
 Latest runtime checks retain exact landing contours through binding and foot
 support instead of reducing them to single precision. The southwest turret is
@@ -203,9 +206,9 @@ complete-sprite and rendered verification remain open.
 All ten scenes reopen after publication, and full Derby passes all five control
 apply/reset checks. All ten Derby stair definitions now pass local floor-anchor
 support checks after the upper-west publication below.
-A library-wide local-anchor audit finds unsupported anchors in 12 of 53 authored stair
+A library-wide local-anchor audit finds unsupported anchors in 11 of 53 authored stair
 definitions: Derby 0/10, Leicester 0/8, Lincoln 0/6, Nottingham 0/12,
-Sherwood 1/1 and York 11/16. All audited floors are planar. This checks local
+Sherwood 1/1 and York 10/16. All audited floors are planar. This checks local
 definitions, not placed connectivity or actual route failures; corrections and
 moved/rotated native traversal checks remain necessary across these assets.
 

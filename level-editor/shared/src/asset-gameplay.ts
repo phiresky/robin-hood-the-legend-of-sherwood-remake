@@ -10,7 +10,7 @@ export interface AssetWalkableSurface {
   polygon: Point[];
   /** Constant height or one height per polygon vertex; the surface must be planar. */
   height: number | number[];
-  /** Clearances only: match collision on this local plane while projecting the authored footprint at its physical height. */
+  /** Static blockers and clearances: match collision on this local navigation plane while projecting the footprint at its physical height. */
   navigationHeight?: number;
   /** Transition blockers may follow terrain within these finite vertical offsets from their plane. */
   terrainReach?: { below: number; above: number };
@@ -1101,9 +1101,10 @@ export function validateAssetGameplay(
     polygon(surface.polygon);
     if (
       surface.navigationHeight !== undefined &&
-      (!Number.isFinite(surface.navigationHeight) || !data.movementClearances?.includes(surface))
+      (!Number.isFinite(surface.navigationHeight) ||
+        (!data.movementClearances?.includes(surface) && !data.movementBlockers?.includes(surface)))
     )
-      fail(`invalid clearance navigation height on ${surface.id}`);
+      fail(`invalid collision navigation height on ${surface.id}`);
     if (surface.terrainReach !== undefined) {
       const reach = surface.terrainReach;
       if (

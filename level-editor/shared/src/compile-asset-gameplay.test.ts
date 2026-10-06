@@ -219,7 +219,10 @@ test("ordinary physical ladder landings retain fractional support boundaries", (
     for (const surface of hut.gameplay!.surfaces) surface.preserveMovementPrecision = true;
     const compiled = compileAssetGameplay(document, assets, bounds);
     const lift = compiled.lifts![0]!;
-    assert.ok(lift.physical_navigation, compiled.warnings?.join("\n"));
+    assert.ok(
+      lift.physical_navigation,
+      compiled.warnings?.join("\n") ?? "Missing physical navigation",
+    );
     for (const door of lift.doors) {
       const area = compiled.motion_data.layers[door.layer_out]!.find((area) => !area.is_lift)!;
       assert.ok(area.precise_polygon, `Missing exact landing at rotation ${rotation}`);
@@ -821,6 +824,50 @@ test("physical clearances project after rotation onto their authored navigation 
   }
 });
 
+test("physical blockers rotate with raised receivers while retaining their navigation plane", () => {
+  for (const rotation of [0, 37, 90, 180])
+    for (const elevation of [0, 60]) {
+      const { document, assets, hut } = anchoredReceiverCompilerFixture();
+      const gameplay = hut.gameplay!;
+      const receiver = gameplay.projectionReceivers![0]!;
+      receiver.anchor = [50, 50, 25];
+      receiver.navigationHeight = 0;
+      gameplay.doors = [
+        {
+          id: "deck-passage",
+          node: hut.parts[0]!.node,
+          polygon: [],
+          outside: [25, 70, 12.5],
+          inside: [75, 70, 37.5],
+          middle: [50, 70, 25],
+          type: 0,
+          locked: false,
+          unlockable: false,
+          allowContinuous: true,
+        },
+      ];
+      document.objects[0]!.transform.rot_deg = rotation;
+      for (const object of document.objects) object.transform.dz = elevation;
+      compileAssetGameplay(document, assets, bounds);
+      gameplay.movementBlockers = [
+        {
+          id: "deck-blocker",
+          node: hut.parts[0]!.node,
+          polygon: [
+            [20, 65],
+            [30, 65],
+            [30, 75],
+            [20, 75],
+          ],
+          height: [10, 15, 15, 10],
+          navigationHeight: 0,
+          preserveMovementPrecision: true,
+        },
+      ];
+      assert.throws(() => compileAssetGameplay(document, assets, bounds), /outside must resolve/);
+    }
+});
+
 test("navigation-plane overrides reject invalid heights and unrelated feature kinds", () => {
   const { hut } = anchoredReceiverCompilerFixture();
   const gameplay = hut.gameplay!;
@@ -847,12 +894,12 @@ test("navigation-plane overrides reject invalid heights and unrelated feature ki
     navigationHeight: Infinity,
   };
   gameplay.movementClearances = [clearance];
-  assert.throws(() => validateAssetGameplay(gameplay, hut), /clearance navigation height/);
+  assert.throws(() => validateAssetGameplay(gameplay, hut), /collision navigation height/);
   clearance.navigationHeight = 0;
   validateAssetGameplay(gameplay, hut);
   gameplay.movementClearances = [];
   gameplay.surfaces = [clearance];
-  assert.throws(() => validateAssetGameplay(gameplay, hut), /clearance navigation height/);
+  assert.throws(() => validateAssetGameplay(gameplay, hut), /collision navigation height/);
 });
 
 test("feature anchors use the physical receiver's elevation within shared ground navigation", () => {

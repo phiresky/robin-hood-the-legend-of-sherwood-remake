@@ -563,7 +563,7 @@
       "model": "3d-assets/york/york-market-southwest-connecting-stairs/model.glb",
       "model_sha256": "b1c7a0392c5eee9f812cf6020c66815fe1a3a855e86be54ef3703aa95626c395",
       "descriptor": "3d-assets/york/york-market-southwest-connecting-stairs/asset.json",
-      "descriptor_sha256": "55654d1f2950a13de65b3712f2c664362bb8a42a7e03cc9b071d1bbdb6d8a069",
+      "descriptor_sha256": "a5323ffeae8d3cc867bb161ab9f2aae8b519172ce8dd5b3ff46cc4993d77349d",
       "id": "york-market-southwest-connecting-stairs"
     },
     {
@@ -1690,7 +1690,7 @@
       "model": "3d-assets/york/york-west-town-raised-terrain/model.glb",
       "model_sha256": "7f57b26d29a173d91eccf1793db58304331ca32b4276f95d72ed1f78c7945d02",
       "descriptor": "3d-assets/york/york-west-town-raised-terrain/asset.json",
-      "descriptor_sha256": "66f8d7d0a8f972b637c738ce68da90fb7a2e56eb9660e18a047f58c012cfacd5",
+      "descriptor_sha256": "25df2dfc9e996df65c20933b122eefff42396789f699f7fddca0fa7f169b9918",
       "id": "york-west-town-raised-terrain"
     },
     {

@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { validateStateDelivery, type StateDeliveryContract } from "./state-delivery.ts";
+import {
+  validateStateDelivery,
+  physicalEndpointSources,
+  validateNativeLoopPreview,
+  nativeLoopPreviewPeriod,
+  type StateDeliveryContract,
+} from "./state-delivery.ts";
 
 export function deliveryFixture(): StateDeliveryContract {
   const source = (id: string) => ({
@@ -74,16 +80,16 @@ test("delivery requires independent physical endpoints and exact native terminal
 
 test("physical placement accepts finite scene translations and rejects invalid vectors", () => {
   const c = deliveryFixture();
-  c.families[0]!.physical.initial[0]!.position = [1, -2, 3];
+  const source = physicalEndpointSources(c.families[0]!.physical.initial)[0]!;
+  source.position = [1, -2, 3];
   validateStateDelivery(c);
-  c.families[0]!.physical.initial[0]!.position = [1, NaN, 3];
+  source.position = [1, NaN, 3];
   assert.throws(() => validateStateDelivery(c), /physical source/);
-  c.families[0]!.physical.initial[0]!.position = [1, 2] as unknown as [number, number, number];
+  source.position = [1, 2] as unknown as [number, number, number];
   assert.throws(() => validateStateDelivery(c), /physical source/);
 });
 
-test("an explicitly absent endpoint is valid but an unprepared empty model list is not", async () => {
-  const { physicalEndpointSources } = await import("./state-delivery.ts");
+test("an explicitly absent endpoint is valid but an unprepared empty model list is not", () => {
   const c = deliveryFixture();
   c.families[0]!.physical.initial = { kind: "absent" };
   validateStateDelivery(c);
@@ -137,9 +143,7 @@ test("static replacements bind the exact source, object and both placement trans
   }
 });
 
-test("loop preview timeline uses the selected loop while other effects keep independent periods", async () => {
-  const { validateNativeLoopPreview, nativeLoopPreviewPeriod } =
-    await import("./state-delivery.ts");
+test("loop preview timeline uses the selected loop while other effects keep independent periods", () => {
   const native = deliveryFixture().native;
   native.elements[0]!.active = true;
   native.elements[0]!.loop = true;

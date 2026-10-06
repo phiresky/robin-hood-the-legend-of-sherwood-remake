@@ -8729,3 +8729,61 @@ retains all six control apply/reset checks, and the published stone-stair
 actual-neighbour fixture `...-hud5S8` retains all 32 actor routes. The game build,
 targeted Rust formatting and diff checks pass. The candidate assets are not yet
 published; broader placement and visual parity remain open.
+
+The market authoring candidate also reaches floating-point contour-union sweep
+limits before its fixed-grid fallback succeeds. Reproduction
+`york-market-stair-contact-wJmiUr` retains the 205 supported contact samples.
+Using fixed-grid union unconditionally regresses the existing noisy-fragment
+outline test by introducing a rounded corner, so that experiment is rejected.
+The conditional fallback remains; all 131 contour, gameplay compilation and
+surface-placement tests pass. Avoiding the expensive failed sweep without
+changing otherwise-valid contours remains open before publication.
+
+### Contour retry review across saved scenes
+
+Unconditional fixed-grid normalization, even after restoring authored vertices,
+is rejected. Its ten-scene batch `market-contour-scene-batch-CjhDTa` passes 84
+climbing routes and 71 control checks, but changes Nottingham collision
+partitioning and makes the stair audit excessively slow. That audit was
+intentionally interrupted while testing Nottingham; it is not a passing batch.
+Unconditional local-coordinate union also changes successful contours and fails
+on a Croisement02 numerical segment. Neither experiment is the final compiler.
+
+The final approach retains successful unions exactly and retries only recognized
+clipping numerical failures in a translated coordinate frame. No additional
+quantization is applied. The captured regression limits the clipping budget in
+an isolated subprocess, proves that direct union fails, and verifies the recovered
+covered area without modifying its input. Nottingham's output is exactly equal
+to a fresh compilation with the pre-change contour implementation (166 obstacles).
+
+Candidate `contour-retry-scene-batch-sbV9Zi` compiles all ten saved scenes with
+the market edits. `...connecting-stairs-neighbour-placements-YkXvwX` passes all
+32 actor routes and rejects 48 missing/raised landing cases. All 421 shared tests
+pass (one unrelated skip), as do focused lint, app/pipeline typechecks and the
+editor production build. Existing test typing was updated for optional diagnostic
+messages, physical endpoint unions and assertion-function imports. The retry
+still waits for the library's sweep limit on pathological contours; full York
+takes about 43 seconds in this run, so export-performance work remains open.
+
+The completed ten-scene native audits pass 288 stair routes (268 seconds), 84
+climbing routes and all 71 control apply/reset checks. All report completion;
+none claims rendered gameplay parity. The isolated final York check in
+`york-market-reviewed-Q6QQEK` also passes all 130 stair routes.
+
+Reviewed publication `york-market-reviewed-Q6QQEK` installs the stair and raised
+terrain with explicit draft mesh/ownership/rendering limitations. Backup:
+`york-market-stair-publication-20261006`. Only York scene pins change. All eight
+fresh placement exports in `...connecting-stairs-neighbour-placements-8xcUcR`
+match the native-tested `...-YkXvwX` geometry, excluding only warning text.
+Fresh full York in `york-market-published-81ndNG` also matches the tested geometry,
+and all ten saved scenes reopen with current pinned descriptors.
+Audit `lift-anchor-support-PUizW9` finds 11/53 unsupported stair definitions
+(York 10/16, Sherwood 1/1), 1/8 ladders and 9/9 walls.
+
+The next unpublished southeast-wall stair candidate `local-stair-seams-Z3MiAE`
+needs a three-unit authoring review bound for its upper landing edge, rather
+than the default two. Its flight has 926/927 supported mesh samples, a maximum
+uncovered edge distance of 0.027388 units and sampled height residuals between
+-0.200 and -0.157 units. Synthetic landing fixture `external-stair-landings-tMnNQm`
+passes 32 native actor routes and rejects 32 invalid lower landings. Actual
+neighbour/full-map checks and publication remain outstanding.
