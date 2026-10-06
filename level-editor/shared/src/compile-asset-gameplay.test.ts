@@ -192,7 +192,11 @@ test("physical ladders require landing support at both the outside point and sea
 test("physical ladder landings can use bound raised receiving volumes", () => {
   const { document, assets, hut } = receivingLadderCompilerFixture();
   const compiled = compileAssetGameplay(document, assets, bounds);
-  assert.ok(compiled.lifts![0]!.physical_navigation, compiled.warnings?.join("\n"));
+  assert.ok(
+    compiled.lifts![0]!.physical_navigation,
+    compiled.warnings?.join("\n") ?? "Missing physical ladder",
+  );
+  assert.equal(compiled.motion_data.layers.flat().filter((area) => area.precise_polygon).length, 1);
   // The receiving height cannot fill a hole in the underlying walking area.
   hut.gameplay!.surfaces[1]!.holes = [
     [

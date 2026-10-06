@@ -13,6 +13,11 @@ import { validateAssetGameplay } from "../shared/src/asset-gameplay.ts";
 // Author one reviewed contact in its owning terrain. Export never adjusts
 // unrelated placements or invents a landing across a physical gap.
 const document = await readStoredMap("library/scenes/lincoln.rhlos-map.json", "library");
+const lowerApproachOffset = Number(process.argv[2] ?? 0);
+assert.ok(
+  Number.isFinite(lowerApproachOffset) && lowerApproachOffset >= 0 && lowerApproachOffset <= 3,
+  "Lower approach offset must be between zero and three units",
+);
 const assets = await pinnedDescriptors("library", document.assetSources, document.sceneAssets);
 const transform = (id, node, point) => {
   const part = document.objects.find((object) => object.node === `asset:${id}:${node}`);
@@ -109,6 +114,7 @@ await fs.writeFile(
   JSON.stringify(
     {
       scope: "unpublished mesh-supported plateau contact",
+      lowerApproachOffset,
       before,
       after,
       supported,
@@ -158,20 +164,40 @@ blockerIndices.forEach((position, i) => {
     (v, axis) => v + after[i][axis] - before[i][axis],
   );
 });
+blocker.preserveMovementPrecision = true;
 validateAssetGameplay(blockerGameplay, blockerAsset);
-await fs.writeFile(
-  `${output}/edits.json`,
-  JSON.stringify([
-    {
-      asset: terrain.id,
-      descriptorSha256: terrainEntry.descriptor_sha256,
-      gameplay,
-    },
-    {
-      asset: blockerAsset.id,
-      descriptorSha256: index.find((entry) => entry.id === blockerAsset.id).descriptor_sha256,
-      gameplay: blockerGameplay,
-    },
-  ]),
-);
+const edits = [
+  {
+    asset: terrain.id,
+    descriptorSha256: terrainEntry.descriptor_sha256,
+    gameplay,
+  },
+  {
+    asset: blockerAsset.id,
+    descriptorSha256: index.find((entry) => entry.id === blockerAsset.id).descriptor_sha256,
+    gameplay: blockerGameplay,
+  },
+];
+if (lowerApproachOffset) {
+  const shedGameplay = structuredClone(shed.gameplay);
+  const door = shedGameplay.lifts.find((item) => item.id === lift.id).doors[0];
+  const length = Math.hypot(a, b);
+  for (const point of [door.outside, door.middle, door.inside]) {
+    point[0] += (lowerApproachOffset * b) / length;
+    point[1] -= (lowerApproachOffset * a) / length;
+  }
+  shedGameplay.draft.issues = shedGameplay.draft.issues.map((issue) =>
+    issue.replace(
+      " The saved Lincoln ground contact still requires projected ladder navigation.",
+      "",
+    ),
+  );
+  validateAssetGameplay(shedGameplay, shed);
+  edits.push({
+    asset: shed.id,
+    descriptorSha256: index.find((entry) => entry.id === shed.id).descriptor_sha256,
+    gameplay: shedGameplay,
+  });
+}
+await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));
 console.log(JSON.stringify({ output, before, after, supported, samples: samples.length }));

@@ -14,6 +14,10 @@
   Raised receiving volumes can supply a ladder landing when their point anchor
   binds to one walking region. Boundary and hole checks still require actual
   navigation support; receiver height alone cannot bridge a gap.
+  Such landings can retain an optional precise walking-area boundary, validated
+  against the existing integer-grid polygon. Runtime binding intersects it with
+  the actual receiver while retaining obstacle states. Replay schema 61 accounts
+  for the additional loaded motion data.
 
 - **Mission state previews.** Crossroads 2's 05 · Ambush mission offers log and
   rock trap artwork playback, seeking, and independently reviewed 3D endpoint

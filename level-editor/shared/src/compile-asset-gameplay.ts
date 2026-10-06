@@ -4,6 +4,7 @@ import { compilePhysicalStairRegion } from "./compile-physical-stair-region.ts";
 import {
   containsNavigationAnchor,
   navigationAnchorHeight,
+  onClippedReceivingBoundary,
   pointInGameplayPolygon as inside,
   type NavigationAnchorArea,
 } from "./navigation-anchor.ts";
@@ -1714,7 +1715,11 @@ function compileAssetGameplayAttempt(
                 region.pieces.some((piece) => {
                   const projected: Point = [point[0], point[1] - point[2]];
                   return (
-                    inside(projected, piece.receivingPolygon ?? piece.polygon, true) &&
+                    (inside(projected, piece.receivingPolygon ?? piece.polygon, true) ||
+                      onClippedReceivingBoundary(
+                        projected,
+                        piece.receivingPolygon ?? piece.polygon,
+                      )) &&
                     !piece.blockers.some((hole) => inside(projected, hole, true))
                   );
                 }),
@@ -1809,11 +1814,29 @@ function compileAssetGameplayAttempt(
     const preciseBlockers = indexPreciseBlockers(
       pieces.flatMap((piece) => piece.preciseBlockers ?? []),
     );
+    const raisedLanding = receiverLandings.some(
+      ({ area, region: landing }) =>
+        landing === region &&
+        doors.some(
+          (door) =>
+            door.lift &&
+            physicalStairs.has(door.lift) &&
+            containsNavigationAnchor(area, door.outside),
+        ),
+    );
+    const preciseBoundaries = raisedLanding
+      ? (
+          indexPreciseBlockers(
+            pieces.flatMap((piece) => (piece.receivingPolygon ? [piece.receivingPolygon] : [])),
+          ).get(motionBoundsKey(boundary)) ?? []
+        ).filter(({ rounded }) => polygonClipping.xor([rounded], [boundary]).length === 0)
+      : [];
     layers[layer]!.push(
       physical?.area ?? {
         is_lift: !!lift,
         state_id: 0,
         polygon: { points: boundary },
+        ...(preciseBoundaries.length === 1 ? { precise_polygon: preciseBoundaries[0]!.exact } : {}),
         skeleton_segments: [],
         flags: 0,
         obstacles: [

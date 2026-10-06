@@ -350,6 +350,7 @@ export interface CompiledAssetGeometry {
       is_lift: boolean;
       state_id: number;
       polygon: { points: Point[] };
+      precise_polygon?: Point[];
       skeleton_segments: never[];
       flags: number;
       obstacles: { state_id: number; polygon: { points: Point[] }; precise_polygon?: Point[] }[];

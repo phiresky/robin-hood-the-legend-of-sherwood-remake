@@ -161,8 +161,8 @@ surfaces retain their precision until final grid rounding; ladder movement
 orders use exact world endpoints while transition animations keep their own
 posture and membership effects. Compiler checks require a landing to support
 both the outside point and seam before enabling physical traversal. Unsupported
-definitions retain projected navigation with a warning, including the Lincoln
-shed ladders whose landing heights still disagree.
+definitions retain projected navigation with a warning when their landing
+heights or coverage still disagree.
 The expanded local-anchor audit finds 4/8 ladder definitions and 9/9 wall
 definitions with unsupported floor anchors. Those counts do not check landing
 height compatibility or certify placed routes. Physical walls remain unfinished.
@@ -187,16 +187,22 @@ The Lincoln courtyard shed now publishes a sloped ladder/roof intersection and
 an approach point farther onto the existing roof. Its new-drop ground height is
 the lower entrance, rather than the buried foundation. All sixteen moved/elevated
 complete-animation routes pass, and eight raised-ground entrances reject.
-Full Lincoln retains all eight climb routes and eleven control checks, but its
-existing ground contact still forces this ladder to use projected navigation.
+Full Lincoln retains all eight climb routes and eleven control checks.
 The roof approach differs from the mesh by up to 0.196 units, and the ladder mesh
-remains incomplete; the draft explicitly retains these visual and contact gaps.
+remains incomplete; the draft explicitly retains these visual gaps.
 Physical ladder eligibility now also recognizes raised receiving volumes with
 unambiguous point-anchor bindings. A native fixture passes both climb directions;
 an underlying navigation hole still rejects support. Segment-bound receivers
-remain outside this additional eligibility path. Lincoln's ground contact has
-a staged terrain/collision correction with 205 mesh-covered samples, but the
-resulting clipped boundary still misses the seam, so it remains unpublished.
+remain outside this additional eligibility path. Lincoln's terrain and neighbouring
+plateau collision now publish matching ground-contact corrections, with all 205
+samples covered by the mesh. A three-unit sideways lower approach avoids the
+annex collision without removing it. The published shed retains all sixteen
+moved/elevated routes; full Lincoln now uses physical ladder navigation and
+passes eight climbs, sixteen stairs and eleven control checks.
+Precise walking-area boundaries survive export for raised physical landings;
+native validation requires the same integer-grid footprint. Binding clips that
+boundary to the actual receiver and retains live obstacles. This fixes rounding
+gaps without inventing missing floor. Rendered climbing remains unverified.
 The east hall's upper stair now has published floor/landing seam corrections and
 passes 48 directed routes across four rotations and two elevations. Full Derby
 passes 28/28 stair routes and all five control checks with this correction.
@@ -287,7 +293,7 @@ invented across that gap. New drops use the correct foundation height. Native
 mouse queries also now reject loaded movement-obstacle interiors. These focused
 checks do not establish every platform route or complete asset coverage.
 
-Latest editor validation (2026-10-06): 846 tests passed, two skipped. Fresh
+Latest editor validation (2026-10-06): 847 tests passed, two skipped. Fresh
 descriptors for all ten saved scenes pass native loading and all 71 control
 apply/reset checks; Derby retains 28/28 stair routes. The game
 build and native stair/control checks passed. Wychford loads with its spline wall

@@ -216,6 +216,41 @@ mod tests {
             .unwrap();
         assert!(stair.supports_landing_neighbour(0, 0, [400., 300.125, 100.]));
         assert!(!stair.supports_landing_neighbour(0, 0, [400., 300.5, 100.]));
+        let mut precise_motion = motion.clone();
+        precise_motion.precise_polygon =
+            vec![[380., 170.], [420., 170.], [420., 200.25], [380., 200.25]];
+        let wide_receiver =
+            polygon(&[[370., 260.], [430., 260.], [430., 310.], [370., 310.]]).unwrap();
+        let mut precise_stair = stair.clone();
+        precise_stair.landings.clear();
+        precise_stair
+            .bind_landing(
+                0,
+                &precise_motion,
+                0,
+                0,
+                0,
+                [0., 0., 100.],
+                Some(&wide_receiver),
+            )
+            .unwrap();
+        assert!(precise_stair.supports_landing_neighbour(0, 0, [400., 300.125, 100.]));
+        assert!(!precise_stair.supports_landing_neighbour(0, 0, [400., 301., 100.]));
+        let short_receiver =
+            polygon(&[[370., 260.], [430., 260.], [430., 299.], [370., 299.]]).unwrap();
+        assert!(
+            precise_stair
+                .bind_landing(
+                    0,
+                    &precise_motion,
+                    0,
+                    0,
+                    0,
+                    [0., 0., 100.],
+                    Some(&short_receiver)
+                )
+                .is_err()
+        );
         let mut with_hole = motion.clone();
         with_hole.obstacles.push(
             serde_json::from_value(serde_json::json!({
@@ -529,13 +564,24 @@ impl BoundPhysicalStair {
                 .collect::<Vec<_>>();
             polygon(&ring)
         };
-        let floor = unproject(&motion.polygon.points)?;
+        let precise_floor = !motion.precise_polygon.is_empty();
+        let floor = if precise_floor {
+            polygon(
+                &motion
+                    .precise_polygon
+                    .iter()
+                    .map(|&[x, y]| [x as f32, ((y + a * x + c) / (1.0 - b)) as f32])
+                    .collect::<Vec<_>>(),
+            )?
+        } else {
+            unproject(&motion.polygon.points)?
+        };
         let mut support = if let Some(receiver) = receiver {
             // Exact receiving geometry may encode all or part of a motion
             // region before integer-grid rounding. Joined regions can include
             // other receivers at different heights. Preserve this receiver only
             // when its rounded footprint stays inside the assigned region.
-            if receiver_matches_motion(receiver, motion, plane) {
+            if !precise_floor && receiver_matches_motion(receiver, motion, plane) {
                 geo::MultiPolygon::from(vec![receiver.clone()])
             } else {
                 floor.intersection(receiver)

@@ -1367,6 +1367,7 @@ export function receivingLadderCompilerFixture() {
   const fixture = changingClimbCompilerFixture(2);
   const gameplay = fixture.hut.gameplay!;
   const landing = gameplay.surfaces[1]!;
+  landing.polygon = landing.polygon.map(([x, y]) => [x > 330 ? x + 0.25 : x, y]);
   const height = 300;
   const part = fixture.hut.parts[0]!;
   part.obstacle_local_game!.points = landing.polygon.map(([x, y]) => ({

@@ -3,9 +3,22 @@ import assert from "node:assert/strict";
 import {
   containsNavigationAnchor,
   navigationAnchorHeight,
+  onClippedReceivingBoundary,
   type NavigationAnchorArea,
 } from "./navigation-anchor.ts";
 import { compilePhysicalStairRegion } from "./compile-physical-stair-region.ts";
+
+test("clipped receiver seams accept grid roundoff but reject real gaps and edge extensions", () => {
+  const edge: [number, number][] = [
+    [1839.668306350708, 1330.6334266662598],
+    [1852.3984394073486, 1327.5435791015625],
+  ];
+  const point: [number, number] = [1849.1975165399576, 1328.3205038045344];
+  assert.ok(onClippedReceivingBoundary(point, edge));
+  assert.equal(onClippedReceivingBoundary([point[0], point[1] - 0.0001], edge), false);
+  assert.equal(onClippedReceivingBoundary([point[0], point[1] + 0.0001], edge), false);
+  assert.equal(onClippedReceivingBoundary([1853, 1327.397566], edge), false);
+});
 
 test("physical anchors resolve distinct heights and holes despite identical screen positions", () => {
   const region = compilePhysicalStairRegion({

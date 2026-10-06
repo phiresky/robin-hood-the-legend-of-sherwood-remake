@@ -1264,64 +1264,70 @@ pub struct RawMotionObstacle {
 
 impl RawMotionObstacle {
     pub fn validate_precise_polygon(&self) -> Result<(), String> {
-        use geo::{Area, BooleanOps, Validation};
-        if self.precise_polygon.is_empty() {
-            return Ok(());
-        }
-        if self.precise_polygon.len() < 3
-            || self.precise_polygon.iter().flatten().any(|v| {
-                !v.is_finite() || *v < f64::from(i16::MIN) - 0.5 || *v >= f64::from(i16::MAX) + 0.5
-            })
-        {
-            return Err(
-                "precise motion obstacle needs a finite contour within the movement grid".into(),
-            );
-        }
-        let polygon = |points: Vec<(f64, f64)>| geo::Polygon::new(points.into(), vec![]);
-        let exact = polygon(self.precise_polygon.iter().map(|&[x, y]| (x, y)).collect());
-        let mut grid_points = self
-            .precise_polygon
-            .iter()
-            .map(|&[x, y]| ((x + 0.5).floor(), (y + 0.5).floor()))
-            .collect::<Vec<_>>();
-        // Grid rounding can collapse a narrow corner into a zero-width spike.
-        // Remove only exactly collinear grid vertices, as the compiler does.
-        loop {
-            if grid_points.len() < 3 {
-                return Err("precise motion obstacle collapses on the grid".into());
-            }
-            let redundant = (0..grid_points.len()).find(|&i| {
-                let a = grid_points[(i + grid_points.len() - 1) % grid_points.len()];
-                let b = grid_points[i];
-                let c = grid_points[(i + 1) % grid_points.len()];
-                (b.0 - a.0) * (c.1 - b.1) == (b.1 - a.1) * (c.0 - b.0)
-            });
-            let Some(index) = redundant else {
-                break;
-            };
-            grid_points.remove(index);
-        }
-        let rounded = polygon(grid_points);
-        let raw = polygon(
-            self.polygon
-                .points
-                .iter()
-                .map(|&(x, y)| (f64::from(x), f64::from(y)))
-                .collect(),
-        );
-        exact
-            .check_validation()
-            .map_err(|error| format!("invalid precise motion obstacle: {error:?}"))?;
-        rounded
-            .check_validation()
-            .map_err(|error| format!("invalid rounded precise motion obstacle: {error:?}"))?;
-        raw.check_validation()
-            .map_err(|error| format!("invalid motion obstacle: {error:?}"))?;
-        if exact.unsigned_area() == 0.0 || rounded.xor(&raw).unsigned_area() != 0.0 {
-            return Err("precise motion obstacle does not match its grid contour".into());
-        }
-        Ok(())
+        validate_precise_motion_polygon(&self.polygon, &self.precise_polygon)
     }
+}
+
+fn validate_precise_motion_polygon(
+    grid_polygon: &SectorPolygon,
+    precise_polygon: &[[f64; 2]],
+) -> Result<(), String> {
+    use geo::{Area, BooleanOps, Validation};
+    if precise_polygon.is_empty() {
+        return Ok(());
+    }
+    if precise_polygon.len() < 3
+        || precise_polygon.iter().flatten().any(|v| {
+            !v.is_finite() || *v < f64::from(i16::MIN) - 0.5 || *v >= f64::from(i16::MAX) + 0.5
+        })
+    {
+        return Err(
+            "precise motion obstacle needs a finite contour within the movement grid".into(),
+        );
+    }
+    let polygon = |points: Vec<(f64, f64)>| geo::Polygon::new(points.into(), vec![]);
+    let exact = polygon(precise_polygon.iter().map(|&[x, y]| (x, y)).collect());
+    let mut grid_points = precise_polygon
+        .iter()
+        .map(|&[x, y]| ((x + 0.5).floor(), (y + 0.5).floor()))
+        .collect::<Vec<_>>();
+    // Grid rounding can collapse a narrow corner into a zero-width spike.
+    // Remove only exactly collinear grid vertices, as the compiler does.
+    loop {
+        if grid_points.len() < 3 {
+            return Err("precise motion obstacle collapses on the grid".into());
+        }
+        let redundant = (0..grid_points.len()).find(|&i| {
+            let a = grid_points[(i + grid_points.len() - 1) % grid_points.len()];
+            let b = grid_points[i];
+            let c = grid_points[(i + 1) % grid_points.len()];
+            (b.0 - a.0) * (c.1 - b.1) == (b.1 - a.1) * (c.0 - b.0)
+        });
+        let Some(index) = redundant else {
+            break;
+        };
+        grid_points.remove(index);
+    }
+    let rounded = polygon(grid_points);
+    let raw = polygon(
+        grid_polygon
+            .points
+            .iter()
+            .map(|&(x, y)| (f64::from(x), f64::from(y)))
+            .collect(),
+    );
+    exact
+        .check_validation()
+        .map_err(|error| format!("invalid precise motion obstacle: {error:?}"))?;
+    rounded
+        .check_validation()
+        .map_err(|error| format!("invalid rounded precise motion obstacle: {error:?}"))?;
+    raw.check_validation()
+        .map_err(|error| format!("invalid motion obstacle: {error:?}"))?;
+    if exact.unsigned_area() == 0.0 || rounded.xor(&raw).unsigned_area() != 0.0 {
+        return Err("precise motion obstacle does not match its grid contour".into());
+    }
+    Ok(())
 }
 
 /// A motion area (walkable polygon + skeleton + obstacles).
@@ -1338,6 +1344,10 @@ pub struct RawMotionArea {
     pub is_lift: bool,
     pub state_id: u32,
     pub polygon: SectorPolygon,
+    /// Pre-grid walking boundary, used for physical landing support. Rounding
+    /// must reproduce the same navigation polygon.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub precise_polygon: Vec<[f64; 2]>,
     /// Skeleton segments for fast line-of-sight checks.
     pub skeleton_segments: Vec<((i16, i16), (i16, i16))>,
     pub flags: u32,
@@ -2792,6 +2802,7 @@ impl LoadedLevel {
         level.proto.motion_data = Some(RawMotionData {
             layers: vec![
                 vec![RawMotionArea {
+                    precise_polygon: Vec::new(),
                     is_lift: false,
                     state_id: 0,
                     polygon: SectorPolygon {
@@ -2989,6 +3000,7 @@ impl LoadedLevel {
                         return Err("invalid compiled asset motion area".into());
                     }
                     area_refs.insert((sector, layer as u16));
+                    validate_precise_motion_polygon(&area.polygon, &area.precise_polygon)?;
                     for obstacle in &area.obstacles {
                         obstacle.validate_precise_polygon()?;
                     }
@@ -3928,6 +3940,7 @@ fn read_motion_data(
             }
 
             areas.push(RawMotionArea {
+                precise_polygon: Vec::new(),
                 is_lift,
                 state_id,
                 polygon,
@@ -6073,6 +6086,19 @@ mod tests {
         assert!(obstacle.validate_precise_polygon().is_err());
         obstacle.precise_polygon.clear();
         obstacle.validate_precise_polygon().unwrap();
+    }
+
+    #[test]
+    fn precise_area_boundaries_require_the_same_grid_footprint() {
+        let mut area: RawMotionArea = serde_json::from_value(serde_json::json!({
+            "is_lift": false, "state_id": 0, "flags": 0, "skeleton_segments": [], "obstacles": [],
+            "polygon": {"points": [[0,0], [10,0], [10,10], [0,10]]},
+            "precise_polygon": [[0,0], [10.25,0], [10.25,10.25], [0,10.25]]
+        }))
+        .unwrap();
+        validate_precise_motion_polygon(&area.polygon, &area.precise_polygon).unwrap();
+        area.precise_polygon[1][0] = 10.6;
+        assert!(validate_precise_motion_polygon(&area.polygon, &area.precise_polygon).is_err());
     }
 
     #[test]

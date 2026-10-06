@@ -164,7 +164,8 @@ pub struct ReplayHeader {
 /// Version 58 adds the combat gate for script-reported mission victory.
 /// Version 59 records cooperative campaign rules and shared Robin inventory.
 /// Version 60 retains physical stair identities on movement orders.
-pub const REPLAY_SCHEMA_VERSION: u32 = 60;
+/// Version 61 retains precise physical landing boundaries in loaded motion data.
+pub const REPLAY_SCHEMA_VERSION: u32 = 61;
 
 /// Identity of the next lockstep/history transaction to be admitted.
 ///
@@ -1598,6 +1599,7 @@ mod tests {
         graph_bytes.extend_from_slice(&0_u16.to_le_bytes());
         loaded.proto.motion_data = Some(crate::level_data::RawMotionData {
             layers: vec![vec![crate::level_data::RawMotionArea {
+                precise_polygon: Vec::new(),
                 is_lift: false,
                 state_id: 0,
                 polygon: crate::level_data::SectorPolygon {

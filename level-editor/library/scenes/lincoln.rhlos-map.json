@@ -16,7 +16,7 @@
       "model": "3d-assets/lincoln/lincoln-terrain/model.glb",
       "model_sha256": "cd26d3bc86d76ebe3ee80433aecc85d54a19c1cb4b176e1d5adcabc616559e15",
       "descriptor": "3d-assets/lincoln/lincoln-terrain/asset.json",
-      "descriptor_sha256": "c893f5a04907d6c2f56a4f7b7024a0528fdf0afa866f3ebdeb7befa449eff4aa",
+      "descriptor_sha256": "bc92a4c2ba7be465fda5eda3b80067e7df9aeffa8ca09c8ec95469e91b284af3",
       "resources": []
     }
   ],
@@ -88,7 +88,7 @@
       "model": "3d-assets/lincoln/lincoln-castle-hill-keep-plateau/model.glb",
       "model_sha256": "d3371fa5bf0c8cf842e804c1c2e6cbee18e0f2849e411850a7f3c5990cd7fbfd",
       "descriptor": "3d-assets/lincoln/lincoln-castle-hill-keep-plateau/asset.json",
-      "descriptor_sha256": "ac5f37528ff70d179b72b4ca3e261c5b08fbfb2d7348d15a36737ef50e467282",
+      "descriptor_sha256": "4ef956ef6219891f65db398e3dabd6f7b099197340abdc9bf20ee8145c2cc1d4",
       "id": "lincoln-castle-hill-keep-plateau"
     },
     {
@@ -117,7 +117,7 @@
       "model": "3d-assets/lincoln/lincoln-courtyard-shed/model.glb",
       "model_sha256": "7855522e013817e4db0d8fa88074a4c27c6a4d8347344adf0a1b6df65d94a324",
       "descriptor": "3d-assets/lincoln/lincoln-courtyard-shed/asset.json",
-      "descriptor_sha256": "97a5f50d5090ae8a768fce77a7ab109a8b849acba6b1ffd79011dd11266d8499",
+      "descriptor_sha256": "ea1f32def705dd3e28de61eb6460db409e1e98ea0af5387d26c61a5fbd1d2442",
       "id": "lincoln-courtyard-shed"
     },
     {

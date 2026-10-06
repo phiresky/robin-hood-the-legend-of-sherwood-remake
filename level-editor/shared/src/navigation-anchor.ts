@@ -10,6 +10,23 @@ export interface NavigationAnchorArea {
   coordinateSpace?: "projected" | "world";
 }
 
+/** Receiving contours pass through the fixed clipping grid before binding. */
+export function onClippedReceivingBoundary(point: Point, polygon: Point[]) {
+  const tolerance = 2 / 1048576;
+  return polygon.some((a, index) => {
+    const b = polygon[(index + 1) % polygon.length]!;
+    const dx = b[0] - a[0],
+      dy = b[1] - a[1];
+    const lengthSquared = dx * dx + dy * dy;
+    if (lengthSquared === 0) return false;
+    const t = Math.max(
+      0,
+      Math.min(1, ((point[0] - a[0]) * dx + (point[1] - a[1]) * dy) / lengthSquared),
+    );
+    return Math.hypot(point[0] - a[0] - t * dx, point[1] - a[1] - t * dy) <= tolerance;
+  });
+}
+
 export function pointInGameplayPolygon(point: Point, polygon: Point[], includeBoundary = false) {
   let hit = false;
   for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {

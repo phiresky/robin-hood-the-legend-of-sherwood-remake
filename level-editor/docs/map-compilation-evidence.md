@@ -4,6 +4,47 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Published Lincoln ground contact and precise raised landings (2026-10-06)
+
+The terrain/plateau contact additionally needed precision on the plateau's
+blocking contour. Candidate `lincoln-shed-ground-contact-WggrfC` retains both
+edges until final clipping. A bounded receiving-edge check accepts clipping-grid
+roundoff (2/1048576 units); its regression rejects 0.0001-unit gaps and points
+beyond edge endpoints. This permits physical compilation, but the first native
+candidate `lincoln-shed-ground-level-aFXW8M` still fails both shed routes.
+
+Raised landings previously recovered their support from an integer boundary
+when the receiving volume extended beyond the walking region. Motion areas now
+optionally retain `precise_polygon`. Loader validation shares the obstacle
+contour validator: the finite valid contour must round to the same grid polygon.
+Physical binding unprojects it onto the selected receiver plane and clips to
+the real receiver. Missing receivers and live collision remain constraints.
+The native regression covers a broad raised receiver and rejects short support.
+Replay schema advances to 61 for the added loaded-motion field.
+
+With boundary precision retained, a narrow annex collision still obstructed the
+lower approach. Candidate `lincoln-shed-ground-contact-zhA0yC` shifts the three
+lower door waypoints three units sideways along the unchanged ladder plane.
+The annex collision remains intact. Full Lincoln `lincoln-shed-ground-level-KzPYQi`
+passes 8/8 complete-animation climbs, 16/16 stair routes and eleven control checks.
+The isolated shed (`lincoln-shed-approach-placement-VY9sId` and
+`local-stair-placements-750Y8I`) passes all sixteen moved/elevated climb routes
+and eight raised-ground rejections. This does not certify rendered climbing.
+
+Final stage `lincoln-shed-ground-contact-zFZhMF` removes the obsolete projected
+contact warning. Publication backup `lincoln-shed-ground-publication-20261006`
+updates terrain, keep plateau, shed and Lincoln's pins. All 205 terrain-strip
+samples have mesh coverage; the top discrepancy is below 0.0584 units. Fresh
+published Lincoln in `saved-map-exports-LeLjCK` matches the tested geometry
+after excluding revised warnings. All ten scenes reopen and compile.
+The fresh batch passes all 84 climb routes and 71 control apply/reset checks;
+the updated game binary builds successfully.
+Editor validation passes 847 tests (two skipped), 126 focused compiler/anchor
+tests, app typecheck, lint and production build. Native validation passes the
+two precise-contour tests, seventeen physical-navigation tests and 29 replay
+tests. The pipeline typecheck still reports unrelated `state-delivery.test.ts`
+errors; no parity changes depend on those tests.
+
 ## Raised receiver eligibility and Lincoln contact investigation (2026-10-06)
 
 Physical ladder eligibility previously checked only authored surfaces, omitting
