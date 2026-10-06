@@ -9526,3 +9526,20 @@ field. Of the 38 missing definitions, 36 have all
 component IDs represented in gameplay-bearing assets; the two unmatched assets
 are the Leicester background and Nottingham terrain ground. Component coverage
 alone does not establish transferable local gameplay ownership.
+
+### Central York gable-house climb candidate
+
+The next independent assembly is `york-central-lane-stone-gable-house` and
+`york-central-lane-timber-lean-to`. The lower entrance belongs to authored ground
+at world height 90.00101 in the saved placement. The upper entrance lies on the
+lean-to's sloped roof, whose plane in the climb frame is
+`[0.24438778094190522, -0.7187429957556019, 111.30475209233093]`.
+
+Unpublished `local-stair-seams-1qvQx4` seats the flight against those two planes.
+The upper midpoint moves 4.616657 units, recorded under an explicit authoring
+bound of 4.7; default limits and runtime matching tolerances remain unchanged.
+The paired placement check rejects projected fallback because the roof contour
+does not reach that physical seam. This requires receiving-asset geometry review
+before native actor checks or publication. Mesh review supports only 205/821
+flight samples, with maximum uncovered distance 7.303562 and height residual
+0.388868 units. This candidate is not certified for new-map use.

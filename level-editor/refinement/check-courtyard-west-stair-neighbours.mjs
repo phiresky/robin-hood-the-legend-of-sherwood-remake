@@ -25,6 +25,7 @@ const map = stair.startsWith("york-")
 const source = await readStoredMap(`library/scenes/${map}.rhlos-map.json`, "library");
 const assets = await pinnedDescriptors("library", source.assetSources, source.sceneAssets);
 const neighbours = {
+  "york-central-lane-stone-gable-house": ["york-central-lane-timber-lean-to"],
   "lincoln-keep-annex": ["lincoln-courtyard-shed"],
   "york-precinct-southwest-wall-ramp": ["york-cathedral-precinct-raised-terrain"],
   "york-east-riverside-northern-wall-stair": ["york-castle-south-curtain-wall"],
@@ -90,6 +91,7 @@ const sourceOrigin =
     "york-precinct-east-wall-stair",
     "york-precinct-southwest-wall-ramp",
     "york-east-riverside-northern-wall-stair",
+    "york-central-lane-stone-gable-house",
   ].includes(stair) ||
   westLane ||
   riverBridge ||
@@ -135,6 +137,7 @@ const entranceCounts = assemblies.flatMap(({ id, identities, lifts }) =>
 const northWall = stair === "nottingham-north-wall-stair";
 const market = stair === "york-market-southwest-connecting-stairs";
 const outerWall = [
+  "york-central-lane-stone-gable-house",
   "york-precinct-southwest-wall-ramp",
   "york-outer-southeast-wall-stair",
   "york-outer-east-upper-wall-stair",
@@ -146,7 +149,15 @@ assert.ok(!physicalTerrace || southernRiverside || westLane);
 const riverside =
   stair === "york-east-riverside-curtain-wall" || southernRiverside || stoneRiverside;
 const terrainHeight =
-  southernRiverside || westLane ? 50.001003 : stoneRiverside ? 0 : riverside ? 90.00101 : 0;
+  stair === "york-central-lane-stone-gable-house"
+    ? 90.00101
+    : southernRiverside || westLane
+      ? 50.001003
+      : stoneRiverside
+        ? 0
+        : riverside
+          ? 90.00101
+          : 0;
 const precinct = stair === "york-precinct-east-wall-stair";
 const size = gatehouse
   ? [8000, 8000]
