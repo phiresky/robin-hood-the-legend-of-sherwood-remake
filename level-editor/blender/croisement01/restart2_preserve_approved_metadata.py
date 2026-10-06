@@ -9,7 +9,7 @@ sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from asset_index import write_asset_index
 from review_evidence import sha
 kind=sys.argv[1]
-asset,node={'stump67':('croisement01-east-ivy-stump','054'),'stump65':('croisement01-southwest-cut-stump','055'),'tree20':('croisement01-tree-20','082'),'stump68':('croisement01-southeast-small-stump','059')}[kind]
+asset,node={'stump64':('croisement01-southwest-broken-stump','060'),'stump67':('croisement01-east-ivy-stump','054'),'stump65':('croisement01-southwest-cut-stump','055'),'tree20':('croisement01-tree-20','082'),'stump68':('croisement01-southeast-small-stump','059')}[kind]
 R=ROOT/'level-editor/work/croisement01-refinement/restart2'/(kind+'-integration-v2')
 scene=json.loads((ROOT/'level-editor/library/scenes/croisement01.rhlos-map.json').read_text())
 p=R/'assets'/asset/'asset.json';d=json.loads(p.read_text())
