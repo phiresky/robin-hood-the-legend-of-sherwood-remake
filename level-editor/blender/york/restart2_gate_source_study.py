@@ -1,6 +1,7 @@
 """Freeze small native gate endpoint/transition crops before proposing geometry."""
 import hashlib
 import json
+import sys
 from pathlib import Path
 
 from PIL import Image, ImageDraw
@@ -8,13 +9,23 @@ from PIL import Image, ImageDraw
 ROOT = Path(__file__).resolve().parents[3]
 WORK = ROOT / 'level-editor/work/york-refinement'
 SOURCE = WORK / 'geometry-pass-01/native-state-source-v1'
-DEST = WORK / 'restart2/gate-source-study-v1'
+DEST = WORK / 'restart2' / (sys.argv[1] if len(sys.argv) > 1 else 'gate-source-study-v1')
 if DEST.exists():
     raise FileExistsError(DEST)
 sha = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
 manifest = json.loads((SOURCE / 'manifest.json').read_text())
 level = WORK / 'baseline/york.rhp.json'
 assert sha(level) == manifest['source_level_sha256']
+level_data = json.loads(level.read_text())
+doors = []
+for building_index, building in enumerate(level_data['buildings']):
+    kind, payload = next(iter(building.items()))
+    for local_index, door in enumerate(payload.get('doors', [])):
+        doors.append({'index':len(doors),'building_index':building_index,
+                      'local_index':local_index,'kind':kind,'record':door})
+gate_doors = [doors[i] for i in (13,14)]
+assert all(d['kind']=='StandaloneDoors' and d['building_index']==5 for d in gate_doors)
+assert all(d['record']['locked_pc'] and not d['record']['locked_pc_after_patch'] for d in gate_doors)
 records = {r['id']: r for r in manifest['records']}
 crop = (2250, 780, 2470, 1030)
 base_path = WORK / 'source-states-complete/revealed.png'
@@ -55,6 +66,8 @@ report = {
     'base_image':str(base_path.relative_to(ROOT)),'base_sha256':sha(base_path),
     'composition':'Frozen revealed background plus only gate/mechanism frames at recorded offsets; independent patches are not assumed synchronized or jointly reachable.',
     'native_records':{k:records[k]['record'] for k in ('patch-000','patch-004')},
+    'door_index_convention':'Sequential non-lift doors in native building record order',
+    'gate_doors':gate_doors,
     'states':states,
     'behavior':[
         'Applying a background-integrated patch paints its last transition frame into the background before disabling an invalid final animation.',
@@ -63,7 +76,7 @@ report = {
         'Patch004 starts with a transparent 1x1 frame and ends with visible chain/winch artwork; it is an independent definitive patch.'
     ],
     'pending':[
-        'Recover native door graph endpoints and gatehouse geometry depth/contact before inferring the largely hidden gate plane.',
+        'Validate gatehouse geometry depth/contact against native door endpoints before inferring the largely hidden gate plane.',
         'Determine which mechanism surfaces belong to permanent background versus the animated replacement.',
         'Transition timing, mission reachability and gameplay integration remain separate from endpoint geometry.'
     ]
