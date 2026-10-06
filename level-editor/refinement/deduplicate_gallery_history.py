@@ -38,13 +38,16 @@ def run(root, receipt, apply=False):
             groups[(ident[2], *ident[4:])].append(path)
     count = sum(map(len, groups.values()))
     changed = recovered = 0
+    hashed_inodes = {}
     print(json.dumps(dict(status='scanned', files=count)), flush=True)
     with receipt.open('x') as journal:
         for paths in groups.values():
             canonicals = {}
             for path in paths:
                 before = identity(path)
-                sha = digest(path)
+                if before not in hashed_inodes:
+                    hashed_inodes[before] = digest(path)
+                sha = hashed_inodes[before]
                 if identity(path) != before:
                     raise RuntimeError(f'File changed while hashing: {path}')
                 canonical = canonicals.get(sha)
