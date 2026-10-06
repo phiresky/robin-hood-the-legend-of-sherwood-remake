@@ -11,6 +11,15 @@ not certification of every library asset or gameplay case. Best-effort exports
 warn about omissions and preserve initial states where possible; warnings are
 not evidence that an omitted feature works.
 
+Latest runtime checks retain exact landing contours through binding and foot
+support instead of reducing them to single precision. The southwest turret
+candidate improves to 12/16 moved routes; four zero-degree routes still fail
+where a rounded ground obstacle blocks the lower seam. It remains unpublished.
+The saved-scene stair batch passes 282/284 routes: both failures are Nottingham
+sector 156, whose door heights disagree with its landings before contour binding.
+Full Leicester separately passes 16/16 routes. The saved-scene climb batch passes
+84/84 routes. These results do not establish arbitrary-placement parity.
+
 Landing validation now excludes permanently blocked portions of shared stair
 edges while retaining their collision. Switchable blockers and uncovered edge
 portions still require matching heights. Focused regressions pass, but the
@@ -143,9 +152,9 @@ twelve passing control checks. The floor has 676/677 sampled mesh hits, with
 the remaining sample 0.032 units from the mesh. Published exports match the
 tested candidates and all ten scenes reopen. Fractional receiving contours now
 use a physical-area threshold instead of the integer-grid minimum, fixing a
-separate southwest turret export error. That turret remains unpublished: eight
-of sixteen candidate routes still fail, with invalid upper landing geometry
-reported at zero degrees.
+separate southwest turret export error. That turret remains unpublished: four
+of sixteen candidate routes still fail after preserving precise upper landing
+geometry, with rounded lower-landing collision still blocking zero-degree routes.
 The first church-side tower candidate emits both physical flights at eight
 placements. It initially passed only 24/32 routes because rounded landing-hole
 boundaries blocked the upper flight at 0/90 degrees. The compiler now retains

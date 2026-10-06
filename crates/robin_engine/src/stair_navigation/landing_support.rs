@@ -19,7 +19,15 @@ impl StairRouteGeometry {
         half: MoveBoxHalfDiagonal,
         landings: &[Vec<[f32; 2]>],
     ) -> Result<Option<Vec<[f32; 2]>>, String> {
-        self.route_with_precise_landing_support(source, goal, half, landings, &[])
+        let landings = landings
+            .iter()
+            .map(|ring| {
+                ring.iter()
+                    .map(|p| [f64::from(p[0]), f64::from(p[1])])
+                    .collect()
+            })
+            .collect::<Vec<_>>();
+        self.route_with_precise_landing_support(source, goal, half, &landings, &[])
     }
 
     /// Keep intersection vertices in their computed precision. Rounding a thin
@@ -29,7 +37,7 @@ impl StairRouteGeometry {
         source: [f32; 2],
         goal: [f32; 2],
         half: MoveBoxHalfDiagonal,
-        landings: &[Vec<[f32; 2]>],
+        landings: &[Vec<[f64; 2]>],
         precise_obstacles: &[Vec<[f64; 2]>],
     ) -> Result<Option<Vec<[f32; 2]>>, String> {
         if source.iter().chain(&goal).any(|value| !value.is_finite())
@@ -73,7 +81,7 @@ impl StairRouteGeometry {
         .to_polygon();
         let mut support = MultiPolygon::from(vec![floor.clone()]);
         for landing in landings {
-            support = support.union(&convert(landing)?.intersection(&neighborhood));
+            support = support.union(&polygon(landing)?.intersection(&neighborhood));
         }
         // Independently encoded f32 edges can leave sub-ULP cracks between
         // already bound floors. Close only that representation error, then

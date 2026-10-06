@@ -4,6 +4,39 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Precise landing contours and remaining route failures (2026-10-06)
+
+Landing boundaries and holes now retain double precision through binding and
+foot-support routing. The captured `precise-landing-floor.json` regression has a
+valid exact contour that becomes self-intersecting when reduced to single
+precision; binding and seam-to-interior routing now succeed. Serialized bound
+landing coordinates change representation, so replay schema advances to 62.
+
+Precise clipping also exposed a rounding strip attached to a real wall cap.
+Cleanup subtracts only the bounded strip along a matching stair/solid edge,
+preserving the wall cap, obstacle identity and standalone thin solids. Focused
+tests cover those distinctions. Full Leicester (`great-keep-level-JTtAxp`)
+retains all sixteen routes after this correction.
+
+Southwest placements `local-stair-placements-ld1PeN` now pass twelve of sixteen
+routes, up from eight. The four remaining failures are zero-degree placements
+at both elevations. The lower landing still has an integer-only obstacle whose
+rounded triangle overlaps the exact seam; precise contour recovery remains open.
+No candidate asset is published by this runtime change.
+
+The saved-scene batch `saved-map-exports-pURUNj` passes 282/284 stair routes and
+84/84 climb routes. Both stair failures are Nottingham sector 156, doors 124/125.
+Its physical midpoints are at heights 0.135946 and 29.832588 while the landing
+heights are 0 and 30.001001. The existing height guard rejects both before any
+changed contour code executes; relaxing it would invent support across a gap.
+The complete batch was rerun after the Nottingham-only trace to retain all ten
+maps in its route report.
+
+Validation: nineteen stair-navigation tests, 191 movement tests (thirteen
+ignored), 29 replay tests and all four changing-climb tests pass. The latter
+include 72 reopening checks. Formatting, diff whitespace checks and the game
+build pass.
+
 ## Published great keep stair and fractional receivers (2026-10-06)
 
 `local-stair-seams-78dS02` corrects the great keep stair's end heights and sets

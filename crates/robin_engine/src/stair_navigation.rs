@@ -117,7 +117,7 @@ impl BoundPhysicalStair {
         half_diagonal: MoveBoxHalfDiagonal,
         extra_obstacles: &[Vec<[f32; 2]>],
     ) -> Result<Option<Vec<[f32; 2]>>, String> {
-        let mut geometry = StairRouteGeometry {
+        let geometry = StairRouteGeometry {
             boundary: self.definition.boundary.clone(),
             obstacles: self
                 .definition
@@ -144,7 +144,7 @@ impl BoundPhysicalStair {
             .collect::<Vec<_>>();
         let mut precise_obstacles = Vec::new();
         for landing in &self.landings {
-            geometry.obstacles.extend(landing.holes.iter().cloned());
+            precise_obstacles.extend(landing.holes.iter().cloned());
             precise_obstacles.extend(
                 landing
                     .obstacles
