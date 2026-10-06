@@ -16,7 +16,7 @@ from restart4_stump_final_contact import frame
 ROOT=OUT/'restart6-source-coverage'
 SPECS={39:(OUT/'restart2-textures/approved7-combined-fill-v1/croisement02-tree-39/native-front-preparation/experiment/bake-v1/worker.blend','4487f04a0b69537b836fe3681c3afc60ee8e2c39a5ece968c6e791f666861553'),95:(OUT/'restart2-textures/approved-fence95-fill-v1/croisement02-east-upright-rail-fence-95/experiment/bake-v1/worker.blend','0de98cd7be4b9275e2eef0cde42fc034ee529ece6ab5aedc994cd137a9d396a6')}
 def main(index):
- assert shutil.disk_usage(OUT).free>25*2**30;source,digest=SPECS[index];assert sha(source)==digest;out=ROOT/f'baseline-audit-{index}-v3';out.mkdir(exist_ok=False);bpy.ops.wm.open_mainfile(filepath=str(source));bpy.context.view_layer.update();scene=bpy.context.scene;asset='croisement02-tree-39'if index==39 else'croisement02-east-upright-rail-fence-95'
+ assert shutil.disk_usage(OUT).free>25*2**30;source,digest=SPECS[index];assert sha(source)==digest;out=ROOT/f'baseline-audit-{index}-v3';out.mkdir(exist_ok=False);bpy.ops.wm.open_mainfile(filepath=str(source));bpy.context.view_layer.update();scene=bpy.context.scene;asset=f'croisement02-tree-{index:02d}'if index!=95 else'croisement02-east-upright-rail-fence-95'
  for obj in scene.objects:
   if obj.type=='MESH'and obj.get('asset_group')!=asset:obj.hide_render=True
  objects=[o for o in scene.objects if o.type=='MESH'and o.get('asset_group')==asset];assert objects;records=[];wood=[];verts=[];world=[];triangles=[];owners=[]
