@@ -1,7 +1,7 @@
 """Private source-led winch components; no runtime coupling or source material assignment."""
 import hashlib,json,math,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';OUT=WORK/'restart2/winch-geometry-v2'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';OUT=WORK/'restart2/winch-geometry-v3'
 if OUT.exists():raise FileExistsError(OUT)
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
@@ -27,15 +27,16 @@ def own(o,name,m):
 def beam(name,a,b,r,m=wood):
  a,b=Vector(a),Vector(b);bpy.ops.mesh.primitive_cylinder_add(vertices=8,radius=r,depth=(b-a).length,location=(a+b)/2);o=own(bpy.context.object,name,m);o.rotation_euler=(b-a).to_track_quat('Z','Y').to_euler();return o
 # Floor is obstacle98 at90.00101. Frame footprint and hidden depth are inferred.
-for x in (2397,2412):
- for y in (1059,1064):beam('Winch frame foot',world(x,y,90.00101),world(x,y,113),1.7)
-for y in (1059,1064):beam('Winch frame cross member',world(2395,y,113),world(2414,y,113),2)
-for x in (2397,2412):beam('Winch frame depth member',world(x,1057,91),world(x,1066,91),2)
-center=world(2410,1064,104)
-beam('Crank axle',world(2410,1057,104),center,2.8,iron)
-# Source spoke wheel seen obliquely; its plane is a declared first geometry hypothesis.
+for y in (1055,1064):
+ beam('Angled left frame brace',world(2391,y,90.00101),world(2398,y,113),1.8)
+ beam('Angled right frame brace',world(2412,y,90.00101),world(2405,y,113),1.8)
+ beam('Frame top saddle',world(2397,y,113),world(2407,y,113),2.0)
+ beam('Frame foot rail',world(2390,y,91),world(2413,y,91),1.7)
+center=world(2410,1064,104);rear=world(2402,1050,104);axle=(center-rear).normalized();lateral=axle.cross(Vector((0,0,1))).normalized()
+beam('Broad timber winding drum',rear,center,4.3)
+beam('Crank axle pin',rear-axle*2,center+axle*2,1.8,iron)
 for i in range(8):
- angle=i*math.tau/8;end=center+Vector((math.cos(angle)*16,0,math.sin(angle)*16));crank.append(beam('Crank spoke',center,end,.9))
+ angle=i*math.tau/8;end=center+(lateral*math.cos(angle)+Vector((0,0,1))*math.sin(angle))*17;crank.append(beam('Crank spoke',center,end,.9))
 for x,y,lo,hi in ((2398,1059,113,177),(2410,1064,111,182)):
  for n,z in enumerate([lo+j*1.7 for j in range(math.ceil((hi-lo)/1.7))]):
   bpy.ops.mesh.primitive_torus_add(major_segments=8,minor_segments=4,major_radius=.85,minor_radius=.4,location=world(x,y,z));o=own(bpy.context.object,'Suspended chain link',iron);o.rotation_euler=(math.pi/2,0,n%2*math.pi/2)

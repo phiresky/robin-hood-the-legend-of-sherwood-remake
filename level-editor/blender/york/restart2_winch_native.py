@@ -1,7 +1,7 @@
 """Render the exact winch candidate at the native source coordinates."""
 import json,math,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';BASE=WORK/'restart2/winch-geometry-v2';SRC=WORK/'geometry-pass-01/native-state-source-v1'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';BASE=WORK/'restart2/winch-geometry-v3';SRC=WORK/'geometry-pass-01/native-state-source-v1'
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
 acquire()

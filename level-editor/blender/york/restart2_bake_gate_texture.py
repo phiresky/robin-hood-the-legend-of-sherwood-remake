@@ -17,7 +17,9 @@ if args.output.exists():raise FileExistsError(args.output)
 manifest=args.experiment/'views.json'
 approval=json.loads((args.experiment/'approval.json').read_text())
 review=json.loads((args.generation/'generation-review.json').read_text())
-model=OUT/'restart2/gate-geometry-v10/covered/model.blend'
+state=args.experiment.parent.name
+if state not in ('covered','raised'):raise ValueError('Unknown approved gate state')
+model=OUT/'restart2/gate-geometry-v10'/state/'model.blend'
 if sha(model)!=approval['saved_model_sha256']:raise ValueError('Approved geometry changed')
 if not review['bake_authorized'] or review['asset_id']!=approval['asset_id']:raise ValueError('Candidate not reviewed')
 for kind in ('raw','preserved'):
