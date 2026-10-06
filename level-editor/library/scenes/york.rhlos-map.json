@@ -16,7 +16,7 @@
       "model": "3d-assets/york/york-terrain/model.glb",
       "model_sha256": "a54d425c2a44a2836e9e1c615a6a5daf92e631c57b53452e0de56e4e877d3965",
       "descriptor": "3d-assets/york/york-terrain/asset.json",
-      "descriptor_sha256": "a190e48d63a0170941fd75177fa0eaafff0ccd8e3953bf5be2288bba43559ba3"
+      "descriptor_sha256": "0a421492914461b43d76634e0a4b9664ce1ec02142db5bbf3e8b55ad70d53c61"
     }
   ],
   "assetSources": [
@@ -416,7 +416,7 @@
       "model": "3d-assets/york/york-east-riverside-curtain-wall/model.glb",
       "model_sha256": "400a1b186937c3e83422741677213bd85b04284854e9a433150b93543985fc1a",
       "descriptor": "3d-assets/york/york-east-riverside-curtain-wall/asset.json",
-      "descriptor_sha256": "f2a67252873a808fe1ccc9dc01d833ac75e0c9934f4a6abe8b512647773ebd19",
+      "descriptor_sha256": "1277c980f434fe142bf40d33705318ab013bdd2e6dca8cb820b13b2268cbc22c",
       "id": "york-east-riverside-curtain-wall"
     },
     {
@@ -493,7 +493,7 @@
       "model": "3d-assets/york/york-east-water-gate-south-bastion/model.glb",
       "model_sha256": "89b79b004ad00f5ad9c2c459f2c9f037996c8bb914844c6c4cc1a0533136fc13",
       "descriptor": "3d-assets/york/york-east-water-gate-south-bastion/asset.json",
-      "descriptor_sha256": "ec1cb71fe266a22939fdd2894150f2628af9367b5c4f684a93ddf27546dee6a4",
+      "descriptor_sha256": "25a0fb9d8251ff2f9556315f58089f41b26ec40462d4606267a770b9e5bcdcaa",
       "id": "york-east-water-gate-south-bastion"
     },
     {

@@ -13,6 +13,7 @@ const map = stair.startsWith("york-") ? "york" : "nottingham";
 const source = await readStoredMap(`library/scenes/${map}.rhlos-map.json`, "library");
 const assets = await pinnedDescriptors("library", source.assetSources, source.sceneAssets);
 const neighbours = {
+  "york-east-riverside-curtain-wall": ["york-east-water-gate-south-bastion"],
   "york-castle-courtyard-lodge-stairs": [
     "york-castle-courtyard-raised-terrain",
     "york-castle-courtyard-rear-curtain-wall",
@@ -40,16 +41,18 @@ for (const id of ids) {
 }
 const liftCount = assets.get(stair).gameplay.lifts.length;
 const northWall = stair === "nottingham-north-wall-stair";
-const size = northWall ? [7000, 6500] : [5000, 4500];
-const centers = northWall
-  ? [
-      [2200, 2500],
-      [4500, 3500],
-    ]
-  : [
-      [1500, 1700],
-      [3200, 2600],
-    ];
+const riverside = stair === "york-east-riverside-curtain-wall";
+const size = northWall || riverside ? [7000, 6500] : [5000, 4500];
+const centers =
+  northWall || riverside
+    ? [
+        [2200, 2500],
+        [4500, 3500],
+      ]
+    : [
+        [1500, 1700],
+        [3200, 2600],
+      ];
 const output = await fs.mkdtemp(`work/map-compile/${stair}-neighbour-placements-`);
 const results = [],
   rejected = [];
@@ -64,8 +67,9 @@ for (const height of [0, 40])
       groups: [],
       sceneAssets: source.sceneAssets.filter((asset) => ids.includes(asset.id)),
       assetSources: source.assetSources.filter((asset) => ids.includes(asset.id)),
-      ...(["nottingham-southwest-wall-stair", "nottingham-north-wall-stair"].includes(stair)
-        ? { terrain: createTerrainGrid([0, 0, ...size], 1000, height) }
+      ...(["nottingham-southwest-wall-stair", "nottingham-north-wall-stair"].includes(stair) ||
+      riverside
+        ? { terrain: createTerrainGrid([0, 0, ...size], 1000, height + (riverside ? 90.00101 : 0)) }
         : {}),
     };
     const radians = (rotation * Math.PI) / 180,
@@ -110,6 +114,19 @@ for (const height of [0, 40])
     await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
     await fs.writeFile(`${output}/${file}.scene.json`, JSON.stringify(document));
     results.push({ file, map: file, warnings: compiled.warnings });
+    if (riverside)
+      for (const kind of ["missing", "raised"]) {
+        const changed = structuredClone(document);
+        if (kind === "missing") delete changed.terrain;
+        else changed.terrain = createTerrainGrid([0, 0, ...size], 1000, height + 110.00101);
+        const invalid = compile(changed);
+        assert.equal(
+          invalid.descriptor.asset_geometry.lifts?.length ?? 0,
+          0,
+          `${file}: ${kind} terrain retained an unsupported stair`,
+        );
+        rejected.push({ file, group: "$terrain", kind, warnings: invalid.warnings });
+      }
     for (const group of document.groups.filter((g) => !g.id.endsWith(`/${stair}`)))
       for (const kind of ["missing", "raised"]) {
         const changed = structuredClone(document);

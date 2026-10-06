@@ -20,10 +20,22 @@ assert.equal(edits.length, 1);
 const upperCastle = edits[0].asset === "nottingham-castle-upper-stair";
 const northWall = edits[0].asset === "nottingham-north-wall-stair";
 const yorkLodge = edits[0].asset === "york-castle-courtyard-lodge-stairs";
+const yorkRiverside = edits[0].asset === "york-east-riverside-curtain-wall";
 assert.ok(
-  upperCastle || northWall || yorkLodge || edits[0].asset === "nottingham-southwest-wall-stair",
+  upperCastle ||
+    northWall ||
+    yorkLodge ||
+    yorkRiverside ||
+    edits[0].asset === "nottingham-southwest-wall-stair",
 );
-const map = yorkLodge ? "york" : "nottingham";
+const map = yorkLodge || yorkRiverside ? "york" : "nottingham";
+if (yorkRiverside) {
+  const adjoiningWall = edits[0].gameplay.surfaces.find(
+    (surface) => surface.id === "building-259--component-wall-walk-0",
+  );
+  assert.ok(adjoiningWall);
+  adjoiningWall.preserveMovementPrecision = true;
+}
 const document = await readStoredMap(`library/scenes/${map}.rhlos-map.json`, "library");
 const assets = await pinnedDescriptors("library", document.assetSources, document.sceneAssets);
 const index = JSON.parse(await fs.readFile("library/3d-assets/index.json", "utf8")).assets;
@@ -39,7 +51,9 @@ const modelHash = hash(await fs.readFile(`library/3d-assets/${stairEntry.model}`
 for (const review of flightReviews) {
   assert.equal(review.asset, edits[0].asset);
   assert.equal(review.modelSha256, modelHash);
-  assert.ok(review.maximumUncoveredMeshEdgeDistance < (yorkLodge ? 0.226 : 0.034));
+  assert.ok(
+    review.maximumUncoveredMeshEdgeDistance < (yorkRiverside ? 0.279 : yorkLodge ? 0.226 : 0.034),
+  );
   edits[0].gameplay.draft ??= { issues: [] };
   edits[0].gameplay.draft.issues.push(
     `Stair ${review.node} has ${review.sampledMeshHits}/${review.sampledFloorPoints} mesh sample hits, with gaps up to ${review.maximumUncoveredMeshEdgeDistance.toFixed(3)} game units; rendered actor integration remains unverified.`,
@@ -52,11 +66,13 @@ const approaches = upperCastle
       [787, 1165.001, 175.001],
       [812, 1230.00101, 100.00101],
     ]
-  : yorkLodge
-    ? [[2426, 866.001, 225.001]]
-    : northWall
-      ? [[1822, 439.00101, 120.00101]]
-      : [[768, 1796, 0]];
+  : yorkRiverside
+    ? [[2549, 1622.001, 200.001]]
+    : yorkLodge
+      ? [[2426, 866.001, 225.001]]
+      : northWall
+        ? [[1822, 439.00101, 120.00101]]
+        : [[768, 1796, 0]];
 const floors = approaches.map((point) => {
   const matches = compiled.lifts.filter((l) =>
     l.physical_navigation?.doors.some(
@@ -87,29 +103,46 @@ const contacts = upperCastle
         edges: [[18, 1]],
       },
     ]
-  : yorkLodge
+  : yorkRiverside
     ? [
         {
-          asset: "york-castle-courtyard-rear-curtain-wall",
-          surface: "building-760-walk-0",
-          edges: [[7, 0]],
+          asset: "york-east-water-gate-south-bastion",
+          surface: "building-259--component-bastion-walk-0",
+          edges: [[13, 0]],
+          cornerLines: [
+            {
+              vertex: 13,
+              points: [
+                [2439, 1715.001],
+                [2555, 1635.001],
+              ],
+            },
+          ],
         },
       ]
-    : northWall
+    : yorkLodge
       ? [
           {
-            asset: "nottingham-north-curtain-wall",
-            surface: "building-169-walk-0",
-            edges: [[11, 0]],
+            asset: "york-castle-courtyard-rear-curtain-wall",
+            surface: "building-760-walk-0",
+            edges: [[7, 0]],
           },
         ]
-      : [
-          {
-            asset: "nottingham-southwest-curtain-wall-north",
-            surface: "building-220--component-wall-220-north-walk-0",
-            edges: [[3, 0]],
-          },
-        ];
+      : northWall
+        ? [
+            {
+              asset: "nottingham-north-curtain-wall",
+              surface: "building-169-walk-0",
+              edges: [[11, 0]],
+            },
+          ]
+        : [
+            {
+              asset: "nottingham-southwest-curtain-wall-north",
+              surface: "building-220--component-wall-220-north-walk-0",
+              edges: [[3, 0]],
+            },
+          ];
 const output = await fs.mkdtemp("work/map-compile/upper-castle-stair-contacts-");
 const changes = [];
 function meshHeight(p, [a, b, c]) {
@@ -166,6 +199,15 @@ for (const contact of contacts) {
       lines.push(floors[which].plane.map((v, i) => v - plane[i]));
       constraints.set(vertex, lines);
     }
+  for (const {
+    vertex,
+    points: [p, q],
+  } of contact.cornerLines ?? []) {
+    const a = q[1] - p[1],
+      b = p[0] - q[0];
+    assert.ok(constraints.has(vertex));
+    constraints.get(vertex).push([a, b, -a * p[0] - b * p[1]]);
+  }
   const corrected = structuredClone(points);
   for (const [vertex, lines] of constraints) {
     const [x, y] = points[vertex];

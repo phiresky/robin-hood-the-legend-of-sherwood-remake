@@ -8454,3 +8454,29 @@ Mesh review finds 685/693 flight hits with a maximum gap of 0.225310 units, and
 164/205 wall contact hits with a maximum gap of 0.579569 units. These limits are
 explicit authoring review bounds, not runtime connection tolerances. Draft
 warnings preserve these discrepancies and the requirement for rendered review.
+
+### York east riverside stair publication
+
+Stair-only candidate `local-stair-seams-OWJLOR` passes 32 copied routes and 64
+missing/raised synthetic landing cases (`external-stair-landings-tGjuCK`), but
+full-map `york-riverside-stair-7AG6Mq` fails both routes at the actual contacts.
+The lower contact is authored in the terrain's projected frame beneath a
+90.00101-unit receiver. The upper contact belongs to the south water-gate bastion.
+Moving its edge initially overlaps the adjoining wall; intersecting the corner
+with the shared wall boundary and preserving that wall's movement precision
+fixes both original and rotated compilation without relaxing material checks.
+
+Final candidate `york-east-riverside-curtain-wall-contact-2wGhpx` passes all 130
+York stair routes and six controls in `york-riverside-precision-gzZs5u`.
+`york-east-riverside-curtain-wall-neighbour-placements-RKPcZl` passes 32 routes
+over authored raised terrain, with independent wall/bastion copies at four
+rotations and two elevations. Expanded fixture `...-0zEzOk` retains identical
+exported geometry and rejects all 48 missing/raised bastion or terrain cases.
+Fresh published geometry matches the full map and eight placement files;
+all ten scenes reopen. Backup: `york-riverside-stair-publication-20261006`.
+
+Flight support is 669/676 mesh samples (maximum edge gap 0.278843 units), upper
+contact discrepancy stays below 0.135 units, and terrain support is 205/205.
+These are draft mesh limitations, not runtime connection tolerances or rendered
+verification. Audit `lift-anchor-support-zwj2QO` finds 15/53 unsupported stairs
+(York 14/16, Sherwood 1/1), 1/8 ladders and 9/9 walls.

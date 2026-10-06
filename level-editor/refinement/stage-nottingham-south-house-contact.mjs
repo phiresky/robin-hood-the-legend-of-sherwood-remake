@@ -9,10 +9,25 @@ import { validateAssetGameplay } from "../shared/src/asset-gameplay.ts";
 // Stage the terrain-owned strip at a reviewed stair contact. The compiler still
 // derives connectivity from placed geometry and does not fill unsupported gaps.
 const [stage, compiledFile] = process.argv.slice(2);
-assert.ok(stage && compiledFile, "Provide stair edits and their Nottingham export");
+assert.ok(stage && compiledFile, "Provide stair edits and their map export");
 const edits = JSON.parse(await fs.readFile(`${stage}/edits.json`, "utf8"));
-assert.ok(edits.length >= 1 && !edits.some((edit) => edit.asset === "nottingham-terrain"));
+assert.ok(edits.length >= 1);
 const contacts = {
+  "york-east-riverside-curtain-wall": {
+    terrain: "york-terrain",
+    projectionHeight: 90.00101,
+    outside: [2479, 1671.00101, 90.00101],
+    surface: "ground-section-0-0",
+    edge: [
+      [2471, 1568],
+      [2500, 1581],
+    ],
+    partial: false,
+    flightMargin: 0.279,
+    landingMargin: 0.000001,
+    issue:
+      "Riverside stair flight has 669/676 mesh sample hits, with edge discrepancies below 0.279 game units. Complete rendered actor integration remains unverified.",
+  },
   "nottingham-southwest-wall-stair": {
     outside: [768, 1796, 0],
     surface: "ground-section-0-0",
@@ -64,6 +79,8 @@ const contacts = {
 };
 const contact = contacts[edits[0].asset];
 assert.ok(contact, "No reviewed terrain contact for this stair asset");
+const terrain = contact.terrain ?? "nottingham-terrain";
+assert.ok(!edits.some((edit) => edit.asset === terrain));
 const compiledBytes = await fs.readFile(compiledFile);
 const compiled = JSON.parse(compiledBytes).asset_geometry;
 const matches = compiled.lifts.filter((lift) =>
@@ -73,17 +90,22 @@ const matches = compiled.lifts.filter((lift) =>
 );
 assert.equal(matches.length, 1);
 const stair = matches[0].physical_navigation;
-const [a, b, c] = stair.plane;
+const [a, b, worldC] = stair.plane;
+const projectionHeight = contact.projectionHeight ?? 0;
+// Convert a receiver-elevated seam into the ground surface's projected frame.
+const c = worldC + (b - 1) * projectionHeight;
 const length = Math.hypot(a, b);
 const sideways = ([x, y]) => (-b * x + a * y) / length;
-const seam = stair.boundary.filter(([x, y]) => Math.abs(a * x + b * y + c) < 1e-5);
+const seam = stair.boundary
+  .map(([x, y]) => [x, y - projectionHeight])
+  .filter(([x, y]) => Math.abs(a * x + b * y + c) < 1e-5);
 assert.equal(seam.length, 2);
 const index = JSON.parse(await fs.readFile("library/3d-assets/index.json", "utf8")).assets;
 assert.equal(
   index.find((e) => e.id === edits[0].asset).descriptor_sha256,
   edits[0].descriptorSha256,
 );
-const entry = index.find((e) => e.id === "nottingham-terrain");
+const entry = index.find((e) => e.id === terrain);
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const bytes = await fs.readFile(`library/3d-assets/${entry.descriptor}`);
 assert.equal(hash(bytes), entry.descriptor_sha256);
@@ -177,7 +199,9 @@ const meshReviews = JSON.parse(await fs.readFile(`${stage}/mesh-review.json`, "u
 assert.equal(meshReviews.length, 1);
 const meshReview = meshReviews[0];
 assert.equal(meshReview.asset, edits[0].asset);
-assert.equal(meshReview.sampledMeshHits, meshReview.sampledFloorPoints);
+if (contact.flightMargin !== undefined)
+  assert.ok(meshReview.maximumUncoveredMeshEdgeDistance < contact.flightMargin);
+else assert.equal(meshReview.sampledMeshHits, meshReview.sampledFloorPoints);
 assert.ok(
   meshReview.landingEdgeReviews.every(
     (edge) => edge.maximumUncoveredDistance < contact.landingMargin,
