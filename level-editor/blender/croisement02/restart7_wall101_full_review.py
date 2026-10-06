@@ -14,6 +14,7 @@ from restart3_tree06_root_correction import fingerprint
 from restart3_tree06_root_review import configure
 from restart2_sign_neighbors import camera_to,render
 from restart7_wall101_cap_candidate import BASE,D,ASSET
+GEOMETRY_EVIDENCE=D
 
 def main():
  dest=D/'full-asset-review-v1';dest.mkdir(exist_ok=False);mask=np.asarray(Image.open(OUT/'baseline/masks/000101.png').convert('L'))>0;yy,xx=np.nonzero(mask);pixels=list(zip(xx+1419,yy+829));records=[]
@@ -37,7 +38,7 @@ def main():
   for i in range(8):
    a=i*math.pi/4;camera_to(camera,center,Vector((math.sin(a)*COS,-math.cos(a)*COS,SIN)));pic=render(scene,dest/f'{mode}-{i}.png');sheet.paste(pic,(i%4*512,i//4*544),pic.getchannel('A'));ImageDraw.Draw(sheet).text((i%4*512+5,i//4*544+516),f'Full asset {mode} {i}; native first',fill='white')
   sheet.save(dest/f'{mode}-eight.png')
- write_json(dest/'receipt.json',dict(model_sha256=sha(D/'model.blend'),base_sha256=sha(BASE),all_six_other_receivers_exact=True,retained_receiver_fingerprints=records[0]['other_receivers'],native_mask101_sha256=sha(OUT/'baseline/masks/000101.png'),native_domain_pixels=len(pixels),old_covered=int(old.sum()),new_covered=int(new.sum()),gained_pixels=gained,lost_pixels=lost,original_camera_first=True,full_asset_camera=dict(center=list(center),ortho_scale=scale,resolution=[512,512]),original_geometry_not_resaved=True,scope='All seven receivers, full native101 solid source-domain guard and full unclipped eight-view actual/solid supplement. Changed cap topology guard remains separately hash-bound.',files={str(p):sha(p)for p in [dest/'actual-eight.png',dest/'solid-eight.png',D/'source-audit.json',D/'changes.json']}));print('FULL GUARD',len(pixels),'gains',len(gained),'loss',len(lost),flush=True)
+ write_json(dest/'receipt.json',dict(model_sha256=sha(D/'model.blend'),base_sha256=sha(BASE),all_six_other_receivers_exact=True,retained_receiver_fingerprints=records[0]['other_receivers'],native_mask101_sha256=sha(OUT/'baseline/masks/000101.png'),native_domain_pixels=len(pixels),old_covered=int(old.sum()),new_covered=int(new.sum()),gained_pixels=gained,lost_pixels=lost,original_camera_first=True,full_asset_camera=dict(center=list(center),ortho_scale=scale,resolution=[512,512]),original_geometry_not_resaved=True,scope='All seven receivers, full native101 solid source-domain guard and full unclipped eight-view actual/solid supplement. Changed cap topology guard remains separately hash-bound.',files={str(p):sha(p)for p in [dest/'actual-eight.png',dest/'solid-eight.png',GEOMETRY_EVIDENCE/'source-audit.json',GEOMETRY_EVIDENCE/'changes.json']}));print('FULL GUARD',len(pixels),'gains',len(gained),'loss',len(lost),flush=True)
 if __name__=='__main__':
  acquire()
  try:main()
