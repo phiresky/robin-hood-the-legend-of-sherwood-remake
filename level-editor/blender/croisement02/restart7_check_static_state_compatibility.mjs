@@ -1,6 +1,7 @@
 import {readFile,writeFile,mkdir} from 'node:fs/promises';import {resolve,join} from 'node:path';import {createHash} from 'node:crypto';
 import {parseStoredMap} from '../../shared/src/stored-level.ts';import {verifyStaticStateReplacements} from '../../shared/src/state-delivery.ts';
-const base=resolve('level-editor/work/croisement02-refinement'),candidate=join(base,'restart2-textures/post-batch15-static-candidate-v1'),stage=join(base,'restart2-state/remaining-seven-package-v2'),out=join(base,'restart2-state/post-batch15-static-compatibility-v1'),read=async p=>JSON.parse(await readFile(p,'utf8')),sha=b=>createHash('sha256').update(b).digest('hex');
+const revision=process.argv[2]??'v2';if(!/^v[0-9]+$/.test(revision))throw Error('Invalid private candidate revision');
+const base=resolve('level-editor/work/croisement02-refinement'),candidate=join(base,'restart2-textures/post-batch15-static-candidate-'+revision),stage=join(base,'restart2-state/remaining-seven-package-v2'),out=join(base,'restart2-state/post-batch15-static-compatibility-'+revision),read=async p=>JSON.parse(await readFile(p,'utf8')),sha=b=>createHash('sha256').update(b).digest('hex');
 const mapPath=join(candidate,'croisement02.rhlos-map.json'),raw=await read(mapPath),manifest=await read(join(stage,'manifest.json')),descriptors=new Map(),resources=[];
 for(const a of [...raw.assetSources,...raw.sceneAssets]){for(const key of ['model','descriptor']){const bytes=await readFile(join(candidate,'map-assets',a[key]));if(sha(bytes)!==a[key+'_sha256'])throw Error('Static resource mismatch '+a.id);resources.push({path:a[key],sha256:sha(bytes)})}descriptors.set(a.id,await read(join(candidate,'map-assets',a.descriptor)))}
 const document=parseStoredMap(raw,descriptors),checks=[];
