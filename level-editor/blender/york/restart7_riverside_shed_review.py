@@ -7,7 +7,7 @@ from mathutils import Vector
 ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender')]
 from render_slots import acquire,release
 from refinement_review import _tree
-B=ROOT/'level-editor/work/york-refinement';D=B/'restart7-riverside-shed-v1';S=math.sin(math.radians(35));C=math.cos(math.radians(35));RAY=Vector((0,-C,S));ASSET='york-riverside-storehouse-timber-shed'
+B=ROOT/'level-editor/work/york-refinement';D=B/'restart7-riverside-shed-v2';S=math.sin(math.radians(35));C=math.cos(math.radians(35));RAY=Vector((0,-C,S));ASSET='york-riverside-storehouse-timber-shed'
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def main():
  model=D/'model.blend';digest=sha(model);bpy.ops.wm.open_mainfile(filepath=str(model));scene=bpy.context.scene;bpy.context.view_layer.update();own=[o for o in scene.objects if o.type=='MESH'and o.get('asset_group')==ASSET];context=[o for o in scene.objects if o.type=='MESH'and o not in own];cam=bpy.data.objects.new('Private native-first camera',bpy.data.cameras.new('Private native-first camera'));scene.collection.objects.link(cam);cam.data.type='ORTHO';cam.data.clip_end=20000;scene.camera=cam;scene.cycles.samples=8

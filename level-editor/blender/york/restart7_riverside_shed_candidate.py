@@ -7,7 +7,7 @@ from PIL import Image
 from mathutils import Vector,Matrix
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire,release
-B=ROOT/'level-editor/work/york-refinement';D=B/'restart7-riverside-shed-v1';SOURCE=B/'grounding/york-grounded.blend';ASSET='york-riverside-storehouse-timber-shed';S=math.sin(math.radians(35));C=math.cos(math.radians(35));RAY=Vector((0,-C,S))
+B=ROOT/'level-editor/work/york-refinement';D=B/'restart7-riverside-shed-v2';SOURCE=B/'grounding/york-grounded.blend';ASSET='york-riverside-storehouse-timber-shed';S=math.sin(math.radians(35));C=math.cos(math.radians(35));RAY=Vector((0,-C,S))
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def signature(o):return sha_bytes(json.dumps(dict(vertices=[list(v.co)for v in o.data.vertices],faces=[list(p.vertices)for p in o.data.polygons],uvs=[[list(d.uv)for d in u.data]for u in o.data.uv_layers],matrix=[list(r)for r in o.matrix_world]),sort_keys=True).encode())
 def sha_bytes(b):return hashlib.sha256(b).hexdigest()
@@ -42,7 +42,7 @@ def main():
  def solid_quad(name,top,depth):
   v=[list(p)for p in top]+[[p[0],p[1],p[2]-depth]for p in top];return mesh(name,v,[(0,1,2,3),(7,6,5,4),(0,4,5,1),(1,5,6,2),(2,6,7,3),(3,7,4,0)])
  def world(x,y,z):return Vector((x,(-y-C*z)/S,z))
- A=world(1480,1020,192.884);U=world(1514,1055,192.884)-A;V=world(1433,1056,170.914)-A
+ A=world(1478,1019,192.884);U=world(1513,1054,192.884)-A;V=world(1432,1055,170.914)-A
  normal=U.cross(V).normalized()
  def roof_z(x,y):return float(A.z-(normal.x*(x-A.x)+normal.y*(y-A.y))/normal.z)
  footprint=[(1481.93,-2059.35),(1513.80,-2117.85),(1468.0,-2142.8),(1436.15,-2084.3)];floor=109.751;top=[(x,y,roof_z(x,y)-2.0)for x,y in footprint];wall=mesh('Riverside shed / closed wall body',top+[(x,y,floor)for x,y in footprint],[(0,1,2,3),(7,6,5,4),(0,4,5,1),(1,5,6,2),(2,6,7,3),(3,7,4,0)])
@@ -64,7 +64,7 @@ def main():
  for other in list(bpy.data.scenes):
   if other!=scene:bpy.data.scenes.remove(other)
  bpy.ops.outliner.orphans_purge(do_recursive=True);bpy.ops.wm.save_as_mainfile(filepath=str(D/'model.blend'));assert sha(SOURCE)==original
- (D/'construction.json').write_text(json.dumps(dict(source=str(SOURCE),source_sha256=original,model_sha256=sha(D/'model.blend'),asset=ASSET,context_exact=before,mask=1,mask_box=[1432,1019,82,120],native_source_sha256=sha(B/'baseline/covered.png'),native_mask_sha256=sha(B/'baseline/masks/000001.png'),floor_z=floor,roof_source_corners=[[1480,1020],[1514,1055],[1467,1091],[1433,1056]],status='Private geometry hypothesis; source coverage, ground contact and actual8 review pending',publication=False),indent=2)+'\n')
+ (D/'construction.json').write_text(json.dumps(dict(source=str(SOURCE),source_sha256=original,model_sha256=sha(D/'model.blend'),asset=ASSET,context_exact=before,mask=1,mask_box=[1432,1019,82,120],native_source_sha256=sha(B/'baseline/covered.png'),native_mask_sha256=sha(B/'baseline/masks/000001.png'),floor_z=floor,roof_source_corners=[[1478,1019],[1513,1054],[1467,1090],[1432,1055]],status='Private geometry hypothesis; source coverage, ground contact and actual8 review pending',publication=False),indent=2)+'\n')
 if __name__=='__main__':
  acquire()
  try:main()
