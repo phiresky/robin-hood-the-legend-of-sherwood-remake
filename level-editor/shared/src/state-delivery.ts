@@ -118,7 +118,7 @@ export function validateStateDelivery(value: unknown): asserts value is StateDel
       members.add(id);
       terminal = Math.max(
         terminal,
-        state!.transition.reduce((n, f) => n + f.delay + 1, 0),
+        Math.max(1, state!.transition.reduce((n, f) => n + f.delay + 1, 0) - 1),
       );
     }
     if (terminal !== family.body_terminal_tick)

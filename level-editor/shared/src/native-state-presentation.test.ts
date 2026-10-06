@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   nativeElementBehind,
+  nativeTransientPatchFrame,
+  type NativeTransientPatchState,
   nativeBackgroundFrames,
   nativePresentationFrame,
   nativePresentationOrder,
@@ -260,4 +262,31 @@ test("verified disjoint pair never permits a third painted element to change pos
     ["a", "b"],
   );
   assert.throws(() => nativePresentationOrder([a, b]), /Ambiguous/);
+});
+
+test("transient completion enters final immediately and reverse reset retains its first tick", () => {
+  const frame = (path: string, delay: number) => ({
+    path,
+    sha256: "a".repeat(64),
+    width: 1,
+    height: 1,
+    offset: [0, 0] as [number, number],
+    delay,
+  });
+  const state = {
+    transition: [frame("first", 1), frame("last", 2)],
+    initial: [frame("idle", 1)],
+    final: [frame("final0", 1), frame("final1", 1)],
+    initial_loop: true,
+    final_loop: true,
+    definitive: false,
+  } as NativeTransientPatchState;
+  assert.deepEqual(
+    Array.from({ length: 9 }, (_, tick) => nativeTransientPatchFrame(state, "forward", tick)?.path),
+    ["first", "first", "last", "last", "final0", "final0", "final1", "final1", "final0"],
+  );
+  assert.deepEqual(
+    Array.from({ length: 7 }, (_, tick) => nativeTransientPatchFrame(state, "reverse", tick)?.path),
+    ["last", "last", "last", "last", "first", "idle", "idle"],
+  );
 });

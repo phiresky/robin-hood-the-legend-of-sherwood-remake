@@ -198,11 +198,11 @@ test("patch-only branch requires a distinct initial target and owns its phase ti
   f.element_ids = [];
   f.hidden_initial_element_ids = [e.id];
   f.patch_ids = ["bag"];
-  f.body_terminal_tick = 3;
-  validateStateDelivery(c);
   f.body_terminal_tick = 2;
-  assert.throws(() => validateStateDelivery(c), /timing/);
+  validateStateDelivery(c);
   f.body_terminal_tick = 3;
+  assert.throws(() => validateStateDelivery(c), /timing/);
+  f.body_terminal_tick = 2;
   f.patch_ids.push("bag");
   assert.throws(() => validateStateDelivery(c), /shared patch/);
   f.patch_ids.pop();

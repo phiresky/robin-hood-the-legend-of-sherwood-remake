@@ -342,11 +342,11 @@ test("transient patches sort foreground separately and final never stamps transi
   assert.deepEqual(rgb(), [200, 0, 0]);
   p.setPatchState("bag", "forward", 0);
   assert.deepEqual(rgb(), [0, 200, 0]);
-  p.setPatchState("bag", "forward", 2);
+  p.setPatchState("bag", "forward", 1);
   assert.deepEqual(rgb(), [200, 0, 0]);
-  p.setPatchState("bag", "forward", 3);
+  p.setPatchState("bag", "forward", 2);
   assert.deepEqual(rgb(), [0, 0, 200]);
-  p.setPatchState("bag", "forward", 5);
+  p.setPatchState("bag", "forward", 4);
   assert.deepEqual(rgb(), [200, 0, 0]);
   p.setPatchState("bag", "initial");
   assert.deepEqual(rgb(), [200, 0, 0]);

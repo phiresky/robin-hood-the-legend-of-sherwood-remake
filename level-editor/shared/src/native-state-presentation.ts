@@ -353,7 +353,12 @@ export function nativeTransientPatchFrame(
     (phase === "reverse" && state.definitive)
   )
     throw new Error("Invalid patch transition");
-  const duration = state.transition.reduce((sum, frame) => sum + frame.delay + 1, 0);
+  // Completion switches phases when the last frame reaches its delay counter.
+  const duration = Math.max(
+    1,
+    state.transition.reduce((sum, frame) => sum + frame.delay + 1, 0) -
+      (phase === "reverse" ? 0 : 1),
+  );
   if (phase === "forward" && tick >= duration)
     return nativeTransientPatchFrame(state, "applied", tick - duration);
   if (phase === "reverse" && tick >= duration)
@@ -371,7 +376,10 @@ export function nativeTransientPatchFrame(
   if (!frames) throw new Error("Unknown patch phase");
   const loop =
     phase === "initial" ? state.initial_loop : phase === "applied" ? state.final_loop : false;
-  const index = nativePresentationFrame({ frames, loop }, tick);
+  const index = nativePresentationFrame(
+    { frames, loop },
+    phase === "reverse" ? Math.max(0, tick - 1) : tick,
+  );
   return index < 0 ? undefined : frames[index];
 }
 

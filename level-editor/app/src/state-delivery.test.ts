@@ -336,7 +336,7 @@ test("nonintegrating branch hides initial rig, advances one clock and restores i
   family.element_ids = [];
   family.hidden_initial_element_ids = [e.id];
   family.patch_ids = ["bag"];
-  family.body_terminal_tick = 2;
+  family.body_terminal_tick = 1;
   const p = new StateDelivery(() => ({ load: async () => f.template, dispose() {} }));
   await p.set(f.contract, f.source, f.library, async (resource) =>
     resource.path === "profile.json"
@@ -352,7 +352,7 @@ test("nonintegrating branch hides initial rig, advances one clock and restores i
   p.activate("trap");
   assert.deepEqual(rgb(), [0, 200, 0]);
   p.setPlaying(true);
-  p.advance(2 / 25);
+  p.advance(1 / 25);
   assert.deepEqual(rgb(), [0, 0, 200]);
   p.reset("trap");
   assert.deepEqual(rgb(), [200, 30, 20]);
