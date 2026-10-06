@@ -34,7 +34,7 @@
       "model": "3d-assets/nottingham/nottingham-castle-east-courtyard-wall/model.glb",
       "model_sha256": "fa485f25f7c20cb83e1563ffd5a159f67471cd32ad6da7d3813c6a3197ecc70e",
       "descriptor": "3d-assets/nottingham/nottingham-castle-east-courtyard-wall/asset.json",
-      "descriptor_sha256": "a2d3b584130d5c555e7c8a132707365e13a7cc6fb54c7b691c89081184b42b2e",
+      "descriptor_sha256": "387edfc531cc14d98021575df36e5cc065efe857ceba62edc682cd9cb066751d",
       "id": "nottingham-castle-east-courtyard-wall"
     },
     {
@@ -69,14 +69,14 @@
       "model": "3d-assets/nottingham/nottingham-castle-upper-stair/model.glb",
       "model_sha256": "a7bea4b21f9c7c550a4a0f15c7def319e577aa5cfff22a6fc8c5f31389b299ba",
       "descriptor": "3d-assets/nottingham/nottingham-castle-upper-stair/asset.json",
-      "descriptor_sha256": "7734e086a02524ab6490aa819f0b9a81946be0a6f3eda217aa4331772eaa3f65",
+      "descriptor_sha256": "516154f40153cc8b5b3bdb28551d7a20e06b3c581146e94e3c0ee44e56712f29",
       "id": "nottingham-castle-upper-stair"
     },
     {
       "model": "3d-assets/nottingham/nottingham-castle-upper-wall/model.glb",
       "model_sha256": "79e70d5339eced7fdc23387e7fbd4de257383a72670a3d51d9ba6f0be3bf0bf0",
       "descriptor": "3d-assets/nottingham/nottingham-castle-upper-wall/asset.json",
-      "descriptor_sha256": "7900d3a50841db6fd4739b0e2612621c3ccbdd8a96161cb5d42c60a454051f25",
+      "descriptor_sha256": "bbb1893274306c2c2654d3720610f8700ebaec2ab6b3ad0eeea49d98e28c8aee",
       "id": "nottingham-castle-upper-wall"
     },
     {
@@ -167,7 +167,7 @@
       "model": "3d-assets/nottingham/nottingham-castle-courtyard-ground/model.glb",
       "model_sha256": "e512fca1003420f5501feebde7dbf65bd169b2978374bfbf628c4748bde5843a",
       "descriptor": "3d-assets/nottingham/nottingham-castle-courtyard-ground/asset.json",
-      "descriptor_sha256": "e8645a9ce881e21dde749a2bd7ffb795a33686c5fac8a68d3d543d83c7b1f7ce",
+      "descriptor_sha256": "5078acae482c66148daf892275d6250f84f74e9e9fa5efe926cabb6b13417240",
       "id": "nottingham-castle-courtyard-ground"
     },
     {

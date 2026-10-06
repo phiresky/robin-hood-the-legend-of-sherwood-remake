@@ -169,8 +169,8 @@ complete-sprite and rendered verification remain open.
 All ten scenes reopen after publication, and full Derby passes all five control
 apply/reset checks. All ten Derby stair definitions now pass local floor-anchor
 support checks after the upper-west publication below.
-A library-wide local-anchor audit finds unsupported anchors in 21 of 53 authored stair
-definitions: Derby 0/10, Leicester 0/8, Lincoln 0/6, Nottingham 4/12,
+A library-wide local-anchor audit finds unsupported anchors in 19 of 53 authored stair
+definitions: Derby 0/10, Leicester 0/8, Lincoln 0/6, Nottingham 2/12,
 Sherwood 1/1 and York 16/16. All audited floors are planar. This checks local
 definitions, not placed connectivity or actual route failures; corrections and
 moved/rotated native traversal checks remain necessary across these assets.
@@ -209,13 +209,14 @@ and 205 terrain-contact samples have mesh support. Full Nottingham retains 92
 passing stair routes and ten control checks; fresh published geometry matches
 the tested descriptor and all ten scenes reopen. Rendered integration remains open.
 
-An unpublished upper-castle stair candidate now passes 352 directed routes across
-two copied two-stair assemblies, four rotations and two elevations. Shared
-coplanar synthetic landings are represented as independent assets; all 96 missing
-or raised landing cases reject. The saved-map candidate still fails 22 routes at
-its existing receiving contacts, so it is not published. Those contacts belong to
-the courtyard ground, upper wall and east courtyard wall and need correction in
-their respective assets. Passing synthetic routes does not repair those gaps.
+The upper-castle stairs and their courtyard-ground, upper-wall and east-wall
+contacts are now published. Real four-asset assemblies pass 352 directed routes
+across independent copies, four rotations and two elevations; all 96 missing or
+raised neighbour cases reject. Correcting the ground's separate physical receiver
+restores all 92 full Nottingham routes and ten controls. Flight mesh discrepancies
+are below 0.034 units and reviewed contact strips have gaps up to 0.692 units;
+these remain explicit draft warnings. Published geometry matches the tested
+candidates and all ten scenes reopen. Rendered integration remains unverified.
 
 Nottingham's castle hall/watchtower stair is published after sixteen moved routes,
 eight control checks and all 92 full-map stair routes pass. Published exports

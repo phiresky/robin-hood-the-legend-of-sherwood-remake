@@ -4,6 +4,53 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Upper castle stairs and independently owned receiving contacts (2026-10-06)
+
+`stage-upper-castle-stair-contacts.mjs` authors four contact edges in three
+neighbour assets. The shared upper-wall corner is solved against both stair
+planes simultaneously; neither seam is invalidated by correcting the other.
+The upper-wall edges have 150/205 and 187/205 mesh sample hits, with maximum
+uncovered distances 0.691202 and 0.351948 units. The east-wall contact has 196/205
+hits and a 0.068379-unit gap; the courtyard ground has 120/205 and 0.120680 units.
+An explicit 0.7-unit authoring review bound records these discrepancies without
+changing compiler/runtime connection tolerances. Access clearances belong only
+to their receiving assets.
+
+Surface-only stage `upper-castle-stair-contacts-qq6a2U` and full export
+`nottingham-upper-stairs-connected-3QFSr6` reduce the original 22 route failures
+to eighteen, all involving the short stair's three lower entrances. Its physical
+receiver is stored separately. Stage `upper-castle-stair-contacts-gQWe0z` also
+corrects vertices 24/25 of the existing courtyard receiver volume, retaining all
+other geometry and bindings. That strip has 5/205 exact sample hits and maximum
+mesh discrepancy 0.120486 units. Full descriptor
+`nottingham-upper-stairs-physical-TDnCZC` passes all 92 stair routes and ten
+control apply/reset checks.
+
+`check-courtyard-west-stair-neighbours.mjs` now also checks the real upper-castle
+four-asset assembly. `nottingham-castle-upper-stair-neighbour-placements-avGUOZ`
+passes 352 native actor routes across two independent copies, four rotations and
+two elevations, plus 96 missing/raised neighbour rejections. The earlier
+surface-only assembly `nottingham-castle-upper-stair-neighbour-placements-7E3raA`
+is superseded and was not actor-tested.
+
+Final warning-bearing stage `upper-castle-stair-contacts-jPiTUe` publishes all
+four definitions with backup `nottingham-upper-castle-publication-20261006`.
+The flight warnings record 787/788 and 827/828 sampled mesh hits, with gaps below
+0.034 units. Fresh published full-map geometry matches the native-tested candidate
+after excluding only warnings; all eight published copied assemblies also match
+their native-tested descriptors. All ten scenes reopen. Local anchor audit
+`lift-anchor-support-4wkb1S` finds 19/53 unsupported stairs, with Nottingham 2/12;
+ladders remain 1/8 and walls 9/9. Rendered integration remains open.
+
+Next unpublished candidates: southwest wall stage `local-stair-seams-Dhvnyv`
+has 833/833 flight mesh hits; `external-stair-landings-wxr3ej` passes 192 directed
+actor routes and 64 missing/raised synthetic landing cases. North wall stage
+`local-stair-seams-dtWG5K` has 1,055/1,055 flight mesh hits and needs a reviewed
+3.745-unit correction to one entrance midpoint (authoring limit 3.75).
+`external-stair-landings-zF1KJt` passes compilation and 64 missing/raised landing
+checks; its actor routes have not yet been run. Both still need full-map and real
+neighbour contact review before publication.
+
 ## Nottingham south curtain stair (2026-10-06)
 
 Next candidate `local-stair-seams-jcgY1i` corrects both upper castle stairs,

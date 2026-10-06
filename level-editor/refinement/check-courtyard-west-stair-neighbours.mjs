@@ -9,18 +9,28 @@ assert.ok(stage && (mode === undefined || mode === "--published"));
 const edits = JSON.parse(await fs.readFile(`${stage}/edits.json`, "utf8"));
 const source = await readStoredMap("library/scenes/nottingham.rhlos-map.json", "library");
 const assets = await pinnedDescriptors("library", source.assetSources, source.sceneAssets);
-const ids = [
-  "nottingham-castle-west-stair",
-  "nottingham-castle-courtyard-ground",
-  "nottingham-castle-west-courtyard-wall",
-];
+const stair = edits[0].asset;
+const neighbours = {
+  "nottingham-castle-west-stair": [
+    "nottingham-castle-courtyard-ground",
+    "nottingham-castle-west-courtyard-wall",
+  ],
+  "nottingham-castle-upper-stair": [
+    "nottingham-castle-courtyard-ground",
+    "nottingham-castle-upper-wall",
+    "nottingham-castle-east-courtyard-wall",
+  ],
+};
+assert.ok(neighbours[stair], "Unknown reviewed stair assembly");
+const ids = [stair, ...neighbours[stair]];
 for (const id of ids) {
   const edit = edits.find((e) => e.asset === id);
   assert.ok(edit);
   if (mode === "--published") assert.deepEqual(assets.get(id).gameplay, edit.gameplay);
   else assets.get(id).gameplay = edit.gameplay;
 }
-const output = await fs.mkdtemp("work/map-compile/courtyard-west-stair-neighbour-placements-");
+const liftCount = assets.get(stair).gameplay.lifts.length;
+const output = await fs.mkdtemp(`work/map-compile/${stair}-neighbour-placements-`);
 const results = [],
   rejected = [];
 for (const height of [0, 40])
@@ -70,15 +80,17 @@ for (const height of [0, 40])
       }
     const compile = (d) => compileMap(d, [0, 0, ...d.size], assets, { bestEffort: true });
     const compiled = compile(document);
-    assert.equal(compiled.descriptor.asset_geometry.lifts?.length, 2, compiled.warnings.join("\n"));
+    assert.equal(
+      compiled.descriptor.asset_geometry.lifts?.length,
+      2 * liftCount,
+      compiled.warnings.join("\n"),
+    );
     assert.ok(compiled.descriptor.asset_geometry.lifts.every((l) => l.physical_navigation));
     const file = `courtyard-west-stair-${height}-${rotation}.level.json`;
     await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
     await fs.writeFile(`${output}/${file}.scene.json`, JSON.stringify(document));
     results.push({ file, map: file, warnings: compiled.warnings });
-    for (const group of document.groups.filter(
-      (g) => !g.id.endsWith("/nottingham-castle-west-stair"),
-    ))
+    for (const group of document.groups.filter((g) => !g.id.endsWith(`/${stair}`)))
       for (const kind of ["missing", "raised"]) {
         const changed = structuredClone(document);
         if (kind === "missing") {
@@ -86,10 +98,10 @@ for (const height of [0, 40])
           changed.objects = changed.objects.filter((o) => o.group !== group.id);
         } else changed.groups.find((g) => g.id === group.id).transform.dz += 20;
         const invalid = compile(changed);
-        assert.equal(
-          invalid.descriptor.asset_geometry.lifts?.length,
-          1,
-          `${file}: ${group.id} ${kind}`,
+        const remaining = invalid.descriptor.asset_geometry.lifts?.length ?? 0;
+        assert.ok(
+          remaining >= liftCount && remaining < 2 * liftCount,
+          `${file}: ${group.id} ${kind} retained ${remaining} lifts`,
         );
         rejected.push({ file, group: group.id, kind, warnings: invalid.warnings });
       }
