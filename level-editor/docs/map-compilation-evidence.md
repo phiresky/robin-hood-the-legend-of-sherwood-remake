@@ -4,6 +4,40 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Published great keep stair and fractional receivers (2026-10-06)
+
+`local-stair-seams-78dS02` corrects the great keep stair's end heights and sets
+new-drop ground height to 50.000920131548675. Its lower approach midpoint moves
+5.128 units to the intersection of its authored approach and the actual landing
+height; the stair boundary moves at most 1.116 units. Mesh review finds 676/677
+floor samples supported, with the remaining sample 0.032 units from the edge.
+The existing upper platform already covers its seam.
+
+Eight independent placements (`local-stair-placements-YPfgAw`) pass sixteen
+stair routes and sixteen control apply/reset checks, with eight raised-ground
+connections rejected. Full Leicester (`great-keep-level-JTtAxp`) passes sixteen
+stairs, 22 climbs and twelve controls. Publication backup is
+`great-keep-publication-20261006`; Leicester and Wychford pins are refreshed.
+Published placement descriptors (`local-stair-placements-ANZYN3`) and the full
+Leicester descriptor exactly equal their tested candidates. All ten scenes reopen.
+
+The southwest turret candidate exposed a separate compilation error: a valid
+fractional receiving triangle was rejected by the 0.5 minimum intended for
+integer-grid motion polygons. Exact receiving boundaries now use the existing
+1e-8 physical-area threshold. A regression compiles the small triangle while
+retaining its valid integer-grid area. All 853 editor tests pass, two skipped;
+app typechecking, focused lint and the production build pass.
+
+Southwest candidate `local-stair-seams-ifICYn`, with ground reference
+50.00641218574032, now exports all eight placements
+(`local-stair-placements-ld1PeN`). Eight of sixteen actor routes still fail at
+0/90 degrees. The zero-degree loader rejects the upper landing as degenerate
+or self-intersecting; the candidate remains unpublished. Its mesh review finds
+694/695 flight samples supported with a maximum uncovered distance of 0.033.
+This remains an unresolved landing-geometry problem, not a completed asset.
+Native construction passes all eight exported descriptors, including the small
+receiver contours; this does not establish the failing actor traversal.
+
 ## Published northwest tower stair and receiving contact (2026-10-06)
 
 Staging `leicester-northwest-tower/building-330-lift` with an external lower

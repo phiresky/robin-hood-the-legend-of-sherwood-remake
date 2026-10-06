@@ -228,6 +228,30 @@ test("ordinary physical ladder landings retain fractional support boundaries", (
   }
 });
 
+test("fractional receiving contours can be smaller than one integer-grid triangle", () => {
+  const { document, assets, hut } = assetCompilerFixture();
+  hut.gameplay!.collision = "none";
+  hut.gameplay!.doors = [];
+  hut.gameplay!.surfaces = [
+    {
+      id: "small-receiver",
+      node: "building-999",
+      height: 10,
+      polygon: [
+        [15.5671797730977, 43.614673813323],
+        [18.5975149305339, 44.44112885626],
+        [18.4638499736564, 44.5739198827384],
+      ],
+      preserveMovementPrecision: true,
+    },
+  ];
+  const compiled = compileAssetGameplay(document, assets, bounds);
+  const areas = compiled.motion_data.layers.flat();
+  assert.equal(areas.length, 1);
+  assert.equal(areas[0]!.polygon.points.length, 3);
+  assert.ok(compiled.sight_obstacles.length > 0);
+});
+
 test("physical ladder landings can use bound raised receiving volumes", () => {
   const { document, assets, hut } = receivingLadderCompilerFixture();
   const compiled = compileAssetGameplay(document, assets, bounds);

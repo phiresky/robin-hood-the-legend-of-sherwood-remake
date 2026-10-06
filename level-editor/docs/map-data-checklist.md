@@ -121,8 +121,8 @@ complete-sprite and rendered verification remain open.
 All ten scenes reopen after publication, and full Derby passes all five control
 apply/reset checks. All ten Derby stair definitions now pass local floor-anchor
 support checks after the upper-west publication below.
-A library-wide local-anchor audit finds unsupported anchors in 37 of 53 authored stair
-definitions: Derby 0/10, Leicester 3/8, Lincoln 6/6, Nottingham 11/12,
+A library-wide local-anchor audit finds unsupported anchors in 36 of 53 authored stair
+definitions: Derby 0/10, Leicester 2/8, Lincoln 6/6, Nottingham 11/12,
 Sherwood 1/1 and York 16/16. All audited floors are planar. This checks local
 definitions, not placed connectivity or actual route failures; corrections and
 moved/rotated native traversal checks remain necessary across these assets.
@@ -136,6 +136,16 @@ visible mesh remains incomplete and is explicitly warned about. Published
 descriptors match the tested candidates and all ten scenes reopen.
 Near-coincident receiving-footprint comparisons now use fixed-point clipping,
 fixing an export crash exposed by this full-scene check.
+The great keep stair is also published after sixteen moved routes and sixteen
+control checks. All eight raised-ground cases reject; new drops use the lower
+entrance height. Full Leicester retains sixteen stair routes, 22 climbs and
+twelve passing control checks. The floor has 676/677 sampled mesh hits, with
+the remaining sample 0.032 units from the mesh. Published exports match the
+tested candidates and all ten scenes reopen. Fractional receiving contours now
+use a physical-area threshold instead of the integer-grid minimum, fixing a
+separate southwest turret export error. That turret remains unpublished: eight
+of sixteen candidate routes still fail, with invalid upper landing geometry
+reported at zero degrees.
 The first church-side tower candidate emits both physical flights at eight
 placements. It initially passed only 24/32 routes because rounded landing-hole
 boundaries blocked the upper flight at 0/90 degrees. The compiler now retains
@@ -347,7 +357,7 @@ invented across that gap. New drops use the correct foundation height. Native
 mouse queries also now reject loaded movement-obstacle interiors. These focused
 checks do not establish every platform route or complete asset coverage.
 
-Latest editor validation (2026-10-06): 852 tests passed, two skipped. Fresh
+Latest editor validation (2026-10-06): 853 tests passed, two skipped. Fresh
 descriptors for all ten saved scenes pass native loading and all 71 control
 apply/reset checks; Derby retains 28/28 stair routes. The game
 build and native stair/control checks passed. Wychford loads with its spline wall

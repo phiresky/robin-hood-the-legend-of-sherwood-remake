@@ -1607,7 +1607,7 @@ function compileAssetGameplayAttempt(
         );
       const receivingBoundary =
         receivingCandidates.length === 1
-          ? ring(receivingCandidates[0]![0]!, "Receiving boundary")
+          ? ring(receivingCandidates[0]![0]!, "Receiving boundary", 1e-8)
           : !lift &&
               doors.some(
                 (door) =>
