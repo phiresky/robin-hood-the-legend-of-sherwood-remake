@@ -10,8 +10,9 @@ def validate(experiment):
     sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
     report=read(e/'wood-scope.json');prepared=read(e/'preparation.json')
     assert prepared['wood_scope_sha256']==sha(e/'wood-scope.json')
-    assert report['status']=='PASS' and report['receivers']==['Unresolved Source Part 030 / Source part 030']
-    assert report['foreign_objects']==['Tree00 inferred off-map crown']
+    asset=read(e/'views.json')['asset_id'];number={'croisement01-tree-00':'030','croisement01-tree-01':'029'}[asset]
+    assert report['status']=='PASS' and report['receivers']==[f'Unresolved Source Part {number} / Source part {number}']
+    assert report['foreign_objects']==['Tree'+asset[-2:]+' inferred off-map crown']
     for name,value in report['original_files'].items():assert sha(old/name)==value
     for name,value in report['scoped_files'].items():assert sha(e/name)==value==prepared['files'][name]
     before=read(old/'views.json');after=read(e/'views.json')
@@ -30,8 +31,11 @@ def validate(experiment):
     assert sha(e/'approved-model.blend')==report['model_sha256']
     assert sha(e/'input.png')==report['input_sha256'] and sha(e/'solid.png')==report['solid_sha256']
     approval=read(e/'approval.json');assert approval['saved_model_sha256']==report['model_sha256']
-    provenance=approval['source_decision']['original_gallery_decision']['batch_approval_provenance']
-    assert 'WOOD ONLY' in provenance['scope'] and sha(Path(provenance['path']))==provenance['sha256']
+    provenance=approval['source_decision']['original_gallery_decision']
+    if asset=='croisement01-tree-00':
+        provenance=provenance['batch_approval_provenance'];assert 'WOOD ONLY' in provenance['scope'] and sha(Path(provenance['path']))==provenance['sha256']
+    else:
+        path=Path(provenance['batch_approval_path']);assert sha(path)==provenance['batch_approval_sha256'];decision=read(path);member=next(m for c in decision['cards'] for m in c['members'] if m['asset_id']==asset);assert decision['status']=='approved' and member['scope']=='geometry' and member['model_sha256']==report['model_sha256'];assert 'woody geometry' in member['scope_description'] and 'crown is excluded' in member['scope_description']
     return report
 
 def bake_packet(experiment, manifest_path):

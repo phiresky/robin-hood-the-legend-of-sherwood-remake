@@ -13,8 +13,8 @@ from render_slots import acquire,release
 from evidence_io import sha
 
 def main():
- p=argparse.ArgumentParser();p.add_argument('workspace',type=Path);p.add_argument('--mask',type=int,required=True);p.add_argument('--domain',type=Path,required=True);a=p.parse_args(sys.argv[sys.argv.index('--')+1:])
- w=a.workspace.resolve();out=w/'inspection/native-geometry-coverage'
+ p=argparse.ArgumentParser();p.add_argument('--output-name',default='native-geometry-coverage');p.add_argument('workspace',type=Path);p.add_argument('--mask',type=int,required=True);p.add_argument('--domain',type=Path,required=True);a=p.parse_args(sys.argv[sys.argv.index('--')+1:])
+ w=a.workspace.resolve();assert Path(a.output_name).name==a.output_name;out=w/'inspection'/a.output_name
  if out.exists():raise FileExistsError(out)
  cfg=json.loads((w/'workspace.json').read_text());acquire();bpy.ops.wm.open_mainfile(filepath=str(w/'model.blend'))
  objects=[o for o in bpy.data.collections[cfg['collection_name']].all_objects if o.type=='MESH' and o.get('asset_group')==cfg['asset_id']]

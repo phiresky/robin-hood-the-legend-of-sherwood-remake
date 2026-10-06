@@ -1,0 +1,22 @@
+"""Isolate the approved bank008 mesh for source-masked texture preparation."""
+import json,sys,hashlib,shutil
+from pathlib import Path
+import bpy
+ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender'),str(Path(__file__).parent)]
+from render_slots import acquire
+from refinement_workspace import prepare,modified,validate
+from refinement_inventory import inventory
+from restart2_tree18 import SIN,COS
+from evidence_io import sha
+R=ROOT/'level-editor/work/croisement01-refinement/restart2';parent=R/'tree01-soil-joint-v10/assets/croisement01-tree-01';out=R/'bank008-approved-receiver-v2';out.mkdir(exist_ok=False);acquire();bpy.ops.wm.open_mainfile(filepath=str(parent/'model.blend'));bpy.context.preferences.filepaths.save_version=0;cfg=json.loads((parent/'workspace.json').read_text());collection=bpy.data.collections[cfg['collection_name']];bank=next(o for o in collection.all_objects if o.type=='MESH' and o.get('source_node')=='building-008')
+def geometry(o):return dict(vertices=[list(o.matrix_world@v.co) for v in o.data.vertices],faces=[list(p.vertices) for p in o.data.polygons])
+before=geometry(bank)
+for other in list(bpy.data.objects):
+ if other.type=='MESH' and other!=bank:bpy.data.objects.remove(other,do_unlink=True)
+asset='croisement01-tree01-bank008-joint';bank['asset_group']=asset;bank['asset_name']='Tree01 approved bank008 local soil joint';bank['part_name']='Bank008 approved source and inferred soil';uv=bank.data.uv_layers.new(name='Source UV');ownership=bank.data.color_attributes.new(name='Source ownership',type='FLOAT_COLOR',domain='CORNER');bank.data.color_attributes.active_color=ownership
+for loop in bank.data.loops:
+ p=bank.matrix_world@bank.data.vertices[loop.vertex_index].co;uv.data[loop.index].uv=(p.x/1408,1-(-p.y*SIN-p.z*COS)/960);ownership.data[loop.index].color=(0,1,1,1)
+assert geometry(bank)==before
+catalog=dict(version=2,map='Croisement01',groups=[dict(id=asset,name=bank['asset_name'],parts=[dict(obstacle=8,name='Approved local soil joint')])],canonical_owners={'building-008':asset});cat=out/'catalog.json';cat.write_text(json.dumps(catalog,indent=2)+'\n');inventory(out/'inventory',collection_name=collection.name,map_name='Croisement01',source_path=R.parent/'baseline/covered.png',patch_manifest=R.parent/'source-states/layers.json')
+mask=out/'masks.json';mask.write_text(json.dumps(dict(masks=[dict(index=208,layer=0,layer_index=208,png=str(R/'tree01-soil-joint-v1/observed-soil-domain.png'),box_top_left=[0,0],box_size=[1408,960],obstacle_indices=[8])]),indent=2)+'\n');sources=out/'source-masks.json';sources.write_text(json.dumps(dict(version=1,mask_inventory=str(mask),projections=dict(exterior=dict(state='Approved own-map local soil domain',source_sha256=sha(R.parent/'baseline/covered.png'),assignments=[dict(reviewed=True,asset_group=asset,mask_indices=[208])]))),indent=2)+'\n');review=out/'grouping-review.json';review.write_text(json.dumps(dict(status='reviewed',reviewer='C1 agent',catalog_sha256=sha(cat),inventory_sha256=sha(out/'inventory/inventory.json'),evidence='Geometry is exact approved bank008 from Tree01 joint; isolated only for texture transport.3413 own-map soil-domain candidates, no other source pixels. All other terrain and gameplay remain untouched.'),indent=2)+'\n');worker=out/'assets'/asset;prepare(worker,asset_id=asset,scene_name=cfg['scene_name'],collection_name=collection.name,source_path=R.parent/'baseline/covered.png',grouping_manifest=cat,inventory_path=out/'inventory/inventory.json',review_path=review,source_mask_manifest=sources,width=384,height=384,framing_padding=1.2,lighting=cfg['lighting']);validate(worker);modified(worker);assert geometry(next(o for o in bpy.data.objects if o.type=='MESH' and o.get('source_node')=='building-008'))==before
+(out/'derivation-proof.json').write_text(json.dumps(dict(status='PASS exact approved bank008 world geometry; texture transport only',parent_model_sha256=sha(parent/'model.blend'),receiver_model_sha256=sha(worker/'model.blend'),world_geometry_sha256=hashlib.sha256(json.dumps(before,sort_keys=True).encode()).hexdigest(),source_domain_sha256=sha(R/'tree01-soil-joint-v1/observed-soil-domain.png'),gameplay_mutation=False,scope='Only bank008, no neighboring banks, no full terrain completion claim'),indent=2)+'\n');(worker/'inspection').mkdir(exist_ok=True);import render_candidate;sys.argv=['render','--',str(worker)];render_candidate.main()

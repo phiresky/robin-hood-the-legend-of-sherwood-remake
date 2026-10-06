@@ -100,7 +100,7 @@ def preflight(experiment):
     approval = read(experiment / 'approval.json')
     manifest = read(experiment / 'views.json')
     preparation = read(experiment / 'preparation.json')
-    if manifest['asset_id'] == 'croisement01-tree-00':
+    if manifest['asset_id'] in ('croisement01-tree-00', 'croisement01-tree-01'):
         from restart2_validate_wood_scope import validate
         validate(experiment)
     source = Path(preparation['source_review_manifest'])
@@ -189,7 +189,7 @@ def run(experiment, output=None, review_path=None, texels_per_unit=2., view_sele
         scene.render.engine = 'CYCLES'
         scene.cycles.samples = 8
         scene.cycles.transparent_max_bounces = 64
-        if manifest['asset_id'] == 'croisement01-tree-00':
+        if manifest['asset_id'] in ('croisement01-tree-00', 'croisement01-tree-01'):
             from restart2_validate_wood_scope import bake_packet
             bake_manifest = bake_packet(experiment, bake_manifest)
             evidence[str(bake_manifest.parent / 'adapter.json')] = sha(bake_manifest.parent / 'adapter.json')
