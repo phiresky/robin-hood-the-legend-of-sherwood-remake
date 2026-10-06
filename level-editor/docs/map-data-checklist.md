@@ -185,6 +185,12 @@ and climbing-surface review: its authored platform hole excludes mostly
 mesh-supported upper approaches, while its rung centers diverge from the current
 climbing plane. The reconstructed plank footprint is still an unpublished
 candidate; all three connections must survive the correction.
+The first three-entrance candidate retains all doors and passes 36/48 moved
+routes, with twelve 90-degree failures. A separate compiler correction accepts
+ladder seams on platform-hole edges while still rejecting hole interiors.
+The focused native fixture passes both directions; a broader rotation check
+exposes a receiver mismatch also present without a hole. Neither complex
+Sherwood candidate is published, and physical traversal remains unresolved.
 All 84 climb routes in the ten saved-scene exports now pass, as do all 71 control
 apply/reset checks and Derby's 28/28 stair routes. The published tower matches
 its native-tested candidate; Leicester retains 22/22 climb and 16/16 stair
@@ -312,7 +318,7 @@ invented across that gap. New drops use the correct foundation height. Native
 mouse queries also now reject loaded movement-obstacle interiors. These focused
 checks do not establish every platform route or complete asset coverage.
 
-Latest editor validation (2026-10-06): 848 tests passed, two skipped. Fresh
+Latest editor validation (2026-10-06): 849 tests passed, two skipped. Fresh
 descriptors for all ten saved scenes pass native loading and all 71 control
 apply/reset checks; Derby retains 28/28 stair routes. The game
 build and native stair/control checks passed. Wychford loads with its spline wall

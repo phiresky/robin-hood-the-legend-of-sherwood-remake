@@ -189,6 +189,29 @@ test("physical ladders require landing support at both the outside point and sea
   );
 });
 
+test("physical ladder seams may meet a platform hole edge but not its interior", () => {
+  for (const end of [330, 330.01]) {
+    const { document, assets, hut } = changingClimbCompilerFixture(2);
+    const landing = hut.gameplay!.surfaces[1]!;
+    landing.polygon = [
+      [250, 0],
+      [600, 0],
+      [600, 300],
+      [250, 300],
+    ];
+    landing.holes = [
+      [
+        [260, 100],
+        [end, 100],
+        [end, 200],
+        [260, 200],
+      ],
+    ];
+    const compiled = compileAssetGameplay(document, assets, bounds);
+    assert.equal(!!compiled.lifts![0]!.physical_navigation, end === 330);
+  }
+});
+
 test("ordinary physical ladder landings retain fractional support boundaries", () => {
   for (const rotation of [0, 37, 90, 180]) {
     const { document, assets, hut } = changingClimbCompilerFixture(2);

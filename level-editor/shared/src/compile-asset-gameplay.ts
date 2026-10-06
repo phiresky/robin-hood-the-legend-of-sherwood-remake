@@ -1705,7 +1705,19 @@ function compileAssetGameplayAttempt(
             };
             return (
               containsNavigationAnchor(area, door.outside) &&
-              containsNavigationAnchor(area, door.worldMiddle)
+              containsNavigationAnchor(
+                {
+                  ...area,
+                  // A ladder can enter at the edge of a platform opening.
+                  // Only its seam may touch that edge; the outside point must
+                  // still have ordinary support and hole interiors stay blocked.
+                  blockers: area.blockers.filter(
+                    (hole) =>
+                      !onClippedReceivingBoundary([door.worldMiddle[0], door.worldMiddle[1]], hole),
+                  ),
+                },
+                door.worldMiddle,
+              )
             );
           });
           const receiverSupported = receiverLandings.some(({ area, region }) =>

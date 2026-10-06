@@ -4,6 +4,35 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Platform-hole ladder seams and three-door candidate (2026-10-06)
+
+Physical ladder eligibility now permits its middle waypoint on a platform-hole
+edge within the existing clipping precision. The outside waypoint still needs
+ordinary support; the regression rejects a seam 0.01 units inside the hole.
+Native fixture `hole-edge-ladder-nnxoT9` passes both complete-animation routes.
+Four rotations (`hole-edge-ladder-placements-hejrdt`) pass 7/8 routes. The failing
+37-degree receiver mismatch is identical with the hole removed in
+`ladder-no-hole-baseline-RF6k1r`; this remains a separate traversal problem.
+Editor validation passes 849 tests, two skipped; app typecheck, focused lint,
+formatting and production build pass.
+
+Three-door candidate `three-door-oak-7osA0K` preserves the existing outer platform
+and connection sockets, replacing only mesh-supported portions of its hole.
+The mesh closing result has no interior ring, but its exterior is indented:
+it must not be interpreted as a filled platform disk. Remaining unsupported
+coverage stays excluded. Eight placements retain all three entrances and reject
+raised ground contacts. Native checks (`local-stair-placements-ASFIRA`) pass
+36/48 routes; all twelve 90-degree routes fail in projected navigation.
+The left upper seam remains 2.436 units inside the reconstructed opening.
+
+A separate diagnostic seam strip (`three-door-oak-oBXE0a`) tests that gap without
+claiming mesh support. With hole-edge eligibility it emits physical navigation
+at 0/90/180 degrees, but those 36 routes fail; the twelve projected 37-degree
+routes pass (`local-stair-placements-jeBV3z`). At 37 degrees the physical compiler
+reports a hole with no physical area. Neither candidate is published. The
+climbing geometry, multi-entrance landing support and rotated contour handling
+remain unresolved; enabling physical navigation alone is not a successful fix.
+
 ## Three-entrance ladder oak mesh audit (2026-10-06)
 
 The remaining Sherwood ladder oak has a ground entrance and two platform
