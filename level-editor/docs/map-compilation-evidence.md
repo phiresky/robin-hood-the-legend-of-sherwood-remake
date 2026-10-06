@@ -9543,3 +9543,37 @@ does not reach that physical seam. This requires receiving-asset geometry review
 before native actor checks or publication. Mesh review supports only 205/821
 flight samples, with maximum uncovered distance 7.303562 and height residual
 0.388868 units. This candidate is not certified for new-map use.
+
+The paired authoring helper `stage-york-gable-roof-contact.mjs` reconstructs the
+roof contour from its receiving footprint and seats the contacting edge against
+the climb plane (0.064142 and 2.110133-unit vertex changes). Initial paired
+candidate `york-gable-roof-contact-S1toGJ` compiles eight copied placements and
+passes 48 missing/raised ground and roof checks, but fails all 32 actor routes.
+The runtime rejects an additional shared boundary where the roof and lower
+flight have different heights. This candidate remains unpublished; full York
+`saved-map-exports-U6Ab0E` only establishes successful compilation.
+
+Reconstructing the flight from its own receiving footprint requires a measured
+0.001142412-unit seating correction to its declared plane. The authoring helper
+now accepts an explicitly reviewed `--footprint-height-limit` only with footprint
+reconstruction; its default remains 0.001. Stage `local-stair-seams-uyZmNW` uses
+0.0012. Compiler and runtime height tolerances are unchanged. The reconstructed
+flight has 252/848 supported mesh samples, maximum gap 7.261157 and height
+residual 0.391348. The paired roof has 775/968 supported samples, maximum gap
+2.107148 and height residual 0.057636.
+
+Candidate `york-gable-roof-contact-HTLHQ9` also retains a roof-owned movement slab
+at the corrected receiving footprint. One copied placement exposed a floating
+polygon-intersection failure between this slab and its height slice. The
+compiler now retries that specific ring-stitching error with fixed-point
+intersection at scale 2^32. Coarser scale 2^20 created a spurious collision strip
+at the tangent edge and is deliberately not used for this physical slice.
+The captured `coincident-roof-slab-slice.json` regression fails before this fix
+and passes afterward, checking blocked slab contact and clear positions above
+and below it. All 162 affected compiler/collision tests, both typechecks and
+focused lint pass. A pre-existing optional assertion-message type error in the
+asset compiler test was corrected without changing its assertion.
+
+With this compiler fix, `...gable-house-neighbour-placements-8Mxjjt` compiles all
+eight placements and passes 48 disconnect controls, but still fails all 32
+actor routes. No house/roof asset definition has been published from this work.

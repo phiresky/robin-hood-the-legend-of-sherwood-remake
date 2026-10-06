@@ -63,6 +63,21 @@ for (const argument of arguments_.filter((v) => v.startsWith("--external-plane="
   externalPlanes.set(door, plane);
 }
 const floorLimits = arguments_.filter((value) => value.startsWith("--floor-shift-limit="));
+const footprintHeightLimits = arguments_.filter((value) =>
+  value.startsWith("--footprint-height-limit="),
+);
+assert.ok(
+  !footprintHeightLimits.length || arguments_.includes("--floor-from-receiving-footprint"),
+  "Footprint height limit requires footprint reconstruction",
+);
+assert.ok(footprintHeightLimits.length <= 1, "Provide at most one footprint height limit");
+const footprintHeightLimit = footprintHeightLimits.length
+  ? Number(footprintHeightLimits[0].split("=")[1])
+  : 0.001;
+assert.ok(
+  Number.isFinite(footprintHeightLimit) && footprintHeightLimit > 0,
+  "Invalid footprint height limit",
+);
 assert.ok(floorLimits.length <= 1, "Provide at most one floor shift limit");
 const floorShiftLimit = floorLimits.length ? Number(floorLimits[0].split("=")[1]) : 2;
 assert.ok(Number.isFinite(floorShiftLimit) && floorShiftLimit > 0, "Invalid floor shift limit");
@@ -87,6 +102,7 @@ const ids = arguments_.filter(
     !value.startsWith("--draft-issue=") &&
     !value.startsWith("--resolve-draft-issue=") &&
     !value.startsWith("--floor-shift-limit=") &&
+    !value.startsWith("--footprint-height-limit=") &&
     !value.startsWith("--landing-shift-limit="),
 );
 const usedExternal = new Set();
@@ -123,8 +139,8 @@ for (const id of ids) {
       ...footprint.map((point) => Math.abs(planeHeight(receivingPlane, point) - point[2])),
     );
     assert.ok(
-      maximumHeightCorrection <= 0.001,
-      `${id}: receiving footprint disagrees with its authored plane; review separately`,
+      maximumHeightCorrection <= footprintHeightLimit,
+      `${id}: receiving footprint height correction ${maximumHeightCorrection} exceeds reviewed limit ${footprintHeightLimit}`,
     );
     floor.polygon = footprint.map(([x, y]) => [x, y]);
     floor.height = footprint.map((point) => planeHeight(receivingPlane, point));
@@ -132,6 +148,7 @@ for (const id of ids) {
       surface: floor.id,
       reason: "Rebuild coarse floor from asset-local receiving footprint",
       maximumHeightCorrection,
+      footprintHeightLimit,
       before,
       after: structuredClone(floor),
     });

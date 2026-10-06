@@ -226,7 +226,10 @@ test("physical climb approaches can cross a shared terrain triangle edge", () =>
       [270, 160],
     ];
     const compiled = compileAssetGameplay(document, assets, bounds);
-    assert.ok(compiled.lifts![0]!.physical_navigation, compiled.warnings?.join("\n"));
+    assert.ok(
+      compiled.lifts![0]!.physical_navigation,
+      compiled.warnings?.join("\n") ?? "Expected physical navigation",
+    );
     // Losing the outside support must still reject the physical approach.
     hut.gameplay!.surfaces.pop();
     const disconnected = compileAssetGameplay(document, assets, bounds, { bestEffort: true });

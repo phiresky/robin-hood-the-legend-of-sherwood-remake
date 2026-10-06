@@ -1,4 +1,4 @@
-import clipping from "polygon-clipping";
+import clipping, { type MultiPolygon } from "polygon-clipping";
 import { fixedPolygonBoolean } from "./fixed-polygon-boolean.ts";
 import {
   compilePhysicalStair,
@@ -142,7 +142,22 @@ export function compilePhysicalStairRegion(input: PhysicalStairRegionInput): Phy
   for (const [index, solid] of input.solids.entries()) {
     const slice = movementVolumeHeightSlice(solid.polygon, plane, solid.bottom, solid.top);
     if (slice.length < 3) continue;
-    let regions = clipping.intersection([solid.polygon, ...solid.holes], [slice]);
+    let regions: MultiPolygon;
+    try {
+      regions = clipping.intersection([solid.polygon, ...solid.holes], [slice]);
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.startsWith("Unable to complete output ring"))
+        throw error;
+      // Slab corners can coincide with a height-slice edge within floating-point
+      // error. Keep subpixel world precision here: coarser clipping can create
+      // a narrow collision strip where the slice is tangent to its own slab.
+      regions = fixedPolygonBoolean(
+        "intersection",
+        [solid.polygon, ...solid.holes],
+        [[slice]],
+        2 ** 32,
+      );
+    }
     for (const clearance of input.clearances) {
       if (
         clearance.owner !== solid.owner ||

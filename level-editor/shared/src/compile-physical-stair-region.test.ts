@@ -21,6 +21,22 @@ test("native joined stair traversal uses the compiler's floors and live collisio
   assert.deepEqual(JSON.parse(JSON.stringify(joinedPhysicalStairFixture())), expected);
 });
 
+test("nearly coincident roof slab slices retain collision without blocking above or below", () => {
+  const input: PhysicalStairRegionInput = JSON.parse(
+    readFileSync(
+      new URL("../test-fixtures/coincident-roof-slab-slice.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  const result = compilePhysicalStairRegion(input);
+  const blocked = (point: Point) =>
+    result.navigation.obstacles.some((obstacle) => pointInGameplayPolygon(point, obstacle.polygon));
+  assert.ok(blocked([4514, 3534.5]), "the slab intersection must remain blocked");
+  assert.equal(blocked([4512, 3532.4416149192534]), false, "the upper climb is above the slab");
+  assert.equal(blocked([4514, 3540.498294070366]), false, "the lower climb is below the slab");
+  assert.ok(result.area.obstacles.every((obstacle) => obstacle.state_id === 0));
+});
+
 test("joined flights retain independent controls and crop each floor at its own height", () => {
   const rect = (x0: number, x1: number): Point[] => [
     [x0, 0],
