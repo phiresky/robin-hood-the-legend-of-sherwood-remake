@@ -163,7 +163,7 @@ posture and membership effects. Compiler checks require a landing to support
 both the outside point and seam before enabling physical traversal. Unsupported
 definitions retain projected navigation with a warning when their landing
 heights or coverage still disagree.
-The expanded local-anchor audit finds 3/8 ladder definitions and 9/9 wall
+The expanded local-anchor audit finds 2/8 ladder definitions and 9/9 wall
 definitions with unsupported floor anchors. Those counts do not check landing
 height compatibility or certify placed routes. Physical walls remain unfinished.
 The Sherwood central oak ladder correction is now published. Ordinary physical
@@ -174,6 +174,12 @@ Fresh published placements pass sixteen climbs; full Sherwood passes ten climbs
 and two stair routes. The lower platform seam extends up to 1.643 units beyond
 its mesh and the ladder has incomplete visible coverage; both remain explicit
 draft limitations requiring rendered review.
+The west-treehouse ladder correction is also published after sixteen moved
+climbs and full Sherwood's ten climb/two stair routes pass. Its upper receiver
+matches the corrected platform, the clearance is limited to the added strip,
+and the platform hole remains intact. The upper seam's 3.381-unit mesh discrepancy
+is an explicit draft warning. Published exports match the tested candidates and
+all ten scenes reopen; rendered integration remains unverified.
 All 84 climb routes in the ten saved-scene exports now pass, as do all 71 control
 apply/reset checks and Derby's 28/28 stair routes. The published tower matches
 its native-tested candidate; Leicester retains 22/22 climb and 16/16 stair

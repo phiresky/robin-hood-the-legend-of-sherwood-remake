@@ -4,6 +4,28 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Published west-treehouse ladder landing (2026-10-06)
+
+Tracing `local-stair-placements-cpAsE5` identifies the unsupported upper receiver.
+Candidate `west-treehouse-landing-q9CzTm` adds a matching non-solid/non-opaque
+receiver and clears only the upper-platform extension, preserving the existing
+hole, collision elsewhere and inside waypoints. All 16/16 moved climbs pass
+(`local-stair-placements-RMC1DD`). Full Sherwood (`west-treehouse-level-Cq2WB9`)
+retains 10/10 climbs and 2/2 stair routes. Exported upper navigation retains its
+hole obstacle; the authoring script explicitly checks the unchanged hole.
+
+`stage-west-treehouse-landing.mjs` produces final stage
+`west-treehouse-landing-81Wg1Y`, adding a warning for incomplete ladder mesh and
+the upper seam's 3.381-unit sampled discrepancy. All sixteen final-stage routes
+pass (`local-stair-placements-UavzCf`). Publication backup
+`west-treehouse-publication-20261006` updates the asset and Sherwood pin.
+The eight fresh published exports (`local-stair-placements-D5xJXy`) exactly match
+the tested final-stage exports. All ten scenes reopen; full published Sherwood
+matches its native-tested candidate except for the revised draft warning.
+Focused authoring-tool lint/formatting pass. Audit `lift-anchor-support-WuF3DR`
+now flags 2/8 ladders, 38/53 stairs and 9/9 walls. Rendered integration and broader
+placement coverage remain open; these route checks do not certify visual parity.
+
 ## Published central oak ladder seams (2026-10-06)
 
 The narrower candidate `oak-receiver-UyTCZN` clears only the lower-platform
