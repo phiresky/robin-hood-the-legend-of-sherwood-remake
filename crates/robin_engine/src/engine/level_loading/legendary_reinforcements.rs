@@ -4,6 +4,10 @@ use serde::{Deserialize, Serialize};
 
 use super::*;
 
+// TODO: Re-enable after reinforcement patches identify compatible mission content
+// across supported editions and overlays, rather than relying on roster counts.
+const REINFORCEMENTS_ENABLED: bool = false;
+
 const PATCH_DATA: &str = include_str!("legendary_enemy_patches.json");
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -68,7 +72,9 @@ impl EngineInner {
         mission_name: &str,
         config: SimConfig,
     ) -> Result<Vec<crate::level_data::RawSoldier>, EngineError> {
-        if config.difficulty != crate::player_profile::DifficultyLevel::Legendary {
+        if !REINFORCEMENTS_ENABLED
+            || config.difficulty != crate::player_profile::DifficultyLevel::Legendary
+        {
             return Ok(Vec::new());
         }
         let manifest = patch_manifest();

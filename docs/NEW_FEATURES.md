@@ -2087,15 +2087,13 @@ A list of which additional features we have added, which ones we might still wan
   budgets. The full-game batch report keeps accepted, alternative,
   budget-limited, conflicting, and low-confidence candidates visible so a
   designer can audit what the rules attempted instead of only seeing winners.
-- The `legendary` preset's reviewed selections are exported as an embedded
-  runtime manifest. On Legendary difficulty, the engine deterministically
-  clones the selected authored soldier profiles after loading live navigation
-  geometry and before spawning mission entities. Every placement is resolved
-  against the runtime walkable grid, authored soldier indices remain stable,
-  officer subordinate lists are extended explicitly, and cloned patrols receive
-  their own commander/follower ownership. Normal, Hard, and custom difficulty
-  missions are unchanged; stale manifests fail mission startup loudly if their
-  expected authored roster no longer matches the loaded mission.
+- The `legendary` preset's reviewed selections are retained as an embedded
+  manifest, but automatic reinforcement spawning is temporarily disabled.
+  Mission editions and overlays can have different authored rosters, causing
+  the roster-count guard to reject otherwise loadable missions. New mission
+  loads retain their authored soldiers and officer/patrol links; Legendary's
+  other difficulty rules remain active. TODO: identify compatible mission
+  content before restoring reinforcement spawning.
 
 ## Todo
 
