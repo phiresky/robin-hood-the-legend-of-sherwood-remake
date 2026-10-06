@@ -1,0 +1,58 @@
+{
+  "status": "PASS",
+  "published": [
+    "croisement03-central-shrub-boulder",
+    "croisement03-east-tree-rocks",
+    "croisement03-southeast-stone-wall"
+  ],
+  "retired": [
+    "croisement03-group-070",
+    "croisement03-group-074",
+    "croisement03-group-075",
+    "croisement03-group-087",
+    "croisement03-group-088",
+    "croisement03-group-089",
+    "croisement03-group-090",
+    "croisement03-group-091",
+    "croisement03-group-092",
+    "croisement03-group-093"
+  ],
+  "unrelated_entries_exact": 1293,
+  "map_sha256": "0cc93d7f5a7c358842e7a4d3866256c9ef21a7ee3afd518a7a5309ca6a257271",
+  "normal_http_pending": false,
+  "limitations": [
+    "Scoped three approved stone assets only; map remains incomplete."
+  ],
+  "normal_http_proof_sha256": "b623d549dd30de2e4276b118122c62f084f8d48b7a8ca38a4f92a3016b77ea92",
+  "full_private_browser_sha256": "301fa10b1529f456521066275766e20415afcf0ac69305241fa2d2df00830046",
+  "screenshots": {
+    "level-editor/work/croisement03-refinement/restart2/approved-stone-integration-preflight/three-stones-stage-v1/croisement03-southeast-stone-wall-live-browser.png": "f433919e53e0a63d57a6fd64c882a44b9f71f790dc0d9ea8403977074fc72ccb",
+    "level-editor/work/croisement03-refinement/restart2/approved-stone-integration-preflight/three-stones-stage-v1/croisement03-east-tree-rocks-live-browser.png": "1374530decd4ad5a182c49e993080641282dfd9894435570529d2b8b9d38248d",
+    "level-editor/work/croisement03-refinement/restart2/approved-stone-integration-preflight/three-stones-stage-v1/croisement03-central-shrub-boulder-live-browser.png": "c47179c27d9c5d0be2daa32012bdb53403a1ce33c5157b3be3ce6885a160cd1c"
+  },
+  "visual_review": "Installed screenshot portions personally viewed; default browser viewport clips complete object framing, so full saved GLB eight-view derivative evidence remains authoritative for complete geometry. Exact normalHTTP model/descriptor checks pass.",
+  "root_stage_visual_review": "Root personally reviewed map-before-insertion and all three derivative actual8 sheets; scoped placement/appearance PASS.",
+  "publication_manifest_sha256": "81187135dfee6a1a68b8f3b34463912ae008feefe9ac71f9944c52706e5ee990",
+  "installed_files": {
+    "3d-assets/croisement03/croisement03-central-shrub-boulder/model.glb": "799299a1be634adc58e90982cb244f1f9fef08fbc30cb6ae2eef6881df6c0fab",
+    "3d-assets/croisement03/croisement03-east-tree-rocks/model.glb": "ad6af4541cf222306b5630230c6d0b716918a3670ebc403cd07f67fbe5ba5501",
+    "3d-assets/croisement03/croisement03-southeast-stone-wall/model.glb": "b70bf09301d72b9e4366cc8cbcf6d2fabc0330d0064e4db9aabb22d43242c1e5",
+    "3d-assets/croisement03/croisement03-central-shrub-boulder/asset.json": "cdc461adf7aa3016205278a04029675c868c359590083fe75eb36be0c9520ff3",
+    "3d-assets/croisement03/croisement03-east-tree-rocks/asset.json": "b6d41c6dfed4294e219b881accc3ca4e4d71f4bb91ecbb13ca7a0c07868abccc",
+    "3d-assets/croisement03/croisement03-southeast-stone-wall/asset.json": "c2734c77564a8aab1ea2365a58b0f3e44f2e4c915a28b2255a86abe476cfa244",
+    "scenes/croisement03.rhlos-map.json": "0cc93d7f5a7c358842e7a4d3866256c9ef21a7ee3afd518a7a5309ca6a257271"
+  },
+  "retired_descriptor_paths": [
+    "3d-assets/croisement03/croisement03-group-070/asset.json",
+    "3d-assets/croisement03/croisement03-group-074/asset.json",
+    "3d-assets/croisement03/croisement03-group-075/asset.json",
+    "3d-assets/croisement03/croisement03-group-087/asset.json",
+    "3d-assets/croisement03/croisement03-group-088/asset.json",
+    "3d-assets/croisement03/croisement03-group-089/asset.json",
+    "3d-assets/croisement03/croisement03-group-090/asset.json",
+    "3d-assets/croisement03/croisement03-group-091/asset.json",
+    "3d-assets/croisement03/croisement03-group-092/asset.json",
+    "3d-assets/croisement03/croisement03-group-093/asset.json"
+  ],
+  "whole_map_complete": false
+}

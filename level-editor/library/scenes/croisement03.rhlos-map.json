@@ -430,13 +430,6 @@
       "id": "croisement03-group-068"
     },
     {
-      "model": "3d-assets/croisement03/croisement03-group-070/model.glb",
-      "model_sha256": "e9c36dd475bed249e0cb4497249c1a82dd00ecc814ece29bcdb9d59f4bd1fd0c",
-      "descriptor": "3d-assets/croisement03/croisement03-group-070/asset.json",
-      "descriptor_sha256": "dcc7a106c404c8e887fc08c1d1deead0ac65e5ec2b3cfa737950189ff14a3f73",
-      "id": "croisement03-group-070"
-    },
-    {
       "model": "3d-assets/croisement03/croisement03-group-071/model.glb",
       "model_sha256": "89f6cd7911316dea7cd32264285988a424fd31aacee09ce66127c15d21a94f48",
       "descriptor": "3d-assets/croisement03/croisement03-group-071/asset.json",
@@ -456,20 +449,6 @@
       "descriptor": "3d-assets/croisement03/croisement03-group-073/asset.json",
       "descriptor_sha256": "47a6994be408be55cc5f529a6ad96d11123fe95f3572e7f003ccfb8c2455d6b5",
       "id": "croisement03-group-073"
-    },
-    {
-      "model": "3d-assets/croisement03/croisement03-group-074/model.glb",
-      "model_sha256": "9538674769e723f098baf27696914b334159718682c17f0330cae954c08f1ce8",
-      "descriptor": "3d-assets/croisement03/croisement03-group-074/asset.json",
-      "descriptor_sha256": "79fc40f7678e4f0253778db511eb2db82383d2bdf211be02e05864c0526825b6",
-      "id": "croisement03-group-074"
-    },
-    {
-      "model": "3d-assets/croisement03/croisement03-group-075/model.glb",
-      "model_sha256": "3bdbf768dda766fb5a65258b121b3592998f45677816f8d1719bfe67d8cc4259",
-      "descriptor": "3d-assets/croisement03/croisement03-group-075/asset.json",
-      "descriptor_sha256": "2e710a0d9b5c473811e2c10bbf3c6112b1ad97f128eb7bf59a7accb1ebbc3958",
-      "id": "croisement03-group-075"
     },
     {
       "model": "3d-assets/croisement03/croisement03-group-076/model.glb",
@@ -533,55 +512,6 @@
       "descriptor": "3d-assets/croisement03/croisement03-group-084/asset.json",
       "descriptor_sha256": "77322935a1ff2eda5fc5a39d34be77b398b92d6b94677245aa91680e37341524",
       "id": "croisement03-group-084"
-    },
-    {
-      "model": "3d-assets/croisement03/croisement03-group-087/model.glb",
-      "model_sha256": "b917f570224722037399698308c4aafa0b9aa4fd8656a100202ad0fc33685892",
-      "descriptor": "3d-assets/croisement03/croisement03-group-087/asset.json",
-      "descriptor_sha256": "488b82642ddfcbea4e71f1289d90688056d1d13d77165d92d0e4c38969c1ea94",
-      "id": "croisement03-group-087"
-    },
-    {
-      "model": "3d-assets/croisement03/croisement03-group-088/model.glb",
-      "model_sha256": "2fe3afa0ec421d5895ddd53bb97cb5a673113677899c47be40cc6dbe2e35e156",
-      "descriptor": "3d-assets/croisement03/croisement03-group-088/asset.json",
-      "descriptor_sha256": "acb57bd883860e579f39e813caa0aed17baf10ab67d89f62d1737a6749069eb1",
-      "id": "croisement03-group-088"
-    },
-    {
-      "model": "3d-assets/croisement03/croisement03-group-089/model.glb",
-      "model_sha256": "84a0273c63011138674f8ca4073c3012f3b940cf621cfc8758d0fbb8cecc293f",
-      "descriptor": "3d-assets/croisement03/croisement03-group-089/asset.json",
-      "descriptor_sha256": "1179424d83952cecd9d57f30b7e5e33e853ccea1f71842de2c272419233066af",
-      "id": "croisement03-group-089"
-    },
-    {
-      "model": "3d-assets/croisement03/croisement03-group-090/model.glb",
-      "model_sha256": "4a476fbb0c5ec53dc125955fc4a17e5fb8691d295f86953c5d800ef9ecc7b90b",
-      "descriptor": "3d-assets/croisement03/croisement03-group-090/asset.json",
-      "descriptor_sha256": "3a2478d336941190482782ee1397a19c1734b6b1491b3048a2778de2ebb1220c",
-      "id": "croisement03-group-090"
-    },
-    {
-      "model": "3d-assets/croisement03/croisement03-group-091/model.glb",
-      "model_sha256": "8d79873ae90e8451ec53b634678f0596437076e0f6d38e5985eacad88780bc48",
-      "descriptor": "3d-assets/croisement03/croisement03-group-091/asset.json",
-      "descriptor_sha256": "e9095d09d1fcb6e4dac714f54d9ef305eccc5727fdcf01509de8639f69216a56",
-      "id": "croisement03-group-091"
-    },
-    {
-      "model": "3d-assets/croisement03/croisement03-group-092/model.glb",
-      "model_sha256": "7a2e184ae43f0fce2c7803acf91fb179512ab89364aa205e97103f3e2e620e53",
-      "descriptor": "3d-assets/croisement03/croisement03-group-092/asset.json",
-      "descriptor_sha256": "e67c0b307632f4fd7b044eb53d43e85bc87555a57346607838a7b29961ea9818",
-      "id": "croisement03-group-092"
-    },
-    {
-      "model": "3d-assets/croisement03/croisement03-group-093/model.glb",
-      "model_sha256": "f44226ac9588e824409602eeb5b1d9c2616b12382376a3edc0da358a5e5cb21a",
-      "descriptor": "3d-assets/croisement03/croisement03-group-093/asset.json",
-      "descriptor_sha256": "3c29bb792031beedbaadea5ab922bc1c53c23d24edf63836c003bbf3d125e5f6",
-      "id": "croisement03-group-093"
     },
     {
       "model": "3d-assets/croisement03/croisement03-group-094/model.glb",
@@ -740,6 +670,30 @@
       "descriptor_sha256": "2df7d2fdb91eb73c66695fd5a1f10987bac424a4e4b4d250ec9dabd0462ad2b4",
       "model": "3d-assets/croisement03/croisement03-timber-bridge/model.glb",
       "model_sha256": "ae661c35e3b06214620f25e236b9202a3026a0366361be694e813d6d79fc96d6",
+      "model_scene": "default"
+    },
+    {
+      "id": "croisement03-central-shrub-boulder",
+      "descriptor": "3d-assets/croisement03/croisement03-central-shrub-boulder/asset.json",
+      "descriptor_sha256": "cdc461adf7aa3016205278a04029675c868c359590083fe75eb36be0c9520ff3",
+      "model": "3d-assets/croisement03/croisement03-central-shrub-boulder/model.glb",
+      "model_sha256": "799299a1be634adc58e90982cb244f1f9fef08fbc30cb6ae2eef6881df6c0fab",
+      "model_scene": "default"
+    },
+    {
+      "id": "croisement03-east-tree-rocks",
+      "descriptor": "3d-assets/croisement03/croisement03-east-tree-rocks/asset.json",
+      "descriptor_sha256": "b6d41c6dfed4294e219b881accc3ca4e4d71f4bb91ecbb13ca7a0c07868abccc",
+      "model": "3d-assets/croisement03/croisement03-east-tree-rocks/model.glb",
+      "model_sha256": "ad6af4541cf222306b5630230c6d0b716918a3670ebc403cd07f67fbe5ba5501",
+      "model_scene": "default"
+    },
+    {
+      "id": "croisement03-southeast-stone-wall",
+      "descriptor": "3d-assets/croisement03/croisement03-southeast-stone-wall/asset.json",
+      "descriptor_sha256": "c2734c77564a8aab1ea2365a58b0f3e44f2e4c915a28b2255a86abe476cfa244",
+      "model": "3d-assets/croisement03/croisement03-southeast-stone-wall/model.glb",
+      "model_sha256": "b70bf09301d72b9e4366cc8cbcf6d2fabc0330d0064e4db9aabb22d43242c1e5",
       "model_scene": "default"
     }
   ],
@@ -1443,18 +1397,6 @@
       ]
     },
     {
-      "id": "group-070",
-      "transform": {
-        "dx": 733,
-        "dy": 656.7450196219477,
-        "dz": 0,
-        "rot_deg": 0
-      },
-      "assets": [
-        "croisement03-group-070"
-      ]
-    },
-    {
       "id": "group-071",
       "transform": {
         "dx": 649,
@@ -1488,30 +1430,6 @@
       },
       "assets": [
         "croisement03-group-073"
-      ]
-    },
-    {
-      "id": "group-074",
-      "transform": {
-        "dx": 1093,
-        "dy": 453.12538471732637,
-        "dz": 0,
-        "rot_deg": 0
-      },
-      "assets": [
-        "croisement03-group-074"
-      ]
-    },
-    {
-      "id": "group-075",
-      "transform": {
-        "dx": 1140,
-        "dy": 450.2575025355711,
-        "dz": 0,
-        "rot_deg": 0
-      },
-      "assets": [
-        "croisement03-group-075"
       ]
     },
     {
@@ -1620,90 +1538,6 @@
       },
       "assets": [
         "croisement03-group-084"
-      ]
-    },
-    {
-      "id": "group-087",
-      "transform": {
-        "dx": 1194,
-        "dy": 790.9619057280925,
-        "dz": 0,
-        "rot_deg": 0
-      },
-      "assets": [
-        "croisement03-group-087"
-      ]
-    },
-    {
-      "id": "group-088",
-      "transform": {
-        "dx": 1244,
-        "dy": 803.0070108914645,
-        "dz": 0,
-        "rot_deg": 0
-      },
-      "assets": [
-        "croisement03-group-088"
-      ]
-    },
-    {
-      "id": "group-089",
-      "transform": {
-        "dx": 1269,
-        "dy": 808.742775254975,
-        "dz": 0,
-        "rot_deg": 0
-      },
-      "assets": [
-        "croisement03-group-089"
-      ]
-    },
-    {
-      "id": "group-090",
-      "transform": {
-        "dx": 1295,
-        "dy": 812.7578103094322,
-        "dz": 0,
-        "rot_deg": 0
-      },
-      "assets": [
-        "croisement03-group-090"
-      ]
-    },
-    {
-      "id": "group-091",
-      "transform": {
-        "dx": 1322,
-        "dy": 813.9049631821343,
-        "dz": 0,
-        "rot_deg": 0
-      },
-      "assets": [
-        "croisement03-group-091"
-      ]
-    },
-    {
-      "id": "group-092",
-      "transform": {
-        "dx": 1356,
-        "dy": 811.6106574367302,
-        "dz": 0,
-        "rot_deg": 0
-      },
-      "assets": [
-        "croisement03-group-092"
-      ]
-    },
-    {
-      "id": "group-093",
-      "transform": {
-        "dx": 1395,
-        "dy": 805.3013166368687,
-        "dz": 0,
-        "rot_deg": 0
-      },
-      "assets": [
-        "croisement03-group-093"
       ]
     },
     {
@@ -2071,6 +1905,42 @@
       "assets": [
         "croisement03-timber-bridge"
       ]
+    },
+    {
+      "id": "croisement03-central-shrub-boulder",
+      "assets": [
+        "croisement03-central-shrub-boulder"
+      ],
+      "transform": {
+        "dx": 746,
+        "dy": 662.6105948635093,
+        "dz": -0.00016449959457324575,
+        "rot_deg": 0
+      }
+    },
+    {
+      "id": "croisement03-east-tree-rocks",
+      "assets": [
+        "croisement03-east-tree-rocks"
+      ],
+      "transform": {
+        "dx": 1124.5,
+        "dy": 461.88376806976197,
+        "dz": -0.00011483756349330255,
+        "rot_deg": 0
+      }
+    },
+    {
+      "id": "croisement03-southeast-stone-wall",
+      "assets": [
+        "croisement03-southeast-stone-wall"
+      ],
+      "transform": {
+        "dx": 1286.45166015625,
+        "dy": 800.2388324261843,
+        "dz": -0.0001976723461215327,
+        "rot_deg": 0
+      }
     }
   ]
 }
