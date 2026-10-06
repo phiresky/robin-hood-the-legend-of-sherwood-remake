@@ -38,6 +38,31 @@ def main():
         path = Path(spec['evidence']).resolve(strict=True)
         packet = json.loads(path.read_text())
         sources.append(dict(kind=spec['kind'], evidence=resource(path)))
+        if spec['kind'] == 'source-artifact':
+            asset, scope = packet['card_id'], packet['review_scope']
+            if (asset, scope) in seen:
+                raise ValueError(f'Duplicate decision scope: {(asset, scope)}')
+            seen.add((asset, scope))
+            reports = [dict(label='Exact contract manifest', **resource(packet['artifact'], packet['artifact_sha256']))]
+            for label in ('root_review', 'parity'):
+                reports.append(dict(label=label.replace('_', ' '), **resource(packet[label], packet[label+'_sha256'])))
+            root_evidence = json.loads(Path(packet['root_review']).read_text())['evidence']
+            for filename, digest in root_evidence.items():
+                reports.append(dict(label=Path(filename).name, **resource(filename, digest)))
+            contract_ids = set()
+            for contract in packet['members']:
+                if contract['id'] in contract_ids:
+                    raise ValueError('Duplicate source contract: '+contract['id'])
+                contract_ids.add(contract['id'])
+                reports.append(dict(label=contract['id'], **resource(contract['contract'], contract['contract_sha256'])))
+            images = [dict(label=packet['source_comparison_label'], **resource(packet['source_comparison'], root_evidence[packet['source_comparison']]))]
+            member = dict(asset_id=asset, title=packet['name'], scope=scope,
+                scope_description=scope, artifact=packet['artifact'], artifact_sha256=packet['artifact_sha256'],
+                contract_members=packet['members'], review_revision=packet['review_revision'],
+                source_evidence=str(path), source_evidence_sha256=sha(path), images=images,
+                reports=reports, notes=packet['notes'], decision='pending')
+            cards.append(dict(card_id='source-artifact-'+asset, title=packet['name'], scope=scope, members=[member]))
+            continue
         members = {}
         selected = set(spec.get('asset_ids', []))
         for item in packet['items']:
@@ -139,7 +164,9 @@ def main():
             pictures=''.join(f'<figure><a href="{escaped(im["file"])}" target="_blank"><img loading="lazy" src="{escaped(im["file"])}" alt="{escaped(im["label"])}"></a><figcaption>{escaped(im["label"])}</figcaption></figure>' for im in member['images'])
             notes=''.join(f'<li>{escaped(note)}</li>' for note in member['notes'])
             reports=''.join(f'<li><a href="{escaped(r["file"])}">{escaped(r["label"])}</a></li>' for r in member['reports'])
-            body.append(f'<section class="member"><h3>{escaped(member["title"])}</h3><p>{escaped(member["scope_description"])}</p><p class="revision">{escaped(member["asset_id"])} · review {member["review_revision"][:16]}</p>{pictures}<ul>{notes}</ul><details><summary>Bound reports and evidence</summary><ul>{reports}</ul><p>Model SHA256: {member["model_sha256"]}</p></details></section>')
+            digest_label = 'Artifact' if 'artifact_sha256' in member else 'Model'
+            digest = member.get('artifact_sha256', member.get('model_sha256'))
+            body.append(f'<section class="member"><h3>{escaped(member["title"])}</h3><p>{escaped(member["scope_description"])}</p><p class="revision">{escaped(member["asset_id"])} · review {member["review_revision"][:16]}</p>{pictures}<ul>{notes}</ul><details><summary>Bound reports and evidence</summary><ul>{reports}</ul><p>{digest_label} SHA256: {digest}</p></details></section>')
         sections.append(f'<article id="{escaped(card["card_id"])}"><h2>{n}. {escaped(card["title"])} <span>{card["scope"].upper()}</span></h2>{"".join(body)}<label>Decision <select data-card="{n-1}"><option value="">Not reviewed</option><option>approved</option><option>needs refinement</option><option>feedback</option></select></label><label> Notes <textarea data-note="{n-1}" rows="2"></textarea></label></article>')
     script="""const cards=DATA;const storageKey='scoped-review-'+cards.flatMap(c=>c.members.map(m=>m.review_revision)).join('-');
 const read=()=>cards.map((c,n)=>({decision:document.querySelector(`[data-card="${n}"]`).value,note:document.querySelector(`[data-note="${n}"]`).value}));
@@ -147,7 +174,7 @@ try{const saved=JSON.parse(localStorage.getItem(storageKey)||'null');if(saved)ca
 document.querySelectorAll('select,textarea[data-note]').forEach(e=>e.addEventListener('input',()=>{try{localStorage.setItem(storageKey,JSON.stringify(read()))}catch(e){}}));
 document.querySelector('#export').onclick=()=>{const lines=[];cards.forEach((c,n)=>{const d=document.querySelector(`[data-card="${n}"]`).value;if(!d)return;const note=document.querySelector(`[data-note="${n}"]`).value;for(const m of c.members)lines.push(`${m.asset_id}: ${d} (${m.scope})${note?' — '+note:''} [review ${m.review_revision}]`)});document.querySelector('#feedback').value=lines.join('\\n');};""".replace('DATA',json.dumps(cards).replace('</','<\\/'))
     navigation=''.join(f'<li><a href="#{escaped(c["card_id"])}">{escaped(c["title"])} — {c["scope"]}</a></li>' for c in cards)
-    page=f'''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{escaped(config['title'])}</title><style>body{{font:16px system-ui;background:#15181c;color:#eef0f4;margin:24px auto;max-width:1450px;padding:0 20px}}a{{color:#a7d4ff}}article{{border:1px solid #555;border-radius:10px;margin:28px 0;padding:20px}}h2 span{{font-size:14px;background:#384861;padding:5px}}img{{width:100%;height:auto;background:#242831}}figure{{margin:16px 0}}figcaption,.revision{{color:#b5c1d0}}details{{overflow-wrap:anywhere}}textarea{{display:block;width:98%;background:#222;color:white}}select,button{{padding:10px}}li{{margin:6px 0}}</style><h1>{escaped(config['title'])}</h1><p>{len(cards)} cards, {evidence['decision_count']} exact model decisions. Each card states its exact review scope. Grouped cards apply one decision to every displayed member. Native camera is top left in eight-view sheets. Click any image for full resolution.</p><p><a href="evidence.json">Frozen evidence manifest</a>. Decisions below prepare feedback; they do not modify any model or approval record.</p><details><summary>Jump to a review card</summary><ul>{navigation}</ul></details>{''.join(sections)}<button id="export">Prepare review feedback</button><textarea id="feedback" rows="12" readonly></textarea><script>{script}</script></html>'''
+    page=f'''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{escaped(config['title'])}</title><style>body{{font:16px system-ui;background:#15181c;color:#eef0f4;margin:24px auto;max-width:1450px;padding:0 20px}}a{{color:#a7d4ff}}article{{border:1px solid #555;border-radius:10px;margin:28px 0;padding:20px}}h2 span{{font-size:14px;background:#384861;padding:5px}}img{{width:100%;height:auto;background:#242831}}figure{{margin:16px 0}}figcaption,.revision{{color:#b5c1d0}}details{{overflow-wrap:anywhere}}textarea{{display:block;width:98%;background:#222;color:white}}select,button{{padding:10px}}li{{margin:6px 0}}</style><h1>{escaped(config['title'])}</h1><p>{len(cards)} cards, {evidence['decision_count']} exact scoped decisions. Each card states its exact review scope. Grouped cards apply one decision to every displayed member. Native camera is top left in eight-view sheets. Click any image for full resolution.</p><p><a href="evidence.json">Frozen evidence manifest</a>. Decisions below prepare feedback; they do not modify any model or approval record.</p><details><summary>Jump to a review card</summary><ul>{navigation}</ul></details>{''.join(sections)}<button id="export">Prepare review feedback</button><textarea id="feedback" rows="12" readonly></textarea><script>{script}</script></html>'''
     (out/'index.html').write_text(page)
     print(json.dumps(dict(output=str(out),cards=len(cards),decisions=evidence['decision_count'],resources=len(resources))))
 
