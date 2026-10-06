@@ -191,6 +191,12 @@ Full Lincoln retains all eight climb routes and eleven control checks, but its
 existing ground contact still forces this ladder to use projected navigation.
 The roof approach differs from the mesh by up to 0.196 units, and the ladder mesh
 remains incomplete; the draft explicitly retains these visual and contact gaps.
+Physical ladder eligibility now also recognizes raised receiving volumes with
+unambiguous point-anchor bindings. A native fixture passes both climb directions;
+an underlying navigation hole still rejects support. Segment-bound receivers
+remain outside this additional eligibility path. Lincoln's ground contact has
+a staged terrain/collision correction with 205 mesh-covered samples, but the
+resulting clipped boundary still misses the seam, so it remains unpublished.
 The east hall's upper stair now has published floor/landing seam corrections and
 passes 48 directed routes across four rotations and two elevations. Full Derby
 passes 28/28 stair routes and all five control checks with this correction.
@@ -281,7 +287,7 @@ invented across that gap. New drops use the correct foundation height. Native
 mouse queries also now reject loaded movement-obstacle interiors. These focused
 checks do not establish every platform route or complete asset coverage.
 
-Latest editor validation (2026-10-06): 845 tests passed, two skipped. Fresh
+Latest editor validation (2026-10-06): 846 tests passed, two skipped. Fresh
 descriptors for all ten saved scenes pass native loading and all 71 control
 apply/reset checks; Derby retains 28/28 stair routes. The game
 build and native stair/control checks passed. Wychford loads with its spline wall

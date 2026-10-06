@@ -11,6 +11,9 @@
   rendered climbing integration remain unfinished.
   Clipped landing obstacles retain their computed precision through routing and
   footprint collision, avoiding self-intersecting contours after float rounding.
+  Raised receiving volumes can supply a ladder landing when their point anchor
+  binds to one walking region. Boundary and hole checks still require actual
+  navigation support; receiver height alone cannot bridge a gap.
 
 - **Mission state previews.** Crossroads 2's 05 · Ambush mission offers log and
   rock trap artwork playback, seeking, and independently reviewed 3D endpoint

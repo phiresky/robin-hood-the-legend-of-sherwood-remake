@@ -4,6 +4,34 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Raised receiver eligibility and Lincoln contact investigation (2026-10-06)
+
+Physical ladder eligibility previously checked only authored surfaces, omitting
+raised receiving volumes attached to lower navigation. It now also recognizes
+point-bound receivers with one unambiguous navigation region, retaining their
+physical height and underlying walking boundaries and holes. Segment bindings
+still use the existing fallback. A compiler regression checks receiving support
+and rejects a hole at the seam. Native complete-animation checks pass both routes
+in `receiving-ladder-IOEnhU`. All 123 compiler tests pass; the editor suite passes
+846 tests with two skipped. App typecheck, focused lint and production build pass.
+
+Batch `saved-map-exports-Ghc6cc` compiles all ten scenes and passes all 84 native
+climb routes and 71 control apply/reset checks. This batch predates the final
+precise-boundary eligibility adjustment; the targeted compiler regression also
+passes after that adjustment.
+
+Lincoln's saved ladder has an additional ground-boundary gap. The reviewed edge
+is owned by both terrain and the keep plateau's ground collision contour.
+`stage-lincoln-shed-ground-contact.mjs` stages matching asset-local corrections,
+bounded to two units and checked against the inner-bailey plateau mesh.
+Candidate `lincoln-shed-ground-contact-iVKQcJ` has 205/205 mesh-covered samples;
+the mesh top lies approximately 0.0584 units below the authored receiving plane.
+The explicit 0.06-unit mesh review bound does not change runtime tolerances.
+Candidate export `lincoln-shed-ground-level-46qvLX` still retains projected
+navigation: subsequent clipping leaves a boundary that misses the precise lower
+seam. The contact edits are unpublished and require further ownership/clipping
+review. No floor or collision was removed to force this check to pass.
+
 ## Sloped Lincoln shed ladder landing (2026-10-06)
 
 The seam authoring tool now optionally intersects the lift and landing planes,

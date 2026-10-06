@@ -1663,6 +1663,29 @@ function compileAssetGameplayAttempt(
     }
   allocateLightReceivingLayers(navigationRegions, lights, layers.length - 1, inside);
   const liftLayer = compactNavigationLayers(navigationRegions);
+  // A raised receiving volume can supply the physical landing over a lower
+  // navigation plane. Require an unambiguous ground binding and retain its
+  // actual walkable boundary and holes when checking the ladder approach.
+  const receiverLandings = projectionReceivers.flatMap((receiver) => {
+    if (receiver.receiverSegment) return [];
+    const regions = navigationRegions.filter(
+      (region) =>
+        !region.lift &&
+        region.pieces.some((piece) => containsNavigationAnchor(piece, receiver.anchor)),
+    );
+    if (regions.length !== 1) return [];
+    const top = receiver.shape.points.map((p): Vec3 => [p.x, p.y - p.z_top, p.z_top]);
+    return [
+      {
+        area: {
+          plane: heightPlane(top.slice(0, 3)),
+          polygon: top.map(([x, y]): Point => [x, y]),
+          blockers: [],
+        },
+        region: regions[0]!,
+      },
+    ];
+  });
   const physicalStairs = new Map<string, ReturnType<typeof compilePhysicalStairRegion>>();
   for (const lift of lifts.filter((lift) => lift.type === 1 || lift.type === 2)) {
     const floor = surfaces.filter((surface) => surface.lift === lift.id);
@@ -1684,7 +1707,20 @@ function compileAssetGameplayAttempt(
               containsNavigationAnchor(area, door.worldMiddle)
             );
           });
-          if (!supported)
+          const receiverSupported = receiverLandings.some(({ area, region }) =>
+            [door.outside, door.worldMiddle].every(
+              (point) =>
+                containsNavigationAnchor(area, point) &&
+                region.pieces.some((piece) => {
+                  const projected: Point = [point[0], point[1] - point[2]];
+                  return (
+                    inside(projected, piece.receivingPolygon ?? piece.polygon, true) &&
+                    !piece.blockers.some((hole) => inside(projected, hole, true))
+                  );
+                }),
+            ),
+          );
+          if (!supported && !receiverSupported)
             throw new Error(`Landing does not reach physical ladder door ${door.name}`);
         }
       physicalStairs.set(

@@ -13,6 +13,7 @@ import {
   liftAssetCompilerFixture,
   changingLiftCompilerFixture,
   changingClimbCompilerFixture,
+  receivingLadderCompilerFixture,
   copiedChangingLiftCompilerFixture,
   liftLightCompilerFixture,
   interiorAssetCompilerFixture,
@@ -186,6 +187,24 @@ test("physical ladders require landing support at both the outside point and sea
       warning.includes("Landing does not reach physical ladder"),
     ),
   );
+});
+
+test("physical ladder landings can use bound raised receiving volumes", () => {
+  const { document, assets, hut } = receivingLadderCompilerFixture();
+  const compiled = compileAssetGameplay(document, assets, bounds);
+  assert.ok(compiled.lifts![0]!.physical_navigation, compiled.warnings?.join("\n"));
+  // The receiving height cannot fill a hole in the underlying walking area.
+  hut.gameplay!.surfaces[1]!.holes = [
+    [
+      [328, -155],
+      [334, -155],
+      [334, -145],
+      [328, -145],
+    ],
+  ];
+  const blocked = compileAssetGameplay(document, assets, bounds);
+  assert.equal(blocked.lifts![0]!.physical_navigation, undefined);
+  assert.ok(blocked.warnings?.some((warning) => warning.includes("Landing does not reach")));
 });
 
 test("best-effort terrain retries preserve input and subsequent terrain edits", () => {

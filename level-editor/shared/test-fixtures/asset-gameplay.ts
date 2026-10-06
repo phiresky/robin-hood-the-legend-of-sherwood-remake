@@ -1363,6 +1363,33 @@ export function changingClimbCompilerFixture(type: 2 | 3, highDoor: 4 | 6 = 4, c
   return fixture;
 }
 
+export function receivingLadderCompilerFixture() {
+  const fixture = changingClimbCompilerFixture(2);
+  const gameplay = fixture.hut.gameplay!;
+  const landing = gameplay.surfaces[1]!;
+  const height = 300;
+  const part = fixture.hut.parts[0]!;
+  part.obstacle_local_game!.points = landing.polygon.map(([x, y]) => ({
+    x,
+    y,
+    z_bottom: height,
+    z_top: height,
+  }));
+  part.obstacle_local_game!.solid = false;
+  part.obstacle_local_game!.opaque = false;
+  landing.polygon = landing.polygon.map(([x, y]) => [x, y - height]);
+  landing.height = 0;
+  gameplay.projectionReceivers = [
+    {
+      id: "raised-ladder-landing",
+      node: part.node,
+      volume: part.node,
+      anchor: [360, -150, 0],
+    },
+  ];
+  return fixture;
+}
+
 export function disconnectedLiftCompilerFixture() {
   const fixture = liftAssetCompilerFixture();
   const gameplay = fixture.hut.gameplay!;
