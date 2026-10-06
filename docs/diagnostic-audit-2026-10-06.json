@@ -236,8 +236,8 @@
     {
       "group_index": 11,
       "issue": "Legendary patch applied to unexpected level",
-      "status": "blocked_missing_content",
-      "finding": "Three H01_Lin_VL errors have 58 authored soldiers versus expected 38. Reviewed patch intentionally rejects unmatched level; exact affected assets are not attached. No matching repair verified. The reporter assets are unavailable; the user confirmed that the diagnostic bundle is the only available evidence. Identity and script-validation checks remain enforced.",
+      "status": "mitigated_reinforcements_disabled",
+      "finding": "Three H01_Lin_VL errors have 58 authored soldiers versus expected 38. Automatic Legendary reinforcements are now temporarily disabled before patch validation or mutation, removing this load failure and retaining authored rosters and patrol links. Other Legendary rules remain active. The underlying content difference is still unidentified; disabling reinforcements does not establish a fix for the separate script or host/client asset mismatches.",
       "relevant_commits": [],
       "report_ids": [
         "933c7f4db90e",
