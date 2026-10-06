@@ -4,6 +4,32 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Lincoln west slate tower stair seams (2026-10-06)
+
+Both tower flights now have corrected local floor/landing seams, with the lower
+external entrance defining the 220.001 new-drop ground height. Review stage
+`local-stair-seams-arXwj0` passes 32 directed native routes in
+`local-stair-placements-bV2Cmd`, covering four rotations and elevations 0/40.
+All eight raised external approaches reject. Full Lincoln
+`lincoln-west-slate-level-Fuf4Uh` passes native construction, all sixteen stair
+routes and eleven control apply/reset checks. The isolated tower exports omit
+controls that need external neighbours; the control harness correctly rejects
+that zero-control batch, so only the full-scene result establishes control
+coverage. This publication corrects the stairs, not every external attachment.
+
+Mesh review finds 791/794 lower-flight samples supported (maximum uncovered
+margin 0.057 units), and 660/690 upper-flight samples (1.131 units). Landing-edge
+discrepancies reach 0.345 units. Final stage `local-stair-seams-ILOSlg` adds an
+explicit draft warning for those discrepancies and unverified rendered actor
+integration; its gameplay otherwise exactly matches the tested stage.
+
+Publication backup is `lincoln-west-slate-publication-20261006`, with the Lincoln
+scene pin refreshed. Published placements `local-stair-placements-P3nQhe` and
+full Lincoln match their tested descriptors except for the added draft warning.
+All ten scenes reopen. Refreshed audit `lift-anchor-support-wT4nMf` finds 32/53
+unsupported stair definitions, including 4/6 in Lincoln; the ladder/wall totals
+remain 1/8 and 9/9. No compiler or runtime code changes were needed.
+
 ## West-moat tower and obstacles formed by joined floors (2026-10-06)
 
 The tower's stair needs corrected floor/landing seams and collision clearance
