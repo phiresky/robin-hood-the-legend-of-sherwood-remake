@@ -938,8 +938,12 @@ impl EngineInner {
         match door_type {
             DoorType::Building | DoorType::BuildingTrap => translate_building(&ctx, &mut orders),
             DoorType::LiftHigh | DoorType::LiftHighCrenel | DoorType::LiftLow => match lift_type {
-                Some(LiftType::Ladder) => {
-                    translate_ladder(&ctx, &mut orders);
+                Some(LiftType::Ladder | LiftType::Wall) => {
+                    if lift_type == Some(LiftType::Wall) {
+                        translate_wall(&ctx, &mut orders);
+                    } else {
+                        translate_ladder(&ctx, &mut orders);
+                    }
                     if let Some((sector, _, physical)) = physical_door {
                         // The entry callback seats the actor on the physical
                         // floor. Keep the following climb's exact world goal.
@@ -959,7 +963,10 @@ impl EngineInner {
                             if inside
                                 && matches!(
                                     order.order_type,
-                                    OrderType::ClimbingLadderUp | OrderType::ClimbingLadderDown
+                                    OrderType::ClimbingLadderUp
+                                        | OrderType::ClimbingLadderDown
+                                        | OrderType::ClimbingWallUp
+                                        | OrderType::ClimbingWallDown
                                 )
                                 && MapPoint::new(order.target_x, order.target_y) == target
                             {
@@ -976,7 +983,6 @@ impl EngineInner {
                         }
                     }
                 }
-                Some(LiftType::Wall) => translate_wall(&ctx, &mut orders),
                 Some(LiftType::Stairs) | Some(LiftType::Normal) => {
                     translate_stairs(&ctx, &mut orders);
                     if let Some((sector, _, physical)) = physical_door {

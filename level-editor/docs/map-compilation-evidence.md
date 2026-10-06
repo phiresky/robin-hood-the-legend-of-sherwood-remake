@@ -9141,14 +9141,13 @@ upper terrace retain their earlier sampled gaps. All 205 ground backdrop samples
 are covered. Real paired-terrace fixture
 `york-west-lane-access-steps-neighbour-placements-BeC1JM` compiles sixteen copies
 at four rotations and two elevations and rejects 64 missing/raised neighbours;
-its native traversal audit is pending.
+all 896 complete-profile native routes pass.
 Actual-neighbour fixture
 `york-west-lane-access-steps-neighbour-placements-NVq5B7` exports sixteen copies
 and rejects 48 missing/raised receivers or terrain; its first 448 native routes
 pass. That synthetic-frame process exits with status 143 before the elevated
 cases complete; its report remains unfinished. A separate complete-profile
-audit is running over all eight exports. All 896 routes must complete before
-publication.
+audit now passes all 896 routes across the eight exports.
 
 Bridge candidate `local-stair-seams-4oe3PY` retains both flights and all eleven
 entrances. The external-landing fixture now gives disconnected coplanar receiving
@@ -9189,9 +9188,12 @@ doors, lifts, jumps and interiors are verified unchanged by the deck migration.
 Combined moved fixture
 `york-stone-river-bridge-and-approach-stairs-neighbour-placements-lND6cV` includes
 the west-lane asset alongside both bridge flights and their shared terraces.
-Eight exports retain all entrances (1,696 directed routes expected), reject
-64 missing/raised terrace cases, and pass the first 212 complete-profile routes.
-The remaining combined routes are pending.
+Eight exports retain all entrances and reject 64 missing/raised terrace cases.
+The initial run passed all 848 ground-height complete-profile routes before
+interruption. The four remaining elevated exports were copied unchanged into
+`york-combined-elevated-pa7oczf4`; all 848 elevated routes pass (359.14 seconds).
+Together this verifies all 1,696 routes. These descriptors predate physical-wall
+compilation; fresh full-scene regression remains required before publication.
 Nothing in this
 section is published or claimed as full-scene parity.
 
@@ -9221,3 +9223,47 @@ published placements in `local-stair-placements-sZTxB8` and full Sherwood in
 Anchor audit `lift-anchor-support-hSBiol` now finds 3/53 unsupported stair
 definitions, all in York; ladder/wall counts remain 1/8 and 9/9. None of these
 navigation results certifies the central oak's visible geometry.
+
+### Physical wall navigation and triangulated approaches (2026-10-06)
+
+The compiler previously attempted physical navigation only for stairs and ladders.
+Walls now use the same planar-flight, exact-contour and supported-landing checks.
+The native descriptor validator accepts wall-owned physical navigation; wall
+climbing orders retain their world destinations. Explicit physical approaches
+remain authoritative during loading: applying a separate screen-space wall
+offset made the gate assertion disagree with the actual movement endpoint.
+Descriptors without physical navigation retain the existing approach adjustment.
+
+The staged Lincoln inner gatehouse in `local-stair-seams-kEIDBM` initially gained
+physical navigation in six of eight placements. The two unrotated failures had
+their outside point and seam on different triangles of the same flat terrain.
+Checking support for each anchor fixes this without changing height tolerances.
+Tests cover split terrain support, removal of outside support, raised landings,
+fractional rotated contours, and hole edges versus hole interiors for both
+ladders and walls. `local-stair-placements-kJTt0J` now retains physical navigation
+in all eight placements and passes all sixteen complete-profile climb routes.
+The gatehouse asset remains staged; no publication is implied by these results.
+
+The updated changing-climb fixtures cover both wall-top door types at four
+rotations and copied independent controls. Native collision/pathfinder, actor
+traversal, mid-climb closure and reopening checks pass. Late reopening waits for
+actual route failure within the bounded simulation, because wall animation
+profiles have different numbers of stationary frames. The copied-control audit
+and fractional ladder exit also pass. The regular compiled-navigation suite
+passes 47 tests (14 opt-in audits skipped).
+
+Editor validation passes 874 tests with two skips; all 195 focused compiler/export
+tests pass, as do editor typechecking and focused lint. Three stale native fixture
+snapshots were refreshed alongside the wall fixtures: the piecewise stair floor,
+a redundant ladder obstacle closing vertex, and the spline contour-repair warning.
+All ten maps recompile in `saved-map-exports-iEv81a`; all 84 climbing routes and
+71 apply/reset controls pass. Full-profile stair regression is still running.
+The game build and Rust formatting pass.
+
+Full Lincoln candidate `lincoln-physical-wall-full-0oj2Up` retains all eight
+passing climb routes, but the gatehouse still falls back to projected navigation.
+Its lower seam lies 2.066150 units outside the separate inner-bailey plateau's
+edge from world `[2256.0005,1499]` to `[2306.9995,1506]`. The outside anchor is
+supported. Correcting that receiving asset, with mesh and moved-neighbour checks,
+is required before publishing the gatehouse; increasing compiler tolerance would
+conceal the missing contact.

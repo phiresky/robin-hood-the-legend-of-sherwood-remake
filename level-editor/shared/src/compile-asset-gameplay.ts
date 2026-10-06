@@ -930,12 +930,12 @@ function compileAssetGameplayAttempt(
       // Clearances are intermediate cutouts. Snapping their intersections before
       // clipping solids bends otherwise straight movement boundaries.
       const clearance = target === movementClearances;
-      // Physical ladders need their authored landing seams before final grid
+      // Physical climbs need their authored landing seams before final grid
       // rounding; rounding individual surfaces can disconnect a rotated entry.
       const continuous =
         clearance ||
         surface.preserveMovementPrecision === true ||
-        gameplay.lifts?.some((lift) => lift.type === 2) === true;
+        gameplay.lifts?.some((lift) => lift.type === 2 || lift.type === 3) === true;
       const projectMovement = continuous ? ([x, y, z]: Vec3): Point => [x, y - z] : project;
       const minimumArea = continuous ? 1e-8 : 0.5;
       const placed = {
@@ -1667,8 +1667,10 @@ function compileAssetGameplayAttempt(
         })),
       ],
     });
-    if (lift.type === 2 && compiled.navigation.floor_patches)
-      throw new Error("Physical ladders require one planar flight");
+    if ((lift.type === 2 || lift.type === 3) && compiled.navigation.floor_patches)
+      throw new Error(
+        `Physical ${lift.type === 2 ? "ladders" : "walls"} require one planar flight`,
+      );
     return compiled;
   };
   let navigationRegions: ReturnType<typeof assembleNavigationRegions>;
@@ -1754,36 +1756,44 @@ function compileAssetGameplayAttempt(
       },
     ];
   });
-  for (const lift of lifts.filter((lift) => lift.type === 1 || lift.type === 2)) {
+  for (const lift of lifts.filter(
+    (lift) => lift.type === 1 || lift.type === 2 || lift.type === 3,
+  )) {
     if (physicalStairs.has(lift.id)) continue;
     try {
-      if (lift.type === 2)
+      if (lift.type === 2 || lift.type === 3)
         for (const door of doors.filter((door) => door.lift === lift.id)) {
-          const supported = surfaces.some((surface) => {
-            if (surface.lift) return false;
-            const area = {
-              coordinateSpace: "world" as const,
-              plane: surface.worldPlane,
-              polygon: surface.worldPolygon,
-              blockers: surface.worldHoles,
-            };
-            return (
-              containsNavigationAnchor(area, door.outside) &&
-              containsNavigationAnchor(
+          // Terrain triangles can support opposite ends of the same approach.
+          const supported = [door.outside, door.worldMiddle].every((point) =>
+            surfaces.some((surface) => {
+              if (surface.lift) return false;
+              const area = {
+                coordinateSpace: "world" as const,
+                plane: surface.worldPlane,
+                polygon: surface.worldPolygon,
+                blockers: surface.worldHoles,
+              };
+              return containsNavigationAnchor(
                 {
                   ...area,
-                  // A ladder can enter at the edge of a platform opening.
+                  // A climb can enter at the edge of a platform opening.
                   // Only its seam may touch that edge; the outside point must
                   // still have ordinary support and hole interiors stay blocked.
-                  blockers: area.blockers.filter(
-                    (hole) =>
-                      !onClippedReceivingBoundary([door.worldMiddle[0], door.worldMiddle[1]], hole),
-                  ),
+                  blockers:
+                    point === door.outside
+                      ? area.blockers
+                      : area.blockers.filter(
+                          (hole) =>
+                            !onClippedReceivingBoundary(
+                              [door.worldMiddle[0], door.worldMiddle[1]],
+                              hole,
+                            ),
+                        ),
                 },
-                door.worldMiddle,
-              )
-            );
-          });
+                point,
+              );
+            }),
+          );
           const receiverSupported = receiverLandings.some(({ area, region }) =>
             [door.outside, door.worldMiddle].every(
               (point) =>
@@ -1802,7 +1812,9 @@ function compileAssetGameplayAttempt(
             ),
           );
           if (!supported && !receiverSupported)
-            throw new Error(`Landing does not reach physical ladder door ${door.name}`);
+            throw new Error(
+              `Landing does not reach physical ${lift.type === 2 ? "ladder" : "wall"} door ${door.name}`,
+            );
         }
       physicalStairs.set(lift.id, compilePhysicalLift(lift));
     } catch (error) {

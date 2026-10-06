@@ -22,9 +22,6 @@
   ],
   "volumes": [],
   "asset_geometry": {
-    "warnings": [
-      "Lift hut-a/hut/stairs: physical navigation unavailable; retaining projected navigation: Walkable surface must be planar; split it into planar asset surfaces"
-    ],
     "motion_data": {
       "layers": [
         [
@@ -113,6 +110,8 @@
           {
             "is_lift": true,
             "state_id": 0,
+            "flags": 0,
+            "skeleton_segments": [],
             "polygon": {
               "points": [
                 [
@@ -141,8 +140,6 @@
                 ]
               ]
             },
-            "skeleton_segments": [],
-            "flags": 0,
             "obstacles": []
           }
         ]
@@ -373,7 +370,121 @@
             "sector_in": 3,
             "layer_in": 2
           }
-        ]
+        ],
+        "physical_navigation": {
+          "plane": [
+            4,
+            0,
+            -1560
+          ],
+          "boundary": [
+            [
+              390,
+              300
+            ],
+            [
+              410,
+              300
+            ],
+            [
+              410,
+              400.00000000000006
+            ],
+            [
+              390,
+              400.00000000000006
+            ]
+          ],
+          "obstacles": [],
+          "doors": [
+            {
+              "inside": [
+                392,
+                350.00000000000006,
+                8
+              ],
+              "middle": [
+                390,
+                350.00000000000006,
+                0
+              ],
+              "outside": [
+                380,
+                350.00000000000006,
+                0
+              ]
+            },
+            {
+              "inside": [
+                408,
+                350.00000000000006,
+                88
+              ],
+              "middle": [
+                410,
+                350.00000000000006,
+                100
+              ],
+              "outside": [
+                420,
+                350.00000000000006,
+                100
+              ]
+            }
+          ],
+          "floor_patches": [
+            {
+              "plane": [
+                4,
+                0,
+                -1560
+              ],
+              "boundary": [
+                [
+                  390,
+                  300
+                ],
+                [
+                  400,
+                  300
+                ],
+                [
+                  400,
+                  400.00000000000006
+                ],
+                [
+                  390,
+                  400.00000000000006
+                ]
+              ]
+            },
+            {
+              "plane": [
+                6,
+                0,
+                -2360
+              ],
+              "boundary": [
+                [
+                  400,
+                  300
+                ],
+                [
+                  410,
+                  300
+                ],
+                [
+                  410,
+                  400.00000000000006
+                ],
+                [
+                  400,
+                  400.00000000000006
+                ]
+              ]
+            }
+          ]
+        }
       }
     ]
   }

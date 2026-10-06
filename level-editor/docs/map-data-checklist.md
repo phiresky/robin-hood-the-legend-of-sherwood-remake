@@ -136,8 +136,9 @@ its first moved actual-neighbour placement fails 84/100 routes. Further staged
 corrections align its upper terrace contact and give the lower deck its own
 physical floor. The revised bridge passes all 800 moved complete-profile routes;
 full York passes 130 stairs, 40 climbs and six controls. The combined moved
-bridge/west-lane assembly and remaining separate west-lane routes still need
-verification before publication. These candidates do not
+bridge/west-lane assembly now passes all 1,696 routes, and both separate
+west-lane receiving arrangements pass 896 routes each. Fresh full-scene checks
+with the physical-wall compiler remain required before publication. These candidates do not
 reduce the published unsupported-anchor counts below.
 The corrected west-lane full-York export also passes all 130 stair routes with
 a complete Robin animation profile. This verifies animation-driven movement,
@@ -152,6 +153,16 @@ The asset explicitly warns that its visible stair is incomplete: only 194/802
 sampled points have assembled mesh within two height units, and nearest visible
 height discrepancies reach 45.807 units. This is verified navigation with a
 substantial unresolved visual limitation, not full asset parity.
+
+Physical climb navigation now includes walls. Landing checks allow the outside
+point and seam to occupy adjacent terrain triangles while still rejecting
+missing support and hole interiors. Native wall movement retains explicit world
+endpoints instead of offsetting only its screen-space approach. The staged
+Lincoln inner gatehouse passes sixteen complete-profile climbing routes across
+four rotations and two elevations; its asset correction remains unpublished
+pending full-scene checks. Ordinary and crenellated wall barriers pass traversal,
+copy isolation, closure and reopening checks. These are headless movement tests,
+not rendered animation certification.
 
 Latest runtime checks retain exact landing contours through binding and foot
 support instead of reducing them to single precision. The southwest turret is

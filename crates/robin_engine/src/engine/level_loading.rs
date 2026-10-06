@@ -4428,7 +4428,12 @@ impl EngineInner {
                     // LiftHighCrenel doors on wall lifts get their
                     // `point_in` nudged toward `point_mid`; other lift
                     // types leave `point_in` alone.
-                    door.adapt_points(lift_wall);
+                    // Explicit physical approaches already lie on the authored
+                    // floor. A screen-space offset would disagree with the
+                    // world endpoint used by movement and gate assertions.
+                    if lift.physical_navigation.is_none() {
+                        door.adapt_points(lift_wall);
+                    }
                     door.compute_door_penalty();
                     door.rebuild_click_bbox();
                 }

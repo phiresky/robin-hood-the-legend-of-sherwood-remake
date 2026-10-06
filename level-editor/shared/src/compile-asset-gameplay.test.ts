@@ -176,15 +176,13 @@ test("changing ladder and wall barriers retain their traversal state bindings", 
       assert.equal(compiled.lifts!.length, 1);
       assert.equal(compiled.movement_transitions!.length, 1);
       const lift = compiled.lifts![0]!;
-      if (type === 2) {
-        assert.ok(
-          lift.physical_navigation,
-          compiled.warnings?.join("\n") ?? "Missing physical ladder",
-        );
-        assert.equal(lift.physical_navigation.doors.length, 2);
-        assert.equal(lift.physical_navigation.obstacles.length, 1);
-        assert.equal(lift.physical_navigation.obstacles[0]!.motion_obstacle, 0);
-      }
+      assert.ok(
+        lift.physical_navigation,
+        compiled.warnings?.join("\n") ?? "Missing physical climb",
+      );
+      assert.equal(lift.physical_navigation.doors.length, 2);
+      assert.equal(lift.physical_navigation.obstacles.length, 1);
+      assert.equal(lift.physical_navigation.obstacles[0]!.motion_obstacle, 0);
       assert.equal(
         compiled.movement_transitions![0]!.motion_changes[0]!.sector,
         compiled.lifts![0]!.motion_area_index,
@@ -193,59 +191,92 @@ test("changing ladder and wall barriers retain their traversal state bindings", 
   }
 });
 
-test("physical ladders require landing support at both the outside point and seam", () => {
-  const { document, assets, hut } = changingClimbCompilerFixture(2);
-  hut.gameplay!.surfaces[0]!.height = 1;
-  hut.gameplay!.lifts![0]!.doors[0]!.outside[2] = 1;
-  hut.gameplay!.movementTransitions![0]!.waypoint[2] = 1;
-  const compiled = compileAssetGameplay(document, assets, bounds);
-  assert.equal(compiled.lifts!.length, 1);
-  assert.equal(compiled.lifts![0]!.physical_navigation, undefined);
-  assert.ok(
-    compiled.warnings?.some((warning) =>
-      warning.includes("Landing does not reach physical ladder"),
-    ),
-  );
-});
-
-test("physical ladder seams may meet a platform hole edge but not its interior", () => {
-  for (const end of [330, 330.01]) {
-    const { document, assets, hut } = changingClimbCompilerFixture(2);
-    const landing = hut.gameplay!.surfaces[1]!;
-    landing.polygon = [
-      [250, 0],
-      [600, 0],
-      [600, 300],
-      [250, 300],
-    ];
-    landing.holes = [
-      [
-        [260, 100],
-        [end, 100],
-        [end, 200],
-        [260, 200],
-      ],
-    ];
+test("physical climbs require landing support at both the outside point and seam", () => {
+  for (const type of [2, 3] as const) {
+    const { document, assets, hut } = changingClimbCompilerFixture(type);
+    hut.gameplay!.surfaces[0]!.height = 1;
+    hut.gameplay!.lifts![0]!.doors[0]!.outside[2] = 1;
+    hut.gameplay!.movementTransitions![0]!.waypoint[2] = 1;
     const compiled = compileAssetGameplay(document, assets, bounds);
-    assert.equal(!!compiled.lifts![0]!.physical_navigation, end === 330);
+    assert.equal(compiled.lifts!.length, 1);
+    assert.equal(compiled.lifts![0]!.physical_navigation, undefined);
+    assert.ok(
+      compiled.warnings?.some((warning) => warning.includes("Landing does not reach physical")),
+    );
   }
 });
 
-test("ordinary physical ladder landings retain fractional support boundaries", () => {
-  for (const rotation of [0, 37, 90, 180]) {
-    const { document, assets, hut } = changingClimbCompilerFixture(2);
-    document.groups[0]!.transform = { dx: 900.25, dy: 900.25, dz: 20, rot_deg: rotation };
-    for (const surface of hut.gameplay!.surfaces) surface.preserveMovementPrecision = true;
+test("physical climb approaches can cross a shared terrain triangle edge", () => {
+  for (const type of [2, 3] as const) {
+    const { document, assets, hut } = changingClimbCompilerFixture(type);
+    const landing = hut.gameplay!.surfaces[0]!;
+    hut.gameplay!.surfaces.push({
+      ...structuredClone(landing),
+      id: "west-other-triangle",
+      polygon: [
+        [0, 0],
+        [270, 160],
+        [270, 300],
+        [0, 300],
+      ],
+    });
+    landing.polygon = [
+      [0, 0],
+      [270, 0],
+      [270, 160],
+    ];
     const compiled = compileAssetGameplay(document, assets, bounds);
-    const lift = compiled.lifts![0]!;
-    assert.ok(
-      lift.physical_navigation,
-      compiled.warnings?.join("\n") ?? "Missing physical navigation",
-    );
-    for (const door of lift.doors) {
-      const area = compiled.motion_data.layers[door.layer_out]!.find((area) => !area.is_lift)!;
-      assert.ok(area.precise_polygon, `Missing exact landing at rotation ${rotation}`);
-      assert.ok(area.precise_polygon.some((point) => point.some((value) => value % 1 !== 0)));
+    assert.ok(compiled.lifts![0]!.physical_navigation, compiled.warnings?.join("\n"));
+    // Losing the outside support must still reject the physical approach.
+    hut.gameplay!.surfaces.pop();
+    const disconnected = compileAssetGameplay(document, assets, bounds, { bestEffort: true });
+    assert.ok(disconnected.warnings?.some((warning) => warning.includes("stairs-low")));
+    assert.ok(disconnected.lifts?.every((lift) => !lift.physical_navigation) ?? true);
+  }
+});
+
+test("physical climb seams may meet a platform hole edge but not its interior", () => {
+  for (const type of [2, 3] as const) {
+    for (const end of [330, 330.01]) {
+      const { document, assets, hut } = changingClimbCompilerFixture(type);
+      const landing = hut.gameplay!.surfaces[1]!;
+      landing.polygon = [
+        [250, 0],
+        [600, 0],
+        [600, 300],
+        [250, 300],
+      ];
+      landing.holes = [
+        [
+          [260, 100],
+          [end, 100],
+          [end, 200],
+          [260, 200],
+        ],
+      ];
+      const compiled = compileAssetGameplay(document, assets, bounds);
+      assert.equal(!!compiled.lifts![0]!.physical_navigation, end === 330);
+    }
+  }
+});
+
+test("ordinary physical climb landings retain fractional support boundaries", () => {
+  for (const type of [2, 3] as const) {
+    for (const rotation of [0, 37, 90, 180]) {
+      const { document, assets, hut } = changingClimbCompilerFixture(type);
+      document.groups[0]!.transform = { dx: 900.25, dy: 900.25, dz: 20, rot_deg: rotation };
+      for (const surface of hut.gameplay!.surfaces) surface.preserveMovementPrecision = true;
+      const compiled = compileAssetGameplay(document, assets, bounds);
+      const lift = compiled.lifts![0]!;
+      assert.ok(
+        lift.physical_navigation,
+        compiled.warnings?.join("\n") ?? "Missing physical navigation",
+      );
+      for (const door of lift.doors) {
+        const area = compiled.motion_data.layers[door.layer_out]!.find((area) => !area.is_lift)!;
+        assert.ok(area.precise_polygon, `Missing exact landing at rotation ${rotation}`);
+        assert.ok(area.precise_polygon.some((point) => point.some((value) => value % 1 !== 0)));
+      }
     }
   }
 });
@@ -274,26 +305,32 @@ test("fractional receiving contours can be smaller than one integer-grid triangl
   assert.ok(compiled.sight_obstacles.length > 0);
 });
 
-test("physical ladder landings can use bound raised receiving volumes", () => {
-  const { document, assets, hut } = receivingLadderCompilerFixture();
-  const compiled = compileAssetGameplay(document, assets, bounds);
-  assert.ok(
-    compiled.lifts![0]!.physical_navigation,
-    compiled.warnings?.join("\n") ?? "Missing physical ladder",
-  );
-  assert.equal(compiled.motion_data.layers.flat().filter((area) => area.precise_polygon).length, 1);
-  // The receiving height cannot fill a hole in the underlying walking area.
-  hut.gameplay!.surfaces[1]!.holes = [
-    [
-      [328, -155],
-      [334, -155],
-      [334, -145],
-      [328, -145],
-    ],
-  ];
-  const blocked = compileAssetGameplay(document, assets, bounds);
-  assert.equal(blocked.lifts![0]!.physical_navigation, undefined);
-  assert.ok(blocked.warnings?.some((warning) => warning.includes("Landing does not reach")));
+test("physical climb landings can use bound raised receiving volumes", () => {
+  for (const type of [2, 3] as const) {
+    const { document, assets, hut } = receivingLadderCompilerFixture();
+    hut.gameplay!.lifts![0]!.type = type;
+    const compiled = compileAssetGameplay(document, assets, bounds);
+    assert.ok(
+      compiled.lifts![0]!.physical_navigation,
+      compiled.warnings?.join("\n") ?? "Missing physical ladder",
+    );
+    assert.equal(
+      compiled.motion_data.layers.flat().filter((area) => area.precise_polygon).length,
+      1,
+    );
+    // The receiving height cannot fill a hole in the underlying walking area.
+    hut.gameplay!.surfaces[1]!.holes = [
+      [
+        [328, -155],
+        [334, -155],
+        [334, -145],
+        [328, -145],
+      ],
+    ];
+    const blocked = compileAssetGameplay(document, assets, bounds);
+    assert.equal(blocked.lifts![0]!.physical_navigation, undefined);
+    assert.ok(blocked.warnings?.some((warning) => warning.includes("Landing does not reach")));
+  }
 });
 
 test("best-effort terrain retries preserve input and subsequent terrain edits", () => {
