@@ -8885,3 +8885,21 @@ for these asset corrections.
 
 Fresh full-York export `york-east-upper-published-qiTScV` matches the
 native-tested terrain-corrected descriptor exactly after excluding warning text.
+
+## York north-garden stair: joined-flight limitation
+
+Candidate `local-stair-seams-OCZPtq` stages both `building-049-lift` and
+`building-050-lift` on `york-north-garden-wall-and-stair`. The first has the
+external ground entrance; the second has the asset-owned upper landing. Their
+shared `joins` anchor connects the flights. The default two-unit upper landing
+bound rejects: its two contact corners are 1.535 and 2.727 units from the seam.
+An explicit three-unit candidate passes local validation and is mesh-reviewed.
+
+`external-stair-landings-zQzgtL` fails the physical-navigation assertion: after
+joining these slightly different floor planes, the compiler reports
+`Walkable surface must be planar; split it into planar asset surfaces` and
+retains projected navigation. `compilePhysicalStairRegion` currently builds a
+single plane for the assembled region. This is a physical traversal limitation,
+not evidence that the joined stair works. No definition is published; the next
+check must address continuous traversal across the flight planes rather than
+counting projected fallback as parity.
