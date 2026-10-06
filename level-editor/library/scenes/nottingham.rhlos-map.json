@@ -19,7 +19,7 @@
       "model": "3d-assets/nottingham/nottingham-terrain/model.glb",
       "model_sha256": "807037fefeee1e9cc3b22defab6215efba1c4d410a695cbe2c75cad3d4215c41",
       "descriptor": "3d-assets/nottingham/nottingham-terrain/asset.json",
-      "descriptor_sha256": "47066853ce3e4b696d7db2922a942a8b8382052d985bd4bf4f61464258b61f38"
+      "descriptor_sha256": "c3c67efb867a0875454c681a039429dcf90aa2d1b26a98447f961397e245b46b"
     }
   ],
   "assetSources": [
@@ -545,7 +545,7 @@
       "model": "3d-assets/nottingham/nottingham-south-stair-house/model.glb",
       "model_sha256": "76d4437142f88365a2a3505df3561e0a21c9e50775a61f7e3ac97fd37e4f11d3",
       "descriptor": "3d-assets/nottingham/nottingham-south-stair-house/asset.json",
-      "descriptor_sha256": "60144446b9ee7a386e6f0541478c1b3b456189e50573de4fa5f60fed29b448da",
+      "descriptor_sha256": "d049d5c4c2b906057e97abe7dab5592d20d42b92a7c8b4a81dca96e8e9741dec",
       "id": "nottingham-south-stair-house"
     },
     {

@@ -4,6 +4,36 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Nottingham south stair house and terrain contact (2026-10-06)
+
+`local-stair-seams-SllNxf` corrects `nottingham-south-stair-house`'s
+`building-030-lift` floor, local upper landing, door midpoints and owned
+clearance. `external-stair-landings-lIHoHp` passes 32 directed native actor
+routes across two independent copies, four rotations and two elevations;
+all 32 missing/raised landing cases reject. `local-stair-placements-SQxDU7`
+also passes sixteen routes after ordinary drops onto editor terrain, with eight
+raised-entrance rejections. Mesh review finds 1,148/1,148 flight sample hits.
+The upper landing's changed edges extend at most 0.309335 units beyond its mesh.
+
+Full Nottingham `nottingham-south-house-level-SgbIZF` initially fails both
+directions through the lower entrance. Its terrain boundary stops short of the
+physical seam. `stage-nottingham-south-house-contact.mjs` inserts a local strip
+into the independently owned terrain surface, moving the two contact endpoints
+2.009983 and 1.376923 units. All 205 strip samples have ground-mesh support.
+This is an asset-authoring correction; export does not fabricate a connection.
+`nottingham-south-house-contact-QUrmfh` and full-map descriptor
+`nottingham-south-house-connected-g5uPrX` pass all 92 stair routes and ten
+control apply/reset checks. No runtime/compiler change was needed.
+
+Final stage `nottingham-south-house-contact-hIPxEc` adds only the explicit upper
+landing mesh/rendering warning. It is published with backup
+`nottingham-south-house-publication-20261006`. Fresh published Nottingham
+geometry equals the native-tested descriptor after excluding warnings, and all
+ten saved scenes reopen with their pinned descriptors. Local anchor audit
+`lift-anchor-support-wOv9oF` now finds 24/53 unsupported stairs, including
+Nottingham 7/12. Ladders remain 1/8 and walls 9/9. Full rendered actor integration
+and arbitrary-placement coverage remain open.
+
 ## Courtyard western stair and joined landing precision (2026-10-06)
 
 `stage-courtyard-west-stair-contacts.mjs` corrects the independently owned ground
