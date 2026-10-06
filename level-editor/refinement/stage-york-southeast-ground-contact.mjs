@@ -13,14 +13,35 @@ import { compileMap } from "../app/src/map-compile.ts";
 const [stage] = process.argv.slice(2);
 assert.ok(stage);
 const edits = JSON.parse(await fs.readFile(`${stage}/edits.json`, "utf8"));
-assert.equal(edits.length, 1);
-assert.equal(edits[0].asset, "york-outer-southeast-wall-stair");
+const contacts = {
+  "york-outer-southeast-wall-stair": {
+    lift: "building-234-lift",
+    label: "Southeast",
+    prefix: "york-southeast-ground-contact",
+    before: [
+      [2466, 2284],
+      [2525, 2297],
+    ],
+  },
+  "york-outer-east-upper-wall-stair": {
+    lift: "building-242-lift",
+    label: "Upper east",
+    prefix: "york-east-upper-ground-contact",
+    before: [
+      [2725, 1911],
+      [2761, 1918],
+    ],
+  },
+};
+const contact = contacts[edits[0].asset];
+assert.ok(contact, "Unknown reviewed terrain contact");
+assert.ok(!edits.some((edit) => edit.asset === "york-terrain"));
 const document = await readStoredMap("library/scenes/york.rhlos-map.json", "library");
 const assets = await pinnedDescriptors("library", document.assetSources, document.sceneAssets);
 const group = document.groups.find((group) => group.id === edits[0].asset);
 assert.equal(group.transform.rot_deg, 0);
 const stair = edits[0].gameplay;
-const lift = stair.lifts.find((lift) => lift.id === "building-234-lift");
+const lift = stair.lifts.find((lift) => lift.id === contact.lift);
 const floor = stair.surfaces.find((surface) => surface.id === lift.surface);
 const plane = heightPlane(
   floor.polygon.map(([x, y], i) => [
@@ -34,10 +55,7 @@ const descriptor = assets.get("york-terrain");
 const gameplay = structuredClone(descriptor.gameplay);
 const surface = gameplay.surfaces.find((surface) => surface.id === "ground-section-2-0");
 assert.ok(surface.height.every((height) => height === 0));
-const before = [
-  [2466, 2284],
-  [2525, 2297],
-];
+const before = contact.before;
 const indices = before.map((p) => surface.polygon.findIndex((q) => p.every((v, i) => v === q[i])));
 assert.ok(indices.every((i) => i >= 0));
 assert.equal((indices[0] + 1) % surface.polygon.length, indices[1]);
@@ -81,7 +99,7 @@ for (let along = 0; along <= 40; along++)
       .filter((z) => z !== undefined);
     samples.push({ point, hits, covered: hits.some((z) => Math.abs(z) < 0.001) });
   }
-const output = await fs.mkdtemp("work/map-compile/york-southeast-ground-contact-");
+const output = await fs.mkdtemp(`work/map-compile/${contact.prefix}-`);
 await fs.writeFile(
   `${output}/review.json`,
   JSON.stringify({
@@ -102,7 +120,7 @@ indices.forEach((index, i) => {
 });
 surface.preserveMovementPrecision = true;
 gameplay.draft.issues.push(
-  "Southeast stair ground boundary is aligned to the mesh-reviewed flight within a three-unit authoring bound. The ground asset supplies backdrop coverage, not a physical terrain mesh; rendered contact remains unverified.",
+  `${contact.label} stair ground boundary is aligned to the mesh-reviewed flight within a three-unit authoring bound. The ground asset supplies backdrop coverage, not a physical terrain mesh; rendered contact remains unverified.`,
 );
 validateAssetGameplay(gameplay, descriptor);
 edits.push({ asset: descriptor.id, descriptorSha256: source.descriptor_sha256, gameplay });

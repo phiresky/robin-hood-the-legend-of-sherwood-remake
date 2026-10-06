@@ -8826,3 +8826,45 @@ York's serialized geometry matches `york-southeast-ground-contact-WdCTsM`, and
 the other nine maps match the previously native-tested
 `contour-retry-scene-batch-sbV9Zi`, excluding warning text. Comparison uses actual
 JSON exports, including their normalization of negative zero.
+
+## York outer east upper stair: independent curtain-wall contacts
+
+The staged `building-242-lift` correction in `local-stair-seams-ZIIUaP`
+passes 32 synthetic receiver routes and rejects 64 missing/raised landings.
+Its real neighbour is `york-outer-east-upper-curtain-wall`. Initial real-neighbour
+fixture `york-outer-east-upper-wall-stair-neighbour-placements-VtHmle` fails all
+32 actor routes; full-York candidate `york-east-upper-stair-KEpFDP` fails two of
+130. Actors reach the stair sector but stop at collision strips across its ends.
+
+`stage-york-east-upper-stair-contact.mjs` authors the wall's independent opening
+and landing contacts from the staged floor and saved editor placements. It reads
+only editor/library assets. The wall's two flight clearances match the corrected
+floor with a 1/1024-unit local opening margin: exact coincident clipping exposed
+a sliver that blocked an endpoint in the second copy. Flight-only candidate
+`york-east-upper-stair-contact-S1ziqK` compiles eight placements but still fails
+all 32 routes, now at the remaining landing boundary edges. Projecting the wall's
+ground clearance and upper floor/clearance contacts onto their respective stair
+height seams moves six corners by 0.746–1.053 units, bounded by two units.
+
+Candidate `york-east-upper-stair-contact-X1njp0` produces fixture
+`york-outer-east-upper-wall-stair-neighbour-placements-4V0heI`: all 32 native
+actor routes pass across two independent copies, four rotations and two heights.
+All 48 missing/raised wall or authored-terrain cases reject. The wall opening
+remains wall-owned and the test moves each assembly independently.
+
+`review-staged-receiving-floors.mjs --all-surfaces` additionally samples ordinary
+floors, not only volume-backed receivers. The candidate flight has 886/970 exact
+mesh hits, maximum edge gap 0.326191 and height residual 0.036406 units. The wall
+floor has 510/764 hits, maximum gap 0.449199 and residual 0.061213 units. These
+are sampled mesh checks, not rendered actor certification. Both definitions
+remain unpublished pending full-York and publication checks.
+
+Full-York stage `york-east-upper-stair-contact-vE9N9E` uses identical definitions
+and passes all six control apply/reset checks, but retains two lower-entrance
+failures among 130 routes. Its upper contact now works. The terrain owner still
+has the old lower boundary. `stage-york-southeast-ground-contact.mjs` now also
+accepts this reviewed stair assembly, staging terrain points `[2725,1911]` and
+`[2761,1918]` at approximately `[2725.141045,1910.268203]` and
+`[2761.152464,1917.208955]`. Stage `york-east-upper-ground-contact-uVCfKF` retains
+all 205 projected artwork coverage samples. This ground model is a backdrop;
+coverage does not certify a physical terrain mesh or rendered contact.

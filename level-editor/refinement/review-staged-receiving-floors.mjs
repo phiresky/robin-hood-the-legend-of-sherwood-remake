@@ -7,8 +7,9 @@ import { sceneToGame, gltfToScene } from "../shared/src/geometry.ts";
 import { heightPlane, planeHeight } from "../shared/src/gameplay-plane.ts";
 import { pointInGameplayPolygon } from "../shared/src/navigation-anchor.ts";
 
-const [stage] = process.argv.slice(2);
+const [stage, mode] = process.argv.slice(2);
 assert.ok(stage);
+assert.ok(mode === undefined || mode === "--all-surfaces");
 const edits = JSON.parse(await fs.readFile(`${stage}/edits.json`, "utf8"));
 const index = JSON.parse(await fs.readFile("library/3d-assets/index.json", "utf8")).assets;
 const camera = { kind: "oblique-orthographic", elevation_deg: 35 };
@@ -33,7 +34,9 @@ function distance(p, a, b) {
 }
 const report = [];
 for (const edit of edits) {
-  const surfaces = edit.gameplay.surfaces.filter((surface) => surface.projectionVolume);
+  const surfaces = edit.gameplay.surfaces.filter(
+    (surface) => surface.projectionVolume || mode === "--all-surfaces",
+  );
   if (!surfaces.length) continue;
   const entry = index.find((entry) => entry.id === edit.asset);
   const bytes = await fs.readFile(`library/3d-assets/${entry.descriptor}`);

@@ -61,6 +61,16 @@ explicitly unverified.
 All ten scenes reopen: fresh York geometry matches the tested candidate, and the
 other nine maps retain their previously tested serialized geometry.
 
+The next York outer east upper stair candidate passes all 32 moved actor routes
+with its separate curtain wall, and rejects 48 missing/raised wall or terrain
+cases. The wall owns corrected flight clearances and landing contacts; no
+scene-specific connection is added to export. Contact corners move at most
+1.053 units. Sampled flight and wall-floor mesh edge gaps reach 0.327 and 0.450
+units respectively. Full York passes 128/130 routes and all six controls; its
+two remaining failures are at the terrain-owned lower contact. A separate
+terrain correction is staged. These definitions remain unpublished pending
+full-York regression and publication checks; rendered contact is unverified.
+
 Latest runtime checks retain exact landing contours through binding and foot
 support instead of reducing them to single precision. The southwest turret is
 now published after all sixteen rotated/elevated routes pass. Obstacle recovery
