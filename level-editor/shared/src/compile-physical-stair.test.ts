@@ -8,6 +8,7 @@ import {
 } from "./compile-physical-stair.ts";
 import { heightPlane, planeHeight } from "./gameplay-plane.ts";
 import { compilePhysicalTransitionObstacles } from "./compile-movement-transitions.ts";
+import { compilePhysicalStairRegion } from "./compile-physical-stair-region.ts";
 import type { Point } from "./level.ts";
 import type { Vec3 } from "./scene.ts";
 
@@ -128,6 +129,50 @@ test("physical clipping dust does not allocate a collision control", () => {
   assert.deepEqual([...result.pairs], [["barrier", 0]]);
   assert.equal(result.obstacles.length, 1);
   assert.equal(result.obstacles[0]!.state_id, 1);
+});
+
+test("clipped stair floors discard roundoff holes while retaining real thin holes", () => {
+  const points: Point[] = [
+    [1677.230021223834, 1793.627728022829],
+    [1677.230021223834, 1793.627728022829],
+    [1685.4321734679177, 1795.942765226406],
+    [1719.949020625519, 1820.182979671997],
+    [1723.2142046103759, 1827.2133971905766],
+    [1702.7715876910293, 1812.2826336494518],
+    [1680.4363876199332, 1824.5224363107166],
+    [1677.2458864394064, 1822.192176007348],
+    [1659.3498181234875, 1809.1213463090269],
+    [1688.821167611619, 1802.0936043130018],
+    [1689.371482732817, 1802.495540375304],
+    [1689.371482732817, 1802.495540375304],
+    [1689.3656303918233, 1802.4912659754125],
+    [1678.5062216960446, 1794.5598321441767],
+  ];
+  const lift = ([x, y]: Point): Vec3 => [x, y, 0];
+  const thin: Vec3[] = [
+    [1680, 1810, 0],
+    [1680.001, 1810, 0],
+    [1680.001, 1811, 0],
+    [1680, 1811, 0],
+  ];
+  for (const holes of [[], [thin]]) {
+    const input = {
+      surfaces: [{ polygon: points.map(lift), holes }],
+      doors: [],
+      obstacles: [],
+      solids: [],
+      clearances: [],
+      blockers: [],
+    };
+    const compiled = compilePhysicalStair(input);
+    assert.equal(compiled.holes.length, holes.length);
+    const cropped = compilePhysicalStairRegion({ ...input, frame: [0, 0, 4000, 4000] });
+    assert.equal(cropped.navigation.obstacles.length, holes.length);
+    if (holes.length) {
+      assert.deepEqual(cropped.navigation.obstacles[0]!.polygon, compiled.holes[0]);
+      assert.equal(cropped.area.obstacles[0]!.state_id, 0);
+    }
+  }
 });
 
 test("physical volume barriers slice the real stair height before projection", () => {

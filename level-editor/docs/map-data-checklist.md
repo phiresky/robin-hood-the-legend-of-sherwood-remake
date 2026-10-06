@@ -15,7 +15,10 @@ Landing validation now excludes permanently blocked portions of shared stair
 edges while retaining their collision. Switchable blockers and uncovered edge
 portions still require matching heights. Focused regressions pass, but the
 three-entrance Sherwood candidate still exposes an incompatible unblocked edge;
-its 36 failed physical routes remain unresolved.
+its traversal remains unresolved. Generated collinear clipping holes no longer
+disable physical navigation at 37 degrees. The latest unpublished candidate
+emits physical navigation at all eight placements but fails all 48 actor routes,
+including the twelve routes previously using projected navigation.
 
 The library-wide audit still finds 34 of 1,289 indexed assets without gameplay
 definitions, including the composite Derby keep, several Nottingham buildings,
@@ -326,7 +329,7 @@ invented across that gap. New drops use the correct foundation height. Native
 mouse queries also now reject loaded movement-obstacle interiors. These focused
 checks do not establish every platform route or complete asset coverage.
 
-Latest editor validation (2026-10-06): 849 tests passed, two skipped. Fresh
+Latest editor validation (2026-10-06): 851 tests passed, two skipped. Fresh
 descriptors for all ten saved scenes pass native loading and all 71 control
 apply/reset checks; Derby retains 28/28 stair routes. The game
 build and native stair/control checks passed. Wychford loads with its spline wall

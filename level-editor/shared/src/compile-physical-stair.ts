@@ -117,7 +117,10 @@ export function compilePhysicalStair(input: PhysicalStairInput): {
     return first[0] === last[0] && first[1] === last[1] ? ring.slice(0, -1) : ring;
   };
   const boundary = open(merged[0]![0]!);
-  const holes = merged[0]!.slice(1).map(open);
+  const holes = merged[0]!
+    .slice(1)
+    .filter((ring) => !isPhysicalClippingSliver(ring))
+    .map(open);
   const obstacles = input.obstacles.map((obstacle) => {
     if (
       !Number.isInteger(obstacle.motionObstacle) ||
@@ -150,4 +153,32 @@ export function compilePhysicalStair(input: PhysicalStairInput): {
     return { inside: [...door.inside], middle: [...door.middle], outside: [...door.outside] };
   });
   return { navigation: { plane, boundary, obstacles, doors }, holes };
+}
+
+/** Only for clipping results: authored contours must pass normal validation. */
+export function isPhysicalClippingSliver(ring: Point[]): boolean {
+  if (ring.length < 3) return true;
+  let start = ring[0]!,
+    end = start,
+    longest = 0;
+  let scale = 1;
+  for (const [i, point] of ring.entries()) {
+    scale = Math.max(scale, Math.abs(point[0]), Math.abs(point[1]));
+    const next = ring[(i + 1) % ring.length]!;
+    const length = Math.hypot(next[0] - point[0], next[1] - point[1]);
+    if (length > longest) {
+      start = point;
+      end = next;
+      longest = length;
+    }
+  }
+  if (longest === 0) return true;
+  const tolerance = scale * Number.EPSILON * 8;
+  return ring.every(
+    (point) =>
+      Math.abs(
+        (end[0] - start[0]) * (point[1] - start[1]) - (end[1] - start[1]) * (point[0] - start[0]),
+      ) <=
+      tolerance * longest,
+  );
 }

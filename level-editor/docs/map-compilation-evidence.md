@@ -4,6 +4,27 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Generated physical-floor hole cleanup (2026-10-06)
+
+A rotated floor with retraced boundary vertices produced a spurious triangular
+hole during polygon union. Its vertices differ from collinearity only within
+floating-point coordinate precision; subsequent export-frame clipping rejected
+the floor. Generated union/clipping holes now discard only contours collinear
+within eight double-precision coordinate units of roundoff. Authored polygons
+still undergo normal validation, and a regression preserves a genuine 0.001-unit
+wide hole and its permanent collision identity through frame clipping.
+
+All 851 editor tests pass (two skipped), along with app typechecking, focused
+lint/format checks and the production build. The diagnostic three-door asset now
+emits physical navigation at all eight placements in
+`local-stair-placements-TltOFJ`. All 48 native actor routes still fail because
+landing support remains unresolved; the twelve formerly projected routes now
+expose that physical failure too. This is a contour-compilation correction, not
+a successful traversal candidate, and the asset remains unpublished.
+The refreshed native integration binary constructs all eight exported geometries,
+including their motion areas, sight obstacles, doors, grids and elevation
+boundaries. Construction does not certify the failed actor routes.
+
 ## Permanent landing holes and height validation (2026-10-06)
 
 Shared-edge validation previously treated permanently blocked platform holes as

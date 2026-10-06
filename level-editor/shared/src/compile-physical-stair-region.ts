@@ -2,6 +2,7 @@ import clipping from "polygon-clipping";
 import {
   compilePhysicalStair,
   compilePhysicalStairArea,
+  isPhysicalClippingSliver,
   type PhysicalStairInput,
 } from "./compile-physical-stair.ts";
 import {
@@ -68,7 +69,10 @@ export function compilePhysicalStairRegion(input: PhysicalStairRegionInput) {
     const lift = (ring: Point[]): Vec3[] => ring.map(([x, y]) => [x, y, a * x + b * y + c]);
     surfaces = clipped.map((polygon) => ({
       polygon: lift(polygon[0]!),
-      holes: polygon.slice(1).map(lift),
+      holes: polygon
+        .slice(1)
+        .filter((ring) => !isPhysicalClippingSliver(ring))
+        .map(lift),
     }));
     floor = compilePhysicalStair({ surfaces, doors: input.doors, obstacles: [] });
   }
