@@ -21,6 +21,10 @@ const map = stair.startsWith("york-") ? "york" : "nottingham";
 const source = await readStoredMap(`library/scenes/${map}.rhlos-map.json`, "library");
 const assets = await pinnedDescriptors("library", source.assetSources, source.sceneAssets);
 const neighbours = {
+  "york-west-lane-access-steps": [
+    "york-east-bridge-raised-terrace",
+    ...(physicalTerrace ? ["york-southeast-riverside-raised-terrace"] : []),
+  ],
   "york-precinct-east-wall-stair": ["york-cathedral-precinct-raised-terrain"],
   "york-north-garden-wall-and-stair": [],
   "york-outer-east-upper-wall-stair": ["york-outer-east-upper-curtain-wall"],
@@ -54,11 +58,11 @@ const neighbours = {
 assert.ok(neighbours[stair], "Unknown reviewed stair assembly");
 const ids = [stair, ...neighbours[stair]];
 const originGroup = source.groups.find((group) => group.id === stair);
-const sourceOrigin = ["york-north-garden-wall-and-stair", "york-precinct-east-wall-stair"].includes(
-  stair,
-)
-  ? [originGroup.transform.dx, originGroup.transform.dy]
-  : [1500, 1500];
+const westLane = stair === "york-west-lane-access-steps";
+const sourceOrigin =
+  ["york-north-garden-wall-and-stair", "york-precinct-east-wall-stair"].includes(stair) || westLane
+    ? [originGroup.transform.dx, originGroup.transform.dy]
+    : [1500, 1500];
 for (const id of ids) {
   const edit = edits.find((e) => e.asset === id);
   assert.ok(assets.has(id));
@@ -83,15 +87,18 @@ const outerWall = [
 ].includes(stair);
 const southernRiverside = stair === "york-east-riverside-southern-wall-stair";
 const stoneRiverside = stair === "york-riverbank-stone-landing-steps";
-assert.ok(!physicalTerrace || southernRiverside);
+assert.ok(!physicalTerrace || southernRiverside || westLane);
 const riverside =
   stair === "york-east-riverside-curtain-wall" || southernRiverside || stoneRiverside;
-const terrainHeight = southernRiverside ? 50.001003 : stoneRiverside ? 0 : riverside ? 90.00101 : 0;
+const terrainHeight =
+  southernRiverside || westLane ? 50.001003 : stoneRiverside ? 0 : riverside ? 90.00101 : 0;
 const precinct = stair === "york-precinct-east-wall-stair";
 const size =
-  northWall || riverside || market || outerWall || precinct ? [7000, 6500] : [5000, 4500];
+  northWall || riverside || market || outerWall || precinct || westLane
+    ? [7000, 6500]
+    : [5000, 4500];
 const centers =
-  northWall || riverside || market || outerWall || precinct
+  northWall || riverside || market || outerWall || precinct || westLane
     ? [
         [2200, 2500],
         [4500, 3500],
@@ -117,7 +124,8 @@ for (const height of [0, 40])
       ...(["nottingham-southwest-wall-stair", "nottingham-north-wall-stair"].includes(stair) ||
       (riverside && !physicalTerrace) ||
       market ||
-      outerWall
+      outerWall ||
+      (westLane && !physicalTerrace)
         ? { terrain: createTerrainGrid([0, 0, ...size], 1000, height + terrainHeight) }
         : {}),
     };
@@ -166,7 +174,7 @@ for (const height of [0, 40])
     await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
     await fs.writeFile(`${output}/${file}.scene.json`, JSON.stringify(document));
     results.push({ file, map: file, warnings: compiled.warnings });
-    if ((riverside && !physicalTerrace) || market || outerWall)
+    if ((riverside && !physicalTerrace) || market || outerWall || (westLane && !physicalTerrace))
       for (const kind of ["missing", "raised"]) {
         const changed = structuredClone(document);
         if (kind === "missing") delete changed.terrain;

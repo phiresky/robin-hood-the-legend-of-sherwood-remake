@@ -148,6 +148,8 @@ const landings = [...landingGroupsByPlane.values()].map(({ plane, candidates }) 
   landing.gameplay.surfaces = union.map(([polygon, ...holes], i) => ({
     ...surface,
     id: `floor-${i}`,
+    // Disconnected receiving islands share fixture ownership, not a motion area.
+    ...(preserveLandings ? { navigationRegion: `landing-${i}` } : {}),
     polygon,
     holes,
     height: polygon.map((p) => planeHeight(plane, p)),

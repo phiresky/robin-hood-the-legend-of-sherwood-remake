@@ -9105,3 +9105,50 @@ review before treating its successful descriptor construction as traversal parit
 
 Fresh full export `york-westwall-published-7E1mLP` matches the native-tested
 candidate exactly. The contact-authoring tool passes syntax and whitespace checks.
+
+### Multi-entrance stair candidates (2026-10-06, unpublished)
+
+West-lane candidate `local-stair-seams-SmR0l9` retains eight entrances.
+`external-stair-landings-9esUa3` passes all 896 directed routes across sixteen
+copies and rejects 64 missing/raised synthetic receivers. Flight sampling finds
+1,294/1,295 mesh hits, maximum gap 0.062427 and height residual 0.094967 units.
+The broader contour review samples a maximum edge gap of 0.251467 units.
+Full York exposes 54 failing handoffs out of 130 routes; only two of the
+west-lane lift's 56 directed routes pass in that initial candidate.
+
+`stage-west-lane-stair-contacts.mjs` authors receiving corrections independently
+in `york-terrain` and `york-east-bridge-raised-terrace`. Candidate
+`west-lane-stair-contacts-98Papl` moves the lower ground edge by 0.309303 units
+and the terrace edge by 1.039790 units. The physical-receiver mesh review in
+`west-lane-physical-receivers-VUrFKg` finds terrace maximum gap 0.539013 and
+height error 0.098886 units. A separate backdrop-coverage review confirms all
+205 ground-strip samples; this is not physical support evidence. This candidate
+passes all six controls but still fails 36 of 130 full-York routes. Three lower
+entrances miss the slightly angled physical terrace boundary.
+Candidate `west-lane-stair-contacts-9A7SvO` additionally aligns both the floor and
+explicit receiving volume on `york-southeast-riverside-raised-terrace`, moving
+two corners by 0.107700 and 0.085600 units. Compilation and all six control
+apply/reset checks pass; native routes remain pending at this checkpoint.
+Mesh review `west-lane-physical-receivers-99PUdW` finds 1,327/1,635 lower-terrace
+hits, maximum edge gap 0.149704 and height residual 0.032518 units. The stair and
+upper terrace retain their earlier sampled gaps. All 205 ground backdrop samples
+are covered. Real paired-terrace fixture
+`york-west-lane-access-steps-neighbour-placements-BeC1JM` compiles sixteen copies
+at four rotations and two elevations and rejects 64 missing/raised neighbours;
+its native traversal audit is pending.
+Actual-neighbour fixture
+`york-west-lane-access-steps-neighbour-placements-NVq5B7` exports sixteen copies
+and rejects 48 missing/raised receivers or terrain; its first 336 native routes
+pass. All 896 routes must complete before publication.
+
+Bridge candidate `local-stair-seams-4oe3PY` retains both flights and all eleven
+entrances. The external-landing fixture now gives disconnected coplanar receiving
+islands separate navigation regions while retaining shared asset ownership.
+`external-stair-landings-sroZbJ` passes all 800 directed routes and rejects 64
+missing/raised receiving cases. Flight mesh hits are 883/885 and 836/846;
+maximum gaps are 0.068722 and 0.282337 units. Combined full-York candidate
+`york-multi-entrance-contacts-O4gMqo` contains both stair candidates and the two
+receiving corrections; it predates the lower physical-terrace correction.
+Replacement `york-multi-entrance-contacts-dvaYCq` combines all five edited assets;
+its compilation and native verification remain pending. Nothing in this
+section is published or claimed as full-scene parity.

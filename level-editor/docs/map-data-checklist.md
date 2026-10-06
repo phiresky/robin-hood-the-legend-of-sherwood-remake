@@ -124,6 +124,16 @@ points hit its mesh, with height residual below 0.106 units. Sixteen fresh
 published placement exports and full York match tested geometry; all ten scenes reopen.
 Ground artwork coverage is verified; rendered physical contact remains open.
 
+Multi-entrance stair work remains unpublished. The eight-entrance west-lane
+candidate passes 896 moved routes with synthetic receiving assets; the two
+stone-bridge flights retain eleven entrances and pass 800 such routes. West-lane
+full-scene testing exposed 54 failing handoffs. Correcting the lower ground edge
+and separate upper terrace reduces this to 36: three lower entrances still miss
+the slightly angled physical terrace edge. A further staged correction aligns
+that receiving asset's floor and volume together. Full-scene and
+actual-neighbour checks must pass before publication. These candidates do not
+reduce the published unsupported-anchor counts below.
+
 Latest runtime checks retain exact landing contours through binding and foot
 support instead of reducing them to single precision. The southwest turret is
 now published after all sixteen rotated/elevated routes pass. Obstacle recovery
