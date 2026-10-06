@@ -7,7 +7,7 @@ import sys
 
 ROOT=Path(__file__).resolve().parents[3]
 WORK=ROOT/'level-editor/work/york-refinement'
-DEST=WORK/'restart2/gate-geometry-v6'
+DEST=WORK/'restart2/gate-geometry-v9'
 if DEST.exists(): raise FileExistsError(DEST)
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
@@ -71,9 +71,9 @@ height=62/c
 upright_x=[2336.8003]+[2339.9+i*4.5 for i in range(9)]+[2377.6338]
 for x in upright_x:
     p=a+(b-a)*(x-2336.8003)/(2377.6338-2336.8003)
-    beam(p,p+Vector((0,0,height)),2.0,2.0)
+    beam(p,p+Vector((0,0,height)),2.3,2.1)
 for i in range(6):
-    z=Vector((0,0,(8+i*9.5)/c));beam(a+z,b+z,2.0,2.0)
+    z=Vector((0,0,(8+i*9.5)/c));beam(a+z,b+z,5.0,2.0)
 mesh=bpy.data.meshes.new('Inferred solid gate lattice');mesh.from_pydata(vertices,[],faces);mesh.update()
 gate=bpy.data.objects.new('scenery-york-castle-portcullis',mesh);scene.collection.objects.link(gate)
 gate['source_node']=gate.name;gate['asset_group']='york-castle-portcullis';gate['asset_name']='Castle courtyard portcullis';gate['part_name']='Lifting grille'
