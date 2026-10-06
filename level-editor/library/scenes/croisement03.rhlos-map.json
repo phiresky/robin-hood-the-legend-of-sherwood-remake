@@ -290,13 +290,6 @@
       "id": "croisement03-group-045"
     },
     {
-      "model": "3d-assets/croisement03/croisement03-group-046/model.glb",
-      "model_sha256": "65f29fe9c6565f868682766f38f85d496d4e5d177985b366d3fb0de292b7eb1e",
-      "descriptor": "3d-assets/croisement03/croisement03-group-046/asset.json",
-      "descriptor_sha256": "eeaff7f701a19c1ef5d59b3f5307a0aaba0405ca59f32c65d7b06d84429fcc3a",
-      "id": "croisement03-group-046"
-    },
-    {
       "model": "3d-assets/croisement03/croisement03-group-048/model.glb",
       "model_sha256": "8093cf9b52bfb2ade3470dc137b69df2c00f37d822ae7ab8d2a933857f15310e",
       "descriptor": "3d-assets/croisement03/croisement03-group-048/asset.json",
@@ -694,6 +687,14 @@
       "descriptor_sha256": "c2734c77564a8aab1ea2365a58b0f3e44f2e4c915a28b2255a86abe476cfa244",
       "model": "3d-assets/croisement03/croisement03-southeast-stone-wall/model.glb",
       "model_sha256": "b70bf09301d72b9e4366cc8cbcf6d2fabc0330d0064e4db9aabb22d43242c1e5",
+      "model_scene": "default"
+    },
+    {
+      "id": "croisement03-tree-25",
+      "descriptor": "3d-assets/croisement03/croisement03-tree-25/asset.json",
+      "descriptor_sha256": "fa6b2d324be40750f59fb12886a0b615f71337ac653502f2620124ab85a516c7",
+      "model": "3d-assets/croisement03/croisement03-tree-25/model.glb",
+      "model_sha256": "834dd8a2b112e377dca92fdd804a480fddedf73a0dbf6304a026e678a79b336f",
       "model_scene": "default"
     }
   ],
@@ -1154,18 +1155,6 @@
       },
       "assets": [
         "croisement03-group-045"
-      ]
-    },
-    {
-      "id": "group-046",
-      "transform": {
-        "dx": 1265,
-        "dy": 797.271246527954,
-        "dz": 0,
-        "rot_deg": 0
-      },
-      "assets": [
-        "croisement03-group-046"
       ]
     },
     {
@@ -1939,6 +1928,18 @@
         "dx": 1286.45166015625,
         "dy": 800.2388324261843,
         "dz": -0.0001976723461215327,
+        "rot_deg": 0
+      }
+    },
+    {
+      "id": "croisement03-tree-25",
+      "assets": [
+        "croisement03-tree-25"
+      ],
+      "transform": {
+        "dx": 1275.8089599609375,
+        "dy": 771.0651328923077,
+        "dz": -0.00021434837991395227,
         "rot_deg": 0
       }
     }
