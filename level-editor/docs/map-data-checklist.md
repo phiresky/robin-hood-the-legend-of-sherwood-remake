@@ -172,9 +172,17 @@ posture and membership effects. Compiler checks require a landing to support
 both the outside point and seam before enabling physical traversal. Unsupported
 definitions retain projected navigation with a warning when their landing
 heights or coverage still disagree.
-The expanded local-anchor audit finds 2/8 ladder definitions and 9/9 wall
+The expanded local-anchor audit finds 1/8 ladder definitions and 9/9 wall
 definitions with unsupported floor anchors. Those counts do not check landing
 height compatibility or certify placed routes. Physical walls remain unfinished.
+The York scaffold ladder correction is published. Its upper platform notch now
+meets the physical seam, and both approaches follow the flight centerline while
+retaining their outside anchors and inside heights. All sixteen rotated/elevated
+climbs pass. Full York passes forty climbs, 130 stair routes and six control
+apply/reset checks. Published exports exactly match the reviewed candidates,
+and all ten scenes reopen. The flight and upper landing retain mesh discrepancies
+up to 0.711 and 0.537 game units respectively, with an explicit rendered-review
+warning. Sherwood's three-entrance ladder is the remaining unsupported ladder.
 The Sherwood central oak ladder correction is now published. Ordinary physical
 landings retain matching pre-grid boundaries too, fixing lost seam support.
 The asset clears only the corrected platform extension and owns a matching

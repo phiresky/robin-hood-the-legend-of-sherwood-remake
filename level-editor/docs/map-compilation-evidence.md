@@ -4,6 +4,44 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Published York scaffold ladder (2026-10-06)
+
+The upper platform notch required a reviewed landing shift limit of 7.1 units;
+the default seam tool correctly rejected unrelated nearby edges. Stage
+`local-stair-seams-CCthzT` seats the floor and upper platform but passes only
+four of sixteen moved climbs. Both landings bind, but the off-center authored
+waypoints leave insufficient actor foot support on the narrow flight.
+
+`refinement/stage-york-scaffold-ladder.mjs` places the middle and inside waypoints
+on the corrected flight centerline, preserving inside heights and outside
+anchors. Both corrections are less than two game units relative to the seam
+stage. The centered candidate `york-centered-ladder-8uILVB` passes all sixteen
+complete-animation routes at 0/37/90/180 degrees and elevations 0/40
+(`local-stair-placements-eTF39l`). Final stage `york-scaffold-ladder-bTzr6k` adds
+the explicit mesh warning; its eight exports (`local-stair-placements-26tsEe`)
+are identical except for that warning.
+
+Mesh review samples 718/744 flight points on the visible mesh, with uncovered
+edges up to 0.711 units away. Reviewed upper landing edges have discrepancies
+up to 0.537 units; nearby assembly parts support portions outside the platform
+part itself. These remain draft visual limitations, not rendered certification.
+The full York candidate (`york-scaffold-level-COaN6u`) passes all forty climb
+routes, 130 stair routes and six control apply/reset checks.
+
+Publication backup is `york-scaffold-publication-20261006`; only York's scene
+pin changes. All eight published placement exports
+(`local-stair-placements-l9cFwe`) exactly equal the final staged descriptors,
+and the published full York descriptor equals the native-tested candidate.
+All ten saved scenes reopen. Audit `lift-anchor-support-Xdvy5w` now finds one
+unsupported ladder out of eight, alongside 38/53 stairs and 9/9 walls.
+
+Reproduce the authoring stages before publication:
+
+```sh
+node refinement/stage-local-stair-seams.mjs york-bridge-square-scaffolded-corner-house building-133-lift --climb-seams --local-landing-edges --sloped-landings --landing-shift-limit=7.1
+node refinement/stage-york-scaffold-ladder.mjs <seam-stage>
+```
+
 ## Generated physical-floor hole cleanup (2026-10-06)
 
 A rotated floor with retraced boundary vertices produced a spurious triangular
