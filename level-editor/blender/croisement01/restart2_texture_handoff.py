@@ -17,6 +17,7 @@ def main(kind='tree18'):
     cases.update(tree20=('approved-tree-fills-v1/croisement01-tree-20','ready-tree20-texture-v1','experiment-v2-dark-bark','baked-v4-dark-bark'), stump68=('approved-stump68-wood-fill-v1/croisement01-southeast-small-stump','ready-stump68-wood-texture-v1','experiment','baked-v1-luminance'))
     cases.update(tree21=('approved-tree21-fill-v1/croisement01-tree-21','ready-tree21-texture-v1','experiment','baked-v1-luminance'), stump65=('approved-stump65-wood-fill-v1/croisement01-southwest-cut-stump','ready-stump65-wood-texture-v1','experiment','baked-v1-luminance'))
     cases.update(tree22=('approved-tree22-fill-v1/croisement01-tree-22','ready-tree22-texture-v1','experiment','baked-v1-luminance'), stump66=('approved-stump66-wood-fill-v1/croisement01-south-cut-stump','ready-stump66-wood-texture-v1','experiment','baked-v1-luminance'))
+    cases['tree71'] = ('approved-tree71-fill-v1/croisement01-tree-71','ready-tree71-texture-v1','experiment','baked-v1-luminance')
     folder, ready_name, experiment, bake = cases[kind]
     case = R / folder
     approval = read(case / 'user-texture-decision.json')

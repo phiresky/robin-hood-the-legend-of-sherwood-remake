@@ -34,5 +34,31 @@ def validate(experiment):
     assert 'WOOD ONLY' in provenance['scope'] and sha(Path(provenance['path']))==provenance['sha256']
     return report
 
+def bake_packet(experiment, manifest_path):
+    """Separate the immutable source-ownership mask from the API edit subset.
+
+    The projector requires the complete original ownership mask. Its receiver
+    selection remains wood-only; the generated sheet retains original pixels
+    everywhere excluded by the stricter API mask. No reviewed file is changed.
+    """
+    e=Path(experiment).resolve();report=validate(e)
+    manifest_path=Path(manifest_path).resolve()
+    manifest=json.loads(manifest_path.read_text())
+    assert manifest['texture_receiver_object_names']==report['receivers']
+    packet=e/(manifest_path.stem+'-wood-bake-packet')
+    packet.mkdir(exist_ok=False)
+    for source in e.iterdir():
+        if source==packet or source.name in ('mask.png',manifest_path.name):continue
+        (packet/source.name).symlink_to(source,target_is_directory=source.is_dir())
+    (packet/manifest_path.name).write_bytes(manifest_path.read_bytes())
+    (packet/'mask.png').symlink_to(e/'wood-scope-original/mask.png')
+    record={'scope':'WOOD ONLY','api_scope_sha256':hashlib.sha256((e/'wood-scope.json').read_bytes()).hexdigest(),
+            'api_mask_sha256':hashlib.sha256((e/'mask.png').read_bytes()).hexdigest(),
+            'projection_ownership_mask_sha256':hashlib.sha256((packet/'mask.png').read_bytes()).hexdigest(),
+            'receivers':report['receivers'],'protected_foreign_objects':report['foreign_objects'],
+            'reason':'Restore full reviewed ownership only for projection validation; wood receiver selection and exact foreign-appearance guards remain mandatory.'}
+    (packet/'adapter.json').write_text(json.dumps(record,indent=2)+'\n')
+    return packet/manifest_path.name
+
 if __name__=='__main__':
     r=validate(sys.argv[1]);print(json.dumps(dict(status='PASS',receivers=r['receivers'],protected=r['foreign_objects'],wood_editable=sum(v['wood_editable'] for v in r['counts']))))

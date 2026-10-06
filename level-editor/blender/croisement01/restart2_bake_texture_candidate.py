@@ -189,6 +189,10 @@ def run(experiment, output=None, review_path=None, texels_per_unit=2., view_sele
         scene.render.engine = 'CYCLES'
         scene.cycles.samples = 8
         scene.cycles.transparent_max_bounces = 64
+        if manifest['asset_id'] == 'croisement01-tree-00':
+            from restart2_validate_wood_scope import bake_packet
+            bake_manifest = bake_packet(experiment, bake_manifest)
+            evidence[str(bake_manifest.parent / 'adapter.json')] = sha(bake_manifest.parent / 'adapter.json')
         staged = stage(bake_manifest, generated, output,
                        texels_per_unit=texels_per_unit, reconciliation_reference=raw_content)
         require(snapshot(scene, names) == before, 'Bake changed geometry, foreign appearance, physical alpha, known foliage, or foliage UV/ownership')
