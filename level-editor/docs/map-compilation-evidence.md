@@ -9045,3 +9045,29 @@ plus the unchanged 1/8 ladder and 9/9 wall definitions.
 
 Fresh full export `york-precinct-published-S7G7nd` matches the native-tested York
 candidate geometry exactly. Authoring scripts pass syntax and whitespace checks.
+
+### South-city-gate east stair publication (2026-10-06)
+
+`local-stair-seams-tJzoY5` corrects both endpoints and the asset-owned upper
+landing. `external-stair-landings-5OjiXC` passes all 32 moved native routes and
+rejects 32 missing/raised receivers. Full York passes all 130 stair routes and
+six controls, including the lower physical receiver bound above ordinary ground
+navigation. No neighbouring geometry change is required.
+
+`local-stair-seams-FX2PTQ` adds placement ground height `90.00057027945812` and
+an explicit mesh-review warning. Its geometry equals the tested candidate.
+New editor-terrain drops in `local-stair-placements-1lJlRr` pass sixteen routes
+at four rotations and two elevations, and reject eight raised placements.
+Flight mesh sampling finds 731/733 hits, maximum gap 0.239863 units and maximum
+absolute height residual 0.076586 units. Rendered traversal remains open.
+
+Published the stair with backup `york-southgate-stair-publication-20261006` and
+refreshed York's pins. All ten scenes reopen. Eight fresh terrain-drop exports in
+`local-stair-placements-03EuDK` match tested geometry. Copied fixture
+`external-stair-landings-hdXOJC` shifts its placement after adopting the authored
+ground height; its fresh native check passes all 32 routes. The fresh
+`lift-anchor-support-SNag0C` audit leaves 5/53 stair definitions with unsupported
+local anchors (York 4/16 and Sherwood 1/1); ladder/wall counts remain 1/8 and 9/9.
+
+Fresh full-York export `york-southgate-published-dtaqwU` matches the native-tested
+candidate geometry exactly; the added placement height affects new drops only.
