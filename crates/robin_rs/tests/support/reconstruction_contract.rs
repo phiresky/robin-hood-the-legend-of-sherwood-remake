@@ -110,7 +110,7 @@ fn production_reconstruction_has_no_host_scratch_and_uses_complete_frames() {
     // Named policy boundaries, not spelling/layout of their implementation.
     // A deliberate entry-point move should update this small routing table.
     let roots = [
-        ("src/rewind.rs", "rewind_to", false),
+        ("src/rewind.rs", "rewind_to_observe", false),
         (
             "../robin_engine/src/sim_timeline.rs",
             "replay_frames_to_frame",

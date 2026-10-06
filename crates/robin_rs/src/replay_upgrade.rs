@@ -461,12 +461,12 @@ mod tests {
     }
 
     #[test]
-    fn schema_upgrade_preserves_input_and_rankability_evidence() {
-        let input = br#"{"version":43,"rankability":{"status":"recorded","taints":[{"kind":"console_command","first_frame":4}]}}
-{"f":0,"i":{"unchanged":true}}
-"#;
-        let (bytes, version) = normalize_jsonl(input, false).unwrap();
-        assert_eq!(version, 43);
+    fn current_schema_preserves_input_and_rankability_evidence() {
+        let input = format!(
+            "{{\"version\":{REPLAY_SCHEMA_VERSION},\"rankability\":{{\"status\":\"recorded\",\"taints\":[{{\"kind\":\"console_command\",\"first_frame\":4}}]}}}}\n{{\"f\":0,\"i\":{{\"unchanged\":true}}}}\n"
+        );
+        let (bytes, version) = normalize_jsonl(input.as_bytes(), false).unwrap();
+        assert_eq!(version, REPLAY_SCHEMA_VERSION);
         let (header, records) = bytes.split_at(bytes.iter().position(|b| *b == b'\n').unwrap());
         let header: serde_json::Value = serde_json::from_slice(header).unwrap();
         assert_eq!(header["version"], REPLAY_SCHEMA_VERSION);
@@ -476,24 +476,18 @@ mod tests {
         );
         assert_eq!(
             records,
-            &input[input.iter().position(|b| *b == b'\n').unwrap()..]
+            &input.as_bytes()[input.bytes().position(|b| b == b'\n').unwrap()..]
         );
-        for version in [42, REPLAY_SCHEMA_VERSION + 1] {
-            assert!(upgrade_header(&mut serde_json::json!({"version":version})).is_err());
-        }
-        for version in 43..=56 {
-            let mut header = serde_json::json!({
-                "version": version,
-                "sim_config": {"bypass_fog_sprites_crash": true, "fog_of_war": true}
-            });
-            assert_eq!(upgrade_header(&mut header).unwrap(), version);
-            assert_eq!(header["version"], REPLAY_SCHEMA_VERSION);
-            assert!(
-                header["sim_config"]
-                    .get("bypass_fog_sprites_crash")
-                    .is_none()
-            );
-            assert_eq!(header["sim_config"]["fog_of_war"], true);
+    }
+
+    #[test]
+    fn obsolete_input_schemas_require_explicit_migration_before_relabeling() {
+        for version in (0..REPLAY_SCHEMA_VERSION).chain([REPLAY_SCHEMA_VERSION + 1]) {
+            let mut header = serde_json::json!({"version":version});
+            let before = header.clone();
+            let error = upgrade_header(&mut header).unwrap_err();
+            assert!(error.to_string().contains("needs an input migration"));
+            assert_eq!(header, before);
         }
     }
 
