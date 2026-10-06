@@ -9,16 +9,17 @@ sys.path.insert(0,str(HERE))
 from restart6_tree38_contour import ROOT,SPECS,RAY,SIN,COS
 from restart6_tree24_contour import SPECS as _unused
 NUMBER=int(sys.argv[sys.argv.index("--")+1])
+FORK_VERSION=4 if "--fork4" in sys.argv else 2
 from restart4_stump_final_contact import frame,sheet
 from render_views import render_views
 from render_slots import acquire,release
 from evidence_io import sha,write_json
 def own():return [o for o in bpy.context.scene.objects if o.type=='MESH'and o.get('asset_group')==f'croisement02-tree-{NUMBER}']
 def main():
- out=ROOT/f'tree{NUMBER}-local-delta-v2';out.mkdir(exist_ok=False);parent=SPECS[NUMBER][0];candidate=ROOT/f'tree{NUMBER}-contour-v2/model.blend';bpy.ops.wm.open_mainfile(filepath=str(parent));bpy.context.view_layer.update();before={o.name:np.array([o.matrix_world@v.co for v in o.data.vertices])for o in own()};bpy.ops.wm.open_mainfile(filepath=str(candidate));bpy.context.view_layer.update();changed=[];deltas={}
+ out=ROOT/(f'tree{NUMBER}-fork-delta-v{FORK_VERSION}' if '--fork' in sys.argv else f'tree{NUMBER}-local-delta-v2');out.mkdir(exist_ok=False);parent=SPECS[NUMBER][0];candidate=ROOT/(f'tree{NUMBER}-fork-union-v{FORK_VERSION}/model.blend' if '--fork' in sys.argv else f'tree{NUMBER}-contour-v2/model.blend');bpy.ops.wm.open_mainfile(filepath=str(parent));bpy.context.view_layer.update();before={o.name:np.array([o.matrix_world@v.co for v in o.data.vertices])for o in own()};bpy.ops.wm.open_mainfile(filepath=str(candidate));bpy.context.view_layer.update();changed=[];deltas={}
  for o in own():
   if 'Crown'in o.name:continue
-  p=np.array([o.matrix_world@v.co for v in o.data.vertices]);old=before[o.name];q=-old[:,1]*SIN-old[:,2]*COS;lo,hi=(858,896)if NUMBER==24 else(520,553);changed.extend(p[(q>lo-8)&(q<hi+8)]);deltas[o.name]=dict(scope='Local source-edge deformation; outside-region/crown guards separately bound')
+  p=np.array([o.matrix_world@v.co for v in o.data.vertices]);q=-p[:,1]*SIN-p[:,2]*COS;lo,hi=((828,878)if '--fork' in sys.argv else(858,896))if NUMBER==24 else(520,553);changed.extend(p[(q>lo-8)&(q<hi+8)]);deltas[o.name]=dict(scope='Local source-edge deformation; outside-region/crown guards separately bound')
  mesh=bpy.data.meshes.new('Delta framing');mesh.from_pydata(changed,[],[]);proxy=bpy.data.objects.new(mesh.name,mesh);bpy.context.scene.collection.objects.link(proxy);cameras=[]
  for d in [RAY,Vector((.6124,-.6124,.5)),Vector((.6124,.6124,.5)),Vector((-.866,0,.5))]:
   cam=frame(bpy.context.scene,[proxy],d.normalized(),512,1.25);cameras.append(dict(matrix=[list(r)for r in cam.matrix_world],scale=cam.data.ortho_scale))
