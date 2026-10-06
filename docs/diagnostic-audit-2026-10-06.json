@@ -719,8 +719,8 @@
     {
       "group_index": 47,
       "issue": "Derby script VM writes into zero locals",
-      "status": "current_fixture_covered_not_reproduced",
-      "finding": "Headless DerbyExplorer report writes i32 into empty local region. Current packaged script declares four local bytes and current regression executes all startup callbacks. Commit adds coverage, not a demonstrated VM fix; old asset absent so retain uncertainty.",
+      "status": "callback_allocation_fixed_report_asset_unavailable",
+      "finding": "Host callbacks ignored size_of_volatile metadata and started with empty locals. A callback entering its body without BeginFunction reproduces the exact interp.rs:536 empty-buffer panic. Callbacks now allocate the declared bytes before execution; regression covers successful execution and fresh zeroed locals on repeated activation. The reported DerbyExplorer script is unavailable, so this fixes a demonstrated matching crash mechanism without proving that asset used it.",
       "relevant_commits": [
         "0860b8160"
       ],
