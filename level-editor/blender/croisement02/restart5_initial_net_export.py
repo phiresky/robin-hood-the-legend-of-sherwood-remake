@@ -16,12 +16,12 @@ from refinement_review import _tree
 from tree_geometry import RAY,SIN
 from render_multiview_asset import render
 ROOT=OUT/'restart5-initial-nets'
-DEST=ROOT/'approved-delivery-v1'
+DEST=ROOT/'approved-delivery-v2'
 HASHES={'00':'7541523af2a34f6db77820a375d1c3202e8752e9b5cd9cf74eb15ee8528b96d8','01':'1983c0ea22240086e82840a00632de247e82da84564b6288715311447733a204'}
 APPROVAL=OUT/'restart3-review-batches/batch-v10/user-approval.json'
 def guard():
  assert shutil.disk_usage(OUT).free>23*1024**3,'Free-space guard'
- total=sum(p.stat().st_size for p in DEST.rglob('*')if p.is_file())if DEST.exists()else 0
+ total=sum(p.stat().st_size for directory in ROOT.glob('approved-delivery-v*')for p in directory.rglob('*')if p.is_file())
  assert total<50*1024**2,('New aggregate output cap',total)
  return total
 def linear(a):return np.where(a<=.04045,a/12.92,((a+.055)/1.055)**2.4)
@@ -96,23 +96,41 @@ def main(key):
  for o in objects:o.hide_set(False);o.select_set(True)
  target=out/'model.glb';bpy.ops.export_scene.gltf(filepath=str(target),export_format='GLB',use_selection=True,export_animations=False,export_yup=True,export_materials='EXPORT',export_extras=True)
  b=target.read_bytes();n,kind=struct.unpack_from('<II',b,12);doc=json.loads(b[20:20+n]);tail=b[20+n:];family='net-piege01'if key=='00'else'net-piege03';origins=OUT/'restart2-state/remaining-local-origins-v1/manifest.json';anchor=json.loads(origins.read_text())['anchors'][family]
- assert all('KHR_materials_unlit'in m.get('extensions',{})for m in doc['materials']);assert all('baseColorTexture'in m['pbrMetallicRoughness']for m in doc['materials'])
+ # Blender exports standalone emission as an emissive PBR material. Express
+ # the same constant-lit result explicitly for the editor's unlit contract.
+ for material in doc['materials']:
+  assert material['emissiveFactor']==[1,1,1] and material['pbrMetallicRoughness']['baseColorFactor']==[0,0,0,1]
+  material['pbrMetallicRoughness']={'baseColorTexture':material.pop('emissiveTexture'),'metallicFactor':0,'roughnessFactor':1}
+  material.pop('emissiveFactor');material.setdefault('extensions',{})['KHR_materials_unlit']={}
+ doc.setdefault('extensionsUsed',[]).append('KHR_materials_unlit')
  sc=doc['scenes'][doc.get('scene',0)];node=len(doc['nodes']);doc['nodes'].append(dict(name='Reusable family origin',translation=[-v for v in anchor],children=sc['nodes']));sc['nodes']=[node];j=json.dumps(doc,separators=(',',':')).encode();j+=b' '*((-len(j))%4);data=struct.pack('<III',0x46546c67,2,20+len(j)+len(tail))+struct.pack('<II',len(j),kind)+j+tail;target.write_bytes(data);assert data[20+len(j):]==tail;guard()
+ verify_export(key,out,parent,exp,parts,report,observed,source,scene,objects,asset,anchor,tail,corrections,family,origins,target)
+def verify_export(key,out,parent,exp,parts,report,observed,source,scene,objects,asset,anchor,tail,corrections,family,origins,target):
  # Reopen the actual GLB in the same review scene, restoring only its binding.
  for o in objects:bpy.data.objects.remove(o,do_unlink=True)
  before=set(scene.objects);bpy.ops.import_scene.gltf(filepath=str(target));new=[o for o in scene.objects if o not in before];root=next(o for o in new if o.name.startswith('Reusable family origin'));root.location+=Vector((anchor[0],-anchor[2],anchor[1]));bpy.context.view_layer.update();imported=sorted([o for o in new if o.type=='MESH'],key=lambda o:o.name)
  assert len(imported)==3;import_parts=[]
  for o,part in zip(imported,parts):
   assert o.name==part['name'];o.data.calc_loop_triangles();assert len(o.data.loop_triangles)==part['triangles'];points=np.array([o.matrix_world@v.co for v in o.data.vertices]);bounds=np.array([points.min(0),points.max(0)]);assert np.max(abs(bounds-np.array(part['bounds'])))<.001;o['asset_group']=asset;import_parts.append(dict(name=o.name,bounds=bounds.tolist(),triangles=len(o.data.loop_triangles)))
- exact=0
+ exact=0;image_cache={}
  for x,y,p,o,t in native_samples(imported,report,observed):
-  mat=o.data.materials[t.material_index];nd=next(n for n in mat.node_tree.nodes if n.type=='TEX_IMAGE'and n.image);uv=o.data.uv_layers[0];q=barycentric_transform(p,*[o.matrix_world@o.data.vertices[j].co for j in t.vertices],*[Vector((*uv.data[j].uv,0))for j in t.loops]);a=np.rint(pixels(nd.image)*255).astype(np.uint8);h,w=a.shape[:2];color=a[min(h-1,max(0,int(q.y*h))),min(w-1,max(0,int(q.x*w)))];assert np.array_equal(color,source[y,x]),(x,y,color.tolist(),source[y,x].tolist());exact+=1
+  mat=o.data.materials[t.material_index];nd=next(n for n in mat.node_tree.nodes if n.type=='TEX_IMAGE'and n.image);uv=o.data.uv_layers[0];q=barycentric_transform(p,*[o.matrix_world@o.data.vertices[j].co for j in t.vertices],*[Vector((*uv.data[j].uv,0))for j in t.loops]);a=image_cache.get(nd.image.name)
+  if a is None:a=np.rint(pixels(nd.image)*255).astype(np.uint8);image_cache[nd.image.name]=a
+  h,w=a.shape[:2];color=a[min(h-1,max(0,int(q.y*h))),min(w-1,max(0,int(q.x*w)))];assert np.array_equal(color,source[y,x]),(x,y,color.tolist(),source[y,x].tolist());exact+=1
  scene.render.engine='CYCLES';scene.cycles.samples=8;scene.cycles.transparent_max_bounces=256;render(exp/'views.json',out/'actual',width=384);sheet=Image.new('RGBA',(1536,768))
  for i in range(8):sheet.paste(Image.open(out/'actual'/f'view-{i}-textured.png').convert('RGBA'),((i%4)*384,(i//4)*384))
  sheet.save(out/'actual/textured.png');assert sha(parent/'worker.blend')==HASHES[key]
  write_json(out/'export.json',dict(status='PASS technical; independent visual review pending',asset_id=asset,profile='Trapcr02-'+key,model_source=str(parent/'worker.blend'),model_sha256=HASHES[key],approval_sha256=sha(APPROVAL),glb=str(target),glb_sha256=sha(target),family=family,position=anchor,family_origins_sha256=sha(origins),binary_chunks_unchanged_by_rebase=True,binary_chunks_sha256=hashlib.sha256(tail).hexdigest(),parts=parts,imported_parts=import_parts,native_exact_RGBA=exact,native_atlas_center_corrections=corrections,atlas_scale=4,limits=['Export shader flattened at four times generated atlas dimensions; nearest resampling approximates source boundaries away from exact native center witnesses.','Shape/source approved models unchanged. No mission state or gameplay edits.','Native-only uncertain source fragments remain excluded.'],new_aggregate_bytes=guard()))
  print('EXPORTED',key,sha(target),exact,flush=True)
+def verify_saved(key):
+ guard();out=DEST/f'profile-{key}';assert not(out/'export.json').exists();assert not(out/'actual').exists();exp=ROOT/f'texture-fill-v1/profile-{key}/experiment';parent=exp/'unseen-complete-v2';assert sha(parent/'worker.blend')==HASHES[key];bpy.ops.wm.open_mainfile(filepath=str(parent/'worker.blend'));scene=bpy.context.scene;objects=sorted([o for o in scene.objects if o.type=='MESH'],key=lambda o:o.name);parts=[]
+ for o in objects:
+  o.data.calc_loop_triangles();points=np.array([o.matrix_world@v.co for v in o.data.vertices]);parts.append(dict(name=o.name,vertices=len(points),triangles=len(o.data.loop_triangles),bounds=[points.min(0).tolist(),points.max(0).tolist()]))
+ asset=json.loads((exp/'views.json').read_text())['asset_id'];report=json.loads((parent/'report.json').read_text());observed=np.array(Image.open(ROOT/f'candidate-v5/profile-{key}/observed-source.png').convert('RGBA'));source=np.array(Image.open(report['source']['source']).convert('RGBA'));origins=OUT/'restart2-state/remaining-local-origins-v1/manifest.json';family='net-piege01'if key=='00'else'net-piege03';anchor=json.loads(origins.read_text())['anchors'][family];target=out/'model.glb';b=target.read_bytes();n,kind=struct.unpack_from('<II',b,12);doc=json.loads(b[20:20+n]);tail=b[20+n:];node=doc['nodes'][doc['scenes'][doc.get('scene',0)]['nodes'][0]];assert node['translation']==[-v for v in anchor];assert all('KHR_materials_unlit'in m.get('extensions',{})for m in doc['materials'])
+ verify_export(key,out,parent,exp,parts,report,observed,source,scene,objects,asset,anchor,tail,None,family,origins,target)
 if __name__=='__main__':
  acquire()
- try:main(sys.argv[sys.argv.index('--')+1])
+ try:
+  args=sys.argv[sys.argv.index('--')+1:]
+  (verify_saved if len(args)>1 and args[1]=='verify-saved' else main)(args[0])
  finally:release()
