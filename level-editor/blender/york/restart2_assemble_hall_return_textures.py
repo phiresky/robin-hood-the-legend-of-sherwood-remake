@@ -57,7 +57,7 @@ for donor_path, is_cover in [(common, False), (cover, True)]:
     targets = {o.name: o for o in scene.objects if o.type == 'MESH' and not o.hide_render
                and o.get('asset_group') == asset
                and (o.get('source_node') in cover_nodes) == is_cover}
-    expected = 2 if is_cover else 13
+    expected = (1 if args.state == 'initial-applied' else 2) if is_cover else 13
     if len(targets) != expected:
         raise ValueError(f'Unexpected receiver count: {len(targets)} != {expected}')
     with bpy.data.libraries.load(str(donor_path / 'model.blend'), link=False) as (available, imported):
