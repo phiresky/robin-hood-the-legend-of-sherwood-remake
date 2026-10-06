@@ -9257,7 +9257,7 @@ tests pass, as do editor typechecking and focused lint. Three stale native fixtu
 snapshots were refreshed alongside the wall fixtures: the piecewise stair floor,
 a redundant ladder obstacle closing vertex, and the spline contour-repair warning.
 All ten maps recompile in `saved-map-exports-iEv81a`; all 84 climbing routes and
-71 apply/reset controls pass. Full-profile stair regression is still running.
+71 apply/reset controls pass. All 288 full-profile stair routes pass (305.49 seconds).
 The game build and Rust formatting pass.
 
 Full Lincoln candidate `lincoln-physical-wall-full-0oj2Up` retains all eight
@@ -9267,3 +9267,24 @@ edge from world `[2256.0005,1499]` to `[2306.9995,1506]`. The outside anchor is
 supported. Correcting that receiving asset, with mesh and moved-neighbour checks,
 is required before publishing the gatehouse; increasing compiler tolerance would
 conceal the missing contact.
+
+### York multi-entrance publication (2026-10-06)
+
+Fresh full York in `york-physical-wall-regression-USE3kB` exactly matches the
+tested `york-bridge-stair-contacts-P0lynX` geometry apart from warnings. With the
+updated runtime it passes all 130 full-profile stair routes (158.52 seconds),
+40 climbing routes and six controls. The combined bridge/west-lane placement
+matrix completes all 1,696 routes, with both separate west-lane arrangements
+also passing 896 routes each and the bridge arrangement passing 800.
+
+`york-multientrance-reviewed-d2qRoP` adds quantitative mesh-review warnings
+without changing gameplay geometry. Published all five reviewed definitions
+with backup `york-multientrance-publication-20261006`, updating York's saved pins.
+Fresh combined placements in
+`york-stone-river-bridge-and-approach-stairs-neighbour-placements-hjZB9y` exactly
+match all eight tested exports, and reject all 64 missing/raised terrace cases.
+All ten saved scenes reopen. Full published York in
+`york-multientrance-published-W7LKhw` exactly matches the native-tested geometry.
+Audit `lift-anchor-support-pdxfth` reports 0/53 unsupported stair definitions,
+1/8 ladders and 9/9 walls. Local anchor support is not full placement, animation,
+rendering or gameplay certification.

@@ -16,7 +16,7 @@
       "model": "3d-assets/york/york-terrain/model.glb",
       "model_sha256": "a54d425c2a44a2836e9e1c615a6a5daf92e631c57b53452e0de56e4e877d3965",
       "descriptor": "3d-assets/york/york-terrain/asset.json",
-      "descriptor_sha256": "0c97d8162c9407e99dcb620007b5dd4c1d75fff2893ab9c333ec8ed1dbee4b02"
+      "descriptor_sha256": "4cda412948a28d7cb5241570b2303c57db286844a0c2e040227c08ee0d4a8715"
     }
   ],
   "assetSources": [
@@ -339,7 +339,7 @@
       "model": "3d-assets/york/york-east-bridge-raised-terrace/model.glb",
       "model_sha256": "3dfad389423c07eaf7d1c3042ed37618bb634b88764149fd609da646c8e2a2a1",
       "descriptor": "3d-assets/york/york-east-bridge-raised-terrace/asset.json",
-      "descriptor_sha256": "0367fc98f4beb00317dd5c47e58a4ae1ff306b1ec94e3ebb0be17dc091ee6b5e",
+      "descriptor_sha256": "06117da076b6ba80f155fe00ad3bdc8e8a0d850864a7eecd37ddd5d0576ff61b",
       "id": "york-east-bridge-raised-terrace"
     },
     {
@@ -1347,7 +1347,7 @@
       "model": "3d-assets/york/york-southeast-riverside-raised-terrace/model.glb",
       "model_sha256": "96e6513041fc9d75578e2d390b51a91d96671d69fe68943d8e708231cdc3de14",
       "descriptor": "3d-assets/york/york-southeast-riverside-raised-terrace/asset.json",
-      "descriptor_sha256": "9a141e54b652469253711e11089c5913ce64495cf1f6dbdeae658d0110bb3e09",
+      "descriptor_sha256": "4b6b10b33a40130b09013d0cd591621e48385d60b4c6f938d92f876cc5cf99db",
       "id": "york-southeast-riverside-raised-terrace"
     },
     {
@@ -1501,7 +1501,7 @@
       "model": "3d-assets/york/york-stone-river-bridge-and-approach-stairs/model.glb",
       "model_sha256": "7fd6471a56318fdad24e709ccd7d8082cfd76267e89907af9377e267c74be973",
       "descriptor": "3d-assets/york/york-stone-river-bridge-and-approach-stairs/asset.json",
-      "descriptor_sha256": "74a8ff81f757b5be1e3c86a94bda013f718a7611e6bdaba785b6ab0c76dfa51b",
+      "descriptor_sha256": "6d506a2d66a9943368b5781a8c4fd47152fc3f22f76e15a065bda592e170635b",
       "id": "york-stone-river-bridge-and-approach-stairs"
     },
     {
@@ -1578,7 +1578,7 @@
       "model": "3d-assets/york/york-west-lane-access-steps/model.glb",
       "model_sha256": "fc044dfe9a56fa5d791cc8a6a334b6061aa51e9c90dd980eba12fc3f9e97f1dd",
       "descriptor": "3d-assets/york/york-west-lane-access-steps/asset.json",
-      "descriptor_sha256": "89f38d814599169794af2308ebb5dfd777a3fabe9805dd5594f30cf0c2a4d6b2",
+      "descriptor_sha256": "3c4928df98dc492d808baeaadb03a3eefe7c276b5c79bc9cd631a29200bba49e",
       "id": "york-west-lane-access-steps"
     },
     {

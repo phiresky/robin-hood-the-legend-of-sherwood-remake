@@ -124,25 +124,17 @@ points hit its mesh, with height residual below 0.106 units. Sixteen fresh
 published placement exports and full York match tested geometry; all ten scenes reopen.
 Ground artwork coverage is verified; rendered physical contact remains open.
 
-Multi-entrance stair work remains unpublished. The eight-entrance west-lane
-candidate passes 896 moved routes with synthetic receiving assets; the two
-stone-bridge flights retain eleven entrances and pass 800 such routes. West-lane
-full-scene testing exposed 54 failing handoffs. Correcting the lower ground edge
-and separate upper terrace reduces this to 36: three lower entrances still miss
-the slightly angled physical terrace edge. A further staged correction aligns
-that receiving asset's floor and volume together, restoring all 130 full-York
-routes and six controls. The combined bridge candidate fails 42 full-York routes;
-its first moved actual-neighbour placement fails 84/100 routes. Further staged
-corrections align its upper terrace contact and give the lower deck its own
-physical floor. The revised bridge passes all 800 moved complete-profile routes;
-full York passes 130 stairs, 40 climbs and six controls. The combined moved
-bridge/west-lane assembly now passes all 1,696 routes, and both separate
-west-lane receiving arrangements pass 896 routes each. Fresh full-scene checks
-with the physical-wall compiler remain required before publication. These candidates do not
-reduce the published unsupported-anchor counts below.
-The corrected west-lane full-York export also passes all 130 stair routes with
-a complete Robin animation profile. This verifies animation-driven movement,
-sector/layer arrival and receiving support, but does not render the character.
+York's multi-entrance stairs and receiving contacts are published as drafts.
+The west-lane stair retains eight entrances, and both bridge flights retain
+eleven. The bridge deck owns its physical floor; the separate terraces and
+terrain own their corrected contacts. The combined moved/copied assembly passes
+all 1,696 complete-profile routes and rejects 64 missing/raised neighbours.
+Separate bridge placements pass 800 routes; both west-lane receiving arrangements
+pass 896 each. Fresh full York passes 130 stairs, 40 climbs and six controls.
+Eight fresh published placement exports match the tested geometry, and all ten
+scenes reopen. Draft warnings retain sampled mesh gaps up to 0.540 units and
+unverified rendered integration. All 53 library stair definitions now pass the
+local floor-anchor check; this does not certify every placement or visual contact.
 
 Sherwood's central-oak stair contact correction is published as a draft. The
 stair and its neighbouring ladder each pass sixteen complete-profile routes
@@ -322,9 +314,9 @@ complete-sprite and rendered verification remain open.
 All ten scenes reopen after publication, and full Derby passes all five control
 apply/reset checks. All ten Derby stair definitions now pass local floor-anchor
 support checks after the upper-west publication below.
-A library-wide local-anchor audit finds unsupported anchors in 3 of 53 authored stair
+A library-wide local-anchor audit finds unsupported anchors in 0 of 53 authored stair
 definitions: Derby 0/10, Leicester 0/8, Lincoln 0/6, Nottingham 0/12,
-Sherwood 0/1 and York 3/16. Individual audited flight floors are planar; joined
+Sherwood 0/1 and York 0/16. Individual audited flight floors are planar; joined
 stairs may contain several planes. This checks local
 definitions, not placed connectivity or actual route failures; corrections and
 moved/rotated native traversal checks remain necessary across these assets.
@@ -536,7 +528,8 @@ definitions retain projected navigation with a warning when their landing
 heights or coverage still disagree.
 The expanded local-anchor audit finds 1/8 ladder definitions and 9/9 wall
 definitions with unsupported floor anchors. Those counts do not check landing
-height compatibility or certify placed routes. Physical walls remain unfinished.
+height compatibility or certify placed routes. Physical wall compilation and
+runtime traversal are supported, but these wall asset contacts remain unfinished.
 The York scaffold ladder correction is published. Its upper platform notch now
 meets the physical seam, and both approaches follow the flight centerline while
 retaining their outside anchors and inside heights. All sixteen rotated/elevated
