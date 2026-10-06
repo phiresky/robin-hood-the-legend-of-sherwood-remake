@@ -9390,3 +9390,21 @@ maximum uncovered distance is 11.387280 units, and sampled height residuals
 range from -71.778567 to 87.749589 units. Next work must resolve the rotated
 actor clearance and review the visible climbing surface, rather than accept
 the unchanged-layout success or widen the contour merely to pass the test.
+
+Follow-up measurements on the 90-degree export identify a genuine clearance
+deficit: the opposed upper corridor edges are 10.435697–10.500689 units apart,
+while the actor's effective rectangular footprint spans 10.582686 units along
+their normal. The narrow section therefore cannot accommodate that actor at
+this placement. Collision rejection is retained. A focused 90-degree native
+trace is in `/tmp/lincoln-annex-rotated-trace.txt`; it overwrote the candidate's
+actor report with the selected map, so use `/tmp/lincoln-annex-jlgO6X-climbs.txt`
+for the complete eight-placement run.
+
+The independent-neighbour checker also covers
+`york-precinct-southwest-wall-ramp` with
+`york-cathedral-precinct-raised-terrain` and newly authored ground. Candidate
+`local-stair-seams-TsXSTb` corrects the climb floor seams, but the upper receiving
+surface does not reach the corrected seam. The test rejects projected fallback
+and now includes the compiler warnings in that assertion. No publication or
+actor success is claimed for this candidate. The receiving asset's contact
+needs explicit authoring before the moved/copied pair can be accepted.
