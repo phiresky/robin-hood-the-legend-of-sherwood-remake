@@ -1,0 +1,35 @@
+{
+  "status": "PASS: installed and normal-HTTP browser verified",
+  "scene_sha256": "9071d3f3899357879a1b5229212db5f7cee2e2fc497daf721463048f60bde4f9",
+  "index_sha256": "146aef084079dd2397f8f00b62937ead94b6f5cf70a1fe66f6a1157b7047946e",
+  "published_files": {
+    "3d-assets/croisement01/croisement01-tree-71/model.glb": "2ef9c888c55c65203e07d5866c5b60f369e95df0132c412827f7b701cf51f8bf",
+    "3d-assets/croisement01/croisement01-tree-71/asset.json": "70a807058c710f49599048cad1ff7985ebc012256bb69ebf5444a37382e07e68",
+    "3d-assets/croisement01/croisement01-group-062/model.glb": "2c8887f071678687e638be2339e2db1cbc519b34f476cb25a8b5438a41360343",
+    "3d-assets/croisement01/croisement01-group-062/asset.json": "2e003d6d3a40ca728b8fee4aa47e717cd10c87e46621176678007aa2b7f01a93"
+  },
+  "private_full_editor": {
+    "path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/croisement01-refinement/restart2/tree71-integration-batch-v1/full-editor-private-v3/result.json",
+    "sha256": "2d96bd8e80afff10df3d11fcba7ec3024cb23b054b9959ded1301d90949dcbe2",
+    "config_sha256": "d4eff2201964f002f9f4b9a416f3170366d57530d186afa8cc4c3d5800cbd560",
+    "checker_provenance_sha256": "531e18e660c79d4d772b5e87f0a91ec7e0db1ffab2df9ed6ba2ea325ccb05ff7"
+  },
+  "backup": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/croisement01-refinement/restart2/tree71-integration-batch-v1/publication-backup-v1",
+  "unchanged_other_placements": 59,
+  "unrelated_palette_entries_preserved": 1302,
+  "protected_existing_asset_files": 358,
+  "scope": {
+    "tree71": "Approved texture and geometry;2963 foreground foliage excluded and archival terrain context provisional; native62/63 preserved; residual64/65/76 exact"
+  },
+  "bounded_live_proof_sha256": "c3c33e99e9ae484fdaaf3708e907b3e1f93107a621b00e3f75ede3f2798cae06",
+  "postcopy_published_files_verified": 4,
+  "postcopy_existing_asset_files_verified": 358,
+  "live_visual_review": "Personally viewed all three screenshots. Tree71 crown/bark match approved export; residual group retains its three untouched parts. Full framing and map insertion/reload were separately verified in the pinned full-editor proof.",
+  "live_screenshots": {
+    "croisement01-tree-71-live-browser.png": "20361b53fec90bb0717b105bdf6aaf180053464fd55dd40db7e1f824464cd93a",
+    "croisement01-group-062-live-browser.png": "cad13acd8aa1bc2f5e04a30107322c5c311031103d7602b84945bbe4fb863266",
+    "live-browser.png": "cad13acd8aa1bc2f5e04a30107322c5c311031103d7602b84945bbe4fb863266"
+  },
+  "publication_path": "level-editor/work/croisement01-refinement/restart2/tree71-integration-batch-v1/publication.json",
+  "publication_sha256": "36606934172cf96d359e52de4d8efcbcf019c1990b06e780c8ec564e35842890"
+}

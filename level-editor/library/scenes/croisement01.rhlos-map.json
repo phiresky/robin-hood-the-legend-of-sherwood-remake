@@ -241,13 +241,6 @@
       "id": "croisement01-group-051"
     },
     {
-      "model": "3d-assets/croisement01/croisement01-group-062/model.glb",
-      "model_sha256": "79fe11d6f477e6bd611761223810823fc7736d57ddfec253b42c5a93e81535c2",
-      "descriptor": "3d-assets/croisement01/croisement01-group-062/asset.json",
-      "descriptor_sha256": "4bead88504ed6a8acd3b6bfbb7dab964202db9ebfd15329ce7aa00a774164d72",
-      "id": "croisement01-group-062"
-    },
-    {
       "model": "3d-assets/croisement01/croisement01-group-068/model.glb",
       "model_sha256": "3a0093311fefc4539163c1cb74e878c2bf1ce0c0ea33c7771e57aaf1c97e47f5",
       "descriptor": "3d-assets/croisement01/croisement01-group-068/asset.json",
@@ -435,6 +428,20 @@
       "model_sha256": "9d3abe6b2990edda6e48db32d86a93c4841ffbfb361d83a3eee5c6e1e2bf2b15",
       "descriptor": "3d-assets/croisement01/croisement01-east-ivy-stump/asset.json",
       "descriptor_sha256": "948ad19ce5e820cea97e425b02c91ad89a5d5a602a95b562974d5f4713eecf09"
+    },
+    {
+      "id": "croisement01-group-062",
+      "model": "3d-assets/croisement01/croisement01-group-062/model.glb",
+      "model_sha256": "2c8887f071678687e638be2339e2db1cbc519b34f476cb25a8b5438a41360343",
+      "descriptor": "3d-assets/croisement01/croisement01-group-062/asset.json",
+      "descriptor_sha256": "2e003d6d3a40ca728b8fee4aa47e717cd10c87e46621176678007aa2b7f01a93"
+    },
+    {
+      "id": "croisement01-tree-71",
+      "model": "3d-assets/croisement01/croisement01-tree-71/model.glb",
+      "model_sha256": "2ef9c888c55c65203e07d5866c5b60f369e95df0132c412827f7b701cf51f8bf",
+      "descriptor": "3d-assets/croisement01/croisement01-tree-71/asset.json",
+      "descriptor_sha256": "70a807058c710f49599048cad1ff7985ebc012256bb69ebf5444a37382e07e68"
     }
   ],
   "sceneMetadata": {},
@@ -1186,6 +1193,18 @@
         "dx": 1025.5277099609375,
         "dy": 579.610821747398,
         "dz": -5.356820737229802e-06,
+        "rot_deg": 0
+      }
+    },
+    {
+      "id": "tree71-approved",
+      "assets": [
+        "croisement01-tree-71"
+      ],
+      "transform": {
+        "dx": 1490.97216796875,
+        "dy": 573.8319971411682,
+        "dz": 40.02780039794276,
         "rot_deg": 0
       }
     }
