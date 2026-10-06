@@ -7,7 +7,7 @@ import sys
 
 ROOT=Path(__file__).resolve().parents[3]
 WORK=ROOT/'level-editor/work/york-refinement'
-DEST=WORK/'restart2/gate-geometry-v2'
+DEST=WORK/'restart2/gate-geometry-v3'
 if DEST.exists(): raise FileExistsError(DEST)
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
@@ -56,7 +56,7 @@ s,c=math.sin(math.radians(35)),math.cos(math.radians(35))
 def world(x,y,z):return Vector((x,-y/s,z/c))
 # Door midpoints bracket the visible gate plane. Width beyond the source-visible
 # sliver is an explicit hypothesis; no native obstacle or collision is invented.
-a=world(2344,1020,90);b=world(2370,1042.286,90)
+a=world(2336.8003,1012.82166,90.00101);b=world(2377.6338,1053.655,90.00101)
 axis=(b-a).normalized();normal=axis.cross(Vector((0,0,1))).normalized()
 vertices=[];faces=[]
 def beam(start,end,width,depth):
@@ -68,14 +68,32 @@ def beam(start,end,width,depth):
         vertices.extend([p-side-cross,p+side-cross,p+side+cross,p-side+cross])
     faces.extend([tuple(n+i for i in f) for f in ((0,3,2,1),(4,5,6,7),(0,1,5,4),(1,2,6,5),(2,3,7,6),(3,0,4,7))])
 height=62/c
-for i in range(5):
-    p=a+(b-a)*i/4;beam(p,p+Vector((0,0,height)),2.0,2.0)
+for i in range(7):
+    p=a+(b-a)*i/6;beam(p,p+Vector((0,0,height)),2.0,2.0)
 for i in range(7):
     z=Vector((0,0,(4+i*9.5)/c));beam(a+z,b+z,2.0,2.0)
 mesh=bpy.data.meshes.new('Inferred solid gate lattice');mesh.from_pydata(vertices,[],faces);mesh.update()
 gate=bpy.data.objects.new('scenery-york-castle-portcullis',mesh);scene.collection.objects.link(gate)
 gate['source_node']=gate.name;gate['asset_group']='york-castle-portcullis';gate['asset_name']='Castle courtyard portcullis';gate['part_name']='Lifting grille'
 gate['native_patch']='patch-000';gate['geometry_status']='unapproved hypothesis';gate.data.materials.append(wood)
+level=json.loads((WORK/'baseline/york.rhp.json').read_text())
+floor_evidence=[]
+def clip(poly,axis,value,above):
+    result=[]
+    for first,second in zip(poly,poly[1:]+poly[:1]):
+        inside=lambda p:p[axis]>=value if above else p[axis]<=value
+        if inside(first):result.append(first)
+        if inside(first)!=inside(second):
+            t=(value-first[axis])/(second[axis]-first[axis]);result.append(tuple(first[i]+t*(second[i]-first[i]) for i in range(2)))
+    return result
+for index in (92,98):
+    obstacle=level['sight_obstacles'][index];poly=[(p['x'],p['y']) for p in obstacle['points']]
+    assert all(abs(p['z_top']-90.00101)<1e-6 for p in obstacle['points'])
+    for axis,value,above in ((0,2280,True),(0,2440,False),(1,985,True),(1,1110,False)):poly=clip(poly,axis,value,above)
+    mesh=bpy.data.meshes.new(f'Floor contact proxy {index}');mesh.from_pydata([world(x,y,90.00101) for x,y in poly],[],[list(range(len(poly)))]);mesh.update()
+    o=bpy.data.objects.new(mesh.name,mesh);scene.collection.objects.link(o);o.data.materials.append(gray);context_objects.append(o)
+    o['source_node']=f'building-{index:03d}';o['diagnostic_only']=True
+    floor_evidence.append({'obstacle':index,'projection_area':obstacle['projection_area'],'top':90.00101,'clip_game_xy':[2280,985,2440,1110],'scope':'Cropped exact flat native obstacle top; context only, not reusable asset geometry'})
 scene.render.engine='CYCLES';scene.cycles.device='CPU';scene.cycles.samples=8;scene.cycles.use_denoising=False
 scene.render.threads_mode='FIXED';scene.render.threads=2;scene.render.film_transparent=True
 scene.render.resolution_x=320;scene.render.resolution_y=384
@@ -123,5 +141,5 @@ for state,lift,source_frame in [('covered',0,'initial'),('raised',57,'transition
     d=ImageDraw.Draw(sheet);d.text((5,6),'Original native source (mechanism separate)',fill='white');d.text((445,6),'Gate hypothesis + unrefined gray context',fill='white');sheet.save(out/'native-comparison.png')
     scene.render.resolution_x=320;scene.render.resolution_y=384
     states.append({'state':state,'lift_game_pixels':lift,'model_sha256':sha(out/'model.blend')})
-(DEST/'geometry-proposal.json').write_text(json.dumps({'status':'HOLD pending self-review','source_blend':str(source),'source_sha256':sha(source),'source_study_sha256':sha(WORK/'restart2/gate-source-study-v2/manifest.json'),'context':context_evidence,'states':states,'inferences':['Hidden gate width and five upright bars are provisional, not directly countable from the 11-pixel native sliver.','Full solid lattice translates upward57 game pixels; gatehouse supplies occlusion, gate is never cut to sprite bounds.','No source texture projected; ochre identifies unknown gate geometry.','Gatehouse geometry is unrefined context only; mechanism patch004 excluded.'],'gameplay':'Native doors13/14 association retained in source study only; no descriptor, catalog or live changes.'},indent=2)+'\n')
+(DEST/'geometry-proposal.json').write_text(json.dumps({'status':'HOLD pending self-review','source_blend':str(source),'source_sha256':sha(source),'source_study_sha256':sha(WORK/'restart2/gate-source-study-v2/manifest.json'),'context':context_evidence,'floor_contact':floor_evidence,'states':states,'inferences':['Hidden gate extends across exact floor92/98 seam; seven upright bars provisional, not directly countable from the 11-pixel native sliver.','Full solid lattice translates upward57 game pixels; gatehouse supplies occlusion, gate is never cut to sprite bounds.','No source texture projected; ochre identifies unknown gate geometry.','Gatehouse geometry is unrefined context only; mechanism patch004 excluded.'],'gameplay':'Native doors13/14 association retained in source study only; no descriptor, catalog or live changes.'},indent=2)+'\n')
 print('GATE GEOMETRY PROPOSAL COMPLETE',flush=True)
