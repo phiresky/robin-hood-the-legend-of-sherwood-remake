@@ -4,6 +4,30 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Nottingham southwest prison stair (2026-10-06)
+
+`local-stair-seams-s63sJS` corrects `building-468-lift` and its local upper
+landing. `external-stair-landings-VwsvD0` passes 32 directed actor routes across
+independent copies at four rotations and two elevations, plus 32 missing/raised
+landing rejections. `local-stair-placements-gnaj83` passes sixteen routes on
+editor terrain and eight raised-entrance rejections. Mesh review finds 829/829
+flight sample hits and upper landing edge discrepancies below 0.029 units.
+
+Full-map candidate `nottingham-prison-level-Dulxy5` initially fails both lower
+entrance routes. The terrain-owned approach ends short of the physical seam.
+The extended `stage-nottingham-south-house-contact.mjs` explicitly reviews this
+second contact in `ground-section-6-0`; it moves the selected edge onto the stair
+seam and checks 205/205 samples against the pinned terrain mesh. The stage
+`nottingham-southwest-prison-contact-HUQenq` includes an upper landing mesh and
+rendering warning. Full export `nottingham-prison-connected-pWeksU` passes all
+92 stair routes and ten control apply/reset checks.
+
+Publication backup is `nottingham-prison-publication-20261006`. Fresh published
+Nottingham exactly equals the native-tested descriptor; all ten scenes reopen.
+Audit `lift-anchor-support-T086X7` finds 23/53 unsupported stairs, with Nottingham
+6/12. Ladders and walls remain 1/8 and 9/9. Rendered actor verification remains
+open; these changes do not certify arbitrary placements or other assets.
+
 ## Nottingham south stair house and terrain contact (2026-10-06)
 
 `local-stair-seams-SllNxf` corrects `nottingham-south-stair-house`'s

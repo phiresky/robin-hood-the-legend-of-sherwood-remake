@@ -12,12 +12,39 @@ const [stage, compiledFile] = process.argv.slice(2);
 assert.ok(stage && compiledFile, "Provide stair edits and their Nottingham export");
 const edits = JSON.parse(await fs.readFile(`${stage}/edits.json`, "utf8"));
 assert.equal(edits.length, 1);
-assert.equal(edits[0].asset, "nottingham-south-stair-house");
+const contacts = {
+  "nottingham-south-stair-house": {
+    outside: [1688, 2004, 0],
+    surface: "ground-section-0-0",
+    edge: [
+      [1678, 1921],
+      [1704, 2016],
+    ],
+    partial: true,
+    landingMargin: 0.31,
+    issue:
+      "South stair flight has complete sampled mesh coverage; corrected upper landing edges extend at most 0.310 game units beyond their mesh. Complete rendered actor integration remains unverified.",
+  },
+  "nottingham-southwest-prison": {
+    outside: [355, 2059, 0],
+    surface: "ground-section-6-0",
+    edge: [
+      [351, 2040],
+      [388, 2074],
+    ],
+    partial: false,
+    landingMargin: 0.03,
+    issue:
+      "Prison stair flight has complete sampled mesh coverage; corrected upper landing edges extend at most 0.029 game units beyond their mesh. Complete rendered actor integration remains unverified.",
+  },
+};
+const contact = contacts[edits[0].asset];
+assert.ok(contact, "No reviewed terrain contact for this stair asset");
 const compiledBytes = await fs.readFile(compiledFile);
 const compiled = JSON.parse(compiledBytes).asset_geometry;
 const matches = compiled.lifts.filter((lift) =>
   lift.physical_navigation?.doors.some(
-    (door) => Math.hypot(door.outside[0] - 1688, door.outside[1] - 2004, door.outside[2]) < 1e-5,
+    (door) => Math.hypot(...door.outside.map((v, i) => v - contact.outside[i])) < 1e-5,
   ),
 );
 assert.equal(matches.length, 1);
@@ -38,12 +65,9 @@ const bytes = await fs.readFile(`library/3d-assets/${entry.descriptor}`);
 assert.equal(hash(bytes), entry.descriptor_sha256);
 const descriptor = JSON.parse(bytes);
 const gameplay = structuredClone(descriptor.gameplay);
-const surface = gameplay.surfaces.find((s) => s.id === "ground-section-0-0");
+const surface = gameplay.surfaces.find((s) => s.id === contact.surface);
 assert.ok(surface.height.every((z) => z === 0));
-const edge = [
-  [1678, 1921],
-  [1704, 2016],
-];
+const edge = contact.edge;
 const position = surface.polygon.findIndex((p) => p.every((v, i) => v === edge[0][i]));
 assert.ok(position >= 0);
 assert.deepEqual(surface.polygon[position + 1], edge[1]);
@@ -55,8 +79,10 @@ assert.ok(
 );
 const start = sideways(edge[0]),
   end = sideways(edge[1]);
-const parameters = seam.map((p) => (sideways(p) - start) / (end - start)).sort((x, y) => x - y);
-assert.ok(parameters.every((t) => t > 0 && t < 1));
+const parameters = contact.partial
+  ? seam.map((p) => (sideways(p) - start) / (end - start)).sort((x, y) => x - y)
+  : [0, 1];
+assert.ok(parameters.every((t) => t >= 0 && t <= 1));
 const before = parameters.map((t) => edge[0].map((v, i) => v + t * (edge[1][i] - v)));
 const after = before.map(([x, y]) => {
   const t = (a * x + b * y + c) / (a * a + b * b);
@@ -104,7 +130,7 @@ for (let along = 0; along <= 40; along++)
     samples.push({ point, hits });
   }
 const supported = samples.every((s) => s.hits.some((z) => Math.abs(z) < 0.05));
-const output = await fs.mkdtemp("work/map-compile/nottingham-south-house-contact-");
+const output = await fs.mkdtemp(`work/map-compile/${edits[0].asset}-contact-`);
 await fs.writeFile(
   `${output}/review.json`,
   JSON.stringify(
@@ -128,17 +154,21 @@ assert.equal(meshReviews.length, 1);
 const meshReview = meshReviews[0];
 assert.equal(meshReview.asset, edits[0].asset);
 assert.equal(meshReview.sampledMeshHits, meshReview.sampledFloorPoints);
-assert.ok(meshReview.landingEdgeReviews.every((edge) => edge.maximumUncoveredDistance < 0.31));
+assert.ok(
+  meshReview.landingEdgeReviews.every(
+    (edge) => edge.maximumUncoveredDistance < contact.landingMargin,
+  ),
+);
 const stairEntry = index.find((e) => e.id === edits[0].asset);
 assert.equal(
   hash(await fs.readFile(`library/3d-assets/${stairEntry.model}`)),
   meshReview.modelSha256,
 );
 edits[0].gameplay.draft ??= { issues: [] };
-edits[0].gameplay.draft.issues.push(
-  "South stair flight has complete sampled mesh coverage; corrected upper landing edges extend at most 0.310 game units beyond their mesh. Complete rendered actor integration remains unverified.",
-);
-surface.polygon.splice(position + 1, 0, before[0], after[0], after[1], before[1]);
+edits[0].gameplay.draft.issues.push(contact.issue);
+if (contact.partial)
+  surface.polygon.splice(position + 1, 0, before[0], after[0], after[1], before[1]);
+else surface.polygon.splice(position, 2, ...after);
 surface.height = surface.polygon.map(() => 0);
 surface.preserveMovementPrecision = true;
 validateAssetGameplay(gameplay, descriptor);
