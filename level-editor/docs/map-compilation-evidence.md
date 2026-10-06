@@ -9621,3 +9621,23 @@ about 2.599 unsupported and 1.571 blocked square units. The lower anchors have
 only subpixel representation strips and no slab overlap. These measurements
 identify an asset support/collision problem beyond landing binding; they do
 not authorize padding the floor or removing the roof's solid volume.
+
+The movement-box review confirms that climbing posture does not select a smaller
+box: the posture-taking accessor returns the same box, as does the runtime.
+No footprint reduction or entrance expansion was applied to the house candidate.
+
+`refinement/audit-gameplay-coverage.mjs` now provides a repeatable current-library
+inventory, checking descriptor hashes and identifying actual saved placements
+separately from unused library references. `gameplay-coverage-DfT8Rc` confirms
+38 missing definitions among 1,297 assets, including four placed in Croisement03.
+Only 32 missing definitions have all part names represented in gameplay-bearing
+assets of the same map; the previous checklist count of 36 combined different
+library revisions. The four newer Croisement03 assets and two old ground assets
+have no component-owner match. Matching names remain authoring leads, not proof
+that gameplay can be copied without coordinate/control review.
+
+The fern construction records identify native masks 35 and 76. Mask 35 includes
+character, projectile and view behavior, with distinct character/projectile
+boundaries. The new fern mesh has no gameplay definition, and merely declaring
+it scenery would not establish equivalent masking. Restoring its asset-local
+mask behavior requires review of the separated fern/bark ownership.

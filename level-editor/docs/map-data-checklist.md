@@ -233,11 +233,13 @@ ferns 35/76, the stream fallen log and the timber bridge. Exporting these or
 placing another missing definition in a new map omits its gameplay with a warning.
 These need individual ownership/geometry review; empty scenery definitions would
 be incorrect for buildings and bridges.
-An index-based component audit finds that 36 of these assets have every part
+The reproducible `audit-gameplay-coverage.mjs` audit (`gameplay-coverage-DfT8Rc`)
+finds that 32 of these assets have every part
 represented in newer gameplay-bearing assets, often larger state assemblies.
 Their standalone definitions still need restoring with local control dependencies
 and coordinate frames; matching parts alone does not make them interchangeable.
-The two remaining old ground assets have no component-owner match.
+The four Croisement03 assets and two old ground assets have no component-owner
+match. Definition counts alone do not verify masks, collision or traversal.
 An unpublished mesh-derived bridge deck candidate passes ten complete native
 crossings and 754 sampled receiving-seam crossings at five rotations. Adding
 twelve inclined support hulls preserves those ten complete crossings, passes
