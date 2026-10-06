@@ -109,6 +109,115 @@ struct MissionChoice {
     label: String,
     custom: Option<CustomMissionLaunch>,
     usual_team: Option<String>,
+    requirements: Option<Vec<MissionRequirement>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct MissionRequirement {
+    label: String,
+    characters: Vec<u8>,
+}
+
+impl MissionRequirement {
+    fn fulfilled(&self, rules: &robin_engine::coop::CoopRules) -> bool {
+        rules.team[..rules.team_len()]
+            .iter()
+            .any(|code| self.characters.contains(code))
+    }
+}
+
+fn mission_requirements(
+    profiles: &engine_profiles::ProfileManager,
+    mission: &engine_profiles::MissionProfile,
+) -> Vec<MissionRequirement> {
+    use robin_engine::coop::TEAM_CHARACTERS;
+    let roster: Vec<_> = TEAM_CHARACTERS
+        .iter()
+        .filter_map(|&(code, name, profile_name)| {
+            let id = profiles.character_idx_by_name(profile_name)?;
+            Some((
+                code,
+                name,
+                id,
+                profiles
+                    .get_character(id)
+                    .expect("resolved character profile"),
+            ))
+        })
+        .collect();
+    let mut requirements = Vec::new();
+    for &required in &mission.required_character_indices {
+        let id = engine_profiles::CharacterProfileIdx(required);
+        let profile = profiles
+            .get_character(id)
+            .expect("mission requires missing character profile");
+        let matching: Vec<_> = roster
+            .iter()
+            .filter(|(_, _, candidate, _)| *candidate == id)
+            .collect();
+        let label = matching
+            .first()
+            .map(|(_, name, _, _)| (*name).to_owned())
+            .unwrap_or_else(|| {
+                if profile.display_name.is_empty() {
+                    profile.profile_name.clone()
+                } else {
+                    profile.display_name.clone()
+                }
+            });
+        requirements.push(MissionRequirement {
+            label,
+            characters: matching.iter().map(|(code, ..)| *code).collect(),
+        });
+    }
+    for &action in &mission.required_actions {
+        requirements.push(MissionRequirement {
+            label: required_ability_name(action).to_owned(),
+            characters: roster
+                .iter()
+                .filter(|(_, _, _, profile)| {
+                    robin_engine::campaign::character_satisfies_mission_action(profile, action)
+                })
+                .map(|(code, ..)| *code)
+                .collect(),
+        });
+    }
+    requirements
+}
+
+fn required_ability_name(action: engine_profiles::Action) -> &'static str {
+    use engine_profiles::Action::*;
+    match action {
+        NoAction => "No action",
+        Bow => "Bow",
+        Hit => "Knock out",
+        HitHard => "Heavy knockout",
+        Purse => "Purse",
+        Stone => "Stones",
+        Shield => "Shield",
+        BigShield => "Large shield",
+        Strangle => "Strangle",
+        Lever => "Levers",
+        HelpToClimb => "Help to climb",
+        Apple => "Apples",
+        Ale => "Ale",
+        Eat | Guzzle => "Food",
+        Listen => "Listen",
+        Heal => "Heal",
+        Net => "Net",
+        Beggar => "Begging",
+        WaspNest => "Wasp nests",
+        Whistle => "Whistle",
+        Climb => "Climb",
+        Jump => "Jump",
+        Search => "Search",
+        Resuscitate => "Revive",
+        LittleJohnCarry | FarmerCarry => "Carry bodies",
+        Tie => "Tie up",
+        Lockpick => "Lockpick",
+        Execute => "Finish off",
+        Test => "Test",
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -805,7 +914,10 @@ impl MultiplayerMenuState {
                     "Review team"
                 }
                 .into(),
-                valid && !self.missions.is_empty() && (self.local || connected),
+                valid
+                    && (!self.hero_setup || self.missing_requirements().is_empty())
+                    && !self.missions.is_empty()
+                    && (self.local || connected),
                 x,
                 bottom - h - 12,
                 w,
@@ -819,7 +931,7 @@ impl MultiplayerMenuState {
                     "Review team"
                 }
                 .into(),
-                valid && connected,
+                valid && (!self.hero_setup || self.missing_requirements().is_empty()) && connected,
                 x,
                 bottom - h - 12,
                 w,
@@ -1370,6 +1482,13 @@ impl MultiplayerMenuState {
         application_context: &ApplicationContext,
         io: &mut ModalScreenIo<'_, '_>,
     ) -> Option<MultiplayerMenuTick> {
+        if matches!(id, ID_CREATE | ID_START) {
+            let missing = self.missing_requirements();
+            if !missing.is_empty() {
+                self.status = format!("Missing mission requirements: {}.", missing.join(", "));
+                return None;
+            }
+        }
         if id == ID_CREATE
             && matches!(self.mode, MenuMode::Missions)
             && self
@@ -2029,6 +2148,43 @@ async fn preflight_host_content(
 }
 
 impl MultiplayerMenuState {
+    fn missing_requirements(&self) -> Vec<&str> {
+        let rules = self.selected_rules();
+        self.selected_mission()
+            .and_then(|m| m.requirements.as_ref())
+            .into_iter()
+            .flatten()
+            .filter(|r| !r.fulfilled(&rules))
+            .map(|r| r.label.as_str())
+            .collect()
+    }
+
+    fn requirements_text(&self) -> Option<String> {
+        let mission = self.selected_mission()?;
+        if mission.campaign_rules.is_some() || mission.load_save {
+            return None;
+        }
+        let Some(requirements) = &mission.requirements else {
+            return Some("Mission requirements unavailable for this custom mission.".to_owned());
+        };
+        if requirements.is_empty() {
+            return Some("No required heroes or abilities.".to_owned());
+        }
+        let missing = self.missing_requirements();
+        if !missing.is_empty() {
+            Some(format!("Missing: {}.", missing.join(", ")))
+        } else {
+            Some(format!(
+                "Requirements met: {}.",
+                requirements
+                    .iter()
+                    .map(|r| r.label.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))
+        }
+    }
+
     fn selected_mission(&self) -> Option<&MissionChoice> {
         if matches!(self.mode, MenuMode::Hosted { .. })
             && let Some(slot) = &self.campaign_save
@@ -2112,7 +2268,11 @@ impl MultiplayerMenuState {
         let text = if let Err(error) = self.coop.validate() {
             error
         } else if self.hero_setup {
-            format!("{mission}\n{}", self.status)
+            format!(
+                "{mission}\n{}",
+                self.requirements_text()
+                    .unwrap_or_else(|| self.status.clone())
+            )
         } else {
             "Click a player to change their slot. Occupied slots swap players.".into()
         };
@@ -2340,7 +2500,12 @@ impl MultiplayerMenuState {
                     format!("Team: {team}. {help}")
                 }
             };
-            let text = format!("{status}\n{detail}");
+            let text = match self.requirements_text() {
+                Some(requirements) if !matches!(mode, MenuMode::Games) => {
+                    format!("{status}\n{requirements}")
+                }
+                _ => format!("{status}\n{detail}"),
+            };
             let wrapped = wrap_text_font(font, &text, LIST_RECT.w, 3);
             for (line, text) in wrapped.lines.iter().enumerate() {
                 render_text_virt_font(
@@ -2500,6 +2665,7 @@ fn add_campaign_choices(
         label: label.into(),
         custom: None,
         usual_team: None,
+        requirements: None,
     };
     let load_choice = MissionChoice {
         load_save: true,
@@ -2546,6 +2712,7 @@ fn mission_choices(
                 load_save: false,
                 campaign_rules: None,
                 campaign_save: None,
+                requirements: Some(mission_requirements(profiles, profile)),
                 usual_team: crate::main_entry::detect_demo_mode_with_context(application_context)
                     .filter(|(mission, ..)| mission.eq_ignore_ascii_case(&profile.mission_filename))
                     .map(|(_, _, pcs, _)| pcs.to_owned())
@@ -2621,6 +2788,7 @@ fn mission_choices(
                 campaign_rules: None,
                 campaign_save: None,
                 usual_team: None,
+                requirements: None,
                 mission_id: u32::MAX,
                 #[cfg(target_arch = "wasm32")]
                 authoritative_basename: entry.rhm_basename.clone(),
@@ -2742,6 +2910,44 @@ fn fill_virtual_rect(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn lobby_requirements_include_named_heroes_contextual_actions_and_substitutions() {
+        use super::*;
+        use engine_profiles::{Action, CharacterProfile, MissionProfile, ProfileManager};
+        let mut profiles = ProfileManager::default();
+        for name in ["Robin des bois", "Will Ecarlate", "Stutely"] {
+            profiles.characters.push(CharacterProfile {
+                profile_name: name.into(),
+                ..Default::default()
+            });
+        }
+        profiles.characters[1].actions[0] = Action::HitHard;
+        profiles.characters[2].contextual_actions[0] = Action::Lockpick;
+        let profile = MissionProfile {
+            required_character_indices: vec![0],
+            required_actions: vec![Action::Hit, Action::Lockpick],
+            ..Default::default()
+        };
+        let requirements = mission_requirements(&profiles, &profile);
+        let mut rules = robin_engine::coop::CoopRules {
+            team: [b'R', 0, 0, 0, 0],
+            ..Default::default()
+        };
+        let missing = |rules: &robin_engine::coop::CoopRules| {
+            requirements
+                .iter()
+                .filter(|r| !r.fulfilled(rules))
+                .map(|r| r.label.as_str())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(missing(&rules), vec!["Knock out", "Lockpick"]);
+        rules.team = [b'R', b'W', b'S', 0, 0];
+        assert!(missing(&rules).is_empty());
+        rules.team = [b'W', b'S', 0, 0, 0];
+        assert_eq!(missing(&rules), vec!["Robin Hood"]);
+        assert!(mission_requirements(&profiles, &MissionProfile::default()).is_empty());
+    }
+
     #[test]
     fn usual_roster_includes_recruited_alternatives_and_flags_early_heroes() {
         use super::*;
@@ -3105,7 +3311,9 @@ mod visual_tests {
                 .iter()
                 .position(|m| m.label.starts_with("01 "))
                 .unwrap_or(0);
+            let normal_requirements = state.missions[state.selected].requirements.clone();
             for view in [
+                "missing-requirements",
                 "full-team",
                 "online-team",
                 "add-slot",
@@ -3119,7 +3327,12 @@ mod visual_tests {
             ] {
                 state.hero_setup = matches!(
                     view,
-                    "full-team" | "online-team" | "add-slot" | "invalid-team" | "keyboard-focus"
+                    "missing-requirements"
+                        | "full-team"
+                        | "online-team"
+                        | "add-slot"
+                        | "invalid-team"
+                        | "keyboard-focus"
                 );
                 state.local = view != "online-team";
                 state.status = if view == "online-team" {
@@ -3164,6 +3377,23 @@ mod visual_tests {
                 } else {
                     MenuMode::Missions
                 };
+                state.missions[state.selected].requirements = normal_requirements.clone();
+                if view == "missing-requirements" {
+                    state.missions[state.selected].requirements = Some(vec![
+                        MissionRequirement {
+                            label: "Robin Hood".into(),
+                            characters: vec![b'R'],
+                        },
+                        MissionRequirement {
+                            label: "Knock out".into(),
+                            characters: vec![b'W', b'J'],
+                        },
+                        MissionRequirement {
+                            label: "Lockpick".into(),
+                            characters: vec![b'S'],
+                        },
+                    ]);
+                }
                 if view == "saved-rules" {
                     let saved = robin_engine::coop::CoopRules {
                         players: 2,
@@ -3184,6 +3414,35 @@ mod visual_tests {
                     state.scroll_view.reveal(state.selected);
                 }
                 state.update_buttons(true, &resources);
+                if view == "missing-requirements" {
+                    assert_eq!(state.missing_requirements(), vec!["Lockpick"]);
+                    assert!(
+                        !state
+                            .frame
+                            .widgets()
+                            .iter()
+                            .find(|w| w.id() == ID_CREATE)
+                            .unwrap()
+                            .base()
+                            .enabled
+                    );
+                    let old_team = state.coop.team;
+                    state.coop.team[4] = b'S';
+                    state.update_buttons(true, &resources);
+                    assert!(state.missing_requirements().is_empty());
+                    assert!(
+                        state
+                            .frame
+                            .widgets()
+                            .iter()
+                            .find(|w| w.id() == ID_CREATE)
+                            .unwrap()
+                            .base()
+                            .enabled
+                    );
+                    state.coop.team = old_team;
+                    state.update_buttons(true, &resources);
+                }
                 if view == "keyboard-focus" {
                     state.move_team_focus(Keycode::Tab);
                     assert_eq!(state.team_focus, Some(ID_COPY_BASE));

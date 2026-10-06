@@ -158,7 +158,7 @@ fn mission_team_has_action(
         let Some(character) = profiles.get_character(cpi) else {
             continue;
         };
-        if character.actions.contains(&action) {
+        if crate::campaign::character_satisfies_mission_action(character, action) {
             return true;
         }
     }
@@ -224,6 +224,42 @@ mod tests {
             *slot = *a;
         }
         p
+    }
+
+    #[test]
+    fn mission_team_accepts_contextual_actions_and_directional_substitutions() {
+        let profiles = pm_with_characters(vec![make_character(
+            &[Action::HitHard, Action::Guzzle],
+            &[Action::FarmerCarry, Action::Lockpick],
+        )]);
+        for action in [
+            Action::Hit,
+            Action::Eat,
+            Action::LittleJohnCarry,
+            Action::Lockpick,
+        ] {
+            assert!(mission_team_has_action(
+                &profiles,
+                &[CharacterProfileIdx(0)],
+                action
+            ));
+        }
+        let profiles = pm_with_characters(vec![make_character(
+            &[Action::Hit, Action::Eat],
+            &[Action::LittleJohnCarry],
+        )]);
+        for action in [
+            Action::HitHard,
+            Action::Guzzle,
+            Action::FarmerCarry,
+            Action::Lockpick,
+        ] {
+            assert!(!mission_team_has_action(
+                &profiles,
+                &[CharacterProfileIdx(0)],
+                action
+            ));
+        }
     }
 
     #[test]

@@ -211,10 +211,12 @@ impl EngineInner {
     }
 
     /// Capture selection state and advance presentation counters before owners run.
-    pub(super) fn hourglass_phase_entities(&mut self) -> bool {
+    pub(super) fn hourglass_phase_entities(&mut self) -> [bool; crate::coop::MAX_PLAYERS] {
         // Detect a swordfight ending during owner or sequence execution so an
         // in-flight drag cannot leak into the next click-release action.
-        let was_swordfighting = self.is_selected_pc_swordfighting();
+        let was_swordfighting = std::array::from_fn(|seat| {
+            self.is_seat_selection_swordfighting(crate::player_command::PlayerId(seat as u8))
+        });
         self.refresh_pc_selection_hulk();
         self.refresh_tactical_selection_hulks();
         self.tick_pc_teleport_fades();
@@ -242,6 +244,18 @@ impl EngineInner {
         }
     }
 
+    fn finish_swordfight_drags(&mut self, before: [bool; crate::coop::MAX_PLAYERS]) {
+        for (seat, was_fighting) in before.into_iter().enumerate() {
+            let player_id = crate::player_command::PlayerId(seat as u8);
+            if was_fighting && !self.is_seat_selection_swordfighting(player_id) {
+                self.feedback
+                    .pending_side_effects
+                    .host_events
+                    .push(HostEvent::IgnorePlayerSwordfightDrag { player_id });
+            }
+        }
+    }
+
     /// Apply work intentionally deferred until every entity, path, sequence,
     /// NPC, and gameplay-system update has completed.
     ///
@@ -252,21 +266,9 @@ impl EngineInner {
     pub(super) fn hourglass_phase_deferred_effects_end(
         &mut self,
         tcx: TickCtx<'_>,
-        was_swordfighting: bool,
+        was_swordfighting: [bool; crate::coop::MAX_PLAYERS],
     ) {
-        // ── Swordfight-drag IgnoreMouseEvent bracket ────────────
-        // If the selected PC was swordfighting at entry to
-        // `perform_hourglass` but is no longer swordfighting after
-        // the per-element / sequence-manager hourglass, raise the
-        // ignore-mouse-event bracket so a drag in flight when the
-        // swordfight ended this tick is suppressed.  We push the
-        // request as a side effect; the host gates it on
-        // `InputState::is_dragging` in `apply_side_effects`.
-        if was_swordfighting && !self.is_selected_pc_swordfighting() {
-            self.feedback
-                .pending_side_effects
-                .request_signal(crate::engine::HostSignal::IgnoreSwordfightDrag);
-        }
+        self.finish_swordfight_drags(was_swordfighting);
 
         // ── Titbit sync + per-frame update ──────────────────────
         // First, sync persistent titbits (emoticons, unconscious
@@ -362,6 +364,59 @@ impl EngineInner {
                 &mut Vec::new(),
                 SequenceElementRef::new(r.sequence_id, r.element_index),
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::player_command::PlayerId;
+
+    #[test]
+    fn ending_combat_only_suppresses_drags_for_players_whose_selected_fight_ended() {
+        for ending_seat in [0, 1] {
+            let mut engine = EngineInner::new();
+            engine.ensure_seat(PlayerId(1));
+            let heroes: Vec<_> = (0..2)
+                .map(|_| {
+                    engine.add_test_entity(Entity::Pc(crate::element::ActorPc {
+                        element: Default::default(),
+                        actor: Default::default(),
+                        human: Default::default(),
+                        pc: Default::default(),
+                    }))
+                })
+                .collect();
+            for seat in 0..2 {
+                engine.players.seats[seat].selection = vec![heroes[seat]];
+                engine
+                    .ent_mut(heroes[seat])
+                    .human_data_mut()
+                    .unwrap()
+                    .opponents
+                    .push(heroes[1 - seat]);
+            }
+            let before = engine.hourglass_phase_entities();
+            engine
+                .ent_mut(heroes[ending_seat])
+                .human_data_mut()
+                .unwrap()
+                .opponents
+                .clear();
+            engine.finish_swordfight_drags(before);
+            let events = &engine.feedback.pending_side_effects.host_events;
+            assert_eq!(events.len(), 1);
+            for seat in 0..2 {
+                let mut input = InputState::default();
+                input.press_left_pointer(crate::coordinates::ScreenPoint::new(0.0, 0.0), 1);
+                let mut display = HostDisplayState::default();
+                for event in events.iter().cloned() {
+                    display.apply_host_event_for_player(&mut input, event, PlayerId(seat as u8));
+                }
+                assert_eq!(input.ignore_next_drag(), seat == ending_seat);
+                assert_eq!(input.ignore_next_left_click(), seat == ending_seat);
+            }
         }
     }
 }

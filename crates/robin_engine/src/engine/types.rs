@@ -598,6 +598,9 @@ pub enum HostEvent {
     ClearPlayerInputFocus {
         player_id: crate::player_command::PlayerId,
     },
+    IgnorePlayerSwordfightDrag {
+        player_id: crate::player_command::PlayerId,
+    },
 }
 
 #[derive(

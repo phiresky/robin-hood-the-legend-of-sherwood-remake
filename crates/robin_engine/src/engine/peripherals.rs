@@ -157,6 +157,11 @@ impl HostDisplayState {
                     self.apply_host_event_for_player(input, HostEvent::Minimap(event), local_seat);
                 }
             }
+            HostEvent::IgnorePlayerSwordfightDrag { player_id } => {
+                if player_id == local_seat && input.is_dragging() {
+                    input.ignore_mouse_event(true, true, true);
+                }
+            }
             HostEvent::ClearPlayerInputFocus { player_id } => {
                 if player_id == local_seat {
                     input.controls.has_focus = false;
