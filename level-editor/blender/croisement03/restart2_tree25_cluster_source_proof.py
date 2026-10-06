@@ -1,5 +1,5 @@
 """Check the cluster atlas against original static foliage ownership and RGB."""
-import hashlib,json
+import hashlib,json,sys
 from pathlib import Path
 import numpy as np
 from PIL import Image
@@ -9,7 +9,9 @@ ROOT=Path(__file__).resolve().parents[3]
 
 def main():
  run=ROOT/'level-editor/work/croisement03-refinement'
- out=run/'restart2/texture-batch-v7/croisement03-tree-25/experiment/cluster-geometry-v4'
+ revision=sys.argv[1] if len(sys.argv)>1 else 'cluster-geometry-v4'
+ assert revision in ('cluster-geometry-v4','cluster-geometry-v5','cluster-geometry-v6')
+ out=run/'restart2/texture-batch-v7/croisement03-tree-25/experiment'/revision
  target=out/'source-proof-verified.json';assert not target.exists()
  construction=json.loads((out/'construction.json').read_text());x0,y0,x1,y1=construction['native_bbox']
  samples=np.load(out/'native-samples.npz');known=samples['observed'];rgba=samples['rgba']
