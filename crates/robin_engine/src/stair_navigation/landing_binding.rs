@@ -26,6 +26,44 @@ mod tests {
     use super::*;
 
     #[test]
+    fn attached_landing_wall_does_not_preserve_a_rounding_strip_at_the_door() {
+        #[derive(Serialize, Deserialize)]
+        struct Fixture {
+            stair: Vec<[f32; 2]>,
+            collision: Vec<[f64; 2]>,
+            clipped: Vec<Vec<[f64; 2]>>,
+            center: [f64; 2],
+        }
+        let fixture: Fixture = serde_json::from_slice(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/attached-landing-seam-strip.json"
+        )))
+        .unwrap();
+        let clipped = geo::MultiPolygon::from(
+            fixture
+                .clipped
+                .iter()
+                .map(|ring| polygon(ring).unwrap())
+                .collect::<Vec<_>>(),
+        );
+        let wall_point = Point::new(1150., 2850.);
+        assert!(clipped.contains(&wall_point));
+        let trimmed = trim_rounded_seam_collision(
+            clipped,
+            &polygon(&fixture.collision).unwrap(),
+            &polygon(&fixture.stair).unwrap(),
+            0.0007,
+        );
+        let [x, y] = fixture.center;
+        let footprint = geo::Rect::new((x - 5., y - 2.), (x + 5., y + 2.)).to_polygon();
+        assert!(
+            !trimmed.intersects(&footprint),
+            "rounding strip blocks the entrance"
+        );
+        assert!(trimmed.contains(&wall_point), "retain the attached wall");
+    }
+
+    #[test]
     fn precise_landing_collision_keeps_a_bent_corner_off_the_stair_seam() {
         #[derive(Serialize, Deserialize)]
         struct Fixture {
@@ -1021,9 +1059,6 @@ fn trim_rounded_seam_collision(
         x: f64::from(p.x),
         y: f64::from(p.y),
     });
-    if collision.intersection(&stair).unsigned_area() <= clipped.unsigned_area() {
-        return clipped;
-    }
     for edge in collision.exterior().lines() {
         for other in stair.exterior().lines() {
             let Some(shared) = rounded_shared_edge_precise(edge, other, tolerance) else {
@@ -1034,6 +1069,21 @@ fn trim_rounded_seam_collision(
             let length = dx.hypot(dy);
             let nx = -dy / length * tolerance;
             let ny = dx / length * tolerance;
+            // The same solid may continue into a large wall beyond this seam.
+            // Its total clipped area says nothing about which side of this
+            // particular edge owns collision. Require solid stair-side material
+            // locally; standalone thin strips and landing-side walls stay solid.
+            let midpoint = geo::Coord {
+                x: (shared.start.x + shared.end.x) * 0.5,
+                y: (shared.start.y + shared.end.y) * 0.5,
+            };
+            let stair_side_is_solid = [-4.0, 4.0].into_iter().any(|offset| {
+                let probe = Point::new(midpoint.x + offset * nx, midpoint.y + offset * ny);
+                stair.contains(&probe) && collision.contains(&probe)
+            });
+            if !stair_side_is_solid {
+                continue;
+            }
             let strip = Polygon::new(
                 LineString::from(vec![
                     (shared.start.x + nx, shared.start.y + ny),

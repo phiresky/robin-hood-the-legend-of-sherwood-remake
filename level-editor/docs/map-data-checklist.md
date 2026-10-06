@@ -35,6 +35,16 @@ spikes before runtime conversion. Fresh published geometry matches all 24
 placement exports and full York; all ten scenes reopen. The stone flight keeps
 an explicit 0.577-unit sampled mesh edge-discrepancy warning.
 
+The York market connecting stair remains unpublished. Its candidate passes all
+130 full-York stair routes and six controls, but only 24/32 routes in moved
+assemblies with the actual raised-terrain neighbour before the latest runtime
+correction. All 48 missing/raised landing cases reject. Receiver-owned collision
+now has a candidate physical height frame for rotation. A captured regression
+exposed a rounding strip attached to a larger landing wall: seam cleanup must
+check the solid immediately beside the shared edge, rather than compare areas
+of the entire wall. With that correction, all 32 moved routes and all 130
+full-York routes pass. Asset publication and broader verification remain open.
+
 Latest runtime checks retain exact landing contours through binding and foot
 support instead of reducing them to single precision. The southwest turret is
 now published after all sixteen rotated/elevated routes pass. Obstacle recovery

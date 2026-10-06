@@ -8702,3 +8702,30 @@ all 24 placement exports, excluding only updated warnings; all ten scenes
 reopen and only York's pins change. Audit `lift-anchor-support-zPHA6r` now finds
 12/53 unsupported stairs (York 11/16 and Sherwood 1/1), 1/8 ladders and 9/9 walls.
 These checks do not establish complete rendered or arbitrary-placement parity.
+
+### Market stair contact and attached landing-wall rounding strips
+
+Unpublished candidate `york-market-stair-contact-P6JmfO` corrects the market
+stair's independently owned raised-terrain contact. All 205 sampled contact-strip
+points have receiving mesh support. The receiver's collision contours use their
+physical height for placement while retaining a separate navigation height.
+Full York passes 130 stair routes and six controls. Actual-neighbour fixture
+`york-market-southwest-connecting-stairs-neighbour-placements-J54ggQ` compiles
+eight translated/rotated/elevated assemblies and rejects 48 missing/raised
+landing cases, but initially passes only 24/32 native actor routes.
+
+Native binding exposes a subpixel collision strip along the lower landing seam.
+The solid also extends into a large real wall, so comparing its total clipped
+area against its overlap with the stair incorrectly prevents seam cleanup.
+`attached-landing-seam-strip.json` captures the failing geometry. The regression
+first fails on the blocked entrance; local stair-side collision probes now
+permit cleanup of the shared rounding strip while preserving the attached wall.
+Existing standalone thin-obstacle and landing-side-wall checks still pass.
+
+With the runtime correction, the same actual-neighbour fixture passes all 32
+actor routes, and the full candidate retains 130/130 routes. The stair-filtered
+native suite passes 67 tests with nine opt-in audits ignored. Full York also
+retains all six control apply/reset checks, and the published stone-stair
+actual-neighbour fixture `...-hud5S8` retains all 32 actor routes. The game build,
+targeted Rust formatting and diff checks pass. The candidate assets are not yet
+published; broader placement and visual parity remain open.
