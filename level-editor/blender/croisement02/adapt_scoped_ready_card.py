@@ -9,7 +9,13 @@ def main():
  parser=argparse.ArgumentParser();parser.add_argument('receipt',type=Path);parser.add_argument('output',type=Path);args=parser.parse_args()
  if args.output.exists():raise FileExistsError(args.output)
  receipt=args.receipt.resolve();data=json.loads(receipt.read_text())
- evidence={str(Path(p).resolve()):h for p,h in data['files'].items()}
+ evidence={}
+ for p,value in data['files'].items():
+  if isinstance(value,dict):
+   if Path(value['path']).resolve()!=Path(p).resolve():raise ValueError('Receipt file key/path mismatch')
+   digest=value['sha256']
+  else:digest=value
+  evidence[str(Path(p).resolve())]=digest
  for filename,digest in evidence.items():
   if sha(filename)!=digest:raise ValueError('Changed ready resource: '+filename)
  evidence[str(receipt)]=sha(receipt)
