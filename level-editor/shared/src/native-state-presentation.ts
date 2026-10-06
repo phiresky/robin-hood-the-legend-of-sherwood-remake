@@ -56,6 +56,16 @@ export interface NativeTransientPatchState extends Omit<NativeBackgroundState, "
   creation_order: number;
   polyline: [number, number][];
 }
+/** Ordered state artwork whose completed transition is retained in a bounded map region. */
+export interface NativeIntegratingPatchState extends Omit<
+  NativeTransientPatchState,
+  "integrate_in_background"
+> {
+  integrate_in_background: true;
+  activation: "initial-only" | "phases";
+  restore_bounds: [number, number, number, number];
+}
+export type NativePatchState = NativeTransientPatchState | NativeIntegratingPatchState;
 /** One exact pair may commute only after decoded alpha and complete merge verification. */
 export interface NativePaintedOrderEquivalence {
   kind: "disjoint-adjacent-source-pair";
@@ -74,7 +84,7 @@ export interface NativeStatePresentationContract {
   origin: [number, number];
   elements: NativePresentationElement[];
   background_states?: NativeBackgroundState[];
-  patch_states?: NativeTransientPatchState[];
+  patch_states?: NativePatchState[];
   painted_order_equivalence?: NativePaintedOrderEquivalence;
 }
 
@@ -249,7 +259,7 @@ export function validateNativeStatePresentation(
       !["map-patch", "mission-patch"].includes(state.source.kind) ||
       !uint(state.source.index) ||
       !hash(state.source.sha256) ||
-      state.integrate_in_background !== false ||
+      typeof state.integrate_in_background !== "boolean" ||
       !uint(state.elevation) ||
       state.layer !== (state.elevation === 0 ? "background" : "ordered") ||
       !pair(state.display_position) ||
@@ -281,6 +291,45 @@ export function validateNativeStatePresentation(
         fail("display polyline must increase in X");
     for (const list of [state.initial, state.transition, state.final]) frames(list);
     if (!state.transition.length) fail("patch transition requires source frames");
+    if (state.integrate_in_background) {
+      if (!["initial-only", "phases"].includes(state.activation))
+        fail("integrating state requires explicit activation scope");
+      const bounds = state.restore_bounds;
+      if (
+        !Array.isArray(bounds) ||
+        bounds.length !== 4 ||
+        !bounds.every(Number.isSafeInteger) ||
+        bounds[2] <= 0 ||
+        bounds[3] <= 0 ||
+        bounds[0] < c.origin[0] ||
+        bounds[1] < c.origin[1] ||
+        bounds[0] + bounds[2] > c.origin[0] + c.background.width ||
+        bounds[1] + bounds[3] > c.origin[1] + c.background.height
+      )
+        fail("invalid integrating restoration bounds");
+      for (const frame of [...state.initial, ...state.transition, ...state.final]) {
+        const x = state.display_position[0] + frame.offset[0],
+          y = state.display_position[1] + frame.offset[1];
+        if (
+          x < bounds[0] ||
+          y < bounds[1] ||
+          x + frame.width > bounds[0] + bounds[2] ||
+          y + frame.height > bounds[1] + bounds[3]
+        )
+          fail("integrating frame outside restoration bounds");
+      }
+      for (const other of state.activation === "phases" ? regions : []) {
+        const b = other.restore_bounds;
+        if (
+          bounds[0] < b[0] + b[2] &&
+          b[0] < bounds[0] + bounds[2] &&
+          bounds[1] < b[1] + b[3] &&
+          b[1] < bounds[1] + bounds[3]
+        )
+          fail("overlapping background restoration domains are unsupported");
+      }
+      if (state.activation === "phases") regions.push(state);
+    } else if ("restore_bounds" in state) fail("nonintegrating state cannot restore background");
   }
   const equivalence = c.painted_order_equivalence;
   if (
@@ -341,8 +390,34 @@ export function nativeBackgroundFrames(
   throw new Error("Unknown background phase");
 }
 
+/** Reverse begins by restoring the original region; final artwork stays independently ordered. */
+export function nativePatchBackgroundFrame(
+  state: NativePatchState,
+  phase: NativeBackgroundPhase,
+  tick: number,
+): NativePresentationFrame | undefined {
+  if (
+    !Number.isSafeInteger(tick) ||
+    tick < 0 ||
+    !["initial", "forward", "applied", "reverse"].includes(phase) ||
+    !state.transition.length ||
+    (phase === "reverse" && state.definitive)
+  )
+    throw new Error("Invalid patch phase");
+  if (!state.integrate_in_background) return undefined;
+  if (state.activation === "initial-only" && phase !== "initial")
+    throw new Error("Context-only patch cannot change phase");
+  const terminal = Math.max(
+    1,
+    state.transition.reduce((sum, frame) => sum + frame.delay + 1, 0) - 1,
+  );
+  return phase === "applied" || (phase === "forward" && tick >= terminal)
+    ? state.transition.at(-1)
+    : undefined;
+}
+
 export function nativeTransientPatchFrame(
-  state: NativeTransientPatchState,
+  state: NativePatchState,
   phase: NativeBackgroundPhase,
   tick: number,
 ): NativePresentationFrame | undefined {
@@ -354,6 +429,8 @@ export function nativeTransientPatchFrame(
   )
     throw new Error("Invalid patch transition");
   // Completion switches phases when the last frame reaches its delay counter.
+  if (state.integrate_in_background && state.activation === "initial-only" && phase !== "initial")
+    throw new Error("Context-only patch cannot change phase");
   const duration = Math.max(
     1,
     state.transition.reduce((sum, frame) => sum + frame.delay + 1, 0) -

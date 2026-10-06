@@ -456,3 +456,76 @@ test("painted tie needs exact contract and decoded disjoint alpha for every phas
   await assert.rejects(p.set(overlap.contract, overlap.source, overlap.read), /pair overlaps/);
   assert.equal(p.ready, false);
 });
+
+async function integratingFixture() {
+  const f = await transientFixture();
+  const source = f.source.data.mission_patches[0]!;
+  source.integrate_in_background = true;
+  source.end_animation_valid = false;
+  f.contract.mission_data_sha256 = await missionStateDataHash(f.source.data);
+  f.contract.patch_states![0] = {
+    ...f.contract.patch_states![0]!,
+    integrate_in_background: true,
+    activation: "phases",
+    restore_bounds: [0, 0, 2, 2],
+    final: [],
+    source: { kind: "mission-patch", index: 0, sha256: await missionStateDataHash(source) },
+  };
+  return f;
+}
+test("integrating foreground leaves the ordered layer at completion but retains only its background stamp", async () => {
+  const f = await integratingFixture(),
+    p = new NativeStatePresentation();
+  await p.set(f.contract, f.source, f.read);
+  const rgb = () => Array.from(p.pixels().data.slice(0, 3));
+  assert.deepEqual(rgb(), [200, 0, 0]);
+  p.setPatchState("bag", "forward", 0);
+  assert.deepEqual(rgb(), [0, 200, 0]);
+  p.setPatchState("bag", "forward", 1);
+  assert.deepEqual(rgb(), [200, 0, 0]);
+  p.setElementState("sign", false);
+  assert.deepEqual(rgb(), [0, 200, 0]);
+  p.setPatchState("bag", "initial");
+  assert.deepEqual(rgb(), [20, 30, 40]);
+  p.setPatchState("bag", "reverse", 2);
+  assert.deepEqual(rgb(), [20, 30, 40]);
+  p.clear();
+  assert.equal(p.ready, false);
+});
+test("integrating restoration rejects escaped, overlapping, or undeclared source domains atomically", async () => {
+  for (const mutation of ["escape", "overlap", "source"]) {
+    const f = await integratingFixture(),
+      p = new NativeStatePresentation(),
+      state = f.contract.patch_states![0]!;
+    if (mutation === "escape" && state.integrate_in_background) state.restore_bounds = [0, 0, 1, 2];
+    if (mutation === "overlap")
+      f.contract.patch_states!.push({
+        ...structuredClone(state),
+        id: "other",
+        creation_order: 2,
+        source: { kind: "mission-patch", index: 1, sha256: "a".repeat(64) },
+      });
+    if (mutation === "source") f.source.data.mission_patches[0]!.integrate_in_background = false;
+    await assert.rejects(p.set(f.contract, f.source, f.read), /restoration|source|changed/);
+    assert.equal(p.ready, false);
+  }
+});
+
+test("overlapping context-only initial rows cannot be activated or stamp background", async () => {
+  const f = await integratingFixture(),
+    p = new NativeStatePresentation();
+  const state = f.contract.patch_states![0]!;
+  if (!state.integrate_in_background) throw new Error("Expected integrating state");
+  state.activation = "initial-only";
+  f.source.data.mission_patches.push(structuredClone(f.source.data.mission_patches[0]!));
+  f.contract.mission_data_sha256 = await missionStateDataHash(f.source.data);
+  f.contract.patch_states!.push({
+    ...structuredClone(state),
+    id: "other",
+    creation_order: 2,
+    source: { ...state.source, index: 1 },
+  });
+  await p.set(f.contract, f.source, f.read);
+  assert.throws(() => p.setPatchState("bag", "forward", 0), /Context-only/);
+  assert.deepEqual(Array.from(p.pixels().data.slice(0, 3)), [200, 0, 0]);
+});

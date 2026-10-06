@@ -4,6 +4,7 @@ import {
   nativePresentationOrder,
   nativeBackgroundFrames,
   nativeTransientPatchFrame,
+  nativePatchBackgroundFrame,
   type NativePresentationElement,
   validateNativeStatePresentation,
   type NativeImageResource,
@@ -204,7 +205,7 @@ export async function verifyNativePresentationSource(
           targets.length +
           state.source.index;
     if (
-      row.integrate_in_background !== false ||
+      row.integrate_in_background !== state.integrate_in_background ||
       row.definitive !== state.definitive ||
       row.start_animation_valid !== state.initial.length > 0 ||
       row.transition_animation_valid !== true ||
@@ -433,6 +434,7 @@ export class NativeStatePresentation {
   setPatchState(id: string, phase: NativeBackgroundPhase, tick = 0) {
     const state = this.contract?.patch_states?.find((s) => s.id === id);
     if (!state) throw new Error(`Unknown native patch state: ${id}`);
+    nativePatchBackgroundFrame(state, phase, tick);
     nativeTransientPatchFrame(state, phase, tick);
     this.patches.set(id, { phase, offset: tick - this.currentTick });
     this.revision++;
@@ -488,6 +490,22 @@ export class NativeStatePresentation {
           state.display_position[0] + frame.offset[0] - this.contract.origin[0],
           state.display_position[1] + frame.offset[1] - this.contract.origin[1],
           frame.shadow_key,
+        );
+    }
+    for (const state of this.contract.patch_states ?? []) {
+      const selected = this.patches.get(state.id) ?? { phase: "initial" as const, offset: 0 };
+      const stamp = nativePatchBackgroundFrame(
+        state,
+        selected.phase,
+        Math.max(0, this.currentTick + selected.offset),
+      );
+      if (stamp)
+        compositeNativePixels(
+          pixels,
+          this.images.get(stamp.path)!,
+          state.display_position[0] + stamp.offset[0] - this.contract.origin[0],
+          state.display_position[1] + stamp.offset[1] - this.contract.origin[1],
+          stamp.shadow_key,
         );
     }
     const elements: Omit<NativePresentationElement, "source">[] = this.contract.elements.map(
