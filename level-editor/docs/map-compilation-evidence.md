@@ -8500,3 +8500,27 @@ The latter's `external-stair-landings-EXkStY` reports that neither landing recei
 reaches its physical door. Preserved-boundary fixture
 `external-stair-landings-AQmZsu` also fails all 32 routes. These are diagnostic
 candidates only; none is published and the library audit count is unchanged.
+
+The binding failure was traced to collision-clipped landing polygons, rather
+than an engine tolerance issue. Matching flight/upper-floor clearances across
+the three owning parts fixes the upper landing; reprojected ground openings
+still leave a lower seam gap. Mesh-derived approach strips subtract projected
+mesh above the landing plus a 0.1-unit authoring margin, preserving the solid
+columns while clearing only the broad hull's empty space.
+`raised-stair-approach-hcQSLF` passes all 32 synthetic routes in
+`external-stair-landings-hanD6G`. Retaining the upper receiver's existing material
+footprint avoids a full-map gatehouse overlap; candidate
+`raised-stair-approach-IkVezD` still passes all 32 synthetic routes and 32
+missing/raised landing rejections (`external-stair-landings-PjIi9R`).
+
+Terrain-contact candidate `york-east-riverside-southern-wall-stair-contact-NZg1Ho`
+has 205/205 supported terrain strip samples. Full-map
+`york-south-connected-KHOKIZ` passes six controls but still fails two of 130 stair
+routes. Its lower physical receiver belongs to
+`york-southeast-riverside-raised-terrace` (`building-093`); the receiver edge stops
+short of the corrected doorway even though the terrain boundary now matches.
+Independent authored-terrain fixture
+`york-east-riverside-southern-wall-stair-neighbour-placements-mjj6wU` passes 16/32
+routes, with upper-landing failures at 37 and 90 degrees; all sixteen
+missing/raised terrain cases reject. These receiver contacts remain unresolved
+and none of the southern riverside candidates is published.

@@ -13,6 +13,7 @@ const map = stair.startsWith("york-") ? "york" : "nottingham";
 const source = await readStoredMap(`library/scenes/${map}.rhlos-map.json`, "library");
 const assets = await pinnedDescriptors("library", source.assetSources, source.sceneAssets);
 const neighbours = {
+  "york-east-riverside-southern-wall-stair": [],
   "york-east-riverside-curtain-wall": ["york-east-water-gate-south-bastion"],
   "york-castle-courtyard-lodge-stairs": [
     "york-castle-courtyard-raised-terrain",
@@ -41,7 +42,9 @@ for (const id of ids) {
 }
 const liftCount = assets.get(stair).gameplay.lifts.length;
 const northWall = stair === "nottingham-north-wall-stair";
-const riverside = stair === "york-east-riverside-curtain-wall";
+const southernRiverside = stair === "york-east-riverside-southern-wall-stair";
+const riverside = stair === "york-east-riverside-curtain-wall" || southernRiverside;
+const terrainHeight = southernRiverside ? 50.001003 : riverside ? 90.00101 : 0;
 const size = northWall || riverside ? [7000, 6500] : [5000, 4500];
 const centers =
   northWall || riverside
@@ -69,7 +72,7 @@ for (const height of [0, 40])
       assetSources: source.assetSources.filter((asset) => ids.includes(asset.id)),
       ...(["nottingham-southwest-wall-stair", "nottingham-north-wall-stair"].includes(stair) ||
       riverside
-        ? { terrain: createTerrainGrid([0, 0, ...size], 1000, height + (riverside ? 90.00101 : 0)) }
+        ? { terrain: createTerrainGrid([0, 0, ...size], 1000, height + terrainHeight) }
         : {}),
     };
     const radians = (rotation * Math.PI) / 180,
@@ -118,7 +121,8 @@ for (const height of [0, 40])
       for (const kind of ["missing", "raised"]) {
         const changed = structuredClone(document);
         if (kind === "missing") delete changed.terrain;
-        else changed.terrain = createTerrainGrid([0, 0, ...size], 1000, height + 110.00101);
+        else
+          changed.terrain = createTerrainGrid([0, 0, ...size], 1000, height + terrainHeight + 20);
         const invalid = compile(changed);
         assert.equal(
           invalid.descriptor.asset_geometry.lifts?.length ?? 0,

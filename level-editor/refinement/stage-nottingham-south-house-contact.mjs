@@ -13,6 +13,21 @@ assert.ok(stage && compiledFile, "Provide stair edits and their map export");
 const edits = JSON.parse(await fs.readFile(`${stage}/edits.json`, "utf8"));
 assert.ok(edits.length >= 1);
 const contacts = {
+  "york-east-riverside-southern-wall-stair": {
+    terrain: "york-terrain",
+    projectionHeight: 50.001003,
+    outside: [2881, 1401.001003, 50.001003],
+    surface: "ground-section-3-0",
+    edge: [
+      [2871, 1337],
+      [2908, 1346],
+    ],
+    partial: false,
+    flightMargin: 0.12,
+    landingMargin: 0.000001,
+    issue:
+      "Southern riverside stair flight has 719/723 mesh sample hits, with edge discrepancies below 0.120 game units; sampled upper landing edges have full mesh support. Complete rendered actor integration remains unverified.",
+  },
   "york-east-riverside-curtain-wall": {
     terrain: "york-terrain",
     projectionHeight: 90.00101,
