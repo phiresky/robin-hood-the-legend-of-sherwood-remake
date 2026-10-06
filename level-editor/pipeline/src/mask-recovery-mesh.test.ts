@@ -128,6 +128,14 @@ test("cutout mesh recovery decodes alpha and keeps foliage ownership separate", 
       ],
     ],
   );
+  const covered = maskRecoveryMesh(model, "part", (p) => p, textures);
+  primitive.getAttribute("TEXCOORD_0")!.setArray(new Float32Array([-2, 3, -2, 3, -2, 3]));
+  assert.throws(() => maskRecoveryMesh(model, "part", (p) => p, textures), /in-range/);
+  material.getBaseColorTextureInfo()!.setWrapS(33071).setWrapT(33071);
+  assert.deepEqual(
+    maskRecoveryMesh(model, "part", (p) => p, textures),
+    covered,
+  );
   material.getBaseColorTextureInfo()!.setMagFilter(9729);
   assert.throws(() => maskRecoveryMesh(model, "part", (p) => p, textures), /nearest/);
   material.setAlphaMode("OPAQUE");

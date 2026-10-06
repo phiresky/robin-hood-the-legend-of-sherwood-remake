@@ -240,6 +240,12 @@ Their standalone definitions still need restoring with local control dependencie
 and coordinate frames; matching parts alone does not make them interchangeable.
 The four Croisement03 assets and two old ground assets have no component-owner
 match. Definition counts alone do not verify masks, collision or traversal.
+The two fern candidates now derive typed mask coverage from their own GLBs,
+including clamped alpha sampling. Twenty rotated/elevated exports and twenty
+wrong-height receiver rejections pass; native loading retains their bitmaps and
+layer registration. Their closed canopy masking boundaries still need rendered
+character/projectile review, so they remain unpublished and are still counted
+as missing definitions.
 An unpublished mesh-derived bridge deck candidate passes ten complete native
 crossings and 754 sampled receiving-seam crossings at five rotations. Adding
 twelve inclined support hulls preserves those ten complete crossings, passes

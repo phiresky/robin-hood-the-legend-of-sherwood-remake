@@ -171,6 +171,7 @@ export function maskRecoveryMesh(
           vertexAlpha,
           material!.getAlphaCutoff(),
           alphaImage,
+          [info?.getWrapS() === 33071, info?.getWrapT() === 33071],
         ))
           triangles.push(covered);
       }

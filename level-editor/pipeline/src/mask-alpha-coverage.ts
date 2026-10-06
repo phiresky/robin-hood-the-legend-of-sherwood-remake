@@ -40,6 +40,7 @@ export function maskAlphaCoverage(
   vertexAlpha: number[],
   cutoff: number,
   texture?: MaskAlphaImage,
+  clampAxes: readonly [boolean, boolean] = [false, false],
 ): MaskTriangle[] {
   if (
     points.length !== 3 ||
@@ -50,7 +51,11 @@ export function maskAlphaCoverage(
     cutoff < 0 ||
     cutoff > 1 ||
     vertexAlpha.some((a) => !Number.isFinite(a) || a < 0 || a > 1) ||
-    uv.some((p) => p.length !== 2 || p.some((v) => !Number.isFinite(v) || v < 0 || v > 1))
+    uv.some(
+      (p) =>
+        p.length !== 2 ||
+        p.some((v, axis) => !Number.isFinite(v) || (!clampAxes[axis] && (v < 0 || v > 1))),
+    )
   )
     throw new Error("Mask alpha recovery requires finite in-range UVs, alpha and cutoff");
   if (
@@ -88,10 +93,12 @@ export function maskAlphaCoverage(
     return triangles;
   }
   const { width, height, alpha } = texture;
-  const left = Math.min(width - 1, Math.floor(Math.min(...uv.map((p) => p[0])) * width));
-  const right = Math.min(width, Math.floor(Math.max(...uv.map((p) => p[0])) * width) + 1);
-  const top = Math.min(height - 1, Math.floor(Math.min(...uv.map((p) => p[1])) * height));
-  const bottom = Math.min(height, Math.floor(Math.max(...uv.map((p) => p[1])) * height) + 1);
+  const pixel = (value: number, size: number) =>
+    Math.max(0, Math.min(size - 1, Math.floor(value * size)));
+  const left = pixel(Math.min(...uv.map((p) => p[0])), width);
+  const right = pixel(Math.max(...uv.map((p) => p[0])), width) + 1;
+  const top = pixel(Math.min(...uv.map((p) => p[1])), height);
+  const bottom = pixel(Math.max(...uv.map((p) => p[1])), height) + 1;
   const maximumAlpha = Math.max(...vertexAlpha);
   // With uniform vertex alpha, accepted texels all produce the same solid
   // geometry. Keep raw alpha only when it changes an interpolated boundary.
@@ -126,10 +133,17 @@ export function maskAlphaCoverage(
     previous = current;
   }
   for (const rectangle of rectangles) {
-    let polygon = clip(original, (v) => v.uv[0] - rectangle.left / width);
-    polygon = clip(polygon, (v) => rectangle.right / width - v.uv[0]);
-    polygon = clip(polygon, (v) => v.uv[1] - rectangle.top / height);
-    polygon = clip(polygon, (v) => rectangle.bottom / height - v.uv[1]);
+    // Extend edge texels to the sampler's clamped exterior. Clamping triangle
+    // vertices instead would change interpolated UVs inside the texture.
+    let polygon = original;
+    if (!clampAxes[0] || rectangle.left !== 0)
+      polygon = clip(polygon, (v) => v.uv[0] - rectangle.left / width);
+    if (!clampAxes[0] || rectangle.right !== width)
+      polygon = clip(polygon, (v) => rectangle.right / width - v.uv[0]);
+    if (!clampAxes[1] || rectangle.top !== 0)
+      polygon = clip(polygon, (v) => v.uv[1] - rectangle.top / height);
+    if (!clampAxes[1] || rectangle.bottom !== height)
+      polygon = clip(polygon, (v) => rectangle.bottom / height - v.uv[1]);
     emit(polygon, rectangle.alpha);
   }
   return triangles;

@@ -9641,3 +9641,27 @@ character, projectile and view behavior, with distinct character/projectile
 boundaries. The new fern mesh has no gameplay definition, and merely declaring
 it scenery would not establish equivalent masking. Restoring its asset-local
 mask behavior requires review of the separated fern/bark ownership.
+
+`stage-fern-gameplay.mjs` now constructs unpublished definitions directly from
+the two fern GLBs, including physical alpha cutouts. Initial extraction rejected
+UVs below zero on clamp-to-edge materials (minimum -0.083866 for fern 35 and
+-0.098072 for fern 76). Mask recovery now honors clamped sampler axes by extending
+edge texel coverage, without clamping triangle vertices and distorting interior
+UV interpolation. Unclamped out-of-range axes remain rejected. Thirty focused
+alpha/mesh/mask tests pass, including all four clamped edges, constant exterior
+UVs, mesh sampler propagation and retained alpha ownership semantics.
+
+Candidate `fern-gameplay-zw6Geo` passes twenty exports across five rotations,
+two terrain elevations and fractional placement. Each retains character,
+projectile and view flags, nonempty coverage with transparent pixels, and
+boundary ranges covering occupied pixel centers. Twenty mismatched terrain
+height cases reject unresolved receiving anchors. Native construction loads all
+twenty descriptors and verifies mask bitmap decoding and receiving-layer
+registration (`/tmp/fern-zw6Geo-native.txt`). Ferns add no movement collision.
+
+The mask front boundaries are explicitly authored closed canopy footprints on
+the local ground plane, not recovered open polylines. Their rendered contact
+with characters/projectiles still needs review. The candidates remain
+unpublished and the missing-definition inventory is unchanged. The two staged
+definitions total approximately 6.1 MiB before compression; the coverage is
+derived from the assets, with no level-data dependency in authoring or export.

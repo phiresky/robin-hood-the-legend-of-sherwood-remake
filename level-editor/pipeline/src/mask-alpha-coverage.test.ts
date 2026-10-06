@@ -51,6 +51,65 @@ test("nearest alpha clips holes and retains cutoff equality exactly", () => {
   assert.equal(maskAlphaCoverage(a, uv(a), [0.49, 0.49, 0.49], 0.5, texture).length, 0);
 });
 
+test("clamp-to-edge extends edge texels without changing interior UV interpolation", () => {
+  for (const axis of [0, 1] as const)
+    for (const reverse of [false, true]) {
+      const texture = {
+        width: axis === 0 ? 2 : 1,
+        height: axis === 1 ? 2 : 1,
+        alpha: new Uint8Array(reverse ? [0, 255] : [255, 0]),
+      };
+      const triangles = [a, b].flatMap((t) =>
+        maskAlphaCoverage(
+          t,
+          t.map((p) => {
+            const coords: [number, number] = [p[0] / 4, p[1] / 4];
+            const value = p[axis] / 2 - 1;
+            coords[axis] = reverse ? 1 - value : value;
+            return coords;
+          }),
+          [1, 1, 1],
+          0.5,
+          texture,
+          [axis === 0, axis === 1],
+        ),
+      );
+      assert.equal(area(triangles), 12);
+      for (const p of triangles.flat()) assert.ok(p[axis] <= 3);
+    }
+  assert.deepEqual(
+    maskAlphaCoverage(
+      a,
+      [
+        [-2, 3],
+        [-2, 3],
+        [-2, 3],
+      ],
+      [1, 1, 1],
+      0.5,
+      { width: 1, height: 1, alpha: new Uint8Array([255]) },
+      [true, true],
+    ),
+    [a],
+  );
+  assert.throws(
+    () =>
+      maskAlphaCoverage(
+        a,
+        [
+          [-2, 3],
+          [-2, 3],
+          [-2, 3],
+        ],
+        [1, 1, 1],
+        0.5,
+        { width: 1, height: 1, alpha: new Uint8Array([255]) },
+        [true, false],
+      ),
+    /in-range/,
+  );
+});
+
 test("vertex alpha clips geometry independently of texture UV degeneracy", () => {
   assert.equal(area(maskAlphaCoverage(a, uv(a), [1, 0, 1], 0.5)), 6);
   const texture = { width: 2, height: 1, alpha: new Uint8Array([0, 255]) };
