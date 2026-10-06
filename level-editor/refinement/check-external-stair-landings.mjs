@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { insertProjectionAsset } from "../app/src/asset-commands.ts";
 import { compileMap } from "../app/src/map-compile.ts";
-import { heightPlane } from "../shared/src/gameplay-plane.ts";
+import { heightPlane, planeHeight } from "../shared/src/gameplay-plane.ts";
 import { groupCentroid } from "../shared/src/level3d.ts";
 
 // Synthetic receiving assets test placement connections, not visual fidelity.
@@ -16,10 +16,11 @@ assert.ok(
 const published = flags.includes("--published");
 const preserveLandings = flags.includes("--preserve-landings");
 const externalOnly = flags.includes("--external-only");
+const review = JSON.parse(await fs.readFile(`${staged}/review.json`, "utf8"));
 const externalDoors = externalOnly
   ? new Set(
-      JSON.parse(await fs.readFile(`${staged}/review.json`, "utf8"))
-        .changes.filter((change) => change.landing === "external placement receiver")
+      review.changes
+        .filter((change) => change.landing === "external placement receiver")
         .map((change) => change.door),
     )
   : undefined;
@@ -42,21 +43,33 @@ assert.equal(descriptor.gameplay.lifts.length, 1);
 const lift = descriptor.gameplay.lifts[0];
 const floor = descriptor.gameplay.surfaces.find((surface) => surface.id === lift.surface);
 const plane = heightPlane(floor.polygon.map(([x, y], i) => [x, y, floor.height[i]]));
-const length = Math.hypot(plane[0], plane[1]);
 const landingDoors = lift.doors.filter((door) => !externalOnly || externalDoors.has(door.id));
 if (externalOnly) assert.equal(landingDoors.length, externalDoors.size);
 const landings = landingDoors.map((door, number) => {
-  const edge = floor.polygon.filter((_, i) => Math.abs(floor.height[i] - door.outside[2]) < 1e-5);
+  const landingPlane = review.changes.find((c) => c.door === door.id)?.landingPlane ?? [
+    0,
+    0,
+    door.outside[2],
+  ];
+  const difference = plane.map((v, i) => v - landingPlane[i]);
+  const length = Math.hypot(difference[0], difference[1]);
+  assert.ok(length > 1e-6);
+  const edge = floor.polygon.filter(
+    (p, i) => Math.abs(floor.height[i] - planeHeight(landingPlane, p)) < 1e-5,
+  );
   assert.equal(edge.length, 2, "Fixture requires one straight seam at each endpoint");
   const width = Math.hypot(edge[1][0] - edge[0][0], edge[1][1] - edge[0][1]);
   const tangent = edge[1].map((value, axis) => (value - edge[0][axis]) / width);
   const ends = edge.map((point, i) =>
     point.map((value, axis) => value + tangent[axis] * (i ? 20 : -20)),
   );
-  const side = Math.sign(
-    plane[0] * door.outside[0] + plane[1] * door.outside[1] + plane[2] - door.outside[2],
-  );
-  const normal = [(plane[0] * side) / length, (plane[1] * side) / length];
+  const side = Math.sign(planeHeight(difference, door.outside));
+  const normal = [(difference[0] * side) / length, (difference[1] * side) / length];
+  const polygon = [
+    ends[0],
+    ends[1],
+    ...[ends[1], ends[0]].map((p) => p.map((v, i) => v + normal[i] * 80)),
+  ];
   const id = `authored-landing-${number}`;
   return {
     version: 1,
@@ -79,12 +92,8 @@ const landings = landingDoors.map((door, number) => {
           ...(preserveLandings
             ? { preserveMovementBoundary: true, navigationRegion: "landing" }
             : {}),
-          polygon: [
-            ends[0],
-            ends[1],
-            ...[ends[1], ends[0]].map((point) => point.map((v, axis) => v + normal[axis] * 80)),
-          ],
-          height: door.outside[2],
+          polygon,
+          height: polygon.map((p) => planeHeight(landingPlane, p)),
         },
       ],
     },

@@ -4,6 +4,36 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Great-hall sloped external landing review (2026-10-06, unpublished)
+
+The remaining Lincoln great-hall stair receives its lower entrance from
+`lincoln-hall-approach-ramp/building-288-walk-0`, not a flat floor at its outside
+waypoint height. The ramp plane transformed into the stair asset's frame is
+`[0.22021854541102542,-0.2523393908114075,427.78412526426655]`; the upper landing
+belongs to `lincoln-keep-annex/building-198-walk-0` at height 550.00104.
+The flat assumption rejects an excessive midpoint correction.
+
+`stage-local-stair-seams.mjs` now accepts explicit reviewed
+`--external-plane=DOOR=A,B,C` arguments for selected external doors, validates
+the outside waypoint against each plane and records the plane in its review.
+`check-external-stair-landings.mjs` constructs the independent receiving fixtures
+on those planes, including their varying vertex heights and intersection edge.
+Existing stages without recorded planes retain flat fixtures. North-hall
+regression `external-stair-landings-5QWrq8` exactly matches the previously
+native-tested flat descriptors, with all 64 negative connection checks retained.
+Both scripts pass formatting checks.
+
+Great-hall stage `local-stair-seams-xESqwA` has mesh support for all 566 sampled
+flight points. Independent copies in `external-stair-landings-VQ7JOS` pass
+32/96 directed routes and reject 64 missing/raised landing cases. The extra
+routes arise from ordinary hall passage doors attached to the stair sector;
+64 fail physical support or receiver checks. Full Lincoln
+`lincoln-great-hall-level-sac1zs` also fails: both external landing boundaries
+need correction and ordinary passage entry can lose physical support. The
+candidate is unpublished. Fixing the door/physical-floor handoff and reviewing
+both independently owned contacts remain necessary; omitting those doors is
+not an acceptable substitute.
+
 ## Lincoln north-hall stair with independent landing owners (2026-10-06)
 
 Stage `local-stair-seams-58q3n8` corrects the stair floor and both external

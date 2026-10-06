@@ -174,6 +174,14 @@ definitions: Derby 0/10, Leicester 0/8, Lincoln 1/6, Nottingham 11/12,
 Sherwood 1/1 and York 16/16. All audited floors are planar. This checks local
 definitions, not placed connectivity or actual route failures; corrections and
 moved/rotated native traversal checks remain necessary across these assets.
+
+The remaining Lincoln great-hall candidate now uses its external ramp's actual
+sloped plane during seam review and independent-placement testing. All 566
+flight mesh samples pass, but only 32/96 copied-assembly routes pass: ordinary
+hall passage doors attached to the stair sector expose physical support and
+receiver failures. The full scene also has mismatched external landing edges.
+This candidate remains unpublished; those doors and both receiving assets need
+correction rather than omission.
 The Nottingham road stair is also published after sixteen moved/elevated routes,
 eight raised-ground rejections and all 92 full-map stair routes pass. Its low-deck
 collision now follows the asset, with 80 units of authored upright headroom.

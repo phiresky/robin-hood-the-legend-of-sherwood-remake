@@ -53,6 +53,15 @@ assert.ok(
 const external = new Set(
   arguments_.filter((value) => value.startsWith("--external=")).map((value) => value.slice(11)),
 );
+const externalPlanes = new Map();
+for (const argument of arguments_.filter((v) => v.startsWith("--external-plane="))) {
+  const [door, values] = argument.slice(17).split("=");
+  const plane = values?.split(",").map(Number);
+  assert.ok(external.has(door), "External landing plane needs an explicit external door");
+  assert.ok(plane?.length === 3 && plane.every(Number.isFinite), "Invalid external landing plane");
+  assert.ok(!externalPlanes.has(door), "Duplicate external landing plane");
+  externalPlanes.set(door, plane);
+}
 const floorLimits = arguments_.filter((value) => value.startsWith("--floor-shift-limit="));
 assert.ok(floorLimits.length <= 1, "Provide at most one floor shift limit");
 const floorShiftLimit = floorLimits.length ? Number(floorLimits[0].split("=")[1]) : 2;
@@ -67,6 +76,7 @@ assert.ok(
 const ids = arguments_.filter(
   (value) =>
     !value.startsWith("--external=") &&
+    !value.startsWith("--external-plane=") &&
     value !== "--local-landing-edges" &&
     value !== "--climb-seams" &&
     value !== "--sloped-landings" &&
@@ -142,7 +152,11 @@ for (const id of ids) {
             Array.isArray(landing.height) ? landing.height[i] : landing.height,
           ]),
         )
-      : [0, 0, door.outside[2]];
+      : (externalPlanes.get(door.id) ?? [0, 0, door.outside[2]]);
+    assert.ok(
+      Math.abs(planeHeight(landingPlane, door.outside) - door.outside[2]) < 1e-4,
+      `${door.id}: reviewed landing plane misses outside anchor`,
+    );
     const difference = plane.map((v, i) => v - landingPlane[i]);
     const extension = outsideExtensions.get(door.id);
     if (extension !== undefined) {
@@ -211,6 +225,7 @@ for (const id of ids) {
       before: oldMiddle,
       after: door.middle,
       landing: landing?.id ?? "external placement receiver",
+      landingPlane,
     });
     // Preserve the authored approach. The compiler must find real receiving
     // terrain or another placed asset; authoring creates no replacement floor.
