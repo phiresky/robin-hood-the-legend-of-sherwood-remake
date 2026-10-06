@@ -4,7 +4,7 @@ from pathlib import Path
 import bpy,numpy as np
 from scipy.spatial import cKDTree
 from PIL import Image
-from mathutils import Vector
+from mathutils import Vector,Matrix
 from mathutils.geometry import barycentric_transform
 HERE=Path(__file__).resolve().parent
 sys.path[:0]=[str(HERE),str(HERE.parents[1]/'refinement'),str(HERE.parents[1]/'refinement/blender')]
@@ -46,15 +46,28 @@ def occupancy(obj,uvname,w,h):
  return occupied,world
 
 def main(key,mode):
- assert mode in ['audit','repair'];assert shutil.disk_usage(OUT).free>25*1024**3
- exp=ROOT/f'texture-fill-v1/profile-{key}/experiment';parent=exp/'native-retained-v2';bake=exp/('bake-v3-identity'if key=='00'else'bake-v2-identity');out=exp/('unseen-audit-v1'if mode=='audit'else'unseen-complete-v1');assert not out.exists();out.mkdir();expected='9829d07f5c96531946281a926b81a13dc254501dbb7374e9332743d40fcc9621'if key=='00'else'6dcb9a3c0798b3bfdf3e12500f6d8280461bb65ca23de45263d2b2bfdda8db2e';assert sha(parent/'worker.blend')==expected;bpy.ops.wm.open_mainfile(filepath=str(parent/'worker.blend'));scene=bpy.context.scene;meta=json.loads((exp/'views.json').read_text());names=set(meta['object_names']);before=snapshot(scene,names);uv_before={n:{u.name:array_hash(np.asarray([d.uv[:]for d in u.data]))for u in scene.objects[n].data.uv_layers}for n in names};native={n:images(scene.objects[n].data.materials[0])for n in names};rows=[]
+ assert mode in ['audit','repair','repair-projected'];assert shutil.disk_usage(OUT).free>25*1024**3
+ exp=ROOT/f'texture-fill-v1/profile-{key}/experiment';parent=exp/'native-retained-v2';bake=exp/('bake-v3-identity'if key=='00'else'bake-v2-identity');out=exp/('unseen-audit-v1'if mode=='audit'else ('unseen-complete-v2' if mode=='repair-projected' else 'unseen-complete-v1'));assert not out.exists();out.mkdir();expected='9829d07f5c96531946281a926b81a13dc254501dbb7374e9332743d40fcc9621'if key=='00'else'6dcb9a3c0798b3bfdf3e12500f6d8280461bb65ca23de45263d2b2bfdda8db2e';assert sha(parent/'worker.blend')==expected;bpy.ops.wm.open_mainfile(filepath=str(parent/'worker.blend'));scene=bpy.context.scene;meta=json.loads((exp/'views.json').read_text());names=set(meta['object_names']);before=snapshot(scene,names);uv_before={n:{u.name:array_hash(np.asarray([d.uv[:]for d in u.data]))for u in scene.objects[n].data.uv_layers}for n in names};native={n:images(scene.objects[n].data.materials[0])for n in names};rows=[]
  for rec in json.loads((bake/'layer-0.json').read_text())['objects']:
   obj=scene.objects[rec['object']];provenance=Path(rec['texel_provenance']['path']);assert sha(provenance)==rec['texel_provenance']['sha256'];ownership=np.load(provenance)['ownership'];mat=next(m for m in obj.data.materials if m and m.get('source_ownership_bake'));node=next(n for n in mat.node_tree.nodes if n.type=='TEX_IMAGE'and n.image);uvname=node.inputs['Vector'].links[0].from_node.uv_map;image=node.image;a=pixels(image).copy();h,w=a.shape[:2];occupied,world=occupancy(obj,uvname,w,h);donors=occupied&(ownership==2);targets=occupied&(ownership==0);assert donors.any();dy,dx=np.nonzero(donors);ty,tx=np.nonzero(targets);dist,index=cKDTree(world[donors]).query(world[targets]);limit=32. if obj.name=='Ground camouflage net'else 2.2;valid=dist<=limit;row=dict(object=obj.name,atlas_size=[w,h],occupied_pixels=int(occupied.sum()),generated_occupied_donors=int(donors.sum()),unfilled_occupied_targets=int(targets.sum()),within_bound=int(valid.sum()),distance_limit=limit,maximum_distance=float(dist.max())if len(dist)else 0,median_distance=float(np.median(dist))if len(dist)else 0,protected_source_pixels=int((ownership==1).sum()),remaining_over_bound=int((~valid).sum()));rows.append(row)
   np.savez_compressed(out/(obj.name.replace(' ','-')+'.npz'),occupied=occupied,target_xy=np.column_stack((tx,ty)),donor_xy=np.column_stack((dx[index],dy[index])),world_distance=dist,accepted=valid)
-  if mode=='repair':
-   assert valid.all(),row;b=a.copy();b[ty,tx,:3]=a[dy[index],dx[index],:3];assert np.array_equal(a[~targets],b[~targets]);assert np.array_equal(a[:,:,3],b[:,:,3]);assert np.array_equal(a[ownership==1],b[ownership==1]);image.pixels.foreach_set(b.ravel());image.update();image.pack();filled_ownership=ownership.copy();filled_ownership[targets]=4;np.savez_compressed(out/(obj.name.replace(' ','-')+'-filled-provenance.npz'),ownership=filled_ownership,occupied=occupied);row['original_protected_and_padding_exact']=True;row['only_occupied_provenance0_rgb_changed']=True;row['filled_rgb_sha256']=array_hash(b)
+  if mode.startswith('repair'):
+   assert valid.all(),row;b=a.copy();b[ty,tx,:3]=a[dy[index],dx[index],:3]
+   if mode=='repair-projected' and obj.name=='Ground camouflage net':
+    from project_reviewed_texture import _read
+    rawpath=exp/'generation-short-no-mask-with-lighting-openrouter-with-auxiliary/generated-raw.png';raw=_read(rawpath);vh,vw=raw.shape[:2];view=meta['views'][0];inverse=Matrix(view['camera_matrix_world']).inverted();crop=view['crop'];scale=view['ortho_scale'];allobjects=[scene.objects[n]for n in sorted(names)];tree,owners,_=_tree(allobjects);used=[];witness=[]
+    for k,(yy,xx) in enumerate(zip(ty,tx)):
+     point=Vector(world[yy,xx]);hit,normal,face,distance=tree.ray_cast(point+RAY*6000,-RAY)
+     if hit is None or owners[face].name!=obj.name or (hit-point).length>8:continue
+     local=inverse@hit;px=crop['left']+(.5+local.x/scale)*crop['width'];py=vh-crop['top']-(.5-local.y/scale)*crop['height'];x0=int(np.floor(px-.5));y0=int(np.floor(py-.5));ax=px-.5-x0;ay=py-.5-y0
+     if not(0<=x0<vw-1 and 0<=y0<vh-1):continue
+     color=(raw[y0,x0,:3]*(1-ax)+raw[y0,x0+1,:3]*ax)*(1-ay)+(raw[y0+1,x0,:3]*(1-ax)+raw[y0+1,x0+1,:3]*ax)*ay
+     if color.max()<.02:continue
+     b[yy,xx,:3]=color;used.append(k);witness.append([float(px),float(py),float((hit-point).length)])
+    np.savez_compressed(out/'ground-generated-native-projection.npz',target_indices=np.asarray(used),sheet_xy_distance=np.asarray(witness));row.update(projected_raw_generated_donors=len(used),raw_generated_image=str(rawpath),raw_generated_sha256=sha(rawpath),raw_projection_max_world_distance=max((r[2]for r in witness),default=0),raw_projection_scope='Same-object first-hit top surface in own generated native view, reused for inferred underside only; residual edges use bounded same-object generated atlas donors.')
+   assert np.array_equal(a[~targets],b[~targets]);assert np.array_equal(a[:,:,3],b[:,:,3]);assert np.array_equal(a[ownership==1],b[ownership==1]);image.pixels.foreach_set(b.ravel());image.update();image.pack();filled_ownership=ownership.copy();filled_ownership[targets]=4;np.savez_compressed(out/(obj.name.replace(' ','-')+'-filled-provenance.npz'),ownership=filled_ownership,occupied=occupied);row['original_protected_and_padding_exact']=True;row['only_occupied_provenance0_rgb_changed']=True;row['filled_rgb_sha256']=array_hash(b)
  assert snapshot(scene,names)==before;assert uv_before=={n:{u.name:array_hash(np.asarray([d.uv[:]for d in u.data]))for u in scene.objects[n].data.uv_layers}for n in names};assert native=={n:images(scene.objects[n].data.materials[0])for n in names};report=dict(parent_model_sha256=expected,scope='Existing generated RGB copied from physically occupied atlas texels to bounded same-object occupied provenance0 only. No native/source texels, padding, alpha, UV or geometry edits.',objects=rows)
- if mode=='repair':
+ if mode.startswith('repair'):
   bpy.context.preferences.filepaths.save_version=0;bpy.ops.wm.save_as_mainfile(filepath=str(out/'worker.blend'),compress=True);digest=sha(out/'worker.blend');bpy.ops.wm.open_mainfile(filepath=str(out/'worker.blend'));scene=bpy.context.scene;assert snapshot(scene,names)==before;assert uv_before=={n:{u.name:array_hash(np.asarray([d.uv[:]for d in u.data]))for u in scene.objects[n].data.uv_layers}for n in names};assert native=={n:images(scene.objects[n].data.materials[0])for n in names};original=ROOT/f'candidate-v5/profile-{key}';source_report=json.loads((original/'report.json').read_text());source=np.array(Image.open(source_report['source']['source']).convert('RGBA'));observed=np.array(Image.open(original/'observed-source.png').convert('RGBA'));objects=[scene.objects[n]for n in sorted(names)];tree,owners,_=_tree(objects);tris=[]
   for o in objects:o.data.calc_loop_triangles();tris.extend((o,t)for t in o.data.loop_triangles)
   ox,oy=source_report['source']['origin'];count=0;cache={}
