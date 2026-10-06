@@ -2,10 +2,10 @@ import {spawn} from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
-import ts from '../../app/node_modules/typescript/lib/typescript.js';
+import {stripTypeScriptTypes} from 'node:module';
 import {chromeEndpoint,socketOpen,evaluate} from '../../app/tests/cdp.mjs';
 const root=process.cwd(),base=path.join(root,'level-editor/work/croisement02-refinement/restart7-tree07-approved-export-v1'),out=path.join(base,process.env.C02_TREE07_REVIEW_DIR||'webgl-v2');await fs.mkdir(out,{recursive:true});
-const displaySource=await fs.readFile(path.join(root,'level-editor/app/src/texture-display.ts'),'utf8'),displayHash=createHash('sha256').update(displaySource).digest('hex');await fs.writeFile(path.join(out,'texture-display.js'),ts.transpileModule(displaySource,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText);
+const displaySource=await fs.readFile(path.join(root,'level-editor/app/src/texture-display.ts'),'utf8'),displayHash=createHash('sha256').update(displaySource).digest('hex');await fs.writeFile(path.join(out,'texture-display.js'),stripTypeScriptTypes(displaySource,{mode:'strip'}));
 const source=JSON.parse(await fs.readFile(path.join(root,'level-editor/work/croisement02-refinement/restart6-tree07-bark-fill-v1/native-restored-v1/full/renders.json'),'utf8'));
 await fs.writeFile(path.join(out,'views.json'),JSON.stringify(source.renders));
 const html=`<!doctype html><meta charset="utf-8"><style>body{margin:0;background:#303030}</style><script type="importmap">{"imports":{"three":"/level-editor/app/node_modules/three/build/three.module.js","three/addons/":"/level-editor/app/node_modules/three/examples/jsm/"}}</script><script type="module">
