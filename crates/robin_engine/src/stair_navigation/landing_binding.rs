@@ -1,7 +1,7 @@
 //! Landing geometry comes from the current motion area and its actual receiver.
 
 use super::*;
-use geo::{BooleanOps, BoundingRect, MapCoords};
+use geo::{BooleanOps, BoundingRect, Buffer, MapCoords};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct BoundLanding {
@@ -288,7 +288,9 @@ mod tests {
         motion.obstacles.clear();
         for (state, right, allowed) in [
             (0, 60., true),
+            (0, 60_f32.next_down(), true),
             (2, 60., false),
+            (2, 60_f32.next_down(), false),
             (0, 59.98, false),
             (0, 50., false),
         ] {
@@ -1073,7 +1075,11 @@ impl BoundPhysicalStair {
                         .any(|p| difference(p.x, p.y).abs() > height_tolerance(*p))
                     {
                         for collision in &permanent_collision {
-                            contacts = collision.clip(&contacts, true);
+                            // The flight and collision round independently.
+                            // Use the existing shared-edge precision when
+                            // excluding blocked contacts, without changing
+                            // movement collision or already matching seams.
+                            contacts = collision.buffer(tolerance).clip(&contacts, true);
                         }
                     }
                     for intersection in contacts.iter().flat_map(|line| line.lines()) {

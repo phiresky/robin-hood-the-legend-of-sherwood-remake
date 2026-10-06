@@ -9602,3 +9602,22 @@ the explicit entrance as the connection between the two floors. Its paired
 exports `...gable-house-neighbour-placements-ROF3Uy` pass all eight compilation
 placements and 48 disconnect controls, but all 32 actor routes still fail.
 The candidate remains unpublished pending diagnosis of the blocked connection.
+
+Shared-edge collision exclusion now uses the existing coordinate precision for
+independently rounded collision and flight contours. Only mismatching contacts
+are clipped this way; already matching seams and actual movement collision stay
+unchanged. The regression includes a one-ULP collision edge offset, removable
+barriers and a real 0.02-unit uncovered gap. All 22 stair-navigation tests, 47
+compiled-navigation tests, and published York's 130 stair routes and 40 climbs
+pass (`york-L4Ocfa-buffer` native logs).
+
+The zero-degree `ROF3Uy` trace now binds both receiving floors for both copies,
+resolving the previous false exposed contact. All 32 candidate actor routes
+still fail, both with the roof cutout and without it (`8Mxjjt`). An independent
+polygon check of the traced support and the actor's effective 10-by-4 footprint
+finds about 8.512 square units unsupported at the upper inside anchor, plus
+1.470 square units overlapping the slab collision. Its middle anchor also has
+about 2.599 unsupported and 1.571 blocked square units. The lower anchors have
+only subpixel representation strips and no slab overlap. These measurements
+identify an asset support/collision problem beyond landing binding; they do
+not authorize padding the floor or removing the roof's solid volume.
