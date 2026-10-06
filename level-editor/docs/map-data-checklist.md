@@ -16,7 +16,7 @@ support instead of reducing them to single precision. The southwest turret is
 now published after all sixteen rotated/elevated routes pass. Obstacle recovery
 restores verified edge interiors without requiring unrelated short edges to
 have a complete reconstruction; uncertain corners and true collision remain.
-The latest saved-scene batch passes 284/284 stair routes, 84/84 climbing routes
+The latest saved-scene batch passes 288/288 stair routes, 84/84 climbing routes
 and all 71 control apply/reset checks. Nottingham's road stair now has corrected
 landing heights and asset-owned low-deck collision; its obsolete terrain hole
 is removed. These results do not establish arbitrary-placement parity.
@@ -169,8 +169,8 @@ complete-sprite and rendered verification remain open.
 All ten scenes reopen after publication, and full Derby passes all five control
 apply/reset checks. All ten Derby stair definitions now pass local floor-anchor
 support checks after the upper-west publication below.
-A library-wide local-anchor audit finds unsupported anchors in 26 of 53 authored stair
-definitions: Derby 0/10, Leicester 0/8, Lincoln 0/6, Nottingham 9/12,
+A library-wide local-anchor audit finds unsupported anchors in 25 of 53 authored stair
+definitions: Derby 0/10, Leicester 0/8, Lincoln 0/6, Nottingham 8/12,
 Sherwood 1/1 and York 16/16. All audited floors are planar. This checks local
 definitions, not placed connectivity or actual route failures; corrections and
 moved/rotated native traversal checks remain necessary across these assets.
@@ -194,12 +194,17 @@ precision without losing their authored footprint or changing their control
 state. Nearly coincident clearance subtraction has a narrowly scoped precision
 fallback that retains collision and clearance ownership.
 
-The separate castle courtyard western stair remains unpublished. Its first
-physical candidate passes 32 isolated routes and 64 missing/raised-landing
-rejections, but fails both directions in full Nottingham. Its mesh supports
-only 423/929 sampled floor points, with visible gaps up to 26.130 units; visible
-treads span roughly heights 78–150 while navigation extends down to ground.
-Both receiving contacts and the substantial mesh/floor mismatch need review.
+The separate castle courtyard western stair and both receiving assets are now
+published as gameplay drafts. Its independent three-asset assemblies pass all
+32 routes and reject 64 missing/raised neighbours; full Nottingham passes all
+92 stair routes and ten controls. Joined multi-plane motion regions now retain
+precise outer boundaries, and runtime landing collision stays in double precision
+through clipping and seam cleanup. The captured blocked-corner regression passes
+without removing real thin collision. Published geometry matches tested candidates
+and all ten scenes reopen. The stair mesh still supports only 423/929 sampled floor
+points, with visible gaps up to 26.130 units; this substantial discrepancy remains
+an explicit warning and an open visual-parity task. Ground and wall contacts have
+smaller mesh discrepancies, up to 0.851 and 0.102 units respectively.
 
 The Lincoln great hall and its independently owned ramp/annex contacts are now
 published. The three-asset assembly passes all 96 directed routes through two
@@ -215,7 +220,7 @@ and all ten scenes reopen. The ramp's corrected contact edge lies up to 0.299
 units beyond its mesh; the annex contact has discrepancies up to 0.473 units.
 These remain explicit draft limitations, with rendered actor integration still
 unverified. Fresh exports of
-the ten saved scenes retain all 284 stair routes and 84 climbing routes with
+the ten saved scenes retain all 288 stair routes and 84 climbing routes with
 the runtime fixes.
 The Nottingham road stair is also published after sixteen moved/elevated routes,
 eight raised-ground rejections and all 92 full-map stair routes pass. Its low-deck
@@ -460,7 +465,7 @@ invented across that gap. New drops use the correct foundation height. Native
 mouse queries also now reject loaded movement-obstacle interiors. These focused
 checks do not establish every platform route or complete asset coverage.
 
-Latest editor validation (2026-10-06): 857 tests passed, two skipped. Fresh
+Latest editor validation (2026-10-06): 861 tests passed, two skipped. Fresh
 descriptors for all ten saved scenes pass native loading and all 71 control
 apply/reset checks; Derby retains 28/28 stair routes. The game
 build and native stair/control checks passed. Wychford loads with its spline wall

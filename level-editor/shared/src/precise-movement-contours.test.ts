@@ -4,7 +4,12 @@ import { readFileSync } from "node:fs";
 import clipping, { type Polygon } from "polygon-clipping";
 import type { Point } from "./level.ts";
 import type { NavigationPiece } from "./assemble-navigation-regions.ts";
-import { joinedBlockedCoverage } from "./precise-movement-contours.ts";
+import {
+  joinedBlockedCoverage,
+  joinedReceivingBoundary,
+  indexPreciseBlockers,
+  motionBoundsKey,
+} from "./precise-movement-contours.ts";
 import { restoreObstacleBoundary } from "./restore-receiving-boundary.ts";
 import { quantizeGeneratedMotionPolygon } from "./motion-quantization.ts";
 
@@ -19,6 +24,38 @@ const frame: Polygon = [
     [0, 4000],
   ],
 ];
+
+test("multi-plane landing regions retain their joined fractional stair contact", () => {
+  const fixture: { boundary: Point[]; pieces: NavigationPiece[] } = JSON.parse(
+    readFileSync(new URL("../test-fixtures/joined-landing-boundary.json", import.meta.url), "utf8"),
+  );
+  assert.equal(fixture.pieces.length, 5);
+  const individual =
+    indexPreciseBlockers(fixture.pieces.map((p) => p.receivingPolygon!)).get(
+      motionBoundsKey(fixture.boundary),
+    ) ?? [];
+  assert.equal(
+    individual.filter(({ rounded }) => clipping.xor([rounded], [fixture.boundary]).length === 0)
+      .length,
+    0,
+  );
+  const restored = joinedReceivingBoundary(fixture.pieces, fixture.boundary);
+  assert.ok(restored);
+  const rounded = quantizeGeneratedMotionPolygon([restored], Math.round, "Joined landing", []);
+  assert.ok(rounded);
+  assert.deepEqual(clipping.xor(rounded, [fixture.boundary]), []);
+  for (const point of [
+    [290.0213518, 1415.50673288],
+    [336.03327203, 1408.78963049],
+  ])
+    assert.ok(restored.some((p) => Math.hypot(p[0] - point[0]!, p[1] - point[1]!) < 2e-6));
+  const disconnected = fixture.pieces.map((p, index) => ({
+    ...p,
+    polygon: p.polygon.map(([x, y]): Point => [x + index * 4000, y]),
+    receivingPolygon: p.receivingPolygon!.map(([x, y]): Point => [x + index * 4000, y]),
+  }));
+  assert.equal(joinedReceivingBoundary(disconnected, fixture.boundary), undefined);
+});
 
 test("joined floor pieces retain the precise contact of their newly enclosed obstacle", () => {
   assert.ok(fixture.pieces.every((piece) => piece.blockers.length === 0));

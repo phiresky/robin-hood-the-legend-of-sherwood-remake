@@ -70,6 +70,7 @@ import {
   motionBoundsKey,
   indexPreciseBlockers,
   joinedBlockedCoverage as recoverJoinedCoverage,
+  joinedReceivingBoundary,
 } from "./precise-movement-contours.ts";
 import { normalizeGeneratedMotion } from "./normalize-generated-motion.ts";
 import { normalizeGameplayStateViews } from "./gameplay-state-views.ts";
@@ -1843,12 +1844,18 @@ function compileAssetGameplayAttempt(
             ) && polygonClipping.xor([rounded], [boundary]).length === 0,
         )
       : [];
+    const preciseBoundary =
+      preciseBoundaries.length === 1
+        ? preciseBoundaries[0]!.exact
+        : physicalLanding && pieces.length > 1
+          ? joinedReceivingBoundary(pieces, boundary)
+          : undefined;
     layers[layer]!.push(
       physical?.area ?? {
         is_lift: !!lift,
         state_id: 0,
         polygon: { points: boundary },
-        ...(preciseBoundaries.length === 1 ? { precise_polygon: preciseBoundaries[0]!.exact } : {}),
+        ...(preciseBoundary ? { precise_polygon: preciseBoundary } : {}),
         skeleton_segments: [],
         flags: 0,
         obstacles: [

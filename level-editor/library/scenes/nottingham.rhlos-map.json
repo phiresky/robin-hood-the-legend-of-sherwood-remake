@@ -55,7 +55,7 @@
       "model": "3d-assets/nottingham/nottingham-castle-west-courtyard-wall/model.glb",
       "model_sha256": "886fb81d680ea111eaf51c3bf52faf4f8192df8fa3b97a677943e6d9d7427298",
       "descriptor": "3d-assets/nottingham/nottingham-castle-west-courtyard-wall/asset.json",
-      "descriptor_sha256": "bd11394d0df8708483f0c033b7090d6ab13b553973a1f21e4dae78cf0dba4522",
+      "descriptor_sha256": "c4b2b34effc80bef17e21fcf13fe04d1e84e88f005f044bdb99416d12b24b9a6",
       "id": "nottingham-castle-west-courtyard-wall"
     },
     {
@@ -90,7 +90,7 @@
       "model": "3d-assets/nottingham/nottingham-castle-west-stair/model.glb",
       "model_sha256": "9d613e010802b14ebba8ff659cf21e045d18b23363000a40d3b60466f6f0de95",
       "descriptor": "3d-assets/nottingham/nottingham-castle-west-stair/asset.json",
-      "descriptor_sha256": "ea7bb4b81074506e42e3c8008336a83145f55c6e9440ee8c103399f0629fe929",
+      "descriptor_sha256": "fd59c7eb1819315942e7a6f82786f9723128cae0eeb6ef89b7db4f4b4e16ae10",
       "id": "nottingham-castle-west-stair"
     },
     {
@@ -167,7 +167,7 @@
       "model": "3d-assets/nottingham/nottingham-castle-courtyard-ground/model.glb",
       "model_sha256": "e512fca1003420f5501feebde7dbf65bd169b2978374bfbf628c4748bde5843a",
       "descriptor": "3d-assets/nottingham/nottingham-castle-courtyard-ground/asset.json",
-      "descriptor_sha256": "ef7aeb8fe63e926a5f430776f3c20540b6cabeb43f7dca428dac7f7724858cc3",
+      "descriptor_sha256": "e8645a9ce881e21dde749a2bd7ffb795a33686c5fac8a68d3d543d83c7b1f7ce",
       "id": "nottingham-castle-courtyard-ground"
     },
     {

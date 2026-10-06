@@ -26,6 +26,64 @@ mod tests {
     use super::*;
 
     #[test]
+    fn precise_landing_collision_keeps_a_bent_corner_off_the_stair_seam() {
+        #[derive(Serialize, Deserialize)]
+        struct Fixture {
+            definition: robin_level_data::physical_stair::PhysicalStairNavigation,
+            motion: crate::level_data::RawMotionArea,
+            plane: [f64; 3],
+            receiver: Vec<[f32; 2]>,
+        }
+        let fixture: Fixture = serde_json::from_slice(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/precise-landing-collision-corner.json"
+        )))
+        .unwrap();
+        let mut bound = BoundPhysicalStair {
+            definition: fixture.definition,
+            layer: 66,
+            area: 0,
+            obstacle_states: vec![],
+            landings: vec![],
+        };
+        bound
+            .bind_landing(
+                0,
+                &fixture.motion,
+                2,
+                0,
+                3,
+                fixture.plane,
+                Some(&polygon(&fixture.receiver).unwrap()),
+            )
+            .unwrap();
+        let landing = &bound.landings[0];
+        let door = &bound.definition.doors[0];
+        let geometry = StairRouteGeometry {
+            boundary: bound.definition.boundary.clone(),
+            obstacles: vec![],
+        };
+        for (from, to) in [(door.middle, door.inside), (door.inside, door.middle)] {
+            assert!(
+                geometry
+                    .route_with_precise_landing_support(
+                        [from[0], from[1]],
+                        [to[0], to[1]],
+                        MoveBoxHalfDiagonal::new(6., 3.),
+                        &[landing.boundary.clone()],
+                        &landing
+                            .obstacles
+                            .iter()
+                            .map(|o| o.polygon.clone())
+                            .collect::<Vec<_>>(),
+                    )
+                    .unwrap()
+                    .is_some()
+            );
+        }
+    }
+
+    #[test]
     fn precise_landing_floor_survives_a_contour_that_cannot_round_to_f32() {
         #[derive(Serialize, Deserialize)]
         struct Fixture {
@@ -153,7 +211,10 @@ mod tests {
             )))
             .unwrap();
         let clipped = landing_collision_intersection(
-            &polygon(&collision).unwrap(),
+            &polygon(&collision).unwrap().map_coords(|p| geo::Coord {
+                x: f64::from(p.x),
+                y: f64::from(p.y),
+            }),
             &polygon(&support).unwrap().map_coords(|p| geo::Coord {
                 x: f64::from(p.x),
                 y: f64::from(p.y),
@@ -219,7 +280,7 @@ mod tests {
             [2090., 1830.],
         ])
         .unwrap();
-        let strip = |width: f32| {
+        let strip = |width: f64| {
             polygon(&[
                 [2090., 1800.],
                 [2150., 1800.],
@@ -813,13 +874,13 @@ impl BoundPhysicalStair {
             .map(|obstacle| {
                 obstacle.validate_precise_polygon()?;
                 if obstacle.precise_polygon.is_empty() {
-                    unproject(&obstacle.polygon.points)
+                    unproject(&obstacle.polygon.points).map(|polygon| polygon.map_coords(promote))
                 } else {
                     polygon(
                         &obstacle
                             .precise_polygon
                             .iter()
-                            .map(|&[x, y]| [x as f32, ((y + a * x + c) / (1.0 - b)) as f32])
+                            .map(|&[x, y]| [x, (y + a * x + c) / (1.0 - b)])
                             .collect::<Vec<_>>(),
                     )
                 }
@@ -829,12 +890,7 @@ impl BoundPhysicalStair {
             .iter()
             .zip(&motion.obstacles)
             .filter(|(_, obstacle)| obstacle.state_id == 0)
-            .map(|(collision, _)| {
-                collision.map_coords(|p| geo::Coord {
-                    x: f64::from(p.x),
-                    y: f64::from(p.y),
-                })
-            })
+            .map(|(collision, _)| collision.clone())
             .collect::<Vec<_>>();
         let mut door_seam = false;
         for stair_edge in stair.exterior().lines() {
@@ -925,41 +981,33 @@ impl BoundPhysicalStair {
 }
 
 fn landing_collision_intersection(
-    collision: &Polygon<f32>,
+    collision: &Polygon<f64>,
     support: &Polygon<f64>,
 ) -> geo::MultiPolygon<f64> {
-    let promote = |point: geo::Coord<f32>| geo::Coord {
-        x: f64::from(point.x),
-        y: f64::from(point.y),
-    };
-    collision.map_coords(promote).intersection(support)
+    collision.intersection(support)
 }
 
 /// A rounding strip can stay connected to a genuine wall beyond the stair end.
 /// Remove only the strip along a matching edge; retain the wall and its identity.
 fn trim_rounded_seam_collision(
     mut clipped: geo::MultiPolygon<f64>,
-    collision: &Polygon<f32>,
+    collision: &Polygon<f64>,
     stair: &Polygon<f32>,
     tolerance: f64,
 ) -> geo::MultiPolygon<f64> {
-    clipped.0.retain(|piece| {
-        !rounded_seam_sliver(
-            &piece.map_coords(|p| geo::Coord {
-                x: p.x as f32,
-                y: p.y as f32,
-            }),
-            collision,
-            stair,
-            tolerance,
-        )
+    clipped
+        .0
+        .retain(|piece| !rounded_seam_sliver(piece, collision, stair, tolerance));
+    let stair = stair.map_coords(|p| geo::Coord {
+        x: f64::from(p.x),
+        y: f64::from(p.y),
     });
-    if f64::from(collision.intersection(stair).unsigned_area()) <= clipped.unsigned_area() {
+    if collision.intersection(&stair).unsigned_area() <= clipped.unsigned_area() {
         return clipped;
     }
     for edge in collision.exterior().lines() {
         for other in stair.exterior().lines() {
-            let Some(shared) = rounded_shared_edge(edge, other, tolerance) else {
+            let Some(shared) = rounded_shared_edge_precise(edge, other, tolerance) else {
                 continue;
             };
             let dx = shared.end.x - shared.start.x;
@@ -982,12 +1030,12 @@ fn trim_rounded_seam_collision(
     clipped
 }
 
-/// Clipping independently encoded f32 contours can leave a strip on their shared
-/// edge. Only discard that strip when the original solid extends away from it;
+/// Clipping against a runtime stair contour can leave a strip on the shared
+/// edge. Only discard that strip when the precise solid extends away from it;
 /// a genuinely thin standalone obstacle must retain its collision.
 fn rounded_seam_sliver(
-    clipped: &Polygon<f32>,
-    collision: &Polygon<f32>,
+    clipped: &Polygon<f64>,
+    collision: &Polygon<f64>,
     stair: &Polygon<f32>,
     tolerance: f64,
 ) -> bool {
@@ -996,19 +1044,17 @@ fn rounded_seam_sliver(
     }
     // A real wall extending into the landing is not a stair-hole rounding
     // artifact. The solid must overlap more stair area than this clipped strip.
-    if collision.intersection(stair).unsigned_area() <= clipped.unsigned_area() {
+    let stair = stair.map_coords(|p| geo::Coord {
+        x: f64::from(p.x),
+        y: f64::from(p.y),
+    });
+    if collision.intersection(&stair).unsigned_area() <= clipped.unsigned_area() {
         return false;
     }
     collision.exterior().lines().any(|edge| {
-        let precise_edge = edge.map_coords(|p| geo::Coord {
-            x: f64::from(p.x),
-            y: f64::from(p.y),
-        });
-        let distance = |p: geo::Point<f32>| {
-            point_edge_distance([f64::from(p.x()), f64::from(p.y())], precise_edge)
-        };
+        let distance = |p: geo::Point<f64>| point_edge_distance([p.x(), p.y()], edge);
         stair.exterior().lines().any(|other| {
-            rounded_shared_edge(edge, other, tolerance)
+            rounded_shared_edge_precise(edge, other, tolerance)
                 .is_some_and(|shared| shared.start != shared.end)
         }) && clipped
             .exterior()
@@ -1037,20 +1083,6 @@ fn point_edge_distance(point: [f64; 2], edge: geo::Line<f64>) -> f64 {
 /// Encoded boundary vertices may disagree by a few ULPs along the same seam.
 /// Require a nonzero overlapping segment within that precision, not a nearby
 /// corner or an extension across a real gap.
-fn rounded_shared_edge(
-    first: geo::Line<f32>,
-    second: geo::Line<f32>,
-    tolerance: f64,
-) -> Option<geo::Line<f64>> {
-    let convert = |c: geo::Coord<f32>| geo::Coord {
-        x: f64::from(c.x),
-        y: f64::from(c.y),
-    };
-    let first = first.map_coords(convert);
-    let second = second.map_coords(convert);
-    rounded_shared_edge_precise(first, second, tolerance)
-}
-
 fn rounded_shared_edge_precise(
     first: geo::Line<f64>,
     second: geo::Line<f64>,

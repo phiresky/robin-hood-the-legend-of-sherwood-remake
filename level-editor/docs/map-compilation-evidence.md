@@ -4,6 +4,60 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Courtyard western stair and joined landing precision (2026-10-06)
+
+`stage-courtyard-west-stair-contacts.mjs` corrects the independently owned ground
+and western-wall contacts for `building-351-lift`. Ground edge vertices move
+0.507/2.974 units; wall vertices move 1.059/1.017 units. Their sampled mesh
+coverage is 98/205 and 188/205, with maximum gaps 0.851/0.102 units. The ground's
+physical receiver has a separately reviewed contour: its contact strip has
+69/205 supported samples and a maximum 0.418-unit gap. An explicit asset-local
+volume replaces the implicit part volume while retaining its flags, material
+bindings and query precedence. Access clearances affect only their owning assets.
+
+Initial contact stage `nottingham-castle-west-stair-contacts-pHzkOw` fixes the
+upper handoff but leaves the lower one blocked. Physical-receiver correction
+`nottingham-castle-west-stair-contacts-N6l1YE` still fails until two precision
+problems are resolved. The compiler previously matched each precise floor
+contour against an entire joined motion region; none of the five individual
+pieces matched. The captured `joined-landing-boundary.json` regression now
+unions outer contours while retaining holes as separate movement obstacles,
+and accepts the exact boundary only when it rounds to the emitted region.
+Disconnected pieces still reject restoration.
+
+Runtime landing collision also cast precise obstacle corners to single precision
+before clipping. The captured `precise-landing-collision-corner.json` regression
+fails before the fix and passes afterward in both directions. Collision contours
+now retain double precision through clipping and seam cleanup. Existing tests
+continue to preserve actual thin obstacles, changing barriers and unsupported gaps.
+
+Full Nottingham `courtyard-west-stair-joined-Pfujvs` passes all 92 stair routes
+and ten control checks. Independent copies in
+`courtyard-west-stair-neighbour-placements-PP2Zj5` pass all 32 routes at four
+rotations and two elevations; all 64 missing/raised-neighbour cases reject.
+Final stage `nottingham-castle-west-stair-contacts-jhi1KS` adds only a warning
+for the substantial stair mesh discrepancy: 423/929 sampled floor points have
+support, with visible gaps up to 26.130 units. The saved refinement recipe
+shortened the visible flight while retaining a vertical rise at its foot. That
+mesh still needs repair; passing gameplay routes does not certify rendered parity.
+
+The three definitions are published with backup
+`nottingham-courtyard-stair-publication-20261006`. Published placements
+`courtyard-west-stair-neighbour-placements-p6JIZK` and full Nottingham match
+native-tested geometry after excluding only the added mesh warning. All ten
+scenes reopen. Audit `lift-anchor-support-l9iTvR` finds 25/53 unsupported stairs,
+including Nottingham 8/12; ladders and walls remain 1/8 and 9/9.
+
+Fresh saved-map exports `saved-map-exports-eYNrRH` pass 288 stair and 84 climbing
+routes with the compiler/runtime fixes. The correctly summed stair total is 288;
+earlier reports saying 284 were arithmetic errors, not fewer checked routes.
+The named historical batch reports were rechecked and their totals corrected
+below. The editor suite passes 861 tests with two skipped; native stair navigation
+passes 20 tests, and movement passes 210 with thirteen diagnostic tests ignored.
+Native asset-map integration passes 66 tests with five diagnostics ignored;
+all 71 saved-map control apply/reset checks pass. App typechecking, focused lint,
+the editor build and the game build pass.
+
 ## Nottingham castle hall, west stair contact and collision precision (2026-10-06)
 
 Next candidate: the separate courtyard western stair (`building-351-lift`) in
@@ -48,7 +102,7 @@ conversion to 32-bit coordinates. Collision partitioning retains its exact
 pre-conversion coverage in four triangles and preserves each piece's state.
 Fresh ten-scene exports `saved-map-exports-CCq9NH`, including the staged tower,
 all pass native geometry construction and 84 climbing routes. Stair checks pass
-282/284 routes: both failures are the tower's upper hall contact, whose receiving
+286/288 routes: both failures are the tower's upper hall contact, whose receiving
 boundary and access clearance still follow the previous stair contour.
 
 `stage-nottingham-west-stair-contact.mjs` stages only the hall-owned receiving
@@ -73,7 +127,7 @@ ten scenes reopen. Audit `lift-anchor-support-2W4NVY` records 26/53 unsupported
 stairs, including Nottingham 9/12; ladders and walls remain 1/8 and 9/9.
 Rendered integration and fresh browser ZIP verification remain outstanding.
 
-Fresh published ten-scene exports `saved-map-exports-3xbSA4` pass all 284 stair
+Fresh published ten-scene exports `saved-map-exports-3xbSA4` pass all 288 stair
 routes and 71 control apply/reset checks. The other nine descriptors exactly
 match `saved-map-exports-CCq9NH`; Nottingham has no climbing definitions, so the
 84 passing climbing routes remain unchanged by this publication.
@@ -148,7 +202,7 @@ Independent great-hall fixture `external-stair-landings-5btVbp` now passes all
 96/96 actor routes and retains all 64 missing/raised landing rejections. The
 candidate remains unpublished pending the real neighbouring contacts in full
 Lincoln, mesh review and rendered verification. Fresh saved-scene batch
-`saved-map-exports-gibq1F` compiles all ten maps and passes 284/284 stair routes
+`saved-map-exports-gibq1F` compiles all ten maps and passes 288/288 stair routes
 and 84/84 climbing routes. These descriptors include the newly exported
 ordinary-passage world endpoints. All 71 control apply/reset checks also pass.
 All 195 movement tests pass, with thirteen ignored; focused ordinary-passage
@@ -178,7 +232,7 @@ rounded map destination and passes in both directions. Loader round-trip and
 projected-identity rejection checks pass. Validation also passes 126 compiler
 tests, application typecheck, focused lint/formatting, 192 movement tests,
 40 level-loading tests, 29 replay tests and 85 level-data tests. The existing
-saved-map descriptors retain all 284 stair and 84 climbing routes; game and
+saved-map descriptors retain all 288 stair and 84 climbing routes; game and
 editor production builds pass. Ignored tests remain outside those counts.
 These results do not certify full-map rendering
 or baked ZIP parity.
@@ -198,7 +252,7 @@ height mismatch from unsupported footprint and include the current order queue.
 The candidate remains unpublished.
 
 Validation: 192 movement tests pass (thirteen ignored), the existing
-`saved-map-exports-rdmm0t` descriptors retain 284 stair and 84 climbing routes,
+`saved-map-exports-rdmm0t` descriptors retain 288 stair and 84 climbing routes,
 and `lincoln-north-hall-level-KSbGJF` retains sixteen stair routes. Formatting
 checks and the game build pass. These checks do not constitute fresh ZIP or
 rendered verification.
@@ -228,7 +282,7 @@ The unpublished great-hall copied assembly `external-stair-landings-VQ7JOS`
 improves from 32/96 to 63/96 passing routes. Remaining rotated movement/support
 and landing-contact failures still prevent publication. The complete movement
 suite passes 192 tests, with thirteen ignored. Existing saved-map batch
-`saved-map-exports-rdmm0t` retains all 284 stair and 84 climbing routes; the newer
+`saved-map-exports-rdmm0t` retains all 288 stair and 84 climbing routes; the newer
 published Lincoln descriptor `lincoln-north-hall-level-KSbGJF` also retains all
 sixteen stair routes. The final focused handoff test, formatting and game build
 pass. These are runtime regression checks against existing
@@ -417,7 +471,7 @@ integration. Editor validation passes 857 tests, with two skipped, app
 typechecking, focused lint, formatting and the production build.
 
 Fresh staged batch `saved-map-exports-rdmm0t` passes native construction for all
-ten maps, 284 stair routes, 84 climbing routes and 71 control apply/reset checks.
+ten maps, 288 stair routes, 84 climbing routes and 71 control apply/reset checks.
 Publication backup is `west-moat-publication-20261006`; Leicester and Wychford
 pins are refreshed. All eight published placement exports
 (`local-stair-placements-BQ3vU8`) and the full Leicester descriptor exactly match
@@ -465,7 +519,7 @@ discrepancies are below 0.048 units. The draft warns about incomplete visible
 coverage and unverified rendered actor integration.
 
 Fresh staged batch `nottingham-road-all-maps-U3N6zl` passes native construction
-for all ten maps, all 284 stair routes, 84 climbing routes and 71 control
+for all ten maps, all 288 stair routes, 84 climbing routes and 71 control
 apply/reset checks. Another 191 movement tests pass (thirteen ignored), and the
 game build passes. Publication backup is `nottingham-road-publication-20261006`;
 the road asset, terrain definition and Nottingham scene pins are updated.
@@ -506,7 +560,7 @@ runtime change is current. This publication does not resolve the separate
 Nottingham height mismatches or certify other arbitrary placements.
 Fresh all-map batch `saved-map-exports-vD9Ih4` passes native construction for
 all ten maps, all 71 control apply/reset checks and 84 climbing routes. Its stair
-audit retains 282/284 passing routes, with only Nottingham sector 156 failing
+audit retains 286/288 passing routes, with only Nottingham sector 156 failing
 in both directions. No additional stair failures appear with the compiler change.
 
 ## Precise landing contours and remaining route failures (2026-10-06)
@@ -529,7 +583,7 @@ at both elevations. The lower landing still has an integer-only obstacle whose
 rounded triangle overlaps the exact seam; precise contour recovery remains open.
 No candidate asset is published by this runtime change.
 
-The saved-scene batch `saved-map-exports-pURUNj` passes 282/284 stair routes and
+The saved-scene batch `saved-map-exports-pURUNj` passes 286/288 stair routes and
 84/84 climb routes. Both stair failures are Nottingham sector 156, doors 124/125.
 Its physical midpoints are at heights 0.135946 and 29.832588 while the landing
 heights are 0 and 30.001001. The existing height guard rejects both before any
