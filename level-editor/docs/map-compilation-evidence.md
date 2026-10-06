@@ -8629,3 +8629,40 @@ floor mesh/placement review remain open; no library asset is published here.
 Validation: 188 affected compiler tests, app typecheck, focused lint and the
 production build pass. Pipeline typecheck reports the same five pre-existing
 test typing errors recorded above, with no new errors in the changed files.
+
+### Southern riverside and wooden stair publication
+
+`stage-york-wooden-stair-floor.mjs` replaces the wooden stair's oversized
+navigation envelope with its structural flight footprint. Mesh review improves
+from 450/862 supported samples and a 13.658-unit uncovered edge gap to 912/920
+samples and a 0.086976-unit gap. Near-floor mesh height residuals range from
+about 0.079 to 0.113 units. The first narrower-floor candidate
+`york-wooden-stair-floor-JTy8jm` still fails both wooden-stair routes because the
+terrace volume overlaps the flight near its upper entrance.
+
+The independently owned terrace and walkway contact corners now meet the stair
+edges, with corrections below 0.6 units. A sub-0.001-unit seating correction
+makes the flight exactly planar, and its obsolete sloped clearance is replaced
+by a clearance derived from that flight. Candidate `york-wooden-stair-floor-kzS32E`
+passes all 130 full-York stair routes and six control apply/reset checks.
+`york-riverbank-wooden-landing-steps-neighbour-placements-UCiH3n` passes 32 actor
+routes at four rotations and two elevations with independently placed walkway
+and terrace copies; 64 missing/raised neighbour cases reject.
+The same combined descriptors retain all 32 southern-stair routes and 32
+missing/raised terrace rejections in `...southern-wall-stair-neighbour-placements-bidpFC`.
+
+`review-staged-receiving-floors.mjs` checks boundaries and interior grid samples
+against nearby mesh faces. The terrace has 1,264/1,635 supported samples, a
+0.149704-unit maximum edge discrepancy and 0.032518-unit maximum sampled height
+error. The walkway has 458/638 supported samples, a 0.092705-unit edge discrepancy
+and a 0.050928-unit height error. These are sampled mesh limits, not runtime
+connection tolerances or rendered actor certification.
+
+Reviewed stage `york-riverside-reviewed-H72jM4` publishes both stairs, the terrace
+and walkway with explicit draft mesh/rendering warnings. Backup:
+`york-southern-and-wooden-stairs-publication-20261006`. Fresh published geometry
+matches full York and all sixteen native-tested placement exports, excluding
+only the updated warnings. All ten saved scenes reopen; only York's scene pins
+change. Audit `lift-anchor-support-Ix1scr` finds 13/53 unsupported stairs (York
+12/16 and Sherwood 1/1), 1/8 ladders and 9/9 walls. Broader traversal, visual
+integration and library coverage remain open.

@@ -5,15 +5,20 @@ import { groupCentroid } from "../shared/src/level3d.ts";
 import { compileMap } from "../app/src/map-compile.ts";
 import { createTerrainGrid } from "../shared/src/authored-terrain.ts";
 
-const [stage, mode] = process.argv.slice(2);
+const [stage, mode, selectedStair] = process.argv.slice(2);
 assert.ok(stage && (mode === undefined || mode === "--published" || mode === "--physical-terrace"));
 const physicalTerrace = mode === "--physical-terrace";
 const edits = JSON.parse(await fs.readFile(`${stage}/edits.json`, "utf8"));
-const stair = edits[0].asset;
+const stair = selectedStair ?? edits[0].asset;
+assert.ok(edits.some((edit) => edit.asset === stair));
 const map = stair.startsWith("york-") ? "york" : "nottingham";
 const source = await readStoredMap(`library/scenes/${map}.rhlos-map.json`, "library");
 const assets = await pinnedDescriptors("library", source.assetSources, source.sceneAssets);
 const neighbours = {
+  "york-riverbank-wooden-landing-steps": [
+    "york-southeast-riverside-raised-terrace",
+    "york-east-riverside-wooden-walkway",
+  ],
   "york-east-riverside-southern-wall-stair": physicalTerrace
     ? ["york-southeast-riverside-raised-terrace"]
     : [],

@@ -19,9 +19,13 @@ wooden walkway their own height-aware floors restores all 130 full-York stair
 routes and six controls. Partitioning holed collision before rounding now
 preserves the exact stair-contact edges: all 32 routes pass with the actual
 terrace moved alongside the southern stair, and 32 missing/raised terrace cases
-reject. The wooden stair's own physical seam correction still fails, and the
-new terrace/walkway floors need broader mesh and placement review, so these
-asset corrections remain unpublished.
+reject. The wooden stair now has a narrower, mesh-reviewed flight and corrected
+independently owned terrace/walkway contacts. Its 32 moved routes pass and 64
+missing/raised neighbours reject. Both stairs and both receiving assets are
+published as drafts; fresh geometry matches all sixteen tested placement files
+and full York, and all ten scenes reopen. Receiving-floor mesh edge discrepancies
+stay below 0.150 units, and the wooden flight below 0.087 units; rendered actor
+integration remains unverified.
 
 Latest runtime checks retain exact landing contours through binding and foot
 support instead of reducing them to single precision. The southwest turret is
@@ -181,9 +185,9 @@ complete-sprite and rendered verification remain open.
 All ten scenes reopen after publication, and full Derby passes all five control
 apply/reset checks. All ten Derby stair definitions now pass local floor-anchor
 support checks after the upper-west publication below.
-A library-wide local-anchor audit finds unsupported anchors in 15 of 53 authored stair
+A library-wide local-anchor audit finds unsupported anchors in 13 of 53 authored stair
 definitions: Derby 0/10, Leicester 0/8, Lincoln 0/6, Nottingham 0/12,
-Sherwood 1/1 and York 14/16. All audited floors are planar. This checks local
+Sherwood 1/1 and York 12/16. All audited floors are planar. This checks local
 definitions, not placed connectivity or actual route failures; corrections and
 moved/rotated native traversal checks remain necessary across these assets.
 
